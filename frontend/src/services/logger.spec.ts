@@ -14,6 +14,8 @@ import { vi, type Mock } from "vitest";
 import { info, warn, error, handleAxiosError } from "@/services/logger";
 
 describe("Logger Service", () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+
   beforeEach(() => {
     // Save original console methods
     vi.spyOn(console, "info").mockImplementation(() => {});
@@ -22,7 +24,34 @@ describe("Logger Service", () => {
   });
 
   afterEach(() => {
+    process.env.NODE_ENV = originalNodeEnv;
+    window.history.replaceState({}, "", "/");
+    window.localStorage.clear();
     vi.restoreAllMocks();
+  });
+
+  describe("debug logging enablement", () => {
+    it("ignores query and localStorage debug flags in production", async () => {
+      process.env.NODE_ENV = "production";
+      window.history.replaceState({}, "", "/?debugLogs=true");
+      window.localStorage.setItem("breakglass:debugLogs", "true");
+      vi.resetModules();
+
+      const logger = await import("@/services/logger");
+
+      expect(logger.isDebugLoggingEnabled()).toBe(false);
+    });
+
+    it("honors query debug flags outside production", async () => {
+      process.env.NODE_ENV = "test";
+      window.history.replaceState({}, "", "/?debugLogs=true");
+      vi.resetModules();
+
+      const logger = await import("@/services/logger");
+
+      expect(logger.isDebugLoggingEnabled()).toBe(true);
+      expect(window.localStorage.getItem("breakglass:debugLogs")).toBe("true");
+    });
   });
 
   describe("info() - info logging", () => {
@@ -196,6 +225,20 @@ describe("Logger Service", () => {
       expect(console.error).toHaveBeenCalled();
     });
 
+    it("does not log Axios request configuration or bearer tokens", () => {
+      const token = "secret-bearer-token";
+      const err = {
+        message: "Request failed",
+        config: { headers: { Authorization: `Bearer ${token}` } },
+        response: { status: 500, data: { error: "Server error" } },
+      };
+
+      handleAxiosError("API", err, undefined, false);
+
+      expect(JSON.stringify((console.error as Mock).mock.calls)).not.toContain(token);
+      expect(JSON.stringify((console.error as Mock).mock.calls)).not.toContain("Authorization");
+    });
+
     it("handles missing response gracefully", () => {
       const err = { message: "Network error" };
 
@@ -248,5 +291,30 @@ describe("Logger Service", () => {
       const result = handleAxiosError("API", err);
       expect(result.message).toBe("Response error");
     });
+  });
+});
+
+describe("Logger Service storage guards", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("loads when localStorage getter throws", async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, "localStorage");
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new Error("localStorage blocked");
+      },
+    });
+
+    try {
+      await expect(import("@/services/logger")).resolves.toBeDefined();
+    } finally {
+      if (localStorageDescriptor) {
+        Object.defineProperty(window, "localStorage", localStorageDescriptor);
+      }
+    }
   });
 });

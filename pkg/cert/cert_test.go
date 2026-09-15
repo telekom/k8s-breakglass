@@ -16,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/events"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
@@ -24,6 +23,7 @@ import (
 	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
+	"sigs.k8s.io/controller-runtime/pkg/recorder"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/conversion"
 )
@@ -276,7 +276,7 @@ func (f *fakeCtrlManager) GetFieldIndexer() client.FieldIndexer {
 	return f.fieldIndexer
 }
 func (f *fakeCtrlManager) GetEventRecorderFor(string) record.EventRecorder { return f.recorder }
-func (f *fakeCtrlManager) GetEventRecorder(string) events.EventRecorder    { return fakeEventRecorder{} }
+func (f *fakeCtrlManager) GetEventRecorder(string) recorder.EventRecorder  { return fakeEventRecorder{} }
 func (f *fakeCtrlManager) GetRESTMapper() meta.RESTMapper                  { return f.restMapper }
 func (f *fakeCtrlManager) GetAPIReader() client.Reader                     { return f.apiReader }
 
@@ -295,6 +295,9 @@ func (f *fakeWebhookServer) WebhookMux() *http.ServeMux { return http.NewServeMu
 type fakeEventRecorder struct{}
 
 func (fakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, _, _, _, _ string, _ ...interface{}) {
+}
+
+func (fakeEventRecorder) AnnotatedEventf(_ runtime.Object, _ runtime.Object, _ map[string]string, _, _, _, _ string, _ ...interface{}) {
 }
 
 // TestEnsure_CertsReady tests the Ensure function when certificates become ready

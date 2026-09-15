@@ -276,8 +276,25 @@ func TestDebugSessionCRUD(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
+	var clusterConfigs breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, cli.List(ctx, &clusterConfigs), "failed to list ClusterConfigs")
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
+	for i := range clusterConfigs.Items {
+		if clusterConfigs.Items[i].Name == clusterName {
+			clusterConfig = &clusterConfigs.Items[i]
+			break
+		}
+	}
+	if clusterConfig == nil {
+		for i := range clusterConfigs.Items {
+			if clusterConfigs.Items[i].Spec.Tenant == clusterName {
+				require.Nil(t, clusterConfig, "cluster config tenant must be unambiguous")
+				clusterConfig = &clusterConfigs.Items[i]
+			}
+		}
+	}
+	require.NotNil(t, clusterConfig, "configured ClusterConfig must match by name or tenant")
 
 	// Create prerequisites: pod template and session template
 	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
@@ -329,9 +346,10 @@ func TestDebugSessionCRUD(t *testing.T) {
 		session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 			TemplateRef: sessionTemplate.Name,
 			Cluster:     clusterName,
-			Namespace:   namespace,
 		})
 		require.NoError(t, err, "Failed to create DebugSession via API")
+		assert.Equal(t, clusterConfig.Namespace, session.Namespace, "DebugSession must remain in the ClusterConfig namespace")
+		assert.Equal(t, "breakglass-debug", session.Spec.TargetNamespace)
 
 		// Add to cleanup
 		var sessionToCleanup breakglassv1alpha1.DebugSession

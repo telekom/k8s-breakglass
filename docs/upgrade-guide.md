@@ -68,6 +68,86 @@ kubectl logs -l app=breakglass -n breakglass-system --tail=100
 
 ### Upcoming Changes (Unreleased)
 
+#### Behaviour change: server-side apply now prunes removed fields
+
+**What changed.** The diff-before-apply optimization used to compare the desired
+manifest against the live object with *subset* semantics only. Because of that, when
+a field was **removed** from a template or auxiliary-resource manifest, the desired
+object became a strict subset of the live object, every comparison still passed, and
+the apply that would have pruned the field was skipped. The field stayed on the live
+resource indefinitely — the operator reported success while silently leaving the
+resource in a drifted state.
+
+The comparison now additionally requires that every field the operator owns
+(according to its own entry in the resource's `managedFields`) is still declared by
+the desired manifest. When ownership cannot be determined the apply is sent
+unconditionally; server-side apply is a no-op when nothing has actually changed, so
+the only cost is one PATCH round-trip.
+
+**What to expect on the first reconcile after upgrading.**
+
+- Fields that were previously removed from a manifest but left behind on live
+  resources will now actually be deleted. This affects auxiliary resources,
+  pod-template resources, and any other resource applied through the shared apply
+  helpers.
+- The correction is applied per resource on its next reconcile, not in a single
+  sweep, so it lands gradually as sessions and resources are reconciled.
+- Resources with no accumulated drift are unaffected: the reconcile is a no-op.
+- On the very first reconcile of a resource created by an older release, the
+  operator may send one apply it would previously have skipped, because that
+  resource has no ownership entry yet. This is a single extra PATCH per resource,
+  not an ongoing cost.
+
+**Recommended action.** Before upgrading, diff a representative auxiliary resource
+against its manifest (`kubectl get <kind> <name> -o yaml`) to see which fields will
+be pruned. If a field on a live resource is intentionally set by something other
+than breakglass, confirm that the other writer uses its own field manager — fields
+owned by a different manager are not touched.
+
+#### Behaviour change: webhook SAR metrics no longer label unresolved clusters
+
+The `cluster` label on the webhook SAR metrics is derived from the attacker-controllable
+`:cluster_name` request path. It is now only set to the name of a **registered** cluster;
+until a request has been matched to an existing `ClusterConfig`, the label carries one of
+three fixed placeholders — `_unknown` (no name supplied), `_invalid` (not a valid object
+name) or `_unresolved` (well-formed but not onboarded). See `docs/metrics.md`.
+
+Effect on existing dashboards and alerts:
+
+- Metrics for **registered** clusters are unchanged: the real cluster name is still
+  recorded, so per-cluster queries continue to work.
+- Requests for clusters Breakglass does not serve previously produced one series per
+  distinct name. Those series are replaced by the placeholders. A query that grouped by
+  `cluster` will show `_unresolved`/`_invalid` buckets instead of the individual bogus
+  names.
+- `breakglass_webhook_sar_denied_total{...}` for the "cluster not registered" denial is
+  now attributed to `_unresolved` rather than to the requested name. If you alerted on a
+  specific unonboarded cluster name, switch to the placeholder.
+- Overall series count for these metrics drops, in some deployments substantially.
+
+#### Behaviour change: BreakglassEscalation reference-failure requeue cadence
+
+Escalations whose references (cluster, IdentityProvider, DenyPolicy, MailProvider)
+cannot be resolved previously requeued on a flat 3-second interval forever, which is
+roughly 20 reconciles per minute per bad object, each performing full validation, a
+status write and a `Warning` event. These failures now return an error so
+controller-runtime's rate limiter applies exponential backoff.
+
+Observable effects:
+
+- Retries start at a comparable interval and then back off; a permanently broken
+  reference settles into infrequent retries instead of a constant loop.
+- `Warning` event and status-write volume for broken escalations drops sharply.
+- The `controller_runtime_reconcile_errors_total` counter now increments for these
+  escalations. This is the expected representation of an unresolvable reference and
+  may need an alerting-threshold adjustment.
+- Purely structural validation failures (`ConfigValidated`) no longer retry at all,
+  since they cannot resolve themselves without a spec change. The status condition
+  is still written exactly as before.
+
+Time to resolution for a genuinely transient case (a reference created moments
+after the escalation) is unchanged in practice, since early retries are still fast.
+
 #### Breaking Changes
 
 1. **Session SAR Metrics Label Changes**

@@ -9,6 +9,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -222,7 +223,7 @@ func TestDebugSessionsReject(t *testing.T) {
 			DebugSession: breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{Name: "debug-session-123"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
-					State: breakglassv1alpha1.DebugSessionStateTerminated,
+					State: breakglassv1alpha1.DebugSessionStateRejected,
 				},
 			},
 		}
@@ -236,7 +237,7 @@ func TestDebugSessionsReject(t *testing.T) {
 
 	result, err := client.DebugSessions().Reject(context.Background(), "debug-session-123", "not needed", "")
 	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, result.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, result.Status.State)
 }
 
 func TestDebugSessionsJoin(t *testing.T) {
@@ -244,9 +245,9 @@ func TestDebugSessionsJoin(t *testing.T) {
 		require.Equal(t, "/api/debugSessions/debug-session-123/join", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		var req JoinDebugSessionRequest
-		_ = json.NewDecoder(r.Body).Decode(&req)
-		assert.Equal(t, "viewer", req.Role)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body)
 
 		response := DebugSessionDetailResponse{
 			DebugSession: breakglassv1alpha1.DebugSession{
@@ -801,4 +802,10 @@ func TestDebugSessionsList_InvalidStateFilter(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "NotAState")
 	assert.Contains(t, err.Error(), "unknown debug session state")
+}
+
+func TestValidateDebugSessionStateAcceptsRejected(t *testing.T) {
+	state, err := validateDebugSessionState("rejected")
+	require.NoError(t, err)
+	assert.Equal(t, string(breakglassv1alpha1.DebugSessionStateRejected), state)
 }

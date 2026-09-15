@@ -40,7 +40,12 @@ func TestCELValidationRulesInCRD(t *testing.T) {
 			name:    "DenyPolicy CEL rules",
 			crdFile: "config/crd/bases/breakglass.t-caas.telekom.com_denypolicies.yaml",
 			expected: []string{
-				"at least one deny rule or podSecurityRules must be specified",
+				// Matched as a fragment: controller-gen line-wraps long CEL messages in
+				// the generated YAML, so the full sentence is not contiguous.
+				"at least one deny rule, impersonationRules or podSecurityRules",
+				// The impersonationRules arm of the CEL rule must be present, otherwise a
+				// policy carrying only impersonation rules would be rejected at admission.
+				"has(self.impersonationRules) && size(self.impersonationRules)",
 			},
 		},
 	}

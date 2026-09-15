@@ -198,7 +198,6 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
 	// Step 1: Create the target namespace for debug pods (shared, do not cleanup)
@@ -295,7 +294,6 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 		debugSession, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 			TemplateRef:       sessionTemplate.Name,
 			Cluster:           clusterName,
-			Namespace:         namespace,
 			RequestedDuration: "10m",
 		})
 		require.NoError(t, err, "Failed to create DebugSession via API")
@@ -361,7 +359,6 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 		cleanupSession, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 			TemplateRef:       sessionTemplate.Name,
 			Cluster:           clusterName,
-			Namespace:         namespace,
 			RequestedDuration: "5m",
 		})
 		require.NoError(t, err, "Failed to create cleanup test session via API")
@@ -515,7 +512,6 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 
 	cli := helpers.GetClient(t)
 	cleanup := helpers.NewCleanup(t, cli)
-	namespace := helpers.GetTestNamespace()
 	clusterName := helpers.GetTestClusterName()
 
 	// Create minimal pod and session templates
@@ -576,7 +572,6 @@ func TestDebugSessionParticipantJoin(t *testing.T) {
 	debugSession, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef:       sessionTemplate.Name,
 		Cluster:           clusterName,
-		Namespace:         namespace,
 		RequestedDuration: "30m",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")

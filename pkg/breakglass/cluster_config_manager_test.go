@@ -9,6 +9,7 @@ import (
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -39,6 +40,23 @@ func TestGetClusterConfigByName(t *testing.T) {
 		require.Contains(t, err.Error(), "not found")
 	})
 
+	t.Run("indexed miss is definitive", func(t *testing.T) {
+		cc := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "indexed-miss", Namespace: "default"},
+		}
+		cli := fake.NewClientBuilder().
+			WithScheme(Scheme).
+			WithObjects(cc).
+			WithIndex(&breakglassv1alpha1.ClusterConfig{}, "metadata.name", func(client.Object) []string { return nil }).
+			Build()
+		mgr := NewClusterConfigManager(cli)
+
+		got, err := mgr.GetClusterConfigByName(ctx, "indexed-miss")
+		require.Error(t, err)
+		require.Nil(t, got)
+		require.True(t, apierrors.IsNotFound(err))
+	})
+
 	t.Run("duplicate cluster configs returns error", func(t *testing.T) {
 		cc1 := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "my-cluster", Namespace: "namespace1"},
@@ -52,6 +70,7 @@ func TestGetClusterConfigByName(t *testing.T) {
 		got, err := mgr.GetClusterConfigByName(ctx, "my-cluster")
 		require.Error(t, err)
 		require.Nil(t, got)
+		require.ErrorIs(t, err, errClusterConfigNameNotUnique)
 		require.Contains(t, err.Error(), "is not unique")
 		require.Contains(t, err.Error(), "namespace1")
 		require.Contains(t, err.Error(), "namespace2")

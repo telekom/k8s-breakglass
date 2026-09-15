@@ -2,8 +2,10 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,15 +16,83 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// unverifiedGroupsCacheSuffix marks the per-request gin context key recording
+// that the cluster-side approver group lookup already failed for this
+// (cluster, user) pair, so repeated authorization checks within one request do
+// not retry a known-failing spoke and do not silently regain "verified" status.
+const unverifiedGroupsCacheSuffix = "_unverified"
+
+// recordUnverifiedApproverGroupsDecision makes a fail-open approval decision
+// observable: it emits a dedicated audit event and increments a dedicated
+// metric whenever an approval was granted on unverified JWT-claim groups because
+// the cluster-verified group lookup failed.
+//
+// This deliberately does NOT change the decision. Breakglass is an
+// emergency-access tool with asymmetric failure modes: a wrong deny locks
+// operators out of production during an incident, which is generally worse than
+// a wrong allow that is fully attributed and alertable. So the weaker basis is
+// surfaced rather than enforced.
+func (wc *BreakglassSessionController) recordUnverifiedApproverGroupsDecision(
+	ctx context.Context,
+	session *breakglassv1alpha1.BreakglassSession,
+	approver, matchedGroup, identityProvider string,
+	reqLog *zap.SugaredLogger,
+) {
+	metrics.ApprovalUnverifiedGroupDecisions.WithLabelValues(session.Spec.Cluster).Inc()
+
+	reqLog.Warnw("Approval authorized on UNVERIFIED groups: cluster group lookup failed and the JWT-claim group fallback was load-bearing for this decision",
+		"session", session.Name,
+		"cluster", session.Spec.Cluster,
+		"approver", approver,
+		"matchedGroup", system.RedactGroupName(matchedGroup),
+		"identityProvider", identityProvider,
+		"remediation", "verify spoke cluster reachability and credentials; review this approval")
+
+	if wc.auditService == nil || !wc.auditService.IsEnabled() {
+		return
+	}
+	wc.auditService.Emit(ctx, &audit.Event{
+		Type:      audit.EventSessionApprovalUnverifiedGroups,
+		Severity:  audit.SeverityWarning,
+		Timestamp: time.Now().UTC(),
+		Actor: audit.Actor{
+			User:             approver,
+			IdentityProvider: identityProvider,
+		},
+		Target: audit.Target{
+			Kind:      "BreakglassSession",
+			Name:      session.Name,
+			Namespace: session.Namespace,
+			Cluster:   session.Spec.Cluster,
+		},
+		RequestContext: &audit.RequestContext{
+			SessionName:    session.Name,
+			EscalationName: session.Spec.GrantedGroup,
+		},
+		Details: map[string]interface{}{
+			"message":       "Approval authorization used unverified JWT-claim groups because the cluster-side group lookup failed",
+			"cluster":       session.Spec.Cluster,
+			"grantedGroup":  session.Spec.GrantedGroup,
+			"matchedGroup":  matchedGroup,
+			"groupBasis":    "unverified_request_context",
+			"loadBearing":   true,
+			"authorization": "allowed",
+		},
+	})
+}
 
 // checkApprovalAuthorization performs a detailed check of whether the current user can approve/reject a session.
 // It returns an ApprovalCheckResult with specific denial reasons instead of a simple boolean.
@@ -42,32 +112,100 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	ctx := c.Request.Context()
 	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	requestContextGroups := approverGroupsFromRequestContext(c)
+	approverIdentityProvider := c.GetString("identity_provider_name")
 
 	// Base defaults for escalation evaluation
 	var baseBlockSelfApproval bool
 	var baseAllowedApproverDomains []string
-
-	// Gather approver groups with caching
-	cacheKey := "approverGroups_" + email
-	var approverGroups []string
-	if cached, ok := c.Get(cacheKey); ok {
-		approverGroups = cached.([]string)
-	} else {
-		var gerr error
-		approverGroups, gerr = wc.getUserGroupsFn(ctx, approverID)
-		if raw, ok := c.Get("groups"); ok {
-			if arr, ok2 := raw.([]string); ok2 && len(arr) > 0 {
-				approverGroups = arr
-			}
-		} else if gerr != nil {
-			reqLog.Errorw("[E2E-DEBUG] Approver group error", "error", gerr)
+	if wc.clusterConfigManager != nil && wc.clusterConfigManager.hasClient() {
+		if cc, cerr := wc.clusterConfigManager.GetClusterConfigByName(ctx, session.Spec.Cluster); cerr == nil && cc != nil {
+			baseBlockSelfApproval = cc.Spec.BlockSelfApproval
+			baseAllowedApproverDomains = cc.Spec.AllowedApproverDomains
+		} else if cerr != nil && errors.Is(cerr, errClusterConfigNameNotUnique) {
+			reqLog.Warnw("Unable to resolve unique ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
 			return ApprovalCheckResult{
 				Allowed: false,
-				Reason:  ApprovalDenialUnauthenticated,
-				Message: "Unable to retrieve user groups",
+				Reason:  ApprovalDenialClusterApprovalPolicyAmbiguous,
+				Message: "Cluster approval policy is ambiguous",
+			}
+		} else if cerr != nil && !apierrors.IsNotFound(cerr) {
+			reqLog.Warnw("Unable to look up ClusterConfig for approval policy", "cluster", session.Spec.Cluster, "error", cerr)
+			return ApprovalCheckResult{
+				Allowed: false,
+				Reason:  ApprovalDenialClusterApprovalPolicyLookupFailed,
+				Message: "Cluster approval policy could not be resolved",
+			}
+		} else if cerr != nil {
+			reqLog.Debugw("No ClusterConfig found for approval policy, continuing with defaults", "cluster", session.Spec.Cluster, "error", cerr)
+		}
+	}
+
+	// Gather approver groups with caching
+	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
+	var approverGroups []string
+	lookupApproverGroups := true
+	if cached, ok := c.Get(cacheKey); ok {
+		if groups, ok := cached.([]string); ok {
+			approverGroups = groups
+			lookupApproverGroups = false
+		} else {
+			reqLog.Debugw("Ignoring approver group cache entry with unexpected type",
+				"cacheKey", cacheKey, "cachedType", fmt.Sprintf("%T", cached))
+		}
+	}
+	// groupsUnverified records that the cluster-side group lookup failed, so no
+	// cluster-verified groups are available for this decision. It does NOT by
+	// itself deny: see the fallback handling below.
+	groupsUnverified := false
+	if lookupApproverGroups {
+		if cachedUnverified, ok := c.Get(cacheKey + unverifiedGroupsCacheSuffix); ok {
+			if flag, ok := cachedUnverified.(bool); ok && flag {
+				// A previous authorization check in this same request already
+				// observed the lookup failure; do not hammer the spoke again.
+				groupsUnverified = true
+				lookupApproverGroups = false
 			}
 		}
-		c.Set(cacheKey, approverGroups)
+	}
+	if lookupApproverGroups {
+		verifiedGroups, gerr := wc.getUserGroupsFn(ctx, approverID)
+		if gerr != nil {
+			// FAIL-OPEN GUARD: previously the JWT-derived request-context groups
+			// were substituted into approverGroups wholesale, silently
+			// downgrading a cluster-verified group check to an unverified one on
+			// any transient spoke error. Instead, treat the lookup failure as
+			// "no verified groups" and let the pre-existing, explicitly-scoped
+			// request-context fallback below decide. That keeps the outcome
+			// identical for callers who would have been authorized anyway, while
+			// making the unverified path observable and attributable.
+			//
+			// Always log the underlying error at Error level, not only when the
+			// fallback is empty — a failing spoke lookup is an operational fault
+			// regardless of whether it changed the outcome.
+			reqLog.Errorw("Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups",
+				"cluster", session.Spec.Cluster,
+				"approver", email,
+				"requestContextGroupCount", len(requestContextGroups),
+				"error", gerr)
+			metrics.ApprovalGroupLookupFailures.WithLabelValues(session.Spec.Cluster).Inc()
+			groupsUnverified = true
+			approverGroups = nil
+			c.Set(cacheKey+unverifiedGroupsCacheSuffix, true)
+
+			if len(requestContextGroups) == 0 {
+				// No verified groups and no unverified groups either: nothing to
+				// evaluate. This is the pre-existing deny and is unchanged.
+				return ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialUnauthenticated,
+					Message: "Unable to retrieve user groups",
+				}
+			}
+		} else {
+			approverGroups = verifiedGroups
+			c.Set(cacheKey, approverGroups)
+		}
 	}
 
 	escalations, err := wc.escalationManager.GetClusterBreakglassEscalations(ctx, session.Spec.Cluster)
@@ -81,9 +219,14 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	// Track the most specific denial reason encountered during evaluation.
-	// Priority: SelfApprovalBlocked > DomainNotAllowed > NotAnApprover > NoMatchingEscalation
+	// Priority: SelfApprovalBlocked > DomainNotAllowed > IdentityProviderNotAllowed
+	// until a matching escalation allows the approver identity provider. If that
+	// escalation still does not list the caller as an approver, NotAnApprover
+	// replaces IdentityProviderNotAllowed. NoMatchingEscalation is returned only
+	// when no escalation matches the session's granted group.
 	var mostSpecificDenial ApprovalCheckResult
 	foundMatchingEscalation := false
+	foundMatchingEscalationWithAllowedApproverIDP := false
 
 	reqLog.Debugw("Approver evaluation context", "session", session.Name, "sessionGroup", system.RedactGroupName(session.Spec.GrantedGroup), "candidateEscalationCount", len(escalations), "approverEmail", email)
 	for _, esc := range escalations {
@@ -100,14 +243,6 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Determine effective settings for this escalation
 		effectiveBlockSelf := baseBlockSelfApproval
 		effectiveAllowedDomains := baseAllowedApproverDomains
-		if wc.clusterConfigManager != nil {
-			if cc, cerr := wc.clusterConfigManager.GetClusterConfigInNamespace(c.Request.Context(), esc.Namespace, session.Spec.Cluster); cerr == nil && cc != nil {
-				effectiveBlockSelf = cc.Spec.BlockSelfApproval
-				effectiveAllowedDomains = cc.Spec.AllowedApproverDomains
-			} else if cerr != nil {
-				reqLog.Debugw("No ClusterConfig found in escalation namespace, continuing with defaults", "cluster", session.Spec.Cluster, "namespace", esc.Namespace, "error", cerr)
-			}
-		}
 		if esc.Spec.BlockSelfApproval != nil {
 			effectiveBlockSelf = *esc.Spec.BlockSelfApproval
 		}
@@ -116,7 +251,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		}
 
 		// Check self-approval restriction
-		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
+		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch) {
 			reqLog.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
 			// Track this as the most specific denial (highest priority)
 			mostSpecificDenial = ApprovalCheckResult{
@@ -150,6 +285,25 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 		}
 
+		if !isApproverIdentityProviderAllowed(approverIdentityProvider, esc.Spec.AllowedIdentityProvidersForApprovers) {
+			reqLog.Warnw("Approver authenticated with disallowed identity provider",
+				"escalation", esc.Name,
+				"approver", email,
+				"identityProvider", approverIdentityProvider,
+				"allowedIdentityProviderCount", len(esc.Spec.AllowedIdentityProvidersForApprovers))
+			if !foundMatchingEscalationWithAllowedApproverIDP &&
+				mostSpecificDenial.Reason != ApprovalDenialSelfApprovalBlocked &&
+				mostSpecificDenial.Reason != ApprovalDenialDomainNotAllowed {
+				mostSpecificDenial = ApprovalCheckResult{
+					Allowed: false,
+					Reason:  ApprovalDenialIdentityProviderNotAllowed,
+					Message: "Your identity provider is not allowed to approve this escalation",
+				}
+			}
+			continue
+		}
+		foundMatchingEscalationWithAllowedApproverIDP = true
+
 		// Direct user approver check
 		if slices.Contains(esc.Spec.Approvers.Users, email) {
 			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)
@@ -159,27 +313,59 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		// Multi-IDP aware group checking
 		approverGroupsToCheck := esc.Spec.Approvers.Groups
 		var dedupMembers []string
+		fallbackApproverGroups := approverGroupsToCheck
 
-		if len(esc.Spec.AllowedIdentityProvidersForApprovers) > 0 && esc.Status.ApproverGroupMembers != nil {
+		if esc.Status.ApproverGroupMembers != nil {
+			fallbackApproverGroups = nil
 			for _, g := range approverGroupsToCheck {
 				if members, ok := esc.Status.ApproverGroupMembers[g]; ok {
 					dedupMembers = append(dedupMembers, members...)
-					reqLog.Debugw("Using deduplicated members from multi-IDP status",
+					reqLog.Debugw("Using resolved approver group members from escalation status",
 						"escalation", esc.Name, "group", system.RedactGroupName(g), "memberCount", len(members))
+				} else {
+					fallbackApproverGroups = append(fallbackApproverGroups, g)
 				}
 			}
 
-			for _, member := range dedupMembers {
-				if strings.EqualFold(member, email) {
-					reqLog.Debugw("User is session approver (multi-IDP deduplicated group member)",
-						"session", session.Name, "escalation", esc.Name, "member", email)
-					return ApprovalCheckResult{Allowed: true}
+			legacyHierarchy := len(esc.Status.IDPGroupMemberships) == 0 || (len(esc.Status.IDPGroupMemberships) == 1 && esc.Status.IDPGroupMemberships[""] != nil)
+			if c.GetBool("legacy_identity_allowed") && (approverIdentityProvider == "" || legacyHierarchy) {
+				for _, member := range dedupMembers {
+					if strings.EqualFold(member, email) {
+						reqLog.Debugw("User is session approver (resolved group member)",
+							"session", session.Name, "escalation", esc.Name, "member", email)
+						return ApprovalCheckResult{Allowed: true}
+					}
 				}
 			}
-		} else {
-			for _, g := range approverGroupsToCheck {
-				if slices.Contains(approverGroups, g) {
-					reqLog.Debugw("User is session approver (legacy group)", "session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(g))
+			if approverIdentityProvider != "" && len(esc.Status.IDPGroupMemberships) > 0 {
+				for _, g := range approverGroupsToCheck {
+					for _, member := range esc.Status.IDPGroupMemberships[approverIdentityProvider][g] {
+						if strings.EqualFold(member, email) {
+							return ApprovalCheckResult{Allowed: true}
+						}
+					}
+				}
+			}
+		}
+
+		if len(fallbackApproverGroups) > 0 {
+			if matchedGroup, ok := firstMatchingApproverGroup(approverGroups, fallbackApproverGroups); ok {
+				reqLog.Debugw("User is session approver (target cluster group)",
+					"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
+				return ApprovalCheckResult{Allowed: true}
+			}
+			if shouldUseRequestContextApproverGroups(approverGroups, requestContextGroups) {
+				if matchedGroup, ok := firstMatchingApproverGroup(requestContextGroups, fallbackApproverGroups); ok {
+					if groupsUnverified {
+						// The approval is load-bearing on unverified (JWT-claim)
+						// groups because the cluster-side lookup failed. Allow it
+						// — denying here would create a new lockout path during
+						// exactly the kind of spoke outage breakglass exists to
+						// resolve — but make it loudly observable.
+						wc.recordUnverifiedApproverGroupsDecision(ctx, &session, email, matchedGroup, approverIdentityProvider, reqLog)
+					}
+					reqLog.Debugw("User is session approver (request identity group fallback)",
+						"session", session.Name, "escalation", esc.Name, "group", system.RedactGroupName(matchedGroup))
 					return ApprovalCheckResult{Allowed: true}
 				}
 			}
@@ -194,7 +380,8 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 				"session", session.Name, "escalation", esc.Name, "user", email, "userGroupCount", len(approverGroups), "approverUserCount", len(esc.Spec.Approvers.Users), "approverGroupCount", len(esc.Spec.Approvers.Groups))
 		}
 		// Track not-an-approver as lowest priority denial
-		if mostSpecificDenial.Reason == ApprovalDenialNone {
+		if mostSpecificDenial.Reason == ApprovalDenialNone ||
+			mostSpecificDenial.Reason == ApprovalDenialIdentityProviderNotAllowed {
 			mostSpecificDenial = ApprovalCheckResult{
 				Allowed: false,
 				Reason:  ApprovalDenialNotAnApprover,
@@ -241,6 +428,49 @@ func sessionOwnedByEscalation(session breakglassv1alpha1.BreakglassSession, esc 
 	return false
 }
 
+func approverGroupsFromRequestContext(c *gin.Context) []string {
+	raw, ok := c.Get("groups")
+	if !ok {
+		return nil
+	}
+	groups, ok := raw.([]string)
+	if !ok {
+		return nil
+	}
+	return slices.Clone(groups)
+}
+
+func firstMatchingApproverGroup(userGroups, approverGroups []string) (string, bool) {
+	for _, g := range approverGroups {
+		if slices.Contains(userGroups, g) {
+			return g, true
+		}
+	}
+	return "", false
+}
+
+func shouldUseRequestContextApproverGroups(targetClusterGroups, requestContextGroups []string) bool {
+	if len(requestContextGroups) == 0 {
+		return false
+	}
+	for _, group := range targetClusterGroups {
+		if group != "" && !strings.HasPrefix(group, "system:") {
+			return false
+		}
+	}
+	return true
+}
+
+func isApproverIdentityProviderAllowed(identityProvider string, allowedIdentityProviders []string) bool {
+	if len(allowedIdentityProviders) == 0 {
+		return true
+	}
+	if identityProvider == "" {
+		return false
+	}
+	return slices.Contains(allowedIdentityProviders, identityProvider)
+}
+
 // isSessionApprover returns true if the current user is authorized to approve/reject the session.
 // For detailed denial reasons, use checkApprovalAuthorization instead.
 func (wc *BreakglassSessionController) isSessionApprover(c *gin.Context, session breakglassv1alpha1.BreakglassSession) bool {
@@ -262,6 +492,18 @@ func IsSessionRetained(session breakglassv1alpha1.BreakglassSession) bool {
 		return false
 	}
 	return time.Now().After(session.Status.RetainedUntil.Time)
+}
+
+// IsSessionAuthorizationEligible reports whether a session can currently grant access.
+func IsSessionAuthorizationEligible(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if IsSessionRetained(session) ||
+		session.Status.State != breakglassv1alpha1.SessionStateApproved ||
+		!session.Status.RejectedAt.IsZero() ||
+		session.Status.ExpiresAt.IsZero() ||
+		!session.Status.ExpiresAt.After(now) {
+		return false
+	}
+	return true
 }
 
 func collectAuthIdentifiers(email, username, userID string) []string {
@@ -302,30 +544,42 @@ func matchesAuthIdentifier(value string, identifiers []string) bool {
 	return false
 }
 
-// IsSessionRejected returns true if session is in Rejected state (state-first validation)
+// IsSessionRejected returns true if session is in Rejected state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionRejected(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateRejected
 }
 
-// IsSessionWithdrawn returns true if session is in Withdrawn state (state-first validation)
+// IsSessionWithdrawn returns true if session is in Withdrawn state. Terminal
+// state is checked before lease timestamps by the access predicates.
 func IsSessionWithdrawn(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check STATE FIRST - state is the ultimate truth
+	// CRITICAL: Check terminal state first; timestamps cannot revive it.
 	return session.Status.State == breakglassv1alpha1.SessionStateWithdrawn
 }
 
-// IsSessionExpired returns true if session is in Expired state OR (state is Approved AND ExpiresAt passed).
+// IsSessionExpired returns true if session is in Expired state OR (state is Approved
+// AND ExpiresAt is missing or has been reached).
 // State-first: Check terminal Expired state first, then timestamp for Approved state.
 func IsSessionExpired(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionExpiredAt(session, time.Now())
+}
+
+// isSessionExpiredAt is the clock-injectable implementation of IsSessionExpired.
+// An Approved session without an expiry is invalid and must fail closed: approval
+// alone never grants unbounded access. The expiry boundary is inclusive, so an
+// ExpiresAt equal to now is already expired.
+func isSessionExpiredAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	// CRITICAL: Check STATE FIRST
 	// If state is explicitly Expired, it is definitely expired
 	if session.Status.State == breakglassv1alpha1.SessionStateExpired {
 		return true
 	}
 
-	// For Approved state, check if the timestamp has passed (timestamp is secondary check)
+	// For Approved state, a missing timestamp is invalid and the expiry boundary
+	// is inclusive (timestamp is secondary check).
 	if session.Status.State == breakglassv1alpha1.SessionStateApproved {
-		return !session.Status.ExpiresAt.Time.IsZero() && time.Now().After(session.Status.ExpiresAt.Time)
+		return session.Status.ExpiresAt.IsZero() || !now.Before(session.Status.ExpiresAt.Time)
 	}
 
 	// All other states (terminal or non-Approved) are not considered expired by this function
@@ -349,11 +603,18 @@ func IsSessionTerminalState(state breakglassv1alpha1.BreakglassSessionState) boo
 }
 
 func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionValidAt(session, time.Now())
+}
+
+func isSessionValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
 	if session.Status.State == "" {
 		return false
 	}
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
-	// Even if timestamps suggest validity, terminal states are never valid.
+	// CRITICAL: Check terminal states FIRST. Even if timestamps suggest validity,
+	// terminal states are never valid.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
@@ -366,25 +627,25 @@ func IsSessionValid(session breakglassv1alpha1.BreakglassSession) bool {
 
 	// Session is not valid if it has a scheduled start time in the future
 	if session.Spec.ScheduledStartTime != nil && !session.Spec.ScheduledStartTime.IsZero() {
-		if time.Now().Before(session.Spec.ScheduledStartTime.Time) {
+		if now.Before(session.Spec.ScheduledStartTime.Time) {
 			return false
 		}
 	}
 
-	// Only now check if it has expired based on ExpiresAt timestamp
-	// But only for approved sessions (which should have ExpiresAt set)
-	if session.Status.State == breakglassv1alpha1.SessionStateApproved && IsSessionExpired(session) {
+	// Only now check if it has expired based on ExpiresAt timestamp. Approved
+	// sessions without ExpiresAt fail closed in IsSessionExpired.
+	if session.Status.State == breakglassv1alpha1.SessionStateApproved && isSessionExpiredAt(session, now) {
 		return false
 	}
 
 	return true
 }
 
-// IsSessionActive returns if session can be approved or was already approved
-// A session is active if it's valid and not in a terminal state.
-// State is the primary determinant; timestamps are secondary validators.
+// IsSessionActive returns whether the session can be approved or was already
+// approved. An Approved session is active only while its non-zero lease is
+// strictly in the future; terminal state always takes precedence.
 func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
-	// CRITICAL: Check terminal states FIRST. State is the ultimate truth.
+	// CRITICAL: Check terminal states FIRST; timestamps cannot revive a terminal state.
 	if IsSessionTerminalState(session.Status.State) {
 		return false
 	}
@@ -400,13 +661,18 @@ func IsSessionActive(session breakglassv1alpha1.BreakglassSession) bool {
 // they reserve capacity after approval until their scheduled activation window
 // expires.
 func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
+	if !session.DeletionTimestamp.IsZero() {
+		return false
+	}
 	switch session.Status.State {
 	case breakglassv1alpha1.SessionStatePending:
 		return IsSessionPendingApproval(session)
 	case breakglassv1alpha1.SessionStateApproved:
 		return IsSessionActive(session)
 	case breakglassv1alpha1.SessionStateWaitingForScheduledTime:
-		return session.Status.ExpiresAt.IsZero() || !time.Now().After(session.Status.ExpiresAt.Time)
+		// A malformed scheduled session without an expiry must not reserve a
+		// slot indefinitely. Exact-boundary expiry is inactive as well.
+		return !session.Status.ExpiresAt.IsZero() && time.Now().Before(session.Status.ExpiresAt.Time)
 	default:
 		return false
 	}
@@ -416,10 +682,41 @@ func IsSessionOccupyingSlot(session breakglassv1alpha1.BreakglassSession) bool {
 // breakglass access. Unlike IsSessionActive, it does not include pending
 // requests that still occupy session-limit slots.
 func IsSessionAccessActive(session breakglassv1alpha1.BreakglassSession) bool {
-	if session.Status.State != breakglassv1alpha1.SessionStateApproved {
+	return isSessionAccessActiveAt(session, time.Now())
+}
+
+// IsSessionAccessActiveAt evaluates access using the supplied decision time.
+// Callers making a multi-step authorization decision can use one timestamp for
+// all final expiry checks.
+func IsSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	return isSessionAccessActiveAt(session, now)
+}
+
+func isSessionAccessActiveAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.SessionStateApproved {
 		return false
 	}
-	return IsSessionValid(session)
+	return isSessionValidAt(session, now)
+}
+
+func isSessionTokenValid(session breakglassv1alpha1.BreakglassSession) bool {
+	return isSessionTokenValidAt(session, time.Now())
+}
+
+func isSessionTokenValidAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
+	if session.Status.State == "" {
+		return false
+	}
+	if IsSessionTerminalState(session.Status.State) {
+		return false
+	}
+	if isSessionApprovalTimedOutAt(session, now) {
+		return false
+	}
+	return session.Status.State != breakglassv1alpha1.SessionStateApproved || !isSessionExpiredAt(session, now)
 }
 
 // isOwnedByEscalation checks if a session is owned by the given escalation by matching
@@ -478,7 +775,11 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
 		if ctrl.ccProvider != nil {
-			if rc, err := ctrl.ccProvider.GetRESTConfig(ctx, cug.Clustername); err == nil && rc != nil {
+			rc, err := ctrl.ccProvider.GetRESTConfig(ctx, cug.Clustername)
+			if err != nil {
+				return nil, fmt.Errorf("get spoke rest config for %s: %w", cug.Clustername, err)
+			}
+			if rc != nil {
 				remote := rest.CopyConfig(rc)
 				remote.Impersonate = rest.ImpersonationConfig{UserName: cug.Username}
 				client, cerr := kubernetes.NewForConfig(remote)
@@ -500,7 +801,7 @@ func NewBreakglassSessionController(log *zap.SugaredLogger,
 				log.Debugw("Resolved user groups via spoke cluster rest.Config", "cluster", cug.Clustername, "user", cug.Username, "groupCount", len(groups))
 				return groups, nil
 			}
-			log.Debugw("Falling back to legacy GetUserGroupsWithConfig (kube context)", "cluster", cug.Clustername)
+			return nil, fmt.Errorf("get spoke rest config for %s: returned nil config", cug.Clustername)
 		}
 		return GetUserGroupsWithConfig(ctx, cug, ctrl.configPath)
 	}
@@ -798,6 +1099,57 @@ func dropK8sInternalFieldsSessionList(list []breakglassv1alpha1.BreakglassSessio
 
 type sessionStatePredicate func(breakglassv1alpha1.BreakglassSession) bool
 
+var sessionStateFilterPredicates = map[string]sessionStatePredicate{
+	"all": nil,
+	"pending": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStatePending
+	},
+	"approved": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateApproved
+	},
+	"active": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionAccessActive(session)
+	},
+	"waiting": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"waitingforscheduledtime": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"scheduled": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
+	},
+	"rejected": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionRejected(session)
+	},
+	"withdrawn": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionWithdrawn(session)
+	},
+	"expired": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return IsSessionExpired(session)
+	},
+	"idleexpired": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateIdleExpired
+	},
+	"timeout": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateTimeout
+	},
+	"approvaltimeout": func(session breakglassv1alpha1.BreakglassSession) bool {
+		return session.Status.State == breakglassv1alpha1.SessionStateTimeout
+	},
+}
+
+var supportedSessionStateFilterTokens = sortedSessionStateFilterTokens()
+
+func sortedSessionStateFilterTokens() []string {
+	tokens := make([]string, 0, len(sessionStateFilterPredicates))
+	for token := range sessionStateFilterPredicates {
+		tokens = append(tokens, token)
+	}
+	sort.Strings(tokens)
+	return tokens
+}
+
 func ParseBoolQuery(value string, defaultVal bool) bool {
 	if value == "" {
 		return defaultVal
@@ -838,69 +1190,83 @@ func normalizeStateToken(value string) string {
 	return replacer.Replace(trimmed)
 }
 
+func validateStateFilterTokens(tokens []string) []string {
+	if len(tokens) == 0 {
+		return nil
+	}
+	invalidSet := make(map[string]struct{})
+	for _, token := range tokens {
+		if _, supported := sessionStateFilterPredicates[token]; !supported {
+			invalidSet[token] = struct{}{}
+		}
+	}
+	if len(invalidSet) == 0 {
+		return nil
+	}
+	invalid := make([]string, 0, len(invalidSet))
+	for token := range invalidSet {
+		invalid = append(invalid, token)
+	}
+	sort.Strings(invalid)
+	return invalid
+}
+
 func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 	if len(tokens) == 0 {
 		return nil
 	}
 	predicates := make([]sessionStatePredicate, 0, len(tokens))
 	for _, token := range tokens {
-		switch token {
-		case "all":
-			return nil
-		case "pending":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStatePending
-			})
-		case "approved":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateApproved
-			})
-		case "rejected":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionRejected(session)
-			})
-		case "withdrawn":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionWithdrawn(session)
-			})
-		case "expired":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionExpired(session)
-			})
-		case "timeout", "approvaltimeout":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateTimeout
-			})
-		case "active":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return IsSessionAccessActive(session)
-			})
-		case "waitingforscheduledtime", "waiting", "scheduled":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateWaitingForScheduledTime
-			})
-		case "idleexpired":
-			predicates = append(predicates, func(session breakglassv1alpha1.BreakglassSession) bool {
-				return session.Status.State == breakglassv1alpha1.SessionStateIdleExpired
-			})
-		default:
+		predicate, supported := sessionStateFilterPredicates[token]
+		if !supported {
 			continue
 		}
+		if predicate == nil {
+			return nil
+		}
+		predicates = append(predicates, predicate)
 	}
 	return predicates
 }
 
-func userHasApprovedSession(session breakglassv1alpha1.BreakglassSession, email string) bool {
-	if email == "" {
-		return false
-	}
-	if strings.EqualFold(session.Status.Approver, email) {
-		return true
-	}
-	for _, approver := range session.Status.Approvers {
-		if strings.EqualFold(approver, email) {
+func userHasApprovedSessionForProvider(session breakglassv1alpha1.BreakglassSession, email, provider string, legacyAllowed bool) bool {
+	for i, approver := range session.Status.Approvers {
+		storedProvider := ""
+		if i < len(session.Status.ApproverIdentityProviders) {
+			storedProvider = session.Status.ApproverIdentityProviders[i]
+		}
+		if strings.EqualFold(approver, email) && ((storedProvider != "" && storedProvider == provider) || (storedProvider == "" && legacyAllowed)) {
 			return true
 		}
 	}
-	return false
+	return strings.EqualFold(session.Status.Approver, email) && ((session.Status.ApproverIdentityProvider != "" && session.Status.ApproverIdentityProvider == provider) || (session.Status.ApproverIdentityProvider == "" && legacyAllowed))
+}
+
+func sessionIdentityProviderMatches(c *gin.Context, provider, issuer string, _ bool) bool {
+	// AllowIDPMismatch governs spoke authorization compatibility, not ownership:
+	// accepting multiple providers never makes their principals interchangeable.
+	if provider == "" && issuer == "" {
+		return c.GetBool("legacy_identity_allowed")
+	}
+	if provider != "" && c.GetString("identity_provider_name") != provider {
+		return false
+	}
+	return issuer == "" || strings.TrimRight(c.GetString("issuer"), "/") == strings.TrimRight(issuer, "/")
+}
+
+func recordApprover(status *breakglassv1alpha1.BreakglassSessionStatus, identity, provider string) {
+	// Preserve unknown historical slots; never attribute them to a later signer.
+	if len(status.ApproverIdentityProviders) > len(status.Approvers) {
+		status.ApproverIdentityProviders = status.ApproverIdentityProviders[:len(status.Approvers)]
+	}
+	for len(status.ApproverIdentityProviders) < len(status.Approvers) {
+		status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, "")
+	}
+	for i, existing := range status.Approvers {
+		if strings.EqualFold(existing, identity) && status.ApproverIdentityProviders[i] == provider {
+			return
+		}
+	}
+	status.Approvers = append(status.Approvers, identity)
+	status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, provider)
 }

@@ -11,8 +11,8 @@ vi.mock("@/services/logger", () => ({
   error: vi.fn(),
 }));
 
-import AuthService, { useUser, AuthRedirect, AuthSilentRedirect } from "./auth";
-import { User } from "oidc-client-ts";
+import AuthService, { useUser, AuthRedirect, AuthSilentRedirect, __authTestHooks } from "./auth";
+import { User, type UserManager } from "oidc-client-ts";
 import { getMultiIDPConfig } from "@/services/multiIDP";
 import type Config from "@/model/config";
 import type { MultiIDPConfig } from "@/model/multiIDP";
@@ -59,8 +59,24 @@ describe("AuthService", () => {
       expect(authService.userManager.settings.userStore).toBeDefined();
     });
 
-    it("should enable automatic silent renew", () => {
-      expect(authService.userManager.settings.automaticSilentRenew).toBe(true);
+    it("should disable automatic silent renew for security", () => {
+      expect(authService.userManager.settings.automaticSilentRenew).toBe(false);
+    });
+
+    it("should not include offline_access in scope", () => {
+      expect(authService.userManager.settings.scope).toBeDefined();
+      expect(authService.userManager.settings.scope).not.toContain("offline_access");
+    });
+
+    it("does not request offline_access refresh-token scope", () => {
+      expect(authService.userManager.settings.scope).toBe("openid profile email");
+    });
+
+    it("does not silently renew real OIDC sessions", async () => {
+      const signinSilentSpy = vi.spyOn(authService.userManager, "signinSilent");
+
+      await expect(authService.trySilentRenew()).resolves.toBe(false);
+      expect(signinSilentSpy).not.toHaveBeenCalled();
     });
   });
 
@@ -89,6 +105,35 @@ describe("AuthService", () => {
 
       const user = await authService.getUser();
       expect(user).toBeNull();
+    });
+
+    it("returns a sanitized user and clears storage when refresh-token stripping cannot be persisted", async () => {
+      const mockUser = new User({
+        profile: {
+          email: "test@example.com",
+          sub: "12345",
+          iss: "https://example.com",
+          aud: "test-client",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        session_state: "",
+        access_token: "token123",
+        token_type: "Bearer",
+        userState: null,
+        expires_at: Math.floor(Date.now() / 1000) + 3600,
+        refresh_token: "stale-refresh-token",
+      });
+
+      vi.spyOn(authService.userManager, "getUser").mockResolvedValue(mockUser);
+      vi.spyOn(authService.userManager, "storeUser").mockRejectedValue(new Error("storage unavailable"));
+      vi.spyOn(authService.userManager, "removeUser").mockResolvedValue(undefined);
+
+      const user = await authService.getUser();
+
+      expect(user).toBe(mockUser);
+      expect(user?.refresh_token).toBeUndefined();
+      expect(authService.userManager.removeUser).toHaveBeenCalledOnce();
     });
   });
 
@@ -221,7 +266,10 @@ describe("AuthService", () => {
 
       const fakeManager = {
         signinRedirect: vi.fn().mockResolvedValue(undefined),
-        settings: {},
+        settings: {
+          authority: "/api/oidc/authority",
+          client_id: "corp-ui",
+        },
       } as unknown as ReturnType<AuthService["getOrCreateUserManagerForIDP"]>;
       const managerSpy = vi
         .spyOn(
@@ -234,6 +282,10 @@ describe("AuthService", () => {
 
       expect(fakeManager.signinRedirect).toHaveBeenCalledWith({ state: { path: "/secure", idpName } });
       expect(sessionStorage.getItem("oidc_idp_name")).toBe(idpName);
+      expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBe(
+        "oidc.user:/api/oidc/authority:corp-ui",
+      );
       expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
       expect(authService.getIdentityProviderName()).toBe(idpName);
 
@@ -292,6 +344,20 @@ describe("AuthService", () => {
     });
   });
 
+  describe("trySilentRenew()", () => {
+    it("does not invoke real OIDC silent renewal or mutate stored users", async () => {
+      const getUserSpy = vi.spyOn(authService.userManager, "getUser");
+      const storeUserSpy = vi.spyOn(authService.userManager, "storeUser").mockResolvedValue(undefined);
+      const signinSilentSpy = vi.spyOn(authService.userManager, "signinSilent").mockResolvedValue(null);
+
+      await expect(authService.trySilentRenew()).resolves.toBe(false);
+
+      expect(getUserSpy).not.toHaveBeenCalled();
+      expect(storeUserSpy).not.toHaveBeenCalled();
+      expect(signinSilentSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe("handleSigninCallback()", () => {
     // Skip: This test requires complex URLSearchParams mocking that doesn't work well with Vitest
     // The functionality is covered by integration tests
@@ -343,12 +409,102 @@ describe("AuthService", () => {
     });
   });
 
+  describe("handleSilentSigninCallback()", () => {
+    it("uses the persisted IDP manager without trying the default manager first", async () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem("oidc_direct_authority", "https://direct.corp");
+      mockedGetMultiIDPConfig.mockResolvedValue({
+        identityProviders: [
+          {
+            name: "corp",
+            displayName: "Corporate",
+            issuer: "https://corp",
+            enabled: true,
+            oidcAuthority: "https://direct.corp",
+            oidcClientID: "corp-ui",
+          },
+        ],
+        escalationIDPMapping: {},
+      } as MultiIDPConfig);
+
+      const defaultCallback = vi
+        .spyOn(authService.userManager, "signinSilentCallback")
+        .mockRejectedValue(new Error("default manager must not process IDP callback"));
+      const idpManager = {
+        signinSilentCallback: vi.fn().mockResolvedValue(null),
+        settings: { authority: "/api/oidc/authority", client_id: "corp-ui" },
+        events: {},
+      };
+      const managerSpy = vi
+        .spyOn(
+          authService as unknown as { getOrCreateUserManagerForIDP: () => unknown },
+          "getOrCreateUserManagerForIDP",
+        )
+        .mockReturnValue(idpManager);
+
+      await authService.handleSilentSigninCallback();
+
+      expect(defaultCallback).not.toHaveBeenCalled();
+      expect(managerSpy).toHaveBeenCalledWith("corp", "/api/oidc/authority", "corp-ui", "https://direct.corp");
+      expect(idpManager.signinSilentCallback).toHaveBeenCalledTimes(1);
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBe("https://direct.corp");
+    });
+
+    it("uses the default manager when no IDP hint is persisted", async () => {
+      const defaultCallback = vi.spyOn(authService.userManager, "signinSilentCallback").mockResolvedValue(undefined);
+
+      await authService.handleSilentSigninCallback();
+
+      expect(defaultCallback).toHaveBeenCalledTimes(1);
+      expect(mockedGetMultiIDPConfig).not.toHaveBeenCalled();
+    });
+  });
+
   describe("logout()", () => {
     it("should call userManager.signoutRedirect", async () => {
       const signoutSpy = vi.spyOn(authService.userManager, "signoutRedirect").mockResolvedValue(undefined);
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      localStorage.setItem("breakglass_current_idp_name", "corp");
 
       await authService.logout();
       expect(signoutSpy).toHaveBeenCalled();
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBeNull();
+      expect(localStorage.getItem("breakglass_current_idp_name")).toBeNull();
+    });
+  });
+
+  describe("getIdentityProviderName()", () => {
+    it("falls back to the session persisted identity provider name", () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBe("corp");
+    });
+
+    it("ignores stale local persisted identity provider names by default", () => {
+      localStorage.setItem("breakglass_current_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBeUndefined();
+    });
+
+    it("uses local persisted identity provider names only when persistent storage is active", () => {
+      localStorage.setItem(TOKEN_PERSISTENCE_KEY, "persistent");
+      localStorage.setItem("breakglass_current_idp_name", "corp");
+
+      expect(authService.getIdentityProviderName()).toBe("corp");
+    });
+  });
+
+  describe("getActiveOIDCUserStorageKeys()", () => {
+    it("returns the default OIDC user key when no identity provider is active", () => {
+      expect(authService.getActiveOIDCUserStorageKeys()).toEqual(["oidc.user:https://example.com:test-client"]);
+    });
+
+    it("returns the active identity provider key from session state", () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem("breakglass_active_oidc_user_storage_key", "oidc.user:/api/oidc/authority:corp-ui");
+
+      expect(authService.getActiveOIDCUserStorageKeys()).toEqual(["oidc.user:/api/oidc/authority:corp-ui"]);
     });
   });
 
@@ -358,6 +514,93 @@ describe("AuthService", () => {
       expect(userRef).toBeDefined();
       // userRef.value is initially undefined until user logs in
       expect(userRef.value === undefined || typeof userRef.value === "object").toBe(true);
+    });
+  });
+
+  describe("OIDC user manager events", () => {
+    it("clears selected OIDC hints when sanitized storage cleanup fails", async () => {
+      sessionStorage.setItem("oidc_idp_name", "corp");
+      sessionStorage.setItem("oidc_direct_authority", "https://direct.corp");
+      sessionStorage.setItem("breakglass_active_oidc_user_storage_key", "oidc.user:/api/oidc/authority:corp-ui");
+
+      let userLoadedHandler: ((user: User) => void) | undefined;
+      let userUnloadedHandler: (() => void) | undefined;
+      const removeUser = vi.fn().mockImplementation(async () => {
+        userUnloadedHandler?.();
+        throw new Error("cleanup unavailable");
+      });
+      const manager = {
+        storeUser: vi.fn().mockRejectedValue(new Error("storage unavailable")),
+        removeUser,
+        events: {
+          addUserLoaded: (handler: (user: User) => void) => {
+            userLoadedHandler = handler;
+          },
+          addUserUnloaded: (handler: () => void) => {
+            userUnloadedHandler = handler;
+          },
+          addAccessTokenExpiring: vi.fn(),
+          addAccessTokenExpired: vi.fn(),
+          addSilentRenewError: vi.fn(),
+          addUserSignedOut: vi.fn(),
+        },
+      } as unknown as UserManager;
+
+      (
+        authService as unknown as { registerUserManagerEvents: (manager: UserManager) => void }
+      ).registerUserManagerEvents(manager);
+
+      const loadedUser = { refresh_token: "stale-refresh-token" } as User;
+      userLoadedHandler?.(loadedUser);
+      await vi.waitFor(() => expect(removeUser).toHaveBeenCalledOnce());
+
+      expect(loadedUser.refresh_token).toBeUndefined();
+      expect(sessionStorage.getItem("oidc_idp_name")).toBeNull();
+      expect(sessionStorage.getItem("oidc_direct_authority")).toBeNull();
+      expect(sessionStorage.getItem("breakglass_active_oidc_user_storage_key")).toBeNull();
+    });
+
+    it("clears reactive and persisted user state when the access token expires", async () => {
+      const userRef = useUser();
+      const loadedUser = {
+        profile: {
+          email: "test@example.com",
+          sub: "12345",
+          iss: "https://example.com",
+          aud: "test-client",
+          exp: Math.floor(Date.now() / 1000) + 3600,
+          iat: Math.floor(Date.now() / 1000),
+        },
+        access_token: "access-token",
+        expired: false,
+      } as User;
+      let expiredHandler: (() => void) | undefined;
+      const removeUser = vi.fn().mockResolvedValue(undefined);
+      const manager = {
+        removeUser,
+        events: {
+          addUserLoaded: (handler: (loaded: User) => void) => handler(loadedUser),
+          addUserUnloaded: vi.fn(),
+          addAccessTokenExpiring: vi.fn(),
+          addAccessTokenExpired: (handler: () => void) => {
+            expiredHandler = handler;
+          },
+          addSilentRenewError: vi.fn(),
+          addUserSignedOut: vi.fn(),
+        },
+      } as unknown as UserManager;
+
+      (
+        authService as unknown as {
+          registerUserManagerEvents: (manager: UserManager) => void;
+        }
+      ).registerUserManagerEvents(manager);
+      await vi.waitFor(() => expect(userRef.value).toStrictEqual(loadedUser));
+
+      expiredHandler?.();
+
+      expect(userRef.value).toBeUndefined();
+      await vi.waitFor(() => expect(removeUser).toHaveBeenCalledTimes(1));
     });
   });
 
@@ -390,11 +633,21 @@ describe("AuthService", () => {
       await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
 
       const user = await mockAuthService.getUser();
-      expect(user?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
+      expect(user?.profile?.email).toBe("mock.user@breakglass.dev");
       const token = await mockAuthService.getAccessToken();
       expect(token?.split(".")[2]).toBe("bW9jay1zaWduYXR1cmU");
-      expect(await mockAuthService.getUserEmail()).toBe("mock.keycloak.user@breakglass.dev");
+      expect(await mockAuthService.getUserEmail()).toBe("mock.user@breakglass.dev");
       expect(mockAuthService.getIdentityProviderName()).toBe("production-keycloak");
+    });
+
+    it("stores empty browser storage values instead of clearing the key", () => {
+      expect(__authTestHooks).toBeDefined();
+
+      __authTestHooks!.setBrowserStorageItem("sessionStorage", "empty-storage-value", "");
+      expect(sessionStorage.getItem("empty-storage-value")).toBe("");
+
+      __authTestHooks!.setBrowserStorageItem("sessionStorage", "empty-storage-value", undefined);
+      expect(sessionStorage.getItem("empty-storage-value")).toBeNull();
     });
 
     it("issues synthetic access tokens and email with default profile", async () => {
@@ -432,7 +685,7 @@ describe("AuthService", () => {
     it("returns the mock user when handling callbacks", async () => {
       await mockAuthService.login({ path: "/pending", idpName: "production-keycloak" });
       const result = await mockAuthService.handleSigninCallback();
-      expect(result?.profile?.email).toBe("mock.keycloak.user@breakglass.dev");
+      expect(result?.profile?.email).toBe("mock.user@breakglass.dev");
     });
   });
 });

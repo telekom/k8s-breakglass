@@ -15,7 +15,7 @@ func resolveUserFromToken(rt *runtimeState, ctx context.Context) string {
 		if err == nil {
 			resolved, err := rt.cfg.ResolveOIDC(ctxCfg)
 			if err == nil {
-				providerKey := resolveProviderKey(ctxCfg, resolved)
+				providerKey := rt.resolveTokenKey(ctxCfg, resolved)
 				manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 				stored, ok, _ := manager.GetToken(providerKey)
 				if ok {

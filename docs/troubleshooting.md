@@ -162,8 +162,16 @@ Error: context deadline exceeded
 ```yaml
 webhook:
   timeout: 5s
+  # Kubernetes 1.34+ structured authorization configuration:
+  authorizedTTL: 5m
+  cacheAuthorizedRequests: false
+  cacheUnauthorizedRequests: false
   unauthorizedTTL: 30s
 ```
+
+This structured setting applies to Kubernetes 1.34+. On older clusters use
+legacy webhook mode with `--authorization-webhook-cache-authorized-ttl=0s`
+and `--authorization-webhook-cache-unauthorized-ttl=0s`.
 
 2. Check network latency
 
@@ -682,7 +690,7 @@ kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProviders
 
 ### Group Sync Failing for One IDP
 
-**Symptoms:** GroupSyncStatus shows "PartialFailure" or "Failed"
+**Symptoms:** `ApprovalGroupMembersResolved` condition shows `False` with reason `GroupSyncPartialFailure` or `GroupSyncFailed`
 
 **Causes:**
 - IDP connection timeout
@@ -694,7 +702,8 @@ kubectl patch breakglassescalation <name> -p '{"spec":{"allowedIdentityProviders
 1. Check sync status and errors
 
 ```bash
-kubectl get breakglassescalation <name> -o yaml | grep -A 10 "groupSync"
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl describe breakglassescalation <name> | grep -A 5 "GroupSync"
 ```
 
 2. Check IdentityProvider events
@@ -716,6 +725,42 @@ kubectl run -it debug --image=curlimages/curl --restart=Never -- \
 kubectl get secret <secret-name> -o yaml
 # Verify it has the right clientID and clientSecret
 ```
+
+### ApprovalGroupMembersResolved Condition: True (GroupMembersEmpty)
+
+**Cause:** The configured identity-provider group exists, but it currently has
+no members with a usable email or username. The lookup succeeded, but sessions
+depending only on that group cannot be approved and may transition to
+`ApprovalTimeout`.
+
+**Diagnosis:**
+
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl get events --field-selector involvedObject.name=<name>
+```
+
+**Solution:** Add the intended approver to the AD/Keycloak group, or configure
+an approver user/group that is populated in the selected identity provider.
+Empty membership is persisted as an empty list. The controller emits a warning
+event when this state changes, while unchanged periodic checks are logged only
+at debug level.
+
+### ApprovalGroupMembersResolved Condition: False (GroupNotFound)
+
+**Cause:** A configured approver group does not exist in the selected identity
+provider. Breakglass removes stale cached members for that group and does not
+use the missing group as a successful empty lookup.
+
+**Diagnosis:**
+
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl get events --field-selector involvedObject.name=<name>
+```
+
+**Solution:** Verify the exact group name and the selected IdentityProvider,
+then create/rename the AD/Keycloak group or update the escalation configuration.
 
 ## General Debug Commands
 
@@ -775,3 +820,9 @@ kubectl logs -n breakglass-system deployment/breakglass-manager > logs.txt
 - [Webhook Setup](./webhook-setup.md) - Webhook configuration
 - [Cluster Config](./cluster-config.md) - Cluster connection details
 - [API Reference](./api-reference.md) - API endpoints
+
+CI diagnostic redaction covers case-insensitive JSON authorization, proxy
+authorization, cookie and secret-header keys with string or string-array values
+on a log line. Non-secret diagnostic fields are retained. Run
+`bash .github/scripts/test-ci-e2e-diagnostics.sh` to exercise redaction and output
+bounds with synthetic credentials.

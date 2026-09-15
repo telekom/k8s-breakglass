@@ -275,12 +275,12 @@ RUN go build -ldflags="\
 
 1. **Check build info:**
    ```bash
-   kubectl exec -n breakglass deploy/breakglass-controller -- /breakglass --version
+   kubectl exec -n breakglass-system deploy/breakglass-manager -c breakglass -- /breakglass --version
    ```
 
 2. **View API logs:**
    ```bash
-   kubectl logs -n breakglass deploy/breakglass-controller -c manager --follow
+   kubectl logs -n breakglass-system deploy/breakglass-manager -c breakglass --follow
    ```
 
 3. **Enable verbose logging:**
@@ -293,8 +293,8 @@ RUN go build -ldflags="\
 
 4. **Check metrics:**
    ```bash
-   kubectl port-forward -n breakglass svc/breakglass-controller-metrics 8443:8443
-   curl -k https://localhost:8443/metrics
+   kubectl port-forward -n breakglass-system svc/breakglass-breakglass 8081:8081
+   curl http://localhost:8081/metrics
    ```
 
 ### E2E Testing with Logging

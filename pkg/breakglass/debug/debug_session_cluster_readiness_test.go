@@ -89,3 +89,15 @@ func TestResolveClustersFromBindingSkipsAmbiguousClusterConfigNames(t *testing.T
 	require.ElementsMatch(t, []string{"unique"}, clusters)
 	require.NotContains(t, clusters, "shared")
 }
+
+func TestResolveClustersFromBindingEmptySelectorKeepsExplicitOnly(t *testing.T) {
+	clusterMap, _ := readyDebugClusterConfigMap([]breakglassv1alpha1.ClusterConfig{
+		readyDebugClusterConfig("team-a", "explicit", nil),
+		readyDebugClusterConfig("team-a", "other", nil),
+	})
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		Clusters: []string{"explicit"}, ClusterSelector: &metav1.LabelSelector{},
+	}}
+	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
+	require.Equal(t, []string{"explicit"}, controller.resolveClustersFromBinding(binding, clusterMap))
+}

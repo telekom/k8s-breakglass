@@ -351,26 +351,23 @@ func (l *IdentityProviderLoader) LoadIdentityProviderByIssuer(ctx context.Contex
 		return nil, fmt.Errorf("issuer cannot be empty after normalization")
 	}
 
+	var matched *breakglassv1alpha1.IdentityProvider
 	for i := range idpList.Items {
 		idp := &idpList.Items[i]
-		if !idp.Spec.Disabled && strings.TrimRight(idp.Spec.Issuer, "/") == issuerNorm {
-			l.logger.Debugw("Found IdentityProvider by issuer", "name", idp.Name, "issuer", issuer)
-			return l.convertToRuntimeConfig(ctx, idp)
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if !idp.Spec.Disabled && strings.TrimRight(effectiveIssuer, "/") == issuerNorm {
+			if matched != nil {
+				return nil, fmt.Errorf("multiple enabled IdentityProviders found for issuer %s: %s and %s", issuer, matched.Name, idp.Name)
+			}
+			matched = idp
 		}
 	}
-
-	// Fallback: if no issuer match, try matching by authority
-	// This handles cases where Spec.Issuer is not set or doesn't match JWT iss claim exactly
-	// Many OIDC providers (including Keycloak) use the realm URL as both authority and issuer
-	l.logger.Debugw("No issuer match found, trying authority fallback", "issuer", issuer)
-	for i := range idpList.Items {
-		idp := &idpList.Items[i]
-		authority := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
-
-		if !idp.Spec.Disabled && authority == issuerNorm {
-			l.logger.Debugw("Found IdentityProvider by authority fallback", "name", idp.Name, "authority", authority, "issuer", issuer)
-			return l.convertToRuntimeConfig(ctx, idp)
-		}
+	if matched != nil {
+		l.logger.Debugw("Found IdentityProvider by issuer", "name", matched.Name, "issuer", issuer)
+		return l.convertToRuntimeConfig(ctx, matched)
 	}
 
 	l.logger.Warnw("No IdentityProvider found for issuer", "issuer", issuer)
@@ -597,4 +594,36 @@ func DefaultIdentityProviderLoader(ctx context.Context, kubeClient client.Client
 	}
 
 	return idpLoader, nil
+}
+
+// IsOnlyEnabledIdentityProvider permits legacy, unbound identities only when
+// exactly one configured provider exists and matches the authenticated issuer.
+// Count raw CRs, including invalid configurations: conversion failure must not
+// make an ambiguous deployment look like a single-provider deployment.
+func IsOnlyEnabledIdentityProvider(ctx context.Context, reader client.Reader, name, issuer string) bool {
+	if reader == nil || issuer == "" {
+		return false
+	}
+	list := &breakglassv1alpha1.IdentityProviderList{}
+	if err := reader.List(ctx, list); err != nil {
+		return false
+	}
+	count := 0
+	matches := false
+	for _, idp := range list.Items {
+		if idp.Spec.Disabled {
+			continue
+		}
+		count++
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		matches = (name == "" || idp.Name == name) && strings.TrimRight(effectiveIssuer, "/") == strings.TrimRight(issuer, "/")
+	}
+	return count == 1 && matches
+}
+
+func (l *IdentityProviderLoader) AllowsLegacyIdentity(ctx context.Context, name, issuer string) bool {
+	return IsOnlyEnabledIdentityProvider(ctx, l.kubeClient, name, issuer)
 }

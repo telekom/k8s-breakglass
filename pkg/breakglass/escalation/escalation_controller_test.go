@@ -2,6 +2,7 @@ package escalation
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -181,4 +182,109 @@ func TestHandleGetEscalationsDoesNotLogRawTokenGroups(t *testing.T) {
 		}
 	}
 	assert.True(t, groupCountSeen, "expected at least one log entry with groupCount field")
+}
+
+// TestHandleGetEscalationsRespectsEmptyTokenGroupsClaim ensures that when the
+// JWT asserts the user belongs to zero groups (the "groups" context key is
+// present but holds an empty slice), handleGetEscalations does not fall back
+// to cluster-based group resolution. Falling back would silently replace the
+// token's explicit "no groups" assertion with whatever groups the cluster
+// happens to report, which can leak escalations the user's token does not
+// authorize.
+func TestHandleGetEscalationsRespectsEmptyTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	em := &EscalationManager{Client: fakeClient}
+
+	ec := &BreakglassEscalationController{
+		manager:          em,
+		log:              zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{email: "alice@example.com"},
+		getUserGroupsFn: func(_ context.Context, _ breakglass.ClusterUserGroup) ([]string, error) {
+			t.Fatal("cluster-based group lookup must not be called when the token asserts empty groups")
+			return nil, nil
+		},
+		configPath: "/nonexistent/config.yaml",
+	}
+
+	w := httptest.NewRecorder()
+	_, engine := gin.CreateTestContext(w)
+	engine.Use(func(c *gin.Context) {
+		c.Set("groups", []string{}) // token carried a groups claim that resolved to zero groups
+		c.Next()
+	})
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+}
+
+// TestHandleGetEscalationsFallsBackWhenNoTokenGroupsClaim ensures
+// handleGetEscalations still falls back to cluster-based group resolution
+// when the token carries no group information at all (the "groups" context
+// key is absent), preserving backward-compatible behavior for IDPs without a
+// groups claim.
+func TestHandleGetEscalationsFallsBackWhenNoTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	em := &EscalationManager{Client: fakeClient}
+
+	fallbackCalled := false
+	ec := &BreakglassEscalationController{
+		manager:          em,
+		log:              zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{email: "alice@example.com"},
+		getUserGroupsFn: func(_ context.Context, _ breakglass.ClusterUserGroup) ([]string, error) {
+			fallbackCalled = true
+			return []string{"cluster-admin"}, nil
+		},
+		configPath: "/nonexistent/config.yaml",
+	}
+
+	w := httptest.NewRecorder()
+	_, engine := gin.CreateTestContext(w)
+	// No "groups" key set at all, simulating a token without a groups claim.
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.True(t, fallbackCalled, "expected cluster-based group lookup fallback when token has no groups claim")
+}
+
+// TestHandleGetEscalationsFallbackPropagatesClusterLookupError ensures that
+// when handleGetEscalations falls back to cluster-based group resolution
+// (because the token carried no group claim) and the cluster lookup fails,
+// the handler responds with a 500 instead of silently proceeding with no
+// groups.
+func TestHandleGetEscalationsFallbackPropagatesClusterLookupError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	fakeClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	em := &EscalationManager{Client: fakeClient}
+
+	ec := &BreakglassEscalationController{
+		manager:          em,
+		log:              zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{email: "alice@example.com"},
+		getUserGroupsFn: func(_ context.Context, _ breakglass.ClusterUserGroup) ([]string, error) {
+			return nil, errors.New("cluster unreachable")
+		},
+		configPath: "/nonexistent/config.yaml",
+	}
+
+	w := httptest.NewRecorder()
+	_, engine := gin.CreateTestContext(w)
+	// No "groups" key set at all, simulating a token without a groups claim.
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+
+	req, _ := http.NewRequest(http.MethodGet, "/breakglassEscalations", nil)
+	engine.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
 }

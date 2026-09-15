@@ -291,7 +291,7 @@ func TestDeduplicateMembersFromHierarchy(t *testing.T) {
 			name:      "empty hierarchy",
 			hierarchy: map[string]map[string][]string{},
 			group:     "admin",
-			expected:  nil,
+			expected:  []string{},
 		},
 		{
 			name: "single IDP single group",
@@ -316,7 +316,7 @@ func TestDeduplicateMembersFromHierarchy(t *testing.T) {
 				"idp1": {"admin": {"user1@example.com"}},
 			},
 			group:    "developers",
-			expected: nil,
+			expected: []string{},
 		},
 		{
 			name: "normalizes to lowercase",

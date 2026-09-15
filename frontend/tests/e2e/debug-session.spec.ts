@@ -259,7 +259,7 @@ test.describe.serial("Debug Session Creation", () => {
     );
   });
 
-  test("schedule checkbox reveals datetime input", async ({ page }) => {
+  test("does not show unsupported delayed-start controls", async ({ page }) => {
     const auth = new AuthHelper(page);
     await auth.loginViaKeycloak(TEST_USERS.requester);
 
@@ -300,20 +300,11 @@ test.describe.serial("Debug Session Creation", () => {
     await clusterCard.click();
     await page.waitForLoadState("networkidle");
 
-    // Schedule checkbox should now be visible
+    // Debug session scheduling options control pod placement, not delayed activation.
     const scheduleCheckbox = page.locator('[data-testid="schedule-checkbox"]');
-    await expect(scheduleCheckbox).toBeVisible({ timeout: 5000 });
-
-    // Initially datetime input should be hidden
-    let scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
-    await expect(scheduleTimeInput).not.toBeVisible();
-
-    // Click schedule checkbox
-    await scheduleCheckbox.click();
-
-    // Now datetime input should be visible
-    scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
-    await expect(scheduleTimeInput).toBeVisible();
+    const scheduleTimeInput = page.locator('[data-testid="schedule-time-input"]');
+    await expect(scheduleCheckbox).toHaveCount(0);
+    await expect(scheduleTimeInput).toHaveCount(0);
   });
 
   test("template selection shows template info", async ({ page }) => {

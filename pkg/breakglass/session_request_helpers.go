@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -14,15 +15,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-type authenticatedIdentityProviderResolver interface {
-	GetIdentityProviderNameByIssuer(context.Context, string) (string, error)
-}
 
 // authenticatedIdentity holds the authenticated user's identity fields
 // (email, username) resolved from the request JWT context.
@@ -30,6 +28,28 @@ type authenticatedIdentity struct {
 	email    string
 	emailErr error
 	username string
+}
+
+func (wc *BreakglassSessionController) validateClusterIdentityProvider(c *gin.Context, ctx context.Context, cluster string) bool {
+	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
+		return true
+	}
+	cc, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, cluster)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return true
+		}
+		apiresponses.RespondInternalError(c, "resolve cluster identity provider policy", err, wc.log)
+		return false
+	}
+	if cc == nil || len(cc.Spec.IdentityProviderRefs) == 0 {
+		return true
+	}
+	if !slices.Contains(cc.Spec.IdentityProviderRefs, c.GetString("identity_provider_name")) {
+		apiresponses.RespondForbidden(c, "identity provider is not allowed for this cluster")
+		return false
+	}
+	return true
 }
 
 // escalationResolutionResult holds the outputs of resolving escalations and approvers
@@ -40,6 +60,16 @@ type escalationResolutionResult struct {
 	allApprovers         []string
 	approversByGroup     map[string][]string
 	selectedDenyPolicies []string
+}
+
+type duplicateSessionConflictResponse struct {
+	Error   string                               `json:"error"`
+	Code    string                               `json:"code"`
+	Session breakglassv1alpha1.BreakglassSession `json:"session"`
+}
+
+func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
+	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{Error: message, Code: "CONFLICT", Session: ses})
 }
 
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
@@ -93,17 +123,19 @@ func (wc *BreakglassSessionController) resolveUserGroups(
 	globalCfg *config.Config, reqLog *zap.SugaredLogger,
 ) ([]string, bool) {
 	var userGroups []string
-	if raw, exists := c.Get("groups"); exists { // trace raw token groups before any normalization
+	// tokenGroupsPresent distinguishes "the JWT carried a groups/realm_access
+	// claim" (even if it resolved to zero groups) from "the JWT carried no
+	// group information at all". Only the latter should fall back to
+	// cluster-based group resolution; a token that legitimately asserts zero
+	// groups must not be treated the same as one with no group claim.
+	raw, tokenGroupsPresent := c.Get("groups")
+	if tokenGroupsPresent { // trace raw token groups before any normalization
 		if arr, ok := raw.([]string); ok {
 			reqLog.With("rawTokenGroups", system.RedactSlice(arr), "rawTokenGroupCount", len(arr)).Debug("Extracted raw token groups from JWT claims")
-		}
-	}
-	if tg, exists := c.Get("groups"); exists {
-		if arr, ok := tg.([]string); ok {
 			userGroups = append(userGroups, arr...)
 		}
 	}
-	if len(userGroups) == 0 { // fallback to cluster lookup
+	if !tokenGroupsPresent { // fallback to cluster lookup only when the token carried no group information
 		var gerr error
 		userGroups, gerr = wc.getUserGroupsFn(ctx, cug)
 		if gerr != nil {
@@ -167,14 +199,6 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	}
 	escalations = readyEscalations
 
-	escalations = wc.filterEscalationsByAuthenticatedProvider(ctx, c, escalations, reqLog)
-	if len(escalations) == 0 {
-		reqLog.Warnw("No escalation is permitted for the authenticated identity provider",
-			"user", cug.Username, "cluster", cug.Clustername)
-		apiresponses.RespondForbidden(c, "user not authorized for requested group")
-		return nil, false
-	}
-
 	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
 		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
 		return nil, false
@@ -182,54 +206,6 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 
 	reqLog.Debugw("Possible escalations found", "user", cug.Username, "cluster", cug.Clustername, "count", len(escalations))
 	return escalations, true
-}
-
-func (wc *BreakglassSessionController) filterEscalationsByAuthenticatedProvider(
-	ctx context.Context,
-	c *gin.Context,
-	escalations []breakglassv1alpha1.BreakglassEscalation,
-	reqLog *zap.SugaredLogger,
-) []breakglassv1alpha1.BreakglassEscalation {
-	issuer := c.GetString("issuer")
-	providerName := c.GetString("identity_provider_name")
-	resolvedProvider := providerName
-
-	if issuer != "" && providerName != "" {
-		if resolver, ok := wc.escalationManager.(authenticatedIdentityProviderResolver); ok {
-			resolved, err := resolver.GetIdentityProviderNameByIssuer(ctx, issuer)
-			if err != nil {
-				reqLog.Warnw("Failed to resolve authenticated identity provider", "error", err)
-				return nil
-			}
-			if resolved == "" || resolved != providerName {
-				reqLog.Debugw("Authenticated identity provider name does not match issuer",
-					"providerName", providerName, "resolvedProvider", resolved)
-				return nil
-			}
-			resolvedProvider = resolved
-		}
-	}
-
-	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
-	for _, escalation := range escalations {
-		allowedProviders := escalation.Spec.AllowedIdentityProvidersForRequests
-		if len(allowedProviders) == 0 {
-			allowedProviders = escalation.Spec.AllowedIdentityProviders
-		}
-		if len(allowedProviders) == 0 {
-			filtered = append(filtered, escalation)
-			continue
-		}
-		if issuer == "" || resolvedProvider == "" || !slices.Contains(allowedProviders, resolvedProvider) {
-			reqLog.Debugw("Escalation filtered by authenticated identity provider",
-				"escalation", escalation.Name,
-				"providerName", resolvedProvider,
-				"allowedProviders", allowedProviders)
-			continue
-		}
-		filtered = append(filtered, escalation)
-	}
-	return filtered
 }
 
 func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {
@@ -258,12 +234,11 @@ func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context
 	return false
 }
 
-// collectApproversFromEscalations performs a single pass over filtered escalations to
-// collect possible groups, find the matched escalation for the requested group,
-// and gather deduplicated approvers from explicit users and resolved group members.
+// collectApproversFromEscalations selects the requested escalation and gathers
+// deduplicated approvers from its explicit users and resolved group members.
 func (wc *BreakglassSessionController) collectApproversFromEscalations(
 	ctx context.Context, possibleEscals []breakglassv1alpha1.BreakglassEscalation,
-	requestedGroup, authenticatedProvider string, reqLog *zap.SugaredLogger,
+	requestedGroup string, reqLog *zap.SugaredLogger,
 ) *escalationResolutionResult {
 	result := &escalationResolutionResult{
 		possibleGroups:   make([]string, 0, len(possibleEscals)),
@@ -275,58 +250,47 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		"escalationCount", len(possibleEscals),
 		"requestedGroup", system.RedactGroupName(requestedGroup))
 
+	// Select the escalation first. Notification recipients belong to the
+	// requested escalation only; collecting from every eligible escalation can
+	// disclose unrelated escalation requests.
+	for i := range possibleEscals {
+		p := &possibleEscals[i]
+		if !p.IsReady() {
+			continue
+		}
+		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
+		if result.matchedEscalation == nil && p.Spec.EscalatedGroup == requestedGroup {
+			result.matchedEscalation = p
+			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
+		}
+	}
+
 	for i := range possibleEscals {
 		p := &possibleEscals[i]
 		if !p.IsReady() {
 			reqLog.Debugw("Skipping unready escalation during approver resolution", "escalationName", p.Name)
 			continue
 		}
-		allowedProviders := p.Spec.AllowedIdentityProvidersForRequests
-		if len(allowedProviders) == 0 {
-			allowedProviders = p.Spec.AllowedIdentityProviders
-		}
-		if len(allowedProviders) > 0 && !slices.Contains(allowedProviders, authenticatedProvider) {
-			reqLog.Debugw("Skipping escalation for a different authenticated identity provider",
-				"escalationName", p.Name,
-				"authenticatedProvider", authenticatedProvider,
-				"allowedProviders", allowedProviders)
+		if p != result.matchedEscalation {
 			continue
 		}
-
-		result.possibleGroups = append(result.possibleGroups, p.Spec.EscalatedGroup)
 		reqLog.Debugw("Processing escalation for approver resolution",
 			"escalationName", p.Name,
 			"escalatedGroup", system.RedactGroupName(p.Spec.EscalatedGroup),
 			"explicitUserCount", len(p.Spec.Approvers.Users),
 			"approverGroupCount", len(p.Spec.Approvers.Groups))
 
-		// Always check if this is the matched escalation first (needed for deny policies)
-		// Only consider the escalation if it's in a "Ready" state.
-		isMatchedEscalation := p.Spec.EscalatedGroup == requestedGroup && result.matchedEscalation == nil && p.IsReady()
-		if isMatchedEscalation {
-			result.matchedEscalation = p
-			result.selectedDenyPolicies = append(result.selectedDenyPolicies, p.Spec.DenyPolicyRefs...)
-			reqLog.Debugw("Matched escalation found during approver collection",
-				"escalationName", result.matchedEscalation.Name,
-				"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
-				"denyPolicyCount", len(result.selectedDenyPolicies))
-		}
+		reqLog.Debugw("Matched escalation selected for approver resolution",
+			"escalationName", result.matchedEscalation.Name,
+			"escalatedGroup", system.RedactGroupName(result.matchedEscalation.Spec.EscalatedGroup),
+			"denyPolicyCount", len(result.selectedDenyPolicies))
 
 		// Check total approvers limit before processing this escalation's approvers
 		if len(result.allApprovers) >= MaxTotalApprovers {
-			// If we've already found the matched escalation, break out entirely
-			// to avoid unnecessary work and log spam
-			if result.matchedEscalation != nil {
-				reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
-					"limit", MaxTotalApprovers,
-					"matchedEscalation", result.matchedEscalation.Name)
-				break
-			}
-			// Otherwise continue looking for the matched escalation (but skip approver resolution)
-			reqLog.Debugw("Total approvers limit reached, skipping approver resolution for escalation",
+			reqLog.Infow("Total approvers limit reached and matched escalation found, stopping",
 				"limit", MaxTotalApprovers,
-				"skippedEscalation", p.Name)
-			continue
+				"matchedEscalation", result.matchedEscalation.Name)
+			break
 		}
 
 		// Add explicit users (deduplicated) - track them under special key
@@ -352,10 +316,7 @@ func (wc *BreakglassSessionController) collectApproversFromEscalations(
 		// Resolve and add group members (deduplicated)
 		wc.resolveAndAddGroupMembers(ctx, p, result, reqLog)
 
-		// Break outer loop if we've reached the maximum total approvers AND
-		// we've already found the matched escalation. If matchedEsc is nil,
-		// let the loop continue — the top-of-loop check will skip approver
-		// resolution but still identify the matched escalation.
+		// Stop once the matched escalation reaches the notification cap.
 		if len(result.allApprovers) >= MaxTotalApprovers && result.matchedEscalation != nil {
 			reqLog.Infow("Maximum total approvers limit reached, stopping escalation processing",
 				"limit", MaxTotalApprovers,
@@ -398,18 +359,10 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		var members []string
 		var err error
 
-		// Multi-IDP mode: use deduplicated members from status if available
-		if len(p.Spec.AllowedIdentityProvidersForApprovers) > 0 && p.Status.ApproverGroupMembers != nil {
-			if statusMembers, ok := p.Status.ApproverGroupMembers[group]; ok {
-				members = statusMembers
-				reqLog.Debugw("Using deduplicated members from status (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name,
-					"memberCount", len(members))
-			} else {
-				reqLog.Debugw("No members found in status for group (multi-IDP mode)",
-					"group", system.RedactGroupName(group),
-					"escalation", p.Name)
+		if len(notificationApproverProviders(p)) > 0 {
+			var known bool
+			members, known = restrictedNotificationGroupMembers(p, group)
+			if !known {
 				continue
 			}
 		} else {
@@ -421,10 +374,16 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 					// Continue with other groups even if one fails
 					continue
 				}
+			} else {
+				continue // No authoritative membership was resolved.
 			}
 		}
 
-		// Apply per-group member limit to prevent resource exhaustion
+		// Keep complete membership, including known-empty groups, for exclusions.
+		// Recipient caps below must not make overlapping excluded members visible.
+		result.approversByGroup[group] = members
+
+		// Cap notification candidates; privacy snapshots remain complete.
 		if len(members) > MaxApproverGroupMembers {
 			reqLog.Warnw("Approver group has too many members, truncating",
 				"group", system.RedactGroupName(group),
@@ -470,8 +429,6 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 		countBefore := len(result.allApprovers)
 		for _, member := range members {
 			result.allApprovers = addIfNotPresent(result.allApprovers, member)
-			// Track member as belonging to this group
-			result.approversByGroup[group] = addIfNotPresent(result.approversByGroup[group], member)
 		}
 		countAdded := len(result.allApprovers) - countBefore
 		reqLog.Debugw("Added group members to approvers",
@@ -509,18 +466,18 @@ func (wc *BreakglassSessionController) checkDuplicateSession(
 
 	// Approved session -> explicit "already approved" error
 	if ses.Status.State == breakglassv1alpha1.SessionStateApproved || !ses.Status.ApprovedAt.IsZero() {
-		c.JSON(http.StatusConflict, gin.H{"error": "already approved", "session": ses})
+		respondDuplicateSessionConflict(c, "already approved", ses)
 		return false
 	}
 
 	// Pending (requested but not yet approved/rejected) -> "already requested" with linked session
 	if IsSessionPendingApproval(ses) {
-		c.JSON(http.StatusConflict, gin.H{"error": "already requested", "session": ses})
+		respondDuplicateSessionConflict(c, "already requested", ses)
 		return false
 	}
 
 	// Fallback: session exists but in another terminal state (e.g. timeout) — return generic conflict with session
-	c.JSON(http.StatusConflict, gin.H{"error": "session exists", "session": ses})
+	respondDuplicateSessionConflict(c, "session exists", ses)
 	return false
 }
 
@@ -541,10 +498,14 @@ func (wc *BreakglassSessionController) resolveUserIdentifierClaim(
 
 	// Check ClusterConfig for per-cluster override
 	var clusterConfig *breakglassv1alpha1.ClusterConfig
-	if wc.clusterConfigManager != nil {
+	if wc.clusterConfigManager != nil && wc.clusterConfigManager.hasClient() {
 		var ccErr error
 		clusterConfig, ccErr = wc.clusterConfigManager.GetClusterConfigByName(ctx, request.Clustername)
 		if ccErr != nil {
+			if !apierrors.IsNotFound(ccErr) {
+				apiresponses.RespondInternalError(c, "resolve cluster user identifier policy", ccErr, reqLog)
+				return "", nil, false
+			}
 			reqLog.Debugw("Could not fetch cluster config for user identifier claim",
 				"cluster", request.Clustername,
 				"error", ccErr)
@@ -757,7 +718,7 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		return nil, false
 	}
 
-	// Check session limits (IDP-level with escalation overrides)
+	// Check session limits (IDP-level with escalation overrides) before creating a provisional object.
 	if err := wc.checkSessionLimits(ctx, params.matchedEsc, params.spec.IdentityProviderName, params.userIdentifier, params.userGroups, reqLog); err != nil {
 		reqLog.Warnw("Session limit check failed", "error", err, "escalation", params.matchedEsc.Name, "user", params.userIdentifier)
 		// Distinguish infrastructure errors (500) from user-facing limit errors (422).
@@ -782,6 +743,14 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	safeCluster := naming.ToRFC1123Subdomain(params.request.Clustername)
 	safeGroup := naming.ToRFC1123Subdomain(params.request.GroupName)
 	bs.GenerateName = fmt.Sprintf("%s-%s-", safeCluster, safeGroup)
+	if wc.sessionManager.quotaEnabled {
+		groups, err := json.Marshal(params.userGroups)
+		if err != nil {
+			apiresponses.RespondInternalError(c, "encode admission groups", err, reqLog)
+			return nil, false
+		}
+		bs.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending, "breakglass.t-caas.telekom.com/quota-user-groups": string(groups)}
+	}
 	if err := wc.sessionManager.AddBreakglassSession(ctx, &bs); err != nil {
 		reqLog.Errorw("error while adding breakglass session", "error", err)
 		reason := "internal_error"
@@ -803,6 +772,17 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 	// Note: bs already has its Name populated by AddBreakglassSession (passed as pointer).
 	// Do not try to fetch it again as this can race with informer cache population.
 	// Instead, reuse the bs object that was created.
+
+	if err := wc.sessionManager.admitSession(ctx, &bs); err != nil {
+		// A failed/ambiguous admission remains provisional and cannot be approved.
+		// Its durable reservation is never released by an HTTP worker timeout.
+		if errors.Is(err, quotas.ErrFull) {
+			apiresponses.RespondConflict(c, "session quota reached")
+		} else {
+			apiresponses.RespondInternalError(c, "reserve session quota", err, reqLog)
+		}
+		return nil, false
+	}
 
 	// Get approval timeout from escalation spec using helper
 	approvalTimeout := ParseApprovalTimeout(params.matchedEsc.Spec, reqLog)
@@ -918,24 +898,64 @@ func (wc *BreakglassSessionController) sendSessionNotifications(
 		"escalationName", matchedEsc.Name,
 		"preFilterApproverCount", len(allApprovers))
 
-	filteredApprovers := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, matchedEsc)
+	filteredApprovers, exclusionsSuppressed := wc.filterExcludedNotificationRecipients(reqLog, allApprovers, approversByGroup, matchedEsc)
+	if exclusionsSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because excluded-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterExcludedNotificationRecipients",
 		"postExcludeApproverCount", len(filteredApprovers),
 		"excludedCount", len(allApprovers)-len(filteredApprovers))
 
-	filteredApprovers = wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, matchedEsc)
+	preHiddenApproverCount := len(filteredApprovers)
+	filteredApprovers, hiddenSuppressed := wc.filterHiddenFromUIRecipients(reqLog, filteredApprovers, approversByGroup, matchedEsc)
+	if hiddenSuppressed {
+		reqLog.Warnw("Suppressing session request notifications because hidden-group membership could not be resolved",
+			"escalationName", matchedEsc.Name,
+			"originalApproverCount", len(allApprovers))
+		return
+	}
 	reqLog.Debugw("After filterHiddenFromUIRecipients",
 		"postHiddenFilterApproverCount", len(filteredApprovers),
-		"hiddenFilteredOutCount", len(allApprovers)-len(filteredApprovers))
+		"hiddenFilteredOutCount", preHiddenApproverCount-len(filteredApprovers))
 
 	if len(filteredApprovers) == 0 {
-		reqLog.Infow("All approvers excluded from notifications via NotificationExclusions or HiddenFromUI",
+		reqLog.Infow("No approvers remain eligible for session request notifications after configured exclusions and hidden approvers",
 			"escalationName", matchedEsc.Name,
 			"originalApproverCount", len(allApprovers))
 		return
 	}
 
-	// Send separate emails per approver group
-	// Each email shows only the specific group that matched
+	// Send recipient notifications with all matching groups from bounded snapshots.
 	wc.sendOnRequestEmailsByGroup(reqLog, bs, authEmail, username, filteredApprovers, approversByGroup, matchedEsc)
+}
+
+// notificationApproverProviders follows role-specific, then legacy restrictions.
+func notificationApproverProviders(escalation *breakglassv1alpha1.BreakglassEscalation) []string {
+	if len(escalation.Spec.AllowedIdentityProvidersForApprovers) > 0 {
+		return escalation.Spec.AllowedIdentityProvidersForApprovers
+	}
+	return escalation.Spec.AllowedIdentityProviders
+}
+
+// restrictedNotificationGroupMembers never substitutes aggregate/default-provider
+// membership for an unresolved allowed provider. Empty resolved groups are known.
+func restrictedNotificationGroupMembers(escalation *breakglassv1alpha1.BreakglassEscalation, group string) ([]string, bool) {
+	var members []string
+	seen := make(map[string]bool)
+	for _, provider := range notificationApproverProviders(escalation) {
+		providerMembers, known := escalation.Status.IDPGroupMemberships[provider][group]
+		if !known {
+			return nil, false
+		}
+		for _, member := range providerMembers {
+			if !seen[member] {
+				seen[member] = true
+				members = append(members, member)
+			}
+		}
+	}
+	return members, true
 }

@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -35,6 +36,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -47,24 +49,32 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+const debugSessionNamePrefix = "debug"
+
 const (
-	debugSessionNamePrefix                 = "debug"
-	debugSessionIdentityProviderAnnotation = "breakglass.telekom.com/identity-provider"
-	debugSessionIdentityIssuerAnnotation   = "breakglass.telekom.com/identity-issuer"
+	debugSessionAdmissionAttempts   = 8
+	debugSessionAdmissionRetryDelay = 20 * time.Millisecond
 )
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	log          *zap.SugaredLogger
-	client       ctrlclient.Client
-	apiReader    ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider   *cluster.ClientProvider
-	middleware   gin.HandlerFunc
-	mailService  breakglass.MailEnqueuer
-	auditService breakglass.AuditEmitter
-	disableEmail bool
-	brandingName string
-	baseURL      string
+	quotaNamespace string
+	quotaEnabled   bool
+	log            *zap.SugaredLogger
+	client         ctrlclient.Client
+	apiReader      ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider     *cluster.ClientProvider
+	// clusterClients optionally overrides how target-cluster clients are
+	// obtained. When nil, ccProvider is used. Tests set this to evaluate
+	// namespace selectorTerms without a live spoke cluster.
+	clusterClients      ClientProviderInterface
+	middleware          gin.HandlerFunc
+	mailService         breakglass.MailEnqueuer
+	groupMemberResolver breakglass.GroupMemberResolver
+	auditService        breakglass.AuditEmitter
+	disableEmail        bool
+	brandingName        string
+	baseURL             string
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller
@@ -85,6 +95,12 @@ func (c *DebugSessionAPIController) WithMailService(mailService breakglass.MailE
 	return c
 }
 
+// WithGroupMemberResolver enables group exclusions in notification recipients.
+func (c *DebugSessionAPIController) WithGroupMemberResolver(resolver breakglass.GroupMemberResolver) *DebugSessionAPIController {
+	c.groupMemberResolver = resolver
+	return c
+}
+
 // WithAuditService sets the audit service for emitting audit events
 func (c *DebugSessionAPIController) WithAuditService(auditService breakglass.AuditEmitter) *DebugSessionAPIController {
 	c.auditService = auditService
@@ -94,6 +110,14 @@ func (c *DebugSessionAPIController) WithAuditService(auditService breakglass.Aud
 // WithDisableEmail disables email notifications
 func (c *DebugSessionAPIController) WithDisableEmail(disable bool) *DebugSessionAPIController {
 	c.disableEmail = disable
+	return c
+}
+
+// WithClusterClients overrides how target-cluster clients are resolved when
+// evaluating namespace selectorTerms. When unset, the configured
+// cluster.ClientProvider is used.
+func (c *DebugSessionAPIController) WithClusterClients(provider ClientProviderInterface) *DebugSessionAPIController {
+	c.clusterClients = provider
 	return c
 }
 
@@ -129,26 +153,26 @@ func (c *DebugSessionAPIController) Handlers() []gin.HandlerFunc {
 func (c *DebugSessionAPIController) Register(rg *gin.RouterGroup) error {
 	// Session endpoints
 	rg.GET("", breakglass.InstrumentedHandler("handleListDebugSessions", c.handleListDebugSessions))
-	rg.GET(":name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
+	rg.GET("/:name", breakglass.InstrumentedHandler("handleGetDebugSession", c.handleGetDebugSession))
 	rg.POST("", breakglass.InstrumentedHandler("handleCreateDebugSession", c.handleCreateDebugSession))
-	rg.POST(":name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
-	rg.POST(":name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
-	rg.POST(":name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
-	rg.POST(":name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
-	rg.POST(":name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
-	rg.POST(":name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
+	rg.POST("/:name/join", breakglass.InstrumentedHandler("handleJoinDebugSession", c.handleJoinDebugSession))
+	rg.POST("/:name/leave", breakglass.InstrumentedHandler("handleLeaveDebugSession", c.handleLeaveDebugSession))
+	rg.POST("/:name/renew", breakglass.InstrumentedHandler("handleRenewDebugSession", c.handleRenewDebugSession))
+	rg.POST("/:name/terminate", breakglass.InstrumentedHandler("handleTerminateDebugSession", c.handleTerminateDebugSession))
+	rg.POST("/:name/approve", breakglass.InstrumentedHandler("handleApproveDebugSession", c.handleApproveDebugSession))
+	rg.POST("/:name/reject", breakglass.InstrumentedHandler("handleRejectDebugSession", c.handleRejectDebugSession))
 
 	// Kubectl-debug mode endpoints
-	rg.POST(":name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
-	rg.POST(":name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
-	rg.POST(":name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
+	rg.POST("/:name/injectEphemeralContainer", breakglass.InstrumentedHandler("handleInjectEphemeralContainer", c.handleInjectEphemeralContainer))
+	rg.POST("/:name/createPodCopy", breakglass.InstrumentedHandler("handleCreatePodCopy", c.handleCreatePodCopy))
+	rg.POST("/:name/createNodeDebugPod", breakglass.InstrumentedHandler("handleCreateNodeDebugPod", c.handleCreateNodeDebugPod))
 
 	// Template endpoints
-	rg.GET("templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
-	rg.GET("templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
-	rg.GET("templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
-	rg.GET("podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
-	rg.GET("podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
+	rg.GET("/templates", breakglass.InstrumentedHandler("handleListTemplates", c.handleListTemplates))
+	rg.GET("/templates/:name", breakglass.InstrumentedHandler("handleGetTemplate", c.handleGetTemplate))
+	rg.GET("/templates/:name/clusters", breakglass.InstrumentedHandler("handleGetTemplateClusters", c.handleGetTemplateClusters))
+	rg.GET("/podTemplates", breakglass.InstrumentedHandler("handleListPodTemplates", c.handleListPodTemplates))
+	rg.GET("/podTemplates/:name", breakglass.InstrumentedHandler("handleGetPodTemplate", c.handleGetPodTemplate))
 	return nil
 }
 
@@ -217,11 +241,6 @@ func normalizeCreateDebugSessionNamespace(req *CreateDebugSessionRequest) error 
 	}
 	req.TargetNamespace = req.Namespace
 	return nil
-}
-
-// JoinDebugSessionRequest represents the request to join an existing debug session
-type JoinDebugSessionRequest struct {
-	Role string `json:"role,omitempty"` // "viewer" or "participant"
 }
 
 // RenewDebugSessionRequest represents the request to extend session duration
@@ -332,6 +351,8 @@ type DebugSessionSummary struct {
 	IsParticipant          bool                                     `json:"isParticipant"`
 	AllowedPods            int                                      `json:"allowedPods"`
 	AllowedPodOperations   *breakglassv1alpha1.AllowedPodOperations `json:"allowedPodOperations,omitempty"`
+	CanApprove             bool                                     `json:"canApprove"`
+	CanReject              bool                                     `json:"canReject"`
 }
 
 // DebugSessionDetailResponse represents the detailed debug session response
@@ -339,25 +360,28 @@ type DebugSessionDetailResponse struct {
 	breakglassv1alpha1.DebugSession
 	// Warnings contains non-critical issues or notes about defaults that were applied
 	Warnings []string `json:"warnings,omitempty"`
+	// CanApprove indicates whether the current requester may approve this session.
+	CanApprove bool `json:"canApprove"`
+	// CanReject indicates whether the current requester may reject this session.
+	CanReject bool `json:"canReject"`
 }
 
 type debugSessionReadIdentity struct {
-	username string
-	email    string
-	groups   []string
+	username      string
+	email         string
+	groups        []string
+	provider      string
+	issuer        string
+	legacyAllowed bool
 }
 
 func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bool) {
-	usernameValue, exists := ctx.Get("username")
-	if !exists || usernameValue == nil {
-		return debugSessionReadIdentity{}, false
-	}
-	username, ok := usernameValue.(string)
-	if !ok || username == "" {
+	username, ok := debugSessionUsernameFromContext(ctx)
+	if !ok {
 		return debugSessionReadIdentity{}, false
 	}
 
-	identity := debugSessionReadIdentity{username: username}
+	identity := debugSessionReadIdentity{username: username, provider: ctx.GetString("identity_provider_name"), issuer: ctx.GetString("issuer"), legacyAllowed: ctx.GetBool("legacy_identity_allowed")}
 	if emailValue, exists := ctx.Get("email"); exists && emailValue != nil {
 		if email, ok := emailValue.(string); ok {
 			identity.email = email
@@ -367,6 +391,38 @@ func debugSessionRequestIdentity(ctx *gin.Context) (debugSessionReadIdentity, bo
 		identity.groups = debugSessionGroupsFromContext(groupsValue)
 	}
 	return identity, true
+}
+
+func debugSessionUsernameFromContext(ctx *gin.Context) (string, bool) {
+	usernameValue, exists := ctx.Get("username")
+	if !exists || usernameValue == nil {
+		return "", false
+	}
+	username, ok := usernameValue.(string)
+	username = strings.TrimSpace(username)
+	if !ok || username == "" {
+		return "", false
+	}
+	return username, true
+}
+
+func requireDebugSessionUsername(ctx *gin.Context) (string, bool) {
+	usernameValue, exists := ctx.Get("username")
+	if !exists || usernameValue == nil {
+		apiresponses.RespondUnauthorized(ctx)
+		return "", false
+	}
+	username, ok := usernameValue.(string)
+	if !ok {
+		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
+		return "", false
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		apiresponses.RespondUnauthorized(ctx)
+		return "", false
+	}
+	return username, true
 }
 
 func debugSessionGroupsFromContext(groupsValue interface{}) []string {
@@ -387,15 +443,151 @@ func debugSessionGroupsFromContext(groupsValue interface{}) []string {
 }
 
 func debugSessionIdentityMatches(identity debugSessionReadIdentity, values ...string) bool {
+	username := strings.TrimSpace(identity.username)
+	email := strings.TrimSpace(identity.email)
 	for _, value := range values {
+		value = strings.TrimSpace(value)
 		if value == "" {
 			continue
 		}
-		if value == identity.username || (identity.email != "" && value == identity.email) {
+		if username != "" && strings.EqualFold(value, username) {
+			return true
+		}
+		if email != "" && strings.EqualFold(value, email) {
 			return true
 		}
 	}
 	return false
+}
+
+func parseDebugSessionStateFilters(ctx *gin.Context) ([]breakglassv1alpha1.DebugSessionState, string, bool) {
+	rawStates := ctx.QueryArray("state")
+	states := make([]breakglassv1alpha1.DebugSessionState, 0, len(rawStates))
+	seen := map[breakglassv1alpha1.DebugSessionState]struct{}{}
+	for _, value := range rawStates {
+		for _, rawState := range strings.Split(value, ",") {
+			rawState = strings.TrimSpace(rawState)
+			if rawState == "" {
+				continue
+			}
+			state, ok := canonicalDebugSessionState(rawState)
+			if !ok {
+				return nil, rawState, false
+			}
+			if _, exists := seen[state]; exists {
+				continue
+			}
+			seen[state] = struct{}{}
+			states = append(states, state)
+		}
+	}
+	return states, "", true
+}
+
+func canonicalDebugSessionState(value string) (breakglassv1alpha1.DebugSessionState, bool) {
+	for state := range validDebugSessionStates {
+		if strings.EqualFold(state, value) {
+			return breakglassv1alpha1.DebugSessionState(state), true
+		}
+	}
+	return "", false
+}
+
+func debugSessionStateMatches(state breakglassv1alpha1.DebugSessionState, filters []breakglassv1alpha1.DebugSessionState) bool {
+	if len(filters) == 0 {
+		return true
+	}
+	for _, filter := range filters {
+		if state == filter {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *DebugSessionAPIController) listDebugSessionsWithFields(ctx context.Context, matchingFields ctrlclient.MatchingFields) ([]breakglassv1alpha1.DebugSession, bool, error) {
+	sessionList := &breakglassv1alpha1.DebugSessionList{}
+	if len(matchingFields) == 0 {
+		if err := c.reader().List(ctx, sessionList); err != nil {
+			return nil, false, err
+		}
+		return sessionList.Items, false, nil
+	}
+
+	if err := c.client.List(ctx, sessionList, matchingFields); err != nil {
+		if breakglass.IsFieldIndexError(err) {
+			fallbackList := &breakglassv1alpha1.DebugSessionList{}
+			if fallbackErr := c.reader().List(ctx, fallbackList); fallbackErr != nil {
+				return nil, false, fmt.Errorf("failed to list debug sessions after field-index fallback: %w", fallbackErr)
+			}
+			return fallbackList.Items, true, nil
+		}
+		return nil, false, err
+	}
+	return sessionList.Items, false, nil
+}
+
+func copyDebugSessionMatchingFields(in ctrlclient.MatchingFields) ctrlclient.MatchingFields {
+	out := make(ctrlclient.MatchingFields, len(in)+1)
+	for field, value := range in {
+		out[field] = value
+	}
+	return out
+}
+
+func filterDebugSessionsForIndexedFallback(sessions []breakglassv1alpha1.DebugSession, cluster string, states []breakglassv1alpha1.DebugSessionState) []breakglassv1alpha1.DebugSession {
+	if cluster == "" && len(states) == 0 {
+		return sessions
+	}
+	filtered := make([]breakglassv1alpha1.DebugSession, 0, len(sessions))
+	for _, session := range sessions {
+		if cluster != "" && session.Spec.Cluster != cluster {
+			continue
+		}
+		if !debugSessionStateMatches(session.Status.State, states) {
+			continue
+		}
+		filtered = append(filtered, session)
+	}
+	return filtered
+}
+
+func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Context, cluster string, states []breakglassv1alpha1.DebugSessionState) ([]breakglassv1alpha1.DebugSession, error) {
+	baseFields := ctrlclient.MatchingFields{}
+	if cluster != "" {
+		baseFields["spec.cluster"] = cluster
+	}
+
+	if len(states) == 0 {
+		sessions, fellBack, err := c.listDebugSessionsWithFields(ctx, baseFields)
+		if fellBack {
+			return filterDebugSessionsForIndexedFallback(sessions, cluster, nil), err
+		}
+		return sessions, err
+	}
+
+	sessions := make([]breakglassv1alpha1.DebugSession, 0)
+	seen := map[string]struct{}{}
+	for _, state := range states {
+		matchingFields := copyDebugSessionMatchingFields(baseFields)
+		matchingFields["status.state"] = string(state)
+		stateSessions, fellBack, err := c.listDebugSessionsWithFields(ctx, matchingFields)
+		if err != nil {
+			return nil, err
+		}
+		if fellBack {
+			return filterDebugSessionsForIndexedFallback(stateSessions, cluster, states), nil
+		}
+		for _, session := range stateSessions {
+			key := session.Namespace + "/" + session.Name
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			sessions = append(sessions, session)
+		}
+	}
+	return sessions, nil
 }
 
 // handleListDebugSessions returns a list of debug sessions
@@ -413,34 +605,19 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Accept repeated ?state= params (e.g. ?state=Active&state=Pending) as well as
 	// a legacy single comma-separated value (e.g. ?state=Active,Pending).
 	// Comparison is case-insensitive so both "Active" and "active" match.
-	var states []string
-	for _, v := range ctx.QueryArray("state") {
-		for _, s := range strings.Split(v, ",") {
-			if s = strings.TrimSpace(s); s != "" {
-				states = append(states, s)
-			}
-		}
-	}
-	// Validate each requested state value against the canonical set.
-	for _, st := range states {
-		if !isValidDebugSessionState(st) {
-			apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", st))
-			return
-		}
+	states, invalidState, ok := parseDebugSessionStateFilters(ctx)
+	if !ok {
+		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("invalid state value: '%s'", invalidState))
+		return
 	}
 	user := ctx.Query("user")
 	mine := ctx.Query("mine") == "true"
 
-	sessionList := &breakglassv1alpha1.DebugSessionList{}
-	listOpts := []ctrlclient.ListOption{}
-
-	// Note: cluster/state/user filters are applied client-side after fetching
-	// Field selectors would require additional indexer setup
-
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 
-	if err := c.reader().List(apiCtx, sessionList, listOpts...); err != nil {
+	sessions, err := c.listDebugSessionsForFilters(apiCtx, cluster, states)
+	if err != nil {
 		reqLog.Errorw("Failed to list debug sessions", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list debug sessions")
 		return
@@ -449,8 +626,8 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 	// Apply filters
 	var filtered []breakglassv1alpha1.DebugSession
 	readAuthorizer := c.newDebugSessionReadAuthorizer(identity)
-	for i := range sessionList.Items {
-		s := &sessionList.Items[i]
+	for i := range sessions {
+		s := &sessions[i]
 		canRead, err := readAuthorizer.canRead(apiCtx, s)
 		if err != nil {
 			reqLog.Errorw("Failed to evaluate debug session read authorization",
@@ -468,24 +645,15 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			continue
 		}
 		// State filter
-		if len(states) > 0 {
-			matched := false
-			for _, st := range states {
-				if strings.EqualFold(string(s.Status.State), st) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				continue
-			}
+		if !debugSessionStateMatches(s.Status.State, states) {
+			continue
 		}
 		// User filter
 		if user != "" && !debugSessionIdentityMatches(debugSessionReadIdentity{username: user, email: user}, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
 		// Mine filter
-		if mine && !debugSessionIdentityMatches(identity, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
+		if mine && !debugSessionIdentityMatchesProvider(identity, s.Spec.IdentityProviderName, s.Spec.IdentityProviderIssuer, s.Spec.RequestedBy, s.Spec.RequestedByEmail) {
 			continue
 		}
 		filtered = append(filtered, *s)
@@ -493,14 +661,16 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 
 	// Build response summaries
 	summaries := make([]DebugSessionSummary, 0, len(filtered))
+	approvalAuthorizer := c.newDebugSessionApprovalAuthorizer()
 	for _, s := range filtered {
+		canApprove := c.canActOnDebugSessionApproval(apiCtx, &s, identity, approvalAuthorizer)
 		// Compute isParticipant and activeParticipants in a single pass
 		isParticipant := false
 		activeParticipants := 0
 		for _, p := range s.Status.Participants {
 			if p.LeftAt == nil {
 				activeParticipants++
-				if !isParticipant && debugSessionIdentityMatches(identity, p.User, p.Email) {
+				if !isParticipant && debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
 					isParticipant = true
 				}
 			}
@@ -520,6 +690,8 @@ func (c *DebugSessionAPIController) handleListDebugSessions(ctx *gin.Context) {
 			IsParticipant:          isParticipant,
 			AllowedPods:            len(s.Status.AllowedPods),
 			AllowedPodOperations:   s.Status.AllowedPodOperations,
+			CanApprove:             canApprove,
+			CanReject:              canApprove,
 		})
 	}
 
@@ -574,7 +746,12 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{DebugSession: *session})
+	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
+	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
+		DebugSession: *session,
+		CanApprove:   canApprove,
+		CanReject:    canApprove,
+	})
 }
 
 // handleCreateDebugSession creates a new debug session
@@ -615,19 +792,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		req.Reason = breakglass.SanitizeReasonText(req.Reason)
 	}
 
-	// Get current user from context before authorization checks.
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	currentUserStr, ok := currentUser.(string)
+	currentUserStr, ok := requireDebugSessionUsername(ctx)
 	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
-		return
-	}
-	if strings.TrimSpace(currentUserStr) == "" {
-		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
 
@@ -660,6 +826,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
+	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("issuer"))
+	if err != nil {
+		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
+		return
+	}
+	userGroups = append(userGroups, sessionGroups...)
 
 	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -676,12 +849,36 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// ClusterConfig readiness and existence errors are returned only after template/binding
 	// and requester authorization succeeds, so unauthorized callers cannot probe cluster state.
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := authorizationReader.List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list bindings for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
 		return
 	}
+	templateRequesterAllowed := isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, nil), currentUserStr, userEmail, userGroups)
+	requesterAllowedForTemplateOrBinding := templateRequesterAllowed
+	var applicableTemplateBindings []breakglassv1alpha1.DebugSessionClusterBinding
+	if req.BindingRef == "" {
+		applicableTemplateBindings = c.findBindingsForTemplate(template, bindingList.Items)
+		if !requesterAllowedForTemplateOrBinding {
+			for i := range applicableTemplateBindings {
+				if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &applicableTemplateBindings[i]), currentUserStr, userEmail, userGroups) {
+					requesterAllowedForTemplateOrBinding = true
+					break
+				}
+			}
+		}
+		if !requesterAllowedForTemplateOrBinding {
+			reqLog.Warnw("User is not allowed to request debug session",
+				"templateRef", req.TemplateRef,
+				"user", currentUserStr,
+				"groupCount", len(userGroups),
+			)
+			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+			return
+		}
+	}
+
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
 	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
 		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
@@ -703,18 +900,45 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var resolvedBinding *breakglassv1alpha1.DebugSessionClusterBinding
 	var allowedResult ClusterAllowedResult
 	if req.BindingRef != "" {
+		canSeeBindingDetails := func(bindings ...breakglassv1alpha1.DebugSessionClusterBinding) bool {
+			if len(bindings) == 0 {
+				return isDebugSessionRequesterAllowed(template.Spec.Allowed, currentUserStr, userEmail, userGroups)
+			}
+			for i := range bindings {
+				if isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, &bindings[i]), currentUserStr, userEmail, userGroups) {
+					return true
+				}
+			}
+			return false
+		}
+		respondBindingBadRequest := func(message string, bindings ...breakglassv1alpha1.DebugSessionClusterBinding) {
+			if !canSeeBindingDetails(bindings...) {
+				apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+				return
+			}
+			apiresponses.RespondBadRequest(ctx, message)
+		}
+		respondBindingForbidden := func(message string, bindings ...breakglassv1alpha1.DebugSessionClusterBinding) {
+			if !canSeeBindingDetails(bindings...) {
+				apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+				return
+			}
+			apiresponses.RespondForbidden(ctx, message)
+		}
+
 		bindingNamespace, bindingName, validBindingRef := parseDebugSessionBindingRef(req.BindingRef)
 		if !validBindingRef {
 			reqLog.Warnw("Invalid bindingRef format", "bindingRef", req.BindingRef)
-			apiresponses.RespondBadRequest(ctx, "bindingRef must use namespace/name format")
+			respondBindingBadRequest("bindingRef must use namespace/name format")
 			return
 		}
+		req.BindingRef = fmt.Sprintf("%s/%s", bindingNamespace, bindingName)
 
 		resolvedBinding = &breakglassv1alpha1.DebugSessionClusterBinding{}
 		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: bindingName, Namespace: bindingNamespace}, resolvedBinding); err != nil {
 			if apierrors.IsNotFound(err) {
 				reqLog.Warnw("Binding not found", "bindingRef", req.BindingRef)
-				apiresponses.RespondBadRequest(ctx, fmt.Sprintf("binding '%s' not found", req.BindingRef))
+				respondBindingBadRequest(fmt.Sprintf("binding '%s' not found", req.BindingRef))
 				return
 			}
 			reqLog.Errorw("Failed to get binding", "binding", req.BindingRef, "error", err)
@@ -729,7 +953,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
 				"expiresAt", resolvedBinding.Spec.ExpiresAt,
 			)
-			apiresponses.RespondForbidden(ctx, "binding is not active (disabled, expired, or not yet effective)")
+			respondBindingForbidden("binding is not active (disabled, expired, or not yet effective)", *resolvedBinding)
 			return
 		}
 
@@ -738,7 +962,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"bindingRef", req.BindingRef,
 				"templateRef", req.TemplateRef,
 			)
-			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested template")
+			respondBindingForbidden("binding does not grant access to the requested template", *resolvedBinding)
 			return
 		}
 
@@ -761,7 +985,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"requestedCluster", req.Cluster,
 				"bindingClusters", bindingClusters,
 			)
-			apiresponses.RespondForbidden(ctx, "binding does not grant access to the requested cluster")
+			respondBindingForbidden("binding does not grant access to the requested cluster", *resolvedBinding)
 			return
 		}
 
@@ -773,7 +997,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	} else {
 		for _, authorizationCluster := range authorizationClusters {
-			allowedResult = c.isClusterAllowedByTemplateOrBinding(template, authorizationCluster, bindingList.Items, clusterMap, clusterConfigList.Items)
+			allowedResult = c.isClusterAllowedByTemplateOrApplicableBindings(template, authorizationCluster, applicableTemplateBindings, clusterMap, clusterConfigList.Items)
 			if allowedResult.Allowed {
 				break
 			}
@@ -782,8 +1006,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if !allowedResult.Allowed {
 		var errDetails string
 		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
-			errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
-				req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+			if templateRequesterAllowed {
+				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
+					req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+			} else {
+				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. No bindings grant access to this cluster.",
+					req.Cluster, req.TemplateRef)
+			}
 		} else {
 			errDetails = fmt.Sprintf("cluster '%s' is not allowed. Template '%s' has no allowed cluster patterns and no bindings grant access to this cluster.",
 				req.Cluster, req.TemplateRef)
@@ -802,26 +1031,25 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, errDetails)
 		return
 	}
-	requesterAllowed, requesterErr := c.isDebugSessionRequesterAllowed(
-		ctx,
-		effectiveDebugSessionAllowed(template, allowedResult.MatchingBinding),
-		currentUserStr,
-		userEmail,
-		userGroups,
-		req.Cluster,
-	)
-	if requesterErr != nil {
-		reqLog.Warnw("Failed to resolve active Breakglass authorization for debug session",
-			"error", requesterErr,
+
+	selectedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
+	if err != nil {
+		// BindingRef is either empty or was normalized and used to build allowedResult above.
+		reqLog.Errorw("Validated debug session binding could not be selected",
+			"bindingRef", req.BindingRef,
 			"cluster", req.Cluster,
-		)
-		apiresponses.RespondInternalError(ctx, "resolve debug session authorization", requesterErr, reqLog)
+			"templateRef", req.TemplateRef,
+			"error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to select debug session binding")
 		return
 	}
-	if !requesterAllowed {
+	resolvedBinding = selectedBinding
+
+	if !isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, resolvedBinding), currentUserStr, userEmail, userGroups) {
 		reqLog.Warnw("User is not allowed to request debug session",
 			"templateRef", req.TemplateRef,
 			"bindingRef", req.BindingRef,
+			"selectedBindingRef", debugSessionBindingRefLogValue(resolvedBinding),
 			"user", currentUserStr,
 			"groupCount", len(userGroups),
 		)
@@ -868,17 +1096,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		"allowedBySource", allowedResult.AllowedBySource,
 	)
 
-	resolvedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
-	if err != nil {
-		reqLog.Warnw("Requested binding is not valid for debug session",
-			"bindingRef", req.BindingRef,
-			"cluster", req.Cluster,
-			"templateRef", req.TemplateRef,
-			"error", err)
-		apiresponses.RespondBadRequest(ctx, err.Error())
-		return
-	}
-
 	effectiveConstraints := effectiveDebugSessionConstraints(template, resolvedBinding)
 	if err := validateRequestedDebugSessionDuration(req.RequestedDuration, effectiveConstraints); err != nil {
 		reqLog.Warnw("Requested debug session duration is invalid",
@@ -906,7 +1123,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var warnings []string
 
 	// Validate and resolve target namespace (pass binding for constraint override)
-	targetNamespace, err := c.resolveTargetNamespace(template, req.TargetNamespace, resolvedBinding)
+	targetNamespace, err := c.resolveTargetNamespace(apiCtx, req.Cluster, template, req.TargetNamespace, resolvedBinding)
 	if err != nil {
 		// Provide more context about namespace constraints when validation fails
 		var effectiveAllowUserNs bool
@@ -999,10 +1216,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				"userGroupCount", len(userGroups),
 				"errors", errMessages,
 			)
-			ctx.JSON(http.StatusBadRequest, gin.H{
-				"error":  "extraDeployValues validation failed",
-				"errors": errMessages,
-			})
+			apiresponses.RespondBadRequestWithDetails(
+				ctx,
+				"extraDeployValues validation failed",
+				strings.Join(errMessages, "; "),
+			)
 			return
 		}
 	}
@@ -1013,18 +1231,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	namespace := requestedClusterConfig.Namespace
 
 	// Create the debug session
-	annotations := map[string]string{}
-	if providerName := ctx.GetString("identity_provider_name"); providerName != "" {
-		annotations[debugSessionIdentityProviderAnnotation] = providerName
-	}
-	if issuer := strings.TrimRight(ctx.GetString("issuer"), "/"); issuer != "" {
-		annotations[debugSessionIdentityIssuerAnnotation] = issuer
-	}
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      sessionName,
 			Namespace: namespace,
-			Annotations: annotations,
 			Labels: map[string]string{
 				DebugSessionLabelKey:  sessionName,
 				DebugTemplateLabelKey: req.TemplateRef,
@@ -1036,6 +1246,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
 			RequestedByEmail:              userEmail,
+			IdentityProviderName:          ctx.GetString("identity_provider_name"),
+			IdentityProviderIssuer:        ctx.GetString("issuer"),
 			RequestedByDisplayName:        displayName,
 			UserGroups:                    userGroups,
 			RequestedDuration:             req.RequestedDuration,
@@ -1125,6 +1337,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The reconciler continues to use SSA for status updates and lifecycle management,
 	// which is the correct boundary: Create() for API-driven creation, SSA for
 	// controller-driven reconciliation.
+	if c.quotaEnabled {
+		if session.Annotations == nil {
+			session.Annotations = map[string]string{}
+		}
+		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
+	}
 	if err := c.client.Create(apiCtx, session); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			apiresponses.RespondConflict(ctx, "session already exists")
@@ -1135,6 +1353,20 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	if err := c.admitCreatedDebugSession(apiCtx, session); err != nil {
+		reqLog.Errorw("Failed to admit debug session quota",
+			"namespace", session.Namespace,
+			"name", session.Name,
+			"error", err,
+		)
+		if errors.Is(err, quotas.ErrFull) {
+			apiresponses.RespondConflict(ctx, "debug session quota reached")
+		} else {
+			apiresponses.RespondInternalErrorSimple(ctx, "debug session admission incomplete; retry after reconciliation")
+		}
+		return
+	}
+
 	// Send request email to approvers
 	c.sendDebugSessionRequestEmail(apiCtx, session, template, resolvedBinding)
 
@@ -1142,13 +1374,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionCreatedEmail(apiCtx, session, template, resolvedBinding)
 
 	// Emit audit event for session creation
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUser.(string), "Debug session created")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionCreated, session, currentUserStr, "Debug session created")
 
 	reqLog.Infow("Debug session created",
 		"name", sessionName,
 		"cluster", req.Cluster,
 		"template", req.TemplateRef,
-		"user", currentUser)
+		"user", currentUserStr)
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
@@ -1158,6 +1390,183 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
+	indexedReader := reader
+	if c.client != nil {
+		indexedReader = c.client
+	}
+	var sessions breakglassv1alpha1.BreakglassSessionList
+	identities := make([]string, 0, 2)
+	seenIdentities := make(map[string]struct{}, 2)
+	for _, identity := range []string{username, email} {
+		if identity == "" {
+			continue
+		}
+		if _, seen := seenIdentities[identity]; seen {
+			continue
+		}
+		seenIdentities[identity] = struct{}{}
+		identities = append(identities, identity)
+	}
+	appendSession := func(session breakglassv1alpha1.BreakglassSession, seen map[string]struct{}) {
+		key := session.Namespace + "\x00" + session.Name
+		if _, exists := seen[key]; exists {
+			return
+		}
+		seen[key] = struct{}{}
+		sessions.Items = append(sessions.Items, session)
+	}
+	seenSessions := make(map[string]struct{})
+	if len(identities) == 0 {
+		var all breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &all); err != nil {
+			return nil, err
+		}
+		for _, session := range all.Items {
+			if session.Spec.Cluster == cluster {
+				appendSession(session, seenSessions)
+			}
+		}
+	} else {
+		for _, identity := range identities {
+			var matches breakglassv1alpha1.BreakglassSessionList
+			err := indexedReader.List(ctx, &matches, ctrlclient.MatchingFields{
+				"spec.cluster": cluster,
+				"spec.user":    identity,
+			})
+			if err == nil {
+				for _, session := range matches.Items {
+					appendSession(session, seenSessions)
+				}
+				continue
+			}
+			if !breakglass.IsFieldIndexError(err) {
+				return nil, err
+			}
+			// A missing index invalidates all identity-specific queries. Do one
+			// full read and apply the same cluster filter instead of issuing a
+			// second indexed query for the other identity.
+			var all breakglassv1alpha1.BreakglassSessionList
+			if err := reader.List(ctx, &all); err != nil {
+				return nil, err
+			}
+			for _, session := range all.Items {
+				if session.Spec.Cluster == cluster {
+					appendSession(session, seenSessions)
+				}
+			}
+			break
+		}
+	}
+	now := time.Now()
+	if c.client != nil && c.apiReader != nil {
+		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions.Items))
+		for i := range sessions.Items {
+			candidate := sessions.Items[i]
+			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
+				(candidate.Spec.User != username && candidate.Spec.User != email) ||
+				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
+					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			fresh := &breakglassv1alpha1.BreakglassSession{}
+			if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(&candidate), fresh); err != nil {
+				if apierrors.IsNotFound(err) {
+					continue
+				}
+				return nil, err
+			}
+			if candidate.UID != "" && fresh.UID != candidate.UID {
+				continue
+			}
+			freshCandidates = append(freshCandidates, *fresh)
+		}
+		sessions.Items = freshCandidates
+	}
+	collectGroups := func(items []breakglassv1alpha1.BreakglassSession) []string {
+		groups := make([]string, 0, len(items))
+		seen := make(map[string]struct{}, len(items))
+		for _, session := range items {
+			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
+				(session.Spec.User != username && session.Spec.User != email) ||
+				(issuer != "" && !session.Spec.AllowIDPMismatch &&
+					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				continue
+			}
+			if _, ok := seen[session.Spec.GrantedGroup]; ok {
+				continue
+			}
+			seen[session.Spec.GrantedGroup] = struct{}{}
+			groups = append(groups, session.Spec.GrantedGroup)
+		}
+		return groups
+	}
+	groups := collectGroups(sessions.Items)
+	if c.client != nil && c.apiReader != nil && len(groups) == 0 {
+		var fresh breakglassv1alpha1.BreakglassSessionList
+		if err := reader.List(ctx, &fresh); err != nil {
+			return nil, err
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
+		for _, session := range fresh.Items {
+			if session.Spec.Cluster == cluster {
+				filtered = append(filtered, session)
+			}
+		}
+		groups = collectGroups(filtered)
+	}
+	return groups, nil
+}
+
+// admitCreatedDebugSession retries only the bounded resource-version race
+// between API creation and the reconciler's concurrent admission. It never
+// retries Create and revalidates the immutable API-authorized session spec.
+func (c *DebugSessionAPIController) admitCreatedDebugSession(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
+	original := session.DeepCopy()
+	current := session.DeepCopy()
+	for attempt := 0; attempt < debugSessionAdmissionAttempts; attempt++ {
+		quotaController := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(c.reader())
+		if c.quotaEnabled {
+			quotaController.WithQuotaNamespace(c.quotaNamespace)
+		}
+		if err := quotaController.admitDebugSession(ctx, current); err == nil {
+			*session = *current
+			return nil
+		} else if !errors.Is(err, errDebugSessionCandidateChanged) || attempt == debugSessionAdmissionAttempts-1 {
+			return err
+		}
+		delay := debugSessionAdmissionRetryDelay << attempt
+		if delay > 250*time.Millisecond {
+			delay = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+
+		fresh := &breakglassv1alpha1.DebugSession{}
+		if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(original), fresh); err != nil {
+			return fmt.Errorf("reload debug session after admission conflict: %w", err)
+		}
+		if fresh.UID == "" || fresh.UID != original.UID {
+			return fmt.Errorf("debug session changed identity during admission retry")
+		}
+		if debugSessionTerminal(fresh) {
+			return fmt.Errorf("debug session became terminal during admission retry")
+		}
+		if !reflect.DeepEqual(fresh.Spec, original.Spec) {
+			return fmt.Errorf("debug session spec changed during admission retry")
+		}
+		current = fresh
+	}
+	return fmt.Errorf("debug session admission retry exhausted")
 }
 
 func buildDebugSessionName(user, cluster string, now time.Time) string {
@@ -1217,31 +1626,31 @@ var validDebugSessionStates = map[string]struct{}{
 	string(breakglassv1alpha1.DebugSessionStatePending):         {},
 	string(breakglassv1alpha1.DebugSessionStatePendingApproval): {},
 	string(breakglassv1alpha1.DebugSessionStateActive):          {},
+	string(breakglassv1alpha1.DebugSessionStateRejected):        {},
 	string(breakglassv1alpha1.DebugSessionStateExpired):         {},
 	string(breakglassv1alpha1.DebugSessionStateTerminated):      {},
 	string(breakglassv1alpha1.DebugSessionStateFailed):          {},
 }
 
-// isValidDebugSessionState returns true when val (case-insensitive) matches
-// one of the canonical DebugSessionState values.
-func isValidDebugSessionState(val string) bool {
-	for k := range validDebugSessionStates {
-		if strings.EqualFold(k, val) {
-			return true
-		}
-	}
-	return false
-}
-
 func parseDebugSessionBindingRef(bindingRef string) (string, string, bool) {
+	bindingRef = strings.TrimSpace(bindingRef)
 	if strings.Count(bindingRef, "/") != 1 {
 		return "", "", false
 	}
 	parts := strings.SplitN(bindingRef, "/", 2)
-	if parts[0] == "" || parts[1] == "" {
+	namespace := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	if namespace == "" || name == "" {
 		return "", "", false
 	}
-	return parts[0], parts[1], true
+	return namespace, name, true
+}
+
+func debugSessionBindingRefLogValue(binding *breakglassv1alpha1.DebugSessionClusterBinding) string {
+	if binding == nil {
+		return "<none>"
+	}
+	return fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 }
 
 func effectiveDebugSessionAllowed(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionAllowed {
@@ -1274,58 +1683,6 @@ func isDebugSessionRequesterAllowed(allowed *breakglassv1alpha1.DebugSessionAllo
 	return false
 }
 
-func (c *DebugSessionAPIController) isDebugSessionRequesterAllowed(
-	ctx *gin.Context,
-	allowed *breakglassv1alpha1.DebugSessionAllowed,
-	username, email string,
-	userGroups []string,
-	cluster string,
-) (bool, error) {
-	if isDebugSessionRequesterAllowed(allowed, username, email, userGroups) {
-		return true, nil
-	}
-	if allowed == nil || len(allowed.Groups) == 0 {
-		return false, nil
-	}
-
-	providerName := ctx.GetString("identity_provider_name")
-	issuer := strings.TrimRight(ctx.GetString("issuer"), "/")
-	if providerName == "" || issuer == "" {
-		return false, nil
-	}
-
-	sessions := &breakglassv1alpha1.BreakglassSessionList{}
-	if err := c.reader().List(ctx, sessions); err != nil {
-		return false, fmt.Errorf("list Breakglass sessions: %w", err)
-	}
-	now := time.Now()
-	for i := range sessions.Items {
-		session := &sessions.Items[i]
-		if breakglass.IsSessionRetained(*session) {
-			continue
-		}
-		if session.Status.State != breakglassv1alpha1.SessionStateApproved ||
-			!session.Status.RejectedAt.IsZero() ||
-			session.Status.ExpiresAt.IsZero() ||
-			!session.Status.ExpiresAt.After(now) ||
-			session.Spec.Cluster != cluster ||
-			session.Spec.IdentityProviderName != providerName ||
-			strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != issuer ||
-			!debugSessionIdentityMatches(
-				debugSessionReadIdentity{username: username, email: email},
-				session.Spec.User,
-			) {
-			continue
-		}
-		for _, allowedGroup := range allowed.Groups {
-			if matchPattern(allowedGroup, session.Spec.GrantedGroup) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
-}
-
 type debugSessionReadAuthorizer struct {
 	controller        *DebugSessionAPIController
 	identity          debugSessionReadIdentity
@@ -1348,24 +1705,43 @@ func (c *DebugSessionAPIController) canReadDebugSession(ctx context.Context, ses
 
 func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true, nil
 	}
 	for _, participant := range session.Status.Participants {
-		if participant.LeftAt == nil && debugSessionIdentityMatches(identity, participant.User, participant.Email) {
+		if participant.LeftAt == nil && debugSessionIdentityMatchesProvider(identity, participant.IdentityProviderName, participant.IdentityProviderIssuer, participant.User, participant.Email) {
 			return true, nil
 		}
 	}
 	for _, invitee := range session.Spec.InvitedParticipants {
-		if debugSessionIdentityMatches(identity, invitee) {
+		if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, invitee) {
 			return true, nil
 		}
 	}
 	if session.Status.Approval != nil &&
-		debugSessionIdentityMatches(identity, session.Status.Approval.ApprovedBy, session.Status.Approval.RejectedBy) {
+		(debugSessionIdentityMatchesProvider(identity, session.Status.Approval.ApprovedByIdentityProvider, "", session.Status.Approval.ApprovedBy) ||
+			debugSessionIdentityMatchesProvider(identity, session.Status.Approval.RejectedByIdentityProvider, "", session.Status.Approval.RejectedBy)) {
 		return true, nil
 	}
 	return a.isExplicitDebugSessionApprover(ctx, session)
+}
+
+func debugSessionProviderMatches(identity debugSessionReadIdentity, session *breakglassv1alpha1.DebugSession) bool {
+	if session.Spec.IdentityProviderName == "" && session.Spec.IdentityProviderIssuer == "" {
+		return identity.legacyAllowed
+	}
+	return (session.Spec.IdentityProviderName == "" || session.Spec.IdentityProviderName == identity.provider) &&
+		(session.Spec.IdentityProviderIssuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/"))
+}
+
+func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
+	if provider == "" && issuer == "" && !identity.legacyAllowed {
+		return false
+	}
+	if provider != "" && identity.provider != provider || issuer != "" && strings.TrimRight(identity.issuer, "/") != strings.TrimRight(issuer, "/") {
+		return false
+	}
+	return debugSessionIdentityMatches(identity, values...)
 }
 
 func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -1373,7 +1749,10 @@ func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.
 	if err != nil {
 		return false, err
 	}
-	if debugSessionApproversConfigured(approvers) {
+	if approvers != nil {
+		if !debugSessionApproversConfigured(approvers) {
+			return false, nil
+		}
 		return a.approverAuthorizationMatches(approvers), nil
 	}
 	if session.Status.ResolvedTemplate != nil &&
@@ -1390,13 +1769,7 @@ func (a *debugSessionReadAuthorizer) isExplicitDebugSessionApprover(ctx context.
 }
 
 func (a *debugSessionReadAuthorizer) approverAuthorizationMatches(approvers *breakglassv1alpha1.DebugSessionApprovers) bool {
-	identity := a.identity
-	if a.controller.checkApproverAuthorization(approvers, identity.username, identity.groups) {
-		return true
-	}
-	return identity.email != "" &&
-		identity.email != identity.username &&
-		a.controller.checkApproverAuthorization(approvers, identity.email, identity.groups)
+	return a.controller.checkApproverAuthorizationForIdentity(approvers, a.identity)
 }
 
 func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.DebugSessionApprovers, error) {
@@ -1410,13 +1783,9 @@ func (a *debugSessionReadAuthorizer) readApproversFromBinding(ctx context.Contex
 
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
 	if err := a.controller.reader().Get(ctx, key, binding); err != nil {
-		if !apierrors.IsNotFound(err) {
-			a.controller.log.Warnw("Could not fetch binding while checking debug session read authorization",
-				"session", session.Name, "binding", key.String(), "error", err)
-			return nil, fmt.Errorf("fetch debug session binding %s: %w", key.String(), err)
-		}
-		a.bindingApprovers[key] = nil
-		return nil, nil
+		a.controller.log.Warnw("Could not fetch binding while checking debug session read authorization",
+			"session", session.Name, "binding", key.String(), "error", err)
+		return nil, fmt.Errorf("fetch debug session binding %s: %w", key.String(), err)
 	}
 	a.bindingApprovers[key] = binding.Spec.Approvers
 	return binding.Spec.Approvers, nil

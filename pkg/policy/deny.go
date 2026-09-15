@@ -38,6 +38,9 @@ type Action struct {
 	// PodSecurityOverrides contains escalation-level overrides for pod security evaluation.
 	// If non-nil, these override the default pod security thresholds/factors.
 	PodSecurityOverrides *breakglassv1alpha1.PodSecurityOverrides
+	// PodSecurityOverrideApproved is set only after the webhook verifies the
+	// escalation's additional approval policy.
+	PodSecurityOverrideApproved bool
 }
 
 // PodSecurityResult contains the outcome of pod security evaluation.
@@ -268,6 +271,9 @@ func (e *Evaluator) evaluatePodSecurity(act Action, rules *breakglassv1alpha1.Po
 			// Continue with normal evaluation - overrides don't apply to this namespace
 			overrides = nil
 		}
+		if overrides != nil && overrides.RequireApproval && !act.PodSecurityOverrideApproved {
+			overrides = nil // Unapproved relaxation must not change normal policy evaluation.
+		}
 	}
 
 	// Detect risk factors
@@ -398,7 +404,8 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *breakglassv1alpha1.
 	if len(exemptions.PodLabels) > 0 {
 		allMatch := true
 		for k, v := range exemptions.PodLabels {
-			if pod.Labels[k] != v {
+			labelValue, exists := pod.Labels[k]
+			if !exists || labelValue != v {
 				allMatch = false
 				break
 			}
@@ -408,6 +415,31 @@ func (e *Evaluator) isPodExempt(pod *corev1.Pod, exemptions *breakglassv1alpha1.
 		}
 	}
 	return false
+}
+
+// allPodContainers flattens every container the pod runs into a single slice:
+// regular containers, init containers AND ephemeral containers.
+//
+// Ephemeral containers matter specifically here: injecting one is the primary
+// debug primitive this operator exposes, so a DenyPolicy that ignored them
+// would exempt exactly the workload it is meant to guard. corev1.EphemeralContainer
+// wraps an EphemeralContainerCommon with a field-for-field identical layout to
+// corev1.Container (it exists only to forbid a few fields at the API level), so
+// the risk-relevant fields — SecurityContext, VolumeMounts, Name — can be
+// projected onto corev1.Container for uniform evaluation.
+func allPodContainers(pod *corev1.Pod) []corev1.Container {
+	if pod == nil {
+		return nil
+	}
+	spec := pod.Spec
+	out := make([]corev1.Container, 0,
+		len(spec.Containers)+len(spec.InitContainers)+len(spec.EphemeralContainers))
+	out = append(out, spec.Containers...)
+	out = append(out, spec.InitContainers...)
+	for _, ec := range spec.EphemeralContainers {
+		out = append(out, corev1.Container(ec.EphemeralContainerCommon))
+	}
+	return out
 }
 
 // detectRiskFactors returns a list of detected risk factor names.
@@ -424,17 +456,16 @@ func (e *Evaluator) detectRiskFactors(pod *corev1.Pod, rf breakglassv1alpha1.Ris
 		factors = append(factors, "hostIPC")
 	}
 
-	// Check all containers (including init containers)
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Check all containers (regular, init AND ephemeral)
+	allContainers := allPodContainers(pod)
 
 	for _, c := range allContainers {
+		if effectiveRunAsUser(pod, c) == 0 {
+			factors = append(factors, fmt.Sprintf("runAsRoot:%s", c.Name))
+		}
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
 				factors = append(factors, fmt.Sprintf("privilegedContainer:%s", c.Name))
-			}
-			if c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
-				factors = append(factors, fmt.Sprintf("runAsRoot:%s", c.Name))
 			}
 			// Check capabilities
 			if c.SecurityContext.Capabilities != nil {
@@ -475,19 +506,18 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 		score += rf.HostIPC
 	}
 
-	// Check all containers
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Check all containers (regular, init AND ephemeral)
+	allContainers := allPodContainers(pod)
 
 	privilegedCount := 0
 	rootCount := 0
 	for _, c := range allContainers {
+		if effectiveRunAsUser(pod, c) == 0 {
+			rootCount++
+		}
 		if c.SecurityContext != nil {
 			if c.SecurityContext.Privileged != nil && *c.SecurityContext.Privileged {
 				privilegedCount++
-			}
-			if c.SecurityContext.RunAsUser != nil && *c.SecurityContext.RunAsUser == 0 {
-				rootCount++
 			}
 			// Add capability scores
 			if c.SecurityContext.Capabilities != nil {
@@ -523,10 +553,21 @@ func (e *Evaluator) calculateRiskScore(pod *corev1.Pod, rf breakglassv1alpha1.Ri
 	return score
 }
 
+func effectiveRunAsUser(pod *corev1.Pod, container corev1.Container) int64 {
+	if container.SecurityContext != nil && container.SecurityContext.RunAsUser != nil {
+		return *container.SecurityContext.RunAsUser
+	}
+	if pod != nil && pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.RunAsUser != nil {
+		return *pod.Spec.SecurityContext.RunAsUser
+	}
+	return -1
+}
+
 // isHostPathWritable checks if a hostPath volume is mounted as writable by any container.
 func (e *Evaluator) isHostPathWritable(pod *corev1.Pod, volumeName string) bool {
-	allContainers := append([]corev1.Container{}, pod.Spec.Containers...)
-	allContainers = append(allContainers, pod.Spec.InitContainers...)
+	// Regular, init AND ephemeral containers: a writable hostPath mount in an
+	// injected ephemeral container is as dangerous as one in a regular container.
+	allContainers := allPodContainers(pod)
 
 	for _, c := range allContainers {
 		for _, vm := range c.VolumeMounts {

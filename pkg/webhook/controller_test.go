@@ -14,11 +14,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -42,6 +45,215 @@ var sessionIndexFnsWebhook = map[string]client.IndexerFunc{
 	"spec.grantedGroup": func(o client.Object) []string {
 		return []string{o.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
 	},
+}
+
+func TestSessionUserAliasMatches(t *testing.T) {
+	tests := []struct {
+		name, username, sessionUser string
+		want                        bool
+	}{
+		{"same local part", "platform-requester", "platform-requester@example.test", true},
+		{"case insensitive", "Platform-Requester", "platform-requester@example.test", true},
+		{"different local part", "other", "platform-requester@example.test", false},
+		{"session is not email", "platform-requester", "platform-requester", false},
+		{"empty username", "", "platform-requester@example.test", false},
+		{"multiple at signs", "alice@corp", "alice@corp@domain", false},
+		{"email requester is exact only", "alice@corp", "alice@corp", false},
+		{"empty domain", "alice", "alice@", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, sessionUserAliasMatches(tt.username, tt.sessionUser))
+		})
+	}
+}
+
+func TestSessionsMatchingIdentityAlias(t *testing.T) {
+	sessions := []breakglassv1alpha1.BreakglassSession{
+		{Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "platform-requester@example.test", IdentityProviderIssuer: "https://idp-a.example",
+		}},
+		{Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "platform-requester@example.test", IdentityProviderIssuer: "https://idp-b.example",
+		}},
+	}
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://idp-a.example"), 1)
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://idp-a.example/"), 1)
+	assert.Len(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", "https://idp-a.example"), 1)
+	assert.Empty(t, sessionsMatchingIdentityAlias(sessions, "platform-requester", ""))
+	assert.Empty(t, sessionsMatchingIdentityAlias(sessions[:1], "platform-requester", "https://other.example"))
+}
+
+func TestFilterSessionsForAuthorizationCanonicalizesIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{IdentityProviderIssuer: "https://idp-a.example/"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorization([]breakglassv1alpha1.BreakglassSession{session}, "https://idp-a.example", time.Now())
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
+}
+
+type countingListClient struct {
+	client.Client
+	listCalls int
+}
+
+func (c *countingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	c.listCalls++
+	return c.Client.List(ctx, list, opts...)
+}
+
+func TestGetSessionsWithIDPMismatchInfoUsesAliasOnlyWithoutEligibleDirectMatch(t *testing.T) {
+	now := time.Now()
+	newSession := func(name, user, issuer string, expiresAt time.Time) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "test-cluster",
+				User:                   user,
+				GrantedGroup:           name,
+				IdentityProviderIssuer: issuer,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(expiresAt),
+			},
+		}
+	}
+
+	tests := []struct {
+		name           string
+		direct         *breakglassv1alpha1.BreakglassSession
+		aliases        []*breakglassv1alpha1.BreakglassSession
+		issuer         string
+		wantGroups     []string
+		wantMismatches int
+		wantListCalls  int
+	}{
+		{
+			name:   "expired direct match allows active alias",
+			direct: newSession("expired-direct", "alice", "https://idp-a.example", now.Add(-time.Minute)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantGroups:    []string{"alice-alias"},
+			wantListCalls: 2,
+		},
+		{
+			name:   "wrong issuer direct match preserves mismatch and allows alias",
+			direct: newSession("wrong-issuer-direct", "alice", "https://idp-b.example", now.Add(time.Hour)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:         "https://idp-a.example",
+			wantGroups:     []string{"alice-alias"},
+			wantMismatches: 1,
+			wantListCalls:  2,
+		},
+		{
+			name:   "eligible direct match suppresses alias scan",
+			direct: newSession("direct", "alice", "https://idp-a.example", now.Add(time.Hour)),
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alice-alias", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantGroups:    []string{"direct"},
+			wantListCalls: 1,
+		},
+		{
+			name: "wrong issuer alias is denied",
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("wrong-issuer-alias", "alice@example.com", "https://idp-b.example", now.Add(time.Hour)),
+			},
+			issuer:        "https://idp-a.example",
+			wantListCalls: 2,
+		},
+		{
+			name: "issuerless aliases from multiple issuers are ambiguous",
+			aliases: []*breakglassv1alpha1.BreakglassSession{
+				newSession("alias-a", "alice@example.com", "https://idp-a.example", now.Add(time.Hour)),
+				newSession("alias-b", "alice@example.com", "https://idp-b.example", now.Add(time.Hour)),
+			},
+			wantListCalls: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			objects := make([]client.Object, 0, 1+len(tt.aliases))
+			if tt.direct != nil {
+				objects = append(objects, tt.direct)
+			}
+			for _, alias := range tt.aliases {
+				objects = append(objects, alias)
+			}
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...)
+			for name, fn := range sessionIndexFnsWebhook {
+				builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+			}
+			countingClient := &countingListClient{Client: builder.Build()}
+			manager := breakglass.NewSessionManagerWithClient(countingClient)
+			controller := &WebhookController{sesManager: manager}
+
+			groups, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", tt.issuer)
+
+			if assert.NoError(t, err) {
+				assert.Len(t, groups, len(tt.wantGroups))
+				if len(tt.wantGroups) > 0 {
+					assert.Equal(t, tt.wantGroups, grantedGroupsFromSessions(groups))
+				}
+				assert.Len(t, mismatches, tt.wantMismatches)
+				assert.Equal(t, tt.wantListCalls, countingClient.listCalls)
+			}
+		})
+	}
+}
+
+func TestGetSessionsWithIDPMismatchInfoFailsClosedOnDirectListError(t *testing.T) {
+	controller := &WebhookController{sesManager: &breakglass.SessionManager{Client: &listErrorClient{}}}
+
+	_, _, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", "https://idp-a.example")
+
+	assert.Error(t, err)
+}
+
+func TestGetSessionsWithIDPMismatchInfoRefreshesAliasWhenOtherCachedGrantIsEligible(t *testing.T) {
+	now := time.Now()
+	newSession := func(name, user string) *breakglassv1alpha1.BreakglassSession {
+		return &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "test-cluster",
+				User:                   user,
+				GrantedGroup:           name,
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+			},
+		}
+	}
+	bob := newSession("bob", "bob")
+	aliceAlias := newSession("alice-alias", "alice@example.com")
+	cached := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(bob)
+	for name, fn := range sessionIndexFnsWebhook {
+		cached = cached.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+	}
+	manager := breakglass.NewSessionManagerWithClientAndReader(cached.Build(), fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(bob, aliceAlias).Build())
+	controller := &WebhookController{sesManager: manager}
+
+	groups, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice", "test-cluster", "https://idp-a.example")
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"alice-alias"}, grantedGroupsFromSessions(groups))
+	assert.Empty(t, mismatches)
 }
 
 var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
@@ -79,7 +291,12 @@ var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 
 // Test that when RBAC check (canDoFn) allows the request, the webhook returns allowed=true
 func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -128,7 +345,12 @@ func TestHandleAuthorize_AllowsByRBAC(t *testing.T) {
 }
 
 func TestHandleAuthorize_BodyTooLarge(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -164,7 +386,12 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -230,7 +457,12 @@ func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -302,7 +534,12 @@ func TestHandleAuthorize_ImpersonationError_TreatedAsDenied(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -402,7 +639,12 @@ func TestHandleAuthorize_MultiIDP_AllowedIDP(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -474,7 +716,12 @@ func TestHandleAuthorize_MultiIDP_BlockedIDP(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -549,7 +796,12 @@ func TestHandleAuthorize_NoIDPRestriction_HappyPath(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(esc)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -792,7 +1044,12 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 			objs = append(objs, &idps[i])
 		}
 
-		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+		cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		}).WithObjects(objs...).Build()
 		escalMgr := &escalation.EscalationManager{Client: cli}
 
 		boolPtr := func(v bool) *bool { return &v }
@@ -834,9 +1091,13 @@ func TestGetIDPHintFromIssuer(t *testing.T) {
 				objs = append(objs, &tt.idps[i])
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
-
 			wc := &WebhookController{
 				log:          logger.Sugar(),
 				escalManager: escalMgr,
@@ -1019,7 +1280,12 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 				objs = append(objs, &tt.idps[i])
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
 
 			wc := &WebhookController{
@@ -1042,7 +1308,12 @@ func TestIsRequestFromAllowedIDP_FailClosed(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	// Create a fake client that returns an error on List
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 
 	// Wrap the client with an interceptor that forces List to fail
 	errorClient := &listErrorClient{Client: cli}
@@ -1077,7 +1348,7 @@ func (c *listErrorClient) List(ctx context.Context, list client.ObjectList, opts
 	return fmt.Errorf("simulated API error")
 }
 
-// TestCheckDebugSessionAccess tests the checkDebugSessionAccess helper function
+// TestCheckDebugSessionAccess tests the issuer-aware debug-session access helper.
 func TestCheckDebugSessionAccess(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	now := metav1.Now()
@@ -1540,10 +1811,28 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			objs := make([]client.Object, 0, len(tt.debugSessions))
 			for i := range tt.debugSessions {
+				for j := range tt.debugSessions[i].Status.Participants {
+					tt.debugSessions[i].Status.Participants[j].IdentityProviderIssuer = "https://test-idp.example"
+				}
+				for j := range tt.debugSessions[i].Status.AllowedPods {
+					tt.debugSessions[i].Status.AllowedPods[j].UID = "pod-uid"
+				}
+				// Legacy fixtures predate the mandatory hard-expiry field; keep
+				// their intended active-session behavior explicit while dedicated
+				// boundary tests below cover missing expiry denial.
+				if tt.debugSessions[i].Status.State == breakglassv1alpha1.DebugSessionStateActive && tt.debugSessions[i].Status.ExpiresAt == nil {
+					expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+					tt.debugSessions[i].Status.ExpiresAt = &expiresAt
+				}
 				objs = append(objs, &tt.debugSessions[i])
 			}
 
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objs...)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objs...)
 			for k, fn := range debugSessionIndexFnsWebhook {
 				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
 			}
@@ -1553,9 +1842,12 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			wc := &WebhookController{
 				log:          logger.Sugar(),
 				escalManager: escalMgr,
+				podFetchFn: func(_ context.Context, clusterName, namespace, name string) (*corev1.Pod, error) {
+					return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace, UID: "pod-uid"}}, nil
+				},
 			}
 
-			allowed, session, reason := wc.checkDebugSessionAccess(context.Background(), tt.username, tt.clusterName, tt.ra, logger.Sugar())
+			allowed, session, reason := wc.checkDebugSessionAccessForIssuer(context.Background(), tt.username, tt.clusterName, "https://test-idp.example", tt.ra, logger.Sugar())
 
 			if allowed != tt.expectAllowed {
 				t.Errorf("expected allowed=%v, got %v", tt.expectAllowed, allowed)
@@ -1568,6 +1860,271 @@ func TestCheckDebugSessionAccess(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCheckDebugSessionAccessRequiresStrictFutureLiveExpiry(t *testing.T) {
+	now := time.Now()
+	tests := []struct {
+		name      string
+		expiresAt *metav1.Time
+		state     breakglassv1alpha1.DebugSessionState
+		allowed   bool
+	}{
+		{name: "missing expiry", allowed: false},
+		{name: "equal expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now); return &v }(), allowed: false},
+		{name: "past expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(-time.Minute)); return &v }(), allowed: false},
+		{name: "future expiry", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(time.Hour)); return &v }(), allowed: true},
+		{name: "revoked state", expiresAt: func() *metav1.Time { v := metav1.NewTime(now.Add(time.Hour)); return &v }(), state: breakglassv1alpha1.DebugSessionStateTerminated, allowed: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := tt.state
+			if state == "" {
+				state = breakglassv1alpha1.DebugSessionStateActive
+			}
+			ds := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "boundary", Namespace: "default"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: state, ExpiresAt: tt.expiresAt,
+					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+				},
+			}
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
+			for k, fn := range debugSessionIndexFnsWebhook {
+				builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+			}
+			cli := builder.Build()
+			wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+			}}
+			allowed, _, _ := wc.checkDebugSessionAccessForIssuer(context.Background(), "user", "cluster", "https://test-idp.example", &authorizationv1.ResourceAttributes{
+				Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod",
+			}, zap.NewNop().Sugar())
+			assert.Equal(t, tt.allowed, allowed)
+		})
+	}
+}
+
+func TestDebugSessionFinalFenceRejectsStaleCachedAllow(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	cached := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "stale-debug", Namespace: "default", UID: "debug-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	live := cached.DeepCopy()
+	live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	cacheClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(cached)
+	liveClient := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(live).Build()
+	for k, fn := range debugSessionIndexFnsWebhook {
+		cacheClient = cacheClient.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+	}
+	cache := cacheClient.Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(),
+		escalManager: &escalation.EscalationManager{Client: cache},
+		sesManager:   breakglass.NewSessionManagerWithClientAndReader(cache, liveClient),
+	}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+	allowed, _, _ := wc.checkDebugSessionAccess(context.Background(), "user", "cluster", ra, zap.NewNop().Sugar())
+	assert.False(t, allowed, "cached active discovery must not bypass the live state fence")
+
+	state := &authorizeState{ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "debug-session",
+		debugSessionNamespace: "default", debugSessionName: "stale-debug", debugSessionUID: "debug-uid",
+		reqLog: zap.NewNop().Sugar(), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, state)
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed, "final debug-session fence must reject a revoked live object")
+}
+
+func TestLiveDebugSessionAccessRequiresExactCapturedUID(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "uid-fenced", Namespace: "default", UID: "actual-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+
+	missingUIDAllowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "", "cluster", ra, "default", "uid-fenced", "")
+	assert.False(t, missingUIDAllowed, "missing captured UID must not become a name-only allow")
+	mismatchedUIDAllowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "", "cluster", ra, "default", "uid-fenced", "wrong-uid")
+	assert.False(t, mismatchedUIDAllowed, "mismatched captured UID must reject a replacement candidate")
+	assert.True(t, func() bool {
+		allowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "https://issuer.example", "cluster", ra, "default", "uid-fenced", "actual-uid")
+		return allowed
+	}(), "the exact live UID should allow the otherwise valid request")
+}
+
+func TestLiveDebugSessionAccessRechecksPodUIDAndParticipantIssuer(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "identity-fenced", Namespace: "default", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://issuer-a.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "replacement-uid"}}, nil
+	}}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+	allowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "https://issuer-a.example", "cluster", ra, "default", ds.Name, string(ds.UID))
+	assert.False(t, allowed, "a replacement target Pod UID must fail the final fence")
+	wc.podFetchFn = func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}
+	allowed, _ = wc.liveDebugSessionAccess(context.Background(), "user", "https://issuer-b.example", "cluster", ra, "default", ds.Name, string(ds.UID))
+	assert.False(t, allowed, "a changed participant issuer must fail the final fence")
+}
+
+func TestLiveDebugSessionAccessRejectsDeletingSession(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	deletingAt := metav1.Now()
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "deleting-debug", Namespace: "default", UID: "debug-uid", DeletionTimestamp: &deletingAt, Finalizers: []string{"test"}},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+
+	allowed, _ := wc.liveDebugSessionAccess(context.Background(), "user", "", "cluster", ra, "default", ds.Name, string(ds.UID))
+	assert.False(t, allowed, "DeletionTimestamp must revoke debug-session access immediately")
+}
+
+func TestSendAuthorizationResponseDebugSessionRequiresCapturedUID(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "response-uid-fenced", Namespace: "default", UID: "actual-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+
+	for _, capturedUID := range []string{"", "wrong-uid"} {
+		t.Run(map[string]string{"": "missing UID", "wrong-uid": "mismatched UID"}[capturedUID], func(t *testing.T) {
+			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", allowed: true, allowSource: "debug-session",
+				debugSessionNamespace: "default", debugSessionName: ds.Name, debugSessionUID: capturedUID,
+				reqLog: zap.NewNop().Sugar(), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			wc.sendAuthorizationResponse(c, state)
+			var response SubjectAccessReviewResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			assert.False(t, response.Status.Allowed, "debug-session allow must be fenced by the captured UID")
+		})
+	}
+}
+
+func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *testing.T) {
+	tests := []struct {
+		name       string
+		podUID     string
+		liveIssuer string
+		delay      time.Duration
+		want       bool
+	}{
+		{name: "replacement pod", podUID: "replacement-uid"},
+		{name: "changed issuer", podUID: "pod-uid", liveIssuer: "https://issuer-b.example"},
+		{name: "expiry after pod read", podUID: "pod-uid", delay: time.Millisecond},
+		{name: "valid original identity", podUID: "pod-uid", want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			future := metav1.NewTime(time.Now().Add(time.Hour))
+			if tt.delay > 0 {
+				future = metav1.NewTime(time.Now().Add(2 * time.Second).Truncate(time.Second))
+			}
+			issuer := "https://issuer-a.example"
+			ds := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "response-live-fence", Namespace: "default", UID: "session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+			}
+			if tt.liveIssuer != "" {
+				ds.Status.Participants[0].IdentityProviderIssuer = tt.liveIssuer
+			}
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
+			podFetched := false
+			wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+				podFetched = true
+				if tt.delay > 0 {
+					require.True(t, time.Now().Before(future.Time), "Pod fetch must begin before the lease expires")
+					time.Sleep(time.Until(future.Time) + tt.delay)
+				}
+				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(tt.podUID)}}, nil
+			}}
+			ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
+			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: issuer, allowed: true, allowSource: "debug-session",
+				debugSessionNamespace: ds.Namespace, debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
+				sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			wc.sendAuthorizationResponse(c, state)
+			var response SubjectAccessReviewResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			assert.Equal(t, tt.want, response.Status.Allowed, "final live fence result for %s", tt.name)
+			assert.True(t, podFetched, "final fence must fetch the live target Pod")
+		})
+	}
+}
+
+func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "early-debug", Namespace: "default", UID: "early-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
+			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+	}
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
+	for k, fn := range debugSessionIndexFnsWebhook {
+		builder = builder.WithIndex(&breakglassv1alpha1.DebugSession{}, k, fn)
+	}
+	cli := builder.WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}}
+	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	assert.True(t, wc.checkEarlyDebugSession(c, s))
+	assert.True(t, s.allowed)
+	assert.Equal(t, "debug-session", s.allowSource)
+
+	var current breakglassv1alpha1.DebugSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(ds), &current))
+	current.Status.State = breakglassv1alpha1.DebugSessionStateExpired
+	require.NoError(t, cli.Status().Update(context.Background(), &current))
+	w := httptest.NewRecorder()
+	c, _ = gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, s)
+	var response SubjectAccessReviewResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	assert.False(t, response.Status.Allowed, "early candidate must be rechecked after it is revoked")
 }
 
 // boolPtr returns a pointer to a bool value
@@ -1834,7 +2391,12 @@ func TestSummarizeAction(t *testing.T) {
 // TestNewWebhookController tests the NewWebhookController constructor
 func TestNewWebhookController(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 	denyEval := policy.NewEvaluator(cli, logger.Sugar())
@@ -1882,7 +2444,12 @@ func TestWebhookController_Handlers(t *testing.T) {
 // TestWebhookController_Register tests the Register method
 func TestWebhookController_Register(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1925,7 +2492,12 @@ func containsString(s, substr string) bool {
 // TestWebhookController_SetCanDoFn tests setting custom canDoFn
 func TestWebhookController_SetCanDoFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1958,7 +2530,12 @@ func TestWebhookController_SetCanDoFn(t *testing.T) {
 // TestWebhookController_SetPodFetchFn tests setting custom podFetchFn
 func TestWebhookController_SetPodFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -1991,7 +2568,12 @@ func TestWebhookController_SetPodFetchFn(t *testing.T) {
 // TestWebhookController_FetchPodFromCluster_WithFn tests fetchPodFromCluster with injected function
 func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -2032,7 +2614,12 @@ func TestWebhookController_FetchPodFromCluster_WithFn(t *testing.T) {
 // TestWebhookController_FetchPodFromCluster_NilProvider tests fetchPodFromCluster without provider
 func TestWebhookController_FetchPodFromCluster_NilProvider(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).Build()
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).Build()
 	sesMgr := &breakglass.SessionManager{Client: cli}
 	escalMgr := &escalation.EscalationManager{Client: cli}
 
@@ -2275,11 +2862,31 @@ func TestGetPodSecurityOverridesFromSessions(t *testing.T) {
 
 			objects := make([]client.Object, 0, len(tc.escalations))
 			for _, esc := range tc.escalations {
+				if esc.UID == "" {
+					esc.UID = types.UID("uid-" + esc.Name)
+				}
 				objects = append(objects, esc)
 			}
 
-			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(objects...).Build()
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			}).WithObjects(objects...).Build()
 			escalMgr := &escalation.EscalationManager{Client: cli}
+			for i := range tc.sessions {
+				for j := range tc.sessions[i].OwnerReferences {
+					for _, esc := range tc.escalations {
+						if tc.sessions[i].OwnerReferences[j].Name == esc.Name {
+							tc.sessions[i].OwnerReferences[j].UID = esc.UID
+							tc.sessions[i].OwnerReferences[j].APIVersion = breakglassv1alpha1.GroupVersion.String()
+							controller := true
+							tc.sessions[i].OwnerReferences[j].Controller = &controller
+						}
+					}
+				}
+			}
 
 			wc := &WebhookController{
 				log:          logger.Sugar(),
@@ -2341,6 +2948,37 @@ func TestGetPodSecurityOverridesFromSessions_NilEscalManager(t *testing.T) {
 
 	if overrides != nil {
 		t.Errorf("expected nil overrides when escalManager is nil, got %+v", overrides)
+	}
+}
+
+func TestPodSecurityOverrideApprovalRequiresListedUser(t *testing.T) {
+	overrides := &breakglassv1alpha1.PodSecurityOverrides{
+		RequireApproval: true,
+		Approvers:       &breakglassv1alpha1.PodSecurityApprovers{Users: []string{"security@example.com"}},
+	}
+	session := breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{Approvers: []string{"operator@example.com"}}}
+	wc := &WebhookController{}
+	if wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("unexpected approval from an unlisted user")
+	}
+	session.Status.Approvers = []string{"security@example.com"}
+	if !wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("expected listed user approval")
+	}
+	overrides.Approvers = &breakglassv1alpha1.PodSecurityApprovers{Groups: []string{"security-team"}}
+	wc.escalManager = &escalation.EscalationManager{}
+	session.Status.ApproverIdentityProviders = []string{"idp-a"}
+	wc.approverResolverFetchFn = func(context.Context, string) (breakglass.GroupMemberResolver, error) {
+		return policyMemberResolver{members: []string{"other@example.com"}}, nil
+	}
+	if wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("unexpected approval from an unrelated group")
+	}
+	wc.approverResolverFetchFn = func(context.Context, string) (breakglass.GroupMemberResolver, error) {
+		return policyMemberResolver{members: []string{"security@example.com"}}, nil
+	}
+	if !wc.podSecurityOverrideApprovalGranted(context.Background(), session, overrides) {
+		t.Fatal("expected approval from configured group member")
 	}
 }
 
@@ -2446,7 +3084,12 @@ func TestHandleAuthorize_DenyPolicyWithNamespaceLabels(t *testing.T) {
 		},
 	}
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(denyPol)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	}).WithObjects(denyPol)
 	for k, fn := range sessionIndexFnsWebhook {
 		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, k, fn)
 	}
@@ -2710,7 +3353,12 @@ func TestEmitPodSecurityAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2830,7 +3478,12 @@ func TestEmitAccessDecisionAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2921,7 +3574,12 @@ func TestEmitPolicyDenialAudit(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+			builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+				if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+					return []string{idp.Spec.Issuer}
+				}
+				return nil
+			})
 			cli := builder.Build()
 
 			sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2949,7 +3607,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	t.Run("uses injected podFetchFn when available", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -2987,7 +3650,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("returns error when pod not found via injected function", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3007,7 +3675,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3026,7 +3699,12 @@ func TestFetchPodFromCluster(t *testing.T) {
 	})
 
 	t.Run("fetches pod with various container configurations", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3076,7 +3754,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 
 	t.Run("uses injected namespaceLabelsFetchFn when available", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3110,7 +3793,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("returns error when namespace not found", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3130,7 +3818,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("returns error when ccProvider is nil", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3149,7 +3842,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 	})
 
 	t.Run("fetches labels with various configurations", func(t *testing.T) {
-		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+		builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+			if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+				return []string{idp.Spec.Issuer}
+			}
+			return nil
+		})
 		cli := builder.Build()
 
 		sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3204,7 +3902,12 @@ func TestFetchNamespaceLabels(t *testing.T) {
 // TestSetPodFetchFn tests the SetPodFetchFn method
 func TestSetPodFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3239,7 +3942,12 @@ func TestSetPodFetchFn(t *testing.T) {
 // TestSetNamespaceLabelsFetchFn tests the SetNamespaceLabelsFetchFn method
 func TestSetNamespaceLabelsFetchFn(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3334,7 +4042,12 @@ func TestEmitAuditWithResourceAndNonResourceAttributes(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctx := context.Background()
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3415,7 +4128,12 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctx := context.Background()
 
-	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithIndex(&breakglassv1alpha1.IdentityProvider{}, "spec.issuer", func(rawObj client.Object) []string {
+		if idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider); ok {
+			return []string{idp.Spec.Issuer}
+		}
+		return nil
+	})
 	cli := builder.Build()
 
 	sesMgr := &breakglass.SessionManager{Client: cli}
@@ -3491,4 +4209,116 @@ func TestAuditEmitWithDifferentEventSeverities(t *testing.T) {
 			wc.emitPodSecurityAudit(ctx, "test@example.com", []string{"group1"}, "cluster1", sar, "policy1", tc.result)
 		})
 	}
+}
+
+func TestAuditTargetFromSARIncludesNamespaceLabels(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(_ context.Context, clusterName, namespace string) (map[string]string, error) {
+			if clusterName != "cluster1" || namespace != "production" {
+				return nil, fmt.Errorf("unexpected namespace lookup %s/%s", clusterName, namespace)
+			}
+			return map[string]string{"audit-enabled": "true"}, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "production",
+				Verb:      "get",
+				Resource:  "pods",
+				Name:      "pod-a",
+			},
+		},
+	}
+
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.Equal(t, "pods", target.Kind)
+	assert.Equal(t, "pod-a", target.Name)
+	assert.Equal(t, "production", target.Namespace)
+	assert.Equal(t, "cluster1", target.Cluster)
+	assert.Equal(t, map[string]string{"audit-enabled": "true"}, target.NamespaceLabels)
+	assert.Equal(t, "get", verb)
+	assert.Empty(t, subresource)
+	assert.Empty(t, apiGroup)
+}
+
+func TestAuditTargetFromSARBoundsNamespaceLabelLookup(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	var sawDeadline bool
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(ctx context.Context, _, _ string) (map[string]string, error) {
+			deadline, ok := ctx.Deadline()
+			sawDeadline = ok
+			if ok {
+				assert.LessOrEqual(t, time.Until(deadline), auditNamespaceLabelLookupTimeout)
+			}
+			return map[string]string{"audit-enabled": "true"}, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			ResourceAttributes: &authorizationv1.ResourceAttributes{
+				Namespace: "production",
+				Verb:      "get",
+				Resource:  "pods",
+			},
+		},
+	}
+
+	target, _, _, _ := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.True(t, sawDeadline)
+	assert.Equal(t, map[string]string{"audit-enabled": "true"}, target.NamespaceLabels)
+}
+
+func TestAuditTargetFromSARSkipsNamespaceLabelsForNonResource(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	ctx := context.Background()
+	called := false
+	wc := NewWebhookController(logger.Sugar(), config.Config{}, nil, nil, nil, nil,
+		WithNamespaceLabelsFetchFunc(func(context.Context, string, string) (map[string]string, error) {
+			called = true
+			return nil, nil
+		}),
+	)
+
+	sar := &authorizationv1.SubjectAccessReview{
+		Spec: authorizationv1.SubjectAccessReviewSpec{
+			NonResourceAttributes: &authorizationv1.NonResourceAttributes{
+				Path: "/metrics",
+				Verb: "get",
+			},
+		},
+	}
+
+	target, verb, subresource, apiGroup := wc.auditTargetFromSAR(ctx, "cluster1", sar)
+
+	assert.False(t, called)
+	assert.Equal(t, "nonresource", target.Kind)
+	assert.Equal(t, "/metrics", target.Name)
+	assert.Equal(t, "cluster1", target.Cluster)
+	assert.Nil(t, target.NamespaceLabels)
+	assert.Equal(t, "get", verb)
+	assert.Empty(t, subresource)
+	assert.Empty(t, apiGroup)
+}
+
+func TestEmailRequesterSkipsIdentityAliasList(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme)
+	for name, fn := range sessionIndexFnsWebhook {
+		builder = builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, name, fn)
+	}
+	counted := &countingListClient{Client: builder.Build()}
+	controller := &WebhookController{sesManager: breakglass.NewSessionManagerWithClient(counted)}
+	sessions, mismatches, err := controller.getSessionsWithIDPMismatchInfo(context.Background(), "alice@corp", "cluster", "https://issuer")
+	assert.NoError(t, err)
+	assert.Empty(t, sessions)
+	assert.Empty(t, mismatches)
+	assert.Equal(t, 1, counted.listCalls, "only the indexed exact identity lookup is needed")
 }

@@ -516,13 +516,31 @@ func (c *APIClient) ListSessions(ctx context.Context) ([]breakglassv1alpha1.Brea
 	}
 	defer func() { _ = resp.Body.Close() }()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read sessions response: %w", err)
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("failed to list sessions: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
+	var itemsEnvelope struct {
+		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
+	}
+	if err := json.Unmarshal(body, &itemsEnvelope); err == nil && itemsEnvelope.Items != nil {
+		return itemsEnvelope.Items, nil
+	}
+
+	var sessionsEnvelope struct {
+		Sessions []breakglassv1alpha1.BreakglassSession `json:"sessions"`
+	}
+	if err := json.Unmarshal(body, &sessionsEnvelope); err == nil && sessionsEnvelope.Sessions != nil {
+		return sessionsEnvelope.Sessions, nil
+	}
+
 	var sessions []breakglassv1alpha1.BreakglassSession
-	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+	if err := json.Unmarshal(body, &sessions); err != nil {
 		return nil, fmt.Errorf("failed to decode sessions: %w", err)
 	}
 
@@ -1084,11 +1102,12 @@ func CreateKeycloakClientSecret(t *testing.T, ctx context.Context, cli client.Cl
 
 // EphemeralContainerRequest is the request body for injecting an ephemeral container
 type EphemeralContainerRequest struct {
-	Namespace     string   `json:"namespace"`
-	PodName       string   `json:"podName"`
-	ContainerName string   `json:"containerName"`
-	Image         string   `json:"image"`
-	Command       []string `json:"command,omitempty"`
+	Namespace       string                  `json:"namespace"`
+	PodName         string                  `json:"podName"`
+	ContainerName   string                  `json:"containerName"`
+	Image           string                  `json:"image"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // PodCopyRequest is the request body for creating a pod copy

@@ -9,6 +9,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 )
 
 func WriteSessionTable(w io.Writer, sessions []breakglassv1alpha1.BreakglassSession) {
@@ -20,7 +21,7 @@ func WriteSessionTable(w io.Writer, sessions []breakglassv1alpha1.BreakglassSess
 		if !s.Status.ExpiresAt.IsZero() {
 			expires = formatTime(s.Status.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, s.Spec.GrantedGroup, string(s.Status.State), created, expires)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", SafeText(s.Name), SafeText(s.Spec.Cluster), SafeText(s.Spec.User), SafeText(s.Spec.GrantedGroup), SafeText(string(s.Status.State)), created, expires)
 	}
 	_ = tw.Flush()
 }
@@ -34,7 +35,7 @@ func WriteSessionTableWide(w io.Writer, sessions []breakglassv1alpha1.Breakglass
 		if !s.Status.ExpiresAt.IsZero() {
 			expires = formatTime(s.Status.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Spec.Cluster, s.Spec.User, s.Spec.GrantedGroup, string(s.Status.State), created, s.Status.Approver, expires)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", SafeText(s.Name), SafeText(s.Spec.Cluster), SafeText(s.Spec.User), SafeText(s.Spec.GrantedGroup), SafeText(string(s.Status.State)), created, SafeText(s.Status.Approver), expires)
 	}
 	_ = tw.Flush()
 }
@@ -46,7 +47,7 @@ func WriteEscalationTable(w io.Writer, escs []breakglassv1alpha1.BreakglassEscal
 		clusters := strings.Join(e.Spec.Allowed.Clusters, ",")
 		allowedGroups := strings.Join(e.Spec.Allowed.Groups, ",")
 		approvers := strings.Join(append(e.Spec.Approvers.Groups, e.Spec.Approvers.Users...), ",")
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", e.Name, clusters, allowedGroups, e.Spec.EscalatedGroup, approvers)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", SafeText(e.Name), SafeText(clusters), SafeText(allowedGroups), SafeText(e.Spec.EscalatedGroup), SafeText(approvers))
 	}
 	_ = tw.Flush()
 }
@@ -59,7 +60,7 @@ func WriteDebugSessionTable(w io.Writer, sessions []client.DebugSessionSummary) 
 		if s.ExpiresAt != nil {
 			expires = formatTime(s.ExpiresAt.Time)
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.TemplateRef, s.TargetNamespace, s.RequestedBy, string(s.State), expires)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n", SafeText(s.Name), SafeText(s.Cluster), SafeText(s.TemplateRef), SafeText(s.TargetNamespace), SafeText(s.RequestedBy), SafeText(string(s.State)), expires)
 	}
 	_ = tw.Flush()
 }
@@ -78,7 +79,7 @@ func WriteDebugSessionTableWide(w io.Writer, sessions []client.DebugSessionSumma
 			expires = formatTime(s.ExpiresAt.Time)
 		}
 		ops := formatAllowedPodOperations(s.AllowedPodOperations)
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", s.Name, s.TemplateRef, s.TargetNamespace, s.Cluster, s.RequestedBy, string(s.State), starts, expires, s.Participants, s.AllowedPods, ops)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%d\t%d\t%s\n", SafeText(s.Name), SafeText(s.TemplateRef), SafeText(s.TargetNamespace), SafeText(s.Cluster), SafeText(s.RequestedBy), SafeText(string(s.State)), starts, expires, s.Participants, s.AllowedPods, SafeText(ops))
 	}
 	_ = tw.Flush()
 }
@@ -123,7 +124,7 @@ func WriteDebugTemplateTable(w io.Writer, templates []client.DebugSessionTemplat
 		} else {
 			clusterStatus = "0"
 		}
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%v\n", t.Name, t.DisplayName, t.Mode, clusterStatus, t.TargetNamespace, t.RequiresApproval)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%v\n", SafeText(t.Name), SafeText(t.DisplayName), SafeText(string(t.Mode)), clusterStatus, SafeText(t.TargetNamespace), t.RequiresApproval)
 	}
 	_ = tw.Flush()
 }
@@ -132,7 +133,7 @@ func WriteDebugPodTemplateTable(w io.Writer, templates []client.DebugPodTemplate
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tDESCRIPTION\tCONTAINERS")
 	for _, t := range templates {
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", t.Name, t.DisplayName, t.Description, t.Containers)
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", SafeText(t.Name), SafeText(t.DisplayName), SafeText(t.Description), t.Containers)
 	}
 	_ = tw.Flush()
 }
@@ -157,7 +158,7 @@ func WriteTemplateClusterTable(w io.Writer, clusters []client.AvailableClusterDe
 			approval = "yes"
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			c.Name, c.DisplayName, c.Environment, bindingsStr, maxDuration, approval)
+			SafeText(c.Name), SafeText(c.DisplayName), SafeText(c.Environment), SafeText(bindingsStr), SafeText(maxDuration), SafeText(approval))
 	}
 	_ = tw.Flush()
 }
@@ -213,7 +214,7 @@ func WriteTemplateClusterTableWide(w io.Writer, clusters []client.AvailableClust
 			}
 		}
 		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			c.Name, c.DisplayName, c.Environment, bindingsStr, maxDuration, nsDefault, scheduling, impersonation, approval, status)
+			SafeText(c.Name), SafeText(c.DisplayName), SafeText(c.Environment), SafeText(bindingsStr), SafeText(maxDuration), SafeText(nsDefault), SafeText(scheduling), SafeText(impersonation), SafeText(approval), SafeText(status))
 	}
 	_ = tw.Flush()
 }
@@ -221,10 +222,10 @@ func WriteTemplateClusterTableWide(w io.Writer, clusters []client.AvailableClust
 // WriteBindingOptionsTable writes a detailed table of binding options for a cluster
 func WriteBindingOptionsTable(w io.Writer, clusterName string, options []client.BindingOption) {
 	if len(options) == 0 {
-		_, _ = fmt.Fprintf(w, "No binding options available for cluster '%s'. Using template defaults.\n", clusterName)
+		_, _ = fmt.Fprintf(w, "No binding options available for cluster '%s'. Using template defaults.\n", SafeText(clusterName))
 		return
 	}
-	_, _ = fmt.Fprintf(w, "Binding options for cluster '%s':\n\n", clusterName)
+	_, _ = fmt.Fprintf(w, "Binding options for cluster '%s':\n\n", SafeText(clusterName))
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(tw, "BINDING\tDISPLAY_NAME\tMAX_DURATION\tNAMESPACE\tSCHEDULING\tIMPERSONATION\tAPPROVAL")
 	for _, opt := range options {
@@ -254,14 +255,22 @@ func WriteBindingOptionsTable(w io.Writer, clusterName string, options []client.
 			approval = "auto"
 		}
 		_, _ = fmt.Fprintf(tw, "%s/%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			opt.BindingRef.Namespace, opt.BindingRef.Name, opt.DisplayName, maxDuration, nsDefault, scheduling, impersonation, approval)
+			SafeText(opt.BindingRef.Namespace), SafeText(opt.BindingRef.Name), SafeText(opt.DisplayName), SafeText(maxDuration), SafeText(nsDefault), SafeText(scheduling), SafeText(impersonation), SafeText(approval))
 	}
 	_ = tw.Flush()
 }
+
+// SafeText neutralizes terminal controls in human-readable output.
+func SafeText(value string) string { return terminal.SafeText(value) }
 
 func formatTime(t time.Time) string {
 	if t.IsZero() {
 		return "-"
 	}
 	return t.Format(time.RFC3339)
+}
+
+// WriteDebugSessionWatchLine writes one terminal-safe watch event.
+func WriteDebugSessionWatchLine(w io.Writer, s client.DebugSessionSummary) {
+	_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", SafeText(s.Name), SafeText(s.Cluster), SafeText(s.RequestedBy), SafeText(string(s.State)))
 }

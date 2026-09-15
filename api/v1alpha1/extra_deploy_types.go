@@ -51,9 +51,9 @@ const (
 )
 
 // ExtraDeployVariable defines a user-provided variable for template rendering.
-// Variables are available as {{ .Vars.<name> }} in all templates.
+// Variables are available as {{ .vars.<name> }} in all templates.
 type ExtraDeployVariable struct {
-	// name is the variable name, used as {{ .Vars.<name> }} in templates.
+	// name is the variable name, used as {{ .vars.<name> }} in templates.
 	// Must be a valid Go identifier (letters, digits, underscores, starting with letter).
 	// +required
 	// +kubebuilder:validation:Pattern=`^[a-zA-Z][a-zA-Z0-9_]*$`
@@ -106,6 +106,12 @@ type ExtraDeployVariable struct {
 	// group organizes variables into collapsible sections in the UI.
 	// +optional
 	Group string `json:"group,omitempty"`
+
+	// disabled prevents this variable from being requested through a binding.
+	// Template variables are enabled by default; bindings may only set this to
+	// true, never use it to re-enable a disabled variable.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // SelectOption defines a choice for select/multiSelect inputs.
@@ -202,7 +208,7 @@ type TemplateRenderContext struct {
 	Annotations map[string]string `json:"annotations"`
 
 	// Vars contains user-provided extraDeployValues.
-	// Access as {{ .Vars.variableName }}
+	// Access as {{ .vars.variableName }}
 	// +optional
 	Vars map[string]string `json:"vars,omitempty"`
 

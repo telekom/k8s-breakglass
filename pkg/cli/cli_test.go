@@ -395,3 +395,52 @@ func TestParse_EnableControllers_EnvVar(t *testing.T) {
 	assert.False(t, cfg.EnableControllers,
 		"EnableControllers should be false when ENABLE_CONTROLLERS=false")
 }
+
+func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
+	tests := []struct {
+		name                     string
+		enableAPI                bool
+		enableControllers        bool
+		enableCleanup            bool
+		enableFrontend           bool
+		enableWebhooks           bool
+		enableValidatingWebhooks bool
+		wantError                bool
+	}{
+		{name: "api only", enableAPI: true, wantError: true},
+		{name: "controllers only", enableControllers: true, wantError: true},
+		{name: "cleanup only", enableCleanup: true, wantError: true},
+		{name: "all writing roles", enableAPI: true, enableControllers: true, enableCleanup: true, wantError: true},
+		{name: "webhooks and controllers", enableWebhooks: true, enableControllers: true, wantError: true},
+		{name: "frontend only", enableFrontend: true},
+		{name: "webhook only", enableWebhooks: true},
+		{name: "validating webhook only", enableValidatingWebhooks: true},
+		{name: "all roles off"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, namespace := range []string{"", " \t"} {
+				cfg := &Config{
+					BreakglassNamespace:      namespace,
+					EnableAPI:                tt.enableAPI,
+					EnableControllers:        tt.enableControllers,
+					EnableCleanup:            tt.enableCleanup,
+					EnableFrontend:           tt.enableFrontend,
+					EnableWebhooks:           tt.enableWebhooks,
+					EnableValidatingWebhooks: tt.enableValidatingWebhooks,
+				}
+				err := cfg.Validate()
+				if tt.wantError {
+					assert.Error(t, err)
+					assert.ErrorContains(t, err, "--breakglass-namespace")
+					assert.ErrorContains(t, err, "BREAKGLASS_NAMESPACE")
+				} else {
+					assert.NoError(t, err)
+				}
+
+				cfg.BreakglassNamespace = "breakglass-system"
+				assert.NoError(t, cfg.Validate())
+			}
+		})
+	}
+}

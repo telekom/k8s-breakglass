@@ -17,6 +17,9 @@ import (
 //
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRefApplyConfiguration struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	UID *string `json:"uid,omitempty"`
 	// originalPod is the name of the original pod.
 	OriginalPod *string `json:"originalPod,omitempty"`
 	// originalNamespace is the original pod's namespace.
@@ -25,6 +28,8 @@ type CopiedPodRefApplyConfiguration struct {
 	CopyName *string `json:"copyName,omitempty"`
 	// copyNamespace is the copied pod's namespace.
 	CopyNamespace *string `json:"copyNamespace,omitempty"`
+	// copyUID is the immutable identity of the copied pod.
+	CopyUID *string `json:"copyUID,omitempty"`
 	// createdAt is when the copy was created.
 	CreatedAt *v1.Time `json:"createdAt,omitempty"`
 	// expiresAt is when the copy will be auto-deleted.
@@ -35,6 +40,14 @@ type CopiedPodRefApplyConfiguration struct {
 // apply.
 func CopiedPodRef() *CopiedPodRefApplyConfiguration {
 	return &CopiedPodRefApplyConfiguration{}
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *CopiedPodRefApplyConfiguration) WithUID(value string) *CopiedPodRefApplyConfiguration {
+	b.UID = &value
+	return b
 }
 
 // WithOriginalPod sets the OriginalPod field in the declarative configuration to the given value
@@ -66,6 +79,14 @@ func (b *CopiedPodRefApplyConfiguration) WithCopyName(value string) *CopiedPodRe
 // If called multiple times, the CopyNamespace field is set to the value of the last call.
 func (b *CopiedPodRefApplyConfiguration) WithCopyNamespace(value string) *CopiedPodRefApplyConfiguration {
 	b.CopyNamespace = &value
+	return b
+}
+
+// WithCopyUID sets the CopyUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CopyUID field is set to the value of the last call.
+func (b *CopiedPodRefApplyConfiguration) WithCopyUID(value string) *CopiedPodRefApplyConfiguration {
+	b.CopyUID = &value
 	return b
 }
 

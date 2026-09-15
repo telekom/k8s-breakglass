@@ -128,6 +128,87 @@ func TestLoadMailProvider(t *testing.T) {
 	})
 }
 
+func TestLoadMailProviderDefaultsLegacyOmittedRetry(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	mailProvider := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "legacy-provider"},
+		Spec: breakglassv1alpha1.MailProviderSpec{
+			SMTP: breakglassv1alpha1.SMTPConfig{
+				Host: "smtp.example.com",
+				Port: 587,
+			},
+			Sender: breakglassv1alpha1.SenderConfig{
+				Address: "sender@example.com",
+			},
+		},
+	}
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(mailProvider).
+		Build()
+
+	loader := NewMailProviderLoader(client)
+	cfg, err := loader.LoadMailProvider(context.Background(), "legacy-provider")
+	if err != nil {
+		t.Fatalf("LoadMailProvider() error = %v", err)
+	}
+
+	if cfg.RetryCount != 3 {
+		t.Errorf("Expected legacy omitted retry count to default to 3, got %d", cfg.RetryCount)
+	}
+	if cfg.RetryBackoffMs != 100 {
+		t.Errorf("Expected retry backoff default 100, got %d", cfg.RetryBackoffMs)
+	}
+	if cfg.QueueSize != 1000 {
+		t.Errorf("Expected queue size default 1000, got %d", cfg.QueueSize)
+	}
+}
+
+func TestLoadMailProviderAllowsExplicitZeroRetryCount(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	mailProvider := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "zero-retry-provider"},
+		Spec: breakglassv1alpha1.MailProviderSpec{
+			SMTP: breakglassv1alpha1.SMTPConfig{
+				Host: "smtp.example.com",
+				Port: 587,
+			},
+			Sender: breakglassv1alpha1.SenderConfig{
+				Address: "sender@example.com",
+			},
+			Retry: breakglassv1alpha1.RetryConfig{
+				Count:            0,
+				InitialBackoffMs: 250,
+				QueueSize:        25,
+			},
+		},
+	}
+	client := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(mailProvider).
+		Build()
+
+	loader := NewMailProviderLoader(client)
+	cfg, err := loader.LoadMailProvider(context.Background(), "zero-retry-provider")
+	if err != nil {
+		t.Fatalf("LoadMailProvider() error = %v", err)
+	}
+
+	if cfg.RetryCount != 0 {
+		t.Errorf("Expected explicit retry count 0 to be preserved, got %d", cfg.RetryCount)
+	}
+	if cfg.RetryBackoffMs != 250 {
+		t.Errorf("Expected retry backoff 250, got %d", cfg.RetryBackoffMs)
+	}
+	if cfg.QueueSize != 25 {
+		t.Errorf("Expected queue size 25, got %d", cfg.QueueSize)
+	}
+}
+
 func TestLoadAllMailProviders(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = breakglassv1alpha1.AddToScheme(scheme)

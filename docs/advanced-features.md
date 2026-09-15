@@ -71,6 +71,7 @@ spec:
 
 - When configured, approvers see the description when approving/rejecting
 - If `mandatory: true`, approval/rejection fails if reason is empty/whitespace; both the pending approvals modal and direct email approval links keep approve/reject actions blocked until a note is entered
+- Direct approval links reload their session details when the same browser tab moves between `/session/{name}/approve` URLs, so approvers do not act on stale request details
 - Reason is stored with the session for audit trail
 
 ### Examples
@@ -330,10 +331,13 @@ API errors are returned in consistent JSON format:
 ```json
 {
   "error": "User email not found in token",
-  "cid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "meta": "metadata about the error"
+  "code": "UNAUTHORIZED",
+  "details": "metadata about the error"
 }
 ```
+
+Use the `X-Request-ID` response header, not the JSON body, as the correlation ID
+for logs and support requests.
 
 ### HTTP Status Codes
 
@@ -427,11 +431,11 @@ kubectl get breakglasssession -A -o json > sessions-export.json
 
 ## State Management and Validation
 
-Breakglass implements a **state-first validation architecture** where session state takes absolute precedence over timestamps. This ensures robust session lifecycle management and prevents edge cases.
+Breakglass implements a **state-and-lease validation architecture** where terminal state takes precedence and an `Approved` session additionally requires a live, non-zero expiry lease. This ensures robust session lifecycle management and prevents edge cases.
 
-### State is Ultimate Authority
+### State and Lease Are Authoritative
 
-A session's validity is determined solely by its `state` field:
+A session's state determines its lifecycle position, while an `Approved` session's lease determines whether it can grant access:
 
 ```go
 // Pseudocode: State-first validation
@@ -451,8 +455,8 @@ func isSessionValid(session) bool {
         return false  // Awaiting scheduled start
     }
     
-    // Approved: Check expiration (ONLY checked for Approved)
-    if session.status.expiresAt <= now {
+    // Approved: a missing/zero or reached expiry fails closed.
+    if session.status.expiresAt is missing || session.status.expiresAt <= now {
         return false  // Session expired
     }
     
@@ -791,7 +795,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: corp-oidc-client-secret
-  namespace: breakglass
+  namespace: breakglass-system
 type: Opaque
 data:
   clientSecret: <base64-secret>
@@ -801,7 +805,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: keycloak-client-secret
-  namespace: breakglass
+  namespace: breakglass-system
 type: Opaque
 data:
   clientSecret: <base64-secret>
@@ -956,11 +960,11 @@ Track authentication patterns by IDP:
 
 ```bash
 # Count successful logins by issuer
-kubectl logs deployment/breakglass-controller -n breakglass \
+kubectl logs deployment/breakglass-manager -n breakglass-system \
   | grep "iss" | sort | uniq -c
 
 # Monitor token validation failures
-kubectl logs deployment/breakglass-controller -n breakglass \
+kubectl logs deployment/breakglass-manager -n breakglass-system \
   | grep -i "token.*invalid\|issuer.*unknown"
 
 # Check IDP configuration status

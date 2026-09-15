@@ -9,6 +9,7 @@ import {
   sanitizeReason,
   validateDuration,
 } from "@/utils/breakglassSession";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import type { Breakglass } from "@/model/breakglass";
 
@@ -52,6 +53,8 @@ function closeRequestModal() {
   showAllRequesterGroups.value = false;
   showAllApprovalGroups.value = false;
 }
+
+useModalBehavior(showRequestModal, closeRequestModal);
 
 watch(
   () => props.breakglass,
@@ -209,10 +212,11 @@ function clearScheduledSelection() {
 }
 
 const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
+const isReasonMissing = computed(() => requiresReason.value && !(requestReason.value || "").toString().trim());
 
 const canRequest = computed(() => {
-  if (requiresReason.value) {
-    return (requestReason.value || "").toString().trim().length > 0;
+  if (isReasonMissing.value) {
+    return false;
   }
   return true;
 });
@@ -660,13 +664,23 @@ function drop() {
         label="Reason"
         :value="requestReason"
         :max-length="reasonCharLimit"
-        :invalid="requiresReason && !(requestReason || '').trim()"
+        :invalid="isReasonMissing"
+        :aria-describedby="isReasonMissing ? `reason-error-${cardUid}` : undefined"
         helper-text-invalid="This field is required."
         :placeholder="
           (breakglass.requestReason && breakglass.requestReason.description) || 'Optional reason (max 1024 characters)'
         "
         @scale-change="handleReasonChange"
       ></scale-textarea>
+      <p
+        v-if="isReasonMissing"
+        :id="`reason-error-${cardUid}`"
+        class="helper error"
+        data-testid="reason-error"
+        aria-live="polite"
+      >
+        Reason is required.
+      </p>
       <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning" aria-live="polite">
         ⚠ Character limit approaching
         <span aria-hidden="true"> ({{ reasonCharLimit - reasonCharCount }} characters remaining) </span>
@@ -674,11 +688,7 @@ function drop() {
     </div>
 
     <div class="modal-actions">
-      <scale-button
-        :disabled="requiresReason && !(requestReason || '').trim()"
-        data-testid="submit-request-button"
-        @click="request"
-      >
+      <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
         Confirm Request
       </scale-button>
       <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"

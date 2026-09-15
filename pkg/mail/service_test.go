@@ -92,9 +92,9 @@ func TestService_EnqueueWhenDisabled(t *testing.T) {
 
 	svc := NewService(client, "Test Branding", logger.Sugar())
 
-	// Enqueue should silently succeed when disabled
+	// A disabled queue must reject enqueue so durable callers retain their intent.
 	err := svc.Enqueue("session-1", []string{"test@example.com"}, "Subject", "Body")
-	assert.NoError(t, err)
+	assert.ErrorContains(t, err, "mail queue is not initialized")
 }
 
 func TestService_Reload(t *testing.T) {

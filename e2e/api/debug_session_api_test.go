@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -38,6 +39,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // debugSessionsBasePath is the base path for debug session API endpoints
@@ -53,11 +55,6 @@ type DebugSessionCreateRequest struct {
 	Reason                   string            `json:"reason,omitempty"`
 	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
 	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"`
-}
-
-// DebugSessionJoinRequest represents the request to join an existing debug session
-type DebugSessionJoinRequest struct {
-	Role string `json:"role,omitempty"` // "viewer" or "participant"
 }
 
 // DebugSessionRenewRequest represents the request to extend session duration
@@ -317,11 +314,10 @@ func (c *DebugSessionAPIClient) CreateDebugSession(ctx context.Context, t *testi
 }
 
 // JoinDebugSession joins an existing debug session
-func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing.T, name string, role string) (int, error) {
+func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing.T, name string) (int, error) {
 	path := fmt.Sprintf("%s/%s/join", debugSessionsBasePath, name)
-	req := DebugSessionJoinRequest{Role: role}
 
-	resp, err := c.doRequest(ctx, http.MethodPost, path, req)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return 0, fmt.Errorf("failed to join debug session: %w", err)
 	}
@@ -329,7 +325,7 @@ func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing
 
 	body, _ := io.ReadAll(resp.Body)
 	if t != nil {
-		t.Logf("JoinDebugSession: name=%s, role=%s, status=%d, body=%s", name, role, resp.StatusCode, string(body))
+		t.Logf("JoinDebugSession: name=%s, status=%d, body=%s", name, resp.StatusCode, string(body))
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -883,7 +879,6 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 	apiClient := NewDebugSessionAPIClient(token)
 	var createdSessionName string
-	namespace := helpers.GetTestNamespace()
 
 	t.Run("CreateDebugSession", func(t *testing.T) {
 		req := DebugSessionCreateRequest{
@@ -906,7 +901,7 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 		// Add to cleanup - create a reference for later deletion
 		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: createdSessionName, Namespace: namespace},
+			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: session.UID},
 		})
 	})
 
@@ -964,7 +959,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
-						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
+						{Name: "debug", Image: helpers.GetTmuxDebugImage(), ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}},
 					},
 					RestartPolicy: corev1.RestartPolicyAlways,
 				},
@@ -1010,8 +1005,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	cleanup.Add(binding)
 	require.NoError(t, cli.Create(ctx, binding))
 
-	namespace := helpers.GetTestNamespace()
-
 	// Create test context for authenticated API clients
 	tc := helpers.NewTestContext(t, ctx).WithClient(cli, helpers.GetTestNamespace())
 	requesterToken := tc.OIDCProvider().GetToken(t, ctx, helpers.TestUsers.DebugSessionRequester.Username, helpers.TestUsers.DebugSessionRequester.Password)
@@ -1024,7 +1017,6 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Join-Leave test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
@@ -1044,7 +1036,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	sessionName := session.Name
 
 	t.Run("JoinAsViewer", func(t *testing.T) {
-		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "viewer")
+		status, err := approverClient.JoinDebugSession(ctx, t, sessionName)
 		// Note: Join might fail if session isn't fully active or user isn't in invited list
 		t.Logf("Join as viewer: status=%d, err=%v", status, err)
 		// Accept either success or forbidden (depending on whether invites are required)
@@ -1054,10 +1046,10 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 
 	t.Run("JoinSameUserTwiceShouldFail", func(t *testing.T) {
 		// First join
-		status1, _ := requesterClient.JoinDebugSession(ctx, t, sessionName, "participant")
+		status1, _ := requesterClient.JoinDebugSession(ctx, t, sessionName)
 
 		// Second join attempt
-		status2, err := requesterClient.JoinDebugSession(ctx, t, sessionName, "participant")
+		status2, err := requesterClient.JoinDebugSession(ctx, t, sessionName)
 		if status1 == http.StatusOK {
 			// If first join succeeded, second should conflict
 			assert.Equal(t, http.StatusConflict, status2, "Duplicate join should return 409 Conflict: %v", err)
@@ -1073,7 +1065,7 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 	})
 
 	t.Run("JoinNonExistentSession", func(t *testing.T) {
-		status, _ := requesterClient.JoinDebugSession(ctx, t, "nonexistent-session-xyz", "viewer")
+		status, _ := requesterClient.JoinDebugSession(ctx, t, "nonexistent-session-xyz")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 Not Found")
 	})
 }
@@ -1159,7 +1151,6 @@ func TestDebugSessionAPITerminate(t *testing.T) {
 	session, err := tc.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Termination test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
@@ -1914,7 +1905,7 @@ func TestDebugSessionEdgeCasesAndErrors(t *testing.T) {
 	})
 
 	t.Run("JoinNonExistentSession", func(t *testing.T) {
-		status, err := apiClient.JoinDebugSession(ctx, t, "nonexistent-session-xyz", "viewer")
+		status, err := apiClient.JoinDebugSession(ctx, t, "nonexistent-session-xyz")
 		// API client returns error for non-200 responses; validate status code is returned
 		require.Error(t, err, "Should return error for nonexistent session")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
@@ -2125,8 +2116,8 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		time.Sleep(helpers.CachePropagationDelay)
 		updatedSession, err := requesterClient.GetDebugSession(ctx, t, session.Name)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State,
-			"Session should be terminated after rejection")
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updatedSession.Status.State,
+			"Session should be rejected after rejection")
 	})
 
 	t.Run("ApproveNonPendingSession", func(t *testing.T) {
@@ -2509,11 +2500,12 @@ func TestDebugSessionAPIListFiltering(t *testing.T) {
 
 // InjectEphemeralContainerRequest represents the request to inject an ephemeral container
 type InjectEphemeralContainerRequest struct {
-	Namespace     string   `json:"namespace"`
-	PodName       string   `json:"podName"`
-	ContainerName string   `json:"containerName"`
-	Image         string   `json:"image"`
-	Command       []string `json:"command,omitempty"`
+	Namespace       string                  `json:"namespace"`
+	PodName         string                  `json:"podName"`
+	ContainerName   string                  `json:"containerName"`
+	Image           string                  `json:"image"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // CreatePodCopyRequest represents the request to create a debug copy of a pod
@@ -2766,11 +2758,15 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 	})
 
 	t.Run("InjectEphemeralContainerNonExistentPod", func(t *testing.T) {
+		runAsNonRoot := true
 		reqBody := InjectEphemeralContainerRequest{
 			Namespace:     "default",
 			PodName:       "nonexistent-pod-xyz",
 			ContainerName: "debug",
 			Image:         "busybox:latest",
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot: &runAsNonRoot,
+			},
 		}
 		status, err := apiClient.InjectEphemeralContainer(ctx, t, sessionName, reqBody)
 		// Should fail because pod doesn't exist
@@ -2821,11 +2817,9 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 			NodeName: "nonexistent-node-xyz",
 		}
 		status, _, err := apiClient.CreateNodeDebugPod(ctx, t, sessionName, reqBody)
-		// The API creates the pod successfully; Kubernetes scheduler will fail to place it
-		// on the nonexistent node later. The API doesn't validate node existence upfront.
-		require.NoError(t, err)
-		assert.Equal(t, http.StatusOK, status)
-		t.Logf("CreateNodeDebugPod with nonexistent node: status=%d (pod created, will fail to schedule)", status)
+		require.Error(t, err)
+		assert.NotEqual(t, http.StatusOK, status)
+		t.Logf("CreateNodeDebugPod with nonexistent node correctly rejected: status=%d", status)
 	})
 
 	t.Run("KubectlDebugWithoutAuth", func(t *testing.T) {
@@ -3014,7 +3008,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 			Template: &breakglassv1alpha1.DebugPodSpec{
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
-						{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}},
+						{Name: "debug", Image: helpers.GetTmuxDebugImage(), ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"sleep", "infinity"}},
 					},
 				},
 			},
@@ -3092,24 +3086,18 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 
 	sessionName := session.Name
 
-	t.Run("JoinAsParticipant", func(t *testing.T) {
-		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "participant")
+	t.Run("JoinAsViewer", func(t *testing.T) {
+		status, err := approverClient.JoinDebugSession(ctx, t, sessionName)
 		// May succeed or fail depending on whether invites are required
-		t.Logf("Join as participant: status=%d, err=%v", status, err)
+		t.Logf("Join as viewer: status=%d, err=%v", status, err)
 		assert.True(t, status == http.StatusOK || status == http.StatusForbidden,
-			"Join as participant should return 200 or 403")
+			"Join as viewer should return 200 or 403")
 	})
 
 	t.Run("LeaveAfterJoin", func(t *testing.T) {
 		// Leave the session
 		status, err := approverClient.LeaveDebugSession(ctx, t, sessionName)
 		t.Logf("Leave after join: status=%d, err=%v", status, err)
-	})
-
-	t.Run("JoinWithInvalidRole", func(t *testing.T) {
-		status, err := approverClient.JoinDebugSession(ctx, t, sessionName, "invalid-role")
-		t.Logf("Join with invalid role: status=%d, err=%v", status, err)
-		// Should either reject invalid role or default to viewer
 	})
 
 	t.Run("LeaveSessionNotJoined", func(t *testing.T) {
@@ -3150,7 +3138,7 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 		time.Sleep(helpers.CachePropagationDelay)
 
 		// Try to join terminated session
-		status, err := approverClient.JoinDebugSession(ctx, t, terminatedSession.Name, "viewer")
+		status, err := approverClient.JoinDebugSession(ctx, t, terminatedSession.Name)
 		t.Logf("Join terminated session: status=%d, err=%v", status, err)
 		assert.True(t, status == http.StatusBadRequest || status == http.StatusForbidden || status == http.StatusNotFound,
 			"Should not be able to join terminated session")
@@ -3160,6 +3148,24 @@ func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
 // =============================================================================
 // RENEWAL PERMUTATION TESTS
 // =============================================================================
+
+// registerDebugSessionSubtestCleanup deletes one exact session before the next
+// sibling creates another session on the shared template.
+func registerDebugSessionSubtestCleanup(t *testing.T, cli ctrlclient.Client, session *breakglassv1alpha1.DebugSession) {
+	t.Helper()
+	t.Cleanup(func() {
+		if os.Getenv("E2E_SKIP_CLEANUP") == "true" || (os.Getenv("E2E_SKIP_CLEANUP_ON_FAILURE") == "true" && t.Failed()) {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), helpers.WaitForConditionTimeout)
+		defer cancel()
+		key := types.NamespacedName{Name: session.Name, Namespace: session.Namespace}
+		uid := session.UID
+		obj := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: uid}}
+		require.NoError(t, ctrlclient.IgnoreNotFound(cli.Delete(cleanupCtx, obj, ctrlclient.Preconditions{UID: &uid})))
+		require.NoError(t, helpers.WaitForResourceDeleted(cleanupCtx, cli, key, &breakglassv1alpha1.DebugSession{}, helpers.WaitForConditionTimeout))
+	})
+}
 
 // TestDebugSessionAPIRenewalPermutations tests various renewal scenarios
 func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
@@ -3258,9 +3264,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3325,9 +3329,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to be pending approval
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3351,9 +3353,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active then terminate
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3382,9 +3382,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for session to become active
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3406,9 +3404,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
@@ -3428,9 +3424,7 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
@@ -3966,9 +3960,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -3991,9 +3983,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4023,9 +4013,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval and approve
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4055,9 +4043,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Wait for pending approval state
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
@@ -4081,9 +4067,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Client with invalid/empty token
 		unauthClient := NewDebugSessionAPIClient("")
@@ -4106,9 +4090,7 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, session)
 
-		cleanup.Add(&breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace},
-		})
+		registerDebugSessionSubtestCleanup(t, cli, session)
 
 		// Approver should be able to view the session
 		viewedSession, err := approverClient.GetDebugSession(ctx, t, session.Name)

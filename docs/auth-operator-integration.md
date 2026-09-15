@@ -56,8 +56,12 @@ Kubernetes evaluates authorizers in the order defined in
 
 ### Webhook Configuration
 
+The structured configuration below targets Kubernetes 1.34 and later. Positive
+authorization responses must not be cached because a session grant ends at its
+exact `expiresAt` boundary.
+
 ```yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -68,11 +72,21 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
+      subjectAccessReviewVersion: v1
       failurePolicy: Deny  # Deny on webhook failure (recommended for security)
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook.kubeconfig
 ```
+
+For older Kubernetes clusters, use legacy webhook mode
+(`--authorization-mode=Node,RBAC,Webhook`) with the webhook kubeconfig and
+set `--authorization-webhook-cache-authorized-ttl=0s` and
+`--authorization-webhook-cache-unauthorized-ttl=0s` instead of the structured
+cache field.
 
 See [Webhook Setup](webhook-setup.md) for the full setup procedure.
 

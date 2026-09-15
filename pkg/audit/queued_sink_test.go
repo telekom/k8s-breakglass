@@ -39,6 +39,9 @@ type queuedMockSink struct {
 	failCount    int
 	writeDelay   time.Duration
 	writtenCount atomic.Int64
+	blockFirst   <-chan struct{}
+	firstStarted chan<- struct{}
+	writeCount   atomic.Int64
 }
 
 func newQueuedMockSink(name string) *queuedMockSink {
@@ -49,6 +52,12 @@ func newQueuedMockSink(name string) *queuedMockSink {
 }
 
 func (s *queuedMockSink) Write(_ context.Context, event *Event) error {
+	if s.writeCount.Add(1) == 1 && s.blockFirst != nil {
+		if s.firstStarted != nil {
+			close(s.firstStarted)
+		}
+		<-s.blockFirst
+	}
 	if s.writeDelay > 0 {
 		time.Sleep(s.writeDelay)
 	}
@@ -123,6 +132,94 @@ func TestQueuedSink_BasicOperation(t *testing.T) {
 	assert.False(t, health.CircuitOpen)
 }
 
+func TestIsolatedMultiSink_PropagatesSensitiveWriteFailure(t *testing.T) {
+	failing := newQueuedMockSink("failing")
+	failing.alwaysFail = true
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	failing.blockFirst = releaseFirst
+	failing.firstStarted = firstStarted
+	ims := NewIsolatedMultiSink([]Sink{failing}, QueuedSinkConfig{
+		QueueSize: 1, WorkerCount: 1, WriteTimeout: time.Second,
+	}, zap.NewNop())
+	defer func() { _ = ims.Close() }()
+
+	// Force the per-sink queue-full fallback, which is the only synchronous
+	// delivery path available to a sensitive event.
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceGet}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first event was not queued")
+	require.Eventually(t, func() bool {
+		select {
+		case <-firstStarted:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first sink write did not start")
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceList}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "second event was not queued")
+	err := ims.Write(context.Background(), &Event{Type: EventSessionRevoked})
+	assert.Error(t, err)
+	close(releaseFirst)
+}
+
+func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing.T) {
+	failing := newQueuedMockSink("failing")
+	failing.alwaysFail = true
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	failing.blockFirst = releaseFirst
+	failing.firstStarted = firstStarted
+	ims := NewIsolatedMultiSink([]Sink{failing}, QueuedSinkConfig{
+		QueueSize: 1, WorkerCount: 1, WriteTimeout: time.Second,
+	}, zap.NewNop())
+	defer func() { _ = ims.Close() }()
+
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceGet}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first event was not queued")
+	require.Eventually(t, func() bool {
+		select {
+		case <-firstStarted:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "first sink write did not start")
+	require.Eventually(t, func() bool {
+		select {
+		case ims.sinks[0].queue <- &Event{Type: EventResourceList}:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond, "second event was not queued")
+
+	err := ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionValidated}})
+	assert.NoError(t, err)
+
+	err = ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionRevoked}})
+	assert.Error(t, err)
+	close(releaseFirst)
+}
+
 func TestQueuedSink_QueueOverflow(t *testing.T) {
 	logger := zap.NewNop()
 	mock := newQueuedMockSink("slow-sink")
@@ -142,7 +239,7 @@ func TestQueuedSink_QueueOverflow(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		event := &Event{
 			ID:   "flood-" + string(rune('0'+i)),
-			Type: EventSessionRequested,
+			Type: EventHealthCheck,
 		}
 		_ = qs.Write(ctx, event)
 	}
@@ -181,27 +278,20 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 		_ = qs.Write(ctx, event)
 	}
 
-	// Wait for processing and circuit to open
-	time.Sleep(200 * time.Millisecond)
-
-	// Circuit should be open
-	health := qs.Health()
-	assert.True(t, health.CircuitOpen, "Circuit breaker should be open after failures")
-	assert.GreaterOrEqual(t, health.ConsecutiveFails, 3)
-
-	// Wait for reset time and send another event
-	time.Sleep(150 * time.Millisecond)
+	// Wait for processing and circuit to open.
+	require.Eventually(t, func() bool {
+		health := qs.Health()
+		return health.CircuitOpen && health.ConsecutiveFails >= 3
+	}, 5*time.Second, 10*time.Millisecond, "circuit breaker should open after failures")
 
 	// Now allow writes to succeed
 	mock.failAfter = 1000 // Won't fail anymore
 
-	// Write should attempt to close circuit
-	_ = qs.Write(ctx, &Event{ID: "retry", Type: EventSessionRequested})
-	time.Sleep(100 * time.Millisecond)
-
-	health = qs.Health()
-	// Circuit should be attempting to close or closed
-	// (may vary based on timing)
+	// Keep attempting the write until the reset closes the circuit.
+	require.Eventually(t, func() bool {
+		_ = qs.Write(ctx, &Event{ID: "retry", Type: EventSessionRequested})
+		return !qs.Health().CircuitOpen
+	}, 5*time.Second, 10*time.Millisecond, "circuit breaker should reset")
 }
 
 func TestIsolatedMultiSink_Independence(t *testing.T) {
@@ -314,4 +404,91 @@ func TestQueuedSink_Name(t *testing.T) {
 	defer func() { _ = qs.Close() }()
 
 	assert.Equal(t, "test-sink", qs.Name())
+}
+
+// circuitOpenSink always returns ErrCircuitOpen from Write, which drives the
+// requeue branch of processQueue.
+type circuitOpenSink struct {
+	name  string
+	calls atomic.Int64
+}
+
+func (s *circuitOpenSink) Write(_ context.Context, _ *Event) error {
+	s.calls.Add(1)
+	return ErrCircuitOpen
+}
+
+func (s *circuitOpenSink) Close() error { return nil }
+
+func (s *circuitOpenSink) Name() string { return s.name }
+
+// TestQueuedSink_CloseDuringCircuitOpenRequeue is a regression test for the
+// "send on closed channel" panic (#053). When the underlying sink returns
+// ErrCircuitOpen the worker requeues the event; that requeue used to happen in
+// an untracked goroutine, so Close() could close qs.queue while the send was
+// still pending, panicking the process unrecoverably.
+//
+// The panic surfaces as a process-level crash (not a recovered panic), so this
+// test drives many concurrent Write/requeue cycles against a Close to make the
+// window reliably reachable. Run with -race.
+func TestQueuedSink_CloseDuringCircuitOpenRequeue(t *testing.T) {
+	for iteration := 0; iteration < 50; iteration++ {
+		sink := &circuitOpenSink{name: "circuit-open"}
+		cfg := QueuedSinkConfig{
+			// Small queue so the requeue contends for space and workers keep
+			// cycling the same events.
+			QueueSize:               4,
+			WorkerCount:             4,
+			WriteTimeout:            time.Second,
+			DropOnFull:              true,
+			CircuitBreakerThreshold: 1_000_000, // never open our own breaker
+			CircuitBreakerResetTime: time.Hour,
+		}
+		qs := NewQueuedSink(sink, cfg, zap.NewNop())
+
+		var producers sync.WaitGroup
+		stop := make(chan struct{})
+		for p := 0; p < 4; p++ {
+			producers.Add(1)
+			go func() {
+				defer producers.Done()
+				for {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					// EventSessionValidated is non-sensitive, so a full queue
+					// drops rather than writing synchronously.
+					_ = qs.Write(context.Background(), &Event{
+						ID:   "e",
+						Type: EventSessionValidated,
+					})
+				}
+			}()
+		}
+
+		// Let the workers start cycling events through the requeue branch.
+		for sink.calls.Load() < 4 {
+			time.Sleep(time.Millisecond)
+		}
+
+		// Close concurrently with in-flight requeues. Before the fix this
+		// panics with "send on closed channel".
+		require.NoError(t, qs.Close())
+		close(stop)
+		producers.Wait()
+	}
+}
+
+// TestQueuedSink_WriteAfterCloseReturnsError asserts that a Write racing with
+// Close never panics and reports the closed sink instead.
+func TestQueuedSink_WriteAfterCloseReturnsError(t *testing.T) {
+	sink := newQueuedMockSink("late-write")
+	qs := NewQueuedSink(sink, DefaultQueuedSinkConfig(), zap.NewNop())
+	require.NoError(t, qs.Close())
+
+	err := qs.Write(context.Background(), &Event{ID: "after-close", Type: EventSessionValidated})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "is closed")
 }

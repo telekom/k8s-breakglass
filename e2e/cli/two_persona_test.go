@@ -176,12 +176,12 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 				switch s.Status.State {
 				case breakglassv1alpha1.SessionStateApproved:
 					t.Logf("Dropping existing approved session: %s", s.Name)
-					if _, err := runAsRequester("session", "drop", s.Name); err != nil {
+					if _, err := runAsRequester("session", "drop", s.Name, "--yes"); err != nil {
 						t.Logf("Warning: Failed to drop session %s: %v", s.Name, err)
 					}
 				case breakglassv1alpha1.SessionStatePending:
 					t.Logf("Withdrawing existing pending session: %s", s.Name)
-					if _, err := runAsRequester("session", "withdraw", s.Name); err != nil {
+					if _, err := runAsRequester("session", "withdraw", s.Name, "--yes"); err != nil {
 						t.Logf("Warning: Failed to withdraw session %s: %v", s.Name, err)
 					}
 				default:
@@ -339,7 +339,7 @@ func TestTwoPersonaGoFlow(t *testing.T) {
 		t.Run("DropApprovedSession", func(t *testing.T) {
 			require.NotEmpty(t, sessionName, "Session must be created first")
 
-			output, err := runAsRequester("session", "drop", sessionName)
+			output, err := runAsRequester("session", "drop", sessionName, "--yes")
 			if err != nil {
 				t.Logf("Drop session result (may be expected to fail): %v, output: %s", err, output)
 			} else {

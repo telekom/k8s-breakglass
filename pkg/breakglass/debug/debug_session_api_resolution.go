@@ -2,7 +2,6 @@ package debug
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -82,57 +81,43 @@ func buildConstraintsSummary(sc *breakglassv1alpha1.SchedulingConstraints) *Sche
 	return summary
 }
 
-// resolveSchedulingOptions resolves scheduling options from binding or template
-func (c *DebugSessionAPIController) resolveSchedulingOptions(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *SchedulingOptionsResponse {
+func (c *DebugSessionAPIController) resolveSchedulingOptionsForRequester(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, requester debugTemplateRequester) *SchedulingOptionsResponse {
 	var so *breakglassv1alpha1.SchedulingOptions
 
-	// Binding options take precedence
 	if binding != nil && binding.Spec.SchedulingOptions != nil {
 		so = binding.Spec.SchedulingOptions
 	} else if template.Spec.SchedulingOptions != nil {
 		so = template.Spec.SchedulingOptions
 	}
 
-	if so == nil {
-		return nil
-	}
-
-	response := &SchedulingOptionsResponse{
-		Required: so.Required,
-		Options:  make([]SchedulingOptionResponse, 0, len(so.Options)),
-	}
-
-	for _, opt := range so.Options {
-		response.Options = append(response.Options, SchedulingOptionResponse{
-			Name:                  opt.Name,
-			DisplayName:           opt.DisplayName,
-			Description:           opt.Description,
-			Default:               opt.Default,
-			SchedulingConstraints: buildConstraintsSummary(opt.SchedulingConstraints),
-		})
-	}
-
-	return response
+	return buildSchedulingOptionsResponseForRequester(so, requester)
 }
 
-// resolveNamespaceConstraints resolves namespace constraints from binding or template
+// resolveNamespaceConstraints builds API-visible namespace constraint hints.
+// Runtime validation still checks template and binding constraints separately;
+// response allow filters are only surfaced when they are safe static hints.
 func (c *DebugSessionAPIController) resolveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *NamespaceConstraintsResponse {
-	var nc *breakglassv1alpha1.NamespaceConstraints
-
-	// Binding constraints take precedence
-	if binding != nil && binding.Spec.NamespaceConstraints != nil {
-		nc = binding.Spec.NamespaceConstraints
-	} else if template.Spec.NamespaceConstraints != nil {
-		nc = template.Spec.NamespaceConstraints
+	var bindingConstraints *breakglassv1alpha1.NamespaceConstraints
+	if binding != nil {
+		bindingConstraints = binding.Spec.NamespaceConstraints
 	}
-
+	nc := c.mergeNamespaceConstraints(template.Spec.NamespaceConstraints, bindingConstraints)
 	if nc == nil {
 		return nil
 	}
+	if template.Spec.NamespaceConstraints != nil && bindingConstraints != nil {
+		nc = nc.DeepCopy()
+		nc.AllowedNamespaces = mergeAllowedNamespaceFiltersForResponse(
+			template.Spec.NamespaceConstraints.AllowedNamespaces,
+			bindingConstraints.AllowedNamespaces,
+		)
+	}
 
 	response := &NamespaceConstraintsResponse{
-		DefaultNamespace:   nc.DefaultNamespace,
-		AllowUserNamespace: nc.AllowUserNamespace,
+		DefaultNamespace: nc.DefaultNamespace,
+		// denyUserNamespace narrows, so it wins over allowUserNamespace in the
+		// hint surfaced to clients.
+		AllowUserNamespace: nc.AllowUserNamespace && !nc.DenyUserNamespace,
 	}
 
 	if nc.AllowedNamespaces != nil {
@@ -180,25 +165,16 @@ func (c *DebugSessionAPIController) resolveImpersonation(template *breakglassv1a
 func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, userGroups []string) *ApprovalInfo {
 	info := &ApprovalInfo{}
 
-	var autoApproveFor *breakglassv1alpha1.AutoApproveConfig
-
-	// Check binding approvers first
-	if binding != nil && binding.Spec.Approvers != nil {
-		info.Required = len(binding.Spec.Approvers.Groups) > 0 || len(binding.Spec.Approvers.Users) > 0
-		info.ApproverGroups = binding.Spec.Approvers.Groups
-		info.ApproverUsers = binding.Spec.Approvers.Users
-		autoApproveFor = binding.Spec.Approvers.AutoApproveFor
-	} else if template.Spec.Approvers != nil {
-		// Check template approvers
-		info.Required = len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0
-		info.ApproverGroups = template.Spec.Approvers.Groups
-		info.ApproverUsers = template.Spec.Approvers.Users
-		autoApproveFor = template.Spec.Approvers.AutoApproveFor
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if debugSessionApproversConfigured(approvers) {
+		info.Required = true
+		info.ApproverGroups = approvers.Groups
+		info.ApproverUsers = approvers.Users
 	}
 
 	// Evaluate auto-approve conditions if approval is required
-	if info.Required && autoApproveFor != nil {
-		info.CanAutoApprove = c.evaluateAutoApprove(autoApproveFor, cc.Name, userGroups)
+	if info.Required && approvers.AutoApproveFor != nil {
+		info.CanAutoApprove = c.evaluateAutoApprove(approvers.AutoApproveFor, cc.Name, userGroups)
 	}
 
 	return info
@@ -207,6 +183,14 @@ func (c *DebugSessionAPIController) resolveApproval(template *breakglassv1alpha1
 // evaluateAutoApprove checks if auto-approve conditions are met for the given cluster and user groups.
 // This mirrors the reconciler's checkAutoApprove() logic for API preview purposes.
 func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *breakglassv1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+	return debugSessionAutoApproveMatches(autoApprove, clusterName, userGroups)
+}
+
+func debugSessionAutoApproveMatches(autoApprove *breakglassv1alpha1.AutoApproveConfig, clusterName string, userGroups []string) bool {
+	if autoApprove == nil {
+		return false
+	}
+
 	// Check cluster patterns
 	for _, pattern := range autoApprove.Clusters {
 		if matched, _ := filepath.Match(pattern, clusterName); matched {
@@ -224,6 +208,16 @@ func (c *DebugSessionAPIController) evaluateAutoApprove(autoApprove *breakglassv
 	}
 
 	return false
+}
+
+func effectiveDebugSessionApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionApprovers {
+	if binding != nil && binding.Spec.Approvers != nil {
+		return binding.Spec.Approvers
+	}
+	if template != nil {
+		return template.Spec.Approvers
+	}
+	return nil
 }
 
 // resolveClusterStatus returns cluster health status
@@ -347,9 +341,10 @@ func (c *DebugSessionAPIController) resolveNotification(template *breakglassv1al
 type notificationEvent string
 
 const (
-	notificationEventRequest  notificationEvent = "request"
-	notificationEventApproval notificationEvent = "approval"
-	notificationEventExpiry   notificationEvent = "expiry"
+	notificationEventRequest     notificationEvent = "request"
+	notificationEventApproval    notificationEvent = "approval"
+	notificationEventExpiry      notificationEvent = "expiry"
+	notificationEventTermination notificationEvent = "termination"
 )
 
 func resolveNotificationConfig(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.DebugSessionNotificationConfig {
@@ -373,9 +368,33 @@ func shouldSendNotification(cfg *breakglassv1alpha1.DebugSessionNotificationConf
 		return cfg.NotifyOnApproval
 	case notificationEventExpiry:
 		return cfg.NotifyOnExpiry
+	case notificationEventTermination:
+		return cfg.NotifyOnTermination
 	default:
 		return true
 	}
+}
+
+// notificationRecipients expands configured exclusions before mailbox filtering.
+// Unknown membership fails closed; group names must never be treated as addresses.
+func (c *DebugSessionAPIController) notificationRecipients(ctx context.Context, base []string, cfg *breakglassv1alpha1.DebugSessionNotificationConfig) []string {
+	if cfg != nil && cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Groups) > 0 {
+		if c.groupMemberResolver == nil {
+			c.log.Warn("Skipping debug notification because excluded group membership is unavailable")
+			return nil
+		}
+		cfg = cfg.DeepCopy()
+		for _, group := range cfg.ExcludedRecipients.Groups {
+			members, err := c.groupMemberResolver.Members(ctx, group)
+			if err != nil {
+				c.log.Warnw("Skipping debug notification because excluded group membership could not be resolved", "error", err)
+				return nil
+			}
+			cfg.ExcludedRecipients.Users = append(cfg.ExcludedRecipients.Users, members...)
+		}
+		cfg.ExcludedRecipients.Groups = nil
+	}
+	return buildNotificationRecipients(base, cfg)
 }
 
 func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSessionNotificationConfig) []string {
@@ -386,13 +405,15 @@ func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSes
 	seen := make(map[string]struct{}, len(base))
 	var recipients []string
 	add := func(addr string) {
+		addr = strings.TrimSpace(addr)
 		if addr == "" {
 			return
 		}
-		if _, ok := seen[addr]; ok {
+		key := strings.ToLower(addr)
+		if _, ok := seen[key]; ok {
 			return
 		}
-		seen[addr] = struct{}{}
+		seen[key] = struct{}{}
 		recipients = append(recipients, addr)
 	}
 
@@ -400,17 +421,22 @@ func buildNotificationRecipients(base []string, cfg *breakglassv1alpha1.DebugSes
 		add(addr)
 	}
 	if cfg != nil {
+		// Group membership is not available at notification time. Fail closed
+		// rather than treating group names as mailbox addresses.
+		if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Groups) > 0 {
+			return nil
+		}
 		for _, addr := range cfg.AdditionalRecipients {
 			add(addr)
 		}
-		if cfg.ExcludedRecipients != nil && len(cfg.ExcludedRecipients.Users) > 0 {
-			excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users))
+		if cfg.ExcludedRecipients != nil {
+			excluded := make(map[string]struct{}, len(cfg.ExcludedRecipients.Users)+len(cfg.ExcludedRecipients.Groups))
 			for _, u := range cfg.ExcludedRecipients.Users {
-				excluded[u] = struct{}{}
+				excluded[strings.ToLower(strings.TrimSpace(u))] = struct{}{}
 			}
 			filtered := recipients[:0]
 			for _, addr := range recipients {
-				if _, blocked := excluded[addr]; blocked {
+				if _, blocked := excluded[strings.ToLower(addr)]; blocked {
 					continue
 				}
 				filtered = append(filtered, addr)
@@ -531,6 +557,30 @@ func (c *DebugSessionAPIController) handleGetPodTemplate(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, resp)
 }
 
+type debugSessionApprovalAuthorizer struct {
+	controller *DebugSessionAPIController
+	templates  map[string]debugSessionApprovalTemplateLookup
+	bindings   map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup
+}
+
+type debugSessionApprovalTemplateLookup struct {
+	template *breakglassv1alpha1.DebugSessionTemplate
+	err      error
+}
+
+type debugSessionApprovalBindingLookup struct {
+	binding *breakglassv1alpha1.DebugSessionClusterBinding
+	err     error
+}
+
+func (c *DebugSessionAPIController) newDebugSessionApprovalAuthorizer() *debugSessionApprovalAuthorizer {
+	return &debugSessionApprovalAuthorizer{
+		controller: c,
+		templates:  make(map[string]debugSessionApprovalTemplateLookup),
+		bindings:   make(map[ctrlclient.ObjectKey]debugSessionApprovalBindingLookup),
+	}
+}
+
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
 // The user must be in one of the approver groups/users defined in the session's template or binding.
 // Additionally, the requester of the session is not allowed to self-approve.
@@ -539,10 +589,23 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 }
 
 func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username, email string, userGroupsInterface interface{}) bool {
+	return c.newDebugSessionApprovalAuthorizer().isIdentityAuthorizedToApprove(ctx, session, debugSessionReadIdentity{
+		username: username,
+		email:    email,
+		groups:   debugSessionGroupsFromContext(userGroupsInterface),
+	})
+}
+
+func (c *DebugSessionAPIController) isIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	return c.newDebugSessionApprovalAuthorizer().isIdentityAuthorizedToApprove(ctx, session, identity)
+}
+
+func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	c := a.controller
 	// Block self-approval: the user who requested the session cannot approve it
-	if debugSessionRequesterMatches(session, username, email) {
+	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		c.log.Infow("Blocking self-approval attempt",
-			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail, "approver", username, "approverEmail", email)
+			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail, "approver", identity.username, "approverEmail", identity.email)
 		return false
 	}
 
@@ -551,8 +614,8 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 	// happen to match the same template and cluster.
 	if session.Spec.BindingRef != nil {
 		key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
-		binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
-		if err := c.reader().Get(ctx, key, binding); err != nil {
+		binding, err := a.getBinding(ctx, key)
+		if err != nil {
 			c.log.Warnw("Could not fetch recorded binding while checking debug session approval authorization",
 				"session", session.Name, "binding", key.String(), "error", err)
 			return false
@@ -562,218 +625,124 @@ func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx contex
 				"session", session.Name, "binding", key.String())
 			return false
 		}
-		if debugSessionApproversConfigured(binding.Spec.Approvers) {
-			return c.checkApproverIdentityAuthorization(binding.Spec.Approvers, username, email, userGroupsInterface)
+		if binding.Spec.Approvers != nil {
+			return a.approverSetAuthorizes(session, binding.Spec.Approvers, identity, "binding")
 		}
 	}
 
 	// If template has no resolved approvers info in status, fall back to fetching template
 	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
 		// Fetch the template to check approvers
-		template := &breakglassv1alpha1.DebugSessionTemplate{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
+		template, err := a.getTemplate(ctx, session.Spec.TemplateRef)
+		if err != nil {
 			// If we can't fetch template, deny approval (fail closed for security)
 			c.log.Errorw("Could not fetch template to check approvers, denying approval",
 				"session", session.Name, "template", session.Spec.TemplateRef, "error", err)
 			return false
 		}
 
-		// If template has no approvers configured, allow any authenticated user
-		if template.Spec.Approvers == nil {
-			return true
-		}
-
-		return c.checkApproverIdentityAuthorization(template.Spec.Approvers, username, email, userGroupsInterface)
+		return a.approverSetAuthorizes(session, template.Spec.Approvers, identity, "template")
 	}
 
 	// Use resolved template from status
-	return c.checkApproverIdentityAuthorization(session.Status.ResolvedTemplate.Approvers, username, email, userGroupsInterface)
+	return a.approverSetAuthorizes(session, session.Status.ResolvedTemplate.Approvers, identity, "resolvedTemplate")
 }
 
-func debugSessionRequesterMatches(session *breakglassv1alpha1.DebugSession, username, email string) bool {
-	requesterIDs := []string{session.Spec.RequestedBy, session.Spec.RequestedByEmail}
-	callerIDs := []string{username, email}
-	for _, requesterID := range requesterIDs {
-		requesterID = strings.TrimSpace(requesterID)
-		if requesterID == "" {
-			continue
-		}
-		for _, callerID := range callerIDs {
-			callerID = strings.TrimSpace(callerID)
-			if callerID != "" && strings.EqualFold(requesterID, callerID) {
-				return true
-			}
-		}
+// approverSetAuthorizes decides whether identity may approve under the given
+// effective approver set.
+//
+// An absent or empty approver set is NOT an allow-all. Treating it as one made the
+// entire authenticated population an approver, which defeats four-eyes control.
+// The read authorizer has always guarded its approver checks with
+// debugSessionApproversConfigured (see isExplicitDebugSessionApprover); the approve
+// path simply did not apply the same predicate. It does now, so read and approve
+// agree on what "configured" means.
+//
+// This is not a lockout: the reconciler's requiresApproval() uses the same
+// predicate, so a session whose effective approver set is empty is auto-approved
+// and never enters PendingApproval -- and both the approve and reject endpoints
+// reject any session that is not PendingApproval. There is therefore no session
+// that was approvable before this change and is unapprovable after it.
+func (a *debugSessionApprovalAuthorizer) approverSetAuthorizes(
+	session *breakglassv1alpha1.DebugSession,
+	approvers *breakglassv1alpha1.DebugSessionApprovers,
+	identity debugSessionReadIdentity,
+	source string,
+) bool {
+	if !debugSessionApproversConfigured(approvers) {
+		a.controller.log.Infow(
+			"Denying debug session approval: no approvers configured, so no user is an approver",
+			"session", session.Name, "approverSource", source, "approver", identity.username)
+		return false
 	}
-	return false
+	return a.controller.checkApproverAuthorizationForIdentity(approvers, identity)
 }
 
-func (c *DebugSessionAPIController) checkApproverIdentityAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username, email string, userGroupsInterface interface{}) bool {
-	if c.checkApproverAuthorization(approvers, username, userGroupsInterface) {
+func (a *debugSessionApprovalAuthorizer) getBinding(ctx context.Context, key ctrlclient.ObjectKey) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	if lookup, ok := a.bindings[key]; ok {
+		return lookup.binding, lookup.err
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	err := a.controller.reader().Get(ctx, key, binding)
+	if err != nil {
+		a.bindings[key] = debugSessionApprovalBindingLookup{err: err}
+		return nil, err
+	}
+	a.bindings[key] = debugSessionApprovalBindingLookup{binding: binding}
+	return binding, nil
+}
+
+func (c *DebugSessionAPIController) checkApproverAuthorizationForIdentity(
+	approvers *breakglassv1alpha1.DebugSessionApprovers,
+	identity debugSessionReadIdentity,
+) bool {
+	if c.checkApproverAuthorization(approvers, identity.username, identity.groups) {
 		return true
 	}
-
-	if email == "" || strings.TrimSpace(username) == strings.TrimSpace(email) {
-		return false
-	}
-	return c.checkApproverAuthorization(approvers, email, userGroupsInterface)
+	return identity.email != "" &&
+		strings.TrimSpace(identity.email) != strings.TrimSpace(identity.username) &&
+		c.checkApproverAuthorization(approvers, identity.email, identity.groups)
 }
 
-func (c *DebugSessionAPIController) isProviderAwareBreakglassApprover(
+func (a *debugSessionApprovalAuthorizer) getTemplate(ctx context.Context, name string) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	if lookup, ok := a.templates[name]; ok {
+		return lookup.template, lookup.err
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	if err := a.controller.reader().Get(ctx, ctrlclient.ObjectKey{Name: name}, template); err != nil {
+		a.templates[name] = debugSessionApprovalTemplateLookup{err: err}
+		return nil, err
+	}
+	a.templates[name] = debugSessionApprovalTemplateLookup{template: template}
+	return template, nil
+}
+
+func (c *DebugSessionAPIController) canActOnDebugSessionApproval(
 	ctx context.Context,
-	authCtx *gin.Context,
 	session *breakglassv1alpha1.DebugSession,
-	username, email string,
-) (bool, error) {
-	providerName := authCtx.GetString("identity_provider_name")
-	if providerName == "" {
-		return false, nil
-	}
-	if !debugSessionProviderMatchesRequest(session, authCtx) {
-		return false, nil
-	}
-
-	var binding *breakglassv1alpha1.DebugSessionClusterBinding
-	if session.Spec.BindingRef != nil {
-		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
-		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{
-			Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace,
-		}, binding); err != nil {
-			return false, fmt.Errorf("fetch debug session binding: %w", err)
-		}
-
-		if !breakglass.IsBindingActive(binding) {
-			return false, nil
-		}
-	}
-
-	var template *breakglassv1alpha1.DebugSessionTemplate
-	approvers := (*breakglassv1alpha1.DebugSessionApprovers)(nil)
-	if binding != nil && debugSessionApproversConfigured(binding.Spec.Approvers) {
-		approvers = binding.Spec.Approvers
-	} else if session.Status.ResolvedTemplate != nil &&
-		debugSessionApproversConfigured(session.Status.ResolvedTemplate.Approvers) {
-		approvers = session.Status.ResolvedTemplate.Approvers
-	} else if session.Spec.TemplateRef != "" {
-		template = &breakglassv1alpha1.DebugSessionTemplate{}
-		if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
-			if apierrors.IsNotFound(err) {
-				return false, nil
-			}
-			return false, fmt.Errorf("fetch debug session template: %w", err)
-		}
-		approvers = template.Spec.Approvers
-	}
-	if !debugSessionApproversConfigured(approvers) {
-		return false, nil
-	}
-
-	allowed := (*breakglassv1alpha1.DebugSessionAllowed)(nil)
-	if binding != nil && binding.Spec.Allowed != nil &&
-		(len(binding.Spec.Allowed.Users) > 0 || len(binding.Spec.Allowed.Groups) > 0) {
-		allowed = binding.Spec.Allowed
-	}
-	if allowed == nil {
-		if template == nil && session.Spec.TemplateRef != "" {
-			template = &breakglassv1alpha1.DebugSessionTemplate{}
-			if err := c.reader().Get(ctx, ctrlclient.ObjectKey{Name: session.Spec.TemplateRef}, template); err != nil {
-				if apierrors.IsNotFound(err) {
-					return false, nil
-				}
-				return false, fmt.Errorf("fetch debug session template: %w", err)
-			}
-		}
-		if template != nil {
-			allowed = template.Spec.Allowed
-		}
-	}
-
-	allowedGroups := map[string]struct{}{}
-	if allowed != nil {
-		for _, group := range allowed.Groups {
-			allowedGroups[group] = struct{}{}
-		}
-	}
-	if len(allowedGroups) == 0 {
-		return false, nil
-	}
-
-	escalations := &breakglassv1alpha1.BreakglassEscalationList{}
-	if err := c.reader().List(ctx, escalations); err != nil {
-		return false, fmt.Errorf("list Breakglass escalations: %w", err)
-	}
-	for i := range escalations.Items {
-		escalation := &escalations.Items[i]
-		if _, ok := allowedGroups[escalation.Spec.EscalatedGroup]; !ok ||
-			!escalationAllowsCluster(escalation, session.Spec.Cluster) {
-			continue
-		}
-		providers := escalation.Spec.AllowedIdentityProvidersForApprovers
-		if len(providers) == 0 {
-			providers = escalation.Spec.AllowedIdentityProviders
-		}
-		if len(providers) == 0 || !stringSliceContains(providers, providerName) {
-			continue
-		}
-		for _, approverGroup := range approvers.Groups {
-			if !stringSliceContains(escalation.Spec.Approvers.Groups, approverGroup) {
-				continue
-			}
-			for _, member := range escalation.Status.ApproverGroupMembers[approverGroup] {
-				if member == username || (email != "" && member == email) {
-					return true, nil
-				}
-			}
-		}
-	}
-	return false, nil
-}
-
-func debugSessionProviderMatchesRequest(session *breakglassv1alpha1.DebugSession, authCtx *gin.Context) bool {
-	if session == nil || authCtx == nil || session.Annotations == nil {
+	identity debugSessionReadIdentity,
+	authorizer *debugSessionApprovalAuthorizer,
+) bool {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		return false
 	}
-	providerName := strings.TrimSpace(authCtx.GetString("identity_provider_name"))
-	requestProvider := strings.TrimSpace(session.Annotations[debugSessionIdentityProviderAnnotation])
-	if providerName == "" || requestProvider == "" || providerName != requestProvider {
+	if identity.username == "" {
 		return false
 	}
-	requestIssuer := strings.TrimRight(strings.TrimSpace(session.Annotations[debugSessionIdentityIssuerAnnotation]), "/")
-	issuer := strings.TrimRight(strings.TrimSpace(authCtx.GetString("issuer")), "/")
-	return requestIssuer != "" && issuer != "" && issuer == requestIssuer
-}
-
-func debugSessionProviderProvenanceMissing(session *breakglassv1alpha1.DebugSession, authCtx *gin.Context) bool {
-	return authCtx != nil &&
-		strings.TrimSpace(authCtx.GetString("identity_provider_name")) != "" &&
-		(session == nil || session.Annotations == nil ||
-			strings.TrimSpace(session.Annotations[debugSessionIdentityProviderAnnotation]) == "" ||
-			strings.TrimRight(strings.TrimSpace(session.Annotations[debugSessionIdentityIssuerAnnotation]), "/") == "")
-}
-
-func escalationAllowsCluster(escalation *breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
-	for _, allowed := range escalation.Spec.Allowed.Clusters {
-		if allowed == cluster {
-			return true
-		}
+	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		return false
 	}
-	return false
-}
-
-func stringSliceContains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
+	if authorizer == nil {
+		authorizer = c.newDebugSessionApprovalAuthorizer()
 	}
-	return false
+	return authorizer.isIdentityAuthorizedToApprove(ctx, session, identity)
 }
 
 // checkApproverAuthorization checks if user is in the approved users/groups
 func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakglassv1alpha1.DebugSessionApprovers, username string, userGroupsInterface interface{}) bool {
 	// Check if user is in allowed users list
 	for _, allowedUser := range approvers.Users {
-		if matchPattern(allowedUser, username) {
+		if matchApproverUser(allowedUser, username) {
 			return true
 		}
 	}
@@ -801,12 +770,16 @@ func (c *DebugSessionAPIController) checkApproverAuthorization(approvers *breakg
 		}
 	}
 
-	// If no approvers defined at all, allow any authenticated user
-	if len(approvers.Users) == 0 && len(approvers.Groups) == 0 {
-		return true
-	}
-
 	return false
+}
+
+func matchApproverUser(pattern, username string) bool {
+	pattern = strings.TrimSpace(pattern)
+	username = strings.TrimSpace(username)
+	if strings.ContainsAny(pattern, "*?[") {
+		return matchPattern(pattern, username)
+	}
+	return strings.EqualFold(pattern, username)
 }
 
 // matchPattern checks if a string matches a glob pattern.
@@ -857,5 +830,5 @@ func convertSelectorTerms(terms []breakglassv1alpha1.NamespaceSelectorTerm) []Na
 
 // resolveTargetNamespace validates and resolves the target namespace for debug pods.
 // Returns the resolved namespace or an error if the requested namespace is not allowed.
-// If a binding is provided and has namespace constraints, those constraints are used to extend
-// or override the template's constraints (e.g., binding.AllowUserNamespace=true overrides template's false).
+// If a binding is provided and has namespace constraints, those constraints are enforced in
+// addition to the template's constraints and cannot widen the template boundary.

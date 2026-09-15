@@ -9,6 +9,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -322,9 +323,9 @@ func TestDebugSessionJoinCommand_DefaultsToViewerRole(t *testing.T) {
 		require.Equal(t, "/api/debugSessions/debug-session-1/join", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
 
-		var req client.JoinDebugSessionRequest
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
-		assert.Equal(t, "viewer", req.Role)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Empty(t, body)
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(client.DebugSessionDetailResponse{

@@ -72,6 +72,10 @@ type KafkaSinkConfig struct {
 	// Default: -1 (all replicas)
 	RequiredAcks int
 
+	// RequiredAcksSet distinguishes an explicit zero value from an omitted
+	// runtime config value.
+	RequiredAcksSet bool
+
 	// Async enables asynchronous writes (fire-and-forget).
 	// Default: false
 	Async bool
@@ -186,7 +190,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	}
 
 	requiredAcks := cfg.RequiredAcks
-	if requiredAcks == 0 {
+	if requiredAcks == 0 && !cfg.RequiredAcksSet {
 		requiredAcks = -1 // Default to all replicas
 	}
 

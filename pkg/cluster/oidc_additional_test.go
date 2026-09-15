@@ -29,6 +29,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -620,7 +621,7 @@ func TestOIDCTokenProvider_PersistTOFUCA_DefaultKey(t *testing.T) {
 	secretRef := &breakglassv1alpha1.SecretKeyReference{
 		Name:      "ca-secret",
 		Namespace: "default",
-		// Key not specified - should default to "ca.crt"
+		// Key not specified - should default to breakglassv1alpha1.DefaultCASecretKey
 	}
 	caPEM := []byte("-----BEGIN CERTIFICATE-----\ntest\n-----END CERTIFICATE-----")
 
@@ -788,6 +789,33 @@ func TestOIDCTokenProvider_CreateOIDCHTTPClient_InsecureSkipVerify(t *testing.T)
 	require.NotNil(t, transport.TLSClientConfig)
 	assert.True(t, transport.TLSClientConfig.InsecureSkipVerify)
 	assert.Equal(t, uint16(tls.VersionTLS12), transport.TLSClientConfig.MinVersion)
+	assert.ErrorIs(t, httpClient.CheckRedirect(nil, nil), http.ErrUseLastResponse)
+}
+
+func TestOIDCTokenProvider_HTTPClientDoesNotReplayCredentialsOn308(t *testing.T) {
+	var redirected bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		redirected = true
+	}))
+	defer target.Close()
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL, http.StatusPermanentRedirect)
+	}))
+	defer source.Close()
+
+	provider := NewOIDCTokenProvider(fake.NewClientBuilder().Build(), zap.NewNop().Sugar())
+	client, err := provider.createOIDCHTTPClient(&breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL:             source.URL,
+		InsecureSkipTLSVerify: true,
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, source.URL, strings.NewReader("client_secret=must-stay-here"))
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusPermanentRedirect, resp.StatusCode)
+	assert.False(t, redirected)
 }
 
 func TestOIDCTokenProvider_CreateOIDCHTTPClient_WithCertificateAuthority(t *testing.T) {
@@ -924,7 +952,9 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 
 	caSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "cluster-ca", Namespace: "default"},
-		Data:       map[string][]byte{"value": caPEM}, // Default key is "value"
+		// "value" is the LEGACY default read key. Kept here on purpose: it proves
+		// the legacy-key fallback still honours CAs pinned by older releases.
+		Data: map[string][]byte{breakglassv1alpha1.LegacyCASecretKey: caPEM},
 	}
 
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
@@ -936,7 +966,7 @@ func TestOIDCTokenProvider_ConfigureTLS_CASecretDefaultKey(t *testing.T) {
 		Server: "https://api.example.com:6443",
 		CASecretRef: &breakglassv1alpha1.SecretKeyReference{
 			Name: "cluster-ca", Namespace: "default",
-			// Key not specified - should default to "value"
+			// Key not specified — resolves to "ca.crt", then falls back to "value".
 		},
 	}
 
@@ -1212,6 +1242,80 @@ func TestOIDCTokenProvider_DiscoverTokenEndpoint_Success(t *testing.T) {
 	endpoint, err := provider.discoverTokenEndpoint(context.Background(), oidc)
 	require.NoError(t, err)
 	assert.Equal(t, server.URL+"/oauth/token", endpoint)
+}
+
+func TestOIDCTokenProvider_TokenEndpointURLValidation(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		expected bool
+	}{
+		{name: "https endpoint", url: "https://issuer.example.com/oauth/token", expected: true},
+		{name: "localhost http endpoint", url: "http://localhost:8080/oauth/token", expected: true},
+		{name: "ipv4 loopback http endpoint", url: "http://127.0.0.1:8080/oauth/token", expected: true},
+		{name: "ipv6 loopback http endpoint", url: "http://[::1]:8080/oauth/token", expected: true},
+		{name: "non-loopback http endpoint", url: "http://issuer.example.com/oauth/token", expected: false},
+		{name: "userinfo rejected", url: "https://client:secret@issuer.example.com/oauth/token", expected: false},
+		{name: "fragment rejected", url: "https://issuer.example.com/oauth/token#fragment", expected: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isValidTokenEndpointURL(tt.url))
+		})
+	}
+}
+
+func TestTokenEndpointHostMatchesIssuer(t *testing.T) {
+	tests := []struct {
+		name          string
+		tokenEndpoint string
+		issuer        string
+		expected      bool
+	}{
+		{
+			name:          "https same host and implicit port",
+			tokenEndpoint: "https://issuer.example.com/oauth/token",
+			issuer:        "https://issuer.example.com",
+			expected:      true,
+		},
+		{
+			name:          "loopback http issuer and token endpoint",
+			tokenEndpoint: "http://localhost/oauth/token",
+			issuer:        "http://localhost",
+			expected:      true,
+		},
+		{
+			name:          "loopback https issuer cannot downgrade token endpoint to http",
+			tokenEndpoint: "http://localhost/oauth/token",
+			issuer:        "https://localhost",
+			expected:      false,
+		},
+		{
+			name:          "http issuer cannot upgrade token endpoint to https",
+			tokenEndpoint: "https://localhost/oauth/token",
+			issuer:        "http://localhost",
+			expected:      false,
+		},
+		{
+			name:          "same host different explicit port",
+			tokenEndpoint: "https://issuer.example.com:8443/oauth/token",
+			issuer:        "https://issuer.example.com:9443",
+			expected:      false,
+		},
+		{
+			name:          "http default port matches explicit port",
+			tokenEndpoint: "http://localhost:80/oauth/token",
+			issuer:        "http://localhost",
+			expected:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, tokenEndpointHostMatchesIssuer(tt.tokenEndpoint, tt.issuer))
+		})
+	}
 }
 
 func TestOIDCTokenProvider_DiscoverTokenEndpoint_MissingTokenEndpoint(t *testing.T) {

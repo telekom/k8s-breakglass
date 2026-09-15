@@ -2,6 +2,32 @@
 
 This document covers security considerations and best practices for deploying and operating the breakglass controller.
 
+## Administrative and requester trust boundaries
+
+Ordinary users request and approve sessions through the authenticated REST API.
+The API derives their identity from verified tokens and applies requester,
+approver, and session policies. Kubernetes RBAC is a separate boundary:
+permission to create or modify session CRs or their status is privileged
+controller or automation authority. Admission validates resource fields; it
+does not bind every declared requester field to the Kubernetes admission caller.
+Do not grant session CR write permissions to ordinary REST users as an
+alternative way to request access.
+
+Writers of `IdentityProvider`, `ClusterConfig`, `MailProvider`, `AuditConfig`,
+`DebugSessionTemplate`, `DebugPodTemplate`, bindings, and credential Secrets
+control administrative policy. Selecting endpoints, service accounts, and
+reviewed workload templates is intentional authority. Restrict these writes
+with Kubernetes RBAC, and scope controller credentials to the resources they
+need. This does not remove validation requirements or narrower constraints
+promised by a policy. See [debug session authoring](debug-session-authoring.md).
+
+Development exceptions are specific to each subsystem. Explicit SMTP or Kafka
+TLS bypass options are unsafe on untrusted networks; they are not production
+recommendations. The API OIDC verifier and OIDC proxy reject IDP
+`insecureSkipVerify`; configure a certificate authority instead. See
+[mail providers](mail-provider.md), [audit configuration](audit-config.md), and
+[OIDC proxy configuration](configuration-reference.md).
+
 ## Rate Limiting
 
 The breakglass API includes **built-in rate limiting** (per-IP, and for some endpoints per-user when authenticated). In production environments, you may still want additional rate limiting at the infrastructure level (ingress/API gateway) to prevent:
@@ -150,7 +176,7 @@ To reduce accidental credential exposure, the API middleware **strips the Author
 Debug-level log statements redact sensitive data to prevent accidental exposure when verbose logging is enabled:
 
 - JWT group memberships (`rawTokenGroups`) are omitted from all log output; only the count is logged
-- Session approval tokens (the `?token=` query parameter) are logged only as their length (`tokenLen`), not their value
+- Session approval tokens (the `?token=` query parameter) are redacted in request-path logs by recording only their length (`tokenLen`), and token metadata authorization helpers receive a redacted session name before emitting downstream authorization logs. Token metadata validation also requires the caller to be the requester, an authorized approver, or a historical approver before returning session state.
 - OIDC group names from the token claims are logged as `[REDACTED]` in the enriched request logger
 
 ### Issuer Validation (SEC-003)
@@ -172,9 +198,24 @@ Subsequent JWKS refreshes (including those triggered by unknown `kid` values) ar
 
 These protections are in addition to the existing LRU cache for JWKS key sets.
 
+### OIDC Proxy Egress Controls
+
+The API exposes an **unauthenticated** OIDC proxy at `GET|POST /api/oidc/authority/*proxyPath`. It exists so the browser can fetch discovery and JWKS documents through the server origin instead of having to trust the IdP certificate directly. Because it is unauthenticated and performs server-side outbound requests, it is an SSRF-sensitive boundary and is defended in depth:
+
+- **Path allowlist** — only well-known OIDC endpoints are proxied; absolute URLs, `..`, backslashes, and encoded traversal are rejected.
+- **Authority allowlist** — the target authority must match a configured `IdentityProvider` authority by **exact string equality**. An attacker-supplied `X-OIDC-Authority` header for an unknown host is rejected with `403`.
+- **Host pinning** — the resolved target URL is rejected if its scheme or host differs from the selected authority.
+- **No redirect following** — the HTTP client refuses upstream `30x` responses. Only the *first* hop is validated against the authority allowlist, so following a redirect would let a trusted-but-redirecting IdP steer a server-side request to an arbitrary host. The `30x` status is relayed to the caller, but `Location` and `Set-Cookie` are stripped by the response-header allowlist.
+- **Response size cap** — the relayed body is capped at 1 MiB. Real discovery documents are a few KiB and even a large JWKS stays well under 256 KiB, so this leaves ample headroom while removing an unbounded-copy DoS vector. A truncated response is logged at `Error` level and counted as `response_too_large`. A body of *exactly* 1 MiB is relayed in full and reported as a success: hitting the limit is only treated as truncation if the upstream body actually continues past it.
+- **No credential relay** — `Authorization` and `Cookie` are never forwarded upstream.
+
+**Always configure an `https://` authority.** A plaintext `http://` authority gives the outbound first hop no CA policy and no server identity check, so DNS or on-path control of the authority hostname becomes a full SSRF primitive with *no redirect involved* — the redirect refusal cannot help. The `IdentityProvider` CRD enforces `^https://.+` for `spec.oidc.authority` and `spec.keycloak.baseURL`; only legacy file-based configuration can reach the plaintext path, and doing so logs a loud `oidc_proxy_insecure_http_authority` warning and reports `breakglass_oidc_proxy_tls_mode{mode="http"} 1`.
+
+> `server.allowOIDCProxyRedirects: true` restores redirect following for a non-conforming IdP. This re-enables the SSRF path described above and logs a warning at startup. Leave it unset unless you have verified the redirect targets are trusted.
+
 ### Audience Validation (SEC-005)
 
-When an `IdentityProvider` CRD has the `expectedAudience` field configured, the middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
+Every `IdentityProvider` CRD must set `spec.oidc.expectedAudience`. The middleware validates the JWT `aud` claim against that value. This prevents token reuse from other services that share the same OIDC provider — a common cross-service token confusion attack.
 
 ```yaml
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -182,32 +223,37 @@ kind: IdentityProvider
 spec:
   oidc:
     clientID: "breakglass-ui"
-    expectedAudience: "breakglass-ui"  # optional: enables JWT aud validation
+    expectedAudience: "breakglass-ui"
 ```
 
-This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens.
-
-If `expectedAudience` is empty (default), audience validation is skipped for backwards compatibility.
+This requires a matching audience protocol mapper in your identity provider (e.g., Keycloak) that adds the expected value to the `aud` claim in issued tokens. Existing `IdentityProvider` resources created before this requirement must be updated with `spec.oidc.expectedAudience` before applying the new CRD or rolling out the new controller.
 
 ### Token Storage in the Browser
 
-The frontend stores OIDC tokens in the browser's **`sessionStorage`** by default (via `oidc-client-ts`). The `AuthService` layer supports `localStorage` as an alternative (e.g., for a future "Remember me" toggle), but no user-facing control is currently exposed — all tokens remain in `sessionStorage`.
+The browser frontend uses `sessionStorage` through `oidc-client-ts` by default.
+Development builds may explicitly opt into persistent `localStorage` storage;
+that mode is warned about because browser scripts can read it. Production builds
+use `sessionStorage` or an in-memory fallback when browser storage is
+unavailable, reset a stale persistent preference, and make a best-effort purge
+of legacy localStorage OIDC artifacts, including IDP name hints used for
+reauthentication. Access tokens remain readable by same-origin JavaScript and
+are explicitly attached as Bearer tokens to API requests. Session storage limits
+persistence and prevents other origins from reading it; it does not protect
+tokens from compromised same-origin scripts. Browser-local cached runtime
+configuration is bootstrap state, not the server's issuer authorization policy.
 
-**Why not `httpOnly` cookies?**
+CSP restricts script sources and reduces injection opportunities, but cannot
+guarantee that every XSS payload is blocked. Keep access tokens short-lived
+(for example, 5–15 minutes), constrain their audience, and avoid logging token
+objects or authenticated HTTP request configurations. Bearer authentication
+avoids the automatic cookie credential attachment that enables conventional
+cookie-based CSRF; it does not remove XSS or other request-forgery risks.
 
-Using `httpOnly` cookies for token storage would require a Backend-For-Frontend (BFF) proxy pattern — the server would need to issue and manage session cookies, translate them into Bearer tokens, and handle CSRF protection. This adds significant architectural complexity for a privilege escalation tool that is used infrequently and for short durations.
-
-The current Bearer token approach provides adequate security because:
-
-| Control | How it protects tokens |
-|---------|----------------------|
-| **Content Security Policy (CSP)** | Restricts script sources to `'self'` plus specific hash-allowed inline scripts, preventing arbitrary XSS payloads from accessing storage |
-| **Input sanitization** | Free-form reason fields are sanitized to strip HTML/JS injection attempts |
-| **Same-origin policy** | `sessionStorage` is origin-scoped — a cross-origin page cannot read it |
-| **Short token lifetime** | OIDC tokens should be configured with 5–15 minute expiry at the IDP |
-| **No CSRF risk** | Bearer tokens must be explicitly attached to requests — the browser never sends them automatically |
-
-> **Recommendation:** Configure your OIDC provider to issue short-lived access tokens (5–15 minutes). If your threat model requires `httpOnly` cookies, you would need to implement a BFF proxy layer in front of the breakglass API.
+An `httpOnly` cookie design would require a server-side session or
+Backend-for-Frontend layer with its own CSRF protection. That is a different
+architecture, not a configuration switch in this SPA. The development mock API
+uses synthetic records and does not exercise production authentication; see
+[the frontend development guide](../frontend/README.md).
 
 If using an API gateway (Kong, Ambassador, etc.), configure rate limiting there.
 
@@ -247,7 +293,7 @@ The following patterns are stripped from text fields:
 ### OIDC Best Practices
 
 1. **Use short-lived tokens** - Configure your IDP to issue tokens with 5-15 minute expiry
-2. **Enable token refresh** - Allow token refresh for long-running sessions
+2. **Disable UI refresh tokens** - Do not issue `offline_access` or refresh tokens for breakglass UI sessions; use short access-token lifetimes and require explicit re-authentication instead
 3. **Validate audiences** - Ensure tokens are issued for the breakglass client
 4. **Use HTTPS** - Always use TLS for OIDC communication
 5. **Keep `hardenedIDPHints` enabled** (default) - Prevents disclosure of configured identity provider names and URLs in webhook error messages. See [Configuration Reference](configuration-reference.md#hardenedidphints-optional) for details.
@@ -348,24 +394,30 @@ spec:
 
 ### SAR Authorization Webhook (Design Decision)
 
-The `/breakglass/webhook/authorize/:cluster_name` endpoint processes Kubernetes [SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access) (SAR) requests **without caller authentication**. This is a deliberate design decision:
+The SAR handler accepts Kubernetes
+[SubjectAccessReview](https://kubernetes.io/docs/reference/access-authn-authz/authorization/#checking-api-access)
+requests without authenticating the HTTP caller. It is exposed on the shared
+Gin API listener (default port 8080) at both
+`/breakglass/webhook/authorize/:cluster_name` and
+`/api/breakglass/webhook/authorize/:cluster_name`. The admission webhook listener
+on port 9443 is separate. Rate limiting reduces abuse but does not authenticate
+SAR callers.
 
-**Why no authentication on the SAR endpoint:**
+The SAR body contains asserted user and group identities. Only the API server
+or another explicitly trusted caller should reach these routes. A direct call
+returns an authorization decision, not Kubernetes permissions or credentials,
+but can disclose decisions and affect activity tracking, counters, and logs.
+The [Kubernetes webhook protocol](https://kubernetes.io/docs/reference/access-authn-authz/webhook/) can use transport authentication; the built-in
+Gin handler does not validate a configured kubeconfig bearer token or client
+certificate. A validating gateway or proxy must provide that protection when
+required; see [webhook setup](webhook-setup.md#transport-authentication).
 
-1. **Kubernetes webhook protocol**: The API server calls authorization webhooks as part of its own request pipeline. Adding token-based authentication would require the API server itself to obtain and present tokens — increasing complexity and creating a circular dependency (the API server would need breakglass credentials to authorize breakglass requests).
-
-2. **Served by the Gin API server**: The SAR webhook is registered on the shared Gin HTTP server (default port 8080), **not** on the controller-runtime webhook server (port 9443). Port 9443 is used exclusively for validating/mutating admission webhooks, which have their own TLS certificates generated at startup.
-
-3. **Rate limiting**: The endpoint includes built-in per-IP rate limiting to prevent abuse even if an attacker gains network access.
-
-> **⚠️ Security Warning:** Because the SAR endpoint shares the Gin API port (8080) and has no HTTP-layer authentication, **any in-cluster workload with network access to port 8080 can send crafted SubjectAccessReview requests**. Without a NetworkPolicy, this means any pod in the cluster could probe authorization decisions and trigger side effects (rate-limiter counters, metrics, potential session-activity lookups) by sending SAR requests with arbitrary `spec.user`/`spec.groups` values. Note that calling the webhook directly does **not** grant Kubernetes permissions — it only returns an `allowed`/`denied` decision.
-
-**Recommended mitigations:**
-
-- **NetworkPolicy (required)**: Deploy a NetworkPolicy (see above) restricting ingress on port 8080 to the Kubernetes API server's IP range and the ingress controller namespace. This is the primary defense.
-- **Kubernetes audit logging**: Enable audit logging to detect unexpected or malicious SAR requests
-- **Network segmentation**: In multi-tenant clusters, ensure the breakglass service is not exposed to untrusted namespaces
-- In production, consider a dedicated listener for the SAR webhook endpoint to separate it from the general API traffic
+Restrict direct pod access with NetworkPolicy and protect **both route aliases**
+at any ingress or gateway. Allowing ingress-controller pods through a
+NetworkPolicy does not authenticate public callers of `/api/*`. Deny public
+routing to the SAR paths or require authentication at a trusted gateway.
+Kubernetes audit logs cover requests processed by the API server; use service
+and gateway logging to observe direct HTTP calls as well.
 
 ### Build Info Endpoint
 
@@ -435,7 +487,7 @@ This enables a single template to serve multiple personas with different capabil
 
 - **Frontend**: Shows only options the user can select
 - **API**: Validates user groups server-side and rejects unauthorized selections with clear error messages
-- **Webhooks**: Admission validation ensures even direct `kubectl` creation respects group restrictions
+- **Webhooks**: Validate resource shape and configured values. Direct CR writes are privileged; admission must not be treated as authenticating the declared requester or replacing REST group authorization.
 
 ### Duration Limits
 
@@ -449,12 +501,38 @@ This enables a single template to serve multiple personas with different capabil
 2. **Prevent self-approval** - The system automatically prevents users from approving their own requests
 3. **Multi-person approval** - Consider requiring multiple approvers for sensitive escalations
 
+### Approver Group Verification and the Unverified-Groups Fallback
+
+Approval authorization normally resolves the approver's groups **on the target spoke cluster** (via `SelfSubjectReview` under impersonation), not from the caller's JWT. Cluster-verified groups are strictly stronger evidence than JWT claims.
+
+When that spoke-side lookup fails (spoke unreachable, credentials expired, RBAC changed), breakglass does **not** hard-fail. This is deliberate and reflects an asymmetric failure model: a wrong *deny* locks operators out of production during exactly the kind of incident breakglass exists to resolve, which is generally worse than a wrong *allow* that is fully attributed and alertable. Instead the lookup failure is treated as "**no verified groups**" and the decision falls through to the pre-existing, explicitly scoped request-context (JWT-claim) group fallback:
+
+- If the caller would have been authorized on verified groups anyway, the outcome is unchanged.
+- If the caller has no matching group in either source, they are denied as before.
+- If the JWT-claim groups are **load-bearing** for an allow, the approval is granted but recorded as based on unverified evidence.
+
+Every lookup failure is observable, so the fallback is never silent:
+
+| Signal | Meaning |
+|---|---|
+| `breakglass_approval_group_lookup_failures_total{cluster}` | A spoke-side approver group lookup failed. At least one approval lost its verified basis. |
+| `breakglass_approval_unverified_group_decisions_total{cluster}` | An approval was **granted** on unverified JWT-claim groups. Security-relevant subset of the above. |
+| `session.approval_unverified_groups` audit event | Per-decision record (severity `warning`, classified as sensitive) with approver, cluster, matched group, and identity provider. |
+| `Error`-level log | The underlying lookup error with cluster context, emitted on every failure. |
+
+**Recommendations:**
+
+1. **Alert on `breakglass_approval_unverified_group_decisions_total`** — any non-zero rate means approvals are being granted on weaker evidence and warrants review of both the approvals and the spoke connectivity.
+2. **Alert on `breakglass_approval_group_lookup_failures_total`** as an availability signal — it is the leading indicator for the above.
+3. **Review the `session.approval_unverified_groups` audit trail** after any spoke outage.
+4. **Keep spoke credentials healthy** — the fallback is a safety net for incidents, not a supported steady state.
+
 ## Cross-Site Request Forgery (CSRF) Protection
 
 The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:
 
 - All API requests include an `Authorization: Bearer <token>` header injected by the HTTP client interceptor (`frontend/src/services/httpClient.ts`).
-- OIDC access tokens are stored in the browser's `sessionStorage` via `oidc-client-ts`, **not** in cookies.
+- OIDC access tokens default to browser `sessionStorage` via `oidc-client-ts`, **not** cookies; development-only persistent `localStorage` is an explicit opt-in and production uses session storage or an in-memory fallback when browser storage is unavailable.
 - The browser never automatically attaches credentials to cross-origin requests, so a malicious site cannot forge authenticated API calls.
 
 This architecture inherently mitigates CSRF because:

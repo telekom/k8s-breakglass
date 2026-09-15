@@ -2,7 +2,9 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
@@ -15,7 +17,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -175,6 +180,175 @@ func TestShouldReconcileEscalationUpdate(t *testing.T) {
 	})
 }
 
+func TestEscalationDependencyChangePredicate(t *testing.T) {
+	pred := dependencyChangePredicate()
+
+	assert.True(t, pred.Create(event.CreateEvent{Object: &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail"},
+	}}))
+	assert.True(t, pred.Delete(event.DeleteEvent{Object: &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail"},
+	}}))
+
+	oldProvider := &breakglassv1alpha1.MailProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "mail", Generation: 1},
+	}
+	sameProvider := oldProvider.DeepCopy()
+	sameProvider.ResourceVersion = "2"
+
+	assert.False(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: sameProvider}))
+
+	newGeneration := oldProvider.DeepCopy()
+	newGeneration.Generation = 2
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: newGeneration}))
+
+	deletingProvider := oldProvider.DeepCopy()
+	deletingAt := metav1.Now()
+	deletingProvider.DeletionTimestamp = &deletingAt
+	assert.True(t, pred.Update(event.UpdateEvent{ObjectOld: oldProvider, ObjectNew: deletingProvider}))
+}
+
+func TestEscalationReconciler_DependencyMapFunctions(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := func(name, namespace string, spec breakglassv1alpha1.BreakglassEscalationSpec) *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec:       spec,
+		}
+	}
+
+	clusterExact := escalation("cluster-exact", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-a"},
+	})
+	clusterGlob := escalation("cluster-glob", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-*"},
+	})
+	clusterWildcard := escalation("cluster-wildcard", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"*"},
+	})
+	clusterOtherNamespace := escalation("cluster-other-namespace", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		ClusterConfigRefs: []string{"prod-a"},
+	})
+	idpLegacy := escalation("idp-legacy", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProviders: []string{"corp-idp"},
+	})
+	idpRequester := escalation("idp-requester", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForRequests: []string{"corp-idp"},
+	})
+	idpApprover := escalation("idp-approver", "team-b", breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForApprovers: []string{"corp-idp"},
+	})
+	denyPolicy := escalation("deny-policy", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		DenyPolicyRefs: []string{"prod-deny"},
+	})
+	mailProvider := escalation("mail-provider", "team-a", breakglassv1alpha1.BreakglassEscalationSpec{
+		MailProvider: "prod-mail",
+	})
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			clusterExact,
+			clusterGlob,
+			clusterWildcard,
+			clusterOtherNamespace,
+			idpLegacy,
+			idpRequester,
+			idpApprover,
+			denyPolicy,
+			mailProvider,
+		).
+		Build()
+	r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+	ctx := context.Background()
+
+	assert.Equal(t,
+		[]string{"team-a/cluster-exact", "team-a/cluster-glob", "team-a/cluster-wildcard"},
+		requestKeys(r.escalationsForClusterConfig(ctx, &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-a", Namespace: "team-a"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/idp-legacy", "team-b/idp-approver", "team-b/idp-requester"},
+		requestKeys(r.escalationsForIdentityProvider(ctx, &breakglassv1alpha1.IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: "corp-idp"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/deny-policy"},
+		requestKeys(r.escalationsForDenyPolicy(ctx, &breakglassv1alpha1.DenyPolicy{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-deny"},
+		})),
+	)
+	assert.Equal(t,
+		[]string{"team-a/mail-provider"},
+		requestKeys(r.escalationsForMailProvider(ctx, &breakglassv1alpha1.MailProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-mail"},
+		})),
+	)
+}
+
+func TestIsFieldIndexUnavailable(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "controller runtime field index",
+			err:  errors.New("field index spec.mailProvider does not exist"),
+			want: true,
+		},
+		{
+			name: "fake client no indexer",
+			err:  errors.New("List on GroupVersionKind with no indexer configured"),
+			want: true,
+		},
+		{
+			name: "missing index name",
+			err:  errors.New("no index with name spec.clusterConfigRefs"),
+			want: true,
+		},
+		{
+			name: "field label unsupported",
+			err:  errors.New("field label not supported: spec.allowedIdentityProviders"),
+			want: true,
+		},
+		{
+			name: "uppercase index wording",
+			err:  errors.New("Index with name spec.denyPolicyRefs does not exist"),
+			want: true,
+		},
+		{
+			name: "unrelated list error",
+			err:  errors.New("permission denied listing BreakglassEscalations"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, isFieldIndexUnavailable(tt.err))
+		})
+	}
+}
+
+func requestKeys(requests []reconcile.Request) []string {
+	keys := make([]string, 0, len(requests))
+	for _, req := range requests {
+		keys = append(keys, req.NamespacedName.String())
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func TestEscalationReconciler_Reconcile(t *testing.T) {
 	scheme := newTestEscalationReconcilerScheme()
 	logger := zap.NewNop().Sugar()
@@ -325,9 +499,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -371,9 +546,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -391,8 +567,9 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				Disabled: true,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://example.com",
-					ClientID:  "test",
+					Authority:        "https://example.com",
+					ClientID:         "test",
+					ExpectedAudience: "test",
 				},
 			},
 		}
@@ -428,9 +605,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -474,9 +652,10 @@ func TestEscalationReconciler_Reconcile(t *testing.T) {
 			NamespacedName: types.NamespacedName{Name: "test-escalation", Namespace: "default"},
 		})
 
-		// Reference validation errors requeue to handle transient missing resources
-		require.NoError(t, err)
-		assert.Equal(t, reconcile.Result{RequeueAfter: 3 * time.Second}, result)
+		// Reference validation errors are returned as errors so controller-runtime
+		// applies exponential backoff instead of a flat 3s hot loop (#254).
+		require.Error(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
 
 		// Verify the status condition was set
 		var updated breakglassv1alpha1.BreakglassEscalation
@@ -706,6 +885,102 @@ func TestEscalationReconciler_ValidateClusterRef(t *testing.T) {
 		err := r.validateClusterRef(context.Background(), esc)
 		require.NoError(t, err)
 	})
+
+	t.Run("glob cluster ref passes when matching ClusterConfig exists", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+	})
+
+	t.Run("multiple glob cluster refs share one ClusterConfig list", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+		var clusterConfigListCalls int
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*breakglassv1alpha1.ClusterConfigList); ok {
+						clusterConfigListCalls++
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*", "prod-e*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.NoError(t, err)
+		assert.Equal(t, 1, clusterConfigListCalls)
+	})
+
+	t.Run("glob cluster ref fails when no matching ClusterConfig exists", func(t *testing.T) {
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-eu", Namespace: "default"},
+			Spec:       breakglassv1alpha1.ClusterConfigSpec{},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(cluster).
+			Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-*"},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "ClusterConfigRefs not found: default/prod-*")
+	})
+
+	t.Run("invalid glob cluster ref reports syntax error", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		r := NewEscalationReconciler(fakeClient, logger, nil, nil, nil, 0)
+
+		esc := &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				ClusterConfigRefs: []string{"prod-["},
+			},
+		}
+
+		err := r.validateClusterRef(context.Background(), esc)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid ClusterConfigRefs glob pattern")
+	})
 }
 
 func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {
@@ -716,8 +991,9 @@ func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://example.com",
-				ClientID:  "test",
+				Authority:        "https://example.com",
+				ClientID:         "test",
+				ExpectedAudience: "test",
 			},
 		},
 	}
@@ -727,8 +1003,9 @@ func TestEscalationReconciler_ValidateIDPRefs(t *testing.T) {
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			Disabled: true,
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://example.com",
-				ClientID:  "test",
+				Authority:        "https://example.com",
+				ClientID:         "test",
+				ExpectedAudience: "test",
 			},
 		},
 	}
@@ -961,4 +1238,92 @@ func TestEscalationReconciler_GetEscalationIDPMapping(t *testing.T) {
 		assert.Len(t, mapping, 1)
 		assert.Equal(t, []string{"idp1"}, mapping["esc1"])
 	})
+}
+
+// TestEscalationReconciler_RefErrorUsesBackoffNotHotLoop is the regression test
+// for #254. A reference-validation failure previously returned
+// reconcile.Result{RequeueAfter: 3s} with a nil error, unconditionally and with no
+// backoff, so a permanently-unresolvable reference produced ~20 reconciles per
+// minute forever — each one running full validation, writing status and emitting a
+// Warning event. Returning an error instead lets controller-runtime's rate limiter
+// back off exponentially.
+func TestEscalationReconciler_RefErrorUsesBackoffNotHotLoop(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "hot-loop", Namespace: "default", Generation: 1},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			EscalatedGroup:    "test-group",
+			MaxValidFor:       "1h",
+			ClusterConfigRefs: []string{"will-never-exist"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Users: []string{"approver@example.com"},
+			},
+		},
+	}
+
+	recorder := &escalationFakeEventRecorder{}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(escalation).
+		WithStatusSubresource(escalation).
+		Build()
+
+	r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "hot-loop", Namespace: "default"},
+	})
+
+	// An error return is what makes controller-runtime apply exponential backoff.
+	require.Error(t, err, "reference validation failure must return an error so the workqueue backs off")
+	assert.Contains(t, err.Error(), "reference validation failed")
+
+	// A fixed RequeueAfter would bypass the rate limiter entirely.
+	assert.Zero(t, result.RequeueAfter,
+		"must not set a fixed RequeueAfter: that bypasses backoff and re-creates the hot loop")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	// The status condition is still written, so observability is unchanged.
+	var updated breakglassv1alpha1.BreakglassEscalation
+	require.NoError(t, fakeClient.Get(context.Background(),
+		types.NamespacedName{Name: "hot-loop", Namespace: "default"}, &updated))
+	cond := apimeta.FindStatusCondition(updated.Status.Conditions,
+		string(breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid))
+	require.NotNil(t, cond)
+	assert.Equal(t, metav1.ConditionFalse, cond.Status)
+}
+
+// TestEscalationReconciler_StructuralErrorDoesNotRetry asserts the other half of
+// the fix: a purely structural (ConfigValidated) failure will not fix itself, so
+// it must neither requeue nor return an error.
+func TestEscalationReconciler_StructuralErrorDoesNotRetry(t *testing.T) {
+	scheme := newTestEscalationReconcilerScheme()
+	logger := zap.NewNop().Sugar()
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "structural", Namespace: "default", Generation: 1},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			// Missing escalatedGroup and an unparseable duration: structural only,
+			// with no references to resolve.
+			MaxValidFor: "not-a-duration",
+		},
+	}
+
+	recorder := &escalationFakeEventRecorder{}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(escalation).
+		WithStatusSubresource(escalation).
+		Build()
+
+	r := NewEscalationReconciler(fakeClient, logger, recorder, nil, nil, 0)
+
+	result, err := r.Reconcile(context.Background(), reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "structural", Namespace: "default"},
+	})
+
+	require.NoError(t, err, "a structural error will not fix itself; retrying is pure waste")
+	assert.Equal(t, reconcile.Result{}, result)
 }

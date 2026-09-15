@@ -20,14 +20,19 @@ package ssa
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -458,6 +463,130 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		assert.Equal(t, "Session is running", updated.Status.Message)
 	})
 
+	t.Run("preserves debug authorization and resource status fields", func(t *testing.T) {
+		execAllowed := false
+		attachAllowed := false
+		logsAllowed := true
+		portForwardAllowed := false
+		createdAt := "2026-06-27T18:00:00Z"
+		readyAt := "2026-06-27T18:01:00Z"
+		deletedAt := "2026-06-27T18:02:00Z"
+		ds := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-debug-fields",
+				Namespace: "default",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "test-cluster",
+				TemplateRef: "test-template",
+				RequestedBy: "test@example.com",
+			},
+		}
+
+		c := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(ds).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		ds.Status.AllowedPodOperations = &breakglassv1alpha1.AllowedPodOperations{
+			Exec:        &execAllowed,
+			Attach:      &attachAllowed,
+			Logs:        &logsAllowed,
+			PortForward: &portForwardAllowed,
+		}
+		ds.Status.ResolvedBindingSnapshotCaptured = true
+		ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"impersonate":{"groups":["system:masters"]}}}`)}
+		ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"containers":[{"name":"debug","image":"example/debug:latest"}]}}`)}
+		ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:            "debug-rbac",
+				Category:        "rbac",
+				Kind:            "ServiceAccount",
+				APIVersion:      "v1",
+				ResourceName:    "debug-sa",
+				Namespace:       "debug-ns",
+				UID:             "auxiliary-uid",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           true,
+				ReadyAt:         &readyAt,
+				ReadinessStatus: "Current",
+				Deleted:         false,
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:            "Role",
+						APIVersion:      "rbac.authorization.k8s.io/v1",
+						ResourceName:    "debug-role",
+						Namespace:       "debug-ns",
+						UID:             "additional-uid",
+						Ready:           true,
+						ReadinessStatus: "Current",
+						Deleted:         false,
+					},
+				},
+			},
+		}
+		ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:            "ConfigMap",
+				APIVersion:      "v1",
+				ResourceName:    "debug-config",
+				Namespace:       "debug-ns",
+				Source:          "podTemplateString",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           false,
+				ReadinessStatus: "InProgress",
+				Deleted:         true,
+				DeletedAt:       &deletedAt,
+				Error:           "cleanup pending",
+				UID:             "pod-template-uid",
+			},
+		}
+
+		err := ApplyDebugSessionStatus(context.Background(), c, ds)
+		require.NoError(t, err)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = c.Get(context.Background(), client.ObjectKeyFromObject(ds), &updated)
+		require.NoError(t, err)
+
+		require.NotNil(t, updated.Status.AllowedPodOperations)
+		assert.Equal(t, &execAllowed, updated.Status.AllowedPodOperations.Exec)
+		assert.Equal(t, &attachAllowed, updated.Status.AllowedPodOperations.Attach)
+		assert.Equal(t, &logsAllowed, updated.Status.AllowedPodOperations.Logs)
+		assert.Equal(t, &portForwardAllowed, updated.Status.AllowedPodOperations.PortForward)
+		assert.True(t, updated.Status.ResolvedBindingSnapshotCaptured)
+		require.NotNil(t, updated.Status.ResolvedBindingSpec)
+		assert.JSONEq(t, string(ds.Status.ResolvedBindingSpec.Raw), string(updated.Status.ResolvedBindingSpec.Raw))
+		require.NotNil(t, updated.Status.ResolvedPodTemplate)
+		assert.JSONEq(t, string(ds.Status.ResolvedPodTemplate.Raw), string(updated.Status.ResolvedPodTemplate.Raw))
+
+		require.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
+		auxiliaryStatus := updated.Status.AuxiliaryResourceStatuses[0]
+		assert.Equal(t, "debug-rbac", auxiliaryStatus.Name)
+		assert.Equal(t, "debug-sa", auxiliaryStatus.ResourceName)
+		assert.Equal(t, "auxiliary-uid", auxiliaryStatus.UID)
+		assert.True(t, auxiliaryStatus.Created)
+		assert.True(t, auxiliaryStatus.Ready)
+		assert.False(t, auxiliaryStatus.Deleted)
+		require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+		assert.Equal(t, "debug-role", auxiliaryStatus.AdditionalResources[0].ResourceName)
+		assert.Equal(t, "additional-uid", auxiliaryStatus.AdditionalResources[0].UID)
+		assert.False(t, auxiliaryStatus.AdditionalResources[0].Deleted)
+
+		require.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
+		podTemplateStatus := updated.Status.PodTemplateResourceStatuses[0]
+		assert.Equal(t, "ConfigMap", podTemplateStatus.Kind)
+		assert.Equal(t, "debug-config", podTemplateStatus.ResourceName)
+		assert.Equal(t, "pod-template-uid", podTemplateStatus.UID)
+		assert.True(t, podTemplateStatus.Created)
+		assert.False(t, podTemplateStatus.Ready)
+		assert.True(t, podTemplateStatus.Deleted)
+		assert.Equal(t, "cleanup pending", podTemplateStatus.Error)
+	})
+
 	t.Run("returns error when debug session does not exist", func(t *testing.T) {
 		c := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -475,6 +604,210 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get object for status update")
 	})
+}
+
+func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		State:                       breakglassv1alpha1.DebugSessionStateActive,
+		AuxiliaryResourceStatuses:   []breakglassv1alpha1.AuxiliaryResourceStatus{},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{},
+	}
+	applyConfig := ac.DebugSession("test-debug", "default").
+		WithStatus(DebugSessionStatusFrom(status))
+
+	data, err := json.Marshal(applyConfig)
+	require.NoError(t, err)
+
+	u := &unstructured.Unstructured{}
+	require.NoError(t, json.Unmarshal(data, u))
+	ensureExplicitEmptyStatusLists(applyConfig, u)
+
+	desiredStatus, ok := u.Object["status"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{}, desiredStatus["auxiliaryResourceStatuses"])
+	assert.Equal(t, []interface{}{}, desiredStatus["podTemplateResourceStatuses"])
+
+	currentStatus := map[string]interface{}{
+		"state": string(breakglassv1alpha1.DebugSessionStateActive),
+		"auxiliaryResourceStatuses": []interface{}{
+			map[string]interface{}{
+				"name":         "old-config",
+				"kind":         "ConfigMap",
+				"apiVersion":   "v1",
+				"resourceName": "old-config",
+				"namespace":    "default",
+				"created":      true,
+			},
+		},
+		"podTemplateResourceStatuses": []interface{}{
+			map[string]interface{}{
+				"name":         "old-template",
+				"kind":         "ConfigMap",
+				"apiVersion":   "v1",
+				"resourceName": "old-template",
+				"namespace":    "default",
+				"created":      true,
+			},
+		},
+	}
+	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
+}
+
+func TestDebugSessionTemplateStatusFromPreservesExplicitEmptyBoundClusters(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		BindingCount:        0,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{},
+	}
+	applyConfig := ac.DebugSessionTemplate("test-template").
+		WithStatus(DebugSessionTemplateStatusFrom(status))
+
+	data, err := json.Marshal(applyConfig)
+	require.NoError(t, err)
+
+	u := &unstructured.Unstructured{}
+	require.NoError(t, json.Unmarshal(data, u))
+	ensureExplicitEmptyStatusLists(applyConfig, u)
+
+	desiredStatus, ok := u.Object["status"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{}, desiredStatus["boundClusters"])
+
+	currentStatus := map[string]interface{}{
+		"bindingCount":        int64(0),
+		"podTemplateResolved": true,
+		"boundClusters":       []interface{}{"old-cluster"},
+	}
+	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
+}
+
+func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testing.T) {
+	execAllowed := false
+	attachAllowed := false
+	logsAllowed := true
+	portForwardAllowed := false
+	createdAt := "2026-06-27T18:00:00Z"
+	deletedAt := "2026-06-27T18:02:00Z"
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
+			Exec:        &execAllowed,
+			Attach:      &attachAllowed,
+			Logs:        &logsAllowed,
+			PortForward: &portForwardAllowed,
+		},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:            "debug-rbac",
+				Category:        "rbac",
+				Kind:            "ServiceAccount",
+				APIVersion:      "v1",
+				ResourceName:    "debug-sa",
+				Namespace:       "debug-ns",
+				Created:         true,
+				CreatedAt:       &createdAt,
+				Ready:           true,
+				ReadinessStatus: "Current",
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:            "Role",
+						APIVersion:      "rbac.authorization.k8s.io/v1",
+						ResourceName:    "debug-role",
+						Namespace:       "debug-ns",
+						Ready:           true,
+						ReadinessStatus: "Current",
+					},
+				},
+			},
+		},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:            "ConfigMap",
+				APIVersion:      "v1",
+				ResourceName:    "debug-config",
+				Namespace:       "debug-ns",
+				Source:          "podTemplateString",
+				Created:         true,
+				Ready:           false,
+				ReadinessStatus: "InProgress",
+				Deleted:         true,
+				DeletedAt:       &deletedAt,
+				Error:           "cleanup pending",
+			},
+		},
+	}
+
+	result := DebugSessionStatusFrom(status)
+	require.NotNil(t, result)
+
+	require.NotNil(t, result.AllowedPodOperations)
+	assert.Equal(t, &execAllowed, result.AllowedPodOperations.Exec)
+	assert.Equal(t, &attachAllowed, result.AllowedPodOperations.Attach)
+	assert.Equal(t, &logsAllowed, result.AllowedPodOperations.Logs)
+	assert.Equal(t, &portForwardAllowed, result.AllowedPodOperations.PortForward)
+
+	require.Len(t, result.AuxiliaryResourceStatuses, 1)
+	auxiliaryStatus := result.AuxiliaryResourceStatuses[0]
+	assert.Equal(t, "debug-rbac", *auxiliaryStatus.Name)
+	assert.Equal(t, "debug-sa", *auxiliaryStatus.ResourceName)
+	assert.True(t, *auxiliaryStatus.Created)
+	assert.True(t, *auxiliaryStatus.Ready)
+	assert.False(t, *auxiliaryStatus.Deleted)
+	require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+	assert.Equal(t, "debug-role", *auxiliaryStatus.AdditionalResources[0].ResourceName)
+
+	require.Len(t, result.PodTemplateResourceStatuses, 1)
+	podTemplateStatus := result.PodTemplateResourceStatuses[0]
+	assert.Equal(t, "ConfigMap", *podTemplateStatus.Kind)
+	assert.Equal(t, "debug-config", *podTemplateStatus.ResourceName)
+	assert.True(t, *podTemplateStatus.Created)
+	assert.False(t, *podTemplateStatus.Ready)
+	assert.True(t, *podTemplateStatus.Deleted)
+	assert.Equal(t, "cleanup pending", *podTemplateStatus.Error)
+}
+
+func TestDebugSessionStatusFromIncludesEmptyErrorFields(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{
+				Name:         "debug-rbac",
+				Kind:         "ServiceAccount",
+				APIVersion:   "v1",
+				ResourceName: "debug-sa",
+				AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+					{
+						Kind:         "Role",
+						APIVersion:   "rbac.authorization.k8s.io/v1",
+						ResourceName: "debug-role",
+					},
+				},
+			},
+		},
+		PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{
+			{
+				Kind:         "ConfigMap",
+				APIVersion:   "v1",
+				ResourceName: "debug-config",
+			},
+		},
+	}
+
+	result := DebugSessionStatusFrom(status)
+	require.NotNil(t, result)
+
+	require.Len(t, result.AuxiliaryResourceStatuses, 1)
+	auxiliaryStatus := result.AuxiliaryResourceStatuses[0]
+	require.NotNil(t, auxiliaryStatus.Error)
+	assert.Empty(t, *auxiliaryStatus.Error)
+
+	require.Len(t, auxiliaryStatus.AdditionalResources, 1)
+	additionalResource := auxiliaryStatus.AdditionalResources[0]
+	require.NotNil(t, additionalResource.Error)
+	assert.Empty(t, *additionalResource.Error)
+
+	require.Len(t, result.PodTemplateResourceStatuses, 1)
+	podTemplateStatus := result.PodTemplateResourceStatuses[0]
+	require.NotNil(t, podTemplateStatus.Error)
+	assert.Empty(t, *podTemplateStatus.Error)
 }
 
 // TestApplyAuditConfigStatus tests SSA status updates for AuditConfig.
@@ -564,6 +897,44 @@ func TestConditionFrom(t *testing.T) {
 func TestConditionFromNil(t *testing.T) {
 	result := ConditionFrom(nil)
 	assert.Nil(t, result)
+}
+
+func TestDebugSessionTemplateStatusFrom(t *testing.T) {
+	lastUsed := metav1.Now()
+	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
+		ObservedGeneration:  7,
+		ActiveSessionCount:  2,
+		PendingSessionCount: 1,
+		TotalSessionCount:   5,
+		LastUsedAt:          &lastUsed,
+		PodTemplateResolved: true,
+		BoundClusters:       []string{"cluster-a", "cluster-b"},
+		BindingCount:        3,
+		Conditions: []metav1.Condition{
+			{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				ObservedGeneration: 7,
+				LastTransitionTime: lastUsed,
+				Reason:             "Ready",
+				Message:            "Template is ready",
+			},
+		},
+	}
+
+	result := DebugSessionTemplateStatusFrom(status)
+
+	require.NotNil(t, result)
+	assert.Equal(t, int64(7), *result.ObservedGeneration)
+	assert.Equal(t, int32(2), *result.ActiveSessionCount)
+	assert.Equal(t, int32(1), *result.PendingSessionCount)
+	assert.Equal(t, int64(5), *result.TotalSessionCount)
+	assert.Equal(t, lastUsed, *result.LastUsedAt)
+	assert.True(t, *result.PodTemplateResolved)
+	assert.Equal(t, []string{"cluster-a", "cluster-b"}, result.BoundClusters)
+	assert.Equal(t, int32(3), *result.BindingCount)
+	require.Len(t, result.Conditions, 1)
+	assert.Equal(t, "Ready", *result.Conditions[0].Type)
 }
 
 // TestDebugSessionApprovalFrom tests conversion of DebugSessionApproval.
@@ -671,10 +1042,11 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 
 	t.Run("converts full resource ref", func(t *testing.T) {
 		ref := &breakglassv1alpha1.DeployedResourceRef{
-			APIVersion: "apps/v1",
-			Kind:       "Deployment",
-			Name:       "debug-pod",
-			Namespace:  "debug-ns",
+			APIVersion:        "apps/v1",
+			Kind:              "Deployment",
+			Name:              "debug-pod",
+			Namespace:         "debug-ns",
+			CreateOperationID: "operation-1",
 		}
 
 		result := DeployedResourceRefFrom(ref)
@@ -684,6 +1056,7 @@ func TestDeployedResourceRefFrom(t *testing.T) {
 		assert.Equal(t, "Deployment", *result.Kind)
 		assert.Equal(t, "debug-pod", *result.Name)
 		assert.Equal(t, "debug-ns", *result.Namespace)
+		assert.Equal(t, "operation-1", *result.CreateOperationID)
 	})
 }
 
@@ -769,9 +1142,35 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 					OriginalNamespace: "app-ns",
 					CopyName:          "debug-copy",
 					CopyNamespace:     "debug-ns",
+					UID:               "copy-uid",
 					CreatedAt:         now,
 				},
 			},
+			Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID:    "operation-1",
+				Kind:  "ephemeral-container",
+				State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+				TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+					Namespace: "app-ns",
+					Name:      "target-pod",
+					UID:       "pod-uid",
+				},
+				EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+					Name:                  "debugger",
+					Image:                 "busybox:latest",
+					Command:               []string{"sh"},
+					ContainerDigest:       "digest",
+					SecurityContextDigest: "security-digest",
+					TTY:                   true,
+					Stdin:                 true,
+				},
+				RequestedBy:            "admin@example.com",
+				RequestedByEmail:       "operator@example.com",
+				IdentityProviderName:   "idp-a",
+				IdentityProviderIssuer: "https://idp-a.example",
+				PreparedAt:             now,
+				Message:                "prepared",
+			}},
 		}
 
 		result := KubectlDebugStatusFrom(status)
@@ -779,6 +1178,14 @@ func TestKubectlDebugStatusFrom(t *testing.T) {
 		require.NotNil(t, result)
 		require.Len(t, result.EphemeralContainersInjected, 1)
 		require.Len(t, result.CopiedPods, 1)
+		assert.Equal(t, "copy-uid", *result.CopiedPods[0].UID)
+		require.Len(t, result.Operations, 1)
+		assert.Equal(t, "operation-1", *result.Operations[0].ID)
+		assert.Equal(t, types.UID("pod-uid"), *result.Operations[0].TargetPod.UID)
+		assert.Equal(t, "digest", *result.Operations[0].EphemeralContainer.ContainerDigest)
+		assert.Equal(t, "operator@example.com", *result.Operations[0].RequestedByEmail)
+		assert.Equal(t, "idp-a", *result.Operations[0].IdentityProviderName)
+		assert.Equal(t, "https://idp-a.example", *result.Operations[0].IdentityProviderIssuer)
 	})
 }
 
@@ -1488,9 +1895,10 @@ func TestDebugPodSpecOverridesFrom(t *testing.T) {
 		hostPID := false
 		hostIPC := true
 		overrides := &breakglassv1alpha1.DebugPodSpecOverrides{
-			HostNetwork: &hostNetwork,
-			HostPID:     &hostPID,
-			HostIPC:     &hostIPC,
+			NodeSelector: map[string]string{"kubernetes.io/hostname": "debug-node"},
+			HostNetwork:  &hostNetwork,
+			HostPID:      &hostPID,
+			HostIPC:      &hostIPC,
 			Containers: []breakglassv1alpha1.DebugContainerOverride{
 				{Name: "debug-container"},
 			},
@@ -1502,6 +1910,7 @@ func TestDebugPodSpecOverridesFrom(t *testing.T) {
 		assert.True(t, *result.HostNetwork)
 		assert.False(t, *result.HostPID)
 		assert.True(t, *result.HostIPC)
+		assert.Equal(t, map[string]string{"kubernetes.io/hostname": "debug-node"}, result.NodeSelector)
 		require.Len(t, result.Containers, 1)
 	})
 }
@@ -1515,7 +1924,9 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 
 	t.Run("converts full override", func(t *testing.T) {
 		override := &breakglassv1alpha1.DebugContainerOverride{
-			Name: "debug-container",
+			Name:    "debug-container",
+			Command: []string{"/bin/sh", "-c"},
+			Args:    []string{"echo", "debug"},
 			SecurityContext: &corev1.SecurityContext{
 				Privileged: func() *bool { b := true; return &b }(),
 			},
@@ -1529,7 +1940,34 @@ func TestDebugContainerOverrideFrom(t *testing.T) {
 
 		require.NotNil(t, result)
 		assert.Equal(t, "debug-container", *result.Name)
+		assert.Equal(t, []string{"/bin/sh", "-c"}, result.Command)
+		assert.Equal(t, []string{"echo", "debug"}, result.Args)
 		require.NotNil(t, result.SecurityContext)
 		assert.Len(t, result.Env, 1)
+	})
+
+	t.Run("preserves nil versus explicitly empty command and args", func(t *testing.T) {
+		nilResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{Name: "nil"})
+		emptyResult := DebugContainerOverrideFrom(&breakglassv1alpha1.DebugContainerOverride{
+			Name: "empty", Command: []string{}, Args: []string{},
+		})
+
+		assert.Nil(t, nilResult.Command)
+		assert.Nil(t, nilResult.Args)
+		assert.NotNil(t, emptyResult.Command)
+		assert.NotNil(t, emptyResult.Args)
+		assert.Empty(t, emptyResult.Command)
+		assert.Empty(t, emptyResult.Args)
+
+		nilJSON, err := json.Marshal(nilResult)
+		require.NoError(t, err)
+		assert.NotContains(t, string(nilJSON), `"command"`)
+		assert.NotContains(t, string(nilJSON), `"args"`)
+		emptyJSON, err := json.Marshal(emptyResult)
+		require.NoError(t, err)
+		var encoded map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(emptyJSON, &encoded))
+		assert.JSONEq(t, `[]`, string(encoded["command"]))
+		assert.JSONEq(t, `[]`, string(encoded["args"]))
 	})
 }

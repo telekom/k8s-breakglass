@@ -1,0 +1,51 @@
+# syntax=docker/dockerfile:1.7
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS uploader-builder
+ARG TARGETOS=linux
+ARG TARGETARCH
+WORKDIR /src
+COPY uploader/main.go .
+RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-upload .
+COPY copier/ /src/copier/
+RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-safe-copy ./copier
+
+FROM busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+
+ARG VERSION=0.1.0
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+
+LABEL org.opencontainers.image.title="Diagnostic artifact collector" \
+      org.opencontainers.image.description="Immutable bounded diagnostic recipes with archive handoff" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only" \
+      org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
+      org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/diagnostic-artifact-collector" \
+      org.opencontainers.image.base.name="busybox:1.37" \
+      org.opencontainers.image.base.digest="sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
+
+RUN install -d -o 65532 -g 65532 /output /host-coredumps /etc/ssl/certs && \
+    install -d -o 0 -g 0 -m 0555 \
+      /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection \
+      /usr/share/breakglass/runbooks/internal
+
+# BusyBox is intentionally kept as the tiny runtime base. Copy the pinned
+# builder's CA bundle so the uploader verifies HTTPS peers instead of silently
+# falling back to an empty trust store.
+COPY --from=uploader-builder --chmod=0644 /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+
+COPY --chmod=0755 bin/diagnostic-artifact-collector /usr/local/bin/diagnostic-artifact-collector
+COPY --from=uploader-builder --chmod=0755 /out/diagnostic-artifact-upload /usr/local/bin/diagnostic-artifact-upload
+COPY --from=uploader-builder --chmod=0755 /out/diagnostic-artifact-safe-copy /usr/local/bin/diagnostic-artifact-safe-copy
+COPY --chmod=0644 motd README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection/
+COPY --chmod=0644 motd /etc/motd
+
+USER 65532:65532
+WORKDIR /output
+
+ENTRYPOINT ["/usr/local/bin/diagnostic-artifact-collector"]
+CMD ["--help"]

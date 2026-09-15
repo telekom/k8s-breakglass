@@ -1,0 +1,124 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# CONSTRAINED impersonation (KEP-5284) for the breakglass RBAC probe.
+#
+# This file is ADDITIVE. It is safe to apply to any spoke at any Kubernetes version:
+# on a spoke that supports constrained impersonation it scopes the probe to a single
+# synthetic identity performing read-only permission checks; on an older spoke the
+# rules are inert and the legacy grant in impersonate_role.yaml continues to serve.
+# Nothing here can break an existing spoke.
+#
+# Two rules are needed per KEP-5284, and both must pass:
+#
+#   1. an IDENTITY rule — may this requestor impersonate this identity? Evaluated
+#      against the `authentication.k8s.io` API group, NOT the core group. Using ""
+#      here is the single easiest way to write a rule that looks right and does
+#      nothing.
+#   2. an ACTION rule — may this requestor perform this verb under impersonation?
+#      Evaluated against the TARGET request's own group/resource, with no group
+#      override. The action check runs FIRST; only if it passes are the identity
+#      checks made.
+#
+# Note what is deliberately NOT granted: no `impersonate:serviceaccount`, no node
+# modes, and no groups resource without a wildcard. The probe impersonates exactly
+# one synthetic username together with a session's granted groups, and nothing else.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  labels:
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  name: impersonate-auth-manager-constrained-identity-role
+rules:
+# Identity rule: the probe may impersonate ONLY the synthetic system:auth-checker
+# username. Unlike the legacy grant this is pinned with resourceNames, so the probe
+# cannot be turned into a way to become an arbitrary real user.
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - users
+  resourceNames:
+  - "system:auth-checker"
+  verbs:
+  - "impersonate:user-info"
+# Identity rule for the capability-detection UID. This rule is what makes runtime
+# capability detection possible at all, so it is load-bearing rather than incidental.
+#
+# KEP-5284 adds no new headers, so a constrained and a legacy impersonated request
+# are byte-identical on the wire, and the apiserver falls back to legacy whenever
+# every constrained mode denies. An ordinary impersonated request therefore cannot
+# tell you whether constrained impersonation works — the retained blanket grant in
+# impersonate_role.yaml authorizes it either way.
+#
+# A UID can. The legacy grant covers `users` and `groups` in the CORE API group and
+# nothing else, so it provably cannot authorize a `uids` check in
+# authentication.k8s.io. Breakglass therefore impersonates a synthetic probe UID and
+# treats success as positive proof that a constrained mode genuinely ran: on a spoke
+# below 1.35, or with the gate off, or without this ClusterRole applied, the check is
+# denied and breakglass correctly keeps using legacy impersonation.
+#
+# The UID is pinned with resourceNames and is not a real UID of anything, so this
+# grants no ability to become any actual principal.
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - uids
+  resourceNames:
+  - "breakglass-capability-probe"
+  verbs:
+  - "impersonate:user-info"
+# Identity rule for groups. The probe impersonates whichever groups a breakglass
+# session granted, and those are not known ahead of time, so this cannot be pinned
+# with resourceNames the way the username is.
+#
+# The "*" is also load-bearing rather than merely convenient: the API server
+# collapses per-group checks into a single wildcard check once a request names four
+# or more groups, so a rule listing individual group names would stop being
+# consulted for exactly the multi-group sessions that matter most.
+#
+# What keeps this safe is that it is only useful in combination with the identity
+# rule above — impersonating groups without an authorized username achieves
+# nothing — and that the action rule below restricts the whole grant to read-only
+# permission queries.
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - groups
+  verbs:
+  - "impersonate:user-info"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  annotations:
+    rbac.authorization.kubernetes.io/autoupdate: "true"
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  labels:
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  name: impersonate-auth-manager-constrained-action-role
+rules:
+# Action rule: under impersonation the probe may do exactly one thing — create a
+# SelfSubjectAccessReview, which is a read-only "what could I do?" query that
+# mutates nothing.
+#
+# This is the tight bound on the wildcard groups rule above. Even with an arbitrary
+# group impersonated, the only permitted action is asking a question.
+- apiGroups:
+  - "authorization.k8s.io"
+  resources:
+  - selfsubjectaccessreviews
+  verbs:
+  - "impersonate-on:user-info:create"
+# SelfSubjectReview is used to resolve a user's real groups from the spoke
+# (the `kubectl auth whoami` equivalent) when a session is approved.
+- apiGroups:
+  - "authentication.k8s.io"
+  resources:
+  - selfsubjectreviews
+  verbs:
+  - "impersonate-on:user-info:create"

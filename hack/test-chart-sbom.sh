@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Behavioral test for the chart SBOM subject binding. It proves that the
+# generated SPDX document accepts the exact package and rejects changed or
+# different package bytes.
+
+set -Eeuo pipefail
+
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+test_dir="$(mktemp -d)"
+trap 'rm -rf -- "${test_dir}"' EXIT
+
+package="${test_dir}/debug-session-catalogue-0.2.0.tgz"
+sbom="${test_dir}/debug-session-catalogue.spdx.json"
+printf 'chart payload\n' >"${package}"
+cat >"${sbom}" <<'EOF'
+{
+  "spdxVersion": "SPDX-2.3",
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://example.invalid/spdx/chart-test",
+  "creationInfo": {"created": "2026-08-27T00:00:00Z", "creators": ["Tool: syft"]},
+  "name": "debug-session-catalogue",
+  "packages": [
+    {"SPDXID": "SPDXRef-Package-chart", "name": "debug-session-catalogue", "downloadLocation": "NOASSERTION"}
+  ]
+}
+EOF
+
+"${script_dir}/attach-chart-subject.sh" "${package}" "${sbom}"
+"${script_dir}/verify-chart-sbom.sh" "${package}" "${sbom}"
+
+# Mutate a valid, correctly bound document so each failure exercises its schema.
+for mutation in \
+  '.spdxVersion = "not-spdx"' \
+  '.creationInfo = {}' \
+  'del(.SPDXID)' \
+  'del(.dataLicense)' \
+  'del(.documentNamespace)' \
+  '.packages[0].downloadLocation = 42' \
+  '.annotations[0].annotationType = "INVALID"'; do
+  malformed="${test_dir}/malformed.spdx.json"
+  jq "${mutation}" "${sbom}" >"${malformed}"
+  if "${script_dir}/verify-chart-sbom.sh" "${package}" "${malformed}" >/dev/null 2>&1; then
+    echo "Malformed SPDX document was accepted: ${mutation}" >&2
+    exit 1
+  fi
+done
+
+conflicting="${test_dir}/conflicting.spdx.json"
+jq '.annotations += [(.annotations[0] | .comment = "Chart artifact: other-chart-0.2.0.tgz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")]' \
+  "${sbom}" >"${conflicting}"
+if "${script_dir}/verify-chart-sbom.sh" "${package}" "${conflicting}" >/dev/null 2>&1; then
+  echo "SBOM with conflicting chart bindings was accepted" >&2
+  exit 1
+fi
+
+printf 'changed chart payload\n' >"${package}"
+if "${script_dir}/verify-chart-sbom.sh" "${package}" "${sbom}" >/dev/null 2>&1; then
+  echo "changed chart package was accepted by its old SBOM" >&2
+  exit 1
+fi
+
+printf 'chart payload\n' >"${package}"
+wrong_package="${test_dir}/other-chart-0.2.0.tgz"
+printf 'other chart payload\n' >"${wrong_package}"
+if "${script_dir}/verify-chart-sbom.sh" "${wrong_package}" "${sbom}" >/dev/null 2>&1; then
+  echo "different chart package was accepted by the SBOM" >&2
+  exit 1
+fi
+
+empty_graph="${test_dir}/empty-graph.spdx.json"
+jq '.packages = [] | .files = []' "${sbom}" >"${empty_graph}"
+if "${script_dir}/verify-chart-sbom.sh" "${package}" "${empty_graph}" >/dev/null 2>&1; then
+  echo "SPDX SBOM with an empty packages/files graph was accepted" >&2
+  exit 1
+fi
+
+echo "Chart SBOM subject binding behavior passed"

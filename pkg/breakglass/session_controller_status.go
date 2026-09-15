@@ -23,6 +23,54 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+type breakglassSessionErrorResponse struct {
+	Error   string                               `json:"error"`
+	Code    string                               `json:"code"`
+	Session breakglassv1alpha1.BreakglassSession `json:"session"`
+}
+
+type breakglassSessionNameErrorResponse struct {
+	Error   string `json:"error"`
+	Code    string `json:"code"`
+	Session string `json:"session"`
+}
+
+func respondBreakglassSessionError(c *gin.Context, status int, message string, session breakglassv1alpha1.BreakglassSession) {
+	c.JSON(status, breakglassSessionErrorResponse{Error: message, Code: breakglassSessionErrorCode(status), Session: session})
+}
+
+func respondBreakglassSessionNotFound(c *gin.Context, sessionName string) {
+	c.JSON(http.StatusNotFound, breakglassSessionNameErrorResponse{Error: "session not found", Code: "NOT_FOUND", Session: sessionName})
+}
+
+func breakglassSessionErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BAD_REQUEST"
+	case http.StatusUnauthorized:
+		return "UNAUTHORIZED"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusConflict:
+		return "CONFLICT"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusUnprocessableEntity:
+		return "UNPROCESSABLE_ENTITY"
+	case http.StatusTooManyRequests:
+		return "TOO_MANY_REQUESTS"
+	case http.StatusBadGateway:
+		return "BAD_GATEWAY"
+	case http.StatusServiceUnavailable:
+		return "SERVICE_UNAVAILABLE"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "INTERNAL_ERROR"
+		}
+		return "ERROR"
+	}
+}
+
 func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition breakglassv1alpha1.BreakglassSessionConditionType) {
 	reqLog := system.GetReqLogger(c, wc.log)
 	reqLog = system.EnrichReqLoggerWithAuth(c, reqLog)
@@ -39,14 +87,17 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 		return
 	}
+	authorizedUID := bs.UID
 
 	// Authorization must happen before body validation and state-specific
 	// responses so unauthorized callers cannot learn session details from
 	// terminal-state or malformed-body errors.
 	allowOwnerReject := false
+	authenticatedActor := ""
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
-		if requesterEmail, err := wc.identityProvider.GetEmail(c); err == nil {
-			if requesterEmail == bs.Spec.User && IsSessionPendingApproval(bs) {
+		if actor, authIdentifiers, err := wc.authenticatedUserIdentifiers(c); err == nil {
+			authenticatedActor = actor
+			if matchesAuthIdentifier(bs.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) && IsSessionPendingApproval(bs) {
 				allowOwnerReject = true
 			}
 		}
@@ -65,9 +116,15 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialDomainNotAllowed:
 				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialIdentityProviderNotAllowed:
+				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialNotAnApprover:
 				apiresponses.RespondForbidden(c, authResult.Message)
 			case ApprovalDenialNoMatchingEscalation:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialClusterApprovalPolicyAmbiguous:
+				apiresponses.RespondForbidden(c, authResult.Message)
+			case ApprovalDenialClusterApprovalPolicyLookupFailed:
 				apiresponses.RespondForbidden(c, authResult.Message)
 			default:
 				// Fallback for unknown reasons
@@ -96,6 +153,28 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		approverPayload.Reason = SanitizeReasonText(approverPayload.Reason)
 	}
 
+	// The authorization check and request parsing above can race with the
+	// requester withdrawing the session or with the approval deadline. For
+	// approval/rejection, fence the state transition with a fresh API read so a
+	// stale cached object cannot be promoted after its timeout.
+	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved || sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		latest := breakglassv1alpha1.BreakglassSession{}
+		if err := wc.sessionManager.Reader().Get(c.Request.Context(), client.ObjectKey{Namespace: bs.Namespace, Name: bs.Name}, &latest); err != nil {
+			reqLog.Error("error while re-reading breakglass session before approval transition", zap.Error(err))
+			if apierrors.IsNotFound(err) {
+				apiresponses.RespondNotFoundSimple(c, "session not found")
+			} else {
+				apiresponses.RespondInternalError(c, "re-read session", err, reqLog)
+			}
+			return
+		}
+		if latest.UID != authorizedUID {
+			apiresponses.RespondConflict(c, "session was replaced while approval was in progress, please retry")
+			return
+		}
+		bs = latest
+	}
+
 	var lastCondition metav1.Condition
 	if l := len(bs.Status.Conditions); l > 0 {
 		lastCondition = bs.Status.Conditions[l-1]
@@ -103,15 +182,7 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 
 	// If the session already has the same last condition, return conflict to avoid repeated transitions.
 	if lastCondition.Type == string(sesCondition) {
-		c.JSON(http.StatusConflict, struct {
-			Error   string                               `json:"error"`
-			Code    string                               `json:"code"`
-			Session breakglassv1alpha1.BreakglassSession `json:"session"`
-		}{
-			Error:   "session already in requested state",
-			Code:    "CONFLICT",
-			Session: bs,
-		})
+		respondBreakglassSessionError(c, http.StatusConflict, "session already in requested state", bs)
 		return
 	}
 
@@ -122,46 +193,23 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	//   because approved sessions may later transition to expired/dropped by owner or canceled by approver.
 	currState := bs.Status.State
 	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved || sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+		if IsSessionApprovalTimedOut(bs) {
+			action := "approval"
+			if sesCondition == breakglassv1alpha1.SessionConditionTypeRejected {
+				action = "rejection"
+			}
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session approval timeout has elapsed; cannot perform %s", action), bs)
+			return
+		}
 		if currState != breakglassv1alpha1.SessionStatePending {
-			c.JSON(http.StatusBadRequest, struct {
-				Error   string                               `json:"error"`
-				Code    string                               `json:"code"`
-				Session breakglassv1alpha1.BreakglassSession `json:"session"`
-			}{
-				Error:   fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState),
-				Code:    "BAD_REQUEST",
-				Session: bs,
-			})
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session must be pending to perform %s; current state: %s", sesCondition, currState), bs)
 			return
 		}
 	} else {
 		if currState == breakglassv1alpha1.SessionStateRejected || currState == breakglassv1alpha1.SessionStateWithdrawn || currState == breakglassv1alpha1.SessionStateExpired || currState == breakglassv1alpha1.SessionStateTimeout || currState == breakglassv1alpha1.SessionStateIdleExpired {
-			c.JSON(http.StatusBadRequest, struct {
-				Error   string                               `json:"error"`
-				Code    string                               `json:"code"`
-				Session breakglassv1alpha1.BreakglassSession `json:"session"`
-			}{
-				Error:   fmt.Sprintf("session is in terminal state %s and cannot be modified", currState),
-				Code:    "BAD_REQUEST",
-				Session: bs,
-			})
+			respondBreakglassSessionError(c, http.StatusBadRequest, fmt.Sprintf("session is in terminal state %s and cannot be modified", currState), bs)
 			return
 		}
-	}
-
-	if sesCondition == breakglassv1alpha1.SessionConditionTypeApproved &&
-		!bs.Status.TimeoutAt.IsZero() &&
-		!time.Now().Before(bs.Status.TimeoutAt.Time) {
-		c.JSON(http.StatusConflict, struct {
-			Error   string                               `json:"error"`
-			Code    string                               `json:"code"`
-			Session breakglassv1alpha1.BreakglassSession `json:"session"`
-		}{
-			Error:   "session approval timeout has elapsed",
-			Code:    "CONFLICT",
-			Session: bs,
-		})
-		return
 	}
 
 	approverReasonAction := "approval"
@@ -215,10 +263,12 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		}
 		// record approver
 		approverEmail, _ := wc.identityProvider.GetEmail(c)
-		if approverEmail != "" {
-			bs.Status.Approver = approverEmail
+		approver := firstNonEmpty(approverEmail, authenticatedActor)
+		if approver != "" {
+			bs.Status.Approver = approver
+			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 			// append to approvers history if not already present
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
+			recordApprover(&bs.Status, approver, c.GetString("identity_provider_name"))
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -227,19 +277,22 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	case breakglassv1alpha1.SessionConditionTypeRejected:
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
 		// Only set state and rejection-specific timestamp.
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 		bs.Status.RejectedAt = metav1.Now()
 		bs.Status.State = breakglassv1alpha1.SessionStateRejected
 		bs.Status.ReasonEnded = "rejected"
 
 		// Set RetainedUntil for rejected sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 		// record approver (rejector)
-		rejectorEmail, _ := wc.identityProvider.GetEmail(c)
-		if rejectorEmail != "" {
-			bs.Status.Approver = rejectorEmail
-			bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, rejectorEmail)
+		rejector := authenticatedActor
+		if rejector != "" {
+			bs.Status.Approver = rejector
+			bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
+			recordApprover(&bs.Status, rejector, c.GetString("identity_provider_name"))
 		}
 		// store approver reason if provided
 		if strings.TrimSpace(approverPayload.Reason) != "" {
@@ -255,7 +308,8 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 		return
 	}
 
-	username, _ := wc.identityProvider.GetEmail(c)
+	username := c.GetString("email")
+	username = firstNonEmpty(username, authenticatedActor)
 	bs.SetCondition(metav1.Condition{
 		Type:               string(sesCondition),
 		Status:             metav1.ConditionTrue,
@@ -279,10 +333,11 @@ func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondi
 	// Get approver identity for audit events
 	approver := wc.identityProvider.GetUsername(c)
 	if approver == "" {
-		if email, err := wc.identityProvider.GetEmail(c); err == nil {
+		if email := c.GetString("email"); email != "" {
 			approver = email
 		}
 	}
+	approver = firstNonEmpty(approver, authenticatedActor)
 
 	// Track metrics for session lifecycle events
 	switch sesCondition {
@@ -489,7 +544,7 @@ GroupOverrideLoop:
 }
 
 // checkUserSessionCount counts active sessions for a user and checks against a limit.
-// Uses the spec.user field index for efficient lookup when available.
+// Indexed prechecks are advisory only when durable quota admission is enabled.
 func (wc *BreakglassSessionController) checkUserSessionCount(
 	ctx context.Context,
 	userIdentifier string,
@@ -497,16 +552,25 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Use indexed query to fetch only sessions for this user
-	sessionList, err := wc.sessionManager.GetUserBreakglassSessions(ctx, userIdentifier)
+	all := &breakglassv1alpha1.BreakglassSessionList{}
+	var err error
+	if wc.sessionManager.quotaEnabled {
+		// The mandatory durable admission gate catches concurrent/stale-cache usage.
+		all.Items, err = wc.sessionManager.GetUserBreakglassSessions(ctx, userIdentifier)
+	} else {
+		err = wc.sessionManager.Reader().List(ctx, all)
+	}
 	if err != nil {
-		return fmt.Errorf("failed to list sessions for user: %w", err)
+		return fmt.Errorf("failed to list sessions for user quota check: %w", err)
 	}
 
 	// Count sessions that still reserve a request slot for this user (across ALL escalations).
 	var userActive int32
-	for i := range sessionList {
-		session := &sessionList[i]
+	for i := range all.Items {
+		session := &all.Items[i]
+		if session.Spec.User != userIdentifier {
+			continue
+		}
 		if !IsSessionOccupyingSlot(*session) {
 			continue
 		}
@@ -529,7 +593,6 @@ func (wc *BreakglassSessionController) checkUserSessionCount(
 // checkTotalSessionCount counts sessions occupying request slots for an escalation and checks against a limit.
 // Sessions are counted by matching owner reference to ensure sessions created by different
 // escalations that grant the same group are not incorrectly counted together.
-// Optimized: only lists sessions in states that can occupy a slot instead of all sessions.
 func (wc *BreakglassSessionController) checkTotalSessionCount(
 	ctx context.Context,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
@@ -537,29 +600,27 @@ func (wc *BreakglassSessionController) checkTotalSessionCount(
 	source string,
 	log *zap.SugaredLogger,
 ) error {
-	// Optimization: only list sessions in potentially slot-occupying states
-	// rather than listing all sessions and filtering out terminal states.
-	// This reduces data transfer from etcd significantly in clusters with many expired sessions.
-	pendingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStatePending)
-	if err != nil {
-		return fmt.Errorf("failed to list pending sessions: %w", err)
+	all := &breakglassv1alpha1.BreakglassSessionList{}
+	var err error
+	if wc.sessionManager.quotaEnabled {
+		all.Items, err = wc.sessionManager.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{
+			breakglassv1alpha1.SessionStatePending,
+			breakglassv1alpha1.SessionStateApproved,
+			breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+		})
+	} else {
+		// Without durable admission, informer lag must not hide usage.
+		err = wc.sessionManager.Reader().List(ctx, all)
 	}
-	approvedSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateApproved)
 	if err != nil {
-		return fmt.Errorf("failed to list approved sessions: %w", err)
-	}
-	waitingSessions, err := wc.sessionManager.GetSessionsByState(ctx, breakglassv1alpha1.SessionStateWaitingForScheduledTime)
-	if err != nil {
-		return fmt.Errorf("failed to list scheduled waiting sessions: %w", err)
+		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 
 	// Count slot-occupying sessions for this specific escalation (by matching owner reference UID)
 	// This ensures sessions from different escalations that grant the same group are counted separately.
 	var totalActive int32
-	slotSessions := append(pendingSessions, approvedSessions...)
-	slotSessions = append(slotSessions, waitingSessions...)
-	for i := range slotSessions {
-		session := &slotSessions[i]
+	for i := range all.Items {
+		session := &all.Items[i]
 		if !isOwnedByEscalation(session, escalation) {
 			continue
 		}
@@ -601,6 +662,92 @@ func (wc *BreakglassSessionController) handleRejectBreakglassSession(c *gin.Cont
 	wc.setSessionStatus(c, breakglassv1alpha1.SessionConditionTypeRejected)
 }
 
+var exactSessionStateFilterValues = map[string]breakglassv1alpha1.BreakglassSessionState{
+	"pending":                 breakglassv1alpha1.SessionStatePending,
+	"approved":                breakglassv1alpha1.SessionStateApproved,
+	"waiting":                 breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"waitingforscheduledtime": breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"scheduled":               breakglassv1alpha1.SessionStateWaitingForScheduledTime,
+	"rejected":                breakglassv1alpha1.SessionStateRejected,
+	"withdrawn":               breakglassv1alpha1.SessionStateWithdrawn,
+	"idleexpired":             breakglassv1alpha1.SessionStateIdleExpired,
+	"timeout":                 breakglassv1alpha1.SessionStateTimeout,
+	"approvaltimeout":         breakglassv1alpha1.SessionStateTimeout,
+}
+
+func exactSessionStateFilters(tokens []string) ([]breakglassv1alpha1.BreakglassSessionState, bool) {
+	if len(tokens) == 0 {
+		return nil, false
+	}
+	states := make([]breakglassv1alpha1.BreakglassSessionState, 0, len(tokens))
+	seen := make(map[breakglassv1alpha1.BreakglassSessionState]struct{}, len(tokens))
+	for _, token := range tokens {
+		state, ok := exactSessionStateFilterValues[token]
+		if !ok {
+			return nil, false
+		}
+		if _, exists := seen[state]; exists {
+			continue
+		}
+		seen[state] = struct{}{}
+		states = append(states, state)
+	}
+	return states, len(states) > 0
+}
+
+func sessionMatchesListFilters(session *breakglassv1alpha1.BreakglassSession, cluster, user, group string) bool {
+	if session == nil {
+		return false
+	}
+	if cluster != "" && session.Spec.Cluster != cluster {
+		return false
+	}
+	if user != "" && session.Spec.User != user {
+		return false
+	}
+	if group != "" && session.Spec.GrantedGroup != group {
+		return false
+	}
+	return true
+}
+
+func (wc *BreakglassSessionController) listBreakglassSessionsForStatus(ctx context.Context, reqLog *zap.SugaredLogger, cluster, user, group string, stateFilters []string) ([]breakglassv1alpha1.BreakglassSession, error) {
+	if states, ok := exactSessionStateFilters(stateFilters); ok {
+		sessions := make([]breakglassv1alpha1.BreakglassSession, 0)
+		reqLog.Debugw("Using state index for sessions query", "states", states)
+		stateSessions, err := wc.sessionManager.GetSessionsByStates(ctx, states)
+		if err != nil {
+			return nil, err
+		}
+		for i := range stateSessions {
+			session := &stateSessions[i]
+			if !sessionMatchesListFilters(session, cluster, user, group) {
+				continue
+			}
+			sessions = append(sessions, *session)
+		}
+		return sessions, nil
+	}
+
+	if cluster != "" || user != "" || group != "" {
+		fs := fields.Set{}
+		if cluster != "" {
+			fs["spec.cluster"] = cluster
+		}
+		if user != "" {
+			fs["spec.user"] = user
+		}
+		if group != "" {
+			fs["spec.grantedGroup"] = group
+		}
+		selector := fields.SelectorFromSet(fs)
+		reqLog.Debugw("Using field selector for sessions query", "selector", selector.String())
+		return wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
+	}
+
+	return wc.sessionManager.GetAllBreakglassSessions(ctx)
+}
+
 // handleGetBreakglassSessionStatus handles GET /status for breakglass session
 func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.Context) {
 	reqLog := system.GetReqLogger(c, wc.log)
@@ -611,7 +758,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	// The Kubernetes API List operation needs to complete even if the HTTP client
 	// disconnects, otherwise users see errors on rapid tab switches in the UI.
 	// We use a timeout to prevent indefinite hangs. Timeout is configurable via APIContextTimeout.
-	ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
+	ctx, cancel := context.WithTimeout(c.Request.Context(), APIContextTimeout)
 	defer cancel()
 
 	// Support server-side filtering when cluster/user/group query params are provided
@@ -624,62 +771,81 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		// Try to load session by metadata.name (token is treated as session name)
 		ses, err := wc.sessionManager.GetBreakglassSessionByName(ctx, token)
 		if err != nil {
-			reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
-			c.JSON(http.StatusNotFound, struct {
-				Valid bool `json:"valid"`
-			}{Valid: false})
+			if apierrors.IsNotFound(err) {
+				reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
+				c.JSON(http.StatusNotFound, struct {
+					Valid bool `json:"valid"`
+				}{Valid: false})
+				return
+			}
+			reqLog.Errorw("Token validation: unable to load session", "tokenLen", len(token), "error", err)
+			apiresponses.RespondInternalError(c, "get session", err, reqLog)
 			return
 		}
-		canApprove := wc.isSessionApprover(c, ses)
-		alreadyActive := IsSessionActive(ses)
-		valid := true
-		if IsSessionExpired(ses) || ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn || ses.Status.State == breakglassv1alpha1.SessionStateRejected {
-			valid = false
+		pendingApproval := IsSessionPendingApproval(ses)
+		sessionForAuth := ses
+		sessionForAuth.Name = "[REDACTED]"
+		approvalMeta := wc.getSessionApprovalMeta(c, sessionForAuth)
+		canRead, err := wc.canReadBreakglassSession(c, sessionForAuth, approvalMeta)
+		if err != nil {
+			reqLog.Warnw("Token validation: unable to verify session read authorization", "tokenLen", len(token), "error", err)
+			apiresponses.RespondUnauthorizedWithMessage(c, "unable to verify user identity")
+			return
 		}
+		if !canRead {
+			reqLog.Warnw("Token validation: user is not authorized to read session", "tokenLen", len(token))
+			apiresponses.RespondForbidden(c, "not allowed to read this breakglass session")
+			return
+		}
+		canApprove := pendingApproval && approvalMeta.CanApprove
+		// Evaluate both flags against one instant so a response cannot claim the
+		// token is valid while simultaneously reporting that access is inactive
+		// when the expiry boundary is crossed between helper calls.
+		now := time.Now()
+		alreadyActive := isSessionAccessActiveAt(ses, now)
+		valid := isSessionTokenValidAt(ses, now)
 		c.JSON(http.StatusOK, gin.H{"canApprove": canApprove, "alreadyActive": alreadyActive, "valid": valid})
 		return
 	}
 
+	// Ownership and state filters are request-local, so validate them before
+	// listing sessions from Kubernetes.
+	includeMine := ParseBoolQuery(c.Query("mine"), false)
+	includeApprovedByMe := ParseBoolQuery(c.Query("approvedByMe"), false)
+	includeApproverDefault := !includeMine && !includeApprovedByMe
+	includeApprover := ParseBoolQuery(c.Query("approver"), includeApproverDefault)
+	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
+	stateFilters := normalizeStateFilters(c)
+	if invalidFilters := validateStateFilterTokens(stateFilters); len(invalidFilters) > 0 {
+		apiresponses.RespondBadRequestWithDetails(
+			c,
+			"invalid state filter",
+			fmt.Sprintf(
+				"unsupported state filter value(s): %s. Supported values: %s",
+				strings.Join(invalidFilters, ", "),
+				strings.Join(supportedSessionStateFilterTokens, ", "),
+			),
+		)
+		return
+	}
+	statePredicates := buildStateFilterPredicates(stateFilters)
+
 	var sessions []breakglassv1alpha1.BreakglassSession
 	var err error
-	if clusterQ != "" || userQ != "" || groupQ != "" {
-		// Build field selector from provided params
-		fs := fields.Set{}
-		if clusterQ != "" {
-			fs["spec.cluster"] = clusterQ
-		}
-		if userQ != "" {
-			fs["spec.user"] = userQ
-		}
-		if groupQ != "" {
-			fs["spec.grantedGroup"] = groupQ
-		}
-		selector := fields.SelectorFromSet(fs)
-		reqLog.Debugw("Using field selector for sessions query", "selector", selector.String())
-		sessions, err = wc.sessionManager.GetBreakglassSessionsWithSelector(ctx, selector)
-	} else {
-		sessions, err = wc.sessionManager.GetAllBreakglassSessions(ctx)
-	}
+	sessions, err = wc.listBreakglassSessionsForStatus(ctx, reqLog, clusterQ, userQ, groupQ, stateFilters)
 	if err != nil {
 		reqLog.Error("Error getting breakglass sessions", zap.Error(err))
 		apiresponses.RespondInternalError(c, "list sessions", err, reqLog)
 		return
 	}
 
-	// Ownership filters
-	includeMine := ParseBoolQuery(c.Query("mine"), false)
-	includeApprover := ParseBoolQuery(c.Query("approver"), true)
-	includeApprovedByMe := ParseBoolQuery(c.Query("approvedByMe"), false)
-	activeOnly := ParseBoolQuery(c.Query("activeOnly"), false)
-	stateFilters := normalizeStateFilters(c)
-	statePredicates := buildStateFilterPredicates(stateFilters)
-
 	var userEmail string
+	var emailErr error
 	if includeMine || includeApprovedByMe {
-		userEmail, err = wc.identityProvider.GetEmail(c)
-		if err != nil {
-			reqLog.Error("Error getting user identity email", zap.Error(err))
-			apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		userEmail, emailErr = wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
+		if includeApprovedByMe && emailErr != nil {
+			reqLog.Warnw("Email claim required for approvedByMe session filter", "error", emailErr)
+			apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for approvedByMe filter")
 			return
 		}
 	}
@@ -688,7 +854,11 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	if includeMine {
 		authIdentifiers = collectAuthIdentifiers(userEmail, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 		if len(authIdentifiers) == 0 {
-			reqLog.Error("No authenticated identity claims found for session ownership filtering")
+			if emailErr != nil {
+				reqLog.Warnw("No authenticated identity claims found for session ownership filtering", "error", emailErr)
+			} else {
+				reqLog.Warn("No authenticated identity claims found for session ownership filtering")
+			}
 			apiresponses.RespondUnauthorizedWithMessage(c, "user identity not found")
 			return
 		}
@@ -696,14 +866,14 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 
 	filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	for _, ses := range sessions {
-		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers)
+		isMine := matchesAuthIdentifier(ses.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, ses.Spec.IdentityProviderName, ses.Spec.IdentityProviderIssuer, ses.Spec.AllowIDPMismatch)
 		var isApprover bool
 		if includeApprover {
 			isApprover = wc.isSessionApprover(c, ses)
 		}
 		hasApproved := false
 		if includeApprovedByMe {
-			hasApproved = userHasApprovedSession(ses, userEmail)
+			hasApproved = userHasApprovedSessionForProvider(ses, userEmail, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed"))
 		}
 
 		include := false
@@ -747,7 +917,7 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 	enriched := wc.enrichSessionsWithApprovalReason(ctx, filtered, reqLog)
 
 	reqLog.Infow("Returning filtered breakglass sessions", "count", len(enriched))
-	c.JSON(http.StatusOK, enriched)
+	c.JSON(http.StatusOK, gin.H{"items": enriched, "total": len(enriched)})
 }
 
 // SessionApprovalMeta contains authorization metadata for a session
@@ -803,22 +973,32 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 		SessionState: string(session.Status.State),
 	}
 
-	// Get user email
-	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		reqLog.Warnw("Failed to get user email for approval meta", "error", err)
+	email, emailErr := wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
+	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	if len(authIdentifiers) == 0 {
+		if emailErr != nil {
+			reqLog.Warnw("Failed to get authenticated identity for approval meta", "error", emailErr)
+		} else {
+			reqLog.Warn("Failed to get authenticated identity for approval meta")
+		}
 		meta.DenialReason = "Unable to verify your identity"
 		return meta
 	}
 
 	// Check if user is the requester. Sessions can store the requester by email,
 	// preferred_username, or sub depending on the spoke cluster identity claim.
-	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
-	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers)
+	meta.IsRequester = matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch)
 
 	// Check session state first
 	switch session.Status.State {
 	case breakglassv1alpha1.SessionStateApproved:
+		// The controller may be a little behind the wall clock.  Do not expose
+		// an Approved session as usable in the API/UI during that cleanup lag:
+		// the recorded expiry is the effective access boundary.
+		if !IsSessionAccessActive(session) {
+			meta.StateMessage = "This session has expired"
+			return meta
+		}
 		meta.StateMessage = "This session has already been approved"
 		if session.Status.Approver != "" {
 			meta.StateMessage += " by " + session.Status.Approver
@@ -854,6 +1034,14 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 	authResult := wc.checkApprovalAuthorization(c, session)
 	meta.IsApprover = authResult.Allowed
 
+	if IsSessionApprovalTimedOut(session) {
+		meta.StateMessage = "This session has timed out waiting for approval"
+		if !meta.IsApprover && !meta.IsRequester {
+			meta.DenialReason = authResult.Message
+		}
+		return meta
+	}
+
 	if meta.IsApprover {
 		meta.CanApprove = true
 		meta.CanReject = true
@@ -875,13 +1063,15 @@ func (wc *BreakglassSessionController) getSessionApprovalMeta(c *gin.Context, se
 }
 
 func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, session breakglassv1alpha1.BreakglassSession, approvalMeta SessionApprovalMeta) (bool, error) {
-	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		return false, err
-	}
-
+	email, emailErr := wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
 	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
-	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) {
+	if len(authIdentifiers) == 0 {
+		if emailErr != nil {
+			return false, emailErr
+		}
+		return false, errAuthenticatedIdentityNotFound
+	}
+	if matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch) {
 		return true, nil
 	}
 
@@ -889,7 +1079,7 @@ func (wc *BreakglassSessionController) canReadBreakglassSession(c *gin.Context, 
 		return true, nil
 	}
 
-	if userHasApprovedSession(session, email) {
+	if email != "" && userHasApprovedSessionForProvider(session, email, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed")) {
 		return true, nil
 	}
 
@@ -911,16 +1101,12 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionByName(c *gin.C
 
 	ses, err := wc.sessionManager.GetBreakglassSessionByName(c.Request.Context(), sessionName)
 	if err != nil {
-		reqLog.Warnw("Session not found", "session", sessionName, "error", err)
-		c.JSON(http.StatusNotFound, struct {
-			Error   string `json:"error"`
-			Code    string `json:"code"`
-			Session string `json:"session"`
-		}{
-			Error:   "session not found",
-			Code:    "NOT_FOUND",
-			Session: sessionName,
-		})
+		if apierrors.IsNotFound(err) {
+			reqLog.Warnw("Session not found", "session", sessionName, "error", err)
+			respondBreakglassSessionNotFound(c, sessionName)
+		} else {
+			apiresponses.RespondInternalError(c, "lookup session", err, reqLog)
+		}
 		return
 	}
 

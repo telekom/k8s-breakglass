@@ -1,10 +1,17 @@
 import { vi, type Mock } from "vitest";
 import BreakglassService from "./breakglass";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
+import { pushError } from "@/services/errors";
 import type { Breakglass, SessionCR } from "@/model/breakglass";
 import type { AxiosInstance } from "axios";
 
 vi.mock("@/services/httpClient");
+vi.mock("@/services/errors", () => ({
+  pushError: vi.fn(),
+  pushSuccess: vi.fn(),
+  dismissError: vi.fn(),
+  useErrors: vi.fn(),
+}));
 const mockedCreateClient = createAuthenticatedApiClient as Mock<typeof createAuthenticatedApiClient>;
 
 type MockAxiosClient = {
@@ -72,13 +79,16 @@ describe("BreakglassService", () => {
 
   it("explodes escalations and parses duration strings for all supported units", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "15s" } },
-        { spec: { allowed: { groups: ["db"], clusters: ["beta"] }, escalatedGroup: "db", maxValidFor: "10m" } },
-        { spec: { allowed: { groups: ["sec"], clusters: ["gamma"] }, escalatedGroup: "sec", maxValidFor: "2h" } },
-        { spec: { allowed: { groups: ["sre"], clusters: ["delta"] }, escalatedGroup: "sre", maxValidFor: "1d" } },
-        { spec: { allowed: { groups: ["qa"], clusters: ["epsilon"] }, escalatedGroup: "qa", maxValidFor: "999x" } },
-      ],
+      data: {
+        items: [
+          { spec: { allowed: { groups: ["ops"], clusters: ["alpha"] }, escalatedGroup: "ops", maxValidFor: "15s" } },
+          { spec: { allowed: { groups: ["db"], clusters: ["beta"] }, escalatedGroup: "db", maxValidFor: "10m" } },
+          { spec: { allowed: { groups: ["sec"], clusters: ["gamma"] }, escalatedGroup: "sec", maxValidFor: "2h" } },
+          { spec: { allowed: { groups: ["sre"], clusters: ["delta"] }, escalatedGroup: "sre", maxValidFor: "1d" } },
+          { spec: { allowed: { groups: ["qa"], clusters: ["epsilon"] }, escalatedGroup: "qa", maxValidFor: "999x" } },
+        ],
+        total: 5,
+      },
     });
 
     const escalations = await (
@@ -340,10 +350,10 @@ describe("BreakglassService", () => {
   });
 
   it("fetches outstanding requests and rethrows errors", async () => {
-    mockClient.get.mockResolvedValueOnce({ data: [{ metadata: { name: "req" } }] });
+    mockClient.get.mockResolvedValueOnce({ data: { items: [{ metadata: { name: "req" } }], total: 1 } });
     const outstanding = await service.fetchMyOutstandingRequests();
     expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
-      params: { mine: true, approver: false, state: "pending" },
+      params: { mine: true, approver: false, state: "pending,waitingforscheduledtime" },
     });
     expect(outstanding).toHaveLength(1);
 
@@ -353,16 +363,22 @@ describe("BreakglassService", () => {
 
   it("normalizes approved sessions when fetching active sessions", async () => {
     mockClient.get.mockResolvedValueOnce({
-      data: [
-        {
-          metadata: { name: "sess" },
-          spec: { grantedGroup: "ops", cluster: "c-1" },
-          status: { expiresAt: new Date().toISOString(), state: "Approved" },
-        },
-      ],
+      data: {
+        items: [
+          {
+            metadata: { name: "sess" },
+            spec: { grantedGroup: "ops", cluster: "c-1" },
+            status: { expiresAt: new Date().toISOString(), state: "Approved" },
+          },
+        ],
+        total: 1,
+      },
     });
 
     const sessions = await service.fetchActiveSessions();
+    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
+      params: { state: "approved", mine: true, approver: false, activeOnly: true },
+    });
     expect(sessions[0]).toEqual(
       expect.objectContaining({
         name: "sess",
@@ -426,15 +442,6 @@ describe("BreakglassService", () => {
     await expect(service.searchSessions({ mine: true })).rejects.toThrow("normalized search failure");
   });
 
-  it("validates requests by passing the token and rethrowing failures", async () => {
-    mockClient.get.mockResolvedValueOnce({ status: 200 });
-    await service.validateBreakglassRequest("abc");
-    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", { params: { token: "abc" } });
-
-    mockClient.get.mockRejectedValueOnce(new Error("bad token"));
-    await expect(service.validateBreakglassRequest("abc")).rejects.toThrow("bad token");
-  });
-
   it("drops breakglass sessions using the active session metadata", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 200 });
     const bg = {
@@ -444,12 +451,12 @@ describe("BreakglassService", () => {
     } as unknown as Breakglass;
 
     await service.dropBreakglass(bg);
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session%2F1/drop", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session%2F1/drop");
 
     await expect(service.dropBreakglass({} as unknown as Breakglass)).rejects.toThrow("Missing session name");
   });
 
-  it("merges approved, timed-out and historical sessions for fetchMySessions", async () => {
+  it("merges approved, timed-out, expired, idle-expired and historical sessions for fetchMySessions", async () => {
     const now = Date.now();
     mockClient.get
       .mockResolvedValueOnce({
@@ -460,6 +467,13 @@ describe("BreakglassService", () => {
       })
       .mockResolvedValueOnce({
         data: [
+          { metadata: { name: "dup" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Expired" } },
+          { metadata: { name: "expired" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Expired" } },
+          {
+            metadata: { name: "idle-expired" },
+            spec: { grantedGroup: "ops", cluster: "c1" },
+            status: { state: "IdleExpired" },
+          },
           { metadata: { name: "hist" }, spec: { grantedGroup: "ops", cluster: "c1" }, status: { state: "Rejected" } },
         ],
       });
@@ -467,8 +481,25 @@ describe("BreakglassService", () => {
     const sessions = await service.fetchMySessions();
     const names = sessions.map((s) => s.name);
     expect(names).toContain("dup");
+    expect(names).toContain("expired");
+    expect(names).toContain("idle-expired");
     expect(names).toContain("hist");
+    expect(sessions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "expired", state: "Expired" }),
+        expect.objectContaining({ name: "idle-expired", state: "IdleExpired" }),
+      ]),
+    );
     expect(new Set(names).size).toBe(names.length);
+    expect(mockClient.get).toHaveBeenNthCalledWith(1, "/breakglassSessions", {
+      params: { mine: true, approver: false, state: "approved", activeOnly: true },
+    });
+    expect(mockClient.get).toHaveBeenNthCalledWith(2, "/breakglassSessions", {
+      params: { mine: true, approver: false, state: "timeout" },
+    });
+    expect(mockClient.get).toHaveBeenNthCalledWith(3, "/breakglassSessions", {
+      params: { state: "rejected,withdrawn,expired,idleexpired", mine: true, approver: false },
+    });
   });
 
   it("returns deduplicated sessions approved by the user", async () => {
@@ -489,9 +520,17 @@ describe("BreakglassService", () => {
   it("withdraws pending requests and errors when metadata is missing", async () => {
     mockClient.post.mockResolvedValueOnce({ status: 204 });
     await service.withdrawMyRequest({ metadata: { name: "pending" } } as SessionCR);
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/pending/withdraw", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/pending/withdraw");
 
     await expect(service.withdrawMyRequest({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
+  });
+
+  it("drops scheduled own sessions and errors when metadata is missing", async () => {
+    mockClient.post.mockResolvedValueOnce({ status: 204 });
+    await service.dropMySession({ metadata: { name: "scheduled" } } as SessionCR);
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/scheduled/drop");
+
+    await expect(service.dropMySession({ metadata: {} } as SessionCR)).rejects.toThrow("Missing session name");
   });
 
   it("rethrows errors when withdrawing requests fails", async () => {
@@ -500,12 +539,21 @@ describe("BreakglassService", () => {
     await expect(service.withdrawMyRequest({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow(
       "withdraw failed",
     );
-    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw", {});
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/withdraw");
   });
 
-  it("sends payloads via testButton helper", async () => {
-    mockClient.post.mockResolvedValueOnce({ status: 200 });
-    await service.testButton("user", "cluster");
-    expect(mockClient.post).toHaveBeenCalledWith("/test", { user: "user", cluster: "cluster" });
+  it("rethrows errors when dropping own sessions fails", async () => {
+    mockClient.post.mockRejectedValueOnce(new Error("drop failed"));
+
+    await expect(service.dropMySession({ metadata: { name: "oops" } } as SessionCR)).rejects.toThrow("drop failed");
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/oops/drop");
+    expect(pushError).not.toHaveBeenCalled();
+  });
+
+  it("rethrows failures when rejecting a session", async () => {
+    const error = new Error("rejection failed");
+    mockClient.post.mockRejectedValueOnce(error);
+    await expect(service.rejectBreakglass("session")).rejects.toBe(error);
+    expect(mockClient.post).toHaveBeenCalledWith("/breakglassSessions/session/reject", {});
   });
 });

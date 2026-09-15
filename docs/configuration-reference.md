@@ -135,7 +135,7 @@ server:
 
 ```bash
 # Check if origin is allowed (look for blocked_request_origin in logs)
-kubectl logs -l app=breakglass-controller | grep blocked_request_origin
+kubectl logs -n breakglass-system -l app=breakglass | grep blocked_request_origin
 
 # Verify CORS headers in response
 curl -v -H "Origin: https://breakglass.example.com" https://api.breakglass.example.com/api/config
@@ -209,6 +209,37 @@ server:
 
 - In high-security environments, set `hardenedIDPHints: true` to prevent attackers from discovering which identity providers are configured.
 - In user-friendly environments (e.g., internal platforms), leave as `false` to help users troubleshoot authentication issues.
+
+---
+
+#### `allowOIDCProxyRedirects` (Optional)
+
+Controls whether the unauthenticated OIDC proxy (`/api/oidc/authority/*`) follows upstream `30x` responses.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `*bool` |
+| **Default** | unset (equivalent to `false` — redirects are refused) |
+| **Secure Setting** | unset / `false` |
+
+```yaml
+server:
+  # Leave unset. Only enable for a non-conforming identity provider.
+  allowOIDCProxyRedirects: true
+```
+
+**Behavior:**
+
+- unset or `false` (default, secure): The proxy never follows redirects. The upstream `30x` status is relayed to the caller with `Location` and `Set-Cookie` stripped by the response-header allowlist.
+- `true`: Go's default redirect handling is restored (up to 10 hops) and a warning is logged at startup.
+
+**Security Considerations:**
+
+- The OIDC proxy validates only the **first** hop against the configured-authority allowlist. Redirect targets are never re-checked, so enabling this lets a trusted-but-redirecting identity provider drive server-side requests to arbitrary hosts — server-side request forgery (CWE-918).
+- The endpoints the proxy is permitted to reach (discovery, JWKS, token, userinfo, introspection, revocation) are specified to be served directly and have no legitimate need to redirect. Keycloak, Entra ID, and Okta all serve discovery and JWKS without redirecting.
+- Existing deployments are unaffected by the default: the field is optional and its zero value reproduces the secure behaviour.
+
+See [OIDC Proxy Egress Controls](security-best-practices.md#oidc-proxy-egress-controls) for the full defence-in-depth description.
 
 ---
 
@@ -642,12 +673,12 @@ data:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: breakglass-controller
+  name: breakglass-manager
 spec:
   template:
     spec:
       containers:
-      - name: controller
+      - name: breakglass
         args:
           - --config-path=/etc/breakglass/config.yaml
         volumeMounts:
@@ -765,7 +796,7 @@ When a `BreakglassSession` is created, the controller resolves all potential app
 
 1. **Monitor warning logs:** Watch for truncation warnings in controller logs:
    ```bash
-   kubectl logs -n breakglass-system -l app=breakglass-manager | grep -i "truncat\|too many members\|no remaining capacity"
+   kubectl logs -n breakglass-system -l app=breakglass | grep -i "truncat\|too many members\|no remaining capacity"
    ```
 
 2. **Check approver counts:** Sessions with truncated approvers will still work correctly, but some potential approvers may not be notified.

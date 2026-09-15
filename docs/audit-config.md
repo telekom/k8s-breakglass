@@ -52,7 +52,7 @@ spec:
 
 ## Security: Secret Namespace Enforcement
 
-**All secrets MUST be in the same namespace as the breakglass controller** (typically `breakglass-system`). This is enforced for security - the controller cannot read secrets from arbitrary namespaces.
+**All secrets MUST be in the same namespace as the breakglass controller** (typically `breakglass-system`). This is enforced for security - the controller cannot read secrets from arbitrary namespaces. If the controller namespace is not configured, secret references are rejected before any Secret lookup.
 
 ```yaml
 # ✅ CORRECT - secrets in controller namespace
@@ -125,12 +125,25 @@ sinks:
         Content-Type: application/json
       authSecretRef:
         name: splunk-hec-token      # Secret with 'token' key for Bearer auth
+        namespace: breakglass-system
       timeoutSeconds: 10
       tls:
         caSecretRef:
           name: splunk-ca
+          namespace: breakglass-system
       batchSize: 50                 # Send events in batches
 ```
+
+`authSecretRef` is optional and supports either a `token` key for `Bearer`
+authentication or `username` and `password` keys for Basic authentication. If
+`headers` already contains an `Authorization` header, that explicit header is
+kept. `tls.caSecretRef` loads a `ca.crt` key into the webhook HTTP client's
+trust store, while `tls.insecureSkipVerify` disables certificate verification
+for private test endpoints and should not be used in production.
+
+Webhook delivery always uses `POST`, does not follow redirects, and succeeds
+only for a `2xx` response. Redirect and other response codes keep required
+audit delivery pending.
 
 ### Log Sink
 
@@ -154,6 +167,7 @@ sinks:
   - name: k8s-events
     type: kubernetes
     eventTypes:
+      - session.termination_intent
       - session.requested
       - session.approved
       - session.revoked
@@ -168,11 +182,14 @@ The audit system captures 120+ event types organized by category:
 - `session.approved` - Session approved by approver
 - `session.denied` - Session denied by approver
 - `session.rejected` - Session auto-rejected by policy
+- `session.withdrawn` / `session.dropped` - Session withdrawn or dropped by its requester
 - `session.activated` - Session now active
 - `session.expired` - Session time expired
+- `session.termination_intent` - Duplicate-cleanup decision stored with the terminal state before delivery
 - `session.revoked` - Session manually revoked
 - `session.extended` - Session duration extended
 - `session.validated` / `session.invalidated` - Session validation
+- `session.approval_unverified_groups` - Approval used unverified JWT groups after a cluster-side lookup failure
 
 ### Access Events (per-request granularity)
 - `access.allowed` / `access.granted` - Access permitted
@@ -205,6 +222,8 @@ These capture access to non-API endpoints:
 ### Secret Access (high security)
 - `secret.accessed` / `secret.created`
 - `secret.updated` / `secret.deleted`
+- `configmap.accessed` / `serviceaccount.used`
+- `token.generated` / `token.validated` / `token.revoked`
 
 ### RBAC Events
 - `role.created` / `role.updated` / `role.deleted`
@@ -214,7 +233,9 @@ These capture access to non-API endpoints:
 
 ### Debug Session Events
 - `debug_session.created` / `debug_session.started`
-- `debug_session.attached` / `debug_session.terminated`
+- `debug_session.attached` / `debug_session.terminated` / `debug_session.rejected`
+- `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
+- `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
 
 ### Authentication Events
@@ -223,7 +244,25 @@ These capture access to non-API endpoints:
 
 ## Filtering
 
-Control which events are captured:
+Control which events are captured. Configured filters are enforced before
+events reach sinks: global event-type filters run before manager queueing and
+synchronous writes, and global user, namespace, resource, and event-type filters
+are applied at every sink. Sink-local `eventTypes` and `minSeverity` filters
+then further narrow each sink's output. Exclude filters take precedence over
+include filters.
+
+Required duplicate-cleanup delivery uses `session.termination_intent`. Every
+configured sink and global filter must accept that event; filtering it out keeps
+the terminal session's intent pending without restoring access. Cleanup stores
+the terminal state and intent in one status update, then delivers the event and
+records acknowledgement. At least one
+sink must return a durable receipt. Kafka can
+acknowledge required delivery only with
+`async: false` and nonzero `requiredAcks`. Kubernetes Events and controller logs
+remain useful operational outputs, but they do not provide a durable delivery
+receipt and cannot satisfy required delivery by themselves. If any configured
+sink cannot be constructed, required auditing remains unavailable and duplicate
+cleanup fails closed until configuration is repaired.
 
 ```yaml
 spec:
@@ -246,8 +285,9 @@ spec:
     
     # Filter by namespace
     excludeNamespaces:
-      - kube-system
-      - kube-public
+      patterns:
+        - kube-system
+        - kube-public
     
     # Filter by resource type
     includeResources:
@@ -258,33 +298,32 @@ spec:
 
 ### Namespace Filtering with Labels
 
-Namespace filters support both string patterns and Kubernetes label selectors:
+Use `includeNamespaces.patterns` and `excludeNamespaces.patterns` for the general
+AuditConfig event stream. For example:
 
 ```yaml
 spec:
   filtering:
-    # Include namespaces matching patterns OR labels
     includeNamespaces:
-      patterns:
-        - "prod-*"
-        - "staging-*"
-      selectorTerms:
-        - matchLabels:
-            audit-enabled: "true"
-    
-    # Exclude system namespaces by pattern
+      patterns: ["prod-*", "staging-*"]
     excludeNamespaces:
-      patterns:
-        - "kube-*"
-      selectorTerms:
-        - matchLabels:
-            audit-exclude: "true"
+      patterns: ["kube-*"]
 ```
 
-This allows dynamic namespace selection based on labels, which is useful when:
-- New namespaces are created frequently
-- Namespace naming conventions vary
-- You want to use Kubernetes-native label selectors
+Label selectors require `target.namespaceLabels`, which general controller event
+emitters do not populate from target clusters. Inclusion selector terms match
+only events carrying labels; they are not a general namespace label lookup.
+
+**Upgrade compatibility:** enabled AuditConfigs containing
+`excludeNamespaces.selectorTerms` are rejected during reload. The last working
+configuration remains active, and the new configuration is reported with
+`Ready=False` / `ReloadFailed`. Convert selector exclusions to namespace patterns
+before upgrading or applying the configuration. On initial startup there is no
+previous configuration to retain. Adding labels to individual events does not
+make selector exclusions supported by AuditConfig.
+
+Direct users of the filtered-sink library can supply namespace labels and use
+selector exclusions; absent labels fail closed in that lower-level API.
 
 ## Sampling
 
@@ -313,8 +352,9 @@ spec:
 
 > **Sensitive event guarantee:** The following event types are **never sampled**
 > regardless of the `rate` setting: session request/approve/deny/reject/expire/
-> revoke/withdraw/drop, access denial, secret CRUD, auth failure, debug session
-> create/start/terminate/fail/expire/approval-timeout, cluster role binding
+> revoke/withdraw/drop/invalidation/termination intent/unverified-group approval,
+> access denial, secret CRUD, auth failure, debug session create/start/reject/
+> terminate/fail/expire/approval-timeout/binding-unresolved, cluster role binding
 > create/delete, resource impersonation, policy bypass/violation, and pod
 > security deny/warning/override. When the manager's main async queue is full,
 > sensitive events fall back to a **direct synchronous write** path, blocking up
@@ -437,7 +477,27 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: webhook-auth
+  namespace: breakglass-system
 type: Opaque
 stringData:
   token: your-bearer-token
 ```
+
+For Basic authentication, use `username` and `password` instead of `token`:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: webhook-basic-auth
+  namespace: breakglass-system
+type: Opaque
+stringData:
+  username: audit-user
+  password: audit-password
+```
+## Secret reference namespace
+
+Kafka TLS CA, client certificate, and SASL credential Secret references must set
+an explicit namespace equal to the controller namespace. Empty namespaces are
+validation errors and are never defaulted or read.

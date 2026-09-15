@@ -114,7 +114,7 @@ func newConfigViewCommand() *cobra.Command {
 			if err := rt.EnsureConfigLoaded(); err != nil {
 				return err
 			}
-			return output.WriteObject(rt.Writer(), output.FormatYAML, rt.cfg)
+			return output.WriteObject(rt.Writer(), output.FormatYAML, rt.cfg.Redacted())
 		},
 	}
 }

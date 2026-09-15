@@ -3,6 +3,7 @@ package escalation_test
 import (
 	"context"
 	"os"
+	"slices"
 	"testing"
 	"time"
 
@@ -16,6 +17,43 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type escalationRecordingListClient struct {
+	client.Client
+	calls []client.ListOptions
+}
+
+func (c *escalationRecordingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&listOpts)
+	}
+	c.calls = append(c.calls, listOpts)
+	return c.Client.List(ctx, list, opts...)
+}
+
+func recordedExactFieldValues(calls []client.ListOptions, field string) []string {
+	values := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call.FieldSelector == nil {
+			continue
+		}
+		value, ok := call.FieldSelector.RequiresExactMatch(field)
+		if ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+func hasUnfilteredListCall(calls []client.ListOptions) bool {
+	for _, call := range calls {
+		if call.FieldSelector == nil {
+			return true
+		}
+	}
+	return false
+}
 
 func TestEscalationManager_GetAllBreakglassEscalations(t *testing.T) {
 	// TestEscalationManager_GetAllBreakglassEscalations
@@ -501,6 +539,117 @@ func TestEscalationManager_GetClusterGroupBreakglassEscalations(t *testing.T) {
 				t.Errorf("GetClusterGroupBreakglassEscalations() count = %v, want %v", len(result), tt.expectedCount)
 			}
 		})
+	}
+}
+
+func TestEscalationManager_GetClusterGroupBreakglassEscalationsUsesGroupIndexCandidates(t *testing.T) {
+	scheme := breakglass.Scheme
+	matchingGlobCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "matching-glob-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"admin"},
+			},
+		},
+	}
+	wrongGroup := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-group", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"guest"},
+			},
+		},
+	}
+	wrongCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"dev-*"},
+				Groups:   []string{"admin"},
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassEscalation{}, "spec.allowed.group", func(o client.Object) []string {
+			be, ok := o.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil {
+				return nil
+			}
+			return be.Spec.Allowed.Groups
+		}).
+		WithObjects(matchingGlobCluster, wrongGroup, wrongCluster).
+		Build()
+	recordingClient := &escalationRecordingListClient{Client: baseClient}
+	em := escalation.EscalationManager{Client: recordingClient}
+
+	result, err := em.GetClusterGroupBreakglassEscalations(context.Background(), "prod-eu", []string{"admin"})
+	if err != nil {
+		t.Fatalf("GetClusterGroupBreakglassEscalations() unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Name != "matching-glob-cluster" {
+		t.Fatalf("GetClusterGroupBreakglassEscalations() = %v, want only matching-glob-cluster", result)
+	}
+	values := recordedExactFieldValues(recordingClient.calls, "spec.allowed.group")
+	if !slices.Contains(values, "admin") {
+		t.Fatalf("expected spec.allowed.group index lookup for admin, got %v", values)
+	}
+	if hasUnfilteredListCall(recordingClient.calls) {
+		t.Fatalf("expected indexed candidate lookup without an unfiltered escalation list, got calls %#v", recordingClient.calls)
+	}
+}
+
+func TestEscalationManager_GetClusterGroupBreakglassEscalationsFallsBackWithoutGroupIndex(t *testing.T) {
+	scheme := breakglass.Scheme
+	matchingGlobCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "matching-glob-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"admin"},
+			},
+		},
+	}
+	wrongGroup := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-group", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"guest"},
+			},
+		},
+	}
+	wrongCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-cluster", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"dev-*"},
+				Groups:   []string{"admin"},
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(matchingGlobCluster, wrongGroup, wrongCluster).
+		Build()
+	recordingClient := &escalationRecordingListClient{Client: baseClient}
+	em := escalation.EscalationManager{Client: recordingClient}
+
+	result, err := em.GetClusterGroupBreakglassEscalations(context.Background(), "prod-eu", []string{"admin"})
+	if err != nil {
+		t.Fatalf("GetClusterGroupBreakglassEscalations() unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Name != "matching-glob-cluster" {
+		t.Fatalf("GetClusterGroupBreakglassEscalations() = %v, want only matching-glob-cluster", result)
+	}
+	values := recordedExactFieldValues(recordingClient.calls, "spec.allowed.group")
+	if !slices.Contains(values, "admin") {
+		t.Fatalf("expected attempted spec.allowed.group index lookup for admin, got %v", values)
+	}
+	if !hasUnfilteredListCall(recordingClient.calls) {
+		t.Fatalf("expected fallback to an unfiltered escalation list when group index is missing, got calls %#v", recordingClient.calls)
 	}
 }
 
@@ -1245,5 +1394,122 @@ func TestEscalationManager_GetClusterGroupTargetBreakglassEscalation(t *testing.
 				t.Errorf("GetClusterGroupTargetBreakglassEscalation() count = %v, want %v", len(result), tt.expectedCount)
 			}
 		})
+	}
+}
+
+func TestEscalationManager_GetClusterGroupTargetBreakglassEscalationUsesTargetIndexCandidates(t *testing.T) {
+	scheme := breakglass.Scheme
+	matchingGlobCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "matching-target", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "apps",
+		},
+	}
+	wrongTarget := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-target", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "database",
+		},
+	}
+	wrongGroup := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-group", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"guest"},
+			},
+			EscalatedGroup: "apps",
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.BreakglassEscalation{}, "spec.escalatedGroup", func(o client.Object) []string {
+			be, ok := o.(*breakglassv1alpha1.BreakglassEscalation)
+			if !ok || be == nil || be.Spec.EscalatedGroup == "" {
+				return nil
+			}
+			return []string{be.Spec.EscalatedGroup}
+		}).
+		WithObjects(matchingGlobCluster, wrongTarget, wrongGroup).
+		Build()
+	recordingClient := &escalationRecordingListClient{Client: baseClient}
+	em := escalation.EscalationManager{Client: recordingClient}
+
+	result, err := em.GetClusterGroupTargetBreakglassEscalation(context.Background(), "prod-eu", []string{"admin"}, "apps")
+	if err != nil {
+		t.Fatalf("GetClusterGroupTargetBreakglassEscalation() unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Name != "matching-target" {
+		t.Fatalf("GetClusterGroupTargetBreakglassEscalation() = %v, want only matching-target", result)
+	}
+	values := recordedExactFieldValues(recordingClient.calls, "spec.escalatedGroup")
+	if len(values) != 1 || values[0] != "apps" {
+		t.Fatalf("expected one spec.escalatedGroup index lookup for apps, got %v", values)
+	}
+	if hasUnfilteredListCall(recordingClient.calls) {
+		t.Fatalf("expected target-index candidate lookup without an unfiltered escalation list, got calls %#v", recordingClient.calls)
+	}
+}
+
+func TestEscalationManager_GetClusterGroupTargetBreakglassEscalationFallsBackWithoutTargetIndex(t *testing.T) {
+	scheme := breakglass.Scheme
+	matchingGlobCluster := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "matching-target", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "apps",
+		},
+	}
+	wrongTarget := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-target", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"admin"},
+			},
+			EscalatedGroup: "database",
+		},
+	}
+	wrongGroup := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "wrong-group", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+				Clusters: []string{"prod-eu"},
+				Groups:   []string{"guest"},
+			},
+			EscalatedGroup: "apps",
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(matchingGlobCluster, wrongTarget, wrongGroup).
+		Build()
+	recordingClient := &escalationRecordingListClient{Client: baseClient}
+	em := escalation.EscalationManager{Client: recordingClient}
+
+	result, err := em.GetClusterGroupTargetBreakglassEscalation(context.Background(), "prod-eu", []string{"admin"}, "apps")
+	if err != nil {
+		t.Fatalf("GetClusterGroupTargetBreakglassEscalation() unexpected error: %v", err)
+	}
+	if len(result) != 1 || result[0].Name != "matching-target" {
+		t.Fatalf("GetClusterGroupTargetBreakglassEscalation() = %v, want only matching-target", result)
+	}
+	values := recordedExactFieldValues(recordingClient.calls, "spec.escalatedGroup")
+	if len(values) != 1 || values[0] != "apps" {
+		t.Fatalf("expected attempted spec.escalatedGroup index lookup for apps, got %v", values)
+	}
+	if !hasUnfilteredListCall(recordingClient.calls) {
+		t.Fatalf("expected fallback to an unfiltered escalation list when target index is missing, got calls %#v", recordingClient.calls)
 	}
 }

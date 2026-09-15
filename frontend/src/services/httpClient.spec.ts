@@ -1,7 +1,7 @@
 import { vi } from "vitest";
 import { createAuthenticatedApiClient } from "./httpClient";
 import type AuthService from "@/services/auth";
-import { AxiosError, type InternalAxiosRequestConfig } from "axios";
+import { AxiosError, type AxiosResponse, type InternalAxiosRequestConfig } from "axios";
 
 function createResolvedAdapter() {
   return async (config: InternalAxiosRequestConfig) => ({
@@ -14,6 +14,15 @@ function createResolvedAdapter() {
     headers: {},
     config,
   });
+}
+
+function stringifyLogArg(arg: unknown): string {
+  if (typeof arg === "string") return arg;
+  try {
+    return JSON.stringify(arg);
+  } catch {
+    return String(arg);
+  }
 }
 
 describe("createAuthenticatedApiClient", () => {
@@ -92,18 +101,110 @@ describe("createAuthenticatedApiClient", () => {
     const authHeaderCalls = debugSpy.mock.calls.filter((call) =>
       call.some((arg) => typeof arg === "string" && arg.includes("Authorization header set")),
     );
-    const authHeaderCallsStringified = authHeaderCalls
-      .flat()
-      .map((arg) => {
-        if (typeof arg === "string") return arg;
-        try {
-          return JSON.stringify(arg);
-        } catch {
-          return String(arg);
-        }
-      })
-      .join(" ");
+    const authHeaderCallsStringified = authHeaderCalls.flat().map(stringifyLogArg).join(" ");
     expect(authHeaderCallsStringified).not.toContain("dev-token");
+  });
+
+  it("does not log Authorization headers or bearer tokens for failed authenticated requests", async () => {
+    const auth = {
+      getAccessToken: vi.fn().mockResolvedValue("sensitive-token"),
+      trySilentRenew: vi.fn().mockResolvedValue(false),
+    } as unknown as AuthService;
+
+    const client = createAuthenticatedApiClient(auth, { retryOn401: false });
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      const response = {
+        data: { error: "denied" },
+        status: 403,
+        statusText: "Forbidden",
+        headers: {},
+        config,
+      } satisfies AxiosResponse;
+      throw new AxiosError("Request failed with status code 403", "ERR_BAD_REQUEST", config, {}, response);
+    };
+
+    await expect(client.get("/restricted")).rejects.toThrow("Request failed with status code 403");
+
+    const logged = errorSpy.mock.calls.flat().map(stringifyLogArg).join(" ");
+    expect(logged).toContain("HTTP 403 error");
+    expect(logged).not.toContain("Authorization");
+    expect(logged).not.toContain("Bearer sensitive-token");
+    expect(logged).not.toContain("sensitive-token");
+  });
+
+  it("does not attempt silent renew on 401 by default", async () => {
+    const auth = {
+      getAccessToken: vi.fn().mockResolvedValue("mock-token"),
+      trySilentRenew: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+
+    const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com" });
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      throw new AxiosError(
+        "Unauthorized",
+        "ERR_BAD_REQUEST",
+        config,
+        {},
+        {
+          data: {},
+          status: 401,
+          statusText: "Unauthorized",
+          headers: {},
+          config,
+        },
+      );
+    };
+
+    await expect(client.get("/protected")).rejects.toThrow("Unauthorized");
+    expect((auth as unknown as { trySilentRenew: ReturnType<typeof vi.fn> }).trySilentRenew).not.toHaveBeenCalled();
+  });
+
+  it("retries a 401 only when retryOn401 is explicitly enabled", async () => {
+    const auth = {
+      getAccessToken: vi.fn().mockResolvedValueOnce("old-token").mockResolvedValue("new-token"),
+      trySilentRenew: vi.fn().mockResolvedValue(true),
+    } as unknown as AuthService;
+
+    let attempts = 0;
+    const client = createAuthenticatedApiClient(auth, { baseURL: "https://api.example.com", retryOn401: true });
+    client.defaults.adapter = async (config: InternalAxiosRequestConfig) => {
+      attempts += 1;
+      if (attempts === 1) {
+        throw new AxiosError(
+          "Unauthorized",
+          "ERR_BAD_REQUEST",
+          config,
+          {},
+          {
+            data: {},
+            status: 401,
+            statusText: "Unauthorized",
+            headers: {},
+            config,
+          },
+        );
+      }
+      return {
+        data: {
+          authorization:
+            typeof config.headers?.get === "function"
+              ? config.headers.get("Authorization")
+              : config.headers?.Authorization,
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+
+    const response = await client.get("/protected");
+
+    expect(attempts).toBe(2);
+    expect((auth as unknown as { trySilentRenew: ReturnType<typeof vi.fn> }).trySilentRenew).toHaveBeenCalledTimes(1);
+    expect(response.data.authorization).toBe("Bearer new-token");
   });
 });
 

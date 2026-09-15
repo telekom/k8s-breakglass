@@ -1,4 +1,5 @@
 import { test, expect, Page } from "@playwright/test";
+import { navigateWithRouter, performMockLogin } from "./helpers";
 
 /**
  * UI Screenshot Tests for Breakglass Frontend
@@ -28,41 +29,20 @@ async function hideDynamicContent(page: Page) {
   });
 }
 
-// Helper to perform mock login
-async function performMockLogin(page: Page) {
-  await page.goto("/");
-  await page.waitForLoadState("networkidle");
-
-  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH !== undefined, {
-    timeout: 10000,
-  });
-
-  await page.evaluate(() => {
-    const auth = (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH as Record<string, unknown>;
-    if (auth && typeof auth.login === "function") {
-      auth.login({ path: "/", idpName: "production-keycloak" });
-    }
-  });
-
-  await page.waitForTimeout(500);
-  await page.waitForLoadState("networkidle");
-  await page.waitForSelector("#main > :not(.login-gate)", { timeout: 5000 });
-}
-
-// Helper to navigate using Vue Router (preserves mock auth state)
-async function navigateTo(page: Page, path: string) {
-  await page.evaluate((targetPath) => {
-    const router = (window as unknown as Record<string, unknown>).__VUE_ROUTER__ as Record<string, unknown>;
-    if (router && typeof router.push === "function") {
-      router.push(targetPath);
-    } else {
-      window.history.pushState({}, "", targetPath);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-    }
-  }, path);
-
-  await page.waitForTimeout(300);
-  await page.waitForLoadState("networkidle");
+// Helper to catch mobile layouts that accidentally widen the document.
+async function expectNoHorizontalOverflow(page: Page, context: string) {
+  const dimensions = await page.evaluate(() => ({
+    documentClientWidth: document.documentElement.clientWidth,
+    documentScrollWidth: document.documentElement.scrollWidth,
+    bodyClientWidth: document.body.clientWidth,
+    bodyScrollWidth: document.body.scrollWidth,
+  }));
+  expect(dimensions.documentScrollWidth, `${context}: document should not overflow horizontally`).toBeLessThanOrEqual(
+    dimensions.documentClientWidth + 1,
+  );
+  expect(dimensions.bodyScrollWidth, `${context}: body should not overflow horizontally`).toBeLessThanOrEqual(
+    dimensions.bodyClientWidth + 1,
+  );
 }
 
 /** Theme mode type for screenshot tests. */
@@ -101,7 +81,7 @@ const pages = [
   { name: "home", path: "/", title: "Request Access" },
   { name: "sessions", path: "/sessions", title: "Session Browser" },
   { name: "pending-approvals", path: "/approvals/pending", title: "Pending Approvals" },
-  { name: "my-requests", path: "/requests/mine", title: "My Pending Requests" },
+  { name: "my-requests", path: "/requests/mine", title: "My Outstanding Requests" },
   { name: "session-review", path: "/sessions/review", title: "Session Review" },
   { name: "debug-sessions", path: "/debug-sessions", title: "Debug Sessions" },
   { name: "debug-session-create", path: "/debug-sessions/create", title: "Create Debug Session" },
@@ -121,7 +101,7 @@ for (const pageInfo of pages) {
 
       // Navigate to the page (home is already loaded after login)
       if (pageInfo.path !== "/") {
-        await navigateTo(page, pageInfo.path);
+        await navigateWithRouter(page, pageInfo.path);
       }
 
       await setTheme(page, theme);
@@ -140,6 +120,22 @@ const responsiveTests = [
   { name: "home-mobile", path: "/", width: 375, height: 667 },
   { name: "home-tablet", path: "/", width: 768, height: 1024 },
   { name: "sessions-mobile", path: "/sessions", width: 375, height: 667 },
+  {
+    name: "debug-sessions-mobile",
+    path: "/debug-sessions",
+    width: 375,
+    height: 667,
+    readySelector: '[data-testid="debug-session-browser"]',
+    assertNoHorizontalOverflow: true,
+  },
+  {
+    name: "debug-session-details-mobile",
+    path: "/debug-sessions/debug-network-001",
+    width: 375,
+    height: 667,
+    readySelector: '[data-testid="debug-session-details"]',
+    assertNoHorizontalOverflow: true,
+  },
 ];
 
 for (const responsive of responsiveTests) {
@@ -153,12 +149,18 @@ for (const responsive of responsiveTests) {
       await page.setViewportSize({ width: responsive.width, height: responsive.height });
 
       if (responsive.path !== "/") {
-        await navigateTo(page, responsive.path);
+        await navigateWithRouter(page, responsive.path);
       }
 
       await setTheme(page, theme);
       await waitForPageLoad(page);
+      if (responsive.readySelector) {
+        await page.waitForSelector(responsive.readySelector, { timeout: 5000 });
+      }
       await hideDynamicContent(page);
+      if (responsive.assertNoHorizontalOverflow) {
+        await expectNoHorizontalOverflow(page, `${responsive.name} ${theme}`);
+      }
 
       await expect(page).toHaveScreenshot(`${responsive.name}-${theme}.png`, {
         fullPage: true,
@@ -166,3 +168,140 @@ for (const responsive of responsiveTests) {
     });
   }
 }
+
+async function routeDebugTemplateLoadFailure(page: Page) {
+  await page.route("**/api/debugSessions/templates", async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "debug session template service unavailable" }),
+    });
+  });
+}
+
+async function routeDebugTemplateClusterLoadFailure(page: Page) {
+  await page.route("**/api/debugSessions/templates/*/clusters", async (route) => {
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      body: JSON.stringify({ error: "compatible cluster service unavailable" }),
+    });
+  });
+}
+
+async function captureDebugTemplateErrorState(
+  page: Page,
+  theme: ThemeMode,
+  viewport: { width: number; height: number },
+  screenshotName: string,
+) {
+  await routeDebugTemplateLoadFailure(page);
+  await page.emulateMedia({ colorScheme: theme === "dark" || theme === "high-contrast-dark" ? "dark" : "light" });
+  await page.setViewportSize(viewport);
+  await performMockLogin(page);
+  await navigateWithRouter(page, "/debug-sessions/create");
+  await setTheme(page, theme);
+  await waitForPageLoad(page);
+  await hideDynamicContent(page);
+
+  await expect(page.getByTestId("debug-session-template-error-state")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await page.addStyleTag({
+    content: `
+      .toast-region,
+      .toast-wrapper,
+      scale-notification-toast,
+      [data-testid="error-toast"],
+      [data-testid="success-toast"] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+    `,
+  });
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+
+  await expect(page).toHaveScreenshot(screenshotName, {
+    fullPage: true,
+  });
+}
+
+async function captureDebugClusterErrorState(
+  page: Page,
+  theme: ThemeMode,
+  viewport: { width: number; height: number },
+  screenshotName: string,
+) {
+  await routeDebugTemplateClusterLoadFailure(page);
+  await page.emulateMedia({ colorScheme: theme === "dark" || theme === "high-contrast-dark" ? "dark" : "light" });
+  await page.setViewportSize(viewport);
+  await performMockLogin(page);
+  await navigateWithRouter(page, "/debug-sessions/create");
+  await setTheme(page, theme);
+  await waitForPageLoad(page);
+
+  await page.getByTestId("next-button").click();
+  await expect(page.getByTestId("debug-session-cluster-error-state")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible();
+  await hideDynamicContent(page);
+  await page.addStyleTag({
+    content: `
+      .toast-region,
+      .toast-wrapper,
+      scale-notification-toast,
+      [data-testid="error-toast"],
+      [data-testid="success-toast"] {
+        display: none !important;
+        visibility: hidden !important;
+      }
+    `,
+  });
+  await page.evaluate(() => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  });
+
+  await expect(page).toHaveScreenshot(screenshotName, {
+    fullPage: true,
+  });
+}
+
+test("Debug session create template error - light mode", async ({ page }) => {
+  await captureDebugTemplateErrorState(
+    page,
+    "light",
+    { width: 1280, height: 720 },
+    "debug-session-create-template-error-light.png",
+  );
+});
+
+test("Debug session create cluster error - light mode", async ({ page }) => {
+  await captureDebugClusterErrorState(
+    page,
+    "light",
+    { width: 1280, height: 720 },
+    "debug-session-create-cluster-error-light.png",
+  );
+});
+
+test("Debug session create cluster error - mobile dark mode", async ({ page }) => {
+  await captureDebugClusterErrorState(
+    page,
+    "dark",
+    { width: 390, height: 844 },
+    "debug-session-create-cluster-error-mobile-dark.png",
+  );
+});
+
+test("Debug session create template error - mobile dark mode", async ({ page }) => {
+  await captureDebugTemplateErrorState(
+    page,
+    "dark",
+    { width: 390, height: 844 },
+    "debug-session-create-template-error-mobile-dark.png",
+  );
+});

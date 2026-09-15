@@ -19,13 +19,18 @@ env:
 jobs:
   validate-tag:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      checks: read
+      contents: read
     outputs:
       stable: ${{ steps.classify.outputs.stable }}
       prerelease: ${{ steps.classify.outputs.prerelease }}
       make_latest: ${{ steps.classify.outputs.make_latest }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -39,38 +44,15 @@ jobs:
       - name: Verify CI passed for commit
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          SHA=${GITHUB_SHA}
-          echo "Checking CI status for commit $SHA"
-          sleep 5
-          
-          FAILURES=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name')
-          if [ -n "$FAILURES" ]; then
-            echo "::error::CI checks failed for commit $SHA: $FAILURES"
-            exit 1
-          fi
-          
-          PENDING=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.status == "in_progress" or .status == "queued") | .name')
-          if [ -n "$PENDING" ]; then
-            echo "::error::CI checks are still pending for commit $SHA. Please wait for them to finish before tagging."
-            exit 1
-          fi
-          
-          SUCCESS=$(gh api repos/${{ github.repository }}/commits/$SHA/check-runs --jq '.check_runs[] | select(.conclusion == "success") | .name')
-          if [ -z "$SUCCESS" ]; then
-            echo "::error::No successful CI checks found for commit $SHA."
-            exit 1
-          fi
+          IGNORE_RELEASE_WORKFLOW_RUNS: "true"
+        run: REQUIRED_CHECKS_JSON="$(hack/utility-release-contract.sh required-checks)" hack/verify-commit-check-runs.sh
 
       - name: Require version tag ref
         id: classify
         run: |
-          if [[ "${GITHUB_REF}" =~ ^refs/tags/v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "Release ref is ${GITHUB_REF}"
-          else
-            echo "::error::Release workflow must run from a semver tag like v1.2.3 or v1.2.3-rc.1. Build metadata tags are not supported because Docker image tags cannot contain '+'. Got ${GITHUB_REF}"
-            exit 1
-          fi
+          validated="$(hack/utility-release-contract.sh tag push "${GITHUB_REF_NAME}")"
+          test "${GITHUB_REF}" = "refs/tags/${validated}"
+          echo "Release ref is ${GITHUB_REF}"
           if [[ "${GITHUB_REF_NAME}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
             echo "stable=true" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
@@ -84,15 +66,127 @@ jobs:
   # ---------------------------------------------------------------------------
   # Build release manifests, Helm chart package, and bgctl CLI binaries
   # ---------------------------------------------------------------------------
-  prepare:
+  build-utility-images:
     needs: [validate-tag]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: workload-debug
+            context: utils/workload-debug
+          - name: network-debug
+            context: utils/network-debug
+          - name: storage-debug
+            context: utils/images/storage-debug
+          - name: node-maintenance
+            context: utils/node-maintenance
+          - name: diagnostic-artifact-collector
+            context: utils/images/diagnostic-artifact-collector
+          - name: dump-reader
+            context: utils/images/dump-reader
+          - name: cluster-validator
+            context: utils/cluster-validator
+            buildContext: .
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish utility image
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ${{ matrix.buildContext || matrix.context }}
+          file: ${{ format('{0}/Dockerfile', matrix.context) }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/utils/${{ matrix.name }}:${{ github.ref_name }}
+          provenance: true
+          sbom: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VCS_REF=${{ github.sha }}
+            GIT_COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+      - name: Generate utility image SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          image: ${{ env.REGISTRY }}/${{ github.repository }}/utils/${{ matrix.name }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: utility-${{ matrix.name }}.spdx.json
+          upload-release-assets: false
+      - name: Sign and attest immutable utility image
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ github.repository }}/utils/${{ matrix.name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          test -n "${DIGEST}"
+          cosign sign --yes "${IMAGE}@${DIGEST}"
+          cosign attest --yes --type spdxjson \
+            --predicate "utility-${{ matrix.name }}.spdx.json" "${IMAGE}@${DIGEST}"
+          bash hack/generate-slsa-provenance.sh \
+            --subject "${IMAGE}" \
+            --digest "${DIGEST}" \
+            --sha "${GITHUB_SHA}" \
+            --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+            --builder-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output "utility-${{ matrix.name }}.provenance.json"
+          cosign attest --yes --type slsaprovenance1 \
+            --predicate "utility-${{ matrix.name }}.provenance.json" "${IMAGE}@${DIGEST}"
+
+  resolve-utility-refs:
+    needs: [validate-tag, build-utility-images]
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.2
+      - name: Resolve and verify immutable catalogue utility references
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/release-refs"
+          hack/resolve-release-refs.sh \
+            charts/debug-session-catalogue/values.yaml \
+            "${RUNNER_TEMP}/release-refs" \
+            "${{ github.ref_name }}"
+      - name: Upload immutable utility references
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-refs
+          path: ${{ runner.temp }}/release-refs/*.ref
+          if-no-files-found: error
+
+  prepare:
+    needs: [validate-tag, resolve-utility-refs]
+    outputs:
+      chart_names: ${{ steps.package-charts.outputs.chart_names }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -100,6 +194,11 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.2
+      - name: Download immutable catalogue utility references
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-refs
+          path: release-refs
       - name: Generate manifests
         run: |
           make manifests
@@ -137,6 +236,7 @@ jobs:
             manifests-debug.yaml
             manifests-crds.yaml
       - name: Package escalation Helm chart
+        id: package-charts
         run: |
           set -euo pipefail
 
@@ -145,14 +245,49 @@ jobs:
           helm package charts/escalation-config \
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
+          # The standalone catalogue is introduced by the foundation stack.
+          # Utility image references are release inputs, not chart defaults.
+          # Refuse to package mutable tags when the catalogue is present.
+          if [ -d charts/debug-session-catalogue ]; then
+            refs_dir="release-refs"
+            [ -d "${refs_dir}" ] || {
+              echo "::error::${refs_dir} is required when packaging debug-session-catalogue; provide one .ref per utility with immutable digest, signature, SBOM, and provenance evidence."
+              exit 1
+            }
+            hack/generate-release-values.sh "${refs_dir}" catalogue-release-values.yaml
+            packaged_catalogue="${RUNNER_TEMP}/debug-session-catalogue"
+            cp -R charts/debug-session-catalogue "${packaged_catalogue}"
+            ruby -ryaml -e '
+              chart = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
+              release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
+              chart["images"] = release.fetch("images")
+              File.write(ARGV.fetch(2), chart.to_yaml)
+            ' charts/debug-session-catalogue/values.yaml catalogue-release-values.yaml "${packaged_catalogue}/values.yaml"
+            helm lint "${packaged_catalogue}" --strict
+            helm template release-proof "${packaged_catalogue}" >/dev/null
+            helm package "${packaged_catalogue}" \
+              --destination chart-dist \
+              --app-version "${{ github.ref_name }}"
+          fi
 
           echo "Packaged chart artifacts:"
           ls -la chart-dist
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
+          chart_names_json="$({
+            for chart_package in "${chart_packages[@]}"; do
+              helm show chart "${chart_package}" | awk '/^name:/ {print $2; exit}'
+            done
+          } | jq -Rsc 'split("\n") | map(select(length > 0)) | unique')"
+          jq -e 'length == '"${#chart_packages[@]}"' and all(.[]; type == "string" and length > 0)' \
+            <<<"${chart_names_json}" >/dev/null
+          echo "chart_names=${chart_names_json}" >> "${GITHUB_OUTPUT}"
       - name: Upload chart artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-chart
-          path: chart-dist/escalation-config-*.tgz
+          path: chart-dist/*.tgz
       - name: Build bgctl release assets
         run: |
           set -e
@@ -214,15 +349,15 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Set build timestamp
         id: build-time
         env:
@@ -236,7 +371,7 @@ jobs:
           echo "build-date=${BUILD_DATE}" >> "$GITHUB_OUTPUT"
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           labels: |
@@ -255,7 +390,7 @@ jobs:
             com.buildkit.build.ref=${{ github.ref }}
       - name: Build & push single-platform image (by digest)
         id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: true
@@ -318,16 +453,16 @@ jobs:
           merge-multiple: true
           path: /tmp/digests
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -415,7 +550,7 @@ jobs:
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
           echo "Multi-arch manifest digest: ${DIGEST}"
       - name: Attest provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.inspect.outputs.digest }}
@@ -427,7 +562,7 @@ jobs:
           set -euo pipefail
           cosign sign --yes ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
       - name: Generate SBOM for attestation
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.inspect.outputs.digest }}
           format: spdx-json
@@ -450,13 +585,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Tag and push image to Artifactory OCI
@@ -519,18 +654,21 @@ jobs:
             echo "Warning: Artifact path not confirmed after retries (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
           fi
 
-  # ---------------------------------------------------------------------------
-  # Publish escalation-config Helm chart to GHCR OCI
-  # ---------------------------------------------------------------------------
-  publish-chart:
+  # Generate one SBOM for each packaged chart. Keeping this as a matrix makes
+  # the package selected for scanning explicit and prevents one aggregate SBOM
+  # from being reused for multiple OCI subjects.
+  chart-sbom:
     needs: [prepare]
+    strategy:
+      fail-fast: false
+      matrix:
+        chart: ${{ fromJSON(needs.prepare.outputs.chart_names) }}
     permissions:
       contents: read
-      packages: write
     runs-on: ubuntu-latest
     steps:
-      - name: Download chart artifact
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: release-chart
           path: chart-dist
@@ -538,35 +676,155 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.2
+      - name: Select exactly one chart package
+        id: select
+        env:
+          CHART_NAME: ${{ matrix.chart }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          matches=()
+          for chart_package in "${chart_packages[@]}"; do
+            chart_name="$(helm show chart "${chart_package}" | awk '/^name:/ {print $2; exit}')"
+            if [ "${chart_name}" = "${CHART_NAME}" ]; then
+              matches+=("${chart_package}")
+            fi
+          done
+          [ "${#matches[@]}" -eq 1 ] || {
+            echo "Expected exactly one package for ${CHART_NAME}, found ${#matches[@]}" >&2
+            exit 1
+          }
+          for chart_package in "${chart_packages[@]}"; do
+            [ "${chart_package}" = "${matches[0]}" ] || rm -- "${chart_package}"
+          done
+          echo "package=${matches[0]}" >> "${GITHUB_OUTPUT}"
+      - name: Generate chart-specific SPDX SBOM
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+        with:
+          path: chart-dist
+          format: spdx-json
+          output-file: ${{ matrix.chart }}.spdx.json
+          upload-release-assets: false
+      - name: Install SPDX schema validator
+        run: sudo apt-get update && sudo apt-get install -y python3-jsonschema
+      - name: Bind and validate SBOM subject
+        run: |
+          set -euo pipefail
+          bash hack/attach-chart-subject.sh \
+            "${{ steps.select.outputs.package }}" "${{ matrix.chart }}.spdx.json"
+          bash hack/verify-chart-sbom.sh \
+            "${{ steps.select.outputs.package }}" "${{ matrix.chart }}.spdx.json"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: chart-sbom-${{ matrix.chart }}
+          path: ${{ matrix.chart }}.spdx.json
+
+  # ---------------------------------------------------------------------------
+  # Publish Helm charts to GHCR OCI; the following step signs and verifies
+  # every packaged chart, including the optional standalone catalogue.
+  # ---------------------------------------------------------------------------
+  publish-chart:
+    needs: [prepare, chart-sbom]
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Download chart artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-chart
+          path: chart-dist
+      - name: Download chart-specific SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: chart-sbom-*
+          merge-multiple: true
+          path: chart-sboms
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.2.2
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.2
       - name: Login to GHCR for Helm OCI
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
             --username "${{ github.actor }}" \
             --password-stdin
-      - name: Publish escalation-config chart
+      - name: Publish charts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
         run: |
           set -euo pipefail
+          hack/publish-helm-charts.sh chart-dist "${CHART_REPO}" "${{ github.ref_name }}"
 
-          CHART_PACKAGE="$(ls chart-dist/escalation-config-*.tgz | head -n1)"
-          CHART_VERSION="$(helm show chart "${CHART_PACKAGE}" | awk '/^version:/ {print $2}')"
-
-          if [ -z "${CHART_VERSION}" ]; then
-            echo "Failed to determine chart version from ${CHART_PACKAGE}" >&2
+      - name: Install SPDX schema validator
+        run: sudo apt-get update && sudo apt-get install -y python3-jsonschema
+      - name: Sign and verify immutable chart contracts
+        env:
+          CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
+          SUPPLY_CHAIN_RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "${SUPPLY_CHAIN_RELEASE_TAG}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]] || {
+            echo "release tag is not a validated semver tag: ${SUPPLY_CHAIN_RELEASE_TAG}" >&2
             exit 1
+          }
+          identity_args=(--certificate-identity "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/${SUPPLY_CHAIN_RELEASE_TAG}")
+          shopt -s nullglob
+          chart_packages=(chart-dist/*.tgz)
+          [ "${#chart_packages[@]}" -gt 0 ] || { echo "No chart packages found" >&2; exit 1; }
+          : > catalogue-image-refs.txt
+          catalogue_chart_ref=""
+          for chart_package in "${chart_packages[@]}"; do
+            metadata="$(helm show chart "${chart_package}")"
+            chart_name="$(printf '%s\n' "${metadata}" | awk '/^name:/ {print $2}')"
+            chart_version="$(printf '%s\n' "${metadata}" | awk '/^version:/ {print $2}')"
+            remote="${CHART_REPO}/${chart_name}"
+            docker_remote="${remote#oci://}"
+            digest="$(docker buildx imagetools inspect "${docker_remote}:${chart_version}" | awk '/^Digest:[[:space:]]+sha256:[0-9a-f]{64}$/ {print $2; exit}')"
+            [[ "${digest}" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo "No immutable digest for ${remote}:${chart_version}" >&2; exit 1; }
+            subject="${docker_remote}@${digest}"
+            sbom="chart-sboms/${chart_name}.spdx.json"
+            bash hack/verify-chart-sbom.sh "${chart_package}" "${sbom}"
+            cosign sign --yes "${subject}"
+            cosign attest --yes --type spdxjson --predicate "${sbom}" "${subject}"
+            bash hack/generate-slsa-provenance.sh \
+              --subject "${remote#oci://}" --digest "${digest}" --sha "${GITHUB_SHA}" \
+              --build-type "https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml" \
+              --builder-id "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output chart-provenance.json
+            cosign attest --yes --type slsaprovenance1 --predicate chart-provenance.json "${subject}"
+            cosign verify "${subject}" \
+              "${identity_args[@]}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            cosign verify-attestation "${subject}" --type spdxjson \
+              "${identity_args[@]}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            cosign verify-attestation "${subject}" --type slsaprovenance1 \
+              "${identity_args[@]}" \
+              --certificate-oidc-issuer="https://token.actions.githubusercontent.com"
+            if [ "${chart_name}" = "debug-session-catalogue" ]; then
+              catalogue_chart_ref="${subject}"
+              helm show values "${chart_package}" > catalogue-values.yaml
+              hack/extract-catalogue-image-refs.sh catalogue-values.yaml catalogue-image-refs.txt
+            fi
+          done
+          if [ -n "${catalogue_chart_ref}" ]; then
+            [ -s catalogue-image-refs.txt ] || {
+              echo "No digest-pinned utility images are embedded in the catalogue chart" >&2
+              exit 1
+            }
+            hack/verify-catalogue-supply-chain.sh --images-file catalogue-image-refs.txt --chart "${catalogue_chart_ref}"
           fi
-
-          echo "Preparing to publish escalation-config:${CHART_VERSION} to ${CHART_REPO}"
-
-          # Idempotent behavior for reruns: skip if this chart version already exists.
-          if helm show chart "${CHART_REPO}/escalation-config" --version "${CHART_VERSION}" >/dev/null 2>&1; then
-            echo "Chart escalation-config:${CHART_VERSION} already present in GHCR; skipping push."
-            exit 0
-          fi
-
-          helm push "${CHART_PACKAGE}" "${CHART_REPO}"
-          echo "Published ${CHART_PACKAGE} to ${CHART_REPO}"
 
   # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
@@ -596,7 +854,7 @@ jobs:
           name: release-chart
           path: chart-dist
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         with:
           image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
           format: spdx-json
@@ -607,10 +865,10 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
 
-          chart_packages=(chart-dist/escalation-config-*.tgz)
+          chart_packages=(chart-dist/*.tgz)
           bgctl_archives=(dist/bgctl_*.tar.gz dist/bgctl_*.zip)
           if [ "${#chart_packages[@]}" -eq 0 ]; then
-            echo "::error::No escalation-config chart package found for checksum generation"
+            echo "::error::No Helm chart packages found for checksum generation"
             exit 1
           fi
           if [ "${#bgctl_archives[@]}" -eq 0 ]; then
@@ -653,7 +911,7 @@ jobs:
             fi
           done
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           prerelease: ${{ needs.validate-tag.outputs.prerelease }}
           make_latest: ${{ needs.validate-tag.outputs.make_latest }}
@@ -662,7 +920,7 @@ jobs:
             manifests-base.yaml
             manifests-debug.yaml
             manifests-crds.yaml
-            chart-dist/escalation-config-*.tgz
+            chart-dist/*.tgz
             dist/bgctl_*.tar.gz
             dist/bgctl_*.zip
             dist/bgctl_*.sha256

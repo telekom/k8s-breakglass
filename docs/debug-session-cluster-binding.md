@@ -36,7 +36,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
   name: sre-production-access
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   templateRef:
     name: network-debug
@@ -167,6 +167,7 @@ Override namespace restrictions:
 | `deniedPatterns` | string[] | Denied namespace patterns |
 | `defaultNamespace` | string | Default namespace for sessions |
 | `allowUserNamespace` | bool | Allow users to specify namespace |
+| `denyUserNamespace` | bool | Narrowing switch: when `true`, reject user-specified namespaces even if the template allows them. Absent or `false` keeps existing behaviour |
 
 ### schedulingConstraints
 
@@ -190,6 +191,13 @@ approvers:
     - security-admin@example.com
 autoApprove: false  # Require manual approval
 ```
+
+Entries in `approvers.users` are matched against the authenticated approver's
+username and email claims. This allows templates and bindings to list email
+addresses even when the OIDC `preferred_username` claim is an opaque subject.
+Exact entries are trimmed and matched case-insensitively. Entries containing
+glob metacharacters (`*`, `?`, or `[]`) are trimmed and matched with
+case-sensitive glob semantics.
 
 ### impersonation
 
@@ -377,6 +385,11 @@ status:
       message: "Binding ready"
 ```
 
+The controller refreshes this status when the binding changes and when matching
+`DebugSessionTemplate` or `ClusterConfig` resources change. Template readiness,
+cluster readiness, and selector label changes are reflected in
+`resolvedTemplates`, `resolvedClusters`, and the binding readiness conditions.
+
 ## Use Cases
 
 ### Multi-Tenant Cluster Access
@@ -488,6 +501,12 @@ When creating a session via the UI, the template clusters API returns per-cluste
 GET /api/debugSessions/templates/:name/clusters
 ```
 
+The API filters results for the authenticated requester before returning
+binding details. A binding appears only when it is active, matches the selected
+template and cluster, and the requester matches `binding.spec.allowed`. If a
+template is visible only through bindings, direct template allowlist metadata is
+not exposed to callers who cannot use the template directly.
+
 Response includes binding information:
 
 ```json
@@ -522,7 +541,7 @@ See [API Reference](api-reference.md#get-template-clusters) for full details.
 
 1. Check binding status:
    ```bash
-   kubectl get debugsessionclusterbinding -n breakglass -o yaml
+   kubectl get debugsessionclusterbinding -n breakglass-system -o yaml
    ```
 
 2. Verify template reference exists:
@@ -641,6 +660,27 @@ for _, binding := range allBindings {
 }
 ```
 
+### Explicit `bindingRef` failures are indeterminate, not "no binding"
+
+Auto-discovery above only runs when the `DebugSession` does **not** carry an explicit
+`spec.bindingRef`. When a session *does* name a `bindingRef` and that object cannot be read, the
+reconciler does **not** fall back to auto-discovery. The binding carries the approver
+configuration, so treating an unreadable ref as "no binding" would let a session that was meant to
+require approval activate with none.
+
+Instead the reconciler:
+
+1. logs at **Error** with the session, cluster, state and binding coordinates,
+2. emits the `debug_session.binding_unresolved` audit event,
+3. increments `breakglass_debug_session_binding_unresolved_total{cluster,reason}`, and
+4. returns the error so the session is **requeued with exponential backoff**.
+
+The session's state is left untouched — it stays `Pending` or `PendingApproval`, so no access is
+granted and nothing is terminally failed. A transient apiserver error resolves itself on the next
+reconcile; a mistyped or deleted `bindingRef` keeps requeueing and stays visible in the log, the
+audit trail and the metric until an operator corrects it. Sessions without a `bindingRef` are
+unaffected and still auto-discover exactly as documented above.
+
 ### Template Matching Options
 
 Bindings can match templates using two methods. At least one must be specified:
@@ -739,7 +779,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   name: production-eu           # Must match the cluster name
-  namespace: breakglass
+  namespace: breakglass-system
   labels:
     environment: production
     region: eu
@@ -779,7 +819,7 @@ spec:
       - "dev-*"
 ```
 
-**Note:** This is on the **template**, not the binding. Bindings can further restrict access but cannot expand beyond the template's allowed clusters.
+**Note:** This is on the **template**, not the binding. Bindings can also grant template access for their matched clusters when the binding references or selects the template. When a request uses a binding implicitly or via `bindingRef`, non-empty binding `spec.allowed.users` or `spec.allowed.groups` replace the template requester allowlist for the matched cluster. If `spec.allowed` is omitted or contains no users or groups, the template requester allowlist still applies.
 
 ### Matching Combinations
 
@@ -825,13 +865,13 @@ Understanding the difference between cluster name matching and `ClusterConfig` l
 
 ### Configuration Merge Rules
 
-When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. The merge follows a **binding-extends-template** pattern:
+When a binding is found (explicit or auto-discovered), its configuration is merged with the template's configuration. Most binding fields specialize the template for a cluster or team; namespace constraints are combined restrictively so bindings cannot widen template namespace boundaries.
 
 | Configuration Area | Merge Behavior |
 |-------------------|----------------|
 | **constraints** | Field-level merge: binding fields override template fields |
 | **schedulingConstraints** | Full replacement: binding takes precedence |
-| **namespaceConstraints** | Field-level merge with extension: see details below |
+| **namespaceConstraints** | Restrictive merge: bindings can narrow, but not widen, template namespace boundaries |
 | **schedulingOptions** | Full replacement: binding takes precedence |
 | **impersonation** | Full replacement: binding takes precedence |
 | **approvers** | Full replacement: binding takes precedence |
@@ -890,16 +930,17 @@ schedulingConstraints:
     node-type: team-a
 ```
 
-#### Namespace Constraints Merge (Field-Level with Extension)
+#### Namespace Constraints Merge (Restrictive)
 
-Namespace constraints use **field-level merging** where the binding can **extend** template permissions. This allows bindings to grant additional access beyond what the template allows:
+Namespace constraints are enforced as a restrictive combination of the template and binding. Bindings can narrow where a debug session runs, but they cannot grant namespace access that the template does not already allow:
 
 | Field | Merge Behavior |
 |-------|----------------|
-| `allowUserNamespace` | Binding `true` overrides template `false` (extension) |
-| `defaultNamespace` | Binding value overrides template value |
-| `allowedNamespaces.patterns` | Combined (union) from both template and binding |
-| `deniedNamespaces.patterns` | Binding replaces template (binding can be more permissive) |
+| `allowUserNamespace` | Binding cannot enable user-selected namespaces when the template disables them |
+| `denyUserNamespace` | Narrowing only: if either the template or the binding sets `true`, user-selected namespaces are rejected |
+| `defaultNamespace` | Binding value is used only when it remains allowed by both template and binding filters |
+| `allowedNamespaces` | The effective allow-list is the **intersection** of the template and binding filters. If neither side configures one, only `defaultNamespace` is allowed |
+| `deniedNamespaces` | Union: template denies are preserved and binding denies are added. `selectorTerms` are evaluated against live namespace labels on the target cluster |
 
 ```yaml
 # Template: restrictive base
@@ -910,27 +951,54 @@ spec:
     allowedNamespaces:
       patterns: ["debug-*"]          # Only debug-* namespaces allowed
 
-# Binding: extends template permissions
+# Binding: narrows template permissions
 spec:
   namespaceConstraints:
-    allowUserNamespace: true         # Enable user-specified namespaces
+    allowUserNamespace: true         # Cannot override a template false value
     allowedNamespaces:
-      patterns: ["breakglass-*"]     # Add breakglass-* to allowed patterns
+      patterns: ["debug-team-a-*"]   # Further restrict debug-* namespaces
 
-# Effective result (merged)
+# Effective result
 namespaceConstraints:
-  allowUserNamespace: true           # From binding (extends access)
+  allowUserNamespace: false          # Template boundary is preserved
   defaultNamespace: "debug"          # From template (not overridden by binding)
   allowedNamespaces:
-    patterns:
-      - "debug-*"                    # From template
-      - "breakglass-*"               # From binding (combined)
+    patterns: ["debug-*"]            # Template boundary; binding filter is checked too
 ```
 
 **Important:** This merge behavior is designed for **least-privilege delegation**:
 - Templates define base security policies (e.g., `allowUserNamespace: false`)
-- Bindings can selectively grant more access per-cluster or per-team
-- Bindings cannot make templates *more* restrictive than defined
+- Bindings can selectively narrow access per-cluster or per-team
+- Bindings cannot make templates more permissive than defined
+
+##### Narrowing a permissive template with `denyUserNamespace`
+
+`allowUserNamespace` is a v1alpha1 boolean with `default: false`, so a binding cannot distinguish an omitted value from an explicit `false` and therefore cannot use it to disable user-selected namespaces that the template enables. Use the additive `denyUserNamespace` field for that instead:
+
+```yaml
+# Template: permissive base
+spec:
+  namespaceConstraints:
+    allowUserNamespace: true
+    defaultNamespace: "breakglass-debug"
+    allowedNamespaces:
+      patterns: ["app-*", "breakglass-debug"]
+
+---
+# Binding: locks this cluster down to the default namespace only
+spec:
+  namespaceConstraints:
+    defaultNamespace: "breakglass-debug"
+    denyUserNamespace: true          # Supported way to narrow a permissive template
+```
+
+Semantics:
+
+- Absent or `false` — behaviour is unchanged (this is why the field carries no `default`, so existing stored objects keep working byte-identically).
+- `true` — user-selected namespaces are rejected with an error naming `namespaceConstraints.denyUserNamespace` and the effective default namespace. Only `defaultNamespace` may be used, even if the template sets `allowUserNamespace: true`.
+- A binding cannot clear a template's `denyUserNamespace: true`; the merge is an OR because the field only ever narrows.
+
+`allowedNamespaces` / `deniedNamespaces` remain available for narrowing which namespaces are reachable, and are evaluated in addition to this switch.
 
 **Example: Production vs. Development Access**
 
@@ -943,7 +1011,7 @@ spec:
       patterns: ["breakglass-debug"]
 
 ---
-# Binding for development clusters: more permissive
+# Binding for development clusters: narrower namespace scope
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
@@ -956,11 +1024,11 @@ spec:
     matchLabels:
       breakglass.t-caas.telekom.com/persona: developer
   namespaceConstraints:
-    allowUserNamespace: true
+    allowUserNamespace: true         # Does not override the template false value
     allowedNamespaces:
       patterns: ["debug-*", "test-*"]
-  # Result: dev clusters allow user-specified namespaces matching
-  # debug-*, test-*, or breakglass-debug
+  # Result: user-specified namespaces remain disabled because the template disables them.
+  # If the template allowed user namespaces, requests would need to match both filters.
 
 ---
 # Binding for production clusters: uses template restrictions
@@ -1009,7 +1077,7 @@ After binding resolution, the session's status is updated with binding informati
 status:
   resolvedBinding:
     name: sre-production-access       # Binding name
-    namespace: breakglass             # Binding namespace
+    namespace: breakglass-system      # Binding namespace
     displayName: "SRE Production"     # Effective display name
   state: Active
 ```
@@ -1172,7 +1240,7 @@ kubectl get debugsessionclusterbinding -A
 kubectl get debugsessionclusterbinding <name> -n <namespace> -o yaml
 
 # View controller logs for auto-discovery
-kubectl logs -n breakglass-system deployment/breakglass-controller -c manager | grep "Auto-discovered binding"
+kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass | grep "Auto-discovered binding"
 ```
 
 ## Related Resources

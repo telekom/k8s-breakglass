@@ -5,30 +5,33 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
-import { ref } from "vue";
+import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
+import { reactive, ref } from "vue";
 import SessionApprovalView from "@/views/SessionApprovalView.vue";
 import { AuthKey } from "@/keys";
-import { pushError } from "@/services/toast";
+import { pushError, pushSuccess } from "@/services/toast";
+import { handleAxiosError } from "@/services/logger";
 
 const mockPush = vi.fn();
 const mockLogin = vi.fn();
 const mockGetSessionByName = vi.fn();
 const mockApproveReview = vi.fn();
 const mockRejectReview = vi.fn();
+const mockUser = ref<{ expired?: boolean; email: string } | null>({ expired: false, email: "approver@example.com" });
+const mockRoute = reactive({
+  params: { sessionName: "session-1" },
+  fullPath: "/session/session-1/approve",
+});
 
 vi.mock("vue-router", () => ({
-  useRoute: () => ({
-    params: { sessionName: "session-1" },
-    fullPath: "/session/session-1/approve",
-  }),
+  useRoute: () => mockRoute,
   useRouter: () => ({
     push: mockPush,
   }),
 }));
 
 vi.mock("@/services/auth", () => ({
-  useUser: vi.fn().mockReturnValue(ref({ expired: false, email: "approver@example.com" })),
+  useUser: vi.fn(() => mockUser),
 }));
 
 vi.mock("@/services/breakglassSession", () => ({
@@ -50,6 +53,8 @@ vi.mock("@/services/logger", () => ({
   handleAxiosError: vi.fn().mockReturnValue({ message: "error" }),
 }));
 
+enableAutoUnmount(afterEach);
+
 describe("SessionApprovalView", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -58,6 +63,9 @@ describe("SessionApprovalView", () => {
     mockGetSessionByName.mockReset();
     mockApproveReview.mockReset();
     mockRejectReview.mockReset();
+    mockUser.value = { expired: false, email: "approver@example.com" };
+    mockRoute.params.sessionName = "session-1";
+    mockRoute.fullPath = "/session/session-1/approve";
   });
 
   afterEach(() => {
@@ -116,6 +124,44 @@ describe("SessionApprovalView", () => {
     expect(mockPush).not.toHaveBeenCalled();
   });
 
+  it("ignores a late 401 load failure after unmount", async () => {
+    let rejectLoad!: (error: unknown) => void;
+    mockGetSessionByName.mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectLoad = reject;
+      }),
+    );
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSessionByName).toHaveBeenCalledTimes(1);
+
+    wrapper.unmount();
+    rejectLoad({ response: { status: 401 } });
+    await flushPromises();
+    vi.advanceTimersByTime(3500);
+
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
   it("redirects after 401 load failure when component remains mounted", async () => {
     mockGetSessionByName.mockRejectedValue({ response: { status: 401 } });
 
@@ -145,6 +191,66 @@ describe("SessionApprovalView", () => {
     expect(mockPush).toHaveBeenCalled();
   });
 
+  it("routes load and approval failures through sanitized Axios logging", async () => {
+    const token = "secret-approval-token";
+    const axiosError = {
+      message: "Request failed",
+      config: { headers: { Authorization: `Bearer ${token}` } },
+      response: { status: 500, data: { error: "Server error" } },
+    };
+    mockGetSessionByName.mockRejectedValueOnce(axiosError);
+
+    mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, "Failed to load session", false);
+    expect(pushError).not.toHaveBeenCalled();
+
+    vi.mocked(handleAxiosError).mockClear();
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester@example.com"));
+    mockApproveReview.mockRejectedValueOnce(axiosError);
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: {
+            template: '<button data-testid="approve" @click="$emit(\'approve\')">Approve</button>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await wrapper.find('[data-testid="approve"]').trigger("click");
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledWith(
+      "SessionApprovalView",
+      axiosError,
+      "Failed to approve session",
+      false,
+    );
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledWith("error", undefined, undefined);
+  });
+
   it("does not approve or reject direct approval links when a required note is empty", async () => {
     mockGetSessionByName.mockResolvedValue({
       data: {
@@ -159,14 +265,14 @@ describe("SessionApprovalView", () => {
               description: "Document the incident ticket",
             },
           },
-          status: { state: "pending" },
+          status: { state: "Pending" },
         },
         approvalMeta: {
           canApprove: true,
           canReject: true,
           isRequester: false,
           isApprover: true,
-          sessionState: "pending",
+          sessionState: "Pending",
         },
       },
     });
@@ -205,4 +311,228 @@ describe("SessionApprovalView", () => {
     expect(pushError).toHaveBeenNthCalledWith(1, "Approval note is required for this escalation");
     expect(pushError).toHaveBeenNthCalledWith(2, "Approval note is required for this escalation");
   });
+
+  it("uses the normalized fallback message for an unexpected load failure", async () => {
+    const axiosError = { response: { status: 418 } };
+    mockGetSessionByName.mockRejectedValueOnce(axiosError);
+    vi.mocked(handleAxiosError).mockReturnValueOnce({
+      message: "normalized load failure",
+      status: 418,
+      cid: "cid-load",
+    });
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: true,
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(handleAxiosError).toHaveBeenCalledWith("SessionApprovalView", axiosError, "Failed to load session", false);
+    expect(pushError).not.toHaveBeenCalled();
+    expect(wrapper.get('[data-testid="error-details"]').attributes("heading")).toBe("normalized load failure");
+  });
+
+  it("shows one normalized fallback toast for an unexpected rejection failure", async () => {
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester@example.com"));
+    const axiosError = { response: { status: 500, data: { error: "backend detail" } } };
+    mockRejectReview.mockRejectedValueOnce(axiosError);
+    vi.mocked(handleAxiosError).mockReturnValueOnce({ message: "backend detail", status: 500, cid: "cid-1" });
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: { [AuthKey as symbol]: { login: mockLogin, logout: vi.fn() } },
+        stubs: {
+          ApprovalModalContent: { template: '<button data-testid="reject" @click="$emit(\'reject\')">Reject</button>' },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+    await flushPromises();
+    await wrapper.find('[data-testid="reject"]').trigger("click");
+    await flushPromises();
+
+    expect(handleAxiosError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledTimes(1);
+    expect(pushError).toHaveBeenCalledWith("backend detail", 500, "cid-1");
+  });
+
+  it("reloads session data when navigating between approval links in the same component", async () => {
+    mockGetSessionByName
+      .mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"))
+      .mockResolvedValueOnce(approvalResponse("session-2", "requester-2@example.com"));
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: '<div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSessionByName).toHaveBeenCalledWith("session-1");
+    expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-1 requester-1@example.com");
+
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockGetSessionByName).toHaveBeenCalledWith("session-2");
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-2 requester-2@example.com");
+    });
+  });
+
+  it("clears stale session data and preserves the new route when auth expires before navigation", async () => {
+    mockGetSessionByName.mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"));
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: '<div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>',
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-1 requester-1@example.com");
+
+    mockUser.value = { expired: true, email: "approver@example.com" };
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    expect(mockGetSessionByName).toHaveBeenCalledTimes(1);
+    expect(mockLogin).toHaveBeenCalledWith({ path: "/session/session-2/approve" });
+    expect(wrapper.find('[data-testid="approval-session"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("Loading session");
+  });
+
+  it("ignores stale approval success after navigating to another approval link", async () => {
+    let resolveApprove!: () => void;
+    mockGetSessionByName
+      .mockResolvedValueOnce(approvalResponse("session-1", "requester-1@example.com"))
+      .mockResolvedValueOnce(approvalResponse("session-2", "requester-2@example.com"));
+    mockApproveReview.mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveApprove = resolve;
+      }),
+    );
+
+    const wrapper = mount(SessionApprovalView, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: mockLogin,
+            logout: vi.fn(),
+          },
+        },
+        stubs: {
+          ApprovalModalContent: {
+            props: ["session"],
+            template: `
+              <div>
+                <div data-testid="approval-session">{{ session.metadata.name }} {{ session.spec.user }}</div>
+                <button data-testid="emit-approve" @click="$emit('approve')">Approve</button>
+              </div>
+            `,
+          },
+          "scale-loading-spinner": true,
+          "scale-notification": true,
+          "scale-icon-action-circle-close": true,
+          "scale-icon-user-file-forbidden": true,
+          "scale-button": true,
+        },
+      },
+    });
+
+    await flushPromises();
+    await wrapper.find('[data-testid="emit-approve"]').trigger("click");
+    expect(mockApproveReview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "session-1",
+      }),
+    );
+
+    mockRoute.params.sessionName = "session-2";
+    mockRoute.fullPath = "/session/session-2/approve";
+    await flushPromises();
+    await flushPromises();
+
+    resolveApprove();
+    await flushPromises();
+
+    expect(pushSuccess).not.toHaveBeenCalled();
+    expect(mockPush).not.toHaveBeenCalledWith("/sessions");
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-testid="approval-session"]').text()).toContain("session-2 requester-2@example.com");
+    });
+  });
 });
+
+function approvalResponse(name: string, requester: string) {
+  return {
+    data: {
+      session: {
+        metadata: { name },
+        spec: {
+          user: requester,
+          cluster: "prod",
+          grantedGroup: "cluster-admin",
+        },
+        status: { state: "Pending" },
+      },
+      approvalMeta: {
+        canApprove: true,
+        canReject: true,
+        isRequester: false,
+        isApprover: true,
+        sessionState: "Pending",
+      },
+    },
+  };
+}

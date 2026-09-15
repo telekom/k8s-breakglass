@@ -21,9 +21,10 @@ When a `ClusterConfig` is created, the controller automatically adds a finalizer
 **What happens when a ClusterConfig is deleted:**
 
 1. The finalizer prevents immediate deletion
-2. All active `BreakglassSession` resources targeting this cluster are marked as **Expired**
-3. All active `DebugSession` resources targeting this cluster are marked as **Failed**
-4. The finalizer is removed, allowing the `ClusterConfig` to be deleted
+2. All non-terminal `BreakglassSession` resources targeting this cluster through `spec.cluster` or `spec.clusterConfigRef` are marked as **Expired** and receive terminal retention
+3. All non-terminal `DebugSession` resources targeting this cluster are marked as **Terminated** so their controller cleanup removes debug pods and auxiliary resources
+4. If any session status update fails, the finalizer remains and reconciliation retries
+5. The finalizer is removed, allowing the `ClusterConfig` to be deleted
 
 This ensures that:
 - Users don't retain privileges to a cluster that no longer exists
@@ -31,8 +32,8 @@ This ensures that:
 - Session state is accurately reflected in the UI
 
 **Terminal states that are preserved:**
-- BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, or `ApprovalTimeout` states are not modified
-- DebugSessions in `Failed`, `Terminated`, or `Expired` states are not modified
+- BreakglassSessions in `Expired`, `Rejected`, `Withdrawn`, `IdleExpired`, or `ApprovalTimeout` states are not modified
+- DebugSessions in `Rejected`, `Terminated`, `Expired`, or `Failed` states are not modified; their controller cleanup removes any remaining tracked debug resources.
 
 ### Metrics
 
@@ -40,7 +41,7 @@ The following Prometheus metrics are updated during cluster deletion:
 
 - `breakglass_clusterconfigs_deleted_total{cluster}` - Counter for deleted ClusterConfigs
 - `breakglass_session_expired_total{cluster}` - Incremented for each session expired due to cluster deletion
-- `breakglass_debug_sessions_failed_total{cluster,reason="cluster_deleted"}` - Incremented for each debug session failed due to cluster deletion
+- `breakglass_debug_sessions_terminated_total{cluster,reason="cluster_deleted"}` - Incremented for each debug session terminated due to cluster deletion
 
 ## Authentication Methods
 
@@ -121,7 +122,7 @@ spec:
     caSecretRef:
       name: <ca-secret-name>
       namespace: <secret-namespace>
-      key: ca.crt  # Optional, defaults to "ca.crt"
+      key: ca.crt  # Optional, defaults to "ca.crt" (a CA found only under the legacy key "value" is still read and migrated)
     
     # Optional: Token audience (defaults to server URL)
     audience: https://my-cluster.example.com:6443
@@ -505,7 +506,7 @@ spec:
 
 **Requirements:**
 
-- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`
+- `rotatedRefreshTokenKey` must differ from the key in `refreshTokenSecretRef`. When `refreshTokenSecretRef.key` is omitted, the runtime resolves it to `token`, so admission rejects `rotatedRefreshTokenKey: token` (and `value`) in that case — otherwise the rotated token would overwrite the seed token in place and spoke access would be lost once it expires. Set `refreshTokenSecretRef.key` explicitly to reserve only that one key.
 - The controller needs `update` permission on Secrets in the token's namespace (already granted by default RBAC)
 
 **Annotations added on rotation:**
@@ -733,6 +734,16 @@ When a spoke cluster performs OIDC authentication, it extracts the username from
 
 For the breakglass authorization webhook to correctly match sessions to SAR requests, the session's `spec.user` must contain the same identifier that the spoke cluster extracts from the JWT.
 
+If an exact `spec.user` lookup returns no eligible session, the webhook may use
+the email local-part as a compatibility alias. Alias matching remains scoped to
+the SAR issuer; an eligible exact match takes precedence, expired or
+issuer-ineligible exact matches do not suppress a valid alias, and aliases from
+multiple issuers are rejected when the SAR does not provide an issuer.
+
+Webhook local-part compatibility accepts only a nonempty local part and domain
+separated by one `@`. Requesters already expressed as email addresses use exact
+identity matching and do not trigger the local-part alias lookup.
+
 Use `userIdentifierClaim` to specify which OIDC claim the spoke cluster uses:
 
 ```yaml
@@ -931,17 +942,26 @@ spec:
 
 ## Webhook Integration
 
-For clusters using the breakglass authorization webhook, configure the API server with:
+For clusters using the breakglass authorization webhook, configure the API
+server with the Kubernetes 1.34+ structured configuration below. Positive
+authorization caching must be disabled so expiry is enforced exactly:
 
 ```yaml
 # authorization-config.yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Webhook
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
+      failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-webhook-kubeconfig.yaml
@@ -949,6 +969,11 @@ authorizers:
         - expression: "'system:authenticated' in request.groups"
         - expression: "!request.user.startsWith('system:')"
 ```
+
+For older Kubernetes versions, use legacy webhook mode with the webhook
+kubeconfig and set `--authorization-webhook-cache-authorized-ttl=0s` and
+`--authorization-webhook-cache-unauthorized-ttl=0s` instead of the structured
+cache field.
 
 The webhook kubeconfig should point to the breakglass service:
 
@@ -1075,10 +1100,17 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list", "watch"]
-# Manage workloads (daemonsets, deployments) for debug sessions
+# Manage workloads (daemonsets, deployments, jobs) for debug sessions
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets", "replicasets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Verify admission-derived scheduling fields for workload identity checks
+- apiGroups: ["scheduling.k8s.io"]
+  resources: ["priorityclasses"]
+  verbs: ["get"]
 # Create events for status reporting
 - apiGroups: [""]
   resources: ["events"]
@@ -1147,6 +1179,12 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
+      unauthorizedTTL: 30s
+      subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: NoOpinion
       connectionInfo:
         type: KubeConfigFile
@@ -1413,3 +1451,9 @@ If you notice slow API calls:
 - [BreakglassEscalation](./breakglass-escalation.md) - Escalation policies  
 - [DenyPolicy](./deny-policy.md) - Access restrictions
 - [Webhook Setup](./webhook-setup.md) - Authorization webhook configuration
+## OIDC refresh fallback cache dependencies
+
+Keycloak service-account credentials are tracked as cache dependencies for
+refresh-token configurations only when fallback policy is `Auto` or `Warn`.
+Empty and `None` policies keep the refresh-only cache independent of the
+unused service-account Secret; re-resolution clears prior fallback state.

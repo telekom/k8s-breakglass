@@ -8,7 +8,7 @@ import { AuthKey } from "@/keys";
 import getConfig from "@/services/config";
 import { BrandingKey } from "@/keys";
 import type Config from "@/model/config";
-import { exposeDebugControls, debug } from "@/services/logger";
+import { debug } from "@/services/logger";
 import logger from "@/services/logger";
 import { pushError } from "@/services/toast";
 
@@ -24,8 +24,6 @@ logger.info("App", "Application starting", {
   useMockAuth: USE_MOCK_AUTH,
   baseUrl: import.meta.env.BASE_URL,
 });
-
-exposeDebugControls();
 
 function cacheRuntimeConfig(config: Config) {
   try {
@@ -219,7 +217,7 @@ async function initializeSilentRenew() {
   }
   const auth = new AuthService(config);
   try {
-    await auth.userManager.signinSilentCallback();
+    await auth.handleSilentSigninCallback();
     logger.info("SilentRenew", "Silent renew callback completed successfully");
   } catch (error) {
     logger.error("SilentRenew", "Silent renew callback failed", error);

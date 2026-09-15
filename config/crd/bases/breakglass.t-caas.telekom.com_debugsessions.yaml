@@ -126,6 +126,14 @@ spec:
                   Keys must match variable names defined in the template.
                   Values are validated against the variable's inputType and validation rules.
                 type: object
+              identityProviderIssuer:
+                description: identityProviderIssuer identifies the issuer that authenticated
+                  the requester.
+                type: string
+              identityProviderName:
+                description: identityProviderName identifies the provider that authenticated
+                  the requester.
+                type: string
               invitedParticipants:
                 description: invitedParticipants lists users invited to join the session.
                 items:
@@ -193,7 +201,7 @@ spec:
                 description: |-
                   requestedDuration is the desired session duration (e.g., "2h").
                   Must not exceed the template's maxDuration constraint.
-                pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                 type: string
               resolvedSchedulingConstraints:
                 description: |-
@@ -210,8 +218,8 @@ spec:
                     type: object
                   deniedNodes:
                     description: |-
-                      deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                      Evaluated as glob patterns.
+                      deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                      Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                     items:
                       type: string
                     type: array
@@ -1069,6 +1077,10 @@ spec:
                     ready:
                       description: ready indicates if the pod is ready for exec.
                       type: boolean
+                    uid:
+                      description: uid is the immutable identity of the authorized
+                        pod.
+                      type: string
                   required:
                   - name
                   - namespace
@@ -1084,6 +1096,10 @@ spec:
                   approvedBy:
                     description: approvedBy is the email/identifier of the approver.
                     type: string
+                  approvedByIdentityProvider:
+                    description: approvedByIdentityProvider identifies the provider
+                      that authenticated the approver.
+                    type: string
                   reason:
                     description: reason is the reason for approval/rejection.
                     type: string
@@ -1093,6 +1109,10 @@ spec:
                     type: string
                   rejectedBy:
                     description: rejectedBy is the email/identifier of the rejector.
+                    type: string
+                  rejectedByIdentityProvider:
+                    description: rejectedByIdentityProvider identifies the provider
+                      that authenticated the rejector.
                     type: string
                   required:
                     description: required indicates if approval is needed.
@@ -1118,6 +1138,11 @@ spec:
                           apiVersion:
                             description: apiVersion is the Kubernetes API version.
                             type: string
+                          createOperationID:
+                            description: |-
+                              createOperationID identifies the exact target create attempt represented by this intent.
+                              Recovery must match this immutable operation marker before reusing a same-name object.
+                            type: string
                           deleted:
                             description: deleted indicates if the resource was deleted.
                             type: boolean
@@ -1142,6 +1167,11 @@ spec:
                             description: resourceName is the actual Kubernetes resource
                               name.
                             type: string
+                          uid:
+                            description: |-
+                              uid is the immutable Kubernetes UID observed when the resource was created.
+                              Cleanup must match this UID before deleting a name-reused replacement.
+                            type: string
                         required:
                         - apiVersion
                         - kind
@@ -1153,6 +1183,11 @@ spec:
                       type: string
                     category:
                       description: category is the resource category.
+                      type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
                       type: string
                     created:
                       description: created indicates if the resource was successfully
@@ -1194,6 +1229,11 @@ spec:
                     resourceName:
                       description: resourceName is the actual Kubernetes resource
                         name (after template rendering).
+                      type: string
+                    uid:
+                      description: |-
+                        uid is the immutable Kubernetes UID observed when the resource was created.
+                        Cleanup must match this UID before deleting a name-reused replacement.
                       type: string
                   required:
                   - name
@@ -1269,6 +1309,11 @@ spec:
                     apiVersion:
                       description: apiVersion is the API version of the resource.
                       type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
+                      type: string
                     kind:
                       description: kind is the kind of the resource.
                       type: string
@@ -1314,6 +1359,10 @@ spec:
                         copyNamespace:
                           description: copyNamespace is the copied pod's namespace.
                           type: string
+                        copyUID:
+                          description: copyUID is the immutable identity of the copied
+                            pod.
+                          type: string
                         createdAt:
                           description: createdAt is when the copy was created.
                           format: date-time
@@ -1327,6 +1376,11 @@ spec:
                           type: string
                         originalPod:
                           description: originalPod is the name of the original pod.
+                          type: string
+                        uid:
+                          description: |-
+                            uid is the immutable UID of the copied pod observed after creation.
+                            Cleanup must match this UID before deleting a name-reused replacement.
                           type: string
                       required:
                       - copyName
@@ -1363,6 +1417,10 @@ spec:
                         podName:
                           description: podName is the name of the pod.
                           type: string
+                        podUID:
+                          description: podUID is the immutable identity of the pod
+                            receiving the container.
+                          type: string
                       required:
                       - containerName
                       - image
@@ -1370,6 +1428,133 @@ spec:
                       - injectedBy
                       - namespace
                       - podName
+                      type: object
+                    type: array
+                  operations:
+                    description: |-
+                      operations is the durable operation outbox for target-cluster mutations.
+                      An operation is persisted in Prepared state before the target API is
+                      changed and is reconciled to a terminal outcome after a restart or an
+                      ambiguous response. Completed operations are idempotent evidence and are
+                      not re-applied.
+                    items:
+                      description: |-
+                        KubectlDebugOperation is durable intent and outcome evidence for a
+                        target-cluster kubectl-debug operation. The target Pod UID and complete
+                        ephemeral-container request are part of the identity used during recovery;
+                        a same-named but different Pod/container is never treated as a match.
+                      properties:
+                        completedAt:
+                          description: completedAt records when the target outcome
+                            was persisted.
+                          format: date-time
+                          type: string
+                        ephemeralContainer:
+                          description: |-
+                            ephemeralContainer contains the exact request fields used to identify
+                            the target mutation.
+                          properties:
+                            command:
+                              description: command is the requested command.
+                              items:
+                                type: string
+                              type: array
+                            containerDigest:
+                              description: containerDigest identifies the exact canonical
+                                ephemeral-container request.
+                              type: string
+                            image:
+                              description: image is the requested image.
+                              type: string
+                            name:
+                              description: name is the ephemeral container name.
+                              type: string
+                            securityContextDigest:
+                              description: securityContextDigest identifies the complete
+                                requested security context.
+                              type: string
+                            stdin:
+                              description: stdin is the manager-owned standard-input
+                                setting.
+                              type: boolean
+                            tty:
+                              description: tty and stdin are the manager-owned terminal
+                                settings.
+                              type: boolean
+                          required:
+                          - containerDigest
+                          - image
+                          - name
+                          - securityContextDigest
+                          - stdin
+                          - tty
+                          type: object
+                        id:
+                          description: id is a unique operation identifier.
+                          minLength: 1
+                          type: string
+                        identityProviderIssuer:
+                          description: identityProviderIssuer identifies the issuer
+                            that authenticated the actor.
+                          type: string
+                        identityProviderName:
+                          description: identityProviderName identifies the provider
+                            that authenticated the actor.
+                          type: string
+                        kind:
+                          description: kind identifies the operation implementation.
+                          minLength: 1
+                          type: string
+                        message:
+                          description: message describes a failed or unknown outcome.
+                          type: string
+                        preparedAt:
+                          description: preparedAt records when intent was persisted.
+                          format: date-time
+                          type: string
+                        requestedBy:
+                          description: requestedBy identifies the authenticated operation
+                            actor.
+                          type: string
+                        requestedByEmail:
+                          description: requestedByEmail is the canonical email identity
+                            when one was provided.
+                          type: string
+                        state:
+                          description: state is the durable outbox state.
+                          enum:
+                          - Prepared
+                          - Completed
+                          - Failed
+                          - Unknown
+                          type: string
+                        targetPod:
+                          description: targetPod identifies the target Pod and immutable
+                            UID.
+                          properties:
+                            name:
+                              description: name is the Pod name.
+                              type: string
+                            namespace:
+                              description: namespace is the Pod namespace.
+                              type: string
+                            uid:
+                              description: uid is the immutable Pod UID observed before
+                                the mutation.
+                              type: string
+                          required:
+                          - name
+                          - namespace
+                          - uid
+                          type: object
+                      required:
+                      - ephemeralContainer
+                      - id
+                      - kind
+                      - preparedAt
+                      - requestedBy
+                      - state
+                      - targetPod
                       type: object
                     type: array
                 type: object
@@ -1394,6 +1579,14 @@ spec:
                       description: |-
                         email is the email address of the participant (from OIDC "email" claim).
                         Used for sending email notifications.
+                      type: string
+                    identityProviderIssuer:
+                      description: identityProviderIssuer identifies the issuer that
+                        authenticated the participant.
+                      type: string
+                    identityProviderName:
+                      description: identityProviderName identifies the provider that
+                        authenticated the participant.
                       type: string
                     joinedAt:
                       description: joinedAt is when the user joined the session.
@@ -1431,6 +1624,11 @@ spec:
                   properties:
                     apiVersion:
                       description: apiVersion is the API version of the resource.
+                      type: string
+                    createOperationID:
+                      description: |-
+                        createOperationID identifies the exact target create attempt represented by this intent.
+                        Recovery must match this immutable operation marker before reusing a same-name object.
                       type: string
                     created:
                       description: created indicates whether the resource was successfully
@@ -1476,6 +1674,11 @@ spec:
                         source identifies where this resource came from.
                         Either "podTemplateString" or "debugPodTemplate:<name>".
                       type: string
+                    uid:
+                      description: |-
+                        uid is the immutable Kubernetes UID observed when the resource was created.
+                        Cleanup must match this UID before deleting a name-reused replacement.
+                      type: string
                   type: object
                 type: array
               renewalCount:
@@ -1501,6 +1704,19 @@ spec:
                 - name
                 - namespace
                 type: object
+              resolvedBindingSnapshotCaptured:
+                description: |-
+                  resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+                  decision from a session created before snapshot persistence was available.
+                type: boolean
+              resolvedBindingSpec:
+                description: resolvedBindingSpec is the immutable binding snapshot
+                  approved for activation.
+                x-kubernetes-preserve-unknown-fields: true
+              resolvedPodTemplate:
+                description: resolvedPodTemplate is the immutable pod-template snapshot
+                  approved for activation.
+                x-kubernetes-preserve-unknown-fields: true
               resolvedTemplate:
                 description: |-
                   resolvedTemplate caches the resolved DebugSessionTemplate spec.
@@ -2672,8 +2888,9 @@ spec:
                         type: boolean
                       enableTerminalRecording:
                         default: false
-                        description: enableTerminalRecording enables recording of
-                          terminal sessions.
+                        description: |-
+                          enableTerminalRecording requests terminal-byte recording. Rendering fails
+                          closed while the transport is unavailable.
                         type: boolean
                       enabled:
                         default: true
@@ -2683,6 +2900,7 @@ spec:
                         default: 90d
                         description: recordingRetention specifies how long recordings
                           are kept.
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                     type: object
                   auxiliaryResourceDefaults:
@@ -2745,7 +2963,7 @@ spec:
                         template:
                           description: |-
                             template is the embedded resource template.
-                            Supports Go templating with session context variables using Sprout functions.
+                            Supports Go templating with session context variables using Sprig functions.
                             See documentation for available variables and functions.
                             Mutually exclusive with templateString.
                             Deprecated: Use templateString for new templates. Removal target: v1beta1.
@@ -2755,7 +2973,7 @@ spec:
                           description: |-
                             templateString is a Go template that produces one or more YAML documents.
                             Use `---` separator for multiple resources from one definition.
-                            Supports all context variables including {{ .Vars.* }} for user-provided values.
+                            Supports all context variables including {{ .vars.* }} for user-provided values.
                             Mutually exclusive with template.
                           type: string
                       required:
@@ -2774,7 +2992,7 @@ spec:
                         default: 1h
                         description: defaultDuration is the default session duration
                           if not specified.
-                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                       maxConcurrentSessions:
                         default: 2
@@ -2785,7 +3003,7 @@ spec:
                       maxDuration:
                         default: 4h
                         description: maxDuration is the maximum allowed session duration.
-                        pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                        pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
                       maxRenewals:
                         description: |-
@@ -2822,7 +3040,8 @@ spec:
                     default: terminate
                     description: |-
                       expirationBehavior controls what happens when a session expires.
-                      Options: "terminate" (default) or "notify-only".
+                      "notify-only" is a deprecated alias that requests an expiry notification;
+                      it still expires the session, revokes access, and starts resource cleanup.
                     enum:
                     - terminate
                     - notify-only
@@ -2831,11 +3050,11 @@ spec:
                     description: |-
                       extraDeployVariables defines user-provided variables for template rendering.
                       These values are collected from the user at session request time
-                      and made available as {{ .Vars.<name> }} in all templates.
+                      and made available as {{ .vars.<name> }} in all templates.
                     items:
                       description: |-
                         ExtraDeployVariable defines a user-provided variable for template rendering.
-                        Variables are available as {{ .Vars.<name> }} in all templates.
+                        Variables are available as {{ .vars.<name> }} in all templates.
                       properties:
                         advanced:
                           description: |-
@@ -2857,6 +3076,12 @@ spec:
                         description:
                           description: description provides help text for the user.
                           type: string
+                        disabled:
+                          description: |-
+                            disabled prevents this variable from being requested through a binding.
+                            Template variables are enabled by default; bindings may only set this to
+                            true, never use it to re-enable a disabled variable.
+                          type: boolean
                         displayName:
                           description: displayName is the human-readable label shown
                             in the UI.
@@ -2879,7 +3104,7 @@ spec:
                           type: string
                         name:
                           description: |-
-                            name is the variable name, used as {{ .Vars.<name> }} in templates.
+                            name is the variable name, used as {{ .vars.<name> }} in templates.
                             Must be a valid Go identifier (letters, digits, underscores, starting with letter).
                           maxLength: 63
                           minLength: 1
@@ -3004,6 +3229,73 @@ spec:
                       impersonation controls which identity is used to deploy debug resources.
                       Enables least-privilege deployment using a constrained ServiceAccount.
                     properties:
+                      actionVerbs:
+                        description: |-
+                          actionVerbs is the set of underlying request verbs this configuration may
+                          perform under impersonation. Breakglass turns each into an
+                          `impersonate-on:<mode>:<verb>` grant.
+
+                          Kubernetes has no prefix wildcard for these verbs: you cannot write
+                          `impersonate-on:user-info:*`. Use "*" here to mean "every verb", which
+                          breakglass renders as an RBAC `verbs: ["*"]` rule.
+                        items:
+                          type: string
+                        maxItems: 32
+                        type: array
+                      allowedIdentities:
+                        description: |-
+                          allowedIdentities restricts which identities this configuration may
+                          impersonate, mirroring the resourceNames of the generated RBAC identity
+                          rule. Supports exact values only — the API server matches resourceNames
+                          exactly, so wildcards other than a bare "*" have no effect.
+
+                          If empty, no allowlist is enforced by breakglass and the spoke's RBAC is the
+                          only control.
+                        items:
+                          type: string
+                        maxItems: 100
+                        type: array
+                      extra:
+                        additionalProperties:
+                          items:
+                            type: string
+                          type: array
+                        description: |-
+                          extra are additional identity attributes, sent as Impersonate-Extra-<key>.
+                          ONLY valid in "user-info" mode. Keys must be lowercase, valid
+                          domain-prefixed paths; value lists must be non-empty with no empty strings.
+                        maxProperties: 32
+                        type: object
+                      groups:
+                        description: |-
+                          groups are the groups to impersonate. ONLY valid in "user-info" mode: the
+                          API server forces groups=[system:nodes] for node identities and computes
+                          them from the namespace for ServiceAccounts.
+
+                          system:masters is rejected. Four or more groups reach the API server's
+                          hardcoded wildcard-collapse threshold, above which grants naming individual
+                          groups stop being consulted.
+                        items:
+                          type: string
+                        maxItems: 32
+                        type: array
+                      mode:
+                        description: |-
+                          mode selects the constrained-impersonation mode (KEP-5284) to use.
+                          If unset, breakglass infers the mode from the identity: a serviceAccountRef
+                          implies "serviceaccount", a userName implies "user-info". Set it explicitly
+                          to have admission reject identities that do not fit the mode.
+
+                          Spokes that do not support constrained impersonation fall back to "legacy"
+                          at runtime regardless of this setting — see
+                          ClusterConfig.spec.constrainedImpersonation.
+                        enum:
+                        - user-info
+                        - serviceaccount
+                        - arbitrary-node
+                        - associated-node
+                        - legacy
+                        type: string
                       serviceAccountRef:
                         description: |-
                           serviceAccountRef references an existing ServiceAccount to impersonate.
@@ -3019,7 +3311,35 @@ spec:
                         - name
                         - namespace
                         type: object
+                      uid:
+                        description: |-
+                          uid is the impersonated identity's UID. ONLY valid in "user-info" mode.
+                          Setting it in any other constrained mode disables constrained impersonation.
+                        maxLength: 253
+                        type: string
+                      userName:
+                        description: |-
+                          userName is the identity to impersonate when mode is "user-info",
+                          "arbitrary-node" or "associated-node". Mutually exclusive with
+                          serviceAccountRef. For node modes it must be "system:node:<name>".
+                        maxLength: 253
+                        type: string
                     type: object
+                    x-kubernetes-validations:
+                    - message: modes serviceaccount, arbitrary-node and associated-node
+                        require that ONLY the username is set; setting uid, groups
+                        or extra makes the API server silently fall back to legacy
+                        unconstrained impersonation
+                      rule: '!(has(self.mode) && (self.mode == ''serviceaccount''
+                        || self.mode == ''arbitrary-node'' || self.mode == ''associated-node'')
+                        && (has(self.uid) || has(self.groups) || has(self.extra)))'
+                    - message: mode user-info cannot impersonate a ServiceAccount;
+                        use mode serviceaccount
+                      rule: '!(has(self.mode) && self.mode == ''user-info'' && has(self.serviceAccountRef))'
+                    - message: node impersonation modes cannot target a ServiceAccount;
+                        unset serviceAccountRef
+                      rule: '!(has(self.mode) && (self.mode == ''arbitrary-node''
+                        || self.mode == ''associated-node'') && has(self.serviceAccountRef))'
                   kubectlDebug:
                     description: |-
                       kubectlDebug configures kubectl debug operations.
@@ -3413,7 +3733,7 @@ spec:
                             default: 2h
                             description: ttl specifies how long copied pods live before
                               auto-deletion.
-                            pattern: ^([0-9]+(ns|us|ms|s|m|h|d))+$
+                            pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                             type: string
                         type: object
                     type: object
@@ -3601,6 +3921,18 @@ spec:
                               type: object
                             type: array
                         type: object
+                      denyUserNamespace:
+                        description: |-
+                          denyUserNamespace disables user-selected namespaces regardless of
+                          allowUserNamespace. It exists so that a DebugSessionClusterBinding can
+                          narrow a permissive template: allowUserNamespace cannot express that
+                          intent because its zero value is indistinguishable from "unset".
+                          Absent or false preserves existing behaviour exactly. When true, only
+                          defaultNamespace is used, even if the template sets
+                          allowUserNamespace: true.
+                          This field intentionally carries no default so that stored objects
+                          written before it existed keep behaving as before.
+                        type: boolean
                       namespaceLabels:
                         additionalProperties:
                           type: string
@@ -3697,6 +4029,20 @@ spec:
                               description: DebugContainerOverride allows overriding
                                 container settings.
                               properties:
+                                args:
+                                  description: |-
+                                    args replaces the container arguments when an administrator-authored
+                                    podOverridesTemplate deliberately binds them to session variables.
+                                  items:
+                                    type: string
+                                  type: array
+                                command:
+                                  description: |-
+                                    command replaces the container command when an administrator-authored
+                                    podOverridesTemplate deliberately binds it to a session variable.
+                                  items:
+                                    type: string
+                                  type: array
                                 env:
                                   description: env adds environment variables to the
                                     container.
@@ -3729,7 +4075,9 @@ spec:
                                             description: Selects a key of a ConfigMap.
                                             properties:
                                               key:
-                                                description: The key to select.
+                                                description: |-
+                                                  The key to select from the ConfigMap's Data field.
+                                                  Keys in the BinaryData field are not currently propagated to container env vars.
                                                 type: string
                                               name:
                                                 default: ""
@@ -4130,6 +4478,12 @@ spec:
                           hostPID:
                             description: hostPID overrides the hostPID setting.
                             type: boolean
+                          nodeSelector:
+                            additionalProperties:
+                              type: string
+                            description: nodeSelector adds mandatory scheduling constraints
+                              to the pod.
+                            type: object
                         type: object
                     type: object
                   podOverridesTemplate:
@@ -4142,7 +4496,7 @@ spec:
                     description: |-
                       podTemplateRef references a DebugPodTemplate for the pod specification.
                       Required when mode is "workload" or "hybrid".
-                      The referenced template can itself contain {{ .Vars.* }} placeholders.
+                      The referenced template can itself contain {{ .vars.* }} placeholders.
                       Mutually exclusive with podTemplateString.
                     properties:
                       name:
@@ -4168,7 +4522,7 @@ spec:
                     default: 1
                     description: |-
                       replicas specifies the number of replicas for Deployment workloads.
-                      Defaults to 1. Ignored for DaemonSet workloads.
+                      Defaults to 1. Ignored for DaemonSet and Job workloads.
                     format: int32
                     minimum: 1
                     type: integer
@@ -4262,8 +4616,8 @@ spec:
                         type: object
                       deniedNodes:
                         description: |-
-                          deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                          Evaluated as glob patterns.
+                          deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                          Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                         items:
                           type: string
                         type: array
@@ -5066,8 +5420,8 @@ spec:
                                   type: object
                                 deniedNodes:
                                   description: |-
-                                    deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-                                    Evaluated as glob patterns.
+                                    deniedNodes is a list of exact node names that MUST NOT run debug pods.
+                                    Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
                                   items:
                                     type: string
                                   type: array
@@ -5867,11 +6221,12 @@ spec:
                     type: object
                   workloadType:
                     description: |-
-                      workloadType specifies the type of workload to create (DaemonSet or Deployment).
+                      workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
                       Required when mode is "workload" or "hybrid".
                     enum:
                     - DaemonSet
                     - Deployment
+                    - Job
                     type: string
                 type: object
               startsAt:
@@ -5884,6 +6239,7 @@ spec:
                 - Pending
                 - PendingApproval
                 - Active
+                - Rejected
                 - Expired
                 - Terminated
                 - Failed

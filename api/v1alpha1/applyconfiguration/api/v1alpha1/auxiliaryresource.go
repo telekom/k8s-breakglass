@@ -29,11 +29,11 @@ type AuxiliaryResourceApplyConfiguration struct {
 	Category *string `json:"category,omitempty"`
 	// templateString is a Go template that produces one or more YAML documents.
 	// Use `---` separator for multiple resources from one definition.
-	// Supports all context variables including {{ .Vars.* }} for user-provided values.
+	// Supports all context variables including {{ .vars.* }} for user-provided values.
 	// Mutually exclusive with template.
 	TemplateString *string `json:"templateString,omitempty"`
 	// template is the embedded resource template.
-	// Supports Go templating with session context variables using Sprout functions.
+	// Supports Go templating with session context variables using Sprig functions.
 	// See documentation for available variables and functions.
 	// Mutually exclusive with templateString.
 	// Deprecated: Use templateString for new templates. Removal target: v1beta1.

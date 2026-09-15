@@ -22,7 +22,7 @@ limitations under the License.
 //
 // Usage:
 //
-//	svc := audit.NewService(kubeClient, logger, "breakglass-system")
+//	svc := audit.NewService(kubeClient, recorder, logger, "breakglass-system")
 //	// When AuditConfig is created/updated:
 //	svc.Reload(ctx, config)
 //	// Emit events:
@@ -33,45 +33,67 @@ package audit
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
+	"errors"
 	"fmt"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
+
+var systemCertPool = x509.SystemCertPool
 
 // Service manages the audit system lifecycle, including sink creation and event emission.
 // It watches AuditConfig changes and reconfigures the audit manager accordingly.
 type Service struct {
-	client            client.Client
-	recorder          record.EventRecorder
-	logger            *zap.Logger
-	mu                sync.RWMutex
-	manager           *Manager
-	sinks             []Sink
-	isolatedMultiSink *IsolatedMultiSink
-	enabled           bool
-	configNS          string // namespace where secrets are located (controller namespace)
+	client             client.Client
+	recorder           events.EventRecorder
+	logger             *zap.Logger
+	mu                 sync.RWMutex
+	manager            *Manager
+	sinks              []Sink
+	isolatedMultiSink  *IsolatedMultiSink
+	enabled            bool
+	configurationState ConfigurationState
+	configNS           string // namespace where secrets are located (controller namespace)
 }
 
+// ConfigurationState distinguishes intentional audit disablement from a
+// configured audit system that cannot currently construct its sinks.
+type ConfigurationState string
+
+const (
+	ConfigurationDisabled    ConfigurationState = "disabled"
+	ConfigurationReady       ConfigurationState = "ready"
+	ConfigurationUnavailable ConfigurationState = "unavailable"
+)
+
 // NewService creates a new audit Service.
-func NewService(kubeClient client.Client, recorder record.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
+func NewService(kubeClient client.Client, recorder events.EventRecorder, logger *zap.Logger, controllerNamespace string) *Service {
 	return &Service{
-		client:   kubeClient,
-		recorder: recorder,
-		logger:   logger.Named("audit-service"),
-		enabled:  false,
-		configNS: controllerNamespace,
+		client:             kubeClient,
+		recorder:           recorder,
+		logger:             logger.Named("audit-service"),
+		enabled:            false,
+		configurationState: ConfigurationUnavailable,
+		configNS:           controllerNamespace,
 	}
 }
+
+// ControllerNamespace is the namespace allowed for audit sink credentials.
+func (s *Service) ControllerNamespace() string { return s.configNS }
 
 // Reload reconfigures the audit system based on the provided AuditConfig.
 // If config is nil, auditing is disabled.
@@ -87,8 +109,21 @@ func (s *Service) Reload(ctx context.Context, config *breakglassv1alpha1.AuditCo
 // Sinks from all enabled configs are aggregated together.
 // If configs is nil or empty, auditing is disabled.
 func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig) error {
+	return s.ReloadMultipleWithAvailability(ctx, configs, false)
+}
+
+// ReloadMultipleWithAvailability reloads valid enabled configs. If
+// configuredUnavailable is true, at least one enabled AuditConfig was rejected
+// before sink construction, so auditing must fail closed instead of appearing
+// intentionally disabled.
+func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	for _, cfg := range configs {
+		if cfg != nil && cfg.Spec.Enabled && cfg.Spec.Filtering != nil && cfg.Spec.Filtering.ExcludeNamespaces != nil && len(cfg.Spec.Filtering.ExcludeNamespaces.SelectorTerms) > 0 {
+			return fmt.Errorf("audit config %q uses unsupported namespace selector exclusions; use namespace patterns", cfg.Name)
+		}
+	}
 
 	// Close the existing manager first so all in-flight goroutines stop before
 	// the underlying sinks are torn down. Without this ordering, async workers
@@ -103,6 +138,14 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	// Now safe to close the underlying sinks.
 	s.closeSinksLocked()
+	s.isolatedMultiSink = nil
+	s.enabled = false
+
+	if configuredUnavailable {
+		s.configurationState = ConfigurationUnavailable
+		metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+		return errors.New("one or more enabled AuditConfigs are invalid or unavailable")
+	}
 
 	// Filter to only enabled configs
 	var enabledConfigs []*breakglassv1alpha1.AuditConfig
@@ -113,7 +156,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	}
 
 	if len(enabledConfigs) == 0 {
-		s.enabled = false
+		s.configurationState = ConfigurationDisabled
 		s.manager = nil
 		s.logger.Info("audit system disabled (no enabled configs)")
 		metrics.AuditConfigReloads.WithLabelValues("disabled").Inc()
@@ -126,20 +169,28 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	for _, config := range enabledConfigs {
 		sinks, err := s.buildSinks(ctx, config)
 		if err != nil {
-			s.logger.Error("failed to build audit sinks from config, skipping",
+			for _, built := range allSinks {
+				_ = built.Close()
+			}
+			s.logger.Error("failed to build audit sinks from config",
 				zap.String("config", config.Name),
 				zap.String("error", err.Error()))
-			continue
+			s.enabled = false
+			s.configurationState = ConfigurationUnavailable
+			s.manager = nil
+			s.sinks = nil
+			metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+			return fmt.Errorf("build audit sinks from config %q: %w", config.Name, err)
 		}
 		allSinks = append(allSinks, sinks...)
 		configNames = append(configNames, config.Name)
 	}
 
 	if len(allSinks) == 0 {
-		s.logger.Warn("no audit sinks configured from any AuditConfig, auditing disabled")
-		s.enabled = false
-		metrics.AuditConfigReloads.WithLabelValues("no_sinks").Inc()
-		return nil
+		s.logger.Error("enabled AuditConfig produced no audit sinks")
+		s.configurationState = ConfigurationUnavailable
+		metrics.AuditConfigReloads.WithLabelValues("error").Inc()
+		return errors.New("enabled AuditConfig produced no audit sinks")
 	}
 
 	// Use queue config from the first enabled config (or defaults)
@@ -179,6 +230,10 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			}
 		}
 	}
+	includeEventTypes, excludeEventTypes, sharedEventTypeFilters := managerEventTypeFilters(enabledConfigs)
+	if !sharedEventTypeFilters {
+		s.logger.Debug("manager event-type pre-filter disabled because enabled AuditConfigs use different event-type filters")
+	}
 
 	// Create isolated multi-sink: each sink gets its own queue for isolation
 	// If one sink is slow/blocked, it won't affect other sinks
@@ -203,6 +258,8 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 		sampleRateConfigured:    sampleRateConfigured,
 		HighVolumeEventTypes:    highVolume,
 		AlwaysCaptureEventTypes: alwaysCapture,
+		IncludeEventTypes:       includeEventTypes,
+		ExcludeEventTypes:       excludeEventTypes,
 		WriteTimeout:            5 * time.Second,
 		// DirectSinks references the same sink instances stored in s.sinks.
 		// On the next ReloadMultiple call, the Manager is closed (draining all
@@ -219,6 +276,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 	s.sinks = allSinks
 	s.isolatedMultiSink = isolatedMultiSink
 	s.enabled = true
+	s.configurationState = ConfigurationReady
 
 	// Log detailed configuration summary
 	s.logger.Info("audit system configured with aggregated sinks",
@@ -251,7 +309,7 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 			case breakglassv1alpha1.AuditSinkTypeWebhook:
 				if sinkCfg.Webhook != nil {
 					fields = append(fields,
-						zap.String("url", sinkCfg.Webhook.URL),
+						zap.String("url", redactURL(sinkCfg.Webhook.URL)),
 						zap.Int("timeout_seconds", sinkCfg.Webhook.TimeoutSeconds),
 						zap.Int("batch_size", sinkCfg.Webhook.BatchSize))
 				}
@@ -262,6 +320,33 @@ func (s *Service) ReloadMultiple(ctx context.Context, configs []*breakglassv1alp
 
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
 	return nil
+}
+
+func managerEventTypeFilters(configs []*breakglassv1alpha1.AuditConfig) ([]string, []string, bool) {
+	if len(configs) == 0 {
+		return nil, nil, true
+	}
+
+	var include []string
+	var exclude []string
+	for i, config := range configs {
+		var currentInclude []string
+		var currentExclude []string
+		if config != nil && config.Spec.Filtering != nil {
+			currentInclude = config.Spec.Filtering.IncludeEventTypes
+			currentExclude = config.Spec.Filtering.ExcludeEventTypes
+		}
+		if i == 0 {
+			include = append([]string(nil), currentInclude...)
+			exclude = append([]string(nil), currentExclude...)
+			continue
+		}
+		if !slices.Equal(include, currentInclude) || !slices.Equal(exclude, currentExclude) {
+			return nil, nil, false
+		}
+	}
+
+	return include, exclude, true
 }
 
 // Emit sends an audit event asynchronously.
@@ -282,7 +367,7 @@ func (s *Service) EmitSync(ctx context.Context, event *Event) error {
 	defer s.mu.RUnlock()
 
 	if !s.enabled || s.manager == nil {
-		return nil
+		return errors.New("audit service is disabled")
 	}
 
 	return s.manager.EmitSync(ctx, event)
@@ -293,6 +378,21 @@ func (s *Service) IsEnabled() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.enabled
+}
+
+// IsConfigured reports whether an enabled AuditConfig intentionally requires
+// auditing, including when its configuration or sinks are unavailable.
+func (s *Service) IsConfigured() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configurationState != ConfigurationDisabled
+}
+
+// ConfigurationState returns the current audit configuration state.
+func (s *Service) ConfigurationState() ConfigurationState {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.configurationState
 }
 
 // Manager returns the current audit Manager, or nil if auditing is not yet configured.
@@ -411,8 +511,11 @@ func (s *Service) Close() error {
 	if s.manager != nil {
 		closeErr = s.manager.Close()
 	}
+	s.manager = nil
 	s.closeSinksLocked()
+	s.isolatedMultiSink = nil
 	s.enabled = false
+	s.configurationState = ConfigurationDisabled
 
 	s.logger.Info("audit service closed")
 	return closeErr
@@ -437,11 +540,10 @@ func (s *Service) buildSinks(ctx context.Context, config *breakglassv1alpha1.Aud
 	for _, sinkCfg := range config.Spec.Sinks {
 		sink, err := s.buildSink(ctx, sinkCfg)
 		if err != nil {
-			s.logger.Warn("failed to build sink, skipping",
-				zap.String("name", sinkCfg.Name),
-				zap.String("type", string(sinkCfg.Type)),
-				zap.String("error", err.Error()))
-			continue
+			for _, built := range sinks {
+				_ = built.Close()
+			}
+			return nil, fmt.Errorf("build audit sink %q: %w", sinkCfg.Name, err)
 		}
 
 		// Wrap network sinks with circuit breaker for resilience
@@ -453,6 +555,23 @@ func (s *Service) buildSinks(ctx context.Context, config *breakglassv1alpha1.Aud
 				zap.String("type", string(sinkCfg.Type)),
 				zap.Int("failure_threshold", cbCfg.FailureThreshold),
 				zap.Duration("open_timeout", cbCfg.OpenTimeout))
+		}
+
+		sink = NewFilteredSink(sink, EventFilterConfig{
+			IncludeEventTypes: sinkCfg.EventTypes,
+			MinSeverity:       Severity(sinkCfg.MinSeverity),
+		})
+		if config.Spec.Filtering != nil {
+			sink = NewFilteredSink(sink, EventFilterConfig{
+				IncludeEventTypes: config.Spec.Filtering.IncludeEventTypes,
+				ExcludeEventTypes: config.Spec.Filtering.ExcludeEventTypes,
+				IncludeUsers:      config.Spec.Filtering.IncludeUsers,
+				ExcludeUsers:      config.Spec.Filtering.ExcludeUsers,
+				IncludeNamespaces: config.Spec.Filtering.IncludeNamespaces,
+				ExcludeNamespaces: config.Spec.Filtering.ExcludeNamespaces,
+				IncludeResources:  config.Spec.Filtering.IncludeResources,
+				ExcludeResources:  config.Spec.Filtering.ExcludeResources,
+			})
 		}
 
 		sinks = append(sinks, sink)
@@ -490,7 +609,7 @@ func (s *Service) buildSink(ctx context.Context, sinkCfg breakglassv1alpha1.Audi
 		return s.buildKafkaSink(ctx, sinkCfg)
 
 	case breakglassv1alpha1.AuditSinkTypeWebhook:
-		return s.buildWebhookSink(sinkCfg)
+		return s.buildWebhookSink(ctx, sinkCfg)
 
 	case breakglassv1alpha1.AuditSinkTypeKubernetes:
 		return s.buildKubernetesSink(sinkCfg)
@@ -516,6 +635,7 @@ func (s *Service) buildKafkaSink(ctx context.Context, sinkCfg breakglassv1alpha1
 		BatchSize:        sinkCfg.Kafka.BatchSize,
 		BatchTimeout:     time.Duration(sinkCfg.Kafka.BatchTimeoutSeconds) * time.Second,
 		RequiredAcks:     sinkCfg.Kafka.RequiredAcks,
+		RequiredAcksSet:  true,
 		CompressionCodec: sinkCfg.Kafka.Compression,
 		Async:            sinkCfg.Kafka.Async,
 	}
@@ -606,20 +726,138 @@ func (s *Service) buildKafkaSASLConfig(ctx context.Context, saslCfg *breakglassv
 	return cfg, nil
 }
 
-func (s *Service) buildWebhookSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
+func (s *Service) buildWebhookSink(ctx context.Context, sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
 	if sinkCfg.Webhook == nil {
 		return nil, fmt.Errorf("webhook config required for webhook sink")
+	}
+
+	headers := cloneHeaders(sinkCfg.Webhook.Headers)
+	var err error
+	headers, err = s.applyWebhookAuth(ctx, sinkCfg.Webhook, headers)
+	if err != nil {
+		return nil, err
 	}
 
 	webhookCfg := WebhookSinkConfig{
 		Name:     sinkCfg.Name,
 		URL:      sinkCfg.Webhook.URL,
 		BatchURL: sinkCfg.Webhook.BatchURL,
-		Headers:  sinkCfg.Webhook.Headers,
+		Headers:  headers,
 		Timeout:  time.Duration(sinkCfg.Webhook.TimeoutSeconds) * time.Second,
 	}
 
+	if sinkCfg.Webhook.TLS != nil {
+		tlsCfg, err := s.buildWebhookTLSConfig(ctx, sinkCfg.Webhook.TLS)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build webhook TLS config: %w", err)
+		}
+		webhookCfg.TLS = tlsCfg
+	}
+
 	return NewWebhookSink(webhookCfg, s.logger), nil
+}
+
+func cloneHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+
+	cloned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func (s *Service) applyWebhookAuth(ctx context.Context, webhookCfg *breakglassv1alpha1.WebhookSinkSpec, headers map[string]string) (map[string]string, error) {
+	if webhookCfg.AuthSecretRef == nil || hasAuthorizationHeader(headers) {
+		return headers, nil
+	}
+
+	namespace := webhookCfg.AuthSecretRef.Namespace
+	if err := s.requireControllerNamespace("webhook auth", webhookCfg.AuthSecretRef.Name, namespace); err != nil {
+		return nil, err
+	}
+
+	secret := &corev1.Secret{}
+	if err := s.client.Get(ctx, types.NamespacedName{Name: webhookCfg.AuthSecretRef.Name, Namespace: namespace}, secret); err != nil {
+		return nil, fmt.Errorf("failed to get webhook auth secret %s/%s: %w", namespace, webhookCfg.AuthSecretRef.Name, err)
+	}
+
+	if headers == nil {
+		headers = make(map[string]string, 1)
+	}
+
+	if token, ok := secret.Data["token"]; ok {
+		headers["Authorization"] = "Bearer " + string(token)
+		return headers, nil
+	}
+
+	username, hasUsername := secret.Data["username"]
+	password, hasPassword := secret.Data["password"]
+	if hasUsername && hasPassword {
+		credentials := append(append([]byte{}, username...), ':')
+		credentials = append(credentials, password...)
+		headers["Authorization"] = "Basic " + base64.StdEncoding.EncodeToString(credentials)
+		return headers, nil
+	}
+
+	return nil, fmt.Errorf("webhook auth secret %s/%s must contain either token or username/password", namespace, webhookCfg.AuthSecretRef.Name)
+}
+
+func (s *Service) requireControllerNamespace(refType, name, namespace string) error {
+	if s.configNS == "" {
+		return fmt.Errorf("%s secret %q cannot be read because controller namespace is not configured", refType, name)
+	}
+	if namespace != s.configNS {
+		return fmt.Errorf("%s secret %q namespace must be controller namespace %q, got %q", refType, name, s.configNS, namespace)
+	}
+	return nil
+}
+
+func hasAuthorizationHeader(headers map[string]string) bool {
+	for key := range headers {
+		if strings.EqualFold(key, "Authorization") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) buildWebhookTLSConfig(ctx context.Context, tlsCfg *breakglassv1alpha1.WebhookTLSSpec) (*tls.Config, error) {
+	cfg := &tls.Config{
+		InsecureSkipVerify: tlsCfg.InsecureSkipVerify, // #nosec G402 -- Explicit AuditConfig option for private webhook endpoints.
+		MinVersion:         tls.VersionTLS12,
+	}
+
+	if tlsCfg.CASecretRef == nil {
+		return cfg, nil
+	}
+
+	namespace := tlsCfg.CASecretRef.Namespace
+	if err := s.requireControllerNamespace("webhook CA", tlsCfg.CASecretRef.Name, namespace); err != nil {
+		return nil, err
+	}
+
+	caData, err := s.getSecretKey(ctx, tlsCfg.CASecretRef.Name, namespace, "ca.crt")
+	if err != nil {
+		return nil, fmt.Errorf("failed to load webhook CA certificate: %w", err)
+	}
+
+	rootCAs, err := systemCertPool()
+	if err != nil && s.logger != nil {
+		s.logger.Warn("failed to load system CA pool, using custom webhook CA pool only",
+			zap.String("error", err.Error()))
+	}
+	if rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if ok := rootCAs.AppendCertsFromPEM(caData); !ok {
+		return nil, fmt.Errorf("failed to parse webhook CA certificate from secret %s/%s", namespace, tlsCfg.CASecretRef.Name)
+	}
+	cfg.RootCAs = rootCAs
+
+	return cfg, nil
 }
 
 func (s *Service) buildKubernetesSink(sinkCfg breakglassv1alpha1.AuditSinkConfig) (Sink, error) {
@@ -634,6 +872,9 @@ func (s *Service) buildKubernetesSink(sinkCfg breakglassv1alpha1.AuditSinkConfig
 
 // getSecretKey retrieves a specific key from a Kubernetes secret.
 func (s *Service) getSecretKey(ctx context.Context, name, namespace, key string) ([]byte, error) {
+	if err := s.requireControllerNamespace("audit", name, namespace); err != nil {
+		return nil, err
+	}
 	secret := &corev1.Secret{}
 	if err := s.client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, secret); err != nil {
 		return nil, fmt.Errorf("failed to get secret %s/%s: %w", namespace, name, err)

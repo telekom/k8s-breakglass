@@ -36,8 +36,9 @@ func TestLoadAllIdentityProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-1"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth1.example.com",
-				ClientID:  "client-1",
+				Authority:        "https://auth1.example.com",
+				ClientID:         "client-1",
+				ExpectedAudience: "client-1",
 			},
 			Issuer:   "https://auth1.example.com",
 			Disabled: false,
@@ -48,8 +49,9 @@ func TestLoadAllIdentityProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-2"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "client-2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "client-2",
+				ExpectedAudience: "client-2",
 			},
 			Issuer:   "https://auth2.example.com",
 			Disabled: false,
@@ -60,8 +62,9 @@ func TestLoadAllIdentityProviders(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-3-disabled"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth3.example.com",
-				ClientID:  "client-3",
+				Authority:        "https://auth3.example.com",
+				ClientID:         "client-3",
+				ExpectedAudience: "client-3",
 			},
 			Issuer:   "https://auth3.example.com",
 			Disabled: true, // Disabled, should not be included
@@ -94,8 +97,9 @@ func TestLoadIdentityProviderByIssuer(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.tenant.com",
-				ClientID:  "tenant-client",
+				Authority:        "https://auth.tenant.com",
+				ClientID:         "tenant-client",
+				ExpectedAudience: "tenant-client",
 			},
 			Issuer:   "https://auth.tenant.com",
 			Disabled: false,
@@ -127,8 +131,9 @@ func TestValidateIdentityProviderRefs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-1"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth1.example.com",
-				ClientID:  "client-1",
+				Authority:        "https://auth1.example.com",
+				ClientID:         "client-1",
+				ExpectedAudience: "client-1",
 			},
 			Issuer:   "https://auth1.example.com",
 			Disabled: false,
@@ -139,8 +144,9 @@ func TestValidateIdentityProviderRefs(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-2-disabled"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "client-2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "client-2",
+				ExpectedAudience: "client-2",
 			},
 			Issuer:   "https://auth2.example.com",
 			Disabled: true,
@@ -182,8 +188,9 @@ func TestGetIDPNameByIssuer(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Issuer:   "https://auth.example.com",
 			Disabled: false,
@@ -210,8 +217,9 @@ func TestIdentityProviderConfigIncludesIssuerAndName(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "test-idp"},
 		Spec: breakglassv1alpha1.IdentityProviderSpec{
 			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "test-client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
 			},
 			Issuer:      "https://auth.example.com",
 			DisplayName: "Test IDP",

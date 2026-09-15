@@ -15,6 +15,7 @@ import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 import { useWithdrawConfirmation } from "@/composables";
+import { currentUserIdentifier } from "@/utils/currentUserIdentity";
 
 const auth = inject(AuthKey);
 if (!auth) {
@@ -25,16 +26,7 @@ const breakglassService = new BreakglassService(auth);
 const breakglassSessionService = new BreakglassSessionService(auth);
 const user = useUser();
 const currentUserEmail = computed(() => {
-  const profile = (
-    user.value as {
-      profile?: { email?: string; preferred_username?: string };
-      email?: string;
-      preferred_username?: string;
-    } | null
-  )?.profile;
-  const directEmail = (user.value as { email?: string; preferred_username?: string } | null)?.email;
-  const directPreferred = (user.value as { email?: string; preferred_username?: string } | null)?.preferred_username;
-  return profile?.email || profile?.preferred_username || directEmail || directPreferred || "";
+  return currentUserIdentifier(user.value);
 });
 
 type SessionActionKey = "reject" | "withdraw" | "drop" | "cancel";
@@ -363,6 +355,8 @@ const visibleSessions = computed(() => {
   });
 });
 
+const sessionCountLabel = computed(() => (sessions.value.length === 1 ? "session" : "sessions"));
+
 const activeFiltersDescription = computed(() => {
   const desc: string[] = [];
   if (filters.mine) desc.push("Mine");
@@ -485,6 +479,16 @@ onMounted(() => {
     <section class="results-card" data-testid="results-section">
       <header>
         <h2>Results ({{ visibleSessions.length }})</h2>
+        <p
+          v-if="!loading && !error"
+          class="sr-only"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-testid="session-results-status"
+        >
+          Showing {{ visibleSessions.length }} of {{ sessions.length }} {{ sessionCountLabel }}
+        </p>
         <p v-if="loading" role="status" aria-live="polite" data-testid="loading-indicator">Loading sessions…</p>
         <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>
       </header>

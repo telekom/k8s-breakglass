@@ -45,7 +45,7 @@ func GetTestNamespace() string {
 
 // GetTmuxDebugImage returns the image used for tmux-enabled terminal sharing tests.
 func GetTmuxDebugImage() string {
-	return getEnvOrDefault("TMUX_DEBUG_IMAGE", "breakglass-tmux-debug:latest")
+	return getEnvOrDefault("TMUX_DEBUG_IMAGE", "breakglass-tmux-debug:e2e")
 }
 
 // GetAPIBaseURL returns the base URL for the breakglass API

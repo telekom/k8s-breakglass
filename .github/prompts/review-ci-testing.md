@@ -129,6 +129,29 @@ and that CI configuration is correct.
   `go-version-file: go.mod` to pick the Go toolchain, so a mismatch
   means CI and container builds use different Go versions, risking
   subtle behavior differences.
+- **Behavior over presence**: Reject tests that grep source files, workflow
+  definitions, manifests, or documentation for expected strings. Tests must
+  exercise the public command, API, controller transition, rendered Helm
+  output, or release script and assert observable results, failure modes,
+  security boundaries, and cleanup. If behavior cannot be executed reliably,
+  require an explicit acceptance gate instead of a presence-only test.
+- **Real tool proofs**: A successful `--help` or `--version` invocation proves
+  packaging only. When a utility advertises an operation such as packet
+  capture, BPF tracing, storage I/O, cluster validation, or repair, its
+  integration job must execute that operation against a disposable fixture
+  and verify the produced evidence.
+- **No duplicate suites**: Keep hermetic helper/unit/lint checks in ordinary
+  CI and privileged real-tool proofs in the dedicated integration workflow.
+  Flag the same test target running in both places.
+- **Runner-start diagnosis**: A check cancelled before any step starts is
+  runner infrastructure evidence, not a code failure. Confirm whether steps
+  executed before proposing a code change or retrying the failed check.
+- **Fail-closed prerequisites**: BPF, kind, Docker, and other privileged test
+  prerequisites must cause the authoritative integration job to fail when
+  unavailable; silent skips turn a required security proof into a false pass.
+- **Cleanup is behavior**: Disposable clusters, containers, volumes, network
+  namespaces, credentials, policy exceptions, and sessions must be removed on
+  success and failure, and the test must verify that they no longer exist.
 
 ### 9. Helm & Manifest Tests
 

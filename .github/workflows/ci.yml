@@ -29,11 +29,21 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Verify release provenance workflow
         run: make verify-release-provenance
+      - name: Install SPDX schema validator
+        run: sudo apt-get update && sudo apt-get install -y python3-jsonschema
+      - name: Run release security behavioral tests
+        run: make test-release-security
+      - name: Verify documentation snippets
+        run: make verify-docs-snippets
+      - name: Verify PR gate contract behavior
+        run: |
+          shellcheck .github/scripts/pr-gate-contract.sh .github/scripts/test-pr-gate-contract.sh
+          .github/scripts/test-pr-gate-contract.sh
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -43,6 +53,8 @@ jobs:
         run: make controller-gen kustomize golangci-lint
       - name: Lint
         run: make lint
+      - name: Cross-compile supported Unix targets
+        run: make cross-compile
 
   unit-tests-controller:
     name: Controller Unit Tests
@@ -50,9 +62,9 @@ jobs:
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -73,9 +85,9 @@ jobs:
     env:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -92,14 +104,28 @@ jobs:
           flags: cli
           fail_ci_if_error: false
 
+  windows-privatefile-tests:
+    name: Windows Private File Security
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify native Windows token-file ACLs
+        run: go test ./pkg/bgctl/internal/privatefile -run '^(TestCreateTempPrivateUsesProtectedOwnerACL|TestPrivateWriteAndReplacement)$' -count=1 -v
+
   crd-validation:
     name: CRD Schema & API Server Validation
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -114,11 +140,11 @@ jobs:
     name: Frontend Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.11.0'
+          node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Frontend security audit (npm)
@@ -140,18 +166,18 @@ jobs:
       contents: read
       pull-requests: write
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0  # Full history for tag access
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
       - name: Install tools
         run: make controller-gen kustomize
-      - name: Generate manifests
-        run: make manifests
+      - name: Verify generated artifacts
+        run: make verify-generated
       - name: Build all kustomize targets
         run: |
           mkdir -p manifests-current
@@ -322,15 +348,17 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.11.0'
+          node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Check Node.js version contract
+        run: npm run test:node-version-contract
       - name: Type check
         run: npm run typecheck
       - name: Lint
@@ -371,7 +399,7 @@ jobs:
     name: Helm Chart Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
@@ -379,10 +407,101 @@ jobs:
       - name: Lint Helm charts
         run: |
           helm lint charts/escalation-config --values charts/escalation-config/ci/test-values.yaml
+          helm lint charts/debug-session-catalogue --strict --values charts/debug-session-catalogue/ci/test-values.yaml
+          charts/debug-session-catalogue/ci/validate.sh
       - name: Template validation
         run: |
           helm template test-release charts/escalation-config --values charts/escalation-config/ci/test-values.yaml --debug
+          helm template test-release charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml --debug
+      - name: Template optional ValidatingAdmissionPolicy resources
+        run: |
+          helm template test-release charts/escalation-config \
+            --show-only templates/validatingadmissionpolicy.yaml \
+            --values charts/escalation-config/ci/test-values.yaml \
+            --set validatingAdmissionPolicy.enabled=true \
+            --kube-version 1.30.0 \
+            --debug >/tmp/escalation-config-vap.yaml
+      - name: Validate VAP resource coverage
+        run: |
+          make kustomize
+          bash charts/escalation-config/ci/test-vap.sh
+      - name: Install kind
+        run: |
+          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          chmod +x /tmp/kind
+          sudo mv /tmp/kind /usr/local/bin/kind
+      - name: Server dry-run optional ValidatingAdmissionPolicy resources
+        run: |
+          kind create cluster --name vap-validation --image "${KIND_NODE_IMAGE}" --wait 120s
+          kubectl apply --dry-run=server -f /tmp/escalation-config-vap.yaml
 
+  utility-image-tests:
+    name: Utility image checks (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep this as one matrix so new utility images do not add duplicate
+        # workflows or diverging lint/build contracts.
+        include:
+          - name: network-diagnostics
+            make_dir: utils/network-debug
+            target: test
+            dockerfile: utils/network-debug/Dockerfile
+            shell_paths: utils/network-debug/scripts/*.sh utils/network-debug/scripts/net-debug utils/network-debug/scripts/net-report utils/network-debug/tests/*.sh
+            metadata: utils/network-debug/IMAGE-METADATA.yaml
+          - name: node-recovery-and-network-repair
+            make_dir: utils/node-maintenance
+            target: test
+            dockerfile: utils/node-maintenance/Dockerfile
+            shell_paths: utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
+            metadata: ""
+          - name: workload-diagnostics
+            make_dir: utils/workload-debug
+            target: test
+            dockerfile: utils/workload-debug/Dockerfile
+            shell_paths: utils/workload-debug/scripts/* utils/workload-debug/tests/*.sh
+            metadata: utils/workload-debug/IMAGE-METADATA.yaml
+          - name: storage-diagnostics
+            make_dir: utils/images
+            target: storage-test
+            dockerfile: utils/images/storage-debug/Dockerfile
+            shell_paths: utils/images/storage-debug/bin/* utils/images/storage-debug/tests/*.sh
+            metadata: utils/images/storage-debug/image-metadata.yaml
+          - name: dump-access
+            make_dir: utils/images
+            target: dump-test
+            dockerfile: utils/images/dump-reader/Dockerfile
+            shell_paths: utils/images/dump-reader/bin/* utils/images/dump-reader/tests/*.sh
+            metadata: utils/images/dump-reader/image-metadata.yaml
+          - name: oci-attestation
+            make_dir: utils/images
+            target: oci-attestation-test
+            dockerfile: utils/images/storage-debug/Dockerfile
+            shell_paths: utils/images/tests/verify-oci-attestations-test.sh
+            metadata: ""
+          - name: diagnostic-artifact-collector
+            make_dir: utils/images/diagnostic-artifact-collector
+            target: test
+            dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+            shell_paths: utils/images/diagnostic-artifact-collector/bin/* utils/images/diagnostic-artifact-collector/tests/*.sh
+            metadata: utils/images/diagnostic-artifact-collector/image-metadata.yaml
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Run helper tests
+        run: make -C "${{ matrix.make_dir }}" "${{ matrix.target }}"
+      - name: ShellCheck helpers
+        run: shellcheck ${{ matrix.shell_paths }}
+      - name: Hadolint Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: ${{ matrix.dockerfile }}
+      - name: Validate image metadata
+        if: matrix.metadata != ''
+        env:
+          IMAGE_METADATA: ${{ matrix.metadata }}
+        run: |
+          ruby hack/validate-image-metadata.rb "$IMAGE_METADATA"
   build-image:
     name: Build Image
     runs-on: ubuntu-latest
@@ -394,11 +513,11 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver-opts: image=moby/buildkit:rootless
       - name: Cache Docker layers
@@ -411,7 +530,7 @@ jobs:
             buildx-
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -435,7 +554,7 @@ jobs:
             com.buildkit.build.ref=${{ github.ref }}
       - name: Build image locally
         id: build
-        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           push: false
@@ -501,6 +620,7 @@ jobs:
       - manifest-validation
       - frontend-tests
       - helm-lint
+      - utility-image-tests
       - single-cluster-e2e
       - oidc-comprehensive-e2e
       - ui-e2e
@@ -511,9 +631,9 @@ jobs:
       id-token: write  # Required for actions/attest-build-provenance
       attestations: write  # Required to persist attestations
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver-opts: image=moby/buildkit:rootless
       - name: Download Docker image artifact
@@ -526,7 +646,7 @@ jobs:
           docker load -i /tmp/image-artifacts/breakglass-e2e.tar
           docker images | grep breakglass
       - name: Login to GHCR
-        uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -564,7 +684,7 @@ jobs:
           fi
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@80c7e94dd9b9319bd5eb7a0e0fe9291e23a2a2e9 # v6.1.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -584,7 +704,7 @@ jobs:
           done <<< "$TAGS"
           docker images | grep breakglass | head -10
       - name: Generate SBOM (Syft)
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
         id: sbom
         if: ${{ steps.push_check.outputs.can_push == 'true' }}
         with:
@@ -652,7 +772,7 @@ jobs:
           echo "::warning::Manifest still not available after 30 attempts (300s). Attestation may fail."
       - name: Attest provenance
         if: ${{ steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.registry_push.outputs.digest }}
@@ -710,10 +830,10 @@ jobs:
     name: Single-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free runner disk space
         run: |
@@ -745,7 +865,7 @@ jobs:
           df -h /
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -836,9 +956,8 @@ jobs:
           if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
             echo "Sourcing E2E environment from setup script..."
             source e2e/kind-setup-single-tdir/e2e-env.sh
-            if [ -n "${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET:-}" ]; then
-              echo "::add-mask::${KEYCLOAK_GROUP_SYNC_CLIENT_SECRET}"
-            fi
+            source .github/scripts/ci-e2e-diagnostics.sh
+            ci_mask_secret_like_e2e_env
 
             # Export to GITHUB_ENV for subsequent steps
             echo "E2E_TEST=true" >> "$GITHUB_ENV"
@@ -859,8 +978,8 @@ jobs:
             echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> "$GITHUB_ENV"
             echo "KUBECONFIG=${KUBECONFIG}" >> "$GITHUB_ENV"
 
-            echo "Environment variables set:"
-            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" | grep -v "KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=" || true
+            echo "Allowlisted E2E environment variables set:"
+            ci_print_e2e_env_allowlist
           else
             echo "ERROR: E2E environment file not found!"
             exit 1
@@ -1115,6 +1234,7 @@ jobs:
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog}
+          source .github/scripts/ci-e2e-diagnostics.sh
           
           echo "Collecting comprehensive E2E diagnostics to $DIAG_DIR..."
           
@@ -1129,7 +1249,7 @@ jobs:
           
           # External Keycloak container
           docker logs e2e-keycloak > "$DIAG_DIR/logs/keycloak-container.log" 2>&1 || echo "No external keycloak container"
-          docker inspect e2e-keycloak > "$DIAG_DIR/docker/keycloak-inspect.json" 2>&1 || true
+          ci_redacted_docker_inspect e2e-keycloak "$DIAG_DIR/docker/keycloak-inspect.json" || true
           
           # Kind cluster containers
           for container in $(docker ps -a --format '{{.Names}}' | grep -E 'e2e-cluster|control-plane'); do
@@ -1218,6 +1338,7 @@ jobs:
           # TEST RESULTS
           # ===========================================
           echo "--- Test results ---"
+          cp e2e-core-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           cp oidc-e2e-results.txt "$DIAG_DIR/" 2>/dev/null || true
           
@@ -1287,10 +1408,10 @@ jobs:
     # above the Go test timeout so the test process, not the runner, owns
     # suite-level timeout failures.
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free runner disk space
         run: |
@@ -1322,7 +1443,7 @@ jobs:
           df -h /
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -1400,6 +1521,8 @@ jobs:
           if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
             echo "Sourcing E2E environment from setup script..."
             source e2e/kind-setup-single-tdir/e2e-env.sh
+            source .github/scripts/ci-e2e-diagnostics.sh
+            ci_mask_secret_like_e2e_env
             echo "E2E_TEST=true" >> $GITHUB_ENV
             echo "E2E_NAMESPACE=${E2E_NAMESPACE}" >> $GITHUB_ENV
             echo "E2E_CLUSTER_NAME=${E2E_CLUSTER_NAME}" >> $GITHUB_ENV
@@ -1417,8 +1540,8 @@ jobs:
             echo "TLS_DIR=${TLS_DIR:-}" >> $GITHUB_ENV
             echo "KUBERNETES_API_SERVER=${KUBERNETES_API_SERVER:-}" >> $GITHUB_ENV
             echo "KUBECONFIG=${KUBECONFIG}" >> $GITHUB_ENV
-            echo "Environment variables set:"
-            env | grep -E "E2E_|BREAKGLASS_|KEYCLOAK_" || true
+            echo "Allowlisted E2E environment variables set:"
+            ci_print_e2e_env_allowlist
           else
             echo "ERROR: E2E environment file not found!"
             exit 1
@@ -1593,10 +1716,10 @@ jobs:
     name: UI E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free runner disk space
         run: |
@@ -1628,14 +1751,14 @@ jobs:
           df -h /
 
       - name: Set up Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: '24.11.0'
+          node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -1813,9 +1936,11 @@ jobs:
           # Source the environment from setup script
           if [ -f e2e/kind-setup-single-tdir/e2e-env.sh ]; then
             source e2e/kind-setup-single-tdir/e2e-env.sh
+            source .github/scripts/ci-e2e-diagnostics.sh
+            ci_mask_secret_like_e2e_env
             echo "Sourced E2E environment"
-            echo "Environment variables:"
-            env | grep -E "KEYCLOAK|BREAKGLASS|MAILHOG" || true
+            echo "Allowlisted E2E environment variables:"
+            ci_print_e2e_env_allowlist
             
             # Extract API port from BREAKGLASS_API_URL for Vite proxy configuration
             # BREAKGLASS_API_URL format: http://localhost:PORT
@@ -1861,8 +1986,8 @@ jobs:
           if [ "$UI_READY" = "false" ]; then
             echo "ERROR: Controller UI not responding on port 8080 within 15 seconds"
             echo "Checking controller pod status..."
-            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
-            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
+            kubectl get pods -n breakglass-system -l app=breakglass || true
+            kubectl logs -n breakglass-system -l app=breakglass --tail=50 || true
             exit 1
           fi
 
@@ -1893,8 +2018,8 @@ jobs:
           # Test controller UI (already verified in previous step, just double-check)
           test_service "Controller UI" "http://localhost:8080" 15 "-s" || {
             echo "Controller UI failed health check - checking controller status"
-            kubectl get pods -n breakglass-system -l app=breakglass-manager || true
-            kubectl logs -n breakglass-system -l app=breakglass-manager --tail=50 || true
+            kubectl get pods -n breakglass-system -l app=breakglass || true
+            kubectl logs -n breakglass-system -l app=breakglass --tail=50 || true
           }
           
           # Test MailHog
@@ -2015,6 +2140,7 @@ jobs:
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,kubernetes,logs,resources,mailhog,frontend,network,keycloak}
+          source .github/scripts/ci-e2e-diagnostics.sh
           
           echo "Collecting comprehensive UI E2E diagnostics to $DIAG_DIR..."
           
@@ -2058,7 +2184,7 @@ jobs:
           if docker ps -a --format '{{.Names}}' | grep -q e2e-keycloak; then
             echo "External Keycloak container found"
             docker logs e2e-keycloak > "$DIAG_DIR/keycloak/container.log" 2>&1
-            docker inspect e2e-keycloak > "$DIAG_DIR/keycloak/inspect.json" 2>&1
+            ci_redacted_docker_inspect e2e-keycloak "$DIAG_DIR/keycloak/inspect.json" || true
             docker stats --no-stream e2e-keycloak > "$DIAG_DIR/keycloak/stats.txt" 2>&1 || true
           else
             echo "No external Keycloak container" > "$DIAG_DIR/keycloak/container-status.txt"
@@ -2090,7 +2216,7 @@ jobs:
           
           # External Keycloak container
           docker logs e2e-keycloak > "$DIAG_DIR/logs/keycloak-container.log" 2>&1 || echo "No external keycloak container"
-          docker inspect e2e-keycloak > "$DIAG_DIR/docker/keycloak-inspect.json" 2>&1 || true
+          ci_redacted_docker_inspect e2e-keycloak "$DIAG_DIR/docker/keycloak-inspect.json" || true
           
           # Kind cluster containers
           for container in $(docker ps -a --format '{{.Names}}' | grep -E 'breakglass-hub|control-plane'); do
@@ -2194,7 +2320,7 @@ jobs:
           fi
           
           # Test environment variables
-          env | grep -E "KEYCLOAK|BREAKGLASS|MAILHOG|PLAYWRIGHT|VITE" > "$DIAG_DIR/frontend/test-environment.txt" 2>&1 || true
+          ci_print_e2e_env_allowlist > "$DIAG_DIR/frontend/test-environment.txt" 2>&1 || true
           
           # Homepage check
           curl -s http://localhost:8080 > "$DIAG_DIR/frontend/homepage.html" 2>&1 || echo "Controller UI not responding" > "$DIAG_DIR/frontend/homepage.html"
@@ -2276,10 +2402,10 @@ jobs:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint]
+    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Free runner disk space
         run: |
@@ -2313,7 +2439,7 @@ jobs:
           df -h /
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
@@ -2355,6 +2481,7 @@ jobs:
         run: |
           echo "=== Setup failed, capturing immediate diagnostics ==="
           mkdir -p e2e-setup-failure-logs
+          source .github/scripts/ci-e2e-diagnostics.sh
           
           # Save the setup script output
           if [ -f e2e-setup-output.log ]; then
@@ -2365,7 +2492,7 @@ jobs:
           echo "--- Keycloak container logs ---"
           if docker ps -a --filter "name=e2e-keycloak" --format "{{.Names}}" | grep -q e2e-keycloak; then
             docker logs e2e-keycloak > e2e-setup-failure-logs/keycloak-container.log 2>&1
-            docker inspect e2e-keycloak > e2e-setup-failure-logs/keycloak-inspect.json 2>&1
+            ci_redacted_docker_inspect e2e-keycloak e2e-setup-failure-logs/keycloak-inspect.json || true
             echo "Keycloak container found and logs captured"
           else
             echo "No keycloak container found - it was never created or already cleaned up" > e2e-setup-failure-logs/keycloak-container.log
@@ -2413,7 +2540,7 @@ jobs:
             mkdir -p "e2e-setup-failure-logs/node-$container"
             
             # Container inspect for full details
-            docker inspect "$container" > "e2e-setup-failure-logs/node-$container/docker-inspect.json" 2>&1 || true
+            ci_redacted_docker_inspect "$container" "e2e-setup-failure-logs/node-$container/docker-inspect.json" || true
             
             # Get all Kubernetes static pod manifests
             docker exec "$container" ls -la /etc/kubernetes/manifests/ > "e2e-setup-failure-logs/node-$container/manifests-list.txt" 2>&1 || true
@@ -2496,6 +2623,8 @@ jobs:
         run: |
           # Source environment variables from setup script
           source e2e/kind-setup-multi-tdir/env.sh
+          source .github/scripts/ci-e2e-diagnostics.sh
+          ci_mask_secret_like_e2e_env
           
           echo "Hub kubeconfig: $E2E_HUB_KUBECONFIG"
           echo "Spoke A kubeconfig: $E2E_SPOKE_A_KUBECONFIG"
@@ -2776,6 +2905,7 @@ jobs:
         run: |
           DIAG_DIR="e2e-diagnostics"
           mkdir -p "$DIAG_DIR"/{docker,hub,spoke-a,spoke-b,mailhog}
+          source .github/scripts/ci-e2e-diagnostics.sh
           
           echo "Collecting comprehensive multi-cluster E2E diagnostics to $DIAG_DIR..."
           
@@ -2783,6 +2913,7 @@ jobs:
           if [ -f e2e/kind-setup-multi-tdir/env.sh ]; then
             echo "Sourcing environment from e2e/kind-setup-multi-tdir/env.sh"
             source e2e/kind-setup-multi-tdir/env.sh
+            ci_mask_secret_like_e2e_env
           else
             echo "WARNING: env.sh not found, attempting to detect kubeconfig paths from kind"
             # Fallback: try to find kubeconfig files created by kind
@@ -2811,7 +2942,7 @@ jobs:
           
           # External Keycloak container
           docker logs e2e-keycloak > "$DIAG_DIR/docker/keycloak-container.log" 2>&1 || echo "No external keycloak container"
-          docker inspect e2e-keycloak > "$DIAG_DIR/docker/keycloak-inspect.json" 2>&1 || true
+          ci_redacted_docker_inspect e2e-keycloak "$DIAG_DIR/docker/keycloak-inspect.json" || true
           
           # Kind cluster containers
           for container in $(docker ps -a --format '{{.Names}}' | grep -E 'breakglass-hub|spoke-cluster|control-plane'); do
@@ -2834,7 +2965,7 @@ jobs:
             mkdir -p "$DIAG_DIR/docker/node-$container"
             
             # Container inspect for full details
-            timeout 10 docker inspect "$container" > "$DIAG_DIR/docker/node-$container/docker-inspect.json" 2>&1 || true
+            ci_redacted_docker_inspect "$container" "$DIAG_DIR/docker/node-$container/docker-inspect.json" || true
             
             # Get all Kubernetes static pod manifests (run in parallel)
             timeout 5 docker exec "$container" ls -la /etc/kubernetes/manifests/ > "$DIAG_DIR/docker/node-$container/manifests-list.txt" 2>&1 &

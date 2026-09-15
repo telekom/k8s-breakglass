@@ -22,6 +22,7 @@ import (
 	ginzap "github.com/gin-contrib/zap"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
@@ -237,6 +238,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
 		},
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
+			c.Next()
 			if len(c.Errors) > 0 {
 				cid, _ := c.Get("cid")
 				first := c.Errors[0]
@@ -253,12 +255,20 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					// Use zap.String to avoid stacktrace in error logs
 					log.Error("handler_error", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("error", first.Error()), zap.String("meta", metaStr))
 				}
-				if !c.IsAborted() {
-					c.JSON(c.Writer.Status(), gin.H{"error": first.Error(), "cid": cid, "meta": metaStr})
+				if !c.IsAborted() && !c.Writer.Written() {
+					status := c.Writer.Status()
+					if status < http.StatusBadRequest {
+						status = http.StatusInternalServerError
+					}
+					RespondError(c, status, first.Error(), metaStr)
 				}
 			}
 		},
 	)
+
+	if cfg.OIDCProxyRedirectsAllowed() {
+		log.Warn("OIDC proxy: server.allowOIDCProxyRedirects is enabled — the proxy will follow upstream 30x responses without re-checking the authority allowlist, which permits SSRF via a redirecting identity provider; unset this field to restore the secure default")
+	}
 
 	allowedOrigins, usedDefaults := buildAllowedOrigins(cfg)
 
@@ -302,9 +312,9 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 		cid, _ := c.Get("cid")
 		log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
-		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-			"error": "origin not allowed",
-			"cid":   cid,
+		c.AbortWithStatusJSON(http.StatusForbidden, APIError{
+			Error: "origin not allowed",
+			Code:  "FORBIDDEN",
 		})
 	})
 
@@ -313,7 +323,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		cors.New(cors.Config{
 			AllowOrigins:     allowedOrigins,
 			AllowMethods:     []string{http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodOptions},
-			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type"},
+			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type", "X-OIDC-Authority"},
 			ExposeHeaders:    []string{"Authorization", "X-Notification-Sent"},
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
@@ -337,7 +347,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
-			c.JSON(http.StatusNotFound, gin.H{"error": "API endpoint not found", "path": c.Request.URL.Path})
+			RespondError(c, http.StatusNotFound, "API endpoint not found", c.Request.URL.Path)
 		} else {
 			ServeSPA("/", "/frontend/dist/")(c)
 		}
@@ -491,6 +501,7 @@ func (s *Server) SetIdentityProvider(idpConfig *config.IdentityProviderConfig) {
 		if authority != "" {
 			if u, err := url.Parse(authority); err == nil {
 				s.oidcAuthority = u
+				s.warnOnInsecureOIDCAuthority(idpConfig.Name, u)
 			} else {
 				s.log.Sugar().Warnw("failed to parse OIDC authority URL", "authority", authority, "error", err)
 			}
@@ -500,6 +511,31 @@ func (s *Server) SetIdentityProvider(idpConfig *config.IdentityProviderConfig) {
 		// Record metric for provider type
 		metrics.IdentityProviderLoaded.WithLabelValues(idpConfig.Type).Inc()
 	}
+}
+
+// warnOnInsecureOIDCAuthority emits a loud, once-per-configuration warning when a
+// configured OIDC authority uses the http scheme.
+//
+// A plaintext authority means the OIDC proxy's outbound first hop carries no CA
+// policy and no server identity check, so DNS or on-path control over the
+// authority's hostname turns the unauthenticated /api/oidc/authority/* endpoint
+// into a full SSRF primitive with no redirect required — the redirect refusal in
+// refuseOIDCProxyRedirects cannot help here.
+//
+// This is NOT rejected outright, deliberately: the IdentityProvider CRD already
+// pins spec.oidc.authority and spec.keycloak.baseURL to `^https://.+`, so the
+// only way to reach this path is legacy file-based configuration, and refusing
+// to start would break existing dev/e2e deployments for no security gain over a
+// warning. Callers with an https authority are unaffected.
+func (s *Server) warnOnInsecureOIDCAuthority(idpName string, authority *url.URL) {
+	if s.log == nil || authority == nil || !strings.EqualFold(authority.Scheme, "http") {
+		return
+	}
+	s.log.Sugar().Warnw("oidc_proxy_insecure_http_authority",
+		"idpName", idpName,
+		"authority", authority.Scheme+"://"+authority.Host+authority.Path,
+		"impact", "the OIDC proxy outbound first hop is unauthenticated and spoofable; DNS rebinding can redirect it to internal services (SSRF)",
+		"remediation", "configure an https:// OIDC authority; use certificateAuthority for private or self-signed certificates")
 }
 
 // ReloadIdentityProvider reloads the IdentityProvider configuration from the provided loader.
@@ -737,7 +773,8 @@ type IdentityProviderResponse struct {
 	// Type is the provider type (e.g., "OIDC", "Keycloak", "LDAP", "AzureAD")
 	Type string `json:"type"`
 	// Authority is the OIDC or OAuth authority URL (exposed to frontend for browser flows)
-	Authority string `json:"authority"`
+	Authority       string `json:"authority"`
+	DirectAuthority string `json:"directAuthority,omitempty"`
 	// ClientID is the OIDC or OAuth client ID
 	ClientID string `json:"clientId"`
 	// KeycloakMetadata contains Keycloak-specific non-secret configuration if applicable
@@ -836,11 +873,18 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 		return
 	}
 
+	// Expose a frontend-facing OIDC authority that points at the server-side proxy
+	frontendAuthority := idpCfg.Authority
+	if s.oidcAuthority != nil {
+		frontendAuthority = "/api/oidc/authority"
+	}
+
 	// Build response with only non-secret fields
 	resp := IdentityProviderResponse{
-		Type:      idpCfg.Type,
-		Authority: idpCfg.Authority,
-		ClientID:  idpCfg.ClientID,
+		Type:            idpCfg.Type,
+		Authority:       frontendAuthority,
+		DirectAuthority: idpCfg.Authority,
+		ClientID:        idpCfg.ClientID,
 	}
 
 	// If Keycloak is configured, expose only non-secret metadata
@@ -927,13 +971,19 @@ func (s *Server) getMultiIDPConfig(c *gin.Context) {
 
 // isKnownIDPAuthority checks if the given authority URL is from a known IDP configuration
 // This prevents SSRF attacks by ensuring we only proxy to configured Keycloak instances
-func (s *Server) isKnownIDPAuthority(authority string) bool {
+func (s *Server) isKnownIDPAuthority(ctx context.Context, authority string) bool {
 	// Check against cached IDPs
 	if s.idpReconciler != nil {
-		cachedIDPs := s.idpReconciler.GetCachedIdentityProviders()
-		for _, idp := range cachedIDPs {
-			if idp.Spec.OIDC.Authority == authority {
-				return true
+		cachedIDPs, err := s.idpReconciler.GetEnabledIdentityProviders(ctx)
+		if err != nil {
+			if s.log != nil {
+				s.log.Sugar().Warnw("oidc_proxy_idp_authority_lookup_failed", "authority", authority, "error", err)
+			}
+		} else {
+			for _, idp := range cachedIDPs {
+				if idp.Spec.OIDC.Authority == authority {
+					return true
+				}
 			}
 		}
 	}
@@ -966,7 +1016,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	}
 
 	customAuthority := strings.TrimSpace(c.Request.Header.Get("X-OIDC-Authority"))
-	targetAuthority, err := s.selectOIDCProxyAuthority(customAuthority)
+	targetAuthority, err := s.selectOIDCProxyAuthority(c.Request.Context(), customAuthority)
 	if err != nil {
 		s.handleOIDCProxyAuthorityError(c, customAuthority, err, start)
 		return
@@ -984,7 +1034,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	target := targetURL.String()
 	s.log.Sugar().Debugw("oidc_proxy_request", "path", proxyPath, "target_scheme", targetURL.Scheme, "target_host", targetURL.Host, "target_path", targetURL.Path)
 
-	client, err := s.newOIDCProxyHTTPClient(targetURL.Scheme == "https")
+	client, err := s.newOIDCProxyHTTPClient(c.Request.Context(), targetURL.Scheme == "https", targetAuthority.String())
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
@@ -1024,10 +1074,29 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		}
 	}
 	c.Status(resp.StatusCode)
-	if _, err := io.Copy(c.Writer, resp.Body); err != nil {
+	// gin buffers the status until the first write, so an upstream response with
+	// an empty body (notably the 30x we now refuse to follow) would otherwise
+	// reach the caller as 200. Commit the status explicitly.
+	c.Writer.WriteHeaderNow()
+	// Bound the relayed body: a malicious or compromised authority must not be
+	// able to stream an unbounded response through the proxy. See
+	// maxOIDCProxyResponseBytes for the rationale behind the limit.
+	copied, err := io.Copy(c.Writer, io.LimitReader(resp.Body, maxOIDCProxyResponseBytes))
+	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
 		recordOIDCProxyFailure("response_copy_error", start)
 		RespondBadGateway(c, "failed to stream response from authority")
+		return
+	}
+	if copied == maxOIDCProxyResponseBytes && oidcProxyBodyHasMore(resp.Body) {
+		// The upstream body did not end at the cap, so the relayed body really is
+		// truncated. Status and headers are already committed and cannot be
+		// replaced, so surface this loudly instead of reporting success.
+		s.log.Sugar().Errorw("oidc_proxy_response_truncated",
+			"target", target,
+			"limitBytes", maxOIDCProxyResponseBytes,
+			"remediation", "an OIDC discovery/JWKS document above the proxy response limit is unexpected; verify the configured authority")
+		recordOIDCProxyFailure("response_too_large", start)
 		return
 	}
 
@@ -1090,20 +1159,78 @@ const (
 	tlsModeCustomCA = "custom_ca"
 )
 
-func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) {
+// maxOIDCProxyResponseBytes caps the upstream response body the OIDC proxy will
+// relay to the caller. OIDC discovery documents and JWKS sets are small: real
+// Keycloak/Entra/Okta discovery documents are a few KiB, and a JWKS containing
+// dozens of RSA-4096 keys stays well under 256 KiB. 1 MiB therefore leaves two
+// orders of magnitude of headroom over any legitimate document while removing
+// the unbounded-copy DoS/read-amplification vector. It also mirrors the 1 MiB
+// inbound request-body cap already applied by the global middleware in
+// NewServer, keeping both directions symmetric.
+const maxOIDCProxyResponseBytes int64 = 1 << 20
+
+// oidcProxyBodyHasMore reports whether the upstream body still holds data after
+// the capped copy consumed exactly maxOIDCProxyResponseBytes. Copying exactly
+// the cap is ambiguous on its own: io.LimitReader yields that byte count both
+// when it truncated a larger document and when the document was exactly the cap
+// and was relayed in full. Probing a single further byte disambiguates the two
+// without ever relaying more than the cap to the caller. A read error (rather
+// than a byte) means the upstream ended at the cap as far as we can tell, so the
+// relayed body was not truncated by us.
+func oidcProxyBodyHasMore(body io.Reader) bool {
+	var probe [1]byte
+	// io.ReadFull rather than a bare Read: a Reader is allowed to return (0, nil)
+	// and ReadFull retries until it has a byte, an error, or EOF.
+	n, _ := io.ReadFull(body, probe[:])
+	return n > 0
+}
+
+// refuseOIDCProxyRedirects prevents the OIDC proxy's HTTP client from following
+// 30x responses.
+//
+// The handler validates only the FIRST hop: selectOIDCProxyAuthority requires
+// exact string equality against a configured IdP authority and
+// buildOIDCProxyTargetURL rejects any target whose scheme/host drifts from that
+// authority. Go's default client (CheckRedirect == nil) follows up to 10
+// redirects, and no allowlist check is re-applied to the redirect targets, so a
+// trusted-but-redirecting IdP could steer the server-side request to an
+// arbitrary host (CWE-918).
+//
+// Refusing redirects outright is preferred over re-validating each hop: the
+// endpoints this proxy is allowed to reach (discovery, JWKS, token, userinfo,
+// introspection, revocation) are specified to be served directly and have no
+// legitimate need to redirect, so a re-validating loop would only add an
+// attackable surface for no functional gain. Returning ErrUseLastResponse (as
+// opposed to an error) keeps the 30x observable to the caller: the status code
+// is still relayed, while isAllowedOIDCProxyResponseHeader continues to strip
+// Location and Set-Cookie so the response cannot be used to pivot.
+func refuseOIDCProxyRedirects(_ *http.Request, _ []*http.Request) error {
+	return http.ErrUseLastResponse
+}
+
+func (s *Server) newOIDCProxyHTTPClient(ctx context.Context, requiresTLS bool, authority string) (*http.Client, error) {
 	transport := &http.Transport{}
 	client := &http.Client{Transport: transport, Timeout: 10 * time.Second}
+	// SSRF guard: never auto-follow redirects unless an operator has explicitly
+	// opted in. See refuseOIDCProxyRedirects for why refusing is the default.
+	if !s.config.OIDCProxyRedirectsAllowed() {
+		client.CheckRedirect = refuseOIDCProxyRedirects
+	}
 
 	if !requiresTLS {
+		// An http-scheme authority gets no CA policy at all, so the first hop is
+		// unauthenticated and spoofable (DNS rebinding yields SSRF with no
+		// redirect involved). The loud operator-facing warning is emitted once at
+		// configuration time by warnOnInsecureOIDCAuthority — warning per request
+		// here would let an unauthenticated caller flood the logs. The
+		// tlsModeHTTP gauge keeps the state observable.
 		recordOIDCProxyTLSMode(tlsModeHTTP)
 		return client, nil
 	}
 
-	s.idpMutex.RLock()
-	idpCfg := s.idpConfig
-	s.idpMutex.RUnlock()
-	if idpCfg == nil {
-		return nil, fmt.Errorf("identity provider not loaded")
+	idpCfg, err := s.oidcProxyIDPConfigForAuthority(ctx, authority)
+	if err != nil {
+		return nil, err
 	}
 
 	mode := tlsModeSystemCA
@@ -1140,6 +1267,64 @@ func (s *Server) newOIDCProxyHTTPClient(requiresTLS bool) (*http.Client, error) 
 
 	recordOIDCProxyTLSMode(mode)
 	return client, nil
+}
+
+func (s *Server) oidcProxyIDPConfigForAuthority(ctx context.Context, authority string) (*config.IdentityProviderConfig, error) {
+	var idpLookupErr error
+	if authority != "" && s.idpReconciler != nil {
+		idps, err := s.idpReconciler.GetEnabledIdentityProviders(ctx)
+		if err != nil {
+			idpLookupErr = fmt.Errorf("list enabled identity providers: %w", err)
+			if s.log != nil {
+				s.log.Sugar().Warnw("oidc_proxy_idp_config_lookup_failed", "authority", authority, "error", err)
+			}
+		} else {
+			for _, idp := range idps {
+				if idp.Spec.OIDC.Authority == authority {
+					return identityProviderCRToOIDCProxyConfig(idp), nil
+				}
+			}
+		}
+	}
+
+	s.idpMutex.RLock()
+	idpCfg := s.idpConfig
+	s.idpMutex.RUnlock()
+	if idpCfg == nil {
+		return nil, fmt.Errorf("identity provider not loaded")
+	}
+	if authority != "" && idpCfg.Authority != authority {
+		if idpLookupErr != nil {
+			return nil, idpLookupErr
+		}
+		return nil, fmt.Errorf("identity provider for authority %q not loaded", authority)
+	}
+	return idpCfg, nil
+}
+
+func identityProviderCRToOIDCProxyConfig(idp *breakglassv1alpha1.IdentityProvider) *config.IdentityProviderConfig {
+	cfg := &config.IdentityProviderConfig{
+		Name:                 idp.Name,
+		Issuer:               idp.Spec.Issuer,
+		Type:                 "OIDC",
+		Authority:            idp.Spec.OIDC.Authority,
+		ClientID:             idp.Spec.OIDC.ClientID,
+		ExpectedAudience:     idp.Spec.OIDC.ExpectedAudience,
+		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
+		InsecureSkipVerify:   idp.Spec.OIDC.InsecureSkipVerify,
+	}
+	if idp.Spec.Keycloak != nil {
+		cfg.Keycloak = &config.KeycloakRuntimeConfig{
+			BaseURL:              idp.Spec.Keycloak.BaseURL,
+			Realm:                idp.Spec.Keycloak.Realm,
+			ClientID:             idp.Spec.Keycloak.ClientID,
+			CacheTTL:             idp.Spec.Keycloak.CacheTTL,
+			RequestTimeout:       idp.Spec.Keycloak.RequestTimeout,
+			InsecureSkipVerify:   idp.Spec.Keycloak.InsecureSkipVerify,
+			CertificateAuthority: idp.Spec.Keycloak.CertificateAuthority,
+		}
+	}
+	return cfg
 }
 
 func recordOIDCProxyTLSMode(mode string) {

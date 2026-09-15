@@ -7,6 +7,11 @@ resources:
 # Impersonate role (handwritten - kept separate for hub/spoke deployment flexibility)
 - impersonate_role.yaml
 - impersonate_role_binding.yaml
+# Constrained impersonation (KEP-5284) roles (handwritten). ADDITIVE and safe on
+# every Kubernetes version: inert on spokes without the feature, where the legacy
+# role above continues to serve. See impersonate_constrained_role.yaml.
+- impersonate_constrained_role.yaml
+- impersonate_constrained_role_binding.yaml
 # Leader election role (required for HA deployments)
 - leader_election_role.yaml
 - leader_election_role_binding.yaml

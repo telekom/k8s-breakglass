@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+profiles:
+  - name: duplicate
+    intent: workload-diagnostics
+    displayName: First
+    description: Duplicate profile test.
+    enabled: true
+    elevated: false
+    imageKey: workload
+    command: ["sh"]
+    args: []
+  - name: duplicate
+    intent: network-diagnostics
+    displayName: Second
+    description: Duplicate profile test.
+    enabled: true
+    elevated: false
+    imageKey: network
+    command: ["sh"]
+    args: []

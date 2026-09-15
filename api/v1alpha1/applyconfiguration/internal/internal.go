@@ -35,6 +35,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: apiVersion
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: deleted
       type:
         scalar: boolean
@@ -54,6 +57,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
     - name: resourceName
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
@@ -96,6 +102,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: ready
       type:
         scalar: boolean
+    - name: uid
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfig
   map:
     fields:
@@ -379,6 +388,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: category
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: created
       type:
         scalar: boolean
@@ -413,6 +425,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: resourceName
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.BindingReference
@@ -687,6 +702,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approver
       type:
         scalar: string
+    - name: approverIdentityProvider
+      type:
+        scalar: string
+    - name: approverIdentityProviders
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: approvers
       type:
         list:
@@ -770,6 +794,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: clusterID
       type:
         scalar: string
+    - name: constrainedImpersonation
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationConfig
     - name: environment
       type:
         scalar: string
@@ -820,6 +847,27 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: observedGeneration
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationConfig
+  map:
+    fields:
+    - name: denyUnrecognisedVerbs
+      type:
+        scalar: boolean
+      default: true
+    - name: legacyFallback
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.LegacyImpersonationFallbackPolicy
+      default: Allow
+    - name: probeMode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+      default: user-info
+    - name: support
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationSupport
+      default: Auto
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ConstrainedImpersonationSupport
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.CopiedPodRef
   map:
     fields:
@@ -827,6 +875,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: copyNamespace
+      type:
+        scalar: string
+    - name: copyUID
       type:
         scalar: string
     - name: createdAt
@@ -839,6 +890,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: originalPod
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
@@ -862,6 +916,18 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugContainerOverride
   map:
     fields:
+    - name: args
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: env
       type:
         list:
@@ -1047,6 +1113,11 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: hostPID
       type:
         scalar: boolean
+    - name: nodeSelector
+      type:
+        map:
+          elementType:
+            scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugPodTemplate
   map:
     fields:
@@ -1210,6 +1281,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approvedBy
       type:
         scalar: string
+    - name: approvedByIdentityProvider
+      type:
+        scalar: string
     - name: reason
       type:
         scalar: string
@@ -1217,6 +1291,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: rejectedBy
+      type:
+        scalar: string
+    - name: rejectedByIdentityProvider
       type:
         scalar: string
     - name: required
@@ -1507,6 +1584,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: email
       type:
         scalar: string
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
     - name: joinedAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -1536,6 +1619,12 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
     - name: invitedParticipants
       type:
         list:
@@ -1656,6 +1745,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedBinding
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ResolvedBindingRef
+    - name: resolvedBindingSnapshotCaptured
+      type:
+        scalar: boolean
+    - name: resolvedBindingSpec
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: resolvedPodTemplate
+      type:
+        namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
@@ -1926,6 +2024,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: appliesTo
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicyScope
+    - name: impersonationRules
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationDenyRule
+          elementRelationship: atomic
     - name: podSecurityRules
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodSecurityRules
@@ -1994,6 +2098,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: apiVersion
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: kind
       type:
         scalar: string
@@ -2028,6 +2135,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: podName
+      type:
+        scalar: string
+    - name: podUID
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainersConfig
@@ -2087,6 +2197,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: description
       type:
         scalar: string
+    - name: disabled
+      type:
+        scalar: boolean
     - name: displayName
       type:
         scalar: string
@@ -2211,9 +2324,97 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
   map:
     fields:
+    - name: actionVerbs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: allowedIdentities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: extra
+      type:
+        map:
+          elementType:
+            list:
+              elementType:
+                scalar: string
+              elementRelationship: atomic
+    - name: groups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: mode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
     - name: serviceAccountRef
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ServiceAccountReference
+    - name: uid
+      type:
+        scalar: string
+    - name: userName
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationDenyRule
+  map:
+    fields:
+    - name: actionVerbs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: extraKeys
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: identities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: identityResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: modes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+          elementRelationship: atomic
+    - name: namespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: reason
+      type:
+        scalar: string
+    - name: targetAPIGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: targetResources
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationMode
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KafkaSASLSpec
   map:
     fields:
@@ -2317,6 +2518,86 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: podCopy
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.PodCopyConfig
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugEphemeralContainerIntent
+  map:
+    fields:
+    - name: command
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: containerDigest
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: securityContextDigest
+      type:
+        scalar: string
+    - name: stdin
+      type:
+        scalar: boolean
+    - name: tty
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperation
+  map:
+    fields:
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: ephemeralContainer
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugEphemeralContainerIntent
+    - name: id
+      type:
+        scalar: string
+    - name: identityProviderIssuer
+      type:
+        scalar: string
+    - name: identityProviderName
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: preparedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: requestedBy
+      type:
+        scalar: string
+    - name: requestedByEmail
+      type:
+        scalar: string
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationState
+    - name: targetPod
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationTargetPod
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperationTargetPod
+  map:
+    fields:
+    - name: name
+      type:
+        scalar: string
+    - name: namespace
+      type:
+        scalar: string
+    - name: uid
+      type:
+        namedType: io.k8s.apimachinery.pkg.types.UID
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
   map:
     fields:
@@ -2332,6 +2613,12 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.EphemeralContainerRef
           elementRelationship: atomic
+    - name: operations
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperation
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
   map:
     fields:
@@ -2341,6 +2628,8 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.LegacyImpersonationFallbackPolicy
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.LogSinkSpec
   map:
     fields:
@@ -2385,6 +2674,7 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: retry
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.RetryConfig
+      default: {}
     - name: sender
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SenderConfig
@@ -2453,6 +2743,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: deniedNamespaces
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: denyUserNamespace
+      type:
+        scalar: boolean
     - name: namespaceLabels
       type:
         map:
@@ -2793,6 +3086,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: apiVersion
       type:
         scalar: string
+    - name: createOperationID
+      type:
+        scalar: string
     - name: created
       type:
         scalar: boolean
@@ -2827,6 +3123,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: source
+      type:
+        scalar: string
+    - name: uid
       type:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
@@ -3447,6 +3746,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: signerName
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.ConfigMapEnvSource
   map:
     fields:
@@ -3493,6 +3795,9 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: items
@@ -3704,10 +4009,16 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resourceFieldRef
       type:
         namedType: io.k8s.api.core.v1.ResourceFieldSelector
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.DownwardAPIVolumeSource
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: items
@@ -3722,6 +4033,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: medium
       type:
         namedType: io.k8s.api.core.v1.StorageMedium
+    - name: mode
+      type:
+        scalar: numeric
     - name: sizeLimit
       type:
         namedType: io.k8s.apimachinery.pkg.api.resource.Quantity
@@ -3870,6 +4184,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.core.v1.GRPCAction
   map:
     fields:
+    - name: mode
+      type:
+        namedType: io.k8s.api.core.v1.GRPCProbeMode
     - name: port
       type:
         scalar: numeric
@@ -3877,6 +4194,8 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: ""
+- name: io.k8s.api.core.v1.GRPCProbeMode
+  scalar: string
 - name: io.k8s.api.core.v1.GitRepoVolumeSource
   map:
     fields:
@@ -3919,6 +4238,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: port
       type:
         namedType: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+    - name: protocol
+      type:
+        namedType: io.k8s.api.core.v1.HTTPProtocol
     - name: scheme
       type:
         namedType: io.k8s.api.core.v1.URIScheme
@@ -3931,6 +4253,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: value
       type:
         scalar: string
+- name: io.k8s.api.core.v1.HTTPProtocol
+  scalar: string
 - name: io.k8s.api.core.v1.HostAlias
   map:
     fields:
@@ -4015,6 +4339,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.Lifecycle
   map:
     fields:
@@ -4276,6 +4603,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: signerName
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
     - name: userAnnotations
       type:
         map:
@@ -4425,6 +4755,9 @@ var schemaYAML = typed.YAMLObject(`types:
   map:
     fields:
     - name: defaultMode
+      type:
+        scalar: numeric
+    - name: defaultUser
       type:
         scalar: numeric
     - name: sources
@@ -4651,6 +4984,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: defaultMode
       type:
         scalar: numeric
+    - name: defaultUser
+      type:
+        scalar: numeric
     - name: items
       type:
         list:
@@ -4714,6 +5050,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: path
       type:
         scalar: string
+    - name: user
+      type:
+        scalar: numeric
 - name: io.k8s.api.core.v1.Signal
   scalar: string
 - name: io.k8s.api.core.v1.SleepAction
@@ -4956,6 +5295,12 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: io.k8s.api.core.v1.VolumeMount
   map:
     fields:
+    - name: bindMountOptions
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
     - name: mountPath
       type:
         scalar: string

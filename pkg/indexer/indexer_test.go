@@ -75,14 +75,24 @@ func TestRegisterCommonFieldIndexes_Success(t *testing.T) {
 	// Verify all expected fields were indexed
 	expectedFields := []string{
 		"spec.cluster",
+		"spec.clusterConfigRef",
 		"spec.user",
 		"spec.grantedGroup",
 		"metadata.name",
 		"status.state",
 		"status.participants.user",
 		"spec.allowed.cluster",
+		BreakglassEscalationClusterConfigRefsField,
+		BreakglassEscalationClusterConfigRefsPatternField,
+		BreakglassEscalationAllowedIdentityProvidersField,
+		BreakglassEscalationDenyPolicyRefsField,
+		BreakglassEscalationMailProviderField,
 		"spec.allowed.group",
 		"spec.escalatedGroup",
+		"spec.templateRef.name",
+		"spec.templateSelector.present",
+		"spec.clusters",
+		"spec.clusterSelector.present",
 		"spec.clusterID",
 	}
 
@@ -124,6 +134,10 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 			failOnField: "spec.cluster",
 		},
 		{
+			name:        "fail on spec.clusterConfigRef",
+			failOnField: "spec.clusterConfigRef",
+		},
+		{
 			name:        "fail on spec.user",
 			failOnField: "spec.user",
 		},
@@ -134,6 +148,14 @@ func TestRegisterCommonFieldIndexes_FailureOnField(t *testing.T) {
 		{
 			name:        "fail on spec.escalatedGroup",
 			failOnField: "spec.escalatedGroup",
+		},
+		{
+			name:        "fail on spec.templateRef.name",
+			failOnField: "spec.templateRef.name",
+		},
+		{
+			name:        "fail on spec.clusters",
+			failOnField: "spec.clusters",
 		},
 		{
 			name:        "fail on spec.clusterID",
@@ -175,9 +197,10 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "test-cluster",
-			User:         "test-user@example.com",
-			GrantedGroup: "admin-access",
+			Cluster:          "test-cluster",
+			ClusterConfigRef: "test-cluster-config",
+			User:             "test-user@example.com",
+			GrantedGroup:     "admin-access",
 		},
 	}
 
@@ -189,6 +212,19 @@ func TestIndexerFunctions_BreakglassSession(t *testing.T) {
 		assert.Equal(t, []string{"test-cluster"}, result)
 
 		// Test with empty cluster
+		emptySession := &breakglassv1alpha1.BreakglassSession{}
+		result = fn(emptySession)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterConfigRef index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusterConfigRef"]
+		require.NotNil(t, fn)
+
+		result := fn(session)
+		assert.Equal(t, []string{"test-cluster-config"}, result)
+
+		// Test with empty clusterConfigRef
 		emptySession := &breakglassv1alpha1.BreakglassSession{}
 		result = fn(emptySession)
 		assert.Nil(t, result)
@@ -299,6 +335,80 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 	})
 }
 
+func TestIndexerFunctions_DebugSessionClusterBinding(t *testing.T) {
+	indexer := newMockFieldIndexer()
+	logger := zaptest.NewLogger(t).Sugar()
+	ctx := context.Background()
+
+	err := RegisterCommonFieldIndexes(ctx, indexer, logger)
+	require.NoError(t, err)
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "debug-binding",
+			Namespace: "default",
+		},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-a"},
+			Clusters:    []string{"cluster-a", "", "cluster-b"},
+		},
+	}
+
+	t.Run("spec.templateRef.name index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.templateRef.name"]
+		require.NotNil(t, fn)
+
+		result := fn(binding)
+		assert.Equal(t, []string{"template-a"}, result)
+
+		empty := &breakglassv1alpha1.DebugSessionClusterBinding{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusters index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusters"]
+		require.NotNil(t, fn)
+
+		result := fn(binding)
+		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b"}, result)
+
+		empty := &breakglassv1alpha1.DebugSessionClusterBinding{}
+		result = fn(empty)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.templateSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.templateSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.TemplateSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"app": "debug"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.TemplateSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterSelector.present index", func(t *testing.T) {
+		fn := indexer.indexedFields["spec.clusterSelector.present"]
+		require.NotNil(t, fn)
+
+		withSelector := binding.DeepCopy()
+		withSelector.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
+		result := fn(withSelector)
+		assert.Equal(t, []string{"true"}, result)
+
+		emptySelector := binding.DeepCopy()
+		emptySelector.Spec.ClusterSelector = &metav1.LabelSelector{}
+		result = fn(emptySelector)
+		assert.Nil(t, result)
+	})
+}
+
 func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 	indexer := newMockFieldIndexer()
 	logger := zaptest.NewLogger(t).Sugar()
@@ -318,7 +428,12 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 				Clusters: []string{"cluster-a", "cluster-b"},
 				Groups:   []string{"developers@example.com", "ops@example.com"},
 			},
-			ClusterConfigRefs: []string{"cluster-c"},
+			ClusterConfigRefs:                    []string{"cluster-c", "cluster-*", "cluster-c", " "},
+			DenyPolicyRefs:                       []string{"deny-prod", "deny-prod", " "},
+			AllowedIdentityProviders:             []string{"corp-idp", "corp-idp"},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+			MailProvider:                         "prod-mail",
 		},
 	}
 
@@ -327,11 +442,68 @@ func TestIndexerFunctions_BreakglassEscalation(t *testing.T) {
 		require.NotNil(t, fn)
 
 		result := fn(escalation)
-		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c"}, result)
+		assert.ElementsMatch(t, []string{"cluster-a", "cluster-b", "cluster-c", "cluster-*"}, result)
 
 		// Test with nil escalation
 		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
 		assert.Empty(t, result)
+	})
+
+	t.Run("spec.clusterConfigRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.ElementsMatch(t, []string{"cluster-c", "cluster-*"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.clusterConfigRefs pattern index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationClusterConfigRefsPatternField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{BreakglassEscalationGlobPatternIndexValue}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{ClusterConfigRefs: []string{"cluster-c"}},
+		})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.allowedIdentityProviders aggregate index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationAllowedIdentityProvidersField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.ElementsMatch(t, []string{"corp-idp", "requester-idp", "approver-idp"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.denyPolicyRefs index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationDenyPolicyRefsField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{"deny-prod"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
+	})
+
+	t.Run("spec.mailProvider index", func(t *testing.T) {
+		fn := indexer.indexedFields[BreakglassEscalationMailProviderField]
+		require.NotNil(t, fn)
+
+		result := fn(escalation)
+		assert.Equal(t, []string{"prod-mail"}, result)
+
+		result = fn(&breakglassv1alpha1.BreakglassEscalation{})
+		assert.Nil(t, result)
 	})
 
 	t.Run("spec.allowed.group index", func(t *testing.T) {
@@ -436,9 +608,10 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 			Namespace: "default",
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "indexed-cluster",
-			User:         "indexed-user@example.com",
-			GrantedGroup: "indexed-group",
+			Cluster:          "indexed-cluster",
+			ClusterConfigRef: "indexed-cluster-config-ref",
+			User:             "indexed-user@example.com",
+			GrantedGroup:     "indexed-group",
 		},
 	}
 
@@ -475,12 +648,24 @@ func TestRegisterCommonFieldIndexes_WithFakeClient(t *testing.T) {
 			}
 			return nil
 		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if s, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && s.Spec.ClusterConfigRef != "" {
+				return []string{s.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		Build()
 
 	// Verify we can query by indexed field
 	ctx := context.Background()
 	var sessions breakglassv1alpha1.BreakglassSessionList
 	err = cli.List(ctx, &sessions, client.MatchingFields{"spec.cluster": "indexed-cluster"})
+	require.NoError(t, err)
+	assert.Len(t, sessions.Items, 1)
+	assert.Equal(t, "indexed-session", sessions.Items[0].Name)
+
+	sessions = breakglassv1alpha1.BreakglassSessionList{}
+	err = cli.List(ctx, &sessions, client.MatchingFields{"spec.clusterConfigRef": "indexed-cluster-config-ref"})
 	require.NoError(t, err)
 	assert.Len(t, sessions.Items, 1)
 	assert.Equal(t, "indexed-session", sessions.Items[0].Name)
@@ -542,7 +727,9 @@ func TestIsIndexRegistered(t *testing.T) {
 
 	// After registration
 	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.cluster"))
+	assert.True(t, IsIndexRegistered("BreakglassSession", "spec.clusterConfigRef"))
 	assert.True(t, IsIndexRegistered("BreakglassEscalation", "spec.allowed.cluster"))
+	assert.True(t, IsIndexRegistered("BreakglassEscalation", BreakglassEscalationAllowedIdentityProvidersField))
 	assert.True(t, IsIndexRegistered("ClusterConfig", "metadata.name"))
 	assert.False(t, IsIndexRegistered("NonExistent", "field"))
 }

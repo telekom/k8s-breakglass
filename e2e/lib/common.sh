@@ -46,8 +46,9 @@ KUBECTL=${KUBECTL:-kubectl}
 KUSTOMIZE=${KUSTOMIZE:-kustomize}
 DOCKER=${DOCKER:-docker}
 OPENSSL=${OPENSSL:-openssl}
-TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:latest}
+TMUX_DEBUG_IMAGE=${TMUX_DEBUG_IMAGE:-breakglass-tmux-debug:e2e}
 TMUX_DEBUG_IMAGE_DIR=${TMUX_DEBUG_IMAGE_DIR:-${E2E_DIR:-}/images/tmux-debug}
+BUSYBOX_IMAGE=${BUSYBOX_IMAGE:-busybox:latest}
 
 # Check if required tools are available
 check_required_tools() {
@@ -228,8 +229,25 @@ ensure_tmux_debug_image() {
   $DOCKER build -t "$image" -f "$TMUX_DEBUG_IMAGE_DIR/Dockerfile" "$TMUX_DEBUG_IMAGE_DIR"
 }
 
-# Load image into Kind cluster
-# Uses docker save + kind load image-archive to avoid "failed to detect containerd snapshotter" issues
+# Ensure the E2E busybox tag exists locally without depending on Docker Hub.
+# CI creates many pods whose specs intentionally reference busybox:latest; tagging
+# the local tmux image keeps those specs stable and avoids flaky setup-time pulls.
+ensure_busybox_image() {
+  local image="$BUSYBOX_IMAGE"
+  if $DOCKER image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ "$image" = "busybox:latest" ]; then
+    ensure_tmux_debug_image
+    log "Tagging $TMUX_DEBUG_IMAGE as $image for local E2E use"
+    $DOCKER tag "$TMUX_DEBUG_IMAGE" "$image"
+    return 0
+  fi
+  ensure_image_exists "$image"
+}
+
+# Load image into Kind cluster.
+# Falls back to docker save + kind load image-archive only for the known containerd snapshotter issue.
 e2e_load_image_into_kind() {
   local cluster_name="$1"
   local image="$2"
@@ -239,24 +257,42 @@ e2e_load_image_into_kind() {
   log "Loading image $image into Kind cluster $cluster_name"
   
   # Try direct load first
-  if $KIND load docker-image "$image" --name "$cluster_name" 2>&1 | tee /dev/stderr | grep -q "failed to detect containerd snapshotter"; then
+  local load_output
+  local load_status
+  if load_output=$($KIND load docker-image "$image" --name "$cluster_name" 2>&1); then
+    printf '%s\n' "$load_output" >&2
+    log "Successfully loaded $image into Kind cluster $cluster_name"
+    return 0
+  else
+    load_status=$?
+  fi
+  printf '%s\n' "$load_output" >&2
+
+  if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
     log_warn "Direct load failed due to containerd snapshotter issue, using archive method..."
     local tmp_archive
-    tmp_archive=$(mktemp --suffix=.tar)
+    local tmp_dir="${TMPDIR:-/tmp}"
+    tmp_archive=$(mktemp "${tmp_dir%/}/breakglass-kind-image.XXXXXX")
     if $DOCKER save "$image" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$cluster_name"; then
       log "Successfully loaded $image via archive method"
+      rm -f "$tmp_archive"
+      return 0
     else
-      log_warn "Failed to load image $image via archive method"
+      log_error "Failed to load image $image via archive method"
+      rm -f "$tmp_archive"
+      return 1
     fi
-    rm -f "$tmp_archive"
   fi
+
+  log_error "Failed to load image $image into Kind cluster $cluster_name"
+  return "$load_status"
 }
 
 # Load all standard images required for breakglass E2E
 e2e_load_standard_images() {
   local cluster_name="$1"
   local breakglass_image="${2:-breakglass:e2e}"
-  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.5.0}"
+  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.7.1}"
   
   log "Loading standard images into cluster $cluster_name..."
   
@@ -269,6 +305,8 @@ e2e_load_standard_images() {
   e2e_load_image_into_kind "$cluster_name" "python:3.11-slim"
   ensure_tmux_debug_image
   e2e_load_image_into_kind "$cluster_name" "$TMUX_DEBUG_IMAGE"
+  ensure_busybox_image
+  e2e_load_image_into_kind "$cluster_name" "$BUSYBOX_IMAGE"
   
   log "Standard images loaded into cluster $cluster_name"
 }
@@ -953,7 +991,7 @@ cleanup_e2e() {
 
 # Default Keycloak settings
 KEYCLOAK_CONTAINER_NAME=${KEYCLOAK_CONTAINER_NAME:-e2e-keycloak}
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.5.0}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
 KEYCLOAK_ADMIN_USER=${KEYCLOAK_ADMIN_USER:-admin}
 KEYCLOAK_ADMIN_PASS=${KEYCLOAK_ADMIN_PASS:-admin}
 KEYCLOAK_HTTP_PORT=${KEYCLOAK_HTTP_PORT:-8080}
@@ -968,6 +1006,35 @@ get_keycloak_ip() {
 # Check if Keycloak container is running
 is_keycloak_running() {
   $DOCKER ps --filter "name=$KEYCLOAK_CONTAINER_NAME" --filter "status=running" -q 2>/dev/null | grep -q .
+}
+
+docker_inspect_redacted() {
+  local container_name="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    $DOCKER inspect "$container_name" \
+      | jq 'walk(if type == "object" and has("Env") then del(.Env) else . end)'
+  else
+    printf '%s\n' "jq unavailable; full docker inspect omitted to avoid environment disclosure."
+    printf '%s\n' "Container: $container_name"
+    printf '\n%s\n' "State:"
+    $DOCKER inspect "$container_name" --format '{{json .State}}' 2>&1 || true
+    printf '\n%s\n' "Mounts:"
+    $DOCKER inspect "$container_name" --format '{{json .Mounts}}' 2>&1 || true
+    printf '\n%s\n' "NetworkSettings:"
+    $DOCKER inspect "$container_name" --format '{{json .NetworkSettings}}' 2>&1 || true
+  fi
+}
+
+docker_inspect_config_redacted() {
+  local container_name="$1"
+
+  if command -v jq >/dev/null 2>&1; then
+    $DOCKER inspect "$container_name" --format '{{json .Config}}' \
+      | jq 'if type == "object" and has("Env") then del(.Env) else . end'
+  else
+    printf '%s\n' "jq unavailable; docker Config omitted to avoid environment disclosure."
+  fi
 }
 
 # Start Keycloak as a standalone Docker container
@@ -1151,12 +1218,12 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Container logs (all) ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (full) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (environment redacted) ==="
+    docker_inspect_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (mounts) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
-    log "=== Docker inspect (config/env) ==="
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    log "=== Docker inspect (config environment redacted) ==="
+    docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (state) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
     log "=== Port check ==="
@@ -1175,13 +1242,13 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" --format "{{.Status}}" >&2 2>&1 || true
     log "=== Container logs (all) ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (mounts and env) ==="
+    log "=== Docker inspect (mounts and redacted config) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 || true; } >&2
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config.Env}}' 2>&1 || true; } >&2
+    docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     log "=== Docker inspect (state details) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 | python3 -m json.tool 2>/dev/null || $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .State}}' 2>&1 || true; } >&2
-    log "=== Docker inspect (full for debugging) ==="
-    $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
+    log "=== Docker inspect (environment redacted) ==="
+    docker_inspect_redacted "$KEYCLOAK_CONTAINER_NAME" >&2 || true
     return 1
   fi
   
@@ -1227,9 +1294,9 @@ start_keycloak_container() {
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
     log "=== Keycloak container full logs ==="
     $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
-    log "=== Docker inspect (mounts and config) ==="
+    log "=== Docker inspect (mounts and redacted config) ==="
     { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Mounts}}' 2>&1 | head -50 || true; } >&2
-    { $DOCKER inspect "$KEYCLOAK_CONTAINER_NAME" --format '{{json .Config}}' 2>&1 | head -50 || true; } >&2
+    { docker_inspect_config_redacted "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -50 || true; } >&2
     log "=== Port bindings on host ==="
     { netstat -tlnp 2>/dev/null | grep -E "8080|8443" || ss -tlnp 2>/dev/null | grep -E "8080|8443" || echo "Could not check ports"; } >&2
     log "=== Testing localhost connectivity ==="
@@ -1496,7 +1563,8 @@ spec:
   issuer: \"$issuer_url\"
   oidc:
     authority: \"$issuer_url\"
-    clientID: \"breakglass\""
+    clientID: \"breakglass-ui\"
+    expectedAudience: \"breakglass-ui\""
   
   # Add CA if provided
   if [ -n "$ca_pem" ] && [ -f "$ca_pem" ]; then

@@ -19,14 +19,18 @@ package audit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/client-go/tools/record"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/events"
 )
 
 // Sink defines the interface for audit event destinations.
@@ -44,6 +48,33 @@ type Sink interface {
 // LogSink writes audit events to a structured logger.
 type LogSink struct {
 	logger *zap.Logger
+}
+
+type redactedError struct {
+	message string
+	cause   error
+}
+
+func (e redactedError) Error() string { return e.message }
+func (e redactedError) Unwrap() error { return e.cause }
+
+func redactHTTPError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return redactedError{message: "HTTP request failed", cause: err}
+}
+
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "<invalid-url>"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	return u.String()
 }
 
 // NewLogSink creates a new LogSink.
@@ -132,6 +163,7 @@ type WebhookSinkConfig struct {
 	BatchURL string // Optional: separate endpoint for batch writes (e.g., /events/batch)
 	Headers  map[string]string
 	Timeout  time.Duration
+	TLS      *tls.Config
 }
 
 // NewWebhookSink creates a new WebhookSink.
@@ -146,21 +178,35 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 		batchURL = cfg.URL // Use same URL for batch if not specified
 	}
 
-	sink := &WebhookSink{
-		name:     cfg.Name,
-		url:      cfg.URL,
-		batchURL: batchURL,
-		httpClient: &http.Client{
-			Timeout: timeout,
+	httpClient := &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
 		},
-		headers: cfg.Headers,
-		logger:  logger.Named("webhook-sink"),
+	}
+	if cfg.TLS != nil {
+		defaultTransport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			defaultTransport = &http.Transport{}
+		}
+		transport := defaultTransport.Clone()
+		transport.TLSClientConfig = cfg.TLS.Clone()
+		httpClient.Transport = transport
+	}
+
+	sink := &WebhookSink{
+		name:       cfg.Name,
+		url:        cfg.URL,
+		batchURL:   batchURL,
+		httpClient: httpClient,
+		headers:    cfg.Headers,
+		logger:     logger.Named("webhook-sink"),
 	}
 
 	sink.logger.Info("Webhook audit sink created",
 		zap.String("name", cfg.Name),
-		zap.String("url", cfg.URL),
-		zap.String("batchURL", batchURL),
+		zap.String("url", redactURL(cfg.URL)),
+		zap.String("batchURL", redactURL(batchURL)),
 		zap.Duration("timeout", timeout))
 
 	return sink
@@ -176,6 +222,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed++
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -187,24 +234,25 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed++
 		s.logger.Debug("webhook request failed",
-			zap.String("url", s.url),
+			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
 			zap.String("event_type", string(event.Type)),
 			zap.String("error", err.Error()))
-		return fmt.Errorf("failed to send audit event to %s: %w", s.url, err)
+		return fmt.Errorf("failed to send audit event to %s: %w", redactURL(s.url), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		s.eventsFailed++
 		s.logger.Debug("webhook returned error",
-			zap.String("url", s.url),
+			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
 			zap.String("event_type", string(event.Type)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", s.url, resp.StatusCode)
+		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.url), resp.StatusCode)
 	}
 
 	s.eventsWritten++
@@ -239,6 +287,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.batchURL, bytes.NewReader(body))
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed += int64(len(events))
 		return fmt.Errorf("failed to create batch request: %w", err)
 	}
@@ -251,22 +300,23 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		err = redactHTTPError(err)
 		s.eventsFailed += int64(len(events))
 		s.logger.Debug("webhook batch request failed",
-			zap.String("url", s.batchURL),
+			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
 			zap.String("error", err.Error()))
-		return fmt.Errorf("failed to send audit batch to %s: %w", s.batchURL, err)
+		return fmt.Errorf("failed to send audit batch to %s: %w", redactURL(s.batchURL), err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		s.eventsFailed += int64(len(events))
 		s.logger.Debug("webhook batch returned error",
-			zap.String("url", s.batchURL),
+			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", s.batchURL, resp.StatusCode)
+		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.batchURL), resp.StatusCode)
 	}
 
 	s.eventsWritten += int64(len(events))
@@ -303,13 +353,13 @@ func (s *WebhookSink) Name() string {
 
 // KubernetesEventSink creates Kubernetes Events for audit entries.
 type KubernetesEventSink struct {
-	recorder record.EventRecorder
+	recorder events.EventRecorder
 	// Only emit events for these types (empty means all)
 	includeTypes map[EventType]bool
 }
 
 // NewKubernetesEventSink creates a new KubernetesEventSink.
-func NewKubernetesEventSink(recorder record.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
+func NewKubernetesEventSink(recorder events.EventRecorder, includeTypes []EventType) *KubernetesEventSink {
 	typeMap := make(map[EventType]bool)
 	for _, t := range includeTypes {
 		typeMap[t] = true
@@ -333,9 +383,6 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 		eventType = corev1.EventTypeWarning
 	}
 
-	// Note: Kubernetes Events require an object reference.
-	// The caller should set up the recorder with appropriate object refs.
-	// This is a simplified implementation - in practice you'd need the object.
 	message := fmt.Sprintf("[%s] %s by %s on %s/%s",
 		event.Type,
 		event.Severity,
@@ -350,19 +397,85 @@ func (s *KubernetesEventSink) Write(_ context.Context, event *Event) error {
 		}
 	}
 
-	regarding := &corev1.ObjectReference{
-		Kind:      event.Target.Kind,
-		Name:      event.Target.Name,
-		Namespace: event.Target.Namespace,
-	}
-	if regarding.Kind == "BreakglassSession" || regarding.Kind == "DebugSession" || regarding.Kind == "DebugSessionTemplate" || regarding.Kind == "DebugSessionClusterBinding" {
-		regarding.APIVersion = "breakglass.t-caas.telekom.com/v1alpha1"
-	}
-
 	if s.recorder != nil {
-		s.recorder.Eventf(regarding, eventType, string(event.Type), "%s", message)
+		reason := kubernetesEventReason(event.Type)
+		target := event.Target
+		if target.APIGroup == "" {
+			if apiGroup, ok := event.Details["apiGroup"].(string); ok {
+				target.APIGroup = apiGroup
+			}
+		}
+		s.recorder.Eventf(kubernetesEventTarget(target), nil, eventType, reason, reason, "%s", message)
 	}
 	return nil
+}
+
+func kubernetesEventTarget(target Target) *metav1.PartialObjectMetadata {
+	kind := target.Kind
+	if kind == "" {
+		kind = "AuditEvent"
+	}
+
+	return &metav1.PartialObjectMetadata{
+		TypeMeta: metav1.TypeMeta{
+			APIVersion: kubernetesEventTargetAPIVersion(target),
+			Kind:       kind,
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      target.Name,
+			Namespace: target.Namespace,
+		},
+	}
+}
+
+func kubernetesEventTargetAPIVersion(target Target) string {
+	if strings.Contains(target.APIGroup, "/") {
+		return target.APIGroup
+	}
+	if target.APIGroup == "breakglass.t-caas.telekom.com" || isBreakglassEventTargetKind(target.Kind) {
+		return "breakglass.t-caas.telekom.com/v1alpha1"
+	}
+	if target.APIGroup != "" {
+		return target.APIGroup + "/v1"
+	}
+	return "v1"
+}
+
+func isBreakglassEventTargetKind(kind string) bool {
+	switch kind {
+	case "AuditConfig",
+		"BreakglassEscalation",
+		"BreakglassSession",
+		"ClusterConfig",
+		"DebugPodTemplate",
+		"DebugSession",
+		"DebugSessionClusterBinding",
+		"DebugSessionTemplate",
+		"DenyPolicy",
+		"IdentityProvider",
+		"MailProvider":
+		return true
+	default:
+		return false
+	}
+}
+
+func kubernetesEventReason(eventType EventType) string {
+	parts := strings.FieldsFunc(string(eventType), func(r rune) bool {
+		return r == '.' || r == '_' || r == '-'
+	})
+	var builder strings.Builder
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		builder.WriteString(strings.ToUpper(part[:1]))
+		builder.WriteString(part[1:])
+	}
+	if builder.Len() == 0 {
+		return "AuditEvent"
+	}
+	return builder.String()
 }
 
 // Close is a no-op for KubernetesEventSink.

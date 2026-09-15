@@ -48,6 +48,7 @@ const stateOptions = [
   { value: "Pending", label: "Pending" },
   { value: "PendingApproval", label: "Pending Approval" },
   { value: "Expired", label: "Expired" },
+  { value: "Rejected", label: "Rejected" },
   { value: "Terminated", label: "Terminated" },
   { value: "Failed", label: "Failed" },
 ];
@@ -88,8 +89,9 @@ const statePriority: Record<string, number> = {
   Pending: 1,
   PendingApproval: 2,
   Expired: 3,
-  Terminated: 4,
-  Failed: 5,
+  Rejected: 4,
+  Terminated: 5,
+  Failed: 6,
 };
 
 const filteredSessions = computed(() => {
@@ -128,13 +130,15 @@ const filteredSessions = computed(() => {
   return result;
 });
 
+const debugSessionCountLabel = computed(() => (sessions.value.length === 1 ? "debug session" : "debug sessions"));
+
 function isOwner(session: DebugSessionSummary): boolean {
   return session.requestedBy === currentUserEmail.value;
 }
 
 async function handleJoin(session: DebugSessionSummary) {
   try {
-    await debugSessionService.joinSession(session.name, { role: "viewer" });
+    await debugSessionService.joinSession(session.name);
     pushSuccess(`Joined debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
@@ -260,7 +264,7 @@ function onStateToggle(state: string, event: Event) {
           class="ui-toolbar-icon-control"
           icon-only="true"
           variant="secondary"
-          aria-label="Refresh"
+          inner-aria-label="Refresh debug sessions"
           data-testid="refresh-button"
           @click="refresh()"
         >
@@ -332,8 +336,15 @@ function onStateToggle(state: string, event: Event) {
       </template>
     </EmptyState>
 
-    <div v-if="!loading" class="results-info ui-toolbar-info">
-      Showing {{ filteredSessions.length }} of {{ sessions.length }} sessions
+    <div
+      v-if="!loading && !error"
+      class="results-info ui-toolbar-info"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      data-testid="debug-session-results-status"
+    >
+      Showing {{ filteredSessions.length }} of {{ sessions.length }} {{ debugSessionCountLabel }}
     </div>
   </div>
 </template>

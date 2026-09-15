@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 )
 
 // CorrelationIDHeader is the HTTP header used to pass correlation IDs for request tracing.
@@ -35,6 +36,8 @@ type Client struct {
 
 // DefaultTimeout is the default HTTP client timeout.
 const DefaultTimeout = 30 * time.Second
+
+const maxResponseBody = 1 << 20
 
 type Option func(*Client) error
 
@@ -168,7 +171,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 		return err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	req.Header.Set(CorrelationIDHeader, correlationID)
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
@@ -207,14 +212,27 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+	if len(data) > maxResponseBody {
+		return fmt.Errorf("response exceeds %d bytes", maxResponseBody)
+	}
+	if err := json.Unmarshal(data, out); err != nil {
+		return fmt.Errorf("decode response: %w", err)
+	}
+	return nil
 }
 
 func decodeError(resp *http.Response, correlationID string) error {
 	var apiErr struct {
 		Error string `json:"error"`
 	}
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
+	if len(body) > maxResponseBody {
+		body = body[:maxResponseBody]
+	}
 	if len(body) > 0 {
 		_ = json.Unmarshal(body, &apiErr)
 	}
@@ -236,7 +254,7 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	if e.CorrelationID != "" {
-		return fmt.Sprintf("request failed (%d): %s (correlationID=%s)", e.StatusCode, e.Message, e.CorrelationID)
+		return fmt.Sprintf("request failed (%d): %s (correlationID=%s)", e.StatusCode, terminal.SafeText(e.Message), terminal.SafeText(e.CorrelationID))
 	}
-	return fmt.Sprintf("request failed (%d): %s", e.StatusCode, e.Message)
+	return fmt.Sprintf("request failed (%d): %s", e.StatusCode, terminal.SafeText(e.Message))
 }

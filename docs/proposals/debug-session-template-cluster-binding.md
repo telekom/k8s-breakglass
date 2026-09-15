@@ -623,7 +623,7 @@ spec:
   
   audit:
     enabled: true
-    enableTerminalRecording: true
+    enableTerminalRecording: false # terminal-byte transport is not yet available
 ```
 
 ### Feature Parity Table
@@ -3476,4 +3476,3 @@ Per-session ServiceAccount creation was removed. Use pre-configured ServiceAccou
 ---
 
 ## Appendix: Full Type Definitions
-

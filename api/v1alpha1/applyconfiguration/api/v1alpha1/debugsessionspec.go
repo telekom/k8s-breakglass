@@ -26,6 +26,10 @@ type DebugSessionSpecApplyConfiguration struct {
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
 	RequestedByEmail *string `json:"requestedByEmail,omitempty"`
+	// identityProviderName identifies the provider that authenticated the requester.
+	IdentityProviderName *string `json:"identityProviderName,omitempty"`
+	// identityProviderIssuer identifies the issuer that authenticated the requester.
+	IdentityProviderIssuer *string `json:"identityProviderIssuer,omitempty"`
 	// requestedByDisplayName is the human-readable name of the requester (from OIDC "name" claim).
 	RequestedByDisplayName *string `json:"requestedByDisplayName,omitempty"`
 	// userGroups contains the groups the requesting user belongs to.
@@ -109,6 +113,22 @@ func (b *DebugSessionSpecApplyConfiguration) WithRequestedBy(value string) *Debu
 // If called multiple times, the RequestedByEmail field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithRequestedByEmail(value string) *DebugSessionSpecApplyConfiguration {
 	b.RequestedByEmail = &value
+	return b
+}
+
+// WithIdentityProviderName sets the IdentityProviderName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdentityProviderName field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithIdentityProviderName(value string) *DebugSessionSpecApplyConfiguration {
+	b.IdentityProviderName = &value
+	return b
+}
+
+// WithIdentityProviderIssuer sets the IdentityProviderIssuer field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdentityProviderIssuer field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithIdentityProviderIssuer(value string) *DebugSessionSpecApplyConfiguration {
+	b.IdentityProviderIssuer = &value
 	return b
 }
 

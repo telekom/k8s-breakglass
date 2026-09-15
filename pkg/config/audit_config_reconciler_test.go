@@ -27,9 +27,11 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
 	corev1 "k8s.io/api/core/v1"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -66,6 +68,16 @@ type auditFakeEventRecorder struct {
 	Events chan string
 }
 
+type countingAuditClient struct {
+	ctrlclient.Client
+	gets []types.NamespacedName
+}
+
+func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	c.gets = append(c.gets, key)
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
 func newAuditFakeEventRecorder(buffer int) *auditFakeEventRecorder {
 	return &auditFakeEventRecorder{Events: make(chan string, buffer)}
 }
@@ -82,6 +94,7 @@ func (f *auditFakeEventRecorder) Eventf(_ runtime.Object, _ runtime.Object, even
 
 func TestAuditConfigReconciler_Reconcile_NotFound(t *testing.T) {
 	r, _ := newTestAuditConfigReconciler(t)
+	assert.Equal(t, AuditConfigurationUnavailable, r.GetAuditConfigurationState())
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "nonexistent"},
@@ -90,6 +103,7 @@ func TestAuditConfigReconciler_Reconcile_NotFound(t *testing.T) {
 	assert.NoError(t, err)
 	// When listing all configs and none exist, we still requeue after resync period
 	assert.Equal(t, time.Minute, result.RequeueAfter)
+	assert.Equal(t, AuditConfigurationDisabled, r.GetAuditConfigurationState())
 }
 
 func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
@@ -114,8 +128,9 @@ func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
 
 	reloadCalled := false
 	r, recorder := newTestAuditConfigReconciler(t, config)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 		reloadCalled = true
+		assert.False(t, configuredUnavailable)
 		require.Len(t, cfgs, 1)
 		assert.Equal(t, "test-config", cfgs[0].Name)
 		return nil
@@ -129,12 +144,12 @@ func TestAuditConfigReconciler_Reconcile_ValidConfig(t *testing.T) {
 	assert.True(t, reloadCalled)
 	assert.Equal(t, time.Minute, result.RequeueAfter)
 
-	// Check event was recorded
+	// No periodic event should be emitted on successful reconciliation
 	select {
 	case event := <-recorder.Events:
-		assert.Contains(t, event, "Reconciled")
+		t.Errorf("Expected no event on periodic reconcile, got: %s", event)
 	default:
-		t.Error("Expected event to be recorded")
+		// OK — no event emitted
 	}
 }
 
@@ -159,6 +174,12 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingBrokers(t *testing.T) 
 	}
 
 	r, recorder := newTestAuditConfigReconciler(t, config)
+	var unavailable bool
+	r.onReloadMultiple = func(_ context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.Empty(t, cfgs)
+		unavailable = configuredUnavailable
+		return nil
+	}
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "test-kafka-invalid"},
@@ -167,6 +188,9 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingBrokers(t *testing.T) 
 	assert.NoError(t, err)
 	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
+	assert.True(t, unavailable)
+	assert.Equal(t, AuditConfigurationUnavailable, r.GetAuditConfigurationState())
+	assert.Empty(t, r.GetActiveConfigs())
 
 	// Check validation failed event
 	select {
@@ -198,6 +222,12 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingTopic(t *testing.T) {
 	}
 
 	r, _ := newTestAuditConfigReconciler(t, config)
+	var unavailable bool
+	r.onReloadMultiple = func(_ context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.Empty(t, cfgs)
+		unavailable = configuredUnavailable
+		return nil
+	}
 
 	result, err := r.Reconcile(context.Background(), reconcile.Request{
 		NamespacedName: types.NamespacedName{Name: "test-kafka-no-topic"},
@@ -206,6 +236,9 @@ func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingTopic(t *testing.T) {
 	assert.NoError(t, err)
 	// With aggregation, we still requeue even if this specific config is invalid
 	assert.Equal(t, time.Minute, result.RequeueAfter)
+	assert.True(t, unavailable)
+	assert.Equal(t, AuditConfigurationUnavailable, r.GetAuditConfigurationState())
+	assert.Empty(t, r.GetActiveConfigs())
 }
 
 func TestAuditConfigReconciler_Reconcile_KafkaSink_MissingKafkaConfig(t *testing.T) {
@@ -523,8 +556,9 @@ func TestAuditConfigReconciler_Reconcile_DisabledConfig(t *testing.T) {
 
 	reloadCalled := false
 	r, _ := newTestAuditConfigReconciler(t, config)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 		reloadCalled = true
+		assert.False(t, configuredUnavailable)
 		return nil
 	}
 
@@ -535,6 +569,43 @@ func TestAuditConfigReconciler_Reconcile_DisabledConfig(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, reloadCalled)
 	assert.Equal(t, time.Minute, result.RequeueAfter)
+	assert.Equal(t, AuditConfigurationDisabled, r.GetAuditConfigurationState())
+
+	var stored breakglassv1alpha1.AuditConfig
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, &stored))
+	condition := findCondition(stored.Status.Conditions, "Ready")
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "AuditingDisabled", condition.Reason)
+	assert.Empty(t, stored.Status.ActiveSinks)
+}
+
+func TestAuditConfigReconciler_Reconcile_RecoversFromUnavailableConfig(t *testing.T) {
+	invalid := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "reload-transition"},
+		Spec:       breakglassv1alpha1.AuditConfigSpec{Enabled: true},
+	}
+	r, _ := newTestAuditConfigReconciler(t, invalid)
+	var unavailableStates []bool
+	r.onReloadMultiple = func(_ context.Context, _ []*breakglassv1alpha1.AuditConfig, unavailable bool) error {
+		unavailableStates = append(unavailableStates, unavailable)
+		return nil
+	}
+
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: invalid.Name}})
+	require.NoError(t, err)
+	assert.Equal(t, AuditConfigurationUnavailable, r.GetAuditConfigurationState())
+
+	var stored breakglassv1alpha1.AuditConfig
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: invalid.Name}, &stored))
+	stored.Spec.Sinks = []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}}
+	require.NoError(t, r.client.Update(context.Background(), &stored))
+
+	_, err = r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: invalid.Name}})
+	require.NoError(t, err)
+	assert.Equal(t, []bool{true, false}, unavailableStates)
+	assert.Equal(t, AuditConfigurationReady, r.GetAuditConfigurationState())
+	require.Len(t, r.GetActiveConfigs(), 1)
 }
 
 func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
@@ -555,7 +626,8 @@ func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
 
 	errorHandlerCalled := false
 	r, recorder := newTestAuditConfigReconciler(t, config)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.False(t, configuredUnavailable)
 		return assert.AnError
 	}
 	r.onError = func(ctx context.Context, err error) {
@@ -566,9 +638,14 @@ func TestAuditConfigReconciler_Reconcile_ReloadError(t *testing.T) {
 		NamespacedName: types.NamespacedName{Name: "test-reload-error"},
 	})
 
-	assert.Error(t, err)
+	assert.NoError(t, err)
 	assert.True(t, errorHandlerCalled)
 	assert.Equal(t, 30*time.Second, result.RequeueAfter)
+	stored := &breakglassv1alpha1.AuditConfig{}
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, stored))
+	require.Len(t, stored.Status.Conditions, 1)
+	assert.Equal(t, metav1.ConditionFalse, stored.Status.Conditions[0].Status)
+	assert.Equal(t, "ReloadFailed", stored.Status.Conditions[0].Reason)
 
 	// Check error event was recorded
 	select {
@@ -767,7 +844,8 @@ func TestAuditConfigReconciler_Reconcile_MultipleConfigs_Aggregation(t *testing.
 
 	var receivedConfigs []*breakglassv1alpha1.AuditConfig
 	r, _ := newTestAuditConfigReconciler(t, config1, config2, configDisabled)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.False(t, configuredUnavailable)
 		receivedConfigs = cfgs
 		return nil
 	}
@@ -803,7 +881,7 @@ func TestAuditConfigReconciler_Reconcile_MultipleConfigs_Aggregation(t *testing.
 	assert.Len(t, activeConfigs, 2)
 }
 
-func TestAuditConfigReconciler_Reconcile_MixedValidInvalid(t *testing.T) {
+func TestAuditConfigReconciler_EnabledInvalidConfigMakesAllAuditUnavailable(t *testing.T) {
 	// One valid config
 	validConfig := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{
@@ -838,9 +916,11 @@ func TestAuditConfigReconciler_Reconcile_MixedValidInvalid(t *testing.T) {
 	}
 
 	var receivedConfigs []*breakglassv1alpha1.AuditConfig
+	var unavailable bool
 	r, _ := newTestAuditConfigReconciler(t, validConfig, invalidConfig)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
 		receivedConfigs = cfgs
+		unavailable = configuredUnavailable
 		return nil
 	}
 
@@ -854,6 +934,9 @@ func TestAuditConfigReconciler_Reconcile_MixedValidInvalid(t *testing.T) {
 	// Should only receive the valid config
 	require.Len(t, receivedConfigs, 1)
 	assert.Equal(t, "valid-config", receivedConfigs[0].Name)
+	assert.True(t, unavailable)
+	assert.Equal(t, AuditConfigurationUnavailable, r.GetAuditConfigurationState())
+	assert.Empty(t, r.GetActiveConfigs())
 }
 
 func TestAuditConfigReconciler_SetSinkHealthProvider(t *testing.T) {
@@ -1151,7 +1234,8 @@ func TestAuditConfigReconciler_ReconcileWithSinkHealth(t *testing.T) {
 		}
 	})
 
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.False(t, configuredUnavailable)
 		return nil
 	}
 
@@ -1212,7 +1296,8 @@ func TestAuditConfigReconciler_GetActiveConfigs_ReturnsDeepCopy(t *testing.T) {
 	}
 
 	r, _ := newTestAuditConfigReconciler(t, config)
-	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig) error {
+	r.onReloadMultiple = func(ctx context.Context, cfgs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		assert.False(t, configuredUnavailable)
 		return nil
 	}
 
@@ -1372,4 +1457,100 @@ func TestAuditConfigReconciler_UpdateStatus_StatsProviderReturnsNil(t *testing.T
 	assert.Equal(t, int64(0), updatedConfig.Status.EventsProcessed)
 	assert.Equal(t, int64(0), updatedConfig.Status.EventsDropped)
 	assert.Nil(t, updatedConfig.Status.LastEventTime)
+}
+
+func TestAuditKafkaSecretNamespaceValidation(t *testing.T) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "controller"}}
+	foreign := secret.DeepCopy()
+	foreign.Namespace = "foreign"
+	r, _ := newTestAuditConfigReconciler(t, secret, foreign)
+	r.SetControllerNamespace("controller")
+	for _, namespace := range []string{"", "controller", "foreign"} {
+		for _, kind := range []string{"ca", "client", "sasl"} {
+			t.Run(namespace+"/"+kind, func(t *testing.T) {
+				ref := breakglassv1alpha1.SecretKeySelector{Name: secret.Name, Namespace: namespace}
+				sink := breakglassv1alpha1.AuditSinkConfig{Name: "kafka", Type: breakglassv1alpha1.AuditSinkTypeKafka,
+					Kafka: &breakglassv1alpha1.KafkaSinkSpec{Brokers: []string{"localhost:9092"}, Topic: "audit"}}
+				switch kind {
+				case "ca":
+					sink.Kafka.TLS = &breakglassv1alpha1.KafkaTLSSpec{Enabled: true, CASecretRef: &ref}
+				case "client":
+					sink.Kafka.TLS = &breakglassv1alpha1.KafkaTLSSpec{Enabled: true, ClientCertSecretRef: &ref}
+				case "sasl":
+					sink.Kafka.SASL = &breakglassv1alpha1.KafkaSASLSpec{CredentialsSecretRef: ref}
+				}
+				errs := r.validateSink(context.Background(), sink, 0)
+				if namespace == "foreign" {
+					require.Len(t, errs, 1)
+					assert.Contains(t, errs[0], "namespace must be controller namespace")
+				} else if namespace == "" {
+					require.Len(t, errs, 1)
+					assert.Contains(t, errs[0], "namespace must be set explicitly")
+				} else {
+					assert.Empty(t, errs)
+				}
+			})
+		}
+	}
+}
+
+func TestAuditKafkaSecretNamespaceValidationDoesNotReadInvalidNamespaces(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	r := NewAuditConfigReconciler(counting, zaptest.NewLogger(t).Sugar(), newAuditFakeEventRecorder(1), nil, nil, time.Minute)
+	r.SetControllerNamespace("controller")
+	for _, namespace := range []string{"", "foreign"} {
+		err := r.validateSecretExists(context.Background(), "credentials", namespace)
+		require.Error(t, err)
+	}
+	assert.Empty(t, counting.gets)
+}
+
+func TestAuditKafkaSecretNamespaceValidationRequiresControllerNamespace(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	r := NewAuditConfigReconciler(counting, zaptest.NewLogger(t).Sugar(), newAuditFakeEventRecorder(1), nil, nil, time.Minute)
+
+	err := r.validateSecretExists(context.Background(), "credentials", "explicit-secret-namespace")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "controller namespace is not configured")
+	assert.Empty(t, counting.gets)
+}
+
+func TestAuditConfigReconcile_EmptyTLSNamespaceExcludedFromReload(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{ObjectMeta: metav1.ObjectMeta{Name: "empty-tls-namespace"}, Spec: breakglassv1alpha1.AuditConfigSpec{
+		Enabled: true,
+		Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "kafka", Type: breakglassv1alpha1.AuditSinkTypeKafka, Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+			Brokers: []string{"localhost:9092"}, Topic: "audit", TLS: &breakglassv1alpha1.KafkaTLSSpec{Enabled: true,
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{Name: "ca", Namespace: ""}},
+		}}},
+	}}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "ca", Namespace: "controller"}, Data: map[string][]byte{"ca.crt": []byte("ca")}}
+	r, _ := newTestAuditConfigReconciler(t, config, secret)
+	r.SetControllerNamespace("controller")
+	reloadCalled := false
+	var reloaded []*breakglassv1alpha1.AuditConfig
+	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig, _ bool) error {
+		reloadCalled = true
+		reloaded = configs
+		return nil
+	}
+	_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: config.Name}})
+	require.NoError(t, err)
+	// Aggregation still reloads so an invalid config cannot leave a previously
+	// accepted sink active; the invalid config itself must be absent.
+	assert.True(t, reloadCalled)
+	assert.Empty(t, reloaded)
+	updated := &breakglassv1alpha1.AuditConfig{}
+	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, updated))
+	condition := apimeta.FindStatusCondition(updated.Status.Conditions, "Ready")
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "ValidationFailed", condition.Reason)
 }

@@ -5,7 +5,7 @@ import logger from "@/services/logger";
 export interface ApiClientOptions {
   baseURL?: string;
   enableDevTokenLogging?: boolean;
-  /** If true, will attempt silent token renew on 401 and retry the request once */
+  /** If true, attempts silent token renew on 401 and retries the request once. Disabled by default. */
   retryOn401?: boolean;
   /** Request timeout in milliseconds. Defaults to 30000 (30 seconds). */
   timeout?: number;
@@ -16,6 +16,53 @@ const DEFAULT_TIMEOUT_MS = 30000;
 
 // Track if we're currently retrying to avoid infinite loops
 const RETRY_FLAG = "__authRetried";
+
+interface SafeHttpClientErrorDetails {
+  message?: string;
+  code?: string;
+  method?: string;
+  url?: string;
+  status?: number;
+  timeout?: number;
+}
+
+interface AxiosErrorLike {
+  message?: unknown;
+  code?: unknown;
+  config?: {
+    method?: unknown;
+    url?: unknown;
+  };
+  response?: {
+    status?: unknown;
+  };
+}
+
+function safeHttpClientErrorDetails(
+  error: unknown,
+  extra: SafeHttpClientErrorDetails = {},
+): SafeHttpClientErrorDetails {
+  const axiosError = error as AxiosErrorLike | undefined;
+  const details: SafeHttpClientErrorDetails = { ...extra };
+
+  if (typeof axiosError?.message === "string") {
+    details.message = axiosError.message;
+  }
+  if (typeof axiosError?.code === "string") {
+    details.code = axiosError.code;
+  }
+  if (typeof axiosError?.config?.method === "string") {
+    details.method = axiosError.config.method.toUpperCase();
+  }
+  if (typeof axiosError?.config?.url === "string") {
+    details.url = axiosError.config.url;
+  }
+  if (typeof axiosError?.response?.status === "number") {
+    details.status = axiosError.response.status;
+  }
+
+  return details;
+}
 
 export function createAuthenticatedApiClient(auth: AuthService, options?: ApiClientOptions): AxiosInstance {
   const client = axios.create({
@@ -52,7 +99,7 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
       return config;
     },
     (error) => {
-      logger.error("HttpClient", "Request interceptor error", error);
+      logger.error("HttpClient", "Request interceptor error", safeHttpClientErrorDetails(error));
       return Promise.reject(error);
     },
   );
@@ -72,8 +119,8 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
     async (error) => {
       const config = error.config as InternalAxiosRequestConfig & { [RETRY_FLAG]?: boolean };
 
-      // Handle 401 errors with optional retry after silent renew
-      if (error.response?.status === 401 && options?.retryOn401 !== false && !config?.[RETRY_FLAG]) {
+      // Handle 401 errors with opt-in retry after silent renew.
+      if (error.response?.status === 401 && options?.retryOn401 === true && !config?.[RETRY_FLAG]) {
         logger.debug("HttpClient", "Received 401, attempting silent token renew before retry");
 
         try {
@@ -92,29 +139,25 @@ export function createAuthenticatedApiClient(auth: AuthService, options?: ApiCli
             logger.warn("HttpClient", "Silent renew failed, not retrying request");
           }
         } catch (renewError) {
-          logger.error("HttpClient", "Error during silent renew attempt", renewError);
+          logger.error("HttpClient", "Error during silent renew attempt", safeHttpClientErrorDetails(renewError));
         }
       }
 
       if (error.response) {
-        logger.error("HttpClient", `HTTP ${error.response.status} error`, error, {
-          method: error.config?.method?.toUpperCase(),
-          url: error.config?.url,
+        logger.error("HttpClient", `HTTP ${error.response.status} error`, {
+          ...safeHttpClientErrorDetails(error),
           status: error.response.status,
-          data: error.response.data,
         });
       } else if (error.request) {
         // Check if this is a timeout error (axios uses ECONNABORTED for timeouts)
         const isTimeout = error.code === "ECONNABORTED";
         const errorType = isTimeout ? "Request timeout" : "No response received";
-        logger.error("HttpClient", errorType, error, {
-          method: error.config?.method?.toUpperCase(),
-          url: error.config?.url,
-          code: error.code,
+        logger.error("HttpClient", errorType, {
+          ...safeHttpClientErrorDetails(error),
           timeout: isTimeout ? (options?.timeout ?? DEFAULT_TIMEOUT_MS) : undefined,
         });
       } else {
-        logger.error("HttpClient", "Request setup error", error);
+        logger.error("HttpClient", "Request setup error", safeHttpClientErrorDetails(error));
       }
       return Promise.reject(error);
     },

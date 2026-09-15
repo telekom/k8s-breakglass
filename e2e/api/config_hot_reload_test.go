@@ -54,8 +54,9 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://original-issuer.example.com",
-					ClientID:  "original-client-id",
+					Authority:        "https://original-issuer.example.com",
+					ClientID:         "original-client-id",
+					ExpectedAudience: "original-client-id",
 				},
 				Issuer: "https://original-issuer.example.com",
 			},
@@ -75,6 +76,7 @@ func TestIdentityProviderHotReload(t *testing.T) {
 		err = helpers.UpdateWithRetry(ctx, cli, &initial, func(idp *breakglassv1alpha1.IdentityProvider) error {
 			idp.Spec.OIDC.Authority = "https://updated-issuer.example.com"
 			idp.Spec.OIDC.ClientID = "updated-client-id"
+			idp.Spec.OIDC.ExpectedAudience = "updated-client-id"
 			idp.Spec.Issuer = "https://updated-issuer.example.com"
 			return nil
 		})
@@ -103,8 +105,9 @@ func TestIdentityProviderHotReload(t *testing.T) {
 			},
 			Spec: breakglassv1alpha1.IdentityProviderSpec{
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://disabled-test.example.com",
-					ClientID:  "disabled-client",
+					Authority:        "https://disabled-test.example.com",
+					ClientID:         "disabled-client",
+					ExpectedAudience: "disabled-client",
 				},
 				Issuer:   "https://disabled-test.example.com",
 				Disabled: false,
@@ -418,39 +421,82 @@ func TestAPIReloadsDuringLiveTraffic(t *testing.T) {
 			return
 		}
 
-		originalClientID := testIDP.Spec.OIDC.ClientID
+		originalDisplayName := testIDP.Spec.DisplayName
 
-		// Ensure we restore the original client ID at the end
-		defer func() {
-			// Re-fetch to get latest version to avoid conflict
-			_ = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
-				idp.Spec.OIDC.ClientID = originalClientID
+		// Updating clientID or expectedAudience changes the authentication contract
+		// for the token that drives this test. That cannot prove hot reload under
+		// live traffic: it deliberately makes the in-flight token invalid and then
+		// leaks 401s into the rest of this serial E2E package. DisplayName is still
+		// part of the provider spec, so it causes the real provider reconciler and
+		// its runtime reload path to run without changing the token contract.
+		// Always restore it, including if an assertion below fails, so this test
+		// cannot contaminate subsequent authenticated tests.
+		restored := false
+		t.Cleanup(func() {
+			if restored {
+				return
+			}
+
+			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cleanupCancel()
+			restoreIDP := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: testIDP.Name}}
+			if err := helpers.UpdateWithRetry(cleanupCtx, cli, restoreIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
+				idp.Spec.DisplayName = originalDisplayName
 				return nil
-			})
-		}()
+			}); err != nil {
+				t.Errorf("failed to restore IdentityProvider display name: %v", err)
+			}
+		})
 
 		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
-			idp.Spec.OIDC.ClientID = "temporary-client-id-" + helpers.GenerateUniqueName("")
+			idp.Spec.DisplayName = "E2E reload " + helpers.GenerateUniqueName("")
 			return nil
 		})
 		require.NoError(t, err, "Failed to update test IDP")
 
+		var updatedIDP breakglassv1alpha1.IdentityProvider
+		err = cli.Get(ctx, types.NamespacedName{Name: testIDP.Name}, &updatedIDP)
+		require.NoError(t, err, "Failed to read updated test IDP")
+		targetGeneration := updatedIDP.Generation
+
 		for i := 0; i < 5; i++ {
 			sessions, err := apiClient.ListSessions(ctx)
-			if err != nil {
-				t.Logf("Request %d during update: error=%v", i+1, err)
-			} else {
-				t.Logf("Request %d during update: success, sessions=%d", i+1, len(sessions))
-			}
+			require.NoErrorf(t, err, "request %d during IdentityProvider reload must retain valid authentication", i+1)
+			t.Logf("Request %d during update: success, sessions=%d", i+1, len(sessions))
 			time.Sleep(500 * time.Millisecond)
 		}
 
-		// Explicitly restore (defer will handle it if this fails, but good to be explicit for the test flow)
+		err = helpers.WaitForCondition(ctx, func() (bool, error) {
+			var reloaded breakglassv1alpha1.IdentityProvider
+			if err := cli.Get(ctx, types.NamespacedName{Name: testIDP.Name}, &reloaded); err != nil {
+				// The API cache/server can transiently reject a read while the
+				// controller is reconciling. Treat that as not-ready and let the
+				// bounded poll retry; WaitForCondition still observes ctx
+				// cancellation and terminates the poll promptly.
+				return false, nil
+			}
+			if reloaded.Status.ObservedGeneration < targetGeneration {
+				return false, nil
+			}
+			for _, condition := range reloaded.Status.Conditions {
+				if condition.Type == string(breakglassv1alpha1.IdentityProviderConditionReady) &&
+					condition.Status == metav1.ConditionTrue &&
+					condition.ObservedGeneration >= targetGeneration {
+					return true, nil
+				}
+			}
+			return false, nil
+		}, helpers.WaitForStateTimeout, 200*time.Millisecond)
+		require.NoError(t, err, "IdentityProvider update was not reconciled after live API traffic")
+
+		// Explicitly restore so the succeeding request verifies the post-reload
+		// state as well. t.Cleanup remains the fail-safe for an earlier failure.
 		err = helpers.UpdateWithRetry(ctx, cli, testIDP, func(idp *breakglassv1alpha1.IdentityProvider) error {
-			idp.Spec.OIDC.ClientID = originalClientID
+			idp.Spec.DisplayName = originalDisplayName
 			return nil
 		})
 		require.NoError(t, err, "Failed to restore test IDP")
+		restored = true
 
 		sessions, err = apiClient.ListSessions(ctx)
 		require.NoError(t, err, "API should work after config update")

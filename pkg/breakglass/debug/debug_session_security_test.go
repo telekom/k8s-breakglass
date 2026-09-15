@@ -128,6 +128,17 @@ func TestDebugSessionSecurity_ApprovalAuthorization(t *testing.T) {
 		assert.True(t, authorized, "Configured approver email should be checked when username casing differs")
 	})
 
+	t.Run("email glob can approve when username only differs by case", func(t *testing.T) {
+		authorized := controller.checkApproverAuthorizationForIdentity(
+			&breakglassv1alpha1.DebugSessionApprovers{Users: []string{"*@example.com"}},
+			debugSessionReadIdentity{
+				username: "Approver@Example.com",
+				email:    "approver@example.com",
+			},
+		)
+		assert.True(t, authorized, "Email claim should be checked for case-sensitive approver glob patterns")
+	})
+
 	t.Run("unauthorized user cannot approve", func(t *testing.T) {
 		authorized := controller.isUserAuthorizedToApprove(
 			ctx,

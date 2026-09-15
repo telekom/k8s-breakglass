@@ -68,8 +68,8 @@ const canJoin = computed(() => props.session.state === "Active" && !props.isOwne
 const canLeave = computed(() => props.session.state === "Active" && !props.isOwner && props.session.isParticipant);
 const canTerminate = computed(() => props.session.state === "Active" && props.isOwner);
 const canRenew = computed(() => props.session.state === "Active" && props.isOwner);
-const canApprove = computed(() => props.session.state === "PendingApproval");
-const canReject = computed(() => props.session.state === "PendingApproval");
+const canApprove = computed(() => props.session.state === "PendingApproval" && props.session.canApprove === true);
+const canReject = computed(() => props.session.state === "PendingApproval" && props.session.canReject === true);
 
 const expiresIn = computed(() => {
   if (!props.session.expiresAt) return null;
@@ -245,6 +245,7 @@ function openRenewModal() {
     >
       <div class="modal-content">
         <p>Provide a reason for rejecting this debug session request.</p>
+        <label class="sr-only" :for="rejectReasonId">Rejection Reason</label>
         <scale-text-field
           :id="rejectReasonId"
           v-model="rejectReason"
@@ -279,6 +280,7 @@ function openRenewModal() {
     >
       <div class="modal-content">
         <p>Extend the duration of this debug session.</p>
+        <label class="sr-only" :for="renewDurationId">Extend By</label>
         <scale-dropdown-select
           :id="renewDurationId"
           :value="renewDuration"

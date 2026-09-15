@@ -20,11 +20,13 @@ import (
 	"bytes"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"unicode"
 
 	"github.com/Masterminds/sprig/v3"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"sigs.k8s.io/yaml"
 )
@@ -58,8 +60,12 @@ func (r *TemplateRenderer) RenderTemplateString(templateStr string, ctx interfac
 		return nil, fmt.Errorf("failed to parse template: %w", err)
 	}
 
+	if err := breakglassv1alpha1.ValidateTemplateOutput(tmpl); err != nil {
+		return nil, fmt.Errorf("template output validation failed: %w", err)
+	}
+
 	// Execute template
-	var buf bytes.Buffer
+	var buf limitedTemplateBuffer
 	if err := tmpl.Execute(&buf, ctxMap); err != nil {
 		return nil, fmt.Errorf("failed to execute template: %w", err)
 	}
@@ -100,8 +106,12 @@ func (r *TemplateRenderer) ValidateTemplate(templateStr string, sampleCtx interf
 		return fmt.Errorf("template syntax error: %w", err)
 	}
 
+	if err := breakglassv1alpha1.ValidateTemplateOutput(tmpl); err != nil {
+		return fmt.Errorf("template output validation failed: %w", err)
+	}
+
 	// Execute template with sample context
-	var buf bytes.Buffer
+	var buf limitedTemplateBuffer
 	if err := tmpl.Execute(&buf, ctxMap); err != nil {
 		return fmt.Errorf("template execution error: %w", err)
 	}
@@ -147,6 +157,8 @@ func (r *TemplateRenderer) ValidateRenderedYAML(yamlBytes []byte) error {
 func (r *TemplateRenderer) buildFuncMap() template.FuncMap {
 	// Start with Sprig functions
 	funcMap := sprig.FuncMap()
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
 
 	// Add custom Breakglass functions
 	funcMap["truncName"] = truncName
@@ -291,29 +303,10 @@ func nindentFunc(spaces int, s string) string {
 // Use this for ANY user-provided values in templates, especially .Vars.* values.
 // Example: key: {{ .Vars.userValue | yamlQuote }}
 func yamlQuote(s string) string {
-	// Check if value needs quoting - if it contains any YAML special chars
-	needsQuoting := strings.ContainsAny(s, ":#{}[]|>!&*?-'\"\\`@,\n\r\t ")
-	needsQuoting = needsQuoting || len(s) == 0
-	needsQuoting = needsQuoting || strings.HasPrefix(s, "---")
-	needsQuoting = needsQuoting || strings.HasPrefix(s, "...")
-	needsQuoting = needsQuoting || isYAMLSpecialWord(s)
-
-	if !needsQuoting {
-		return s
-	}
-
-	// Use double quotes with proper escaping
-	escaped := strings.ReplaceAll(s, "\\", "\\\\")
-	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-	escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-	escaped = strings.ReplaceAll(escaped, "\r", "\\r")
-	escaped = strings.ReplaceAll(escaped, "\t", "\\t")
-
-	return "\"" + escaped + "\""
+	return strconv.Quote(s)
 }
 
-// yamlSafe sanitizes a string to be safe as a YAML scalar value.
-// Unlike yamlQuote, this removes potentially dangerous characters.
+// yamlSafe sanitizes a string and emits it as a YAML string scalar.
 // Use for values that should NOT contain special characters.
 func yamlSafe(s string) string {
 	// Replace dangerous characters with safe alternatives
@@ -336,7 +329,20 @@ func yamlSafe(s string) string {
 		result = strings.ReplaceAll(result, "--", "-")
 	}
 
-	return strings.TrimSpace(result)
+	return yamlQuote(strings.TrimSpace(result))
+}
+
+const maxTemplateOutputBytes = 1 << 20
+
+type limitedTemplateBuffer struct {
+	bytes.Buffer
+}
+
+func (b *limitedTemplateBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > maxTemplateOutputBytes {
+		return 0, fmt.Errorf("rendered template exceeds %d bytes", maxTemplateOutputBytes)
+	}
+	return b.Buffer.Write(p)
 }
 
 // isYAMLSpecialWord checks if a string is a YAML special keyword.

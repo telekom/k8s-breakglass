@@ -24,6 +24,8 @@ import (
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 // TestIdentityProviderOIDCConfig verifies OIDC configuration structure
@@ -90,8 +92,9 @@ func TestKeycloakGroupSyncWithTLS(t *testing.T) {
 func TestIdentityProviderSpecBasic(t *testing.T) {
 	spec := IdentityProviderSpec{
 		OIDC: OIDCConfig{
-			Authority: "https://auth.example.com",
-			ClientID:  "frontend-app",
+			Authority:        "https://auth.example.com",
+			ClientID:         "frontend-app",
+			ExpectedAudience: "frontend-app",
 		},
 		Issuer:      "https://auth.example.com",
 		DisplayName: "Corporate Identity",
@@ -106,8 +109,9 @@ func TestIdentityProviderSpecBasic(t *testing.T) {
 func TestIdentityProviderSpecWithGroupSync(t *testing.T) {
 	spec := IdentityProviderSpec{
 		OIDC: OIDCConfig{
-			Authority: "https://auth.example.com",
-			ClientID:  "frontend-app",
+			Authority:        "https://auth.example.com",
+			ClientID:         "frontend-app",
+			ExpectedAudience: "frontend-app",
 		},
 		GroupSyncProvider: GroupSyncProviderKeycloak,
 		Keycloak: &KeycloakGroupSync{
@@ -126,8 +130,9 @@ func TestIdentityProviderSpecWithGroupSync(t *testing.T) {
 func TestIdentityProviderSpecPrimary(t *testing.T) {
 	spec := IdentityProviderSpec{
 		OIDC: OIDCConfig{
-			Authority: "https://auth.example.com",
-			ClientID:  "frontend-app",
+			Authority:        "https://auth.example.com",
+			ClientID:         "frontend-app",
+			ExpectedAudience: "frontend-app",
 		},
 		Primary: true,
 	}
@@ -139,8 +144,9 @@ func TestIdentityProviderSpecPrimary(t *testing.T) {
 func TestIdentityProviderSpecDisabled(t *testing.T) {
 	spec := IdentityProviderSpec{
 		OIDC: OIDCConfig{
-			Authority: "https://auth.example.com",
-			ClientID:  "frontend-app",
+			Authority:        "https://auth.example.com",
+			ClientID:         "frontend-app",
+			ExpectedAudience: "frontend-app",
 		},
 		Disabled: true,
 	}
@@ -236,8 +242,9 @@ func TestIdentityProvider(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.corp.com",
-				ClientID:  "frontend-web",
+				Authority:        "https://auth.corp.com",
+				ClientID:         "frontend-web",
+				ExpectedAudience: "frontend-web",
 			},
 			Issuer:      "https://auth.corp.com",
 			DisplayName: "Corporate OIDC Provider",
@@ -410,8 +417,9 @@ func TestIdentityProviderValidateCreateValidSpec(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -431,8 +439,9 @@ func TestIdentityProviderValidateCreateRejectsNonHTTPSURLs(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "http://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "http://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://issuer.example.com",
 		},
@@ -450,8 +459,9 @@ func TestIdentityProviderValidateCreateRejectsInvalidKeycloakDurations(t *testin
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer:            "https://issuer.example.com",
 			GroupSyncProvider: GroupSyncProviderKeycloak,
@@ -481,8 +491,9 @@ func TestIdentityProviderValidateCreateRejectsInvalidRequestTimeout(t *testing.T
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer:            "https://issuer.example.com",
 			GroupSyncProvider: GroupSyncProviderKeycloak,
@@ -513,8 +524,9 @@ func TestIdentityProviderValidateUpdateValidSpec(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -525,8 +537,9 @@ func TestIdentityProviderValidateUpdateValidSpec(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "updated-client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "updated-client-id",
+				ExpectedAudience: "updated-client-id",
 			},
 		},
 	}
@@ -610,9 +623,10 @@ func TestIdentityProviderIntegration(t *testing.T) {
 		},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority:    "https://auth.example.com",
-				ClientID:     "test-client",
-				JWKSEndpoint: "https://auth.example.com/.well-known/jwks.json",
+				Authority:        "https://auth.example.com",
+				ClientID:         "test-client",
+				ExpectedAudience: "test-client",
+				JWKSEndpoint:     "https://auth.example.com/.well-known/jwks.json",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -657,7 +671,8 @@ func TestIdentityProvider_ValidateCreate_MissingAuthority(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-no-authority"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				ClientID: "client-id",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -685,9 +700,10 @@ func TestIdentityProvider_ValidateCreate_InvalidJWKSEndpoint(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-bad-jwks"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority:    "https://auth.example.com",
-				ClientID:     "client-id",
-				JWKSEndpoint: "not-a-valid-url",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
+				JWKSEndpoint:     "not-a-valid-url",
 			},
 		},
 	}
@@ -701,8 +717,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakMissingConfig(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-cfg"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			// Keycloak config is nil
@@ -718,8 +735,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakMissingBaseURL(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-url"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -746,8 +764,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakMissingRealm(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-realm"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -766,8 +785,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakMissingClientID(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-clientid"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -786,8 +806,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakMissingSecretRef(t *testing.T) 
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-secretref"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -807,8 +828,9 @@ func TestIdentityProvider_ValidateCreate_ValidKeycloak(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-valid"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			GroupSyncProvider: GroupSyncProviderKeycloak,
 			Keycloak: &KeycloakGroupSync{
@@ -831,8 +853,9 @@ func TestIdentityProvider_ValidateCreate_KeycloakWithoutGroupSyncProvider(t *tes
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-keycloak-no-gsp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			// GroupSyncProvider not set but Keycloak config provided
 			Keycloak: &KeycloakGroupSync{
@@ -848,4 +871,38 @@ func TestIdentityProvider_ValidateCreate_KeycloakWithoutGroupSyncProvider(t *tes
 	}
 	_, err := idp.ValidateCreate(context.Background(), idp)
 	require.Error(t, err, "expected error when keycloak provided without groupSyncProvider set")
+}
+
+func TestIdentityProviderDuplicateIssuerReportsEffectiveField(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, AddToScheme(scheme))
+	existing := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "existing"}, Spec: IdentityProviderSpec{Issuer: "https://issuer.example.com"}}
+	oldClient := webhookClient
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	t.Cleanup(func() { webhookClient = oldClient })
+	for _, explicit := range []bool{false, true} {
+		name := "authority"
+		path := "spec.oidc.authority"
+		if explicit {
+			name = "issuer"
+			path = "spec.issuer"
+		}
+		t.Run(name, func(t *testing.T) {
+			candidate := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "candidate"}, Spec: IdentityProviderSpec{OIDC: OIDCConfig{Authority: existing.Spec.Issuer, ClientID: "client"}}}
+			if explicit {
+				candidate.Spec.Issuer = existing.Spec.Issuer
+			}
+			_, err := candidate.ValidateCreate(context.Background(), candidate)
+			require.Error(t, err)
+			status := &apierrors.StatusError{}
+			require.ErrorAs(t, err, &status)
+			var duplicateFields []string
+			for _, cause := range status.ErrStatus.Details.Causes {
+				if cause.Type == metav1.CauseTypeFieldValueDuplicate {
+					duplicateFields = append(duplicateFields, cause.Field)
+				}
+			}
+			require.Equal(t, []string{path}, duplicateFields)
+		})
+	}
 }

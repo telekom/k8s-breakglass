@@ -18,6 +18,7 @@ package debug
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,37 +29,57 @@ func effectiveDebugSessionConstraints(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 ) *breakglassv1alpha1.DebugSessionConstraints {
-	var constraints *breakglassv1alpha1.DebugSessionConstraints
-	if template != nil && template.Spec.Constraints != nil {
-		constraints = template.Spec.Constraints.DeepCopy()
+	var templateConstraints *breakglassv1alpha1.DebugSessionConstraints
+	if template != nil {
+		templateConstraints = template.Spec.Constraints
 	}
-	if binding == nil || binding.Spec.Constraints == nil {
-		return constraints
+	if binding == nil {
+		return templateConstraints.DeepCopy()
 	}
+	return mergeDebugSessionConstraints(templateConstraints, binding.Spec.Constraints)
+}
 
-	if constraints == nil {
-		constraints = &breakglassv1alpha1.DebugSessionConstraints{}
+func mergeDebugSessionConstraints(template, binding *breakglassv1alpha1.DebugSessionConstraints) *breakglassv1alpha1.DebugSessionConstraints {
+	if binding == nil {
+		return template.DeepCopy()
 	}
-	bindingConstraints := binding.Spec.Constraints
-	if isPositiveDebugSessionDuration(bindingConstraints.MaxDuration) {
-		constraints.MaxDuration = bindingConstraints.MaxDuration
+	merged := &breakglassv1alpha1.DebugSessionConstraints{}
+	if template != nil {
+		merged = template.DeepCopy()
 	}
-	if isPositiveDebugSessionDuration(bindingConstraints.DefaultDuration) {
-		constraints.DefaultDuration = bindingConstraints.DefaultDuration
+	if isPositiveDebugSessionDuration(binding.MaxDuration) && (merged.MaxDuration == "" || isShorterDebugSessionDuration(binding.MaxDuration, merged.MaxDuration)) {
+		merged.MaxDuration = binding.MaxDuration
 	}
-	if bindingConstraints.AllowRenewal != nil {
-		allowRenewal := *bindingConstraints.AllowRenewal
-		constraints.AllowRenewal = &allowRenewal
+	if isPositiveDebugSessionDuration(binding.DefaultDuration) && (merged.DefaultDuration == "" || isShorterDebugSessionDuration(binding.DefaultDuration, merged.DefaultDuration)) {
+		merged.DefaultDuration = binding.DefaultDuration
 	}
-	if bindingConstraints.MaxRenewals != nil {
-		maxRenewals := *bindingConstraints.MaxRenewals
-		constraints.MaxRenewals = &maxRenewals
+	if binding.AllowRenewal != nil && (merged.AllowRenewal == nil || !*binding.AllowRenewal) {
+		allowRenewal := *binding.AllowRenewal
+		merged.AllowRenewal = &allowRenewal
 	}
-	if bindingConstraints.RenewalLimit != 0 {
-		constraints.RenewalLimit = bindingConstraints.RenewalLimit
+	if binding.MaxRenewals != nil {
+		effectiveMaxRenewals := int32(3)
+		if merged.MaxRenewals != nil {
+			effectiveMaxRenewals = *merged.MaxRenewals
+		}
+		if *binding.MaxRenewals < effectiveMaxRenewals {
+			maxRenewals := *binding.MaxRenewals
+			merged.MaxRenewals = &maxRenewals
+		}
 	}
+	if binding.RenewalLimit > 0 && (merged.RenewalLimit == 0 || binding.RenewalLimit < merged.RenewalLimit) {
+		merged.RenewalLimit = binding.RenewalLimit
+	}
+	if binding.MaxConcurrentSessions > 0 && (merged.MaxConcurrentSessions == 0 || binding.MaxConcurrentSessions < merged.MaxConcurrentSessions) {
+		merged.MaxConcurrentSessions = binding.MaxConcurrentSessions
+	}
+	return merged
+}
 
-	return constraints
+func isShorterDebugSessionDuration(candidate, current string) bool {
+	candidateDuration, candidateErr := breakglassv1alpha1.ParseDuration(candidate)
+	currentDuration, currentErr := breakglassv1alpha1.ParseDuration(current)
+	return candidateErr == nil && currentErr == nil && candidateDuration < currentDuration
 }
 
 func isPositiveDebugSessionDuration(value string) bool {
@@ -76,7 +97,11 @@ func validateRequestedDebugSessionDuration(requested string, constraints *breakg
 
 	requestedDuration, err := breakglassv1alpha1.ParseDuration(requested)
 	if err != nil {
-		return fmt.Errorf("invalid requestedDuration: %w", err)
+		trimmed := strings.TrimSpace(requested)
+		if strings.HasPrefix(trimmed, "-") {
+			return fmt.Errorf("requestedDuration %q must be positive", requested)
+		}
+		return fmt.Errorf("invalid requestedDuration %q: %w", requested, err)
 	}
 	if requestedDuration <= 0 {
 		return fmt.Errorf("requestedDuration must be positive")
@@ -115,13 +140,15 @@ func selectEffectiveDebugSessionBinding(
 			return allowedResult.MatchingBinding, nil
 		}
 		if len(allowedResult.AllBindings) > 0 {
-			return &allowedResult.AllBindings[0], nil
+			bindings := append([]breakglassv1alpha1.DebugSessionClusterBinding(nil), allowedResult.AllBindings...)
+			sortDebugSessionClusterBindings(bindings)
+			return &bindings[0], nil
 		}
 		return nil, nil
 	}
 
-	namespace, name, ok := strings.Cut(bindingRef, "/")
-	if !ok || strings.TrimSpace(namespace) == "" || strings.TrimSpace(name) == "" {
+	namespace, name, ok := parseDebugSessionBindingRef(bindingRef)
+	if !ok {
 		return nil, fmt.Errorf("invalid bindingRef format, expected namespace/name")
 	}
 
@@ -133,4 +160,13 @@ func selectEffectiveDebugSessionBinding(
 	}
 
 	return nil, fmt.Errorf("binding %q does not allow the requested template and cluster", bindingRef)
+}
+
+func sortDebugSessionClusterBindings(bindings []breakglassv1alpha1.DebugSessionClusterBinding) {
+	sort.SliceStable(bindings, func(i, j int) bool {
+		if bindings[i].Namespace != bindings[j].Namespace {
+			return bindings[i].Namespace < bindings[j].Namespace
+		}
+		return bindings[i].Name < bindings[j].Name
+	})
 }

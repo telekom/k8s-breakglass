@@ -8,8 +8,9 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -22,7 +23,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 
 	// Get pod template if referenced
 	var podTemplate *breakglassv1alpha1.DebugPodTemplate
-	if template.Spec.PodTemplateRef != nil {
+	if ds.Status.ResolvedPodTemplate != nil {
+		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
+		if err := json.Unmarshal(ds.Status.ResolvedPodTemplate.Raw, &podTemplate.Spec); err != nil {
+			return fmt.Errorf("decode approved pod-template snapshot: %w", err)
+		}
+	} else if template.Spec.PodTemplateRef != nil {
 		var err error
 		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
 		if err != nil {
@@ -30,42 +36,55 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
-	// Get binding if session was created via a binding
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
-	if ds.Spec.BindingRef != nil {
+	if ds.Status.ResolvedBindingSnapshotCaptured {
+		// The captured decision is authoritative, including an explicit
+		// no-binding result. Never rediscover a live binding after approval.
+		if ds.Status.ResolvedBindingSpec == nil {
+			binding = nil
+		} else {
+			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+			if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+				return fmt.Errorf("decode approved binding snapshot: %w", err)
+			}
+			if ds.Status.ResolvedBinding != nil {
+				binding.Name = ds.Status.ResolvedBinding.Name
+				binding.Namespace = ds.Status.ResolvedBinding.Namespace
+			}
+		}
+	} else if ds.Status.ResolvedBindingSpec != nil {
+		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, &binding.Spec); err != nil {
+			return fmt.Errorf("decode approved binding snapshot: %w", err)
+		}
+	} else if ds.Spec.BindingRef != nil {
 		var err error
 		binding, err = c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace)
 		if err != nil {
-			log.Warnw("Failed to get binding by ref, will try auto-discovery",
-				"binding", ds.Spec.BindingRef.Name,
-				"namespace", ds.Spec.BindingRef.Namespace,
-				"error", err)
-			// Non-fatal: try auto-discovery below
+			return fmt.Errorf("resolve workload binding: %w", err)
 		}
-	}
-
-	// Auto-discover binding if not found via BindingRef
-	// This enables binding configuration to apply even when sessions are created
-	// without explicitly setting BindingRef (e.g., via the unified API)
-	if binding == nil {
-		discoveredBinding, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster)
+	} else {
+		var err error
+		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
 		if err != nil {
-			log.Warnw("Failed to auto-discover binding, continuing without binding config",
-				"error", err)
-		} else if discoveredBinding != nil {
-			log.Infow("Auto-discovered binding for session",
-				"binding", discoveredBinding.Name,
-				"namespace", discoveredBinding.Namespace)
-			binding = discoveredBinding
+			return fmt.Errorf("resolve workload binding: %w", err)
 		}
 	}
 
 	// Cache resolved binding info in session status for observability
 	if binding != nil {
 		displayName := breakglassv1alpha1.GetEffectiveDisplayName(binding, template.Spec.DisplayName, template.Name)
+		name, namespace := binding.Name, binding.Namespace
+		if ds.Status.ResolvedBinding != nil {
+			// The approved binding snapshot contains only the spec. Preserve the
+			// immutable identity captured while resolving the live binding.
+			name = ds.Status.ResolvedBinding.Name
+			namespace = ds.Status.ResolvedBinding.Namespace
+			displayName = ds.Status.ResolvedBinding.DisplayName
+		}
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
-			Name:        binding.Name,
-			Namespace:   binding.Namespace,
+			Name:        name,
+			Namespace:   namespace,
 			DisplayName: displayName,
 		}
 	}
@@ -76,6 +95,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	// Get target cluster client (with or without impersonation)
 	var targetClient ctrlclient.Client
 	var err error
+	namespaceConstraints := effectiveNamespaceConstraints(template, binding)
 
 	// First, resolve the target namespace (needed for per-session SA creation)
 	targetNs := ds.Spec.TargetNamespace
@@ -84,8 +104,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 	if targetNs == "" {
 		// Check namespaceConstraints for default
-		if template.Spec.NamespaceConstraints != nil && template.Spec.NamespaceConstraints.DefaultNamespace != "" {
-			targetNs = template.Spec.NamespaceConstraints.DefaultNamespace
+		if namespaceConstraints != nil && namespaceConstraints.DefaultNamespace != "" {
+			targetNs = namespaceConstraints.DefaultNamespace
 		}
 	}
 	if targetNs == "" {
@@ -93,15 +113,54 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Create base client for spoke cluster (no impersonation yet)
-	baseRestCfg, restErr := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
+	baseRestCfg, configuredCluster, restErr := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 	if restErr != nil {
 		return fmt.Errorf("failed to get REST config for cluster %s: %w", ds.Spec.Cluster, restErr)
 	}
-	baseClient, baseErr := ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	defer c.ccProvider.ReleasePrivilegedOperationClusterConfig(configuredCluster)
+	var baseClient ctrlclient.Client
+	var baseErr error
+	if c.targetClientFactory != nil {
+		baseClient, baseErr = c.targetClientFactory(baseRestCfg)
+	} else {
+		baseClient, baseErr = ctrlclient.New(baseRestCfg, ctrlclient.Options{})
+	}
 	if baseErr != nil {
 		return fmt.Errorf("failed to create base client for cluster %s: %w", ds.Spec.Cluster, baseErr)
 	}
-
+	fence := func() error {
+		if c.beforeDebugTargetWrite != nil {
+			c.beforeDebugTargetWrite("")
+		}
+		if err := c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return fmt.Errorf("privileged target configuration changed during deployment: %w", err)
+		}
+		liveSession := &breakglassv1alpha1.DebugSession{}
+		reader := c.reader
+		if reader == nil {
+			reader = c.client
+		}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), liveSession); err != nil {
+			return fmt.Errorf("read live debug session before deployment mutation: %w", err)
+		}
+		if liveSession.UID != ds.UID || !liveSession.DeletionTimestamp.IsZero() ||
+			liveSession.Status.ExpiresAt == nil || !time.Now().UTC().Before(liveSession.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		activationInProgress := liveSession.Status.State == "" ||
+			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
+			liveSession.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval
+		if liveSession.Status.State != breakglassv1alpha1.DebugSessionStateActive && !activationInProgress {
+			return fmt.Errorf("debug session is no longer active before deployment mutation")
+		}
+		if activationInProgress &&
+			liveSession.Status.Approval != nil &&
+			liveSession.Status.Approval.Required &&
+			liveSession.Status.Approval.ApprovedAt == nil {
+			return fmt.Errorf("debug session is not approved for deployment")
+		}
+		return nil
+	}
 	// Handle impersonation configuration
 	if impConfig != nil && impConfig.ServiceAccountRef != nil {
 		// Use existing ServiceAccount - validate it exists
@@ -110,7 +169,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 
 		// Create impersonated client
-		targetClient, err = c.createImpersonatedClient(ctx, ds.Spec.Cluster, impConfig)
+		targetClient, err = c.createImpersonatedClientFromRESTConfig(ctx, baseRestCfg, ds.Spec.Cluster, impConfig)
 		if err != nil {
 			return fmt.Errorf("failed to create impersonated client: %w", err)
 		}
@@ -125,16 +184,12 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	// Ensure target namespace exists
-	ns := &corev1.Namespace{}
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err != nil {
-		if apierrors.IsNotFound(err) {
-			if template.Spec.FailMode == "open" {
-				log.Warnw("Target namespace does not exist, fail-open mode", "namespace", targetNs)
-				return nil
-			}
-			return fmt.Errorf("target namespace %s does not exist", targetNs)
-		}
-		return fmt.Errorf("failed to check namespace: %w", err)
+	ready, err := c.ensureTargetNamespace(ctx, targetClient, targetNs, template.Spec.FailMode, namespaceConstraints, fence)
+	if err != nil {
+		return err
+	}
+	if !ready {
+		return nil
 	}
 
 	// Deploy ResourceQuota if configured
@@ -144,18 +199,35 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build resource quota: %w", rqErr)
 		}
 		if rq != nil {
+			operationID, err := stampCreateOperation(rq, ds)
+			if err != nil {
+				return fmt.Errorf("failed to stamp resource quota create operation: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, rq); err != nil {
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota", CreateOperationID: operationID,
+			})
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist resource quota intent: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
+			if err := createOrRecoverTargetObject(ctx, targetClient, rq, ds); err != nil {
 				return fmt.Errorf("failed to apply resource quota: %w", err)
 			}
+			rqUID, err := captureResourceUID(ctx, targetClient, rq)
+			if err != nil {
+				return fmt.Errorf("failed to read resource quota after apply: %w", err)
+			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(),
-				Kind:       gvk.Kind,
-				Name:       rq.Name,
-				Namespace:  rq.Namespace,
-				Source:     "debug-resourcequota",
-			})
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = rqUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist resource quota outcome: %w", err)
+			}
 		}
 	}
 
@@ -166,18 +238,35 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			return fmt.Errorf("failed to build pod disruption budget: %w", pdbErr)
 		}
 		if pdb != nil {
+			operationID, err := stampCreateOperation(pdb, ds)
+			if err != nil {
+				return fmt.Errorf("failed to stamp pod disruption budget create operation: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			if err := utils.ApplyObject(ctx, targetClient, pdb); err != nil {
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb", CreateOperationID: operationID,
+			})
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist PDB intent: %w", err)
+			}
+			if err := fence(); err != nil {
+				return err
+			}
+			if err := createOrRecoverTargetObject(ctx, targetClient, pdb, ds); err != nil {
 				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
 			}
+			pdbUID, err := captureResourceUID(ctx, targetClient, pdb)
+			if err != nil {
+				return fmt.Errorf("failed to read pod disruption budget after apply: %w", err)
+			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-				APIVersion: gvk.GroupVersion().String(),
-				Kind:       gvk.Kind,
-				Name:       pdb.Name,
-				Namespace:  pdb.Namespace,
-				Source:     "debug-pdb",
-			})
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = pdbUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+				return fmt.Errorf("failed to persist PDB outcome: %w", err)
+			}
 		}
 	}
 
@@ -194,60 +283,170 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 			"count", len(podTemplateResources),
 			"debugSession", ds.Name)
 		for _, res := range podTemplateResources {
-			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs); err != nil {
+			if err := c.deployPodTemplateResource(ctx, targetClient, ds, res, targetNs, fence); err != nil {
 				return fmt.Errorf("failed to deploy pod template resource %s/%s: %w", res.GetKind(), res.GetName(), err)
 			}
+		}
+	}
+
+	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
+	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
+	if auxiliaryResourcesConfigured {
+		if err := fence(); err != nil {
+			return err
+		}
+		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
+		auxStatuses = append(auxStatuses, beforeStatuses...)
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		if auxErr != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
 		}
 	}
 
 	// Capture GVK before Apply call as Kubernetes client may clear TypeMeta
 	gvk := workload.GetObjectKind().GroupVersionKind()
 
-	if err := utils.ApplyObject(ctx, targetClient, workload); err != nil {
+	if err := fence(); err != nil {
+		return err
+	}
+	operationID, err := stampCreateOperation(workload, ds)
+	if err != nil {
+		return fmt.Errorf("failed to stamp workload create operation: %w", err)
+	}
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod", CreateOperationID: operationID,
+	})
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return fmt.Errorf("failed to persist workload intent: %w", err)
+	}
+	if err := fence(); err != nil {
+		return err
+	}
+	if err := createOrRecoverTargetObject(ctx, targetClient, workload, ds); err != nil {
 		return fmt.Errorf("failed to apply workload: %w", err)
+	}
+
+	workloadUID, err := captureResourceUID(ctx, targetClient, workload)
+	if err != nil {
+		return fmt.Errorf("failed to read workload after apply: %w", err)
 	}
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-		APIVersion: gvk.GroupVersion().String(),
-		Kind:       gvk.Kind,
-		Name:       workload.GetName(),
-		Namespace:  targetNs,
-		Source:     "debug-pod",
-	})
+	ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = workloadUID
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return fmt.Errorf("failed to persist workload outcome: %w", err)
+	}
 
 	log.Infow("Deployed debug workload",
 		"name", workload.GetName(),
 		"namespace", targetNs,
 		"kind", gvk.Kind)
 
-	// Deploy auxiliary resources if configured
-	if c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0 {
-		auxStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResources(ctx, ds, &template.Spec, binding, targetClient, targetNs)
-		if auxErr != nil {
-			// Log but don't fail the session - auxiliary resources are optional
-			log.Warnw("Failed to deploy some auxiliary resources", "error", auxErr)
+	if auxiliaryResourcesConfigured {
+		if err := fence(); err != nil {
+			return err
 		}
-		// Add deployed auxiliary resources to status
+		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
+		auxStatuses = append(auxStatuses, afterStatuses...)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
+		if auxErr != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
+		}
 	}
 
 	return nil
 }
 
+func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
+			ds.Status.AuxiliaryResourceStatuses[i] = status
+			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		}
+	}
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+}
+
+// createOrRecoverTargetObject never adopts a resource owned by another session.
+// A same-session object is recovered only when its immutable session marker
+// matches, allowing retries after a lost response without changing its spec.
+func createOrRecoverTargetObject(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, session *breakglassv1alpha1.DebugSession) error {
+	if err := targetClient.Create(ctx, obj); err == nil {
+		return nil
+	} else {
+		return recoverTrackedCreateResult(ctx, targetClient, obj, session, err)
+	}
+}
+
+func effectiveNamespaceConstraints(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) *breakglassv1alpha1.NamespaceConstraints {
+	if binding != nil && binding.Spec.NamespaceConstraints != nil {
+		return binding.Spec.NamespaceConstraints
+	}
+	return template.Spec.NamespaceConstraints
+}
+
+func (c *DebugSessionController) ensureTargetNamespace(ctx context.Context, targetClient ctrlclient.Client, targetNs, failMode string, constraints *breakglassv1alpha1.NamespaceConstraints, fences ...func() error) (bool, error) {
+	ns := &corev1.Namespace{}
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: targetNs}, ns); err == nil {
+		return true, nil
+	} else if !apierrors.IsNotFound(err) {
+		return false, fmt.Errorf("failed to check namespace: %w", err)
+	}
+
+	if constraints != nil && constraints.CreateIfNotExists {
+		if len(fences) > 0 && fences[0] != nil {
+			if err := fences[0](); err != nil {
+				return false, err
+			}
+		}
+		ns = &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+			Name:   targetNs,
+			Labels: constraints.NamespaceLabels,
+		}}
+		if err := targetClient.Create(ctx, ns); err != nil && !apierrors.IsAlreadyExists(err) {
+			return false, fmt.Errorf("failed to create target namespace %s: %w", targetNs, err)
+		}
+		return true, nil
+	}
+	if failMode == "open" {
+		c.log.Warnw("Target namespace does not exist, fail-open mode", "namespace", targetNs)
+		return false, nil
+	}
+	return false, fmt.Errorf("target namespace %s does not exist", targetNs)
+}
+
+func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliaryResourcesConfigured bool) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	if !auxiliaryResourcesConfigured {
+		return nil
+	}
+	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	ds.Status.AuxiliaryResourceStatuses = statuses
+	return statuses
+}
+
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
 // It also returns any additional resources from multi-document pod templates
 // that should be deployed alongside the workload.
-// Supports three templateString formats:
-//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment)
+// Supports four templateString formats:
+//   - Bare PodSpec: wrapped into the workloadType (DaemonSet/Deployment/Job)
 //   - Full Pod manifest (kind: Pod): PodSpec extracted, wrapped into workloadType
 //   - Full workload manifest (kind: Deployment/DaemonSet): used directly with breakglass labels merged
+//   - Full Job manifest (kind: Job): PodSpec extracted, wrapped into a Job
 func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate, targetNs string) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	// ds.Name already starts with "debug-" (generated as "debug-{user}-{cluster}-{ts}"),
 	// so we use it directly to avoid a redundant "debug-debug-" prefix.
 	workloadName := ds.Name
 	renderResult, err := c.buildPodSpec(ds, template, podTemplate)
+	if err != nil {
+		return nil, nil, err
+	}
+	restrictedCatalogue, _, err := restrictedCatalogueProfile(template, podTemplate)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -288,6 +487,11 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
+			return nil, nil, err
+		}
+	}
 
 	workloadType := template.Spec.WorkloadType
 	if workloadType == "" {
@@ -298,10 +502,20 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// If the template produced a full workload manifest, validate and use it directly
 	if renderResult.Workload != nil {
-		return c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, labels, annotations)
+		workload, resources, err := c.useTemplateWorkload(renderResult, workloadType, workloadName, targetNs, ds, template, binding, labels, annotations)
+		if err != nil {
+			return nil, nil, err
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, resources, nil
 	}
 
-	// Enforce RestartPolicy: Always for DaemonSets and Deployments
+	// Enforce RestartPolicy: Always for DaemonSets and Deployments. Jobs retain
+	// Never so bounded diagnostics are not restarted after completion.
 	// These workload types require Always restart policy
 	if workloadType == breakglassv1alpha1.DebugWorkloadDaemonSet || workloadType == breakglassv1alpha1.DebugWorkloadDeployment {
 		if podSpec.RestartPolicy != corev1.RestartPolicyAlways {
@@ -316,7 +530,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	switch workloadType {
 	case breakglassv1alpha1.DebugWorkloadDaemonSet:
-		return &appsv1.DaemonSet{
+		workload := &appsv1.DaemonSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "DaemonSet",
@@ -329,19 +543,23 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 			},
 			Spec: appsv1.DaemonSetSpec{
 				Selector: &metav1.LabelSelector{
-					MatchLabels: map[string]string{
-						DebugSessionLabelKey: ds.Name,
-					},
+					MatchLabels: debugSessionSelectorLabels(ds),
 				},
 				Template: corev1.PodTemplateSpec{
 					ObjectMeta: metav1.ObjectMeta{
-						Labels:      labels,
+						Labels:      mergeStringMaps(labels, debugSessionSelectorLabels(ds)),
 						Annotations: annotations,
 					},
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	case breakglassv1alpha1.DebugWorkloadDeployment:
 		replicas := int32(1)
@@ -351,7 +569,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		if template.Spec.ResourceQuota != nil && template.Spec.ResourceQuota.MaxPods != nil && replicas > *template.Spec.ResourceQuota.MaxPods {
 			return nil, nil, fmt.Errorf("replicas (%d) exceed resourceQuota.maxPods (%d)", replicas, *template.Spec.ResourceQuota.MaxPods)
 		}
-		return &appsv1.Deployment{
+		workload := &appsv1.Deployment{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "apps/v1",
 				Kind:       "Deployment",
@@ -377,7 +595,50 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 					Spec: podSpec,
 				},
 			},
-		}, renderResult.AdditionalResources, nil
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
+
+	case breakglassv1alpha1.DebugWorkloadJob:
+		if podSpec.RestartPolicy != corev1.RestartPolicyNever && podSpec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			podSpec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		manualSelector := true
+		one := int32(1)
+		backoffLimit := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
+		selectorLabels := debugSessionSelectorLabels(ds)
+		jobLabels := mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
+		workload := &batchv1.Job{
+			TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: workloadName, Namespace: targetNs, Labels: jobLabels, Annotations: annotations,
+			},
+			Spec: batchv1.JobSpec{
+				ManualSelector:        &manualSelector,
+				Selector:              &metav1.LabelSelector{MatchLabels: selectorLabels},
+				Parallelism:           &one,
+				Completions:           &one,
+				BackoffLimit:          &backoffLimit,
+				ActiveDeadlineSeconds: &activeDeadlineSeconds,
+				Template: corev1.PodTemplateSpec{
+					ObjectMeta: metav1.ObjectMeta{Labels: mergeStringMaps(jobLabels, selectorLabels), Annotations: annotations},
+					Spec:       podSpec,
+				},
+			},
+		}
+		if restrictedCatalogue {
+			if err := validateRestrictedWorkloadAnnotations(workload); err != nil {
+				return nil, nil, err
+			}
+		}
+		return workload, renderResult.AdditionalResources, nil
 
 	default:
 		return nil, nil, fmt.Errorf("unsupported workload type: %s", workloadType)
@@ -393,6 +654,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 	workloadName, targetNs string,
 	ds *breakglassv1alpha1.DebugSession,
 	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
 	labels, annotations map[string]string,
 ) (ctrlclient.Object, []*unstructured.Unstructured, error) {
 	workload := renderResult.Workload
@@ -406,9 +668,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		)
 	}
 
-	selectorLabels := map[string]string{
-		DebugSessionLabelKey: ds.Name,
-	}
+	selectorLabels := debugSessionSelectorLabels(ds)
 
 	switch w := workload.(type) {
 	case *appsv1.Deployment:
@@ -418,7 +678,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload.
@@ -454,7 +714,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Labels = labels
 		w.Annotations = annotations
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
-		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels)
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
 
 		// Apply the modified PodSpec back into the workload (see Deployment comment above).
@@ -465,6 +725,43 @@ func (c *DebugSessionController) useTemplateWorkload(
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyAlways
 		}
 
+		return w, renderResult.AdditionalResources, nil
+
+	case *batchv1.Job:
+		w.Name = workloadName
+		w.Namespace = targetNs
+		w.Labels = mergeStringMaps(labels, map[string]string{
+			DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+		})
+		w.Annotations = annotations
+		manualSelector := true
+		w.Spec.ManualSelector = &manualSelector
+		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
+		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
+		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Spec = renderResult.PodSpec
+		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
+			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
+		}
+		one := int32(1)
+		zero := int32(0)
+		activeDeadlineSeconds := max(int64(c.parseDuration(ds.Spec.RequestedDuration, effectiveDebugSessionConstraints(template, binding)).Seconds()), 1)
+		w.Spec.Parallelism = &one
+		w.Spec.Completions = &one
+		w.Spec.BackoffLimit = &zero
+		w.Spec.ActiveDeadlineSeconds = &activeDeadlineSeconds
+		// Template authors cannot expand one session into unbounded pods or make
+		// cleanup depend on Kubernetes Job lifecycle features. Session cleanup is
+		// the sole owner of the rendered workload.
+		w.Spec.TTLSecondsAfterFinished = nil
+		w.Spec.CompletionMode = nil
+		w.Spec.Suspend = nil
+		w.Spec.PodFailurePolicy = nil
+		w.Spec.SuccessPolicy = nil
+		w.Spec.BackoffLimitPerIndex = nil
+		w.Spec.MaxFailedIndexes = nil
+		w.Spec.PodReplacementPolicy = nil
+		w.Spec.ManagedBy = nil
 		return w, renderResult.AdditionalResources, nil
 
 	default:
@@ -480,6 +777,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	ds *breakglassv1alpha1.DebugSession,
 	obj *unstructured.Unstructured,
 	targetNs string,
+	fences ...func() error,
 ) error {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
@@ -506,34 +804,63 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
 	obj.SetAnnotations(annotations)
-
-	// Deploy using Server-Side Apply for idempotency
-	obj.SetManagedFields(nil)
-	//nolint:staticcheck // SA1019: client.Apply for Patch is still required for unstructured objects
-	if err := targetClient.Patch(ctx, obj, ctrlclient.Apply, ctrlclient.FieldOwner("breakglass-controller"), ctrlclient.ForceOwnership); err != nil {
-		return fmt.Errorf("SSA apply failed: %w", err)
+	operationID, err := stampCreateOperation(obj, ds)
+	if err != nil {
+		return err
 	}
 
-	// Track in session status
+	// Persist an intent before the target write so a crash cannot hide a
+	// resource that must be recovered or cleaned up.
 	status := breakglassv1alpha1.PodTemplateResourceStatus{
-		Kind:         obj.GetKind(),
-		APIVersion:   obj.GetAPIVersion(),
-		ResourceName: obj.GetName(),
-		Namespace:    obj.GetNamespace(),
-		Source:       "podTemplateString",
-		Created:      true,
+		Kind:              obj.GetKind(),
+		APIVersion:        obj.GetAPIVersion(),
+		ResourceName:      obj.GetName(),
+		Namespace:         obj.GetNamespace(),
+		Source:            "podTemplateString",
+		Created:           true,
+		CreateOperationID: operationID,
+	}
+	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
+	if c.client != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
+		}
+	}
+	if len(fences) > 0 && fences[0] != nil {
+		if err := fences[0](); err != nil {
+			return err
+		}
+	}
+
+	// Apply only after checking ownership; a same-name resource from another
+	// session must never be adopted.
+	obj.SetManagedFields(nil)
+	if err := applyOwnedTrackedResource(ctx, targetClient, obj, ds); err != nil {
+		return fmt.Errorf("apply pod template resource failed: %w", err)
+	}
+	// Record the target UID as the durable outcome.
+	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
+	statusRef.UID = string(obj.GetUID())
+	if statusRef.UID == "" {
+		return fmt.Errorf("created pod template resource %s/%s has no UID", obj.GetNamespace(), obj.GetName())
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	status.CreatedAt = &now
-	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
+	statusRef.CreatedAt = &now
+	if c.client != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			return fmt.Errorf("failed to persist pod template resource outcome: %w", err)
+		}
+	}
 
 	// Add to deployed resources list
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
-		APIVersion: obj.GetAPIVersion(),
-		Kind:       obj.GetKind(),
-		Name:       obj.GetName(),
-		Namespace:  obj.GetNamespace(),
-		Source:     "pod-template",
+		APIVersion:        obj.GetAPIVersion(),
+		Kind:              obj.GetKind(),
+		Name:              obj.GetName(),
+		Namespace:         obj.GetNamespace(),
+		Source:            "pod-template",
+		UID:               statusRef.UID,
+		CreateOperationID: statusRef.CreateOperationID,
 	})
 
 	log.Infow("Deployed pod template resource",
@@ -549,6 +876,17 @@ func (c *DebugSessionController) deployPodTemplateResource(
 // Now supports multi-document YAML where the first document can be a bare PodSpec,
 // a full Pod manifest, or a full Deployment/DaemonSet manifest.
 // Returns a PodTemplateRenderResult containing the PodSpec, optional workload, and metadata.
+func debugSessionSelectorLabels(ds *breakglassv1alpha1.DebugSession) map[string]string {
+	name := "unknown"
+	if ds != nil && ds.Name != "" {
+		name = ds.Name
+	}
+	return map[string]string{
+		DebugSessionLabelKey:    name,
+		DebugSessionUIDLabelKey: debugSessionIdentity(ds),
+	}
+}
+
 func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (*PodTemplateRenderResult, error) {
 	var renderResult *PodTemplateRenderResult
 
@@ -585,6 +923,15 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	}
 
 	spec := &renderResult.PodSpec
+	restrictedCatalogue, catalogueIntent, err := restrictedCatalogueProfile(template, podTemplate)
+	if err != nil {
+		return nil, err
+	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCatalogueResources(renderResult.AdditionalResources); err != nil {
+			return nil, err
+		}
+	}
 
 	// Apply podOverridesTemplate if specified (Go template producing overrides YAML)
 	if template.Spec.PodOverridesTemplate != "" {
@@ -592,20 +939,26 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		if err != nil {
 			return nil, fmt.Errorf("failed to render podOverridesTemplate: %w", err)
 		}
-		c.applyPodOverridesStruct(spec, overrides)
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
+		}
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply podOverridesTemplate: %w", err)
+		}
 	}
 
 	// Apply static overrides from session template (legacy support)
 	if template.Spec.PodOverrides != nil && template.Spec.PodOverrides.Spec != nil {
 		overrides := template.Spec.PodOverrides.Spec
-		if overrides.HostNetwork != nil {
-			spec.HostNetwork = *overrides.HostNetwork
+		if restrictedCatalogue {
+			if err := validateRestrictedCatalogueOverrides(overrides); err != nil {
+				return nil, err
+			}
 		}
-		if overrides.HostPID != nil {
-			spec.HostPID = *overrides.HostPID
-		}
-		if overrides.HostIPC != nil {
-			spec.HostIPC = *overrides.HostIPC
+		if err := c.applyPodOverridesStruct(spec, overrides); err != nil {
+			return nil, fmt.Errorf("apply static pod overrides: %w", err)
 		}
 	}
 
@@ -625,6 +978,9 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 			spec.NodeSelector = make(map[string]string)
 		}
 		for k, v := range ds.Spec.NodeSelector {
+			if existing, ok := spec.NodeSelector[k]; ok && existing != v {
+				return nil, fmt.Errorf("session nodeSelector %q=%q conflicts with the template selector value %q", k, v, existing)
+			}
 			spec.NodeSelector[k] = v
 		}
 	}
@@ -632,10 +988,14 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 	// Apply resolved scheduling constraints from session
 	// These are computed at session creation time and take precedence
 	if ds.Spec.ResolvedSchedulingConstraints != nil {
-		c.applySchedulingConstraints(spec, ds.Spec.ResolvedSchedulingConstraints)
+		if err := c.applySchedulingConstraints(spec, ds.Spec.ResolvedSchedulingConstraints); err != nil {
+			return nil, fmt.Errorf("apply resolved scheduling constraints: %w", err)
+		}
 	} else if template.Spec.SchedulingConstraints != nil {
 		// Fallback to template constraints if session doesn't have resolved constraints
-		c.applySchedulingConstraints(spec, template.Spec.SchedulingConstraints)
+		if err := c.applySchedulingConstraints(spec, template.Spec.SchedulingConstraints); err != nil {
+			return nil, fmt.Errorf("apply template scheduling constraints: %w", err)
+		}
 	}
 
 	if template.Spec.ResourceQuota != nil {
@@ -679,7 +1039,379 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		}
 	}
 
+	if err := rejectUnsupportedTerminalRecording(template); err != nil {
+		return nil, fmt.Errorf("reject terminal recording: %w", err)
+	}
+	if restrictedCatalogue {
+		if err := validateRestrictedCataloguePodSpec(spec, catalogueIntent); err != nil {
+			return nil, err
+		}
+	}
+
 	return renderResult, nil
+}
+
+const (
+	catalogueProfileLabel  = "breakglass.t-caas.telekom.com/catalogue-profile"
+	catalogueIntentLabel   = "breakglass.t-caas.telekom.com/catalogue-intent"
+	catalogueElevatedLabel = "breakglass.t-caas.telekom.com/elevated"
+)
+
+func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
+	templateProfile := template.Labels[catalogueProfileLabel]
+	podProfile := ""
+	if podTemplate != nil {
+		podProfile = podTemplate.Labels[catalogueProfileLabel]
+	}
+	if templateProfile == "" && podProfile == "" {
+		return false, "", nil
+	}
+	if templateProfile == "" || podProfile == "" || templateProfile != podProfile {
+		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
+	}
+	templateIntent := template.Labels[catalogueIntentLabel]
+	podIntent := podTemplate.Labels[catalogueIntentLabel]
+	if templateIntent == "" || templateIntent != podIntent {
+		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
+	}
+	templateElevated := template.Labels[catalogueElevatedLabel]
+	podElevated := podTemplate.Labels[catalogueElevatedLabel]
+	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
+		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")
+	}
+	return templateElevated == "false", templateIntent, nil
+}
+
+func validateRestrictedCatalogueOverrides(overrides *breakglassv1alpha1.DebugPodSpecOverrides) error {
+	if overrides == nil {
+		return nil
+	}
+	if (overrides.HostNetwork != nil && *overrides.HostNetwork) ||
+		(overrides.HostPID != nil && *overrides.HostPID) ||
+		(overrides.HostIPC != nil && *overrides.HostIPC) {
+		return fmt.Errorf("restricted catalogue profiles cannot enable host namespaces through pod overrides")
+	}
+	for _, container := range overrides.Containers {
+		if container.SecurityContext != nil || container.Resources != nil || len(container.Env) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q may override only command and args", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) error {
+	if spec.HostNetwork || spec.HostPID || spec.HostIPC {
+		return fmt.Errorf("restricted catalogue profiles cannot use host namespaces")
+	}
+	if spec.SecurityContext == nil || spec.SecurityContext.RunAsNonRoot == nil || !*spec.SecurityContext.RunAsNonRoot {
+		return fmt.Errorf("restricted catalogue profiles must run as non-root")
+	}
+	if spec.SecurityContext.RunAsUser != nil && *spec.SecurityContext.RunAsUser == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod user to root")
+	}
+	if spec.SecurityContext.RunAsGroup != nil && *spec.SecurityContext.RunAsGroup == 0 {
+		return fmt.Errorf("restricted catalogue profiles cannot override the pod group to root")
+	}
+	if err := validateRestrictedAppArmor(spec.SecurityContext.AppArmorProfile); err != nil {
+		return err
+	}
+	if err := validateRestrictedSELinux(spec.SecurityContext.SELinuxOptions); err != nil {
+		return err
+	}
+	if err := validateRestrictedSysctls(spec.SecurityContext.Sysctls); err != nil {
+		return err
+	}
+	if spec.SecurityContext.WindowsOptions != nil && spec.SecurityContext.WindowsOptions.HostProcess != nil && *spec.SecurityContext.WindowsOptions.HostProcess {
+		return fmt.Errorf("restricted catalogue profiles cannot use a Windows host process")
+	}
+	podSeccompValid := false
+	if spec.SecurityContext.SeccompProfile != nil {
+		if err := validateRestrictedSeccomp(spec.SecurityContext.SeccompProfile); err != nil {
+			return err
+		}
+		podSeccompValid = true
+	}
+	if intent == "cluster-validation" {
+		if spec.ServiceAccountName == "" || spec.ServiceAccountName == "default" || spec.AutomountServiceAccountToken == nil || !*spec.AutomountServiceAccountToken {
+			return fmt.Errorf("cluster-validation requires its explicit dedicated service account identity")
+		}
+	} else if spec.ServiceAccountName != "" || spec.AutomountServiceAccountToken == nil || *spec.AutomountServiceAccountToken {
+		return fmt.Errorf("restricted catalogue profiles cannot receive a Kubernetes service account identity")
+	}
+	dumpInputReadOnly := false
+	dumpInputMounts := 0
+	if intent == "dump-access" {
+		containers := append(append([]corev1.Container{}, spec.InitContainers...), spec.Containers...)
+		for _, container := range containers {
+			for _, mount := range container.VolumeMounts {
+				if mount.Name != "input" {
+					continue
+				}
+				dumpInputMounts++
+				if mount.MountPath != "/input" || !mount.ReadOnly {
+					return fmt.Errorf("dump-access input volume mounts must have exactly one read-only mount at /input")
+				}
+				dumpInputReadOnly = true
+			}
+		}
+		if dumpInputMounts != 1 {
+			return fmt.Errorf("dump-access requires exactly one read-only input volume mount at /input")
+		}
+	}
+	for _, volume := range spec.Volumes {
+		source := volume.VolumeSource
+		approvedDumpInput := intent == "dump-access" && volume.Name == "input" && dumpInputReadOnly &&
+			(source.HostPath != nil || source.PersistentVolumeClaim != nil)
+		if source.EmptyDir == nil && source.ConfigMap == nil && source.DownwardAPI == nil && !approvedDumpInput {
+			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
+		}
+	}
+	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
+	containers = append(containers, spec.InitContainers...)
+	containers = append(containers, spec.Containers...)
+	for _, container := range containers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
+			return err
+		}
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
+			return fmt.Errorf("restricted catalogue profile container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use root group", container.Name)
+		}
+		if security.ProcMount != nil && *security.ProcMount != corev1.DefaultProcMount {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use an unmasked proc mount", container.Name)
+		}
+		if security.WindowsOptions != nil && security.WindowsOptions.HostProcess != nil && *security.WindowsOptions.HostProcess {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host process", container.Name)
+		}
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile container %q requires a confined seccomp profile", container.Name)
+		}
+		for _, env := range container.Env {
+			if env.ValueFrom != nil {
+				if intent == "cluster-validation" && ((env.Name == "VALIDATOR_POD_NAME" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.name") ||
+					(env.Name == "VALIDATOR_POD_NAMESPACE" && env.ValueFrom.FieldRef != nil && env.ValueFrom.FieldRef.FieldPath == "metadata.namespace")) {
+					continue
+				}
+				return fmt.Errorf("restricted catalogue profile container %q cannot source environment variable %q", container.Name, env.Name)
+			}
+		}
+		if len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use envFrom", container.Name)
+		}
+	}
+	for _, container := range spec.EphemeralContainers {
+		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, nil, nil, nil, nil); err != nil {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+		}
+		security := container.SecurityContext
+		if security == nil || security.ReadOnlyRootFilesystem == nil || !*security.ReadOnlyRootFilesystem ||
+			(security.Privileged != nil && *security.Privileged) ||
+			security.AllowPrivilegeEscalation == nil || *security.AllowPrivilegeEscalation ||
+			security.Capabilities == nil || len(security.Capabilities.Add) > 0 || !dropsAllCapabilities(security.Capabilities.Drop) {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q violates its security boundary", container.Name)
+		}
+		if security.RunAsNonRoot != nil && !*security.RunAsNonRoot {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot disable non-root execution", container.Name)
+		}
+		if security.RunAsUser != nil && *security.RunAsUser == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot run as root", container.Name)
+		}
+		if security.RunAsGroup != nil && *security.RunAsGroup == 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot use root group", container.Name)
+		}
+		if security.SeccompProfile != nil {
+			if err := validateRestrictedSeccomp(security.SeccompProfile); err != nil {
+				return fmt.Errorf("restricted catalogue profile ephemeral container %q: %w", container.Name, err)
+			}
+		} else if !podSeccompValid {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q requires a confined seccomp profile", container.Name)
+		}
+		if len(container.Env) > 0 || len(container.EnvFrom) > 0 {
+			return fmt.Errorf("restricted catalogue profile ephemeral container %q cannot source environment variables", container.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedContainerSurface(name string, security *corev1.SecurityContext, ports []corev1.ContainerPort, liveness, readiness, startup *corev1.Probe, lifecycle *corev1.Lifecycle) error {
+	if security == nil {
+		return nil
+	}
+	if err := validateRestrictedAppArmor(security.AppArmorProfile); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	if err := validateRestrictedSELinux(security.SELinuxOptions); err != nil {
+		return fmt.Errorf("restricted catalogue profile container %q: %w", name, err)
+	}
+	for _, port := range ports {
+		if port.HostPort != 0 {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use hostPort", name)
+		}
+	}
+	for probeName, probe := range map[string]*corev1.Probe{"liveness": liveness, "readiness": readiness, "startup": startup} {
+		if probe != nil && probe.HTTPGet != nil && probe.HTTPGet.Host != "" {
+			return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s probe", name, probeName)
+		}
+	}
+	if lifecycle != nil {
+		for hookName, hook := range map[string]*corev1.LifecycleHandler{"postStart": lifecycle.PostStart, "preStop": lifecycle.PreStop} {
+			if hook != nil && hook.HTTPGet != nil && hook.HTTPGet.Host != "" {
+				return fmt.Errorf("restricted catalogue profile container %q cannot use a host in %s lifecycle hook", name, hookName)
+			}
+		}
+	}
+	return nil
+}
+
+func validateRestrictedAppArmor(profile *corev1.AppArmorProfile) error {
+	if profile == nil {
+		return nil
+	}
+	switch profile.Type {
+	case corev1.AppArmorProfileTypeRuntimeDefault:
+		if profile.LocalhostProfile != nil {
+			return fmt.Errorf("restricted catalogue profiles cannot set a localhost AppArmor name with RuntimeDefault")
+		}
+	case corev1.AppArmorProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost AppArmor profile name")
+		}
+	case corev1.AppArmorProfileTypeUnconfined:
+		return fmt.Errorf("restricted catalogue profiles cannot use an unconfined AppArmor profile")
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost AppArmor")
+	}
+	return nil
+}
+
+func validateRestrictedSELinux(options *corev1.SELinuxOptions) error {
+	if options == nil {
+		return nil
+	}
+	if options.User != "" || options.Role != "" {
+		return fmt.Errorf("restricted catalogue profiles cannot set SELinux user or role")
+	}
+	if options.Type != "" {
+		switch options.Type {
+		case "container_t", "container_init_t", "container_kvm_t", "container_engine_t":
+		default:
+			return fmt.Errorf("restricted catalogue profiles cannot use SELinux type %q", options.Type)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedSysctls(sysctls []corev1.Sysctl) error {
+	allowed := map[string]struct{}{
+		"kernel.shm_rmid_forced":              {},
+		"net.ipv4.ip_local_port_range":        {},
+		"net.ipv4.ip_unprivileged_port_start": {},
+		"net.ipv4.tcp_syncookies":             {},
+		"net.ipv4.ping_group_range":           {},
+		"net.ipv4.ip_local_reserved_ports":    {},
+		"net.ipv4.tcp_keepalive_time":         {},
+		"net.ipv4.tcp_fin_timeout":            {},
+		"net.ipv4.tcp_keepalive_intvl":        {},
+		"net.ipv4.tcp_keepalive_probes":       {},
+	}
+	for _, sysctl := range sysctls {
+		if _, ok := allowed[sysctl.Name]; !ok {
+			return fmt.Errorf("restricted catalogue profiles cannot use unsafe sysctl %q", sysctl.Name)
+		}
+	}
+	return nil
+}
+
+func validateRestrictedCatalogueAnnotations(annotations map[string]string) error {
+	for key := range annotations {
+		if strings.HasPrefix(key, "container.apparmor.security.beta.kubernetes.io/") {
+			return fmt.Errorf("restricted catalogue profiles cannot use legacy AppArmor annotations")
+		}
+	}
+	return nil
+}
+
+func validateRestrictedWorkloadAnnotations(workload ctrlclient.Object) error {
+	var annotations map[string]string
+	switch typed := workload.(type) {
+	case *appsv1.Deployment:
+		annotations = typed.Spec.Template.Annotations
+	case *appsv1.DaemonSet:
+		annotations = typed.Spec.Template.Annotations
+	case *batchv1.Job:
+		annotations = typed.Spec.Template.Annotations
+	default:
+		return nil
+	}
+	return validateRestrictedCatalogueAnnotations(annotations)
+}
+
+func dropsAllCapabilities(drop []corev1.Capability) bool {
+	for _, capability := range drop {
+		if capability == "ALL" {
+			return true
+		}
+	}
+	return false
+}
+
+func validateRestrictedSeccomp(profile *corev1.SeccompProfile) error {
+	if profile == nil {
+		return fmt.Errorf("restricted catalogue profiles require a confined seccomp profile")
+	}
+	switch profile.Type {
+	case corev1.SeccompProfileTypeRuntimeDefault:
+		return nil
+	case corev1.SeccompProfileTypeLocalhost:
+		if profile.LocalhostProfile == nil || strings.TrimSpace(*profile.LocalhostProfile) == "" {
+			return fmt.Errorf("restricted catalogue profiles require a localhost seccomp profile name")
+		}
+		return nil
+	default:
+		return fmt.Errorf("restricted catalogue profiles require RuntimeDefault or named Localhost seccomp")
+	}
+}
+
+// validateRestrictedCatalogueResources is intentionally a small allowlist. A
+// restricted catalogue item may carry a namespaced ConfigMap for deterministic
+// input data, but cannot create a resource with its own controller, identity,
+// network, storage, or cluster scope. Namespaces are omitted so deployment
+// always assigns the session target namespace.
+func validateRestrictedCatalogueResources(resources []*unstructured.Unstructured) error {
+	for _, resource := range resources {
+		if resource == nil {
+			return fmt.Errorf("restricted catalogue profiles cannot contain empty additional resources")
+		}
+		if resource.GetAPIVersion() != "v1" || resource.GetKind() != "ConfigMap" {
+			return fmt.Errorf("restricted catalogue profiles may only carry core/v1 ConfigMap additional resources")
+		}
+		if resource.GetNamespace() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMap %q must omit namespace so it stays in the session target namespace", resource.GetName())
+		}
+		if resource.GetName() == "" || resource.GetGenerateName() != "" {
+			return fmt.Errorf("restricted catalogue ConfigMaps require a fixed name")
+		}
+		if len(resource.GetFinalizers()) > 0 || len(resource.GetOwnerReferences()) > 0 {
+			return fmt.Errorf("restricted catalogue ConfigMap %q cannot define finalizers or owner references", resource.GetName())
+		}
+	}
+	return nil
 }
 
 // buildPodRenderContext creates the render context for pod templates.

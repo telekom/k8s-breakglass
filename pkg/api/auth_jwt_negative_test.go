@@ -1,6 +1,7 @@
 package api
 
 import (
+	"container/list"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/base64"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -525,11 +527,9 @@ func TestAuthMiddleware_JWTTimingEdgeCases(t *testing.T) {
 	}
 }
 
-// TestAuthMiddleware_AudienceNotValidated verifies that JWT audience (aud) claim
-// is NOT validated — Keycloak does not include the requesting client_id in the
-// aud claim by default, so audience validation would break environments without
-// audience protocol mappers. A dedicated CRD field is needed before this can be enabled.
-func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
+// TestAuthMiddleware_IdentityProviderRequiresAudience verifies that CRD-backed
+// identity providers fail closed when expectedAudience is missing.
+func TestAuthMiddleware_IdentityProviderRequiresAudience(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	srv, priv, kid := setupTestJWKSServer(t)
@@ -539,50 +539,51 @@ func TestAuthMiddleware_AudienceNotValidated(t *testing.T) {
 	require.NoError(t, err)
 
 	logger := zaptest.NewLogger(t).Sugar()
-
-	tests := []struct {
-		name          string
-		tokenAudience interface{} // aud claim in token (nil = omitted)
-	}{
-		{name: "no audience claim", tokenAudience: nil},
-		{name: "audience present", tokenAudience: "some-audience"},
-		{name: "array audience", tokenAudience: []string{"aud1", "aud2"}},
-		{name: "mismatched audience", tokenAudience: "wrong-client"},
+	auth := &AuthHandler{
+		jwksCache:   make(map[string]*list.Element),
+		jwksLRUList: list.New(),
+		log:         logger,
+		idpLoader: staticIdentityProviderByIssuerLoader{cfg: &config.IdentityProviderConfig{
+			Name:      "missing-audience",
+			Issuer:    "https://idp.example.com",
+			Authority: "https://idp.example.com",
+			ClientID:  "breakglass-ui",
+		}},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Use the simple single-IDP path — no need for cache internals
-			// since audience validation is disabled regardless.
-			auth := &AuthHandler{jwks: jwks, log: logger}
-
-			router := gin.New()
-			router.Use(auth.Middleware())
-			router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
-
-			claims := jwt.MapClaims{
-				"sub": "test-user",
-				"exp": time.Now().Add(time.Hour).Unix(),
-			}
-			if tt.tokenAudience != nil {
-				claims["aud"] = tt.tokenAudience
-			}
-
-			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-			tok.Header["kid"] = kid
-			tokStr, err := tok.SignedString(priv)
-			require.NoError(t, err)
-
-			req := httptest.NewRequest(http.MethodGet, "/test", nil)
-			req.Header.Set("Authorization", "Bearer "+tokStr)
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			// All cases should succeed since audience is not validated
-			require.Equal(t, http.StatusOK, w.Code,
-				"audience validation is disabled; all audience values should be accepted")
-		})
+	entry := &jwksCacheEntry{
+		issuer:              "https://idp.example.com",
+		idpName:             "missing-audience",
+		expectedAudience:    "",
+		jwks:                jwks,
+		audienceRefreshedAt: time.Now().Add(-audienceRefreshInterval - time.Second),
+		audienceAttemptedAt: time.Now().Add(-audienceRefreshFailureBackoff - time.Second),
 	}
+	elem := auth.jwksLRUList.PushFront(entry)
+	auth.jwksCache[entry.issuer] = elem
+
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
+
+	claims := jwt.MapClaims{
+		"iss": "https://idp.example.com",
+		"sub": "test-user",
+		"exp": time.Now().Add(time.Hour).Unix(),
+		"aud": "wrong-client",
+	}
+
+	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+	tok.Header["kid"] = kid
+	tokStr, err := tok.SignedString(priv)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/test", nil)
+	req.Header.Set("Authorization", "Bearer "+tokStr)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 // TestAuthMiddleware_ExpirationRequired verifies SEC-005: tokens without exp claim are rejected.

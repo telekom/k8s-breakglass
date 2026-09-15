@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/auth"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
@@ -98,7 +99,7 @@ func resolveTokenFromCache(cmdCtx context.Context, rt *runtimeState, ctxCfg *con
 	if err != nil {
 		return "", err
 	}
-	providerKey := resolveProviderKey(ctxCfg, resolved)
+	providerKey := rt.resolveTokenKey(ctxCfg, resolved)
 	manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 	token, ok, err := manager.GetToken(providerKey)
 	if err != nil {
@@ -129,7 +130,8 @@ func resolveTokenFromCache(cmdCtx context.Context, rt *runtimeState, ctxCfg *con
 	if err != nil {
 		return "", err
 	}
-	if _, refreshed, err := manager.RefreshIfNeeded(cmdCtx, providerKey, oauthResult.OAuthConfig); err != nil {
+	oauthCtx := oidc.ClientContext(cmdCtx, oauthResult.Client)
+	if _, refreshed, err := manager.RefreshIfNeeded(oauthCtx, providerKey, oauthResult.OAuthConfig); err != nil {
 		if grantType == "client-credentials" {
 			loginResult, loginErr := auth.ClientCredentialsLogin(cmdCtx, auth.OIDCConfig{
 				Authority:       resolved.Authority,

@@ -45,6 +45,6 @@ spec:
     # No duplicate identityProviderRefs
     - expression: >-
         !has(object.spec.identityProviderRefs) ||
-        object.spec.identityProviderRefs.size() == object.spec.identityProviderRefs.toSet().size()
+        object.spec.identityProviderRefs.all(ref, object.spec.identityProviderRefs.exists_one(x, x == ref))
       message: "spec.identityProviderRefs must not contain duplicates"
       reason: Invalid

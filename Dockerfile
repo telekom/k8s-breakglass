@@ -1,4 +1,4 @@
-FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS npm_builder
+FROM node:26-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS npm_builder
 WORKDIR /workspace
 ARG UI_FLAVOUR=oss
 ENV VITE_UI_FLAVOUR=$UI_FLAVOUR
@@ -9,7 +9,7 @@ RUN set -eux; cd /workspace/frontend; \
 	npm run build
 
 # Build the manager binary
-FROM golang:1.26.4@sha256:32c0e6e5c4f6707717051091b4d0b077464a679eaab563e11474efc5328e2aa5 AS builder
+FROM golang:1.27@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea AS builder
 ARG TARGETOS
 ARG TARGETARCH
 
@@ -39,7 +39,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)}
               -X github.com/telekom/k8s-breakglass/pkg/version.BuildDate=${BUILD_DATE}" \
     -o breakglass ./cmd
 
-FROM gcr.io/distroless/static:nonroot@sha256:963fa6c544fe5ce420f1f54fb88b6fb01479f054c8056d0f74cc2c6000df5240
+FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 WORKDIR /
 
 COPY --from=builder /workspace/breakglass .

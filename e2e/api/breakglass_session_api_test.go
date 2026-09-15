@@ -622,6 +622,12 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 
 	requesterClient := NewBreakglassSessionAPIClient(requesterToken)
 	approverClient := NewBreakglassSessionAPIClient(approverToken)
+	clientForUser := func(t *testing.T, user helpers.TestUser) *BreakglassSessionAPIClient {
+		t.Helper()
+		token := tc.OIDCProvider().GetToken(t, ctx, user.Username, user.Password)
+		require.NotEmpty(t, token)
+		return NewBreakglassSessionAPIClient(token)
+	}
 
 	t.Run("WithdrawPendingSession", func(t *testing.T) {
 		// Create a session
@@ -647,16 +653,21 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 		// Requester can withdraw their own pending session
 		status, err := requesterClient.WithdrawSession(ctx, t, session.Name, namespace)
 		t.Logf("Withdraw status: %d, err: %v", status, err)
-		// Withdraw should succeed or session might already be in a different state
-		assert.True(t, status == http.StatusOK || status == http.StatusBadRequest,
-			"Withdraw should succeed or return bad request if state changed")
+		require.NoError(t, err, "Withdraw pending session should succeed")
+		require.Equal(t, http.StatusOK, status, "Withdraw pending session should succeed")
+
+		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace,
+			breakglassv1alpha1.SessionStateWithdrawn, helpers.WaitForConditionTimeout)
 	})
 
 	t.Run("DropActiveSession", func(t *testing.T) {
+		requester := helpers.TestUsers.DevAlpha
+		requesterClient := clientForUser(t, requester)
+
 		// Create and approve a session
 		req := BreakglassSessionRequest{
 			Clustername: clusterName,
-			Username:    helpers.TestUsers.Requester.Email,
+			Username:    requester.Email,
 			GroupName:   escalation.Spec.EscalatedGroup,
 			Reason:      "Testing drop",
 		}
@@ -688,10 +699,13 @@ func TestBreakglassSessionAPIWithdrawDropCancel(t *testing.T) {
 	})
 
 	t.Run("CancelActiveSession", func(t *testing.T) {
+		requester := helpers.TestUsers.DevBeta
+		requesterClient := clientForUser(t, requester)
+
 		// Create and approve a session
 		req := BreakglassSessionRequest{
 			Clustername: clusterName,
-			Username:    helpers.TestUsers.Requester.Email,
+			Username:    requester.Email,
 			GroupName:   escalation.Spec.EscalatedGroup,
 			Reason:      "Testing cancel",
 		}

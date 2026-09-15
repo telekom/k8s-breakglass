@@ -1,0 +1,20 @@
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+
+Network Debug Utility
+
+Runtime toolset: netshoot v0.16 (immutable manifest)
+
+Start with:  net-report
+Help:        net-debug --help
+Tool list:   net-debug tools
+Capture:      net-debug capture --help
+Trace:        net-debug trace --help (host netns + BPF prerequisites)
+Selected-pod capture: controller-approved ephemeral container only
+Docs:        /usr/share/breakglass/runbooks/upstream/network-debug/README.md
+Runbook:     /usr/share/breakglass/runbooks/upstream/network-debug/RUNBOOK.md
+Optional:    /usr/share/breakglass/runbooks/internal/INDEX.md (read-only downstream bundle)
+
+This container reports only the current network namespace. Do not paste
+reports containing addresses or packet data into public issue trackers.
+The optional downstream bundle is never sourced or executed by this image.

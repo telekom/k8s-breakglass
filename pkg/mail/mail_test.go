@@ -10,7 +10,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewSenderFromMailProvider(t *testing.T) {
@@ -529,7 +532,13 @@ func TestSender_Send_Edge_Cases(t *testing.T) {
 // startTestSMTPServer starts a minimal SMTP server on a random port that
 // accepts one message and then returns. It is intentionally minimal and
 // only implements the commands necessary for the mail sender tests.
-func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
+type smtpCapture struct {
+	data       strings.Builder
+	recipients []string
+	reject     bool
+}
+
+func startTestSMTPServer(t *testing.T, capture ...*smtpCapture) (host string, port int, stop func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -539,6 +548,7 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		defer func() { _ = ln.Close() }()
 		conn, err := ln.Accept()
 		if err != nil {
@@ -563,6 +573,15 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 				continue
 			}
 			if strings.HasPrefix(line, "RCPT TO:") {
+				reject := false
+				for _, output := range capture {
+					output.recipients = append(output.recipients, line)
+					reject = reject || output.reject
+				}
+				if reject {
+					_, _ = fmt.Fprintf(conn, "550 %s recipient rejected\r\n", line)
+					continue
+				}
 				_, _ = fmt.Fprintf(conn, "250 OK\r\n")
 				continue
 			}
@@ -577,6 +596,9 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 					if strings.TrimSpace(dline) == "." {
 						break
 					}
+					for _, output := range capture {
+						output.data.WriteString(dline)
+					}
 				}
 				_, _ = fmt.Fprintf(conn, "250 OK: queued as 12345\r\n")
 				continue
@@ -588,7 +610,6 @@ func startTestSMTPServer(t *testing.T) (host string, port int, stop func()) {
 			// Unknown command – respond generically
 			_, _ = fmt.Fprintf(conn, "250 OK\r\n")
 		}
-		wg.Done()
 	}()
 
 	host = "127.0.0.1"
@@ -627,7 +648,8 @@ func TestSender_Send_HappyPath(t *testing.T) {
 
 // TestSender_Send_PlainSMTP tests the DisableTLS path using plain SMTP without STARTTLS
 func TestSender_Send_PlainSMTP(t *testing.T) {
-	host, port, stop := startTestSMTPServer(t)
+	var data smtpCapture
+	host, port, stop := startTestSMTPServer(t, &data)
 	defer stop()
 
 	mpConfig := &config.MailProviderConfig{
@@ -645,6 +667,11 @@ func TestSender_Send_PlainSMTP(t *testing.T) {
 	// Send to multiple recipients in a single call (the test server only handles one connection)
 	err := sender.Send([]string{"user1@example.com", "user2@example.com"}, "Test Subject", "<p>Test body for plain SMTP</p>")
 	assert.NoError(t, err, "expected Send with DisableTLS to succeed against test SMTP server")
+	stop() // Synchronize with capture writes before inspecting DATA and envelope.
+	assert.Equal(t, []string{"RCPT TO:<user1@example.com>", "RCPT TO:<user2@example.com>"}, data.recipients)
+	assert.NotContains(t, data.data.String(), "Bcc:")
+	assert.NotContains(t, data.data.String(), "user1@example.com")
+	assert.NotContains(t, data.data.String(), "user2@example.com")
 }
 
 // TestSender_GetHost tests the GetHost accessor method
@@ -673,4 +700,21 @@ func TestSender_GetPort(t *testing.T) {
 
 	port := s.GetPort()
 	assert.Equal(t, 465, port)
+}
+
+func TestPlainSMTPRecipientReplyIsPrivate(t *testing.T) {
+	capture := smtpCapture{reject: true}
+	host, port, stop := startTestSMTPServer(t, &capture)
+	defer stop()
+	core, logs := observer.New(zap.DebugLevel)
+	s := NewSenderFromMailProvider(&config.MailProviderConfig{
+		Host: host, Port: port, DisableTLS: true, SenderAddress: "sender@example.com",
+	}, "").(*sender)
+	s.log = zap.New(core).Sugar()
+	err := s.Send([]string{"private-recipient@example.com"}, "subject", "body")
+	require.ErrorIs(t, err, errSMTPRecipientCommandFailed)
+	assert.NotContains(t, err.Error(), "private-recipient")
+	for _, entry := range logs.All() {
+		assert.NotContains(t, fmt.Sprint(entry.ContextMap()), "private-recipient")
+	}
 }

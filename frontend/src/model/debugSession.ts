@@ -90,6 +90,8 @@ export interface DebugSessionSummary {
   isParticipant: boolean;
   allowedPods: number;
   allowedPodOperations?: AllowedPodOperations;
+  canApprove?: boolean;
+  canReject?: boolean;
 }
 
 export interface DebugSessionTemplateResponse {
@@ -173,7 +175,6 @@ export interface DebugSession {
     requestedDuration?: string;
     reason?: string;
     nodeSelector?: Record<string, string>;
-    scheduledStartTime?: string;
   };
   status?: {
     state: DebugSessionState;
@@ -205,7 +206,6 @@ export interface CreateDebugSessionRequest {
   requestedDuration?: string;
   reason?: string;
   nodeSelector?: Record<string, string>;
-  scheduledStartTime?: string;
   targetNamespace?: string;
   selectedSchedulingOption?: string;
   extraDeployValues?: ExtraDeployValues; // User-provided variable values
@@ -215,10 +215,9 @@ export interface CreateDebugSessionRequest {
 export interface DebugSessionDetailResponse extends DebugSession {
   // Warnings contains non-critical issues or notes about defaults that were applied
   warnings?: string[];
-}
-
-export interface JoinDebugSessionRequest {
-  role?: ParticipantRole;
+  // Whether the current user may approve or reject this session.
+  canApprove?: boolean;
+  canReject?: boolean;
 }
 
 export interface RenewDebugSessionRequest {

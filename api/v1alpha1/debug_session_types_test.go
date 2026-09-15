@@ -18,6 +18,7 @@ package v1alpha1
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,6 +33,7 @@ func TestDebugSessionState(t *testing.T) {
 		{"pending state", DebugSessionStatePending},
 		{"pending approval state", DebugSessionStatePendingApproval},
 		{"active state", DebugSessionStateActive},
+		{"rejected state", DebugSessionStateRejected},
 		{"expired state", DebugSessionStateExpired},
 		{"terminated state", DebugSessionStateTerminated},
 		{"failed state", DebugSessionStateFailed},
@@ -1016,6 +1018,7 @@ func TestDebugSession_InvalidState(t *testing.T) {
 		if session.Status.State == DebugSessionStatePending ||
 			session.Status.State == DebugSessionStatePendingApproval ||
 			session.Status.State == DebugSessionStateActive ||
+			session.Status.State == DebugSessionStateRejected ||
 			session.Status.State == DebugSessionStateExpired ||
 			session.Status.State == DebugSessionStateTerminated ||
 			session.Status.State == DebugSessionStateFailed {
@@ -1466,12 +1469,74 @@ func TestDebugSession_ValidateUpdate(t *testing.T) {
 		},
 	}
 
-	warnings, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
-	if err != nil {
-		t.Errorf("ValidateUpdate() unexpected error: %v", err)
+	_, err := newSession.ValidateUpdate(ctx, oldSession, newSession)
+	if err == nil {
+		t.Fatal("ValidateUpdate() expected error for immutable spec update")
 	}
-	if len(warnings) > 0 {
-		t.Errorf("ValidateUpdate() unexpected warnings: %v", warnings)
+	if !strings.Contains(err.Error(), "spec is immutable") {
+		t.Errorf("ValidateUpdate() expected immutable spec error, got: %v", err)
+	}
+}
+
+func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing.T) {
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			State:     DebugSessionStateExpired,
+			ExpiresAt: &expiredAt,
+		},
+	}
+	resurrected := base.DeepCopy()
+	resurrected.Status.State = DebugSessionStateActive
+	futureExpiry := metav1.NewTime(time.Now().Add(time.Hour))
+	resurrected.Status.ExpiresAt = &futureExpiry
+	resurrected.Status.RenewalCount = 1
+
+	_, err := resurrected.ValidateUpdate(context.Background(), base, resurrected)
+	if err == nil {
+		t.Fatal("expected terminal DebugSession resurrection to be rejected")
+	}
+}
+
+func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{State: DebugSessionStateRejected},
+	}
+	resurrected := base.DeepCopy()
+	resurrected.Status.State = DebugSessionStateActive
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	resurrected.Status.ExpiresAt = &expiresAt
+
+	if _, err := resurrected.ValidateUpdate(context.Background(), base, resurrected); err == nil {
+		t.Fatal("expected rejected DebugSession resurrection to be rejected")
+	}
+}
+
+func TestDebugSessionRejectsActiveStateWithoutExpiry(t *testing.T) {
+	session := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{State: DebugSessionStateActive},
+	}
+	if _, err := session.ValidateCreate(context.Background(), session); err == nil {
+		t.Fatal("expected active creation without expiry to be rejected")
+	}
+
+	addedExpiry := session.DeepCopy()
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	addedExpiry.Status.ExpiresAt = &future
+	if _, err := addedExpiry.ValidateUpdate(context.Background(), session, addedExpiry); err == nil {
+		t.Fatal("expected a missing active expiry to remain missing")
+	}
+
+	failed := session.DeepCopy()
+	failed.Status.State = DebugSessionStateFailed
+	if _, err := failed.ValidateUpdate(context.Background(), session, failed); err != nil {
+		t.Fatalf("expected malformed active session to become failed: %v", err)
 	}
 }
 

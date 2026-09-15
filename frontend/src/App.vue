@@ -21,7 +21,7 @@ const user = useUser();
 const authenticated = computed(() => Boolean(user.value && !user.value?.expired));
 const selectedIDPName = ref<string | undefined>();
 const hasMultipleIDPs = ref(false);
-const showDebugPanel = import.meta.env.DEV === true || import.meta.env.VITE_ENABLE_DEBUG_PANEL === "true";
+const showDebugPanel = import.meta.env.DEV === true;
 
 const route = useRoute();
 const router = useRouter();
@@ -139,6 +139,7 @@ onMounted(() => {
   applyTheme(theme.value);
   applyHighContrast(highContrast.value);
   if (typeof window === "undefined") return;
+  uiFlavour.value = getUIFlavour();
   mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
   mediaQueryHandler = (event: MediaQueryListEvent) => {
     if (highContrast.value || getStoredTheme()) {
@@ -160,6 +161,12 @@ onMounted(() => {
   if (!scaleMobileFlyoutDefined.value && typeof customElements !== "undefined" && "whenDefined" in customElements) {
     void customElements.whenDefined("scale-telekom-nav-flyout").then(() => {
       scaleMobileFlyoutDefined.value = true;
+    });
+  }
+  scaleAppShellDefined.value = isScaleAppShellDefined();
+  if (!scaleAppShellDefined.value && typeof customElements !== "undefined" && "whenDefined" in customElements) {
+    void customElements.whenDefined("scale-telekom-app-shell").then(() => {
+      scaleAppShellDefined.value = true;
     });
   }
 });
@@ -211,7 +218,7 @@ const primaryNavItems: PrimaryNavItem[] = [
   },
   {
     id: "requests",
-    label: "My Pending Requests",
+    label: "My Requests",
     to: { name: "myPendingRequests" },
     matches: ["myPendingRequests"],
   },
@@ -257,6 +264,12 @@ const profileMenuAriaLabel = computed(() => {
   if (groupsRef.value.length) tokens.push(`${groupsRef.value.length} groups`);
   return `${tokens.join(" – ")} menu`;
 });
+const uiFlavour = ref(getUIFlavour());
+const scaleAppShellDefined = ref(isScaleAppShellDefined());
+const appShellOwnsMainLandmark = computed(
+  () => scaleAppShellDefined.value && uiFlavour.value !== "oss" && uiFlavour.value !== "neutral",
+);
+const mainLandmarkRole = computed(() => (appShellOwnsMainLandmark.value ? undefined : "main"));
 
 const profileMenuCloseLabel = computed(() => `Close ${profileMenuLabel.value} menu`);
 
@@ -323,6 +336,15 @@ function isScaleMobileFlyoutDefined() {
   return typeof customElements !== "undefined" && customElements.get("scale-telekom-nav-flyout") != null;
 }
 
+function isScaleAppShellDefined() {
+  return typeof customElements !== "undefined" && customElements.get("scale-telekom-app-shell") != null;
+}
+
+function getUIFlavour() {
+  if (typeof document === "undefined") return "oss";
+  return document.documentElement.getAttribute("data-ui-flavour") ?? "oss";
+}
+
 function toggleMobileNav() {
   if (scaleMobileFlyoutDefined.value) {
     // Scale owns hydrated flyout toggling through trigger-selector; scale-expanded mirrors state back.
@@ -351,18 +373,18 @@ async function refreshGroups() {
     const at = await auth?.getAccessToken();
     if (at) {
       const decoded = decodeJwt(at);
-      debug("App", "refreshGroups: Decoded access token keys:", Object.keys(decoded));
-      debug("App", "refreshGroups: Full decoded access token:", decoded);
 
       // Extract groups from various possible locations
       const realmAccess = decoded?.realm_access as Record<string, unknown> | undefined;
       let g: unknown = decoded?.groups || decoded?.group || realmAccess?.roles || [];
-      debug("App", "refreshGroups: Extracted groups from token:", g);
+      debug("App", "refreshGroups: Extracted groups from token", {
+        groupsCount: Array.isArray(g) ? g.length : typeof g === "string" ? 1 : 0,
+      });
 
       if (typeof g === "string") g = [g];
       if (Array.isArray(g)) groupsRef.value = g as string[];
       else groupsRef.value = [];
-      debug("App", "refreshGroups: Final groups from access token:", groupsRef.value);
+      debug("App", "refreshGroups: Final groups from access token", { groupsCount: groupsRef.value.length });
 
       // Also extract IDP info from token if available
       if (decoded?.iss) {
@@ -379,16 +401,17 @@ async function refreshGroups() {
   // Fallback to user profile claims
   const claims: Record<string, unknown> = (user.value?.profile as Record<string, unknown>) || {};
   debug("App", "refreshGroups: User profile available:", !!user.value?.profile);
-  debug("App", "refreshGroups: User profile keys:", Object.keys(claims));
-  debug("App", "refreshGroups: User profile claims:", claims);
+  debug("App", "refreshGroups: User profile claim keys:", Object.keys(claims));
 
   const claimsRealmAccess = claims["realm_access"] as Record<string, unknown> | undefined;
   let g: unknown = claims["groups"] || claims["group"] || claimsRealmAccess?.roles || [];
-  debug("App", "refreshGroups: Extracted groups from user profile:", g);
+  debug("App", "refreshGroups: Extracted groups from user profile", {
+    groupsCount: Array.isArray(g) ? g.length : typeof g === "string" ? 1 : 0,
+  });
 
   if (typeof g === "string") g = [g];
   groupsRef.value = Array.isArray(g) ? g : [];
-  debug("App", "refreshGroups: Final groups from user profile:", groupsRef.value);
+  debug("App", "refreshGroups: Final groups from user profile", { groupsCount: groupsRef.value.length });
 }
 
 onMounted(refreshGroups);
@@ -661,7 +684,7 @@ watch(
         </div>
       </scale-telekom-header>
 
-      <div id="main" class="app-container" role="main" tabindex="-1">
+      <div id="main" class="app-container" :role="mainLandmarkRole" tabindex="-1">
         <h1 class="sr-only">{{ brandingTitle }}</h1>
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->

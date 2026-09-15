@@ -30,6 +30,16 @@ var (
 		Name: "breakglass_cluster_cache_misses_total",
 		Help: "Total number of cluster config cache misses",
 	}, []string{"cluster"})
+	// ClusterCacheAmbiguous counts cluster-name lookups that failed closed because
+	// more than one ClusterConfig carries the requested metadata.name. `source`
+	// distinguishes where the duplicate was seen: "cache" (two cached entries from
+	// different namespaces) or "list" (two live objects returned by the API server).
+	// Any non-zero value means cluster-wide name uniqueness has been violated and
+	// name-based lookups — including the authorization webhook path — are failing.
+	ClusterCacheAmbiguous = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_cluster_cache_ambiguous_total",
+		Help: "Total number of cluster config lookups rejected because the name resolved to multiple ClusterConfigs",
+	}, []string{"cluster", "source"})
 	ClusterRESTConfigLoaded = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_cluster_rest_config_loaded_total",
 		Help: "Total number of successful REST config loads",
@@ -108,6 +118,47 @@ var (
 		Name: "breakglass_webhook_sar_decisions_total",
 		Help: "Counts of SAR decisions (allowed/denied) grouped by cluster and source",
 	}, []string{"cluster", "decision", "deny_source"})
+	// === Constrained impersonation (KEP-5284) ===
+	// These mirror the API server's own impersonation metrics (which carry
+	// {mode, decision} labels) so that a breakglass decision can be correlated with
+	// apiserver_impersonation_authorization_attempts_total for the same request.
+	ImpersonationSARRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_sar_requests_total",
+		Help: "SubjectAccessReviews concerning impersonation, by constrained-impersonation mode and verb kind (identity/action/legacy-impersonate/malformed)",
+	}, []string{"cluster", "mode", "verb_kind"})
+	ImpersonationSARDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_sar_decisions_total",
+		Help: "Impersonation authorization decisions by cluster, mode, decision and source",
+	}, []string{"cluster", "mode", "decision", "source"})
+	// Unrecognised impersonation verbs are the security-critical case: a webhook
+	// that allows them silently grants constrained impersonation. Alert on the
+	// "allowed" series, and treat any "denied" series as a signal that breakglass
+	// is older than the spoke's API server.
+	ImpersonationUnrecognisedVerbs = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_unrecognised_verbs_total",
+		Help: "Impersonation verbs the webhook could not parse, by resulting outcome",
+	}, []string{"cluster", "outcome"})
+	// Legacy fallback usage. A blanket `impersonate` grant wins by fallback and
+	// silently defeats constrained rules, so this is the migration progress metric.
+	ImpersonationLegacyFallback = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_legacy_fallback_total",
+		Help: "Uses of legacy (unconstrained) impersonation, by the cluster's legacyFallback policy outcome (allowed/warned/denied)",
+	}, []string{"cluster", "outcome"})
+	ImpersonationDenyPolicyErrors = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_deny_policy_errors_total",
+		Help: "Failures evaluating DenyPolicy impersonationRules (request denied fail-closed)",
+	}, []string{"cluster"})
+	// Per-spoke capability, so operators can see which spokes are still on the
+	// legacy path. 1 for the active state, 0 otherwise.
+	ImpersonationCapability = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_impersonation_capability",
+		Help: "Per-spoke constrained-impersonation capability (1 for the active support level: supported/unsupported/unknown)",
+	}, []string{"cluster", "support"})
+	ImpersonationDowngrades = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_impersonation_downgrades_total",
+		Help: "Times a constrained impersonation request was downgraded to legacy because the spoke lacks capability",
+	}, []string{"cluster", "requested_mode"})
+
 	WebhookSessionSARsAllowed = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_webhook_session_sar_allowed_total",
 		Help: "Total number of session SAR checks that returned allowed",
@@ -375,6 +426,23 @@ var (
 		Help: "Number of IDPs allowed for an escalation",
 	}, []string{"escalation"})
 
+	// ApprovalGroupLookupFailures counts cluster-side approver group lookups that
+	// failed during approval authorization. Every increment means at least one
+	// approval decision lost its cluster-verified group basis. Alert on this.
+	ApprovalGroupLookupFailures = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_approval_group_lookup_failures_total",
+		Help: "Total cluster-side approver group lookup failures during approval authorization",
+	}, []string{"cluster"})
+
+	// ApprovalUnverifiedGroupDecisions counts approvals that were GRANTED on the
+	// basis of unverified (JWT-claim) approver groups because the cluster-side
+	// lookup failed. This is the security-relevant subset of
+	// ApprovalGroupLookupFailures: the fallback was load-bearing for the outcome.
+	ApprovalUnverifiedGroupDecisions = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_approval_unverified_group_decisions_total",
+		Help: "Total approval authorizations granted using unverified JWT-claim groups after a cluster group lookup failure",
+	}, []string{"cluster"})
+
 	// Frontend API endpoint metrics
 	APIEndpointRequests = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_api_endpoint_requests_total",
@@ -466,6 +534,15 @@ var (
 	DebugSessionRejected = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_debug_session_rejected_total",
 		Help: "Total debug sessions rejected",
+	}, []string{"cluster", "reason"})
+	// DebugSessionBindingUnresolved counts DebugSessions whose explicit bindingRef could
+	// not be resolved. The binding carries the approver configuration, so the approval
+	// requirement is indeterminate and activation is deferred (requeued) rather than
+	// falling back to auto-discovery. A non-zero rate means sessions are stalled waiting
+	// on a binding — alert on it.
+	DebugSessionBindingUnresolved = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_debug_session_binding_unresolved_total",
+		Help: "Total debug session reconciles where an explicit bindingRef could not be resolved",
 	}, []string{"cluster", "reason"})
 
 	// Auxiliary resource metrics
@@ -595,6 +672,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ClusterConfigsDeleted)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheHits)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheMisses)
+	ctrlmetrics.Registry.MustRegister(ClusterCacheAmbiguous)
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigLoaded)
 	ctrlmetrics.Registry.MustRegister(ClusterRESTConfigErrors)
 	ctrlmetrics.Registry.MustRegister(ClusterCacheInvalidations)
@@ -617,6 +695,13 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(WebhookSARAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDenied)
 	ctrlmetrics.Registry.MustRegister(WebhookSARDecisions)
+	ctrlmetrics.Registry.MustRegister(ImpersonationSARRequests)
+	ctrlmetrics.Registry.MustRegister(ImpersonationSARDecisions)
+	ctrlmetrics.Registry.MustRegister(ImpersonationUnrecognisedVerbs)
+	ctrlmetrics.Registry.MustRegister(ImpersonationLegacyFallback)
+	ctrlmetrics.Registry.MustRegister(ImpersonationDenyPolicyErrors)
+	ctrlmetrics.Registry.MustRegister(ImpersonationCapability)
+	ctrlmetrics.Registry.MustRegister(ImpersonationDowngrades)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsAllowed)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARsDenied)
 	ctrlmetrics.Registry.MustRegister(WebhookSessionSARErrors)
@@ -688,6 +773,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(SessionApprovedWithIDP)
 	ctrlmetrics.Registry.MustRegister(EscalationIDPAuthorizationChecks)
 	ctrlmetrics.Registry.MustRegister(EscalationAllowedIDPsCount)
+	ctrlmetrics.Registry.MustRegister(ApprovalGroupLookupFailures)
+	ctrlmetrics.Registry.MustRegister(ApprovalUnverifiedGroupDecisions)
 
 	// Register frontend API metrics
 	ctrlmetrics.Registry.MustRegister(APIEndpointRequests)
@@ -715,6 +802,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(DebugSessionApprovalRequired)
 	ctrlmetrics.Registry.MustRegister(DebugSessionApproved)
 	ctrlmetrics.Registry.MustRegister(DebugSessionRejected)
+	ctrlmetrics.Registry.MustRegister(DebugSessionBindingUnresolved)
 
 	// Register auxiliary resource metrics
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceDeployments)

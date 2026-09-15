@@ -23,6 +23,10 @@ type DebugSessionParticipantApplyConfiguration struct {
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.
 	Email *string `json:"email,omitempty"`
+	// identityProviderName identifies the provider that authenticated the participant.
+	IdentityProviderName *string `json:"identityProviderName,omitempty"`
+	// identityProviderIssuer identifies the issuer that authenticated the participant.
+	IdentityProviderIssuer *string `json:"identityProviderIssuer,omitempty"`
 	// displayName is the human-readable name of the participant (from OIDC "name" claim).
 	DisplayName *string `json:"displayName,omitempty"`
 	// role is the participant's role (owner or participant).
@@ -52,6 +56,22 @@ func (b *DebugSessionParticipantApplyConfiguration) WithUser(value string) *Debu
 // If called multiple times, the Email field is set to the value of the last call.
 func (b *DebugSessionParticipantApplyConfiguration) WithEmail(value string) *DebugSessionParticipantApplyConfiguration {
 	b.Email = &value
+	return b
+}
+
+// WithIdentityProviderName sets the IdentityProviderName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdentityProviderName field is set to the value of the last call.
+func (b *DebugSessionParticipantApplyConfiguration) WithIdentityProviderName(value string) *DebugSessionParticipantApplyConfiguration {
+	b.IdentityProviderName = &value
+	return b
+}
+
+// WithIdentityProviderIssuer sets the IdentityProviderIssuer field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the IdentityProviderIssuer field is set to the value of the last call.
+func (b *DebugSessionParticipantApplyConfiguration) WithIdentityProviderIssuer(value string) *DebugSessionParticipantApplyConfiguration {
+	b.IdentityProviderIssuer = &value
 	return b
 }
 

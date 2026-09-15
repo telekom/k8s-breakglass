@@ -54,6 +54,9 @@ func applyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Client, a
 func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
 	applyConfig := ac.BreakglassSession(session.Name, session.Namespace).
 		WithStatus(BreakglassSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -62,6 +65,9 @@ func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session 
 func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
 }
@@ -167,8 +173,14 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 	if status.Approver != "" {
 		result.WithApprover(status.Approver)
 	}
+	if status.ApproverIdentityProvider != "" {
+		result.WithApproverIdentityProvider(status.ApproverIdentityProvider)
+	}
 	if len(status.Approvers) > 0 {
 		result.WithApprovers(status.Approvers...)
+	}
+	if status.ApproverIdentityProviders != nil {
+		result.WithApproverIdentityProviders(status.ApproverIdentityProviders...)
 	}
 	if status.ApprovalReason != "" {
 		result.WithApprovalReason(status.ApprovalReason)
@@ -223,9 +235,30 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		result.WithDeployedResources(DeployedResourceRefFrom(&status.DeployedResources[i]))
 	}
 
+	// Set auxiliary resource statuses
+	if status.AuxiliaryResourceStatuses != nil {
+		result.AuxiliaryResourceStatuses = []ac.AuxiliaryResourceStatusApplyConfiguration{}
+	}
+	for i := range status.AuxiliaryResourceStatuses {
+		result.WithAuxiliaryResourceStatuses(AuxiliaryResourceStatusFrom(&status.AuxiliaryResourceStatuses[i]))
+	}
+
+	// Set pod template resource statuses
+	if status.PodTemplateResourceStatuses != nil {
+		result.PodTemplateResourceStatuses = []ac.PodTemplateResourceStatusApplyConfiguration{}
+	}
+	for i := range status.PodTemplateResourceStatuses {
+		result.WithPodTemplateResourceStatuses(PodTemplateResourceStatusFrom(&status.PodTemplateResourceStatuses[i]))
+	}
+
 	// Set allowed pods
 	for i := range status.AllowedPods {
 		result.WithAllowedPods(AllowedPodRefFrom(&status.AllowedPods[i]))
+	}
+
+	// Set resolved pod operations used by the authorization webhook
+	if status.AllowedPodOperations != nil {
+		result.WithAllowedPodOperations(AllowedPodOperationsFrom(status.AllowedPodOperations))
 	}
 
 	// Set kubectl debug status
@@ -264,6 +297,15 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	// Set resolved binding
 	if status.ResolvedBinding != nil {
 		result.WithResolvedBinding(ResolvedBindingRefFrom(status.ResolvedBinding))
+	}
+	if status.ResolvedBindingSnapshotCaptured {
+		result.WithResolvedBindingSnapshotCaptured(true)
+	}
+	if status.ResolvedBindingSpec != nil {
+		result.WithResolvedBindingSpec(*status.ResolvedBindingSpec.DeepCopy())
+	}
+	if status.ResolvedPodTemplate != nil {
+		result.WithResolvedPodTemplate(*status.ResolvedPodTemplate.DeepCopy())
 	}
 
 	return result
@@ -329,6 +371,10 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 
 	result := ac.DebugSessionTemplateStatus()
 
+	if status.ObservedGeneration > 0 {
+		result.WithObservedGeneration(status.ObservedGeneration)
+	}
+
 	// Set conditions
 	for i := range status.Conditions {
 		result.WithConditions(ConditionFrom(&status.Conditions[i]))
@@ -337,6 +383,13 @@ func DebugSessionTemplateStatusFrom(status *breakglassv1alpha1.DebugSessionTempl
 	// Always set active session count — zero is a meaningful value that SSA
 	// must declare so the patchHelper can detect decrements back to 0.
 	result.WithActiveSessionCount(status.ActiveSessionCount)
+	result.WithPendingSessionCount(status.PendingSessionCount)
+	result.WithTotalSessionCount(status.TotalSessionCount)
+	result.WithPodTemplateResolved(status.PodTemplateResolved)
+	result.WithBindingCount(status.BindingCount)
+	if status.BoundClusters != nil {
+		result.BoundClusters = append([]string{}, status.BoundClusters...)
+	}
 
 	// Set last used at
 	if status.LastUsedAt != nil && !status.LastUsedAt.IsZero() {
@@ -444,11 +497,17 @@ func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.De
 	if a.ApprovedBy != "" {
 		result.WithApprovedBy(a.ApprovedBy)
 	}
+	if a.ApprovedByIdentityProvider != "" {
+		result.WithApprovedByIdentityProvider(a.ApprovedByIdentityProvider)
+	}
 	if a.ApprovedAt != nil {
 		result.WithApprovedAt(*a.ApprovedAt)
 	}
 	if a.RejectedBy != "" {
 		result.WithRejectedBy(a.RejectedBy)
+	}
+	if a.RejectedByIdentityProvider != "" {
+		result.WithRejectedByIdentityProvider(a.RejectedByIdentityProvider)
 	}
 	if a.RejectedAt != nil {
 		result.WithRejectedAt(*a.RejectedAt)
@@ -475,6 +534,12 @@ func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) 
 	}
 	if p.DisplayName != "" {
 		result.WithDisplayName(p.DisplayName)
+	}
+	if p.IdentityProviderName != "" {
+		result.WithIdentityProviderName(p.IdentityProviderName)
+	}
+	if p.IdentityProviderIssuer != "" {
+		result.WithIdentityProviderIssuer(p.IdentityProviderIssuer)
 	}
 	if p.LeftAt != nil {
 		result.WithLeftAt(*p.LeftAt)
@@ -511,8 +576,17 @@ func DeployedResourceRefFrom(r *breakglassv1alpha1.DeployedResourceRef) *ac.Depl
 		WithKind(r.Kind).
 		WithName(r.Name)
 
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
+	}
 	if r.Namespace != "" {
 		result.WithNamespace(r.Namespace)
+	}
+	if r.Source != "" {
+		result.WithSource(r.Source)
+	}
+	if r.UID != "" {
+		result.WithUID(r.UID)
 	}
 
 	return result
@@ -531,6 +605,9 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 	if p.NodeName != "" {
 		result.WithNodeName(p.NodeName)
 	}
+	if p.UID != "" {
+		result.WithUID(p.UID)
+	}
 	if p.Phase != "" {
 		result.WithPhase(p.Phase)
 	}
@@ -538,6 +615,153 @@ func AllowedPodRefFrom(p *breakglassv1alpha1.AllowedPodRef) *ac.AllowedPodRefApp
 		result.WithContainerStatus(PodContainerStatusFrom(p.ContainerStatus))
 	}
 
+	return result
+}
+
+// AllowedPodOperationsFrom converts an AllowedPodOperations to its ApplyConfiguration.
+func AllowedPodOperationsFrom(o *breakglassv1alpha1.AllowedPodOperations) *ac.AllowedPodOperationsApplyConfiguration {
+	if o == nil {
+		return nil
+	}
+	result := ac.AllowedPodOperations()
+	if o.Exec != nil {
+		result.WithExec(*o.Exec)
+	}
+	if o.Attach != nil {
+		result.WithAttach(*o.Attach)
+	}
+	if o.Logs != nil {
+		result.WithLogs(*o.Logs)
+	}
+	if o.PortForward != nil {
+		result.WithPortForward(*o.PortForward)
+	}
+	return result
+}
+
+// AuxiliaryResourceStatusFrom converts an AuxiliaryResourceStatus to its ApplyConfiguration.
+func AuxiliaryResourceStatusFrom(s *breakglassv1alpha1.AuxiliaryResourceStatus) *ac.AuxiliaryResourceStatusApplyConfiguration {
+	if s == nil {
+		return nil
+	}
+	result := ac.AuxiliaryResourceStatus().
+		WithName(s.Name).
+		WithCreated(s.Created).
+		WithReady(s.Ready).
+		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
+
+	if s.Category != "" {
+		result.WithCategory(s.Category)
+	}
+	if s.Kind != "" {
+		result.WithKind(s.Kind)
+	}
+	if s.APIVersion != "" {
+		result.WithAPIVersion(s.APIVersion)
+	}
+	if s.ResourceName != "" {
+		result.WithResourceName(s.ResourceName)
+	}
+	if s.Namespace != "" {
+		result.WithNamespace(s.Namespace)
+	}
+	if s.CreatedAt != nil {
+		result.WithCreatedAt(*s.CreatedAt)
+	}
+	if s.ReadyAt != nil {
+		result.WithReadyAt(*s.ReadyAt)
+	}
+	if s.ReadinessStatus != "" {
+		result.WithReadinessStatus(s.ReadinessStatus)
+	}
+	if s.DeletedAt != nil {
+		result.WithDeletedAt(*s.DeletedAt)
+	}
+	result.WithError(s.Error)
+	for i := range s.AdditionalResources {
+		result.WithAdditionalResources(AdditionalResourceRefFrom(&s.AdditionalResources[i]))
+	}
+
+	return result
+}
+
+// AdditionalResourceRefFrom converts an AdditionalResourceRef to its ApplyConfiguration.
+func AdditionalResourceRefFrom(r *breakglassv1alpha1.AdditionalResourceRef) *ac.AdditionalResourceRefApplyConfiguration {
+	if r == nil {
+		return nil
+	}
+	result := ac.AdditionalResourceRef().
+		WithKind(r.Kind).
+		WithAPIVersion(r.APIVersion).
+		WithResourceName(r.ResourceName).
+		WithReady(r.Ready).
+		WithDeleted(r.Deleted)
+	if r.CreateOperationID != "" {
+		result.WithCreateOperationID(r.CreateOperationID)
+	}
+	if r.UID != "" {
+		result.WithUID(r.UID)
+	}
+
+	if r.Namespace != "" {
+		result.WithNamespace(r.Namespace)
+	}
+	if r.ReadinessStatus != "" {
+		result.WithReadinessStatus(r.ReadinessStatus)
+	}
+	result.WithError(r.Error)
+	return result
+}
+
+// PodTemplateResourceStatusFrom converts a PodTemplateResourceStatus to its ApplyConfiguration.
+func PodTemplateResourceStatusFrom(s *breakglassv1alpha1.PodTemplateResourceStatus) *ac.PodTemplateResourceStatusApplyConfiguration {
+	if s == nil {
+		return nil
+	}
+	result := ac.PodTemplateResourceStatus().
+		WithCreated(s.Created).
+		WithReady(s.Ready).
+		WithDeleted(s.Deleted)
+	if s.CreateOperationID != "" {
+		result.WithCreateOperationID(s.CreateOperationID)
+	}
+	if s.UID != "" {
+		result.WithUID(s.UID)
+	}
+	if s.Kind != "" {
+		result.WithKind(s.Kind)
+	}
+	if s.APIVersion != "" {
+		result.WithAPIVersion(s.APIVersion)
+	}
+	if s.ResourceName != "" {
+		result.WithResourceName(s.ResourceName)
+	}
+	if s.Namespace != "" {
+		result.WithNamespace(s.Namespace)
+	}
+	if s.Source != "" {
+		result.WithSource(s.Source)
+	}
+	if s.CreatedAt != nil {
+		result.WithCreatedAt(*s.CreatedAt)
+	}
+	if s.ReadyAt != nil {
+		result.WithReadyAt(*s.ReadyAt)
+	}
+	if s.ReadinessStatus != "" {
+		result.WithReadinessStatus(s.ReadinessStatus)
+	}
+	if s.DeletedAt != nil {
+		result.WithDeletedAt(*s.DeletedAt)
+	}
+	result.WithError(s.Error)
 	return result
 }
 
@@ -577,6 +801,9 @@ func KubectlDebugStatusFrom(k *breakglassv1alpha1.KubectlDebugStatus) *ac.Kubect
 	for i := range k.CopiedPods {
 		result.WithCopiedPods(CopiedPodRefFrom(&k.CopiedPods[i]))
 	}
+	for i := range k.Operations {
+		result.WithOperations(KubectlDebugOperationFrom(&k.Operations[i]))
+	}
 
 	return result
 }
@@ -593,6 +820,9 @@ func EphemeralContainerRefFrom(e *breakglassv1alpha1.EphemeralContainerRef) *ac.
 		WithImage(e.Image).
 		WithInjectedAt(e.InjectedAt).
 		WithInjectedBy(e.InjectedBy)
+	if e.PodUID != "" {
+		result.WithPodUID(e.PodUID)
+	}
 
 	return result
 }
@@ -608,12 +838,74 @@ func CopiedPodRefFrom(c *breakglassv1alpha1.CopiedPodRef) *ac.CopiedPodRefApplyC
 		WithCopyName(c.CopyName).
 		WithCopyNamespace(c.CopyNamespace).
 		WithCreatedAt(c.CreatedAt)
+	if c.UID != "" {
+		result.WithUID(c.UID)
+	}
+	if c.CopyUID != "" {
+		result.WithCopyUID(c.CopyUID)
+	}
 
 	if c.ExpiresAt != nil {
 		result.WithExpiresAt(*c.ExpiresAt)
 	}
-
 	return result
+}
+
+// KubectlDebugOperationFrom converts a KubectlDebugOperation to its ApplyConfiguration.
+func KubectlDebugOperationFrom(o *breakglassv1alpha1.KubectlDebugOperation) *ac.KubectlDebugOperationApplyConfiguration {
+	if o == nil {
+		return nil
+	}
+	result := ac.KubectlDebugOperation().
+		WithID(o.ID).
+		WithKind(o.Kind).
+		WithState(o.State).
+		WithTargetPod(KubectlDebugOperationTargetPodFrom(&o.TargetPod)).
+		WithEphemeralContainer(KubectlDebugEphemeralContainerIntentFrom(&o.EphemeralContainer)).
+		WithRequestedBy(o.RequestedBy).
+		WithPreparedAt(o.PreparedAt)
+	if o.RequestedByEmail != "" {
+		result.WithRequestedByEmail(o.RequestedByEmail)
+	}
+	if o.IdentityProviderName != "" {
+		result.WithIdentityProviderName(o.IdentityProviderName)
+	}
+	if o.IdentityProviderIssuer != "" {
+		result.WithIdentityProviderIssuer(o.IdentityProviderIssuer)
+	}
+	if o.CompletedAt != nil {
+		result.WithCompletedAt(*o.CompletedAt)
+	}
+	if o.Message != "" {
+		result.WithMessage(o.Message)
+	}
+	return result
+}
+
+// KubectlDebugOperationTargetPodFrom converts a KubectlDebugOperationTargetPod.
+func KubectlDebugOperationTargetPodFrom(p *breakglassv1alpha1.KubectlDebugOperationTargetPod) *ac.KubectlDebugOperationTargetPodApplyConfiguration {
+	if p == nil {
+		return nil
+	}
+	return ac.KubectlDebugOperationTargetPod().
+		WithNamespace(p.Namespace).
+		WithName(p.Name).
+		WithUID(p.UID)
+}
+
+// KubectlDebugEphemeralContainerIntentFrom converts a KubectlDebugEphemeralContainerIntent.
+func KubectlDebugEphemeralContainerIntentFrom(e *breakglassv1alpha1.KubectlDebugEphemeralContainerIntent) *ac.KubectlDebugEphemeralContainerIntentApplyConfiguration {
+	if e == nil {
+		return nil
+	}
+	return ac.KubectlDebugEphemeralContainerIntent().
+		WithName(e.Name).
+		WithImage(e.Image).
+		WithCommand(e.Command...).
+		WithContainerDigest(e.ContainerDigest).
+		WithSecurityContextDigest(e.SecurityContextDigest).
+		WithTTY(e.TTY).
+		WithStdin(e.Stdin)
 }
 
 // DebugSessionTemplateSpecFrom converts a DebugSessionTemplateSpec to its ApplyConfiguration.
@@ -719,6 +1011,9 @@ func DebugPodSpecOverridesFrom(s *breakglassv1alpha1.DebugPodSpecOverrides) *ac.
 		return nil
 	}
 	result := ac.DebugPodSpecOverrides()
+	if len(s.NodeSelector) > 0 {
+		result.WithNodeSelector(s.NodeSelector)
+	}
 	if s.HostNetwork != nil {
 		result.WithHostNetwork(*s.HostNetwork)
 	}
@@ -740,6 +1035,14 @@ func DebugContainerOverrideFrom(c *breakglassv1alpha1.DebugContainerOverride) *a
 		return nil
 	}
 	result := ac.DebugContainerOverride().WithName(c.Name)
+	if c.Command != nil {
+		result.Command = make([]string, len(c.Command))
+		copy(result.Command, c.Command)
+	}
+	if c.Args != nil {
+		result.Args = make([]string, len(c.Args))
+		copy(result.Args, c.Args)
+	}
 	if c.SecurityContext != nil {
 		result.WithSecurityContext(*c.SecurityContext)
 	}

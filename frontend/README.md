@@ -6,12 +6,13 @@ state management.
 
 ## Prerequisites
 
-- **Node.js** 24.11.0 or newer
+- **Node.js** 24.15.0 or newer within the Node 24 release line, or 26.0.0 or newer
 - **npm** ≥ 9
 
-Node.js 24.11.0 is the supported project baseline for the current frontend
-toolchain and CI. Some transitive packages advertise lower engine ranges, but
-the Playwright/Vite test stack is validated on Node.js 24.11.0 or newer.
+Node.js `^24.15.0 || >=26.0.0` is the supported range for the current
+frontend toolchain and CI. Node 25 is intentionally not included. The existing
+dependency lockfile requires Node.js 24.15.0 for its supported Node 24 release
+line, while its dependency engine ranges also support Node 26 and newer.
 
 ## IDE Setup
 
@@ -56,6 +57,14 @@ The frontend proxies `http://localhost:5173/api/*` traffic to `http://localhost:
 changes you make to Vue components or the mock data refresh instantly without rebuilding a
 container. The mock backend preloads sample breakglass escalations, sessions, and multi-IDP data
 so you can tweak UI layouts WYSIWYG-style.
+The production Keycloak mock profile uses `mock.user@breakglass.dev`, matching the mock API's
+current user so owner-only debug session controls are visible in the local UI.
+
+`frontend/mock-api/` is an optional standalone Node development fixture server. It uses synthetic
+in-memory records and a fixed mock user, performs no Kubernetes operations, and is not included in
+the production runtime image. Its fabricated approval, injection, and pod-copy responses exercise
+UI layouts only; use synthetic data and keep the mock server reachable only from trusted local
+development environments. Scale testing is bounded to 1,000 generated records.
 
 ### Switching UI flavours locally
 
@@ -114,9 +123,16 @@ Edit `frontend/mock-api/data.mjs` if you want to pin additional permutations. Th
 Express server automatically after each save.
 
 > **Node version**: The built-in `node --watch` flag only requires Node.js **18.11.0 or newer**, but this project requires
-> Node.js **24.11.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
+> Node.js **24.15.0 through Node 24**, or **26.0.0 or newer**. Use the project baseline when running `npm run mock-api` or `npm run dev:mock`.
 
 ### Type-Check, Compile and Minify for Production
+
+TypeScript 7 does not yet expose the stable programmatic API required by
+`vue-tsc` and `typescript-eslint`. The frontend therefore installs the native
+TypeScript 7 compiler as `@typescript/native` while the `typescript` package
+name points to the supported `@typescript/typescript6` compatibility package.
+`npm run typecheck` checks Vue source with TypeScript 6 and the Node-based Vite
+and Vitest configuration with TypeScript 7.
 
 ## UI E2E tests
 
@@ -131,6 +147,7 @@ npm run build
 
 ```sh
 npm run lint
+npm run lint:fix
 ```
 
 ### Accessibility Testing
@@ -143,6 +160,10 @@ npx playwright test --config=playwright.a11y.config.ts
 
 This runs axe-core audits against all primary pages, error pages, and modals in four theme modes (light, dark, high contrast, high contrast dark). The tests use the mock dev server.
 
+Dynamic session result counts are exposed through polite, atomic status regions
+so filter changes on session, debug-session, approval, and review list pages
+are announced without interrupting the current screen-reader task.
+
 See `frontend/SCALE_DEVIATIONS.md` for documented contrast deviations from the Scale Design System and their rationale.
 
 ### Screenshot Testing
@@ -152,6 +173,8 @@ Visual regression screenshots are captured with Playwright:
 ```sh
 npm run test:screenshots:update
 ```
+
+The responsive screenshot set includes mobile Debug Session browser and detail routes, with browser assertions that the document and body do not overflow horizontally at the mobile viewport width.
 
 The `UI Screenshots` GitHub Actions workflow uploads the screenshot gallery and Playwright report even when generation fails, then fails the job after diagnostics are available. A passing workflow therefore means the screenshots were generated successfully.
 

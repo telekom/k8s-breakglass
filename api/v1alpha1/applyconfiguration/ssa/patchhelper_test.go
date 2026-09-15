@@ -155,6 +155,8 @@ func TestPatchApplyBreakglassSessionStatus_Changed(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, PatchApplyResultPatched, result)
 
+	// Observe the committed predecessor version before the next transition.
+	require.NoError(t, c.Get(context.Background(), client.ObjectKeyFromObject(session), session))
 	// Change status — should patch again.
 	session.Status.State = breakglassv1alpha1.SessionStateApproved
 	result, err = PatchApplyBreakglassSessionStatus(context.Background(), c, session)

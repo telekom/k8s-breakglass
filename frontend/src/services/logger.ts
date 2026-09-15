@@ -12,6 +12,16 @@ function isDevRuntime(): boolean {
     typeof globalThis !== "undefined"
       ? (globalThis as unknown as Record<string, Record<string, Record<string, string>>>)?.process?.env?.NODE_ENV
       : undefined;
+  if (nodeEnv === "production") {
+    return false;
+  }
+  const viteEnv = import.meta.env;
+  if (typeof viteEnv?.PROD === "boolean") {
+    return !viteEnv.PROD;
+  }
+  if (typeof viteEnv?.MODE === "string") {
+    return viteEnv.MODE !== "production";
+  }
   if (typeof nodeEnv === "string") {
     return nodeEnv !== "production";
   }
@@ -34,27 +44,42 @@ function parseBooleanFlag(value: string | null | undefined): boolean | null {
   return null;
 }
 
-function readStoredDebugFlag(): boolean | null {
-  if (typeof window === "undefined" || !window.localStorage) return null;
+function getLocalStorage(): Storage | undefined {
+  if (typeof window === "undefined") return undefined;
   try {
-    const stored = window.localStorage.getItem(DEBUG_STORAGE_KEY);
+    return window.localStorage;
+  } catch {
+    // localStorage unavailable (SSR, sandboxed iframe) — cannot read or persist flag
+    return undefined;
+  }
+}
+
+function readStoredDebugFlag(): boolean | null {
+  if (!isDevRuntime()) return null;
+  const storage = getLocalStorage();
+  if (!storage) return null;
+  try {
+    const stored = storage.getItem(DEBUG_STORAGE_KEY);
     return parseBooleanFlag(stored);
   } catch {
-    // localStorage unavailable (SSR, sandboxed iframe) — cannot read flag
+    // localStorage read failed — cannot read flag
     return null;
   }
 }
 
 function persistDebugFlag(enabled: boolean) {
-  if (typeof window === "undefined" || !window.localStorage) return;
+  if (!isDevRuntime()) return;
+  const storage = getLocalStorage();
+  if (!storage) return;
   try {
-    window.localStorage.setItem(DEBUG_STORAGE_KEY, String(enabled));
+    storage.setItem(DEBUG_STORAGE_KEY, String(enabled));
   } catch {
     // localStorage write failed (quota, disabled) — non-critical
   }
 }
 
 function readQueryDebugFlag(): boolean | null {
+  if (!isDevRuntime()) return null;
   if (typeof window === "undefined") return null;
   try {
     const params = new URLSearchParams(window.location.search);
@@ -97,20 +122,6 @@ export function setDebugLoggingEnabled(enabled: boolean, source = "manual") {
 
 export function toggleDebugLogging(source = "manual toggle") {
   setDebugLoggingEnabled(!debugEnabled, source);
-}
-
-export function exposeDebugControls() {
-  if (typeof window === "undefined") return;
-  const w = window as unknown as Record<string, unknown>;
-  w.breakglassDebug = {
-    enable: () => setDebugLoggingEnabled(true, "window helper"),
-    disable: () => setDebugLoggingEnabled(false, "window helper"),
-    toggle: () => toggleDebugLogging("window helper toggle"),
-    status: () => isDebugLoggingEnabled(),
-  };
-  if (debugEnabled) {
-    announceDebugStatus("initial load");
-  }
 }
 
 export function debug(tag: string, ...args: unknown[]) {
@@ -199,7 +210,7 @@ export default {
   action,
   stateChange,
   handleAxiosError,
-  exposeDebugControls,
+
   setDebugLoggingEnabled,
   toggleDebugLogging,
   isDebugLoggingEnabled,

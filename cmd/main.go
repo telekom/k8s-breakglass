@@ -10,20 +10,6 @@ import (
 	"time"
 
 	"github.com/go-logr/zapr"
-	"go.uber.org/zap"
-
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/kubernetes"
-	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/leaderelection/resourcelock"
-	"k8s.io/client-go/tools/record"
-
-	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
@@ -45,6 +31,17 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/telemetry"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
+	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // RBAC markers for resources managed by non-reconciler components (cleanup, API handlers, etc.)
@@ -82,7 +79,7 @@ func main() {
 // 1. MONOLITHIC (default):
 //
 //	All components run in a single instance. Use defaults or:
-//	breakglass-controller
+//	breakglass-controller --breakglass-namespace=breakglass-system
 //
 // 2. WEBHOOK-ONLY INSTANCE (validating webhooks only):
 //
@@ -90,6 +87,7 @@ func main() {
 //	breakglass-controller \
 //	  --enable-frontend=false \
 //	  --enable-api=false \
+//	  --enable-controllers=false \
 //	  --enable-cleanup=false \
 //	  --webhooks-metrics-bind-address=0.0.0.0:8083
 //
@@ -98,13 +96,15 @@ func main() {
 //	Runs API endpoints (Session/Escalation), web UI, and SAR authorization webhook.
 //	breakglass-controller \
 //	  --enable-webhooks=false \
-//	  --enable-cleanup=false
+//	  --enable-cleanup=false \
+//	  --breakglass-namespace=breakglass-system
 //
 // 4. FRONTEND-ONLY INSTANCE:
 //
 //	Runs only the frontend web UI without webhooks, API, or SAR.
 //	breakglass-controller \
 //	  --enable-api=false \
+//	  --enable-controllers=false \
 //	  --enable-webhooks=false \
 //	  --enable-cleanup=false
 //
@@ -114,7 +114,9 @@ func main() {
 //	breakglass-controller \
 //	  --enable-frontend=false \
 //	  --enable-api=false \
-//	  --enable-webhooks=false
+//	  --enable-controllers=false \
+//	  --enable-webhooks=false \
+//	  --breakglass-namespace=breakglass-system
 //
 // COMPONENT ARCHITECTURE
 // ======================
@@ -141,6 +143,9 @@ func main() {
 //	ENABLE_VALIDATING_WEBHOOKS=true  # Which validating webhooks to register
 func run() error {
 	cliConfig := cli.Parse()
+	if err := cliConfig.Validate(); err != nil {
+		return fmt.Errorf("validate CLI configuration: %w", err)
+	}
 
 	// Setup logging with zap
 	zapLogger, err := utils.SetupLogger(cliConfig.Debug)
@@ -445,7 +450,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	if cbCfg.HalfOpenMaxRequests <= 0 {
 		cbCfg.HalfOpenMaxRequests = defaults.HalfOpenMaxRequests
 	}
-	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg)
+	ccProvider := cluster.NewClientProviderWithCircuitBreaker(escalationManager.Client, log, cbCfg).
+		WithLiveReader(reconcilerMgr.GetAPIReader())
 	denyEval := policy.NewEvaluator(escalationManager.Client, log)
 
 	// Create mail service with hot-reload capability
@@ -455,15 +461,14 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	}
 
 	// Create audit service for Kafka/webhook/log audit event emission
-	//nolint:staticcheck
-	auditService := audit.NewService(uncachedClient, reconcilerMgr.GetEventRecorderFor("breakglass-audit"), zapLogger, cliConfig.BreakglassNamespace)
+	auditService := audit.NewService(uncachedClient, reconcilerMgr.GetEventRecorder("breakglass-audit"), zapLogger, cliConfig.BreakglassNamespace)
 
 	// Enable multi-IDP support in auth handler for token verification
 	auth.WithIdentityProviderLoader(idpLoader)
 
 	sessionManager := breakglass.NewSessionManagerWithClientAndReader(
 		reconcilerMgr.GetClient(), reconcilerMgr.GetAPIReader(),
-		breakglass.WithSessionLogger(log.Named("session-manager")))
+		breakglass.WithSessionLogger(log.Named("session-manager")), breakglass.WithQuotaNamespace(cliConfig.BreakglassNamespace))
 
 	// Authenticated rate limiter: 50 req/s per user, 10 req/s per IP (unauthenticated)
 	apiRateLimiter := ratelimit.NewAuthenticated(ratelimit.DefaultAuthenticatedAPIConfig())
@@ -487,9 +492,16 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
 	debugSessionAPICtrl := debug.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, authMiddleware).
 		WithAPIReader(reconcilerMgr.GetAPIReader()).
+		WithQuotaNamespace(cliConfig.BreakglassNamespace).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
 		WithDisableEmail(cliConfig.DisableEmail)
+
+	// Only supply an operational resolver; SetupResolver's no-op fallback cannot
+	// distinguish an empty group from unavailable group synchronization.
+	if idpConfig != nil && idpConfig.Keycloak != nil && idpConfig.Keycloak.BaseURL != "" && idpConfig.Keycloak.Realm != "" && !idpConfig.Keycloak.InsecureSkipVerify {
+		debugSessionAPICtrl.WithGroupMemberResolver(resolver)
+	}
 
 	// Note: ClusterBindingAPIController is not exposed as a public API endpoint.
 	// Cluster bindings are aggregated internally through the template/clusters endpoint
@@ -609,34 +621,6 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 ) {
 	log := deps.log
 
-	// Cleanup routine (optional)
-	if deps.cliConfig.EnableCleanup {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cr := breakglass.CleanupRoutine{
-				Log:     log,
-				Manager: deps.sessionManager,
-				// AuditService is stored so Manager() can be resolved lazily on each
-				// cleanup iteration, picking up the current manager after any reload.
-				AuditService:  deps.auditService,
-				LeaderElected: leaderElectedCh,
-				MailService:   deps.mailService,
-				BrandingName:  deps.cfg.Frontend.BrandingName,
-				DisableEmail:  deps.cliConfig.DisableEmail,
-			}
-			// Plumb the activity tracker from the webhook controller so the
-			// cleanup routine can prune orphaned entries.
-			if at := deps.webhookCtrl.ActivityTrackerCleaner(); at != nil {
-				cr.ActivityTracker = at
-			}
-			cr.CleanupRoutine(ctx)
-		}()
-		log.Infow("Cleanup routine enabled")
-	} else {
-		log.Infow("Cleanup routine disabled via --enable-cleanup=false")
-	}
-
 	if deps.cliConfig.EnableControllers {
 		if err := cluster.RegisterInvalidationHandlers(ctx, deps.reconcilerMgr, deps.ccProvider, log); err != nil {
 			log.Warnw("Failed to register cluster cache invalidation handlers", "error", err)
@@ -645,42 +629,57 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		log.Infow("Cache invalidation handlers disabled via --enable-controllers=false")
 	}
 
-	if deps.cliConfig.EnableControllers {
-		// Escalation status updater with EventRecorder and IDPLoader
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			escalation.EscalationStatusUpdater{
-				Log:           log,
-				K8sClient:     deps.escalationManager.Client,
-				Resolver:      deps.escalationManager.GetResolver(),
-				EventRecorder: deps.eventsRecorder,
-				IDPLoader:     deps.idpLoader,
-				Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
-				LeaderElected: leaderElectedCh,
-			}.Start(ctx)
-		}()
-	} else {
-		log.Infow("Escalation status updater disabled via --enable-controllers=false")
-	}
-
-	if deps.cliConfig.EnableControllers {
-		// ClusterConfig checker: validates referenced kubeconfig secrets contain the expected key
-		intervalStr := deps.cliConfig.ClusterConfigCheckInterval
-		if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
-			intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+	startLoops := func(leaderCtx context.Context) {
+		if deps.cliConfig.EnableCleanup {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				cr := breakglass.CleanupRoutine{
+					Log:           log,
+					Manager:       deps.sessionManager,
+					AuditService:  deps.auditService,
+					LeaderElected: nil,
+					MailService:   deps.mailService,
+					BrandingName:  deps.cfg.Frontend.BrandingName,
+					DisableEmail:  deps.cliConfig.DisableEmail,
+				}
+				if at := deps.webhookCtrl.ActivityTrackerCleaner(); at != nil {
+					cr.ActivityTracker = at
+				}
+				cr.CleanupRoutine(leaderCtx)
+			}()
+			log.Infow("Cleanup routine started")
 		}
-		interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			clusterconfig.ClusterConfigChecker{
-				Log: log, Client: deps.escalationManager.Client,
-				Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: leaderElectedCh,
-			}.Start(ctx)
-		}()
-	} else {
-		log.Infow("ClusterConfig checker disabled via --enable-controllers=false")
+
+		if deps.cliConfig.EnableControllers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				escalation.EscalationStatusUpdater{
+					Log:           log,
+					K8sClient:     deps.escalationManager.Client,
+					Resolver:      deps.escalationManager.GetResolver(),
+					EventRecorder: deps.eventsRecorder,
+					IDPLoader:     deps.idpLoader,
+					Interval:      cli.ParseEscalationStatusUpdateInterval(deps.cliConfig.EscalationStatusUpdateInt, log),
+					LeaderElected: nil,
+				}.Start(leaderCtx)
+			}()
+
+			intervalStr := deps.cliConfig.ClusterConfigCheckInterval
+			if intervalStr == "" && deps.cfg.Kubernetes.ClusterConfigCheckInterval != "" {
+				intervalStr = deps.cfg.Kubernetes.ClusterConfigCheckInterval
+			}
+			interval := cli.ParseClusterConfigCheckInterval(intervalStr, log)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				clusterconfig.ClusterConfigChecker{
+					Log: log, Client: deps.escalationManager.Client,
+					Recorder: deps.eventsRecorder, Interval: interval, LeaderElected: nil,
+				}.Start(leaderCtx)
+			}()
+		}
 	}
 
 	// Leader election
@@ -689,21 +688,24 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		wg.Add(1)
 		go func() {
 			leaderelection.Start(ctx, wg, &leaderElectedCh, deps.resourceLock,
-				deps.hostname, deps.cliConfig.LeaderElectID, leaseNamespace, log)
+				deps.hostname, deps.cliConfig.LeaderElectID, leaseNamespace, log, startLoops)
 		}()
 	} else {
 		log.Infow("Leader election disabled via --enable-leader-election=false, background loops will run on all replicas")
 		close(leaderElectedCh)
+		startLoops(ctx)
 	}
 
 	// Reconciler manager stays running for shared manager services such as
-	// health checks, metrics, and clients. Controller-specific indexes and
-	// reconcilers are gated by --enable-controllers.
+	// health checks, metrics, clients, and field indexes. Reconcilers are gated
+	// by --enable-controllers.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
-			deps.ccProvider, deps.auditService, deps.mailService, deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
+			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
+			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
+			deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()

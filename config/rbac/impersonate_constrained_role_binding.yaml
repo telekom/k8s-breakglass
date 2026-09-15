@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Bindings for the constrained impersonation (KEP-5284) probe roles.
+# Both the identity and the action rule must be bound: the API server requires both
+# checks to pass, and binding only one produces a grant that never works.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/managed-by: kustomize
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  name: impersonate-auth-manager-constrained-identity-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impersonate-auth-manager-constrained-identity-role
+subjects:
+- kind: ServiceAccount
+  name: manager
+  namespace: system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/managed-by: kustomize
+    breakglass.t-caas.telekom.com/impersonation-mode: "user-info"
+  name: impersonate-auth-manager-constrained-action-rolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: impersonate-auth-manager-constrained-action-role
+subjects:
+- kind: ServiceAccount
+  name: manager
+  namespace: system

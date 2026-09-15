@@ -5,6 +5,9 @@
 *.so
 *.dylib
 bin/
+!utils/images/storage-debug/bin/
+!utils/images/storage-debug/bin/storage-diagnostics
+!utils/images/storage-debug/bin/storage-report
 
 # Test binary, built with `go test -c`
 *.test

@@ -26,6 +26,11 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Metrics](./metrics.md)** - Prometheus metrics and monitoring
 - **[Rate Limiting](./rate-limiting.md)** - Multi-tier rate limiting architecture, tiers, and troubleshooting
 - **[Logging and Debugging](./logging-and-debugging.md)** - Frontend and backend logging infrastructure, debugging tips
+- **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
+- **[DebugSession authoring guide](./debug-session-authoring.md)** - Generic template, identity, isolation, lifecycle, and utility-mode guidance
+- **[Network-debug runbook](./network-debug-image.md)** - Intent-driven network diagnostics and host/pod capture limits
+- **[Node-maintenance runbook](./node-maintenance.md)** - Controller-approved node evidence and bounded repair
+- **[Diagnostic artifact collector](../utils/images/diagnostic-artifact-collector/README.md)** - Crashdump and summary evidence collection
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
 
 ## Identity & Authentication
@@ -48,11 +53,40 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Resources
 
+### Debug utility images
+
+Every utility is published as an immutable,
+  reviewed image and has a generic in-image runbook. Choose the least
+  powerful intent that answers the incident question:
+  - **[Workload diagnostics](../utils/workload-debug/README.md)** - Bounded
+    DNS, TLS, HTTP(S), read-only Kubernetes API, and report helpers
+  - **[Network diagnostics](../utils/network-debug/README.md)** - Public
+    report/bounded-capture-only pod/network troubleshooting; this catalogue
+    profile does not authorize full host `pwru` tracing. Full host tracing is
+    an image capability that requires a separate custom template/profile with
+    independent privilege review and approval.
+  - **[Node maintenance](../utils/node-maintenance/README.md)** - Read-only
+    node recovery evidence and independently approved exact-entry repair
+  - **[Storage diagnostics](../utils/images/storage-debug/README.md)** -
+    Existing-PVC checks and controller-owned, provider-dependent storage
+    workflows
+  - **[Diagnostic artifact collection](../utils/images/diagnostic-artifact-collector/README.md)** -
+    Bounded system summaries and separately approved coredump collection
+
+### DebugSession and resource guides
+
+- **[DebugSession authoring guide](./debug-session-authoring.md)** - Publish
+  safe templates, ephemeral identity/RBAC, NetworkPolicy, lifecycle cleanup,
+  and downstream OCI runbook extensions
 - **[ClusterConfig](./cluster-config.md)** - Manage tenant cluster connections
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
+- **[Terminal recording](./terminal-recording.md)** - Reserved fail-closed terminal-byte transport and retention validation
+- **[DebugSession cleanup recovery](./debug-session-cleanup.md)** - UID-fenced cleanup and legacy recovery behavior
+- **[OCI runbook bundles](./runbook-bundle-contract.md)** - Additive, digest-pinned documentation image volumes for debug templates
 - **[Debug Session Cluster Bindings](./debug-session-cluster-binding.md)** - Delegate template access to teams and clusters
+- **[Breakglass user-flow recording](./demos/breakglass-user-flow.md)** - Asciinema demo of denial, approval, API access, and DebugSession
 - **[Extra Deploy Variables](./extra-deploy-variables.md)** - User-provided variables for customizable templates
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
 - **[AuditConfig](./audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
@@ -65,6 +99,9 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Security & Policy
 
+- **[Security Scanning](./security-scanning.md)** - CI vulnerability enforcement, PR warnings, and retained reports
+- **[Cluster and Identity Security](./security-defender-cluster.md)** - Cluster credential and OIDC hardening
+
 - **[Security Best Practices](./security-best-practices.md)** - Rate limiting, input sanitization, network security
 - **Frontend input sanitization** - Request reason sanitization and duration parsing are centralized in shared UI utilities for consistent validation.
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions and pod security rules
@@ -73,9 +110,13 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Development & Maintenance
 
+- **[CI Concurrency Fixtures](./ci-validation.md)** - Deterministic live-fallback deduplication regression checks
+
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
+- **[T-CaaS deployment-model E2E coverage audit](./e2e-tcaas-coverage-audit.md)** - Deployment-shape coverage, evidence, and remaining gaps
+- **[Node-maintenance image](./node-maintenance.md)** - Allowlisted node recovery preflight and network repair runbooks
 
 ## Contributing
 
@@ -132,7 +173,7 @@ Complete documentation for the breakglass privilege escalation system.
 - Debug sessions and debug pod templates
 - Multi-IDP support with optional group sync
 - CLI automation via `bgctl`
-- Request modals reset to a clean state when closed for consistent UX
+- Request, approval, review, and withdraw modals support Escape dismissal, lock background scrolling, and reset to a clean state when closed for consistent UX
 
 ## Deployment Modes
 

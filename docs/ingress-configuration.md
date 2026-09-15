@@ -50,6 +50,12 @@ server:
 - Hostname (`breakglass.example.com`)
 - Port (omit for standard 443)
 
+If your ingress, reverse proxy, CDN, or API gateway enforces its own CORS
+request-header allow-list, include `X-OIDC-Authority` alongside `Origin`,
+`Authorization`, and `Content-Type`. Browser OIDC proxy requests use this
+header in multi-IDP deployments to select the configured authority before
+fetching discovery or JWKS endpoints.
+
 ### Frontend Base URL
 
 Configure the frontend base URL to match your external hostname:

@@ -61,28 +61,28 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		},
 		{
 			name:     "user variables access",
-			template: "Size: {{ .vars.pvcSize }}, Class: {{ .vars.storageClass }}",
+			template: "size: {{ .vars.pvcSize | yamlQuote }}\nclass: {{ .vars.storageClass | yamlQuote }}",
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{
 					"pvcSize":      "50Gi",
 					"storageClass": "csi-cinder",
 				},
 			},
-			expected: "Size: 50Gi, Class: csi-cinder",
+			expected: "size: \"50Gi\"\nclass: \"csi-cinder\"",
 		},
 		{
 			name:     "sprig functions - upper",
-			template: "{{ .session.name | upper }}",
+			template: "{{ .session.name | upper | yamlQuote }}",
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "test-session",
 				},
 			},
-			expected: "TEST-SESSION",
+			expected: `"TEST-SESSION"`,
 		},
 		{
 			name:     "sprig functions - trunc",
-			template: "{{ .session.name | trunc 8 }}",
+			template: "{{ .session.name | trunc 8 | k8sName }}",
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "very-long-session-name",
@@ -102,11 +102,11 @@ func TestTemplateRenderer_RenderTemplateString(t *testing.T) {
 		},
 		{
 			name:     "sprig functions - default",
-			template: "name: {{ .vars.missing | default \"default-value\" }}",
+			template: "name: {{ .vars.missing | default \"default-value\" | yamlQuote }}",
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Vars: map[string]string{},
 			},
-			expected: "name: default-value",
+			expected: `name: "default-value"`,
 		},
 		{
 			name: "conditional rendering - if true",
@@ -124,7 +124,7 @@ pvc: enabled
 			name: "range over labels",
 			template: `labels:
 {{- range $k, $v := .labels }}
-  {{ $k }}: {{ $v | quote }}
+  {{ $k | yamlQuote }}: {{ $v | quote }}
 {{- end }}`,
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Labels: map[string]string{
@@ -132,17 +132,17 @@ pvc: enabled
 					"version": "v1",
 				},
 			},
-			expected: "labels:\n  app: \"test\"\n  version: \"v1\"",
+			expected: "labels:\n  \"app\": \"test\"\n  \"version\": \"v1\"",
 		},
 		{
 			name:     "custom function - truncName",
-			template: "{{ truncName 10 .session.name }}",
+			template: "{{ truncName 10 .session.name | yamlQuote }}",
 			context: breakglassv1alpha1.AuxiliaryResourceContext{
 				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
 					Name: "very-long-session-name-that-exceeds-limit",
 				},
 			},
-			expected: "very-long-",
+			expected: `"very-long-"`,
 		},
 		{
 			name:     "custom function - k8sName",
@@ -339,12 +339,12 @@ metadata:
 			template: `apiVersion: v1
 kind: Secret
 metadata:
-  name: secret-{{ .vars.testName }}
+  name: secret-{{ .vars.testName | k8sName }}
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: config-{{ .vars.testName }}`,
+  name: config-{{ .vars.testName | k8sName }}`,
 			expectError: false,
 		},
 		{
@@ -646,19 +646,19 @@ func TestTemplateRenderer_FullExample(t *testing.T) {
 	template := `apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: pvc-{{ .vars.testName }}-{{ .session.name | trunc 8 }}
+  name: pvc-{{ .vars.testName | k8sName }}-{{ .session.name | trunc 8 | k8sName }}
   namespace: {{ .target.namespace }}
   labels:
     {{- range $k, $v := .labels }}
-    {{ $k }}: {{ $v | quote }}
+    {{ $k | yamlQuote }}: {{ $v | quote }}
     {{- end }}
 spec:
   accessModes:
-    - {{ .vars.accessMode }}
+    - {{ .vars.accessMode | yamlQuote }}
   storageClassName: {{ .vars.storageClass | quote }}
   resources:
     requests:
-      storage: {{ .vars.pvcSize }}`
+      storage: {{ .vars.pvcSize | yamlQuote }}`
 
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
@@ -691,10 +691,10 @@ spec:
 	// Verify key rendered values
 	assert.Contains(t, rendered, "name: pvc-customer-xyz-debug-se")
 	assert.Contains(t, rendered, "namespace: breakglass-debug")
-	assert.Contains(t, rendered, "storage: 50Gi")
+	assert.Contains(t, rendered, `storage: "50Gi"`)
 	assert.Contains(t, rendered, `storageClassName: "csi-cinder-replicated"`)
-	assert.Contains(t, rendered, "- ReadWriteOnce")
-	assert.Contains(t, rendered, `app.kubernetes.io/managed-by: "breakglass"`)
+	assert.Contains(t, rendered, `- "ReadWriteOnce"`)
+	assert.Contains(t, rendered, `"app.kubernetes.io/managed-by": "breakglass"`)
 }
 
 func TestTemplateRenderer_ConditionalResources(t *testing.T) {
@@ -709,7 +709,7 @@ metadata:
 spec:
   resources:
     requests:
-      storage: {{ .vars.pvcSize }}
+      storage: {{ .vars.pvcSize | yamlQuote }}
 {{- end }}`
 
 	tests := []struct {
@@ -763,7 +763,7 @@ func TestYamlQuote(t *testing.T) {
 		{
 			name:     "simple string",
 			input:    "hello",
-			expected: "hello",
+			expected: `"hello"`,
 		},
 		{
 			name:     "empty string",
@@ -804,6 +804,11 @@ func TestYamlQuote(t *testing.T) {
 			name:     "yaml false",
 			input:    "false",
 			expected: `"false"`,
+		},
+		{
+			name:     "numeric string",
+			input:    "123",
+			expected: `"123"`,
 		},
 		{
 			name:     "yaml yes",
@@ -870,37 +875,42 @@ func TestYamlSafe(t *testing.T) {
 		{
 			name:     "simple string",
 			input:    "hello",
-			expected: "hello",
+			expected: `"hello"`,
+		},
+		{
+			name:     "numeric string",
+			input:    "123",
+			expected: `"123"`,
 		},
 		{
 			name:     "string with colon",
 			input:    "key:value",
-			expected: "key-value",
+			expected: `"key-value"`,
 		},
 		{
 			name:     "string with hash",
 			input:    "test#comment",
-			expected: "test-comment",
+			expected: `"test-comment"`,
 		},
 		{
 			name:     "string with newline",
 			input:    "line1\nline2",
-			expected: "line1 line2",
+			expected: `"line1 line2"`,
 		},
 		{
 			name:     "curly braces",
 			input:    "{key: value}",
-			expected: "-key- value-",
+			expected: `"-key- value-"`,
 		},
 		{
 			name:     "injection attempt",
 			input:    "test\nkey: injected",
-			expected: "test key- injected",
+			expected: `"test key- injected"`,
 		},
 		{
 			name:     "multiple special chars",
 			input:    "test:::#value",
-			expected: "test-value",
+			expected: `"test-value"`,
 		},
 	}
 

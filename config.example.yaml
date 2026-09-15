@@ -6,6 +6,13 @@ server:
   # When false (default): Error messages list available IDPs to help users troubleshoot.
   # When true: Error messages are generic to prevent IDP reconnaissance attacks.
   # hardenedIDPHints: true
+  #
+  # allowOIDCProxyRedirects controls whether the OIDC proxy follows upstream 30x responses.
+  # Leave unset (secure default): redirects are refused, because only the FIRST hop is
+  # validated against the configured-authority allowlist — following a redirect would let a
+  # redirecting identity provider drive server-side requests to arbitrary hosts (SSRF).
+  # Enable only for a non-conforming IdP whose redirect targets you trust.
+  # allowOIDCProxyRedirects: true
   allowedOrigins:
     - https://breakglass.example.com
     - https://admin.example.net

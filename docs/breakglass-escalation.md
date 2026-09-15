@@ -87,15 +87,26 @@ approvers:
 
 **Note**: At least one of `users` or `groups` must be specified.
 
+Approver group membership is checked against the resolved group members recorded
+in escalation status when available. Otherwise, authorization resolves the
+approver's groups for the specific target cluster of the session under review
+and caches that lookup per target cluster and approver. Authenticated
+request-token groups are used as a fallback when the target-cluster lookup
+fails, returns no groups, or returns only Kubernetes `system:*` groups, because
+identity-provider approver groups may not be visible through Kubernetes
+SelfSubjectReview.
+
 ## Optional Fields
 
 ### maxValidFor
 
-Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with an additional day unit (`d`). Day values must not exceed 365.
+Maximum time a session will remain active after approval. Supports Go `time.ParseDuration` syntax with additional day, week, and year units (`d`, `w`, and `y`). Decimal sub-day units such as `1.5h` are accepted; extended-unit values must be whole numbers, must not exceed 365 days, and the duration must be positive and unsigned (for example, `1h`, not `+1h`). If omitted, admission and runtime behavior use the default `1h`.
 
 ```yaml
-maxValidFor: "2h"    # 2 hours (default: 1h)
+maxValidFor: "1h"    # 1 hour (default)
+maxValidFor: "2h"    # 2 hours
 maxValidFor: "30m"   # 30 minutes
+maxValidFor: "1.5h"  # 1 hour and 30 minutes
 maxValidFor: "4h"    # 4 hours
 maxValidFor: "1d12h" # 1 day and 12 hours
 ```
@@ -119,7 +130,7 @@ idleTimeout: "30m"   # Expire after 30 minutes of inactivity
 
 **Effective granularity**: Idle checks run every ~5 minutes (the cleanup interval), so a 1-minute idle timeout may not trigger until up to 5 minutes after the true idle point.
 
-**Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor` (if both are set).
+**Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor`. If `maxValidFor` is omitted, admission validates against the default `1h`.
 
 ### retainFor
 
@@ -129,6 +140,8 @@ How long to retain expired/revoked sessions before deletion:
 retainFor: "720h"    # Keep for 30 days (default: 720h)
 retainFor: "168h"    # Keep for 7 days
 ```
+
+The value must be a positive duration.
 
 ### approvalTimeout
 
@@ -141,6 +154,8 @@ approvalTimeout: "30m"   # Timeout after 30 minutes
 ```
 
 If not set, a default timeout of `1h` is applied. To change this behavior, explicitly set `approvalTimeout` to the desired duration.
+
+`approvalTimeout` must be a positive duration and must not exceed `maxValidFor`. If `maxValidFor` is omitted, admission validates it against the default `1h`.
 
 **Example:** Require quick approvals for emergency escalations:
 
@@ -189,7 +204,7 @@ mailProvider: "prod-mail-provider"
 
 If omitted, Breakglass uses the cluster-level mail provider, and if that is unset, the default MailProvider. This allows sensitive escalations to route via hardened SMTP relays while everything else uses the default.
 
-> **Runtime validation:** The webhook no longer blocks missing MailProviders. The Escalation controller re-checks the reference after admission and flips the `MailProviderValid` condition (and emits a warning event) if the provider is missing or disabled. Create/enable the provider to restore the condition to `True` and re-enable notifications.
+> **Runtime validation:** The webhook no longer blocks missing MailProviders. The Escalation controller re-checks the reference after admission and flips the `MailProviderValid` condition (and emits a warning event) if the provider is missing or disabled. The controller watches referenced MailProvider create/delete events and update events that change `metadata.generation` or `metadata.deletionTimestamp`; status-only updates are ignored. Creating or enabling the provider refreshes the condition and re-enables notifications.
 
 ### notificationExclusions
 
@@ -209,6 +224,7 @@ notificationExclusions:
 
 - Excluded users will NOT receive emails when sessions are requested/approved/rejected
 - Excluded groups' members will NOT receive emails
+- Request notifications reuse the approver memberships already resolved for the session request, so excluded approver groups remain excluded if a follow-up identity-provider lookup is unavailable
 - All other approvers will receive emails as normal
 - Takes precedence over individual approver lists
 
@@ -251,6 +267,7 @@ approvers:
 
 - Hidden users/groups are NOT shown in the UI's approver list
 - Hidden users/groups do NOT receive email notifications
+- Request notifications reuse the memberships already resolved for the session request, including multi-identity-provider status, so a missing follow-up resolver cannot expose hidden approvers
 - Hidden users/groups CAN still approve sessions if they know about them
 - Hidden users/groups are still counted as valid approvers for approval requirements
 - Useful for "on-call" or "last resort" approver groups
@@ -316,7 +333,14 @@ blockSelfApproval: false   # Allow self-approval (default, uses cluster-level se
 blockSelfApproval: true    # Prevent self-approval for this escalation
 ```
 
-If not specified, the cluster-level `blockSelfApproval` setting from `ClusterConfig` is used.
+If not specified, the cluster-level `blockSelfApproval` setting from the
+unique `ClusterConfig` with the requested cluster name is used. The
+`ClusterConfig` can live in a different namespace than the escalation. Set
+`blockSelfApproval` on the escalation only when that escalation needs to
+override the cluster-level default. The same unique `ClusterConfig` lookup
+also supplies cluster-level `allowedApproverDomains` unless the escalation
+sets its own domain allowlist. Approval checks fail closed when the cluster
+name resolves to multiple `ClusterConfig` resources.
 
 ### Session Limits
 
@@ -449,18 +473,25 @@ allowedIdentityProvidersForApprovers:
 - Cannot be mixed with legacy `allowedIdentityProviders` field
 - All referenced IdentityProviders must exist
 
+> **Runtime validation:** The Escalation controller watches referenced IdentityProvider create/delete events and update events that change `metadata.generation` or `metadata.deletionTimestamp`; status-only updates are ignored. It refreshes the `IDPRefsValid` condition when a provider is created, disabled, enabled, or removed.
+
 **Behavior:**
 
 - If `allowedIdentityProvidersForRequests` is empty, all IDPs can request (default)
 - If `allowedIdentityProvidersForApprovers` is empty, all IDPs can approve (default)
 - Users can only request via their authenticated IDP
 - Approvers can only approve if their IDP is in the allowed list
-- Provider-aware DebugSession approval additionally requires the session's
-  persisted provider name **and issuer** to match the approver's request.
-  Provider name alone is not an authorization boundary.
-- For a temporary DebugSession route, grant the exact
-  `breakglass:platform:debugsession` group through Breakglass; do not add that
-  group to an OIDC provider or static user fixture.
+- While approver group membership status is not populated yet, approval falls
+  back to target-cluster group lookup for the missing groups. If that lookup
+  cannot expose identity-provider groups and returns no groups or only
+  Kubernetes `system:*` groups, the authenticated request-token groups are used.
+  Once `status.approverGroupMembers` contains an approver group entry, that
+  resolved member list is authoritative for that group.
+- Approval endpoints deny requests when an approver allowlist is configured but
+  the authenticated caller's IDP is missing or not listed.
+- Session admission applies requester IDP restrictions to matching escalations
+  found through exact or glob matches in both `allowed.clusters` and
+  `clusterConfigRefs`.
 
 #### Example: Restrict to Corporate OIDC only
 
@@ -574,6 +605,36 @@ When `False`:
   message: "Referenced cluster 'missing-cluster' does not exist"
 ```
 
+#### ApprovalGroupMembersResolved Condition
+
+Tracks whether approver group members were resolved by the escalation status updater.
+This condition is separate from `Ready`: transient group-sync failures are surfaced
+for operators without changing validation/reference readiness.
+
+```yaml
+conditions:
+- type: ApprovalGroupMembersResolved
+  status: "True"
+  reason: "GroupMembersResolved"
+  message: "Resolved approver group members for 2 group(s) from 2 identity provider(s)."
+```
+
+When group synchronization fails for at least one configured approver group or IDP,
+the condition becomes `False` with `GroupSyncPartialFailure` or `GroupSyncFailed`.
+Check related `BreakglassEscalation` and `IdentityProvider` events for the specific
+failing group or provider. Escalations with no approver groups report
+`NoApproverGroupsConfigured` because no group member lookup is required.
+
+An existing identity-provider group with no resolvable members is reported
+separately with `status: "True"` and reason `GroupMembersEmpty`. This is a
+successful lookup, but no approver can approve from that group, so pending
+sessions can reach `ApprovalTimeout`. A group that is not present in the
+identity provider is a sync failure: when it is the only sync failure, the
+condition is `False` with reason `GroupNotFound`; mixed failures retain
+`GroupSyncPartialFailure` or `GroupSyncFailed` and name the missing group in
+the condition message. In all cases, stale cached members are removed and a
+warning event identifies the missing group.
+
 #### Condition Reasons
 
 | Reason | Status | Description |
@@ -583,7 +644,12 @@ When `False`:
 | `IdentityProviderReferenceInvalid` | False | Referenced IDP doesn't exist or is disabled |
 | `DenyPolicyReferenceInvalid` | False | Referenced deny policy doesn't exist |
 | `MailProviderValidationFailed` | False | Referenced MailProvider is missing or disabled |
-| `GroupSyncFailed` | False | Failed to sync approver groups from IDP |
+| `GroupMembersResolved` | True | Approver group members were resolved |
+| `GroupMembersEmpty` | True | The configured group exists but has no resolvable members; sessions relying on it may time out |
+| `NoApproverGroupsConfigured` | True | No approver groups require member resolution |
+| `GroupNotFound` | False | A configured approver group does not exist in an identity provider |
+| `GroupSyncPartialFailure` | False | Some approver groups or IDPs failed during group sync |
+| `GroupSyncFailed` | False | All approver group resolution failed |
 | `ValidationInProgress` | Unknown | Configuration being validated |
 
 ### Viewing Status
@@ -620,7 +686,7 @@ clusterConfigRefs: ["*"]         # ALL clusters (global escalation)
 
 **Glob patterns**: Supports `*` (any characters), `?` (single character), and `[abc]` (character class). See [Glob Pattern Matching](#glob-pattern-matching) for details.
 
-> **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates these references and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved.
+> **Runtime validation:** The admission webhook intentionally accepts escalations even if the referenced `ClusterConfig` objects are missing. The Escalation controller re-validates exact and glob references, watches matching `ClusterConfig` create/delete events and update events that change `metadata.generation` or `metadata.deletionTimestamp`, and updates the `ClusterRefsValid` condition (and emits warning events) whenever a reference cannot be resolved. Status-only updates do not refresh the condition.
 
 The Escalation API defaults `activeOnly=true`. With a concrete or glob `cluster`
 filter, escalations are hidden when every matching registered `ClusterConfig`
@@ -637,7 +703,7 @@ Default deny policies attached to any session created via this escalation:
 denyPolicyRefs: ["deny-production-secrets", "deny-destructive-actions"]
 ```
 
-> **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests.
+> **Runtime validation:** Missing or misconfigured `DenyPolicy` references do not block creation. Instead, the Escalation controller watches referenced DenyPolicy create/delete events and update events that change `metadata.generation` or `metadata.deletionTimestamp`, then surfaces problems through the `DenyPolicyRefsValid` condition and warning events so operators can react without being prevented from applying manifests. Status-only updates are ignored.
 
 ### podSecurityOverrides
 
@@ -951,7 +1017,7 @@ The controller matches requested clusters against `spec.allowed.clusters` and `s
 
 #### Glob Pattern Matching
 
-Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. This uses Go's `filepath.Match` syntax:
+Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for flexible cluster matching. Admission validates patterns with Go's `path.Match` syntax; existing runtime matching for stored `BreakglassEscalation` objects uses Go's `filepath.Match` semantics for cluster names.
 
 | Pattern | Matches |
 |---------|---------|
@@ -960,6 +1026,10 @@ Both `allowed.clusters` and `clusterConfigRefs` support **glob patterns** for fl
 | `*-staging` | Clusters ending with `-staging` |
 | `cluster-?` | Clusters like `cluster-1`, `cluster-2` (single character) |
 | `[abc]-cluster` | `a-cluster`, `b-cluster`, or `c-cluster` |
+
+Malformed glob patterns, for example an unclosed character class like `prod-[`,
+are rejected by `BreakglassEscalation` admission. Existing malformed patterns are
+ignored during session matching rather than failing unrelated session admission.
 
 **Example: Regional cluster access**
 
@@ -1095,7 +1165,7 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 - Check if referenced IDP is disabled (`spec.disabled: true`)
 - Enable the IDP or update the escalation references
 
-#### Ready Condition: False (GroupSyncFailed)
+#### ApprovalGroupMembersResolved Condition: False (GroupSyncFailed)
 
 **Cause:** Failed to synchronize approver groups from identity provider.
 
@@ -1104,6 +1174,9 @@ kubectl get identityprovider <name> -o yaml | grep -E '(name:|disabled:)'
 ```bash
 # Check sync error details
 kubectl describe breakglassescalation <name> | grep -A 3 "GroupSyncFailed"
+
+# Check the dedicated group-sync condition
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
 
 # Check related IdentityProvider status
 kubectl describe identityprovider <idp-name>
@@ -1224,7 +1297,7 @@ kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions}' | jq 
 kubectl get events --field-selector involvedObject.kind=BreakglassEscalation
 
 # Check controller logs (if accessible)
-kubectl logs -n breakglass deployment/breakglass-controller -f --grep=escalation
+kubectl logs -n breakglass-system deployment/breakglass-manager -f | grep escalation
 ```
 
 ## Best Practices

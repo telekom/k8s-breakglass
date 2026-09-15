@@ -224,6 +224,43 @@ func TestRespondInternalErrorSimple(t *testing.T) {
 	assert.Equal(t, "INTERNAL_ERROR", resp.Code)
 }
 
+func TestRespondTooManyRequestsWithRetryAfter(t *testing.T) {
+	tests := []struct {
+		name     string
+		message  string
+		expected string
+	}{
+		{
+			name:     "custom message",
+			message:  "session creation rate limit exceeded",
+			expected: "session creation rate limit exceeded",
+		},
+		{
+			name:     "default message",
+			message:  "",
+			expected: "too many requests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondTooManyRequestsWithRetryAfter(c, "3", tt.message)
+
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+			assert.Equal(t, "3", w.Header().Get("Retry-After"))
+
+			var resp APIError
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+		})
+	}
+}
+
 func TestRespondBadGateway(t *testing.T) {
 	tests := []struct {
 		name     string

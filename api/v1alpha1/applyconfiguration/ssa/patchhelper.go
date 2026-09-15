@@ -93,6 +93,7 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	if err := json.Unmarshal(data, u); err != nil {
 		return 0, fmt.Errorf("failed to unmarshal apply configuration: %w", err)
 	}
+	ensureExplicitEmptyStatusLists(applyConfig, u)
 
 	// Clear managed fields.
 	u.SetManagedFields(nil)
@@ -146,6 +147,35 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 	return PatchApplyResultPatched, nil
 }
 
+func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {
+	emptyLists := map[string]struct{}{}
+	if dsConfig, ok := applyConfig.(*ac.DebugSessionApplyConfiguration); ok && dsConfig.Status != nil {
+		if dsConfig.Status.AuxiliaryResourceStatuses != nil && len(dsConfig.Status.AuxiliaryResourceStatuses) == 0 {
+			emptyLists["auxiliaryResourceStatuses"] = struct{}{}
+		}
+		if dsConfig.Status.PodTemplateResourceStatuses != nil && len(dsConfig.Status.PodTemplateResourceStatuses) == 0 {
+			emptyLists["podTemplateResourceStatuses"] = struct{}{}
+		}
+	}
+	if templateConfig, ok := applyConfig.(*ac.DebugSessionTemplateApplyConfiguration); ok && templateConfig.Status != nil {
+		if templateConfig.Status.BoundClusters != nil && len(templateConfig.Status.BoundClusters) == 0 {
+			emptyLists["boundClusters"] = struct{}{}
+		}
+	}
+	if len(emptyLists) == 0 {
+		return
+	}
+
+	status, _ := u.Object["status"].(map[string]interface{})
+	if status == nil {
+		status = map[string]interface{}{}
+		u.Object["status"] = status
+	}
+	for field := range emptyLists {
+		status[field] = []interface{}{}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Per-type PatchApply status functions
 // ---------------------------------------------------------------------------
@@ -155,6 +185,9 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 func PatchApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) (PatchApplyResult, error) {
 	applyConfig := ac.BreakglassSession(session.Name, session.Namespace).
 		WithStatus(BreakglassSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
 
@@ -163,6 +196,9 @@ func PatchApplyBreakglassSessionStatus(ctx context.Context, c client.Client, ses
 func PatchApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) (PatchApplyResult, error) {
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
+	if session.ResourceVersion != "" {
+		applyConfig.WithResourceVersion(session.ResourceVersion)
+	}
 	return patchApplyStatusViaUnstructured(ctx, c, applyConfig)
 }
 

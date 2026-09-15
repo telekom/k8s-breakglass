@@ -27,7 +27,7 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	Mode *apiv1alpha1.DebugSessionTemplateMode `json:"mode,omitempty"`
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
-	// The referenced template can itself contain {{ .Vars.* }} placeholders.
+	// The referenced template can itself contain {{ .vars.* }} placeholders.
 	// Mutually exclusive with podTemplateString.
 	PodTemplateRef *DebugPodTemplateReferenceApplyConfiguration `json:"podTemplateRef,omitempty"`
 	// podTemplateString is an inline Go template that produces pod spec YAML.
@@ -40,13 +40,13 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	PodOverridesTemplate *string `json:"podOverridesTemplate,omitempty"`
 	// extraDeployVariables defines user-provided variables for template rendering.
 	// These values are collected from the user at session request time
-	// and made available as {{ .Vars.<name> }} in all templates.
+	// and made available as {{ .vars.<name> }} in all templates.
 	ExtraDeployVariables []ExtraDeployVariableApplyConfiguration `json:"extraDeployVariables,omitempty"`
-	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
+	// workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
 	// Required when mode is "workload" or "hybrid".
 	WorkloadType *apiv1alpha1.DebugWorkloadType `json:"workloadType,omitempty"`
 	// replicas specifies the number of replicas for Deployment workloads.
-	// Defaults to 1. Ignored for DaemonSet workloads.
+	// Defaults to 1. Ignored for DaemonSet and Job workloads.
 	Replicas *int32 `json:"replicas,omitempty"`
 	// podOverrides allows overriding specific fields in the referenced pod template.
 	// Merged with the base template using strategic merge patch.
@@ -125,7 +125,8 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// Only displayed when deprecated is true.
 	DeprecationMessage *string `json:"deprecationMessage,omitempty"`
 	// expirationBehavior controls what happens when a session expires.
-	// Options: "terminate" (default) or "notify-only".
+	// "notify-only" is a deprecated alias that requests an expiry notification;
+	// it still expires the session, revokes access, and starts resource cleanup.
 	ExpirationBehavior *string `json:"expirationBehavior,omitempty"`
 	// gracePeriodBeforeExpiry is the duration before expiry when users are notified.
 	// Users will receive a warning notification at this interval before session expires.

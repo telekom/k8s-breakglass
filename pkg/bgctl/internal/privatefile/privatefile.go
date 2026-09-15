@@ -10,7 +10,7 @@ import (
 // Write stores secret-bearing local state with owner-only permissions.
 func Write(path string, content []byte) (err error) {
 	dir := filepath.Dir(path)
-	file, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
+	file, err := createTempPrivate(dir, "."+filepath.Base(path)+".tmp-")
 	if err != nil {
 		if shouldWriteInPlace(path, err) {
 			return writeInPlace(path, content)
@@ -73,6 +73,9 @@ func writeInPlace(path string, content []byte) (err error) {
 		return fmt.Errorf("target is not a regular file: %s", path)
 	}
 	if err := file.Chmod(0o600); err != nil {
+		return err
+	}
+	if err := secureFile(file); err != nil {
 		return err
 	}
 	if err := file.Truncate(0); err != nil {

@@ -27,11 +27,11 @@ import (
 	"testing"
 	"time"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/naming"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // isCleanupDisabled returns true when cleanup should be skipped for diagnostics.
@@ -136,10 +136,11 @@ func CleanupAllSessions(ctx context.Context, cli client.Client, namespace string
 	return nil
 }
 
-// ExpireActiveSessionsForUser expires (sets to Expired state) all active sessions for a user.
+// ExpireActiveSessionsForUser ends all active sessions for a user through valid
+// lifecycle transitions.
 // This is useful to avoid 409 conflicts when a test needs to create a new session
 // for a user that may already have an active session from a previous test.
-// Unlike deletion, expiring a session is cleaner and reflects natural lifecycle.
+// Unlike deletion, ending a session follows its normal lifecycle.
 func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespace, userEmail string) error {
 	sessions := &breakglassv1alpha1.BreakglassSessionList{}
 	if err := cli.List(ctx, sessions,
@@ -149,19 +150,22 @@ func ExpireActiveSessionsForUser(ctx context.Context, cli client.Client, namespa
 		return err
 	}
 
-	now := metav1.Now()
 	for i := range sessions.Items {
 		session := &sessions.Items[i]
-		// Only expire active sessions (Pending or Approved)
-		if session.Status.State == breakglassv1alpha1.SessionStatePending ||
-			session.Status.State == breakglassv1alpha1.SessionStateApproved {
-			// Mark as expired by setting expiresAt to the past
-			session.Status.ExpiresAt = now
+		switch session.Status.State {
+		case breakglassv1alpha1.SessionStatePending, breakglassv1alpha1.SessionStateWaitingForScheduledTime:
+			session.Status.State = breakglassv1alpha1.SessionStateWithdrawn
+			session.Status.ReasonEnded = "withdrawn"
+		case breakglassv1alpha1.SessionStateApproved:
 			session.Status.State = breakglassv1alpha1.SessionStateExpired
-			if err := ApplySessionStatus(ctx, cli, session); err != nil {
-				if client.IgnoreNotFound(err) != nil {
-					return err
-				}
+			session.Status.ReasonEnded = "testCleanup"
+			session.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(session.Status.ExpiresAt, time.Now())
+		default:
+			continue
+		}
+		if err := ApplySessionStatus(ctx, cli, session); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				return err
 			}
 		}
 	}

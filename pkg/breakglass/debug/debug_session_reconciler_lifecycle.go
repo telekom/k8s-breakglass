@@ -9,18 +9,21 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
-	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -106,8 +109,12 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return err
 	}
 
-	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(podList.Items))
-	for _, pod := range podList.Items {
+	allowedPodCandidates, retainedAllowedPods := c.filterAllowedPodsForRefresh(ctx, targetClient, ds, podList.Items)
+	allowedPods := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPodCandidates)+len(retainedAllowedPods))
+	// Keep rejected same-name identities in status so later refreshes do not
+	// reinterpret the replacement as an untracked Pod.
+	allowedPods = append(allowedPods, retainedAllowedPods...)
+	for _, pod := range allowedPodCandidates {
 		ready := false
 		for _, cond := range pod.Status.Conditions {
 			if cond.Type == corev1.PodReady && cond.Status == corev1.ConditionTrue {
@@ -122,14 +129,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		// Build container status for detailed information
 		containerStatus := buildContainerStatus(&pod)
 
-		allowedPods = append(allowedPods, breakglassv1alpha1.AllowedPodRef{
-			Namespace:       pod.Namespace,
-			Name:            pod.Name,
-			NodeName:        pod.Spec.NodeName,
-			Ready:           ready,
-			Phase:           string(pod.Status.Phase),
-			ContainerStatus: containerStatus,
-		})
+		allowedPods = append(allowedPods, allowedPodRefFromPod(&pod, ready, containerStatus))
 	}
 
 	// Preserve allowed pods for ephemeral containers injected into existing pods
@@ -146,7 +146,7 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 			if !found {
 				// Find it in the old allowedPods to preserve its state
 				for _, oldAP := range ds.Status.AllowedPods {
-					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName {
+					if oldAP.Namespace == ec.Namespace && oldAP.Name == ec.PodName && ec.PodUID != "" && oldAP.UID == ec.PodUID {
 						allowedPods = append(allowedPods, oldAP)
 						break
 					}
@@ -156,7 +156,153 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 	}
 
 	ds.Status.AllowedPods = allowedPods
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	patchAuxiliaryResourceStatuses := c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0
+	if err := c.updateAuxiliaryResourceReadiness(ctx, ds, targetClient); err != nil {
+		return err
+	}
+	if patchAuxiliaryResourceStatuses {
+		return c.patchDebugSessionAllowedPodsAndAuxiliaryStatuses(ctx, ds, allowedPods, ds.Status.AuxiliaryResourceStatuses)
+	}
+	return c.patchDebugSessionAllowedPods(ctx, ds, allowedPods)
+}
+
+func (c *DebugSessionController) filterAllowedPodsForRefresh(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *breakglassv1alpha1.DebugSession,
+	pods []corev1.Pod,
+) ([]corev1.Pod, []breakglassv1alpha1.AllowedPodRef) {
+	allowed := make([]corev1.Pod, 0, len(pods))
+	retained := make([]breakglassv1alpha1.AllowedPodRef, 0)
+	for _, pod := range pods {
+		if !c.allowedPodForRefresh(ctx, targetClient, ds, &pod) {
+			if existing, found := existingAllowedPodRef(ds, &pod); found {
+				retained = append(retained, existing)
+			}
+			continue
+		}
+		allowed = append(allowed, pod)
+	}
+	return allowed, retained
+}
+
+func existingAllowedPodRef(ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) (breakglassv1alpha1.AllowedPodRef, bool) {
+	for _, existing := range ds.Status.AllowedPods {
+		if existing.Namespace == pod.Namespace && existing.Name == pod.Name {
+			return existing, true
+		}
+	}
+	return breakglassv1alpha1.AllowedPodRef{}, false
+}
+
+func (c *DebugSessionController) allowedPodForRefresh(
+	ctx context.Context,
+	targetClient ctrlclient.Client,
+	ds *breakglassv1alpha1.DebugSession,
+	pod *corev1.Pod,
+) bool {
+	existing, known := existingAllowedPodRef(ds, pod)
+	if known {
+		if existing.UID == string(pod.UID) && existing.UID != "" {
+			return true
+		}
+		if existing.UID == "" || pod.UID == "" {
+			return false
+		}
+		return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
+	}
+	return c.podBelongsToTrackedWorkload(ctx, targetClient, ds, pod)
+}
+
+func allowedPodRefFromPod(pod *corev1.Pod, ready bool, containerStatus *breakglassv1alpha1.PodContainerStatus) breakglassv1alpha1.AllowedPodRef {
+	return breakglassv1alpha1.AllowedPodRef{
+		Namespace:       pod.Namespace,
+		Name:            pod.Name,
+		UID:             string(pod.UID),
+		NodeName:        pod.Spec.NodeName,
+		Ready:           ready,
+		Phase:           string(pod.Status.Phase),
+		ContainerStatus: containerStatus,
+	}
+}
+
+func (c *DebugSessionController) updateAuxiliaryResourceReadiness(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	targetClient ctrlclient.Client,
+) error {
+	if c.auxiliaryMgr == nil || len(ds.Status.AuxiliaryResourceStatuses) == 0 {
+		return nil
+	}
+	_, err := c.auxiliaryMgr.CheckAuxiliaryResourcesReadiness(ctx, ds, targetClient)
+	return err
+}
+
+func (c *DebugSessionController) podBelongsToTrackedWorkload(ctx context.Context, targetClient ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod) bool {
+	if ds == nil || pod == nil {
+		return false
+	}
+	for _, ref := range ds.Status.DeployedResources {
+		if ref.UID == "" || ref.Namespace != pod.Namespace || ref.Source != "debug-pod" {
+			continue
+		}
+		if ref.Kind == "Pod" && ref.Name == pod.Name && ref.UID == string(pod.UID) {
+			return true
+		}
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil {
+			continue
+		}
+		switch ref.Kind {
+		case "DaemonSet":
+			if owner.Kind != "DaemonSet" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
+				continue
+			}
+			workload := &appsv1.DaemonSet{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
+				continue
+			}
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &workload.Spec.Template, true) {
+				return true
+			}
+		case "Deployment":
+			if owner.Kind != "ReplicaSet" || owner.APIVersion != "apps/v1" {
+				continue
+			}
+			rs := &appsv1.ReplicaSet{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: pod.Namespace, Name: owner.Name}, rs); err != nil || rs.UID != owner.UID {
+				continue
+			}
+			rsOwner := metav1.GetControllerOf(rs)
+			if rsOwner == nil || rsOwner.Kind != "Deployment" || rsOwner.Name != ref.Name || string(rsOwner.UID) != ref.UID {
+				continue
+			}
+			workload := &appsv1.Deployment{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, workload); err != nil || string(workload.UID) != ref.UID {
+				continue
+			}
+			if !podMatchesWorkloadTemplate(&corev1.Pod{Spec: rs.Spec.Template.Spec}, &workload.Spec.Template, false) {
+				continue
+			}
+			// Only the live Pod from the API list receives admission defaults;
+			// the ReplicaSet-to-Deployment template comparison above stays strict.
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &rs.Spec.Template, false) {
+				return true
+			}
+		case "Job":
+			if owner.Kind != "Job" || owner.APIVersion != "batch/v1" || owner.Name != ref.Name || string(owner.UID) != ref.UID {
+				continue
+			}
+			job := &batchv1.Job{}
+			if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, job); err != nil || string(job.UID) != ref.UID {
+				continue
+			}
+			if podMatchesAdmittedWorkloadTemplate(ctx, targetClient, pod, &job.Spec.Template, false) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // monitorPodHealth checks pod status and emits audit events for failures/restarts
@@ -180,14 +326,16 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 			"node", pod.Spec.NodeName,
 		)
 
-		if c.shouldEmitAudit(ds) && c.auditManager != nil {
-			c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
-			c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
-				"pod":       pod.Name,
-				"namespace": pod.Namespace,
-				"reason":    reason,
-				"message":   message,
-			})
+		if c.shouldEmitAudit(ds) {
+			if auditManager := c.currentAuditManager(); auditManager != nil {
+				auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, reason, message)
+				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+					"pod":       pod.Name,
+					"namespace": pod.Namespace,
+					"reason":    reason,
+					"message":   message,
+				})
+			}
 		}
 		metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, reason).Inc()
 	}
@@ -212,15 +360,17 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 				"lastTerminationReason", lastTerminationReason,
 			)
 
-			if c.shouldEmitAudit(ds) && c.auditManager != nil {
-				c.auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
-				c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
-					"pod":                   pod.Name,
-					"namespace":             pod.Namespace,
-					"container":             cs.Name,
-					"restartCount":          cs.RestartCount,
-					"lastTerminationReason": lastTerminationReason,
-				})
+			if c.shouldEmitAudit(ds) {
+				if auditManager := c.currentAuditManager(); auditManager != nil {
+					auditManager.DebugSessionPodRestarted(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, cs.RestartCount, lastTerminationReason)
+					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodRestarted", map[string]interface{}{
+						"pod":                   pod.Name,
+						"namespace":             pod.Namespace,
+						"container":             cs.Name,
+						"restartCount":          cs.RestartCount,
+						"lastTerminationReason": lastTerminationReason,
+					})
+				}
 			}
 			metrics.DebugSessionPodRestarts.WithLabelValues(ds.Spec.Cluster, ds.Name).Inc()
 		}
@@ -244,15 +394,17 @@ func (c *DebugSessionController) monitorPodHealth(ctx context.Context, ds *break
 					"waitingMessage", waitingMessage,
 				)
 
-				if c.shouldEmitAudit(ds) && c.auditManager != nil {
-					c.auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
-					c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
-						"pod":       pod.Name,
-						"namespace": pod.Namespace,
-						"container": cs.Name,
-						"reason":    waitingReason,
-						"message":   waitingMessage,
-					})
+				if c.shouldEmitAudit(ds) {
+					if auditManager := c.currentAuditManager(); auditManager != nil {
+						auditManager.DebugSessionPodFailed(ctx, ds.Name, ds.Namespace, pod.Name, pod.Namespace, waitingReason, waitingMessage)
+						c.sendToWebhookDestinations(ctx, ds, "DebugSessionPodFailed", map[string]interface{}{
+							"pod":       pod.Name,
+							"namespace": pod.Namespace,
+							"container": cs.Name,
+							"reason":    waitingReason,
+							"message":   waitingMessage,
+						})
+					}
 				}
 				metrics.DebugSessionPodFailures.WithLabelValues(ds.Spec.Cluster, ds.Name, waitingReason).Inc()
 			}
@@ -318,51 +470,63 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	// Keep the inventory observed at the start of this cleanup attempt.  A
+	// concurrent outcome writer may add a newer target while cleanup is in
+	// progress; the status patch below must remove only entries that this
+	// attempt actually retired.
+	cleanupBaseline := ds.Status.DeepCopy()
 
 	if c.ccProvider == nil {
+		if hasTrackedSpokeResources(ds) {
+			return fmt.Errorf("cannot clean up tracked spoke resources: cluster client provider is unavailable")
+		}
 		return nil
 	}
 
 	// Clean up kubectl-debug resources (if any)
-	kubectlHandler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	kubectlHandler := c.newKubectlDebugHandler()
+	var cleanupErrors []error
 	if err := kubectlHandler.CleanupKubectlDebugResources(ctx, ds); err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
+		// An unavailable cluster cannot prove that tracked resources are gone.
 		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+			log.Warnw("ClusterConfig no longer exists; retaining cleanup inventory for retry", "cluster", ds.Spec.Cluster)
+			return fmt.Errorf("cleanup blocked by missing ClusterConfig: %w", err)
 		}
 		log.Errorw("Failed to cleanup kubectl-debug resources", "error", err)
-		// Continue to clean up deployed resources even if this fails
+		cleanupErrors = append(cleanupErrors, err)
+	}
+
+	if len(ds.Status.DeployedResources) == 0 &&
+		len(ds.Status.AuxiliaryResourceStatuses) == 0 &&
+		len(ds.Status.PodTemplateResourceStatuses) == 0 {
+		// AllowedPods are authorization references, not spoke resources. Remove
+		// this attempt's baseline refs while the status merge retains newer refs.
+		ds.Status.AllowedPods = nil
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+		}
+		return errors.Join(cleanupErrors...)
 	}
 
 	// Get spoke cluster client for cleanup
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
 	if err != nil {
-		// Check if the error is due to missing ClusterConfig - if so, treat as cleanup complete
-		if errors.Is(err, cluster.ErrClusterConfigNotFound) {
-			log.Warnw("ClusterConfig no longer exists, treating cleanup as complete (orphaned session)",
-				"cluster", ds.Spec.Cluster)
-			// Clear deployed resources since we can't clean them up anyway
-			ds.Status.DeployedResources = nil
-			ds.Status.AllowedPods = nil
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
-		}
-		return fmt.Errorf("failed to get REST config: %w", err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to get REST config: %w", err))
+		return errors.Join(cleanupErrors...)
 	}
 	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
 	if err != nil {
-		return fmt.Errorf("failed to create client: %w", err)
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
+		return errors.Join(cleanupErrors...)
 	}
 
 	// Cleanup auxiliary resources first using the manager
+	auxiliaryCleanupFailed := false
 	if c.auxiliaryMgr != nil && len(ds.Status.AuxiliaryResourceStatuses) > 0 {
 		if err := c.auxiliaryMgr.CleanupAuxiliaryResources(ctx, ds, targetClient); err != nil {
 			log.Warnw("Failed to cleanup auxiliary resources", "error", err)
-			// Continue to clean up main workloads
+			auxiliaryCleanupFailed = true
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 
@@ -370,79 +534,512 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	if len(ds.Status.PodTemplateResourceStatuses) > 0 {
 		if err := c.cleanupPodTemplateResources(ctx, ds, targetClient); err != nil {
 			log.Warnw("Failed to cleanup pod template resources", "error", err)
-			// Continue to clean up main workloads
+			cleanupErrors = append(cleanupErrors, err)
 		}
 	}
 
 	if len(ds.Status.DeployedResources) == 0 {
 		// Persist any status changes from auxiliary/pod-template cleanup above
-		return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+		if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+		}
+		return errors.Join(cleanupErrors...)
 	}
 
-	// Cleanup main workloads (DaemonSet/Deployment)
+	if err := c.cleanupDeployedResources(ctx, ds, targetClient, auxiliaryCleanupFailed, len(ds.Status.PodTemplateResourceStatuses) > 0); err != nil {
+		cleanupErrors = append(cleanupErrors, err)
+	}
+	if err := c.patchDebugSessionCleanupStatus(ctx, ds, cleanupBaseline); err != nil {
+		cleanupErrors = append(cleanupErrors, fmt.Errorf("update cleanup status: %w", err))
+	}
+	return errors.Join(cleanupErrors...)
+}
+
+func residualResourceIdentities(refs []breakglassv1alpha1.DeployedResourceRef) string {
+	identities := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		identity := fmt.Sprintf("%s/%s", ref.Kind, ref.Name)
+		if ref.Namespace != "" {
+			identity = ref.Namespace + "/" + identity
+		}
+		if ref.UID != "" {
+			identity += " (uid=" + ref.UID + ")"
+		}
+		identities = append(identities, identity)
+	}
+	return strings.Join(identities, ", ")
+}
+
+func (c *DebugSessionController) patchDebugSessionCleanupStatus(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	baseline ...*breakglassv1alpha1.DebugSessionStatus,
+) error {
+	desiredStatus := ds.Status
+	cleanupBaseline := desiredStatus
+	if len(baseline) > 0 && baseline[0] != nil {
+		cleanupBaseline = *baseline[0]
+	}
+	var patchedStatus breakglassv1alpha1.DebugSessionStatus
+	var patchedResourceVersion string
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.DebugSession{}
+		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
+			return err
+		}
+		if ds.UID != "" && current.UID != ds.UID {
+			return fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
+		}
+
+		base := current.DeepCopy()
+		current.Status.DeployedResources = mergeCleanupInventory(
+			cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
+			deployedResourceKey,
+		)
+		current.Status.AllowedPods = mergeCleanupInventory(
+			cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
+			allowedPodKey,
+		)
+		current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
+			cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
+		)
+		current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
+			cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
+			podTemplateResourceStatusKey,
+		)
+		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
+			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
+		)
+		if current.Generation > 0 {
+			current.Status.ObservedGeneration = current.Generation
+		}
+
+		if err := c.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return err
+		}
+		patchedStatus = current.Status
+		patchedResourceVersion = current.ResourceVersion
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("patch debug session cleanup status: %w", err)
+	}
+
+	ds.Status = patchedStatus
+	ds.ResourceVersion = patchedResourceVersion
+	return nil
+}
+
+// mergeCleanupInventory applies the removals observed by one cleanup attempt
+// to the latest persisted list.  Entries absent from the baseline are newer
+// writes and must survive, even when the cleanup caller started from an older
+// same-UID session object.
+func mergeCleanupInventory[T any](baseline, desired, current []T, key func(T) string) []T {
+	baselineKeys := make(map[string]struct{}, len(baseline))
+	for _, item := range baseline {
+		baselineKeys[key(item)] = struct{}{}
+	}
+	desiredKeys := make(map[string]struct{}, len(desired))
+	for _, item := range desired {
+		desiredKeys[key(item)] = struct{}{}
+	}
+	merged := append([]T(nil), desired...)
+	for _, item := range current {
+		itemKey := key(item)
+		if _, wasTracked := baselineKeys[itemKey]; wasTracked {
+			continue
+		}
+		if _, alreadyDesired := desiredKeys[itemKey]; !alreadyDesired {
+			merged = append(merged, item)
+		}
+	}
+	return merged
+}
+
+func deployedResourceKey(ref breakglassv1alpha1.DeployedResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.Source, ref.UID, ref.CreateOperationID)
+}
+
+func allowedPodKey(ref breakglassv1alpha1.AllowedPodRef) string {
+	return fmt.Sprintf("%s|%s|%s", ref.Namespace, ref.Name, ref.UID)
+}
+
+func auxiliaryResourceStatusKey(status breakglassv1alpha1.AuxiliaryResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s", status.Name, status.Category, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, status.UID, status.CreateOperationID)
+}
+
+func additionalResourceKey(ref breakglassv1alpha1.AdditionalResourceRef) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", ref.APIVersion, ref.Kind, ref.Namespace, ref.ResourceName, ref.UID, ref.CreateOperationID)
+}
+
+func mergeAuxiliaryResourceStatuses(
+	baseline, desired, current []breakglassv1alpha1.AuxiliaryResourceStatus,
+) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
+	desiredByKey := make(map[string]int, len(desired))
+	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
+	for i, status := range desired {
+		desiredByKey[auxiliaryResourceStatusKey(status)] = i
+	}
+	for _, status := range baseline {
+		baselineByKey[auxiliaryResourceStatusKey(status)] = status
+	}
+	for _, status := range current {
+		key := auxiliaryResourceStatusKey(status)
+		if desiredIndex, ok := desiredByKey[key]; ok {
+			baselineStatus := baselineByKey[key]
+			merged[desiredIndex].AdditionalResources = mergeCleanupInventory(
+				baselineStatus.AdditionalResources,
+				desired[desiredIndex].AdditionalResources,
+				status.AdditionalResources,
+				additionalResourceKey,
+			)
+			continue
+		}
+		if _, wasTracked := baselineByKey[key]; !wasTracked {
+			merged = append(merged, status)
+		}
+	}
+	return merged
+}
+
+func podTemplateResourceStatusKey(status breakglassv1alpha1.PodTemplateResourceStatus) string {
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.Source, status.UID, status.CreateOperationID)
+}
+
+func canonicalCopiedPodUID(ref breakglassv1alpha1.CopiedPodRef) string {
+	if ref.UID != "" {
+		return ref.UID
+	}
+	return ref.CopyUID
+}
+
+func mergeKubectlDebugStatus(baseline, desired, current *breakglassv1alpha1.KubectlDebugStatus) *breakglassv1alpha1.KubectlDebugStatus {
+	if baseline == nil && desired == nil {
+		return current.DeepCopy()
+	}
+	var empty breakglassv1alpha1.KubectlDebugStatus
+	if baseline == nil {
+		baseline = &empty
+	}
+	if desired == nil {
+		desired = &empty
+	}
+	if current == nil {
+		current = &empty
+	}
+	merged := desired.DeepCopy()
+	merged.EphemeralContainersInjected = mergeCleanupInventory(
+		baseline.EphemeralContainersInjected, desired.EphemeralContainersInjected, current.EphemeralContainersInjected,
+		func(ref breakglassv1alpha1.EphemeralContainerRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.Namespace, ref.PodName, ref.ContainerName, ref.PodUID, ref.Image)
+		},
+	)
+	merged.CopiedPods = mergeCleanupInventory(
+		baseline.CopiedPods, desired.CopiedPods, current.CopiedPods,
+		func(ref breakglassv1alpha1.CopiedPodRef) string {
+			return fmt.Sprintf("%s|%s|%s|%s|%s", ref.CopyNamespace, ref.CopyName, canonicalCopiedPodUID(ref), ref.OriginalNamespace, ref.OriginalPod)
+		},
+	)
+	merged.Operations = mergeKubectlDebugOperations(baseline.Operations, desired.Operations, current.Operations)
+	if len(merged.EphemeralContainersInjected) == 0 && len(merged.CopiedPods) == 0 && len(merged.Operations) == 0 {
+		return nil
+	}
+	return merged
+}
+
+// mergeKubectlDebugOperations preserves durable operation evidence while a
+// cleanup attempt races with a target mutation outcome writer. Terminal state
+// always wins over Prepared, and concurrent operations that were added after
+// the cleanup baseline are retained.
+func mergeKubectlDebugOperations(
+	baseline, desired, current []breakglassv1alpha1.KubectlDebugOperation,
+) []breakglassv1alpha1.KubectlDebugOperation {
+	desiredByID := make(map[string]int, len(desired))
+	baselineByID := make(map[string]breakglassv1alpha1.KubectlDebugOperation, len(baseline))
+	for i, operation := range desired {
+		desiredByID[operation.ID] = i
+	}
+	for _, operation := range baseline {
+		baselineByID[operation.ID] = operation
+	}
+	merged := make([]breakglassv1alpha1.KubectlDebugOperation, 0, len(desired)+len(current))
+	deferredFinalized := make([]breakglassv1alpha1.KubectlDebugOperation, 0)
+	currentIDs := make(map[string]struct{}, len(current))
+	for _, operation := range current {
+		currentIDs[operation.ID] = struct{}{}
+		if desiredIndex, ok := desiredByID[operation.ID]; ok {
+			mergedOperation := mergeKubectlDebugOperation(desired[desiredIndex], operation)
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared && mergedOperation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
+				deferredFinalized = append(deferredFinalized, mergedOperation)
+			} else {
+				merged = append(merged, mergedOperation)
+			}
+			continue
+		}
+		// The current server snapshot owns terminal ordering and retains any
+		// operation that was observed during the cleanup race.
+		merged = append(merged, operation)
+	}
+	merged = append(merged, deferredFinalized...)
+	for _, operation := range desired {
+		if _, exists := currentIDs[operation.ID]; exists {
+			continue
+		}
+		// A terminal record absent from current was compacted by another
+		// writer. Do not reintroduce it from the cleanup's stale desired copy.
+		if _, wasTracked := baselineByID[operation.ID]; wasTracked {
+			continue
+		}
+		merged = append(merged, operation)
+	}
+	merged = terminalKubectlDebugOperations(merged)
+	return merged
+}
+
+func mergeKubectlDebugOperation(desired, current breakglassv1alpha1.KubectlDebugOperation) breakglassv1alpha1.KubectlDebugOperation {
+	if current.State != breakglassv1alpha1.KubectlDebugOperationPrepared || desired.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+		return current
+	}
+	return desired
+}
+
+func (c *DebugSessionController) cleanupDeployedResources(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	targetClient ctrlclient.Client,
+	keepAuxiliaryRefs bool,
+	keepPodTemplateRefs bool,
+) error {
+	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+	var cleanupErrors []error
+	remainingDeployedResources := make([]breakglassv1alpha1.DeployedResourceRef, 0, len(ds.Status.DeployedResources))
+
 	for _, ref := range ds.Status.DeployedResources {
 		// Skip auxiliary resources - already cleaned up by manager
 		if strings.HasPrefix(ref.Source, "auxiliary:") {
-			continue
+			if keepAuxiliaryRefs {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+				continue
+			}
+			if auxiliaryResourceDeleted(ds, ref) || !auxiliaryResourceRequiresCleanup(ds, ref) {
+				if !auxiliaryResourceStatusKnown(ds, ref) {
+					remainingDeployedResources = append(remainingDeployedResources, ref)
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("missing auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
+				}
+				continue
+			}
 		}
-		// Skip pod-template resources - already cleaned up above
+		// Retain pod-template inventory while specialized cleanup is pending;
+		// otherwise let the generic pass remove legacy residual references.
 		if ref.Source == "pod-template" {
+			if keepPodTemplateRefs {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+				continue
+			}
+		}
+
+		if ref.APIVersion == "" || ref.Kind == "" || ref.Name == "" {
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("invalid deployed resource identity %q", residualResourceIdentities([]breakglassv1alpha1.DeployedResourceRef{ref})))
 			continue
 		}
 
-		var obj ctrlclient.Object
-
-		switch ref.Kind {
-		case "DaemonSet":
-			obj = &appsv1.DaemonSet{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ref.Name,
-					Namespace: ref.Namespace,
-				},
-			}
-		case "Deployment":
-			obj = &appsv1.Deployment{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ref.Name,
-					Namespace: ref.Namespace,
-				},
-			}
-		case "ResourceQuota":
-			obj = &corev1.ResourceQuota{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ref.Name,
-					Namespace: ref.Namespace,
-				},
-			}
-		case "PodDisruptionBudget":
-			obj = &policyv1.PodDisruptionBudget{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      ref.Name,
-					Namespace: ref.Namespace,
-				},
-			}
-		default:
-			log.Warnw("Unknown resource type, skipping cleanup", "kind", ref.Kind, "name", ref.Name)
+		// The inventory is deliberately generic: auxiliary resources and
+		// multi-document templates may contain PVCs, NetworkPolicies, RBAC
+		// objects, CRDs, or kinds added after this controller was released.
+		if ref.Source == "workload" && ref.Kind != "DaemonSet" && ref.Kind != "Deployment" &&
+			ref.Kind != "Job" && ref.Kind != "ResourceQuota" && ref.Kind != "PodDisruptionBudget" &&
+			ref.Kind != "Pod" {
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("unsupported deployed resource kind %q for %s/%s", ref.Kind, ref.Namespace, ref.Name))
 			continue
 		}
+		obj := &unstructured.Unstructured{}
+		obj.SetGroupVersionKind(schema.FromAPIVersionAndKind(ref.APIVersion, ref.Kind))
+		obj.SetName(ref.Name)
+		obj.SetNamespace(ref.Namespace)
+		if ref.UID != "" {
+			obj.SetUID(types.UID(ref.UID))
+		}
 
-		if err := targetClient.Delete(ctx, obj); err != nil && !apierrors.IsNotFound(err) {
-			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "error", err)
+		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
+			if apierrors.IsNotFound(err) {
+				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+				continue
+			}
+			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace, "error", err)
+			remainingDeployedResources = append(remainingDeployedResources, ref)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
 		} else {
-			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name)
+			// Kubernetes reports a successful DELETE before finalizers finish.
+			// Verify the identity is actually gone so finalizer stalls remain in
+			// the durable inventory and are retried/visible to operators.
+			remaining := &unstructured.Unstructured{}
+			remaining.SetGroupVersionKind(obj.GroupVersionKind())
+			remaining.SetName(ref.Name)
+			remaining.SetNamespace(ref.Namespace)
+			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: ref.Name, Namespace: ref.Namespace}, remaining); getErr == nil {
+				expectedUID := types.UID(ref.UID)
+				if expectedUID == "" {
+					var resolveErr error
+					expectedUID, resolveErr = legacyCleanupUID(ds, obj.GroupVersionKind(), ref.Namespace, ref.Name)
+					if resolveErr != nil {
+						remainingDeployedResources = append(remainingDeployedResources, ref)
+						cleanupErrors = append(cleanupErrors, fmt.Errorf("resolve legacy identity for debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, resolveErr))
+						continue
+					}
+				}
+				if remaining.GetUID() != expectedUID {
+					// The recorded instance is gone and a same-name replacement is
+					// intentionally left untouched.
+					continue
+				}
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s is pending finalizers", ref.Kind, ref.Namespace, ref.Name))
+				continue
+			} else if !apierrors.IsNotFound(getErr) {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("verify deletion of debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, getErr))
+				continue
+			}
+			log.Infow("Deleted debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 		}
 	}
 
-	// Clear deployed resources from status
-	ds.Status.DeployedResources = nil
-	ds.Status.AllowedPods = nil
-	ds.Status.PodTemplateResourceStatuses = nil
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	ds.Status.DeployedResources = remainingDeployedResources
+	ds.Status.AllowedPods = allowedPodsForRemainingDeployedPods(ds.Status.AllowedPods, remainingDeployedResources)
+	return errors.Join(cleanupErrors...)
+}
+
+const sourceSessionUIDAnnotation = "breakglass.t-caas.telekom.com/source-session-uid"
+
+const createOperationIDAnnotation = "breakglass.t-caas.telekom.com/create-operation-id"
+
+// deleteOwnedResource resolves the target object immediately before deletion and
+// verifies immutable ownership. A name is reusable after deletion, so deleting
+// a name-only placeholder can destroy a replacement belonging to another
+// session. Records written before UID tracking was introduced are only
+// deletable when the immutable session UID annotation is present and matches.
+func deleteOwnedResource(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, expectedUID string, session *breakglassv1alpha1.DebugSession) error {
+	live := obj.DeepCopyObject().(ctrlclient.Object)
+	if err := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(obj), live); err != nil {
+		return err
+	}
+	if live.GetUID() == "" {
+		return fmt.Errorf("refusing to delete %s %s/%s: live UID is unavailable", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if expectedUID != "" {
+		if string(live.GetUID()) != expectedUID {
+			return nil
+		}
+	} else if session == nil || session.UID == "" || live.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("refusing to delete %s %s/%s: ownership identity is unavailable or changed", obj.GetObjectKind().GroupVersionKind().Kind, obj.GetNamespace(), obj.GetName())
+	}
+	if live.GetUID() != "" {
+		uid := live.GetUID()
+		return targetClient.Delete(ctx, live, ctrlclient.Preconditions{UID: &uid})
+	}
+	return targetClient.Delete(ctx, live)
+}
+
+func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.Object) (string, error) {
+	// Use only the mutation response; a name lookup could observe a replacement.
+	if obj.GetUID() == "" {
+		return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
+	}
+	return string(obj.GetUID()), nil
+}
+
+func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return status.Deleted
+		}
+		for _, additional := range status.AdditionalResources {
+			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
+				return additional.Deleted
+			}
+		}
+	}
+	return false
+}
+
+func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return shouldDeleteAuxiliaryResource(ds, status.Name)
+		}
+		for _, additional := range status.AdditionalResources {
+			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
+				return shouldDeleteAuxiliaryResource(ds, status.Name)
+			}
+		}
+	}
+	// Without the durable status metadata, deleteAfter cannot be determined.
+	// Retain the inventory and surface the ambiguity rather than guessing that
+	// the resource was controller-owned.
+	return false
+}
+
+func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return true
+		}
+		for _, additional := range status.AdditionalResources {
+			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func allowedPodsForRemainingDeployedPods(
+	allowedPods []breakglassv1alpha1.AllowedPodRef,
+	remainingDeployedResources []breakglassv1alpha1.DeployedResourceRef,
+) []breakglassv1alpha1.AllowedPodRef {
+	if len(allowedPods) == 0 {
+		return nil
+	}
+
+	remainingPodRefs := make(map[[2]string]struct{})
+	for _, ref := range remainingDeployedResources {
+		if ref.Kind != "Pod" {
+			continue
+		}
+		remainingPodRefs[[2]string{ref.Namespace, ref.Name}] = struct{}{}
+	}
+	if len(remainingPodRefs) == 0 {
+		return nil
+	}
+
+	filtered := make([]breakglassv1alpha1.AllowedPodRef, 0, len(allowedPods))
+	for _, pod := range allowedPods {
+		if _, ok := remainingPodRefs[[2]string{pod.Namespace, pod.Name}]; ok {
+			filtered = append(filtered, pod)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil
+	}
+	return filtered
 }
 
 // cleanupPodTemplateResources removes resources deployed from multi-document pod templates.
 func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, targetClient ctrlclient.Client) error {
 	log := c.log.With("debugSession", ds.Name, "cluster", ds.Spec.Cluster)
+
+	var cleanupErrors []error
+	remainingStatuses := make([]breakglassv1alpha1.PodTemplateResourceStatus, 0, len(ds.Status.PodTemplateResourceStatuses))
 
 	for i := range ds.Status.PodTemplateResourceStatuses {
 		status := &ds.Status.PodTemplateResourceStatuses[i]
@@ -465,6 +1062,8 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				"kind", status.Kind,
 				"error", err)
 			status.Error = fmt.Sprintf("failed to parse GVK: %v", err)
+			remainingStatuses = append(remainingStatuses, *status)
+			cleanupErrors = append(cleanupErrors, fmt.Errorf("parse GVK for pod template resource %s/%s: %w", status.Namespace, status.ResourceName, err))
 			continue
 		}
 
@@ -472,8 +1071,11 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		obj.SetGroupVersionKind(gvk)
 		obj.SetName(status.ResourceName)
 		obj.SetNamespace(status.Namespace)
+		if status.UID != "" {
+			obj.SetUID(types.UID(status.UID))
+		}
 
-		if err := targetClient.Delete(ctx, obj); err != nil {
+		if err := deleteTrackedResource(ctx, targetClient, ds, obj); err != nil {
 			if apierrors.IsNotFound(err) {
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
@@ -484,9 +1086,34 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 					"name", status.ResourceName,
 					"error", err)
 				status.Error = fmt.Sprintf("delete failed: %v", err)
+				remainingStatuses = append(remainingStatuses, *status)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("delete pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, err))
 				continue
 			}
 		} else {
+			// DELETE can be accepted while a finalizer keeps the object live.
+			// Keep the specialized status and deployed-resource inventory until a
+			// later reconcile confirms that the recorded instance is gone. This
+			// prevents the generic cleanup pass from issuing a second delete with
+			// incomplete legacy identity data.
+			remaining := &unstructured.Unstructured{}
+			remaining.SetGroupVersionKind(gvk)
+			remaining.SetName(status.ResourceName)
+			remaining.SetNamespace(status.Namespace)
+			if getErr := targetClient.Get(ctx, ctrlclient.ObjectKeyFromObject(remaining), remaining); getErr == nil {
+				expectedUID := types.UID(status.UID)
+				if expectedUID != "" && remaining.GetUID() == expectedUID {
+					status.Error = "delete accepted but resource remains pending finalizers"
+					remainingStatuses = append(remainingStatuses, *status)
+					cleanupErrors = append(cleanupErrors, fmt.Errorf("delete pod template resource %s %s/%s is pending finalizers", status.Kind, status.Namespace, status.ResourceName))
+					continue
+				}
+			} else if !apierrors.IsNotFound(getErr) {
+				status.Error = fmt.Sprintf("verify deletion failed: %v", getErr)
+				remainingStatuses = append(remainingStatuses, *status)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("verify deletion of pod template resource %s %s/%s: %w", status.Kind, status.Namespace, status.ResourceName, getErr))
+				continue
+			}
 			log.Infow("Deleted pod template resource",
 				"kind", status.Kind,
 				"name", status.ResourceName,
@@ -498,11 +1125,12 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		status.DeletedAt = &now
 	}
 
-	return nil
+	ds.Status.PodTemplateResourceStatuses = remainingStatuses
+	return errors.Join(cleanupErrors...)
 }
 
 // parseDuration parses the requested duration with template constraints.
-// Supports day units (e.g., "1d", "7d") in addition to standard Go duration units.
+// Supports day, week, and year units (e.g., "1d", "1w", "1y") in addition to standard Go duration units.
 func (c *DebugSessionController) parseDuration(requested string, constraints *breakglassv1alpha1.DebugSessionConstraints) time.Duration {
 	defaultDur := time.Hour
 	maxDur := 4 * time.Hour
@@ -584,47 +1212,163 @@ func IsPodInDebugSession(namespace, name string, allowedPods []breakglassv1alpha
 	return false
 }
 
-// updateTemplateStatus updates the DebugSessionTemplate and DebugPodTemplate status
-// to reflect active session counts and usage tracking.
-// incrementActive: true when activating a session, false when deactivating (cleanup/expiry)
-func (c *DebugSessionController) updateTemplateStatus(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, incrementActive bool) error {
-	log := c.log.With("template", template.Name)
+// reconcilePeriodicActiveAccounting coalesces periodic repairs per template.
+// Lifecycle transitions bypass this throttle, and failed repairs remain retryable.
+func (c *DebugSessionController) reconcilePeriodicActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	_, err, _ := c.accountingFlight.Do(ds.Spec.TemplateRef, func() (any, error) {
+		c.accountingMu.Lock()
+		last := c.accountingLast[ds.Spec.TemplateRef]
+		failureVersion := c.accountingFailureVersion
+		c.accountingMu.Unlock()
+		if time.Since(last) < DefaultDebugSessionRequeue {
+			return nil, nil
+		}
+		if err := c.reconcileActiveAccounting(ctx, ds, true); err != nil {
+			return nil, err
+		}
+		c.accountingMu.Lock()
+		defer c.accountingMu.Unlock()
+		// A lifecycle failure racing this scan must still get an immediate retry.
+		if failureVersion != c.accountingFailureVersion {
+			return nil, nil
+		}
+		// Bound process-local repair bookkeeping; eviction only adds a repair.
+		if c.accountingLast == nil {
+			c.accountingLast = make(map[string]time.Time)
+		}
+		if _, exists := c.accountingLast[ds.Spec.TemplateRef]; !exists && len(c.accountingLast) >= 1024 {
+			var oldest string
+			for name, repaired := range c.accountingLast {
+				if oldest == "" || repaired.Before(c.accountingLast[oldest]) {
+					oldest = name
+				}
+			}
+			delete(c.accountingLast, oldest)
+		}
+		c.accountingLast[ds.Spec.TemplateRef] = time.Now()
+		return nil, nil
+	})
+	return err
+}
 
-	// Re-fetch template to get latest version
-	currentTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
-	if err := c.client.Get(ctx, ctrlclient.ObjectKey{Name: template.Name}, currentTemplate); err != nil {
-		return fmt.Errorf("failed to get template: %w", err)
+// lockActiveAccounting serializes scans and metric publication for one template.
+// Entries exist only while workers are using or waiting for that template.
+func (c *DebugSessionController) lockActiveAccounting(template string) func() {
+	c.accountingMu.Lock()
+	if c.accountingLocks == nil {
+		c.accountingLocks = make(map[string]*accountingLock)
 	}
+	entry := c.accountingLocks[template]
+	if entry == nil {
+		entry = &accountingLock{}
+		c.accountingLocks[template] = entry
+	}
+	entry.users++
+	c.accountingMu.Unlock()
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		c.accountingMu.Lock()
+		entry.users--
+		if entry.users == 0 {
+			delete(c.accountingLocks, template)
+		}
+		c.accountingMu.Unlock()
+	}
+}
 
-	// Update active session count
-	if incrementActive {
-		currentTemplate.Status.ActiveSessionCount++
-		now := metav1.Now()
-		currentTemplate.Status.LastUsedAt = &now
-	} else {
-		if currentTemplate.Status.ActiveSessionCount > 0 {
-			currentTemplate.Status.ActiveSessionCount--
+// reconcileActiveAccounting derives aggregates from authoritative session state.
+// Template CAS retries repeat the list; periodic Active reconciliation repairs
+// snapshots raced by a session transition without replaying increment/decrement.
+func (c *DebugSessionController) reconcileActiveAccounting(ctx context.Context, ds *breakglassv1alpha1.DebugSession, markUsed bool) (resultErr error) {
+	unlock := c.lockActiveAccounting(ds.Spec.TemplateRef)
+	defer unlock()
+	defer func() {
+		if resultErr != nil {
+			c.accountingMu.Lock()
+			delete(c.accountingLast, ds.Spec.TemplateRef)
+			c.accountingFailureVersion++
+			c.accountingMu.Unlock()
+		}
+	}()
+	reader := c.approvalReader()
+	var templateUID types.UID
+	var podTemplateName string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		template := &breakglassv1alpha1.DebugSessionTemplate{}
+		templateExists := ds.Spec.TemplateRef != ""
+		if templateExists {
+			if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.TemplateRef}, template); err != nil {
+				if !apierrors.IsNotFound(err) {
+					return fmt.Errorf("read accounting template: %w", err)
+				}
+				templateExists = false
+			}
+			if templateExists {
+				if templateUID != "" && template.UID != templateUID {
+					return fmt.Errorf("accounting template identity changed")
+				}
+				templateUID = template.UID
+			}
+		}
+		var total int32
+		clusterCounts := map[string]int32{ds.Spec.Cluster: 0}
+		var latestStart *metav1.Time
+		continuation := ""
+		for {
+			var sessions breakglassv1alpha1.DebugSessionList
+			if err := reader.List(ctx, &sessions, &ctrlclient.ListOptions{Limit: 500, Continue: continuation, Raw: &metav1.ListOptions{FieldSelector: fields.OneTermEqualSelector("spec.templateRef", ds.Spec.TemplateRef).String()}}); err != nil {
+				return fmt.Errorf("list accounting sessions: %w", err)
+			}
+			for i := range sessions.Items {
+				session := &sessions.Items[i]
+				if session.Spec.TemplateRef != ds.Spec.TemplateRef {
+					continue
+				}
+				if _, ok := clusterCounts[session.Spec.Cluster]; !ok {
+					clusterCounts[session.Spec.Cluster] = 0
+				}
+				if session.Status.State == breakglassv1alpha1.DebugSessionStateActive {
+					total++
+					clusterCounts[session.Spec.Cluster]++
+				}
+				if session.Status.StartsAt != nil && (latestStart == nil || latestStart.Before(session.Status.StartsAt)) {
+					latestStart = session.Status.StartsAt.DeepCopy()
+				}
+			}
+			continuation = sessions.Continue
+			if continuation == "" {
+				break
+			}
+		}
+		if templateExists {
+			base := template.DeepCopy()
+			template.Status.ActiveSessionCount = total
+			if latestStart != nil && (template.Status.LastUsedAt == nil || template.Status.LastUsedAt.Before(latestStart)) {
+				template.Status.LastUsedAt = latestStart
+			}
+			if base.Status.ActiveSessionCount != template.Status.ActiveSessionCount || !base.Status.LastUsedAt.Equal(template.Status.LastUsedAt) {
+				if err := c.client.Status().Patch(ctx, template, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+					return fmt.Errorf("patch accounting template: %w", err)
+				}
+			}
+			if (markUsed || latestStart != nil) && template.Spec.PodTemplateRef != nil {
+				podTemplateName = template.Spec.PodTemplateRef.Name
+			}
+		}
+		for clusterName, count := range clusterCounts {
+			metrics.DebugSessionsActive.WithLabelValues(clusterName, ds.Spec.TemplateRef).Set(float64(count))
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if podTemplateName != "" {
+		if err := c.updatePodTemplateUsedBy(ctx, podTemplateName, ds.Spec.TemplateRef); err != nil {
+			c.log.Warnw("Failed to repair optional pod template usage; periodic reconciliation will retry", "podTemplate", podTemplateName, "error", err)
 		}
 	}
-
-	// Update the template status using SSA
-	if err := ssa.ApplyDebugSessionTemplateStatus(ctx, c.client, currentTemplate); err != nil {
-		return fmt.Errorf("failed to update template status: %w", err)
-	}
-
-	log.Debugw("Updated template status",
-		"activeSessionCount", currentTemplate.Status.ActiveSessionCount,
-		"lastUsedAt", currentTemplate.Status.LastUsedAt,
-		"incrementActive", incrementActive)
-
-	// Also update the DebugPodTemplate.status.usedBy if a pod template is referenced
-	if currentTemplate.Spec.PodTemplateRef != nil && currentTemplate.Spec.PodTemplateRef.Name != "" {
-		if err := c.updatePodTemplateUsedBy(ctx, currentTemplate.Spec.PodTemplateRef.Name, template.Name); err != nil {
-			log.Warnw("Failed to update pod template usedBy", "podTemplate", currentTemplate.Spec.PodTemplateRef.Name, "error", err)
-			// Non-fatal
-		}
-	}
-
 	return nil
 }
 

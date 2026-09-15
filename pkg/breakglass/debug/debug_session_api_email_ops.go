@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -31,16 +32,21 @@ func (c *DebugSessionAPIController) sendDebugSessionRequestEmail(ctx context.Con
 		return
 	}
 
-	// Collect approver emails
-	var approverEmails []string
-	if template.Spec.Approvers != nil {
-		approverEmails = append(approverEmails, template.Spec.Approvers.Users...)
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if !debugSessionApproversConfigured(approvers) {
+		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
+		return
+	}
+	if debugSessionAutoApproveMatches(approvers.AutoApproveFor, session.Spec.Cluster, session.Spec.UserGroups) {
+		c.log.Debugw("Debug session request is auto-approved, skipping approver request email", "session", session.Name)
+		return
 	}
 
+	approverEmails := append([]string(nil), approvers.Users...)
 	approverEmails = buildNotificationRecipients(approverEmails, notificationCfg)
 
 	if len(approverEmails) == 0 {
-		c.log.Debugw("No approvers configured for debug session template, skipping request email", "session", session.Name, "template", template.Name)
+		c.log.Debugw("No email recipients configured for debug session approvers, skipping request email", "session", session.Name, "template", debugSessionTemplateName(template))
 		return
 	}
 
@@ -228,6 +234,52 @@ func (c *DebugSessionAPIController) sendDebugSessionRejectionEmail(ctx context.C
 	}
 }
 
+// sendDebugSessionFailedEmail sends email notification to requester when a debug session fails.
+func (c *DebugSessionAPIController) sendDebugSessionFailedEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, reason string) {
+	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
+		return
+	}
+
+	requesterEmail := session.Spec.RequestedByEmail
+	if requesterEmail == "" {
+		requesterEmail = session.Spec.RequestedBy
+	}
+	recipients := []string{requesterEmail}
+
+	params := mail.DebugSessionFailedMailParams{
+		RequesterName:  debugSessionRequesterDisplayName(session),
+		RequesterEmail: requesterEmail,
+		SessionID:      session.Name,
+		Cluster:        session.Spec.Cluster,
+		TemplateName:   session.Spec.TemplateRef,
+		Namespace:      session.Namespace,
+		FailedAt:       time.Now().Format(time.RFC3339),
+		FailureReason:  reason,
+		URL:            fmt.Sprintf("%s/debug-sessions", c.baseURL),
+		BrandingName:   c.brandingName,
+	}
+
+	body, err := mail.RenderDebugSessionFailed(params)
+	if err != nil {
+		c.log.Errorw("Failed to render debug session failed email", "session", session.Name, "error", err)
+		return
+	}
+
+	subject := fmt.Sprintf("[%s] Debug Session Failed: %s", c.brandingName, session.Name)
+	if err := c.mailService.Enqueue(session.Name, recipients, subject, body); err != nil {
+		c.log.Errorw("Failed to enqueue debug session failed email", "session", session.Name, "error", err)
+	} else {
+		c.log.Infow("Debug session failed email queued", "session", session.Name, "requester", requesterEmail)
+	}
+}
+
+func debugSessionRequesterDisplayName(session *breakglassv1alpha1.DebugSession) string {
+	if session.Spec.RequestedByDisplayName != "" {
+		return session.Spec.RequestedByDisplayName
+	}
+	return session.Spec.RequestedBy
+}
+
 // sendDebugSessionCreatedEmail sends email confirmation to requester when a debug session is created
 func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Context, session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) {
 	if c.disableEmail || c.mailService == nil || !c.mailService.IsEnabled() {
@@ -268,7 +320,7 @@ func (c *DebugSessionAPIController) sendDebugSessionCreatedEmail(ctx context.Con
 		RequestedDuration: session.Spec.RequestedDuration,
 		Reason:            session.Spec.Reason,
 		RequestedAt:       session.CreationTimestamp.Format(time.RFC3339),
-		RequiresApproval:  template.Spec.Approvers != nil && len(template.Spec.Approvers.Users) > 0,
+		RequiresApproval:  isApprovalRequiredForSession(session, template, binding),
 		URL:               fmt.Sprintf("%s/debug-sessions/%s", c.baseURL, session.Name),
 		BrandingName:      c.brandingName,
 	}
@@ -321,6 +373,16 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 	c.auditService.Emit(ctx, event)
 }
 
+func (c *DebugSessionAPIController) shouldEmitAudit(session *breakglassv1alpha1.DebugSession) bool {
+	if session.Status.ResolvedTemplate == nil {
+		return true
+	}
+	if session.Status.ResolvedTemplate.Audit == nil {
+		return true
+	}
+	return session.Status.ResolvedTemplate.Audit.Enabled
+}
+
 // handleInjectEphemeralContainer injects a debug container into an existing pod
 func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
@@ -338,12 +400,12 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -365,10 +427,14 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -381,20 +447,38 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
 	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
-	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot); err != nil {
-		apiresponses.RespondForbidden(ctx, err.Error())
+	privileged := extractPrivileged(req.SecurityContext)
+	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot, privileged); err != nil {
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to validate ephemeral container request", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
+		return
+	}
+	if err := validateEphemeralContainerSecurityContext(req.SecurityContext, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers); err != nil {
+		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
 
 	// Inject the ephemeral container
-	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, currentUser.(string)); err != nil {
-		reqLog.Errorw("Failed to inject ephemeral container", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to inject ephemeral container")
+	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, username); err != nil {
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
+		} else {
+			reqLog.Warnw("Rejected ephemeral container injection", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
 
@@ -403,7 +487,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		"pod", req.PodName,
 		"namespace", req.Namespace,
 		"container", req.ContainerName,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "ephemeral container injected successfully",
@@ -430,12 +514,12 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -457,10 +541,14 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -473,13 +561,21 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Create the pod copy
-	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, currentUser.(string))
+	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
 	if err != nil {
-		reqLog.Errorw("Failed to create pod copy", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create pod copy")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create pod copy", "error", err)
+		} else {
+			reqLog.Warnw("Rejected pod copy request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
 
@@ -489,7 +585,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		"originalNamespace", req.Namespace,
 		"copyName", pod.Name,
 		"copyNamespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":           "pod copy created successfully",
@@ -517,12 +613,12 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	username := identity.username
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -544,10 +640,14 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not active, current state: %s", session.Status.State))
 		return
 	}
+	if isDebugSessionExpired(session, time.Now()) {
+		apiresponses.RespondBadRequest(ctx, "cannot run kubectl-debug operation on expired session")
+		return
+	}
 
-	// Verify user is a participant
-	if !c.isUserParticipant(session, currentUser.(string)) {
-		apiresponses.RespondForbidden(ctx, "user is not a participant of this session")
+	// Verify user can perform mutating debug operations
+	if !c.canUserOperateDebugResources(session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not allowed to modify debug resources for this session")
 		return
 	}
 
@@ -560,13 +660,21 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	}
 
 	// Create kubectl debug handler
-	handler := NewKubectlDebugHandler(c.client, &clusterClientAdapter{ccProvider: c.ccProvider})
+	provider := c.clusterClients
+	if provider == nil {
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 
 	// Create the node debug pod
-	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, currentUser.(string))
+	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
 	if err != nil {
-		reqLog.Errorw("Failed to create node debug pod", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to create node debug pod")
+		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
+			reqLog.Errorw("Failed to create node debug pod", "error", err)
+		} else {
+			reqLog.Warnw("Rejected node debug pod request", "error", err)
+		}
+		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
 
@@ -575,7 +683,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		"node", req.NodeName,
 		"podName", pod.Name,
 		"namespace", pod.Namespace,
-		"user", currentUser)
+		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "node debug pod created successfully",
@@ -585,17 +693,94 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	})
 }
 
+func respondKubectlDebugOperationError(ctx *gin.Context, err error, fallback string) {
+	switch kubectlDebugOperationHTTPStatus(err) {
+	case http.StatusForbidden:
+		var operationErr *kubectlDebugOperationError
+		if errors.As(err, &operationErr) && operationErr.kind == kubectlDebugOperationErrorPolicy {
+			// Policy errors may wrap provider, policy, or credential details.
+			// Keep the public response stable and log-sensitive causes private.
+			apiresponses.RespondForbidden(ctx, "debug operation is not allowed")
+			return
+		}
+		apiresponses.RespondForbidden(ctx, err.Error())
+	case http.StatusBadRequest:
+		apiresponses.RespondBadRequest(ctx, err.Error())
+	default:
+		apiresponses.RespondInternalErrorSimple(ctx, fallback)
+	}
+}
+
+func kubectlDebugOperationHTTPStatus(err error) int {
+	var operationErr *kubectlDebugOperationError
+	if errors.As(err, &operationErr) {
+		switch operationErr.kind {
+		case kubectlDebugOperationErrorPolicy:
+			return http.StatusForbidden
+		case kubectlDebugOperationErrorRequest:
+			return http.StatusBadRequest
+		case kubectlDebugOperationErrorInternal:
+			return http.StatusInternalServerError
+		}
+	}
+	if apierrors.IsNotFound(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
 // clusterClientAdapter adapts cluster.ClientProvider to ClientProviderInterface
 type clusterClientAdapter struct {
 	ccProvider *cluster.ClientProvider
 }
 
 func (a *clusterClientAdapter) GetClient(ctx context.Context, clusterName string) (ctrlclient.Client, error) {
+	if a.ccProvider == nil {
+		return nil, fmt.Errorf("cluster client provider is not configured")
+	}
 	restCfg, err := a.ccProvider.GetRESTConfig(ctx, clusterName)
 	if err != nil {
 		return nil, err
 	}
 	return ctrlclient.New(restCfg, ctrlclient.Options{})
+}
+
+func (a *clusterClientAdapter) GetClientForPrivilegedOperation(ctx context.Context, clusterName string) (ctrlclient.Client, *breakglassv1alpha1.ClusterConfig, error) {
+	if a.ccProvider == nil {
+		return nil, nil, fmt.Errorf("cluster client provider is not configured")
+	}
+	restCfg, configured, err := a.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, clusterName)
+	if err != nil {
+		return nil, nil, err
+	}
+	targetClient, err := ctrlclient.New(restCfg, ctrlclient.Options{})
+	if err != nil {
+		// GetRESTConfigForPrivilegedOperation registers the exact input snapshot
+		// before returning.  Client construction is part of the same operation;
+		// release that snapshot on this failure path so a failed request cannot
+		// retain an entry in privilegedInputVersions indefinitely.
+		a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+		return nil, nil, fmt.Errorf("create target cluster client: %w", err)
+	}
+	return targetClient, configured, nil
+}
+
+// ReleasePrivilegedOperationClusterConfig forwards operation cleanup to the
+// underlying provider.  Keeping this adapter method explicit ensures callers
+// using the debug ClientProviderInterface can release snapshots through the
+// optional lifecycle interface as well.
+func (a *clusterClientAdapter) ReleasePrivilegedOperationClusterConfig(configured *breakglassv1alpha1.ClusterConfig) {
+	if a == nil || a.ccProvider == nil {
+		return
+	}
+	a.ccProvider.ReleasePrivilegedOperationClusterConfig(configured)
+}
+
+func (a *clusterClientAdapter) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
+	if a.ccProvider == nil {
+		return fmt.Errorf("cluster client provider is not configured")
+	}
+	return a.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
 }
 
 // isUserParticipant checks if the user is a participant of the session
@@ -609,6 +794,35 @@ func (c *DebugSessionAPIController) isUserParticipant(session *breakglassv1alpha
 	for _, p := range session.Status.Participants {
 		if p.User == user && p.LeftAt == nil {
 			return true
+		}
+	}
+
+	return false
+}
+
+// canUserOperateDebugResources checks if the user can run mutating kubectl-debug operations.
+func (c *DebugSessionAPIController) canUserOperateDebugResources(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if debugSessionIdentityMatchesProvider(
+		identity,
+		session.Spec.IdentityProviderName,
+		session.Spec.IdentityProviderIssuer,
+		session.Spec.RequestedBy,
+		session.Spec.RequestedByEmail,
+	) {
+		return true
+	}
+
+	for _, p := range session.Status.Participants {
+		if p.LeftAt != nil ||
+			!debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
+			continue
+		}
+
+		switch p.Role {
+		case breakglassv1alpha1.ParticipantRoleOwner, breakglassv1alpha1.ParticipantRoleParticipant:
+			return true
+		default:
+			continue
 		}
 	}
 
@@ -633,6 +847,14 @@ func extractRunAsNonRoot(sc *corev1.SecurityContext) bool {
 		return false
 	}
 	return *sc.RunAsNonRoot
+}
+
+// extractPrivileged extracts the privileged value from a security context.
+func extractPrivileged(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.Privileged == nil {
+		return false
+	}
+	return *sc.Privileged
 }
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
@@ -661,8 +883,8 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 			continue
 		}
 
-		// Check if session is active (pending or approved, not expired/terminated/failed)
-		if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+		// Check if session is active (pending or approved, not rejected/expired/terminated/failed)
+		if session.Status.State == breakglassv1alpha1.DebugSessionStateRejected || session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
 			isDebugSessionExpired(session, now) {
@@ -713,6 +935,17 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
 	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
 ) ClusterAllowedResult {
+	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	return c.isClusterAllowedByTemplateOrApplicableBindings(template, clusterName, applicableBindings, clusterConfigs, clusterConfigItems)
+}
+
+func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindings(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	clusterName string,
+	applicableBindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	clusterConfigs map[string]*breakglassv1alpha1.ClusterConfig,
+	clusterConfigItems []breakglassv1alpha1.ClusterConfig,
+) ClusterAllowedResult {
 	result := ClusterAllowedResult{}
 
 	hasTemplateClusterRestriction := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
@@ -721,7 +954,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 		"template", template.Name,
 		"cluster", clusterName,
 		"hasTemplateClusterRestriction", hasTemplateClusterRestriction,
-		"totalBindingsProvided", len(bindings),
+		"applicableBindingsProvided", len(applicableBindings),
 		"totalClusterConfigs", len(clusterConfigs),
 	)
 
@@ -761,7 +994,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	}
 
 	// 2. Check if allowed by any binding that references this template
-	applicableBindings := c.findBindingsForTemplate(template, bindings)
+	sortDebugSessionClusterBindings(applicableBindings)
 	c.log.Debugw("Found bindings for template",
 		"template", template.Name,
 		"applicableBindingsCount", len(applicableBindings),
@@ -824,4 +1057,22 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrBinding(
 	)
 
 	return result
+}
+
+func isApprovalRequiredForSession(session *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	approvers := effectiveDebugSessionApprovers(template, binding)
+	if !debugSessionApproversConfigured(approvers) {
+		return false
+	}
+	if session != nil && debugSessionAutoApproveMatches(approvers.AutoApproveFor, session.Spec.Cluster, session.Spec.UserGroups) {
+		return false
+	}
+	return true
+}
+
+func debugSessionTemplateName(template *breakglassv1alpha1.DebugSessionTemplate) string {
+	if template == nil {
+		return ""
+	}
+	return template.Name
 }

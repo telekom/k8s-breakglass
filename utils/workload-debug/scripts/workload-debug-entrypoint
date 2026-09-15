@@ -1,0 +1,18 @@
+#!/bin/sh
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+set -eu
+
+if [ "$#" -eq 0 ]; then
+    set -- /bin/sh
+fi
+
+if [ "${WORKLOAD_DEBUG_MOTD:-1}" = "1" ] && [ -t 1 ] && [ -r /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD ]; then
+    cat /usr/share/breakglass/runbooks/upstream/workload-debug/MOTD
+fi
+
+if [ -r /usr/share/breakglass/runbooks/internal/INDEX.md ]; then
+    printf '%s\n' 'Optional mounted runbooks: /usr/share/breakglass/runbooks/internal/INDEX.md (documentation only; never sourced)'
+fi
+
+exec "$@"

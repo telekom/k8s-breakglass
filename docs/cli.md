@@ -189,7 +189,7 @@ bgctl session watch --mine --show-full
 # Watch debug sessions
 bgctl debug session watch --cluster prod-1
 
-# Watch debug sessions filtered by state (Pending, PendingApproval, Active, Expired, Terminated, Failed)
+# Watch debug sessions filtered by state (Pending, PendingApproval, Active, Rejected, Expired, Terminated, Failed)
 bgctl debug session watch --state Active --interval 5s
 
 # Watch debug sessions for a specific user and show full JSON on change
@@ -305,6 +305,10 @@ bgctl update --version v1.2.0
 # Rollback to previous version
 bgctl update rollback
 ```
+
+`bgctl update` fails closed when the matching `.sha256` checksum asset is missing
+or cannot be downloaded. Download the release archive and checksum manually if a
+release needs to be installed before its checksum asset is available.
 
 ## Exit Codes
 

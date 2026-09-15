@@ -18,6 +18,7 @@ spec:
     # Authority is typically the Keycloak server base URL
     authority: "https://auth.example.com"
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     
     # Optional: jwksEndpoint for custom JWKS endpoint
     # If not specified, defaults to Authority/.well-known/openid-configuration
@@ -119,6 +120,7 @@ spec:
   oidc:
     authority: "https://backup-auth.example.com"
     clientID: "breakglass-ui-fallback"
+    expectedAudience: "breakglass-ui-fallback"
 
   # IMPORTANT: Different issuer URL to distinguish this provider
   issuer: "https://backup-auth.example.com"

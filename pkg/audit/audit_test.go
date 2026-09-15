@@ -6,30 +6,41 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 // allSensitiveEventTypes mirrors the cases in IsSensitiveEvent so that
 // TestIsSensitiveEvent and sampling tests share a single source of truth.
 var allSensitiveEventTypes = []EventType{
 	EventSessionRequested, EventSessionApproved, EventSessionDenied,
 	EventSessionRejected, EventSessionExpired,
-	EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+	EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped, EventSessionInvalidated,
+	EventSessionTerminationIntent,
 	EventAccessDenied, EventAccessDeniedPolicy,
 	EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 	EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
 	EventDebugSessionCreated, EventDebugSessionStarted,
-	EventDebugSessionTerminated, EventDebugSessionFailed,
+	EventDebugSessionTerminated, EventDebugSessionRejected, EventDebugSessionFailed,
 	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 	EventResourceImpersonate, EventPolicyBypassed,
@@ -44,6 +55,7 @@ func TestEventTypes(t *testing.T) {
 		{EventSessionRequested, SeverityInfo},
 		{EventSessionApproved, SeverityInfo},
 		{EventAccessDenied, SeverityWarning},
+		{EventDebugSessionRejected, SeverityWarning},
 		{EventPolicyViolation, SeverityWarning},
 		{EventSessionRevoked, SeverityCritical},
 		{EventDebugSessionTerminated, SeverityCritical},
@@ -65,6 +77,45 @@ func TestEventTypes(t *testing.T) {
 		t.Run(string(tc.eventType), func(t *testing.T) {
 			severity := SeverityForEventType(tc.eventType)
 			assert.Equal(t, tc.expectedSeverity, severity)
+		})
+	}
+}
+
+func TestRedactURL(t *testing.T) {
+	assert.Equal(t, "https://hooks.example/events", redactURL("https://user:secret@hooks.example/events?token=secret#fragment"))
+	assert.Equal(t, "<invalid-url>", redactURL("://bad"))
+}
+
+func TestWebhookSinkRedactsTransportURL(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(fmt.Sprint(batch), func(t *testing.T) {
+			core, logs := observer.New(zap.DebugLevel)
+			logger := zap.New(core)
+			sink := NewWebhookSink(WebhookSinkConfig{URL: "https://user:secret@collector.invalid/events?token=secret#secret"}, logger)
+			cause := errors.New("nested secret transport detail")
+			sink.httpClient.Transport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+				return nil, &url.Error{Op: "nested", URL: "https://secret.invalid?secret", Err: cause}
+			})
+			wrapped := NewCircuitBreakerSink(sink, DefaultCircuitBreakerConfig(), logger)
+			var err error
+			if batch {
+				err = wrapped.WriteBatch(context.Background(), []*Event{{ID: "event"}})
+			} else {
+				err = wrapped.Write(context.Background(), &Event{ID: "event"})
+			}
+			require.Error(t, err)
+			assert.NotContains(t, err.Error(), "secret")
+			assert.ErrorIs(t, err, cause)
+			var typed *url.Error
+			assert.ErrorAs(t, err, &typed)
+			service := &Service{sinks: []Sink{wrapped}}
+			health := service.GetSinkHealth()
+			require.Len(t, health, 1)
+			assert.NotEmpty(t, health[0].LastError)
+			assert.NotContains(t, health[0].LastError, "secret")
+			for _, entry := range logs.All() {
+				assert.NotContains(t, fmt.Sprint(entry.ContextMap()), "secret")
+			}
 		})
 	}
 }
@@ -454,6 +505,8 @@ type testSink struct {
 	writeFunc func(event *Event)
 }
 
+func (s *testSink) SupportsSynchronousDelivery() bool { return true }
+
 func (s *testSink) Write(_ context.Context, event *Event) error {
 	if s.callback != nil {
 		s.callback()
@@ -576,6 +629,162 @@ func TestManagerEmitSync(t *testing.T) {
 	_ = manager.Close()
 }
 
+func TestManagerEmitSyncRequiresEveryDirectSink(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	working := &testSink{name: "working"}
+	failing := &failingSink{name: "required"}
+	manager := NewManager(&testSink{name: "primary"}, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{working, failing},
+	}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	err := manager.EmitSync(context.Background(), &Event{Type: EventSessionExpired})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "required")
+	assert.Zero(t, manager.Stats().ProcessedEvents,
+		"partial sink delivery must not be counted as an accepted required audit event")
+}
+
+func TestManagerEmitSyncRejectsAsyncKafkaBeforeWritingAnySink(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	workingWrites := 0
+	working := &testSink{name: "working", callback: func() { workingWrites++ }}
+	asyncKafka := &KafkaSink{
+		name:   "async-kafka",
+		writer: &kafka.Writer{Async: true},
+		logger: logger,
+	}
+	wrappedKafka := NewFilteredSink(NewCircuitBreakerSink(asyncKafka, CircuitBreakerConfig{}, logger), EventFilterConfig{})
+	manager := NewManager(&testSink{name: "primary"}, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{working, wrappedKafka},
+	}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	err := manager.EmitSync(context.Background(), &Event{Type: EventSessionExpired})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "async-kafka")
+	assert.Contains(t, err.Error(), "uses asynchronous delivery")
+	assert.Zero(t, workingWrites, "capability preflight must prevent partial required-event delivery")
+	assert.Zero(t, manager.Stats().ProcessedEvents)
+}
+
+func TestManagerEmitSyncRequiresKafkaBrokerAcknowledgements(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	kafkaSink := &KafkaSink{
+		name:   "no-ack-kafka",
+		writer: &kafka.Writer{RequiredAcks: 0},
+		logger: logger,
+	}
+	manager := NewManager(&testSink{name: "primary"}, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{kafkaSink},
+	}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	err := manager.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not require broker acknowledgements")
+	assert.Zero(t, manager.Stats().ProcessedEvents)
+}
+
+func TestManagerEmitSyncTraversesKnownCompositeWrappers(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	writes := 0
+	direct := &testSink{name: "direct", callback: func() { writes++ }}
+	queued := NewQueuedSink(direct, QueuedSinkConfig{QueueSize: 1, WorkerCount: 1}, logger)
+	filtered := NewFilteredSink(NewMultiSink([]Sink{queued}, logger), EventFilterConfig{
+		IncludeEventTypes: []string{string(EventSessionTerminationIntent)},
+	})
+	manager := NewManager(filtered, ManagerConfig{QueueSize: 1, WorkerCount: 1}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	require.NoError(t, manager.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}))
+	assert.Equal(t, 1, writes, "synchronous delivery must bypass every known queue wrapper")
+}
+
+func TestManagerEmitSyncRejectsFilteredRequiredEvent(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	unknown := NewFilteredSink(&unknownAuditSink{}, EventFilterConfig{
+		IncludeEventTypes: []string{string(EventAccessGranted)},
+	})
+	manager := NewManager(unknown, ManagerConfig{QueueSize: 1, WorkerCount: 1}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	err := manager.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "filtered out")
+	err = manager.EmitSync(context.Background(), &Event{Type: EventAccessGranted})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unknown synchronous delivery semantics")
+}
+
+func TestManagerEmitSyncRejectsKubernetesEventRecorderAsDurableReceipt(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	manager := NewManager(NewKubernetesEventSink(nil, nil), ManagerConfig{QueueSize: 1, WorkerCount: 1}, logger)
+	defer func() { require.NoError(t, manager.Close()) }()
+
+	err := manager.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "without a durable delivery receipt")
+}
+
+type unknownAuditSink struct{}
+
+func (*unknownAuditSink) Write(context.Context, *Event) error { return nil }
+func (*unknownAuditSink) Close() error                        { return nil }
+func (*unknownAuditSink) Name() string                        { return "unknown" }
+
+type blockingAuditSink struct {
+	started   chan struct{}
+	release   chan struct{}
+	startOnce sync.Once
+}
+
+func (s *blockingAuditSink) Write(_ context.Context, _ *Event) error {
+	s.startOnce.Do(func() { close(s.started) })
+	<-s.release
+	return nil
+}
+
+func (s *blockingAuditSink) Close() error                      { return nil }
+func (s *blockingAuditSink) Name() string                      { return "blocking-direct" }
+func (s *blockingAuditSink) SupportsSynchronousDelivery() bool { return true }
+
+func TestManagerEmitSyncSerializesClose(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	direct := &blockingAuditSink{started: make(chan struct{}), release: make(chan struct{})}
+	manager := NewManager(&testSink{name: "primary"}, ManagerConfig{
+		QueueSize:   1,
+		WorkerCount: 1,
+		DirectSinks: []Sink{direct},
+	}, logger)
+
+	emitDone := make(chan error, 1)
+	go func() {
+		emitDone <- manager.EmitSync(context.Background(), &Event{Type: EventSessionRevoked})
+	}()
+	<-direct.started
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- manager.Close() }()
+
+	select {
+	case err := <-closeDone:
+		t.Fatalf("Close returned while synchronous sink write was blocked: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(direct.release)
+	require.NoError(t, <-emitDone)
+	require.NoError(t, <-closeDone)
+	assert.Error(t, manager.EmitSync(context.Background(), &Event{Type: EventSessionRevoked}), "closed manager must reject synchronous writes")
+}
+
 func TestManagerHelperMethods(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 	var events []*Event
@@ -635,6 +844,76 @@ func TestKubernetesEventSink(t *testing.T) {
 
 	assert.Equal(t, "kubernetes", sink.Name())
 	assert.NoError(t, sink.Close())
+}
+
+func TestKubernetesEventSinkUsesStableEventReason(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventDebugSessionApprovalTimeout,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "approver@example.com"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      "debug-session-1",
+			Namespace: "breakglass-system",
+		},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "Warning", recorder.eventType)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.reason)
+	assert.Equal(t, "DebugSessionApprovalTimeout", recorder.action)
+	assert.Contains(t, recorder.note, string(EventDebugSessionApprovalTimeout))
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "breakglass.t-caas.telekom.com/v1alpha1", regarding.APIVersion)
+	assert.Equal(t, "DebugSession", regarding.Kind)
+	assert.Equal(t, "debug-session-1", regarding.Name)
+	assert.Equal(t, "breakglass-system", regarding.Namespace)
+}
+
+func TestKubernetesEventSinkUsesDetailsAPIGroupFallback(t *testing.T) {
+	recorder := &capturingEventRecorder{}
+	sink := NewKubernetesEventSink(recorder, nil)
+
+	err := sink.Write(context.Background(), &Event{
+		Type:     EventAccessDenied,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "auditor@example.com"},
+		Target: Target{
+			Kind: "RoleBinding",
+			Name: "breakglass-view",
+		},
+		Details: map[string]interface{}{
+			"apiGroup": "rbac.authorization.k8s.io",
+		},
+	})
+	require.NoError(t, err)
+
+	regarding, ok := recorder.regarding.(*metav1.PartialObjectMetadata)
+	require.True(t, ok)
+	assert.Equal(t, "rbac.authorization.k8s.io/v1", regarding.APIVersion)
+	assert.Equal(t, "RoleBinding", regarding.Kind)
+	assert.Equal(t, "breakglass-view", regarding.Name)
+}
+
+type capturingEventRecorder struct {
+	regarding runtime.Object
+	eventType string
+	reason    string
+	action    string
+	note      string
+}
+
+func (r *capturingEventRecorder) Eventf(regarding runtime.Object, _ runtime.Object, eventType, reason, action, note string, args ...interface{}) {
+	r.regarding = regarding
+	r.eventType = eventType
+	r.reason = reason
+	r.action = action
+	r.note = fmt.Sprintf(note, args...)
 }
 
 func BenchmarkManagerEmit(b *testing.B) {
@@ -724,6 +1003,11 @@ func TestWebhookSink_InvalidURL(t *testing.T) {
 
 func TestWebhookSink_BadStatusCodes(t *testing.T) {
 	statusCodes := []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
 		http.StatusBadRequest,
 		http.StatusUnauthorized,
 		http.StatusForbidden,
@@ -751,6 +1035,75 @@ func TestWebhookSink_BadStatusCodes(t *testing.T) {
 			}
 
 			err := sink.Write(context.Background(), event)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), fmt.Sprintf("%d", code))
+		})
+	}
+}
+
+func TestWebhookSink_RequiresSuccessfulPostResponse(t *testing.T) {
+	for _, code := range []int{http.StatusOK, http.StatusCreated, http.StatusAccepted, http.StatusNoContent} {
+		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
+			var method string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				method = r.Method
+				w.WriteHeader(code)
+			}))
+			defer server.Close()
+
+			sink := NewWebhookSink(WebhookSinkConfig{URL: server.URL}, zaptest.NewLogger(t))
+			require.NoError(t, sink.Write(context.Background(), &Event{ID: "success", Type: EventSessionRequested}))
+			assert.Equal(t, http.MethodPost, method)
+		})
+	}
+}
+
+func TestWebhookSink_DoesNotFollowRedirects(t *testing.T) {
+	for _, code := range []int{
+		http.StatusMovedPermanently,
+		http.StatusFound,
+		http.StatusSeeOther,
+		http.StatusTemporaryRedirect,
+		http.StatusPermanentRedirect,
+	} {
+		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
+			var redirected bool
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				redirected = true
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			defer target.Close()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Location", target.URL)
+				w.WriteHeader(code)
+			}))
+			defer server.Close()
+
+			sink := NewWebhookSink(WebhookSinkConfig{URL: server.URL}, zaptest.NewLogger(t))
+			err := sink.Write(context.Background(), &Event{ID: "redirect", Type: EventSessionRequested})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), fmt.Sprintf("%d", code))
+			assert.False(t, redirected)
+		})
+	}
+}
+
+func TestWebhookSink_BatchRejectsRedirectAndAccepts2xx(t *testing.T) {
+	for _, code := range []int{http.StatusFound, http.StatusNoContent} {
+		t.Run(fmt.Sprintf("status_%d", code), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, http.MethodPost, r.Method)
+				w.Header().Set("Location", "/other")
+				w.WriteHeader(code)
+			}))
+			defer server.Close()
+
+			sink := NewWebhookSink(WebhookSinkConfig{URL: server.URL}, zaptest.NewLogger(t))
+			err := sink.WriteBatch(context.Background(), []*Event{{ID: "batch", Type: EventSessionRequested}})
+			if code >= http.StatusOK && code < http.StatusMultipleChoices {
+				require.NoError(t, err)
+				return
+			}
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), fmt.Sprintf("%d", code))
 		})
@@ -787,6 +1140,8 @@ func TestMultiSink_OneFailsOthersSucceed(t *testing.T) {
 type failingSink struct {
 	name string
 }
+
+func (s *failingSink) SupportsSynchronousDelivery() bool { return true }
 
 func (s *failingSink) Write(_ context.Context, _ *Event) error {
 	return fmt.Errorf("intentional failure from %s", s.name)
@@ -1371,8 +1726,9 @@ func (s *errableSink) Write(_ context.Context, event *Event) error {
 	return s.writeFn(event)
 }
 
-func (s *errableSink) Close() error { return nil }
-func (s *errableSink) Name() string { return s.name }
+func (s *errableSink) Close() error                      { return nil }
+func (s *errableSink) Name() string                      { return s.name }
+func (s *errableSink) SupportsSynchronousDelivery() bool { return true }
 
 // ================================
 // Batch Processing Tests
@@ -1735,4 +2091,15 @@ func TestSyncWriteDirect_NoDirectSinks_FallsBackToPrimary(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, primaryReceived, 1, "primary sink must receive event when no direct sinks configured")
 	assert.Equal(t, "e3", primaryReceived[0].ID)
+}
+
+func TestWebhookSinkRedactsMalformedRequestURL(t *testing.T) {
+	sink := NewWebhookSink(WebhookSinkConfig{URL: "https://invalid/%secret"}, zap.NewNop())
+	for _, err := range []error{
+		sink.Write(context.Background(), &Event{ID: "single"}),
+		sink.WriteBatch(context.Background(), []*Event{{ID: "batch"}}),
+	} {
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "secret")
+	}
 }

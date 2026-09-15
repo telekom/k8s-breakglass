@@ -7,23 +7,878 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Publish the generic `dump-reader` and provider-neutral `cluster-validator`
+  images through the signed utility-image release matrix, with their existing
+  runtime behavior gates and multi-architecture build contexts.
+
+- The debug-session-catalogue Helm chart provides administrator-authored,
+  restricted DebugSession profiles for workload, network, storage, dump-access,
+  and cluster-validation diagnostics.
+
 ### Fixed
 
+- Release-value generation and catalogue validation now consume all seven
+  canonical utility-image references, including `dump-reader` and
+  `cluster-validator`, while checked-in values remain zero-digest placeholders.
+
+- Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
+
+- Align rejection API, mock, E2E, and audit contracts with `Rejected`; coalesce periodic active accounting while preserving immediate lifecycle and failure repair.
+
+- Reconcile debug-session active counts from live state across clusters, retrying template conflicts without duplicate decrements.
+
+- Persist DebugSession rejection as a terminal `Rejected` state across API,
+  reconciliation, cleanup, CLI filters, and the frontend.
+- Make terminal cleanup accounting idempotent and avoid decrementing active
+  counts for sessions rejected before activation.
+
+- If a debug session expires after an ephemeral-container intent is persisted
+  but before the target write, record the operation as Failed without touching
+  the target Pod; the normal expiry reconciler retains ownership of lifecycle
+  effects.
+
+- Persist known pre-write operation failures with a bounded cancellation-independent
+  context, while terminalizing unsupported legacy Prepared records as Unknown
+  during cleanup without target-cluster mutation.
+
+- Block replay of a retained `Unknown` ephemeral-container outcome for the
+  same namespace, Pod UID, and container name, while preserving retries for
+  confirmed `Failed` outcomes and replacements with a different Pod UID.
+
+- Requeue terminal DebugSession cleanup when a fresh prepared kubectl-debug
+  operation remains within its recovery grace period, preventing stranded
+  outbox intent.
+
+- Validate kubectl-debug operation outbox updates so prepared intent remains
+  immutable, terminal evidence cannot be rewritten, and bounded history
+  compaction cannot discard a newly finalized operation.
+
+- Validate newly admitted Prepared operation intent for complete supported
+  ephemeral-container identity, target, actor, digest, and timestamp fields.
+
+- Bind ephemeral-container operation evidence to the authenticated provider identity and cap new distinct injection admissions at 256 identities, including prepared reservations, while retaining existing history and recovery evidence.
+
+- Recover tracked resources after bounded create timeouts when session and
+  operation markers and requested content match the persisted object.
+
+- Preserve numeric dotted IP addresses and image versions when redacting
+  JWT-shaped diagnostic stream values.
+
+- Repeat debug-session participant issuer and target Pod UID checks at the final
+  authorization fence, failing closed when either live identity has changed.
+
+- Enforce node debug denied names, denied labels, and required node affinity,
+  including node-name field matches, at both node authorization fences; reject
+  hard pod anti-affinity and topology-spread constraints that direct binding
+  cannot enforce.
+
+- Enforce explicit ephemeral-container security-context restrictions before
+  recording injection intent or mutating a target Pod.
+
+- Apply provisional quota admission checks in the shared authorization and
+  token validity helpers, and preserve concurrently recorded same-name copied
+  pod replacements by merging on the persisted UID with legacy fallback.
+
+- Reject approval or rejection when the authorized session was replaced under the same name, and clear completed debug-session pod authorization references while retaining concurrent additions.
+
+- Preserve concurrently created cleanup inventory entries when same-coordinate resources have distinct creation-operation provenance.
+
+- Redact structured diagnostic authorization headers and remove obsolete variable-sanitization warnings; template serialization remains mandatory.
+
+- Align template and cluster-binding duration schemas with supported week, year, and fractional sub-day values.
+
+- Align all shared `ParseDuration` CRD fields, including debug sessions, pod-copy TTL,
+  recording retention, Keycloak timeouts, and breakglass session/escalation limits,
+  with the supported duration syntax.
+
+- Report invalid terminal-recording retention once and test every catalogue utility job at the requested dispatch revision.
+
+- Verify SLSA provenance for both published reference image and catalogue chart,
+  preserve reference namespaces safely during EXIT cleanup, and keep catalogue
+  integration checks on the requested workflow ref.
+
+- Parse debug-session expiry grace periods with the shared duration parser.
+
+- Omit disabled deployment variables from requester template discovery.
+
+- Retry deadline synchronization quietly while tracked Jobs are waiting to start.
+
+- Document and test conservative fractional-second flooring for Job deadlines,
+  while keeping field indexes registered when controllers are disabled.
+- Keep tracked debug Job deadlines aligned with the latest committed session expiry,
+  including delayed starts and shorter live leases.
+- Retain auxiliary-resource cleanup inventory while a UID-matched delete is held
+  by a finalizer, and retire it only after the object is gone.
+- Require an explicit recorded or operator-approved original UID for auxiliary
+  cleanup when a create outcome did not persist; copied ownership markers cannot
+  authorize a same-name replacement.
+
+- Include diagnostic-artifact-collector in aggregate multi-platform utility builds.
+
+- Reject malformed chart SBOMs against the SPDX 2.3 schema before release attestation.
+
+- Retain tracked-resource cleanup inventory while the original resource remains pending finalizers.
+
+- OCI attestation verification now rejects unsupported or duplicate image
+  platforms instead of silently filtering unverified descriptors. Dump-reader
+  copy limits are enforced on a single opened source descriptor, including
+  growth after validation, and reference fixtures use run-scoped names and
+  cleanup labels that cannot remove pre-existing resources.
+- Catalogue publication verification now requires exactly one linux/amd64 and
+  one linux/arm64 utility manifest after excluding attestation descriptors.
+- Cluster-validator node and namespace readiness checks now follow Kubernetes
+  continuation tokens instead of inspecting only the first list page.
+- Unsupported terminal recording errors identify the requested
+  `spec.audit.enableTerminalRecording` field and the unavailable transport.
+- Cluster-validator report publication now refuses to replace an existing
+  report, including when the destination appears concurrently.
+- Dump-reader rejects control characters in reported filenames, preventing
+  metadata output from injecting additional report fields.
+- Dump-reader removes its private temporary output when a copy is interrupted,
+  preventing partial artifacts from remaining in the output volume.
+
+- Static pod overrides now serialize explicitly empty command and argument
+  lists through server-side apply, so an administrator can clear a previous
+  override. Job workloads retain exact owner-chain cleanup and spoke workload
+  RBAC for batch resources.
+- Local BuildKit OCI archives retain strict attestation checks for Statement
+  v0.1/v1 and SLSA v0.2/v1 provenance forms; descriptor annotations remain
+  bound to the referenced image digest. Multi-architecture validation uses a
+  named non-artifact OCI export and verifies the untouched archive; subject
+  normalization is not part of the production build path.
+- Helm chart provenance reruns fail closed unless the pulled remote package is
+  byte-identical to the package whose SBOM is being attested.
+- Terminal recording requests fail closed before approval or mode selection,
+  including kubectl-debug, while the terminal-byte transport remains unavailable.
+- Renewing a Job-backed DebugSession now commits the session expiry and renewal
+  count before synchronizing its tracked batch/v1 debug workload Job deadline;
+  a target failure is retried by reconciliation without double-counting, with a
+  live session and privileged cluster-configuration fence before each patch.
+- Reference usage cleanup bounds every waited Kubernetes delete and makes EXIT
+  cleanup explicitly nonblocking; the API reference now lists `Job` among the
+  allowed `workloadType` values.
+- Release-values verification no longer depends on ripgrep and its negative
+  fixtures now assert the intended digest and evidence validation failures.
+- Canceled kubectl-debug requests now bound post-mutation status reconciliation,
+  and successful or recovered ephemeral-container operations refresh the
+  allowed-Pod UID used for webhook authorization.
+
+### Security
+
+- Bound retained terminal kubectl-debug operation evidence while preserving all
+  Prepared intents, so terminal history cannot block ClusterConfig deletion.
+- Preserve serialized debug template variable values exactly, including
+  multiline and Unicode content, during validation.
+- Restrict webhook local-part compatibility to single-at-sign email identities and skip alias lookups for email-form requesters (PR #1326).
+- Filter Breakglass grants used for DebugSession creation by the request issuer unless the grant explicitly allows IDP mismatch (PR #1326).
+- Keep DebugSession creation grant matching exact to authenticated username/email claims; email local-part aliases remain limited to the issuer-scoped webhook compatibility path (PR #1326).
+- Allow the webhook's issuer-scoped email alias fallback when exact sessions are expired or issuer-ineligible, while preserving eligible exact-match precedence and issuer ambiguity rejection (PR #1326).
+- Use indexed BreakglassSession lookups for DebugSession grant checks while retaining a fresh-reader fallback when the cache has no eligible exact grant (PR #1326).
+- Revalidate positive cached DebugSession grants through the fresh reader, rejecting revoked or deleted sessions and stale object identities (PR #1326).
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
+- Validate both device-login verification URLs before displaying or opening them.
+
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
+- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
+  named-class additions against the spoke PriorityClass while retaining explicit
+  template fields, controller UID checks, and strict ReplicaSet template matching.
+
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
+
+- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
+  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
+  signing keys when identity-provider trust settings change.
+
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
+
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
+- Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
+
+- Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
+
+- Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
+
+- Use indexed advisory quota prechecks when durable admission is enabled, retaining authoritative enforcement before session success.
+
+- Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
+
+- Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
+
+- Quota admission rejects ambiguous escalation ownership and reclaims durable reservations only under quota or storage pressure, reducing unrelated API reads while preserving exact-UID checks.
+- Fail writing-role startup when the durable quota namespace is empty, with actionable flag and environment-variable guidance; read-only instances may omit it.
+- Saturated quota cleanup continues checking other reservations after an unreadable UID while retaining that slot and failing closed when capacity remains unproven.
+- Retry debug-session quota admission after the reconciler advances the resource
+  version, rechecking the original UID and spec; API creation is never repeated
+  and replacement or terminal objects fail closed.
+
+- Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
+- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
+
+- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
+- Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
+- The packaged controller Deployment passes its pod namespace as the durable quota and breakglass resource namespace, so API admission can create the shared reservation ledger.
+- **DebugSession authoring guidance**: Added provider-neutral documentation for
+  digest-pinned utility templates, namespaced RBAC, isolation, lifecycle
+  cleanup, and downstream admission boundaries.
+### Changed
+
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
+- **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
+  documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
+  Node 24 release line required by the existing dependency graph (including
+  the `abbrev` and `nopt` versions brought in by Dependabot #1288). The
+  supported engine range is `^24.15.0 || >=26.0.0`, and a contract test keeps
+  dependency engines and CI pins aligned without admitting Node 25.
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
+
+- Keep debug session CRUD fixtures in the hub namespace while using the default
+  `breakglass-debug` target, and use valid exact node names in Helm scheduling
+  fixtures.
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
+
+- Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
+
+- Reject ambiguous normalized IdentityProvider issuers at authentication and
+  duplicate effective issuers at admission. An explicit `spec.issuer` now takes
+  precedence over `oidc.authority`; configure it to match the token issuer.
+
+- Prevent debug bindings from widening template duration and renewal limits,
+  including the default renewal cap, and ignore legacy empty cluster selectors.
+
+- Reject nonfinite numeric variables and overflowing extended durations, and
+  avoid disclosing restricted extra-deploy options in validation errors.
+
+- Recheck debug-session state and participant authority before spoke mutations,
+  retain late ephemeral-injection evidence, and compensate copied/node pods with
+  UID-guarded deletion. Cross-cluster revocation remains non-atomic.
+
+- Enforce resolved node affinity and legacy target namespaces, preserve empty
+  affinity restrictions, and deny approver reads when a recorded binding is missing.
+
+- Resolve debug-notification excluded group members before filtering mailboxes,
+  and preserve historical participant leave timestamps across repeated requests.
+
+- Bind debug resource cleanup, readiness, and pod access to original UIDs; retain cleanup inventory when cluster access is unavailable. Legacy sessions have an explicit operator recovery path. Reject unsupported denied-node globs at admission instead of silently ignoring them; migrate these entries to exact node names or denied node labels before upgrading.
+- **Authorization webhook session selection**: Register shared BreakglassSession
+  field indexes even when reconcilers are disabled, so approved sessions remain
+  discoverable by the SubjectAccessReview path (PR #1297).
+- **`bgctl session drop` empty requests**: Omit the JSON `Content-Type` header
+  for empty drop requests, matching the API's empty-body contract (PR #1298).
+- **Authorization webhook cache consistency**: Refresh session selection from
+  the live API reader when an indexed cache lookup has no currently eligible
+  session, avoiding transient denials after approval or cache lag (PR #1300).
+- **Node-maintenance recovery verification outcome**: Recovery evidence now
+  distinguishes a verified-file digest mismatch from failure to capture, read,
+  or parse a digest. Both outcomes fail closed without executing kexec, while
+  preserving the truthful outcome for incident handling.
+### Changed
+
+- Static pod overrides now apply the same validated container command and
+  argument fields as templated overrides.
+- Catalogue utility integration now includes a multi-architecture and real-kind
+  proof for the diagnostic artifact collector.
+- Release automation now builds, publishes, signs, and attests every catalogue
+  utility image before resolving immutable release references.
+- Cluster-validator pod checks now exclude only the exact in-cluster validator
+  pod when both Downward API identity values match; incomplete identity fails
+  safe by excluding nothing.
+- Cluster-validator pod readiness excludes both Succeeded and Failed terminal
+  pods, uses bounded continuation-token pages, and
+  stops at the first unhealthy active pod, while preserving exact validator
+  self-pod exclusion and fail-closed list errors.
+- Pod-template cleanup now migrates pre-UID auxiliary resources only when their
+  legacy session name and source-session markers both identify the terminating
+  session; partial or mismatched markers remain protected.
+- Network-debug integration now requires the pwru proof in CI, allows a bounded
+  BPF-detach window after SIGINT, and deletes only resources carrying this run's
+  exact ownership label after daemon-reachable checks.
+- Cluster-validator reports now reject traversal and symlink escapes, use
+  owner-only report permissions, and preserve post-upgrade diagnostics in a
+  credential-free CI artifact on failure.
+- Security CI now fails closed on malformed or incomplete gosec SARIF output
+  and reports analyzer/load errors instead of treating skipped packages as a
+  clean scan.
+- **Network debug image**: Rebased the runtime on the immutable netshoot v0.16
+  multi-architecture manifest. The inherited netshoot toolset now supplies all
+  overlapping network commands; the image retains only its bounded helpers,
+  pinned `pwru` addition, and signed SBOM/provenance workflow. Tool
+  inventory normalizes upstream version-banner formats while the integration
+  proof exercises the network image's connectivity, packet-capture, and
+  kernel-tracing operations.
+- The standalone debug-session catalogue now uses an ordered, extensible
+  profile list with DNS-safe names and stable generic intent names. Existing
+  map-shaped profile values must be converted before upgrading; the chart
+  rejects duplicate/invalid names, unresolved image references, and missing
+  explicit elevated opt-in.
+
+### Security
+
+- Require every debug resource create intent to carry and recover by an exact
+  operation identity, preventing same-session same-name objects from being adopted.
+
+- Disable trusted raw field output for a complete debug template set when Sprig
+  mutation functions can modify requester-visible maps during rendering.
+
+- Validate both device-login verification URLs before displaying or opening them.
+
+- Use accurate generic wording for privacy-preserving plain-SMTP recipient command diagnostics.
+
+- Recognize Kubernetes scheduling defaults on debug workload Pods, validating
+  named-class additions against the spoke PriorityClass while retaining explicit
+  template fields, controller UID checks, and strict ReplicaSet template matching.
+
+- Reject unsupported audit namespace selector exclusions before replacing active
+  sinks; migrate these exclusions to namespace patterns before upgrading.
+
+- Enforce Kafka audit credential namespaces, redact webhook URL diagnostics and
+  debug backend denials, hide plain-SMTP Bcc recipients, and invalidate cached
+  signing keys when identity-provider trust settings change.
+
+- Require explicit controller namespace values for AuditConfig Kafka Secret references and avoid tracking unused OIDC fallback Secrets when fallback is disabled.
+
+- The packaged controller Deployment passes its pod namespace to the audit service namespace guard, preventing valid audit Secret references from being rejected as unconfigured.
+
+- Track inherited OIDC fallback Secrets only when refresh fallback is enabled, while preserving cache invalidation for active primary credentials.
+
+- Clear inherited OIDC fallback credentials when resolving new settings, including
+  transitions to direct OIDC configuration.
+
+- Keep refresh tokens stripped when browser storage fails, redact approval-page HTTP errors, and cap mock dataset scaling.
+
+- Disable automatic silent renewal and iframe-based session extension for frontend OIDC sessions. Production uses session storage or an in-memory fallback when browser storage is unavailable, resets stale persistent preferences, and makes a best-effort purge of legacy persistent OIDC artifacts; development-only persistent local storage remains an explicit opt-in.
+
+- Avoid duplicate approval-page error logging and preserve one contextual toast for unexpected approval failures.
+
+- Preserve contextual diagnostics when debug template output validation rejects unsafe actions.
+
+- Debug template admission now checks output actions without executing template code. Dynamic string output must end in a scalar serializer; migrate aliases and transformed expressions to `yamlQuote`. Runtime removes `env`/`expandenv` and limits serialized output to 1 MiB. Requester values are preserved; `yamlQuote` and `yamlSafe` always emit strings. Auxiliary defaults use category keys and inaccessible select defaults are omitted.
+
+- Deduplicate notification group badges and avoid a second explicit-user email
+  when that recipient is already covered by an approver group.
+
+- Report unresolved privacy membership as notification suppression separately from
+  the normal case where all recipients were filtered by configuration.
+
+- Bound per-group notification attribution rendering while preserving the full
+  membership snapshot used for privacy exclusions and hidden approver filtering.
+
+- Restrict session notification group recipients to the configured approver
+  identity providers; unresolved membership never falls back to another provider,
+  including hidden and excluded groups.
+
+- Scope session request emails to the matched escalation, suppress notifications
+  when hidden or excluded group membership is unresolved, and remove hidden group
+  names from email content.
+
+- Log cluster identity-policy lookup failures and attribute issuer uniqueness errors to the configured issuer or fallback authority field.
+
+- Explain how to recover legacy debug sessions whose auxiliary resource UIDs were not recorded.
+
+- Reuse each provider/group membership result within one pod-security approval decision, including failed lookups, while retrying on later decisions.
+
+- Accept configured Kubernetes default node-condition toleration durations when checking debug workload identity, and reuse one live Pod lookup per authorization request while retaining UID checks.
+
+- Use indexed advisory quota prechecks when durable admission is enabled, retaining authoritative enforcement before session success.
+
+- Reuse provider-bound approver group resolvers after reloading provider configuration and credentials; unchanged providers retain the configured membership-cache TTL.
+
+- Reject missing, empty, or multiple issuer extras explicitly for ephemeral-container subresource requests, including updates that add no containers; valid issuer provenance and an active session are required before inspecting additions. Resolve debug constraints into independent snapshots so returned values cannot mutate template or binding configuration.
+
+- Quota admission rejects ambiguous escalation ownership and reclaims durable reservations only under quota or storage pressure, reducing unrelated API reads while preserving exact-UID checks.
+- Fail writing-role startup when the durable quota namespace is empty, with actionable flag and environment-variable guidance; read-only instances may omit it.
+- Saturated quota cleanup continues checking other reservations after an unreadable UID while retaining that slot and failing closed when capacity remains unproven.
+- Retry debug-session quota admission after the reconciler advances the resource
+  version, rechecking the original UID and spec; API creation is never repeated
+  and replacement or terminal objects fail closed.
+
+- Update the frontend development dependency `qs` to 6.16.0 to fix query parsing and serialization denial-of-service advisories.
+
+- Update vulnerable Go crypto and frontend humanfs dependencies. Trivy filesystem findings now produce visible warnings and retained reports on pull requests; main, scheduled, and manual scans still fail on findings.
+
+- Bind session owner and debug participant operations to their authenticated identity provider and issuer, enforce cluster identity-provider allowlists, and retain approver provider provenance. Unbound legacy identities are accepted only in an explicitly resolved single-provider configuration; multi-provider deployments must migrate ambiguous legacy sessions. Spoke debug authorization and ephemeral admission require issuer propagation.
+
+- Preserve the original session resource version on status writes so concurrent cancellation or withdrawal cannot be overwritten by stale approval.
+
+- Pod security policy honors inherited root identity, present label keys, valid namespace filters, and exact escalation ownership. Additional approvals use each recorded approver's identity provider for explicit-user restrictions and group membership; explicit approver email matching is case-insensitive. Unknown legacy group provenance fails closed; debug admission retains issuer-bound owner/participant checks and spoke namespace labels.
+
+- Session quota reservations persist across replicas and crashes while preserving provider-bound identity and approval history. Debug lifecycle and workload deployment stop on unresolved binding policy.
+- The packaged controller Deployment passes its pod namespace as the durable quota and breakglass resource namespace, so API admission can create the shared reservation ledger.
+
+### Added
+
+- **DebugSession authoring guidance**: Added provider-neutral documentation for
+  digest-pinned utility templates, namespaced RBAC, isolation, lifecycle
+  cleanup, and downstream admission boundaries.
+- **Diagnostic artifact collector utility image**: Added the bounded,
+  immutable `diagnostic-artifact-collector` image for reviewed system-summary
+  and crashdump collection recipes, with private archive hand-off and a
+  controller-issued upload boundary.
+- **Network-debug utility image**: Added the generic, digest-pinned
+  `network-debug` intent image with bounded network capture, selected-Pod
+  EphemeralContainer capture, host packet tracing, runbooks, and behavioral
+  CI proofs.
+- **OCI runbook bundle contract**: Documented the generic, additive contract for
+  mounting signed, digest-pinned documentation bundles into approved debug
+  templates through Kubernetes image volumes. The controller continues to use
+  the built-in runbooks when an optional bundle is absent and leaves capability,
+  signature, and provenance enforcement to the platform admission pipeline.
+- **Storage diagnostics utility image**: Added the bounded `storage-debug`
+  image with mounted-volume fio/ioping checks and controller-owned kubestr
+  storage workflows.
+- **Standalone debug-session catalogue**: Added the OCI-ready
+  `debug-session-catalogue` Helm chart with neutral workload, network,
+  storage, dump-access, network-repair, node-recovery, and cluster-validation
+  profiles. Requesters, approvers, targets, images, and the target namespace are
+  configurable; elevated profiles are disabled and require explicit opt-in.
+- **Node-maintenance utility image**: Added the generic, digest-pinnable
+  `node-maintenance` intent image with read-only node recovery evidence, exact
+  controller-approved link, auto-negotiation, neighbor, and bridge-FDB repair,
+  and fixed-provider recovery-input validation that never executes kexec. Its
+  runbooks, MOTD, bounded evidence bundles, controller-bound approval tuple,
+  node-level operation lock, and cleanup/expiry integration define the
+  supported operational boundary.
+
+### Fixed
+
+- **Kubectl-debug operation outcome retention**: Reconciler cleanup now uses
+  live status reads, preserves and monotonically merges concurrent operation
+  evidence, records deterministic target authorization/validation/conflict
+  failures as `Failed`, and retains all inventory and operation states unchanged
+  when their ClusterConfig is deleted. Recovery waits through the full API mutation
+  timeout so slow requests cannot be finalized by a concurrent reconcile.
+- **DebugSession cleanup identity fencing**: Kubectl-debug outcome and cleanup
+  status writes now require the original DebugSession UID, captured no-binding
+  decisions remain immutable through status admission, and cleanup retries
+  instead of reporting success when tracked spoke resources cannot be reached
+  because the cluster client provider is unavailable.
+- **DebugSession cluster-deletion and approval-read fencing**: DebugSession
+  deployment now establishes pod-template auxiliary resources with create-first
+  ownership checks that avoid adopting foreign same-name objects, failed
+  sessions with tracked spoke resources block ClusterConfig finalizer removal,
+  and reconciler setup restores uncached approval reads plus audit Secret
+  namespace wiring.
+- **ClusterConfig cleanup inventory fencing**: ClusterConfig finalizers now
+  remain until retained inventory is gone for every DebugSession state,
+  including sessions terminalized during the same reconciliation. Cleanup also
+  preserves concurrently recorded auxiliary child-document UIDs.
+- **Auxiliary cleanup retries**: Additional resources are retried after their
+  primary document has already been deleted, and completed auxiliary history no
+  longer keeps ClusterConfig deletion blocked.
+- **Failed-session cleanup completion**: Fully deleted auxiliary history no
+  longer causes a Failed DebugSession to requeue forever.
+- **Allowed pod identity tracking**: DebugSession status now records each
+  allowed Pod UID, including Pods created by API-mediated debug operations, so
+  webhook authorization remains bound to the original Pod after same-name
+  replacement; refreshes accept a new UID only for a Pod proven to belong to
+  the session's recorded workload.
+- **DebugSession authorization discovery**: Webhook authorization now retries
+  live DebugSession discovery when the informer cache has not observed a newly
+  active session. The fallback is scoped to the selected ClusterConfig
+  namespace and session cluster label with bounded pagination while retaining
+  the live expiry, participant, and Pod UID fences before allowing pod
+  operations.
+- **DebugSession participant identity**: Active owner participants now retain
+  the requesting session's identity-provider name and issuer so webhook pod
+  authorization preserves issuer provenance in multi-provider deployments.
+- **Hard-expiry CI diagnostics**: Diagnostic redaction now covers compact JWTs
+  with short segments, and the hard-expiry port-forward lane records only a
+  candidate proven to be available. SSA coverage also verifies immutable debug
+  authorization snapshots.
+- **DebugSession quota admission ordering**: The lifecycle reconciler now
+  completes durable quota admission before resolving or activating a
+  DebugSession, and API completion retries resource-version conflicts against
+  fresh same-UID objects without duplicating ledger reservations.
+- **DebugSession API mutation identity matching**: Mutating kubectl-debug
+  operations now authorize requester and participant identities using the same
+  provider-aware username/email matching used by read authorization, preventing
+  valid API-mediated ephemeral-container requests from being denied when the
+  username claim differs from the recorded user identifier.
+- **Durable kubectl-debug operation outcomes (PR #1278)**: Ephemeral-container
+  intent is persisted before the target mutation, with exact target/request
+  matching during recovery and terminal evidence retained through cleanup.
+- **Hard expiry and authorization caching**: Authorization now fails closed
+  at the exact `expiresAt` boundary, cannot be resurrected by stale writes or
+  cached decisions, and shipped Kubernetes 1.34+ examples disable both
+  positive and negative webhook decision caches.
+
+### Removed
+
+- **Broad `flush-neighbors` network action (breaking)**: Removed the prior
+  broad neighbor-flush interface. It is superseded by independently approved,
+  intent-specific `neighbor-replace` for one exact neighbor tuple,
+  `bridge-fdb-replace` for one exact FDB tuple, and read-only `node-recovery`
+  evidence when mutation is not required.
+
+### Changed
+
+- Clarified privileged CR writers, browser token storage, and the gateway/network
+  authentication required for both SAR webhook routes (PR #1311).
+
+- Refresh embedded Kubernetes CRD schemas and the certificate-manager test recorder for the Kubernetes/controller-runtime dependency update.
+
+- **Frontend Node.js engine baseline**: Raised the frontend package, lockfile,
+  documentation, and all `setup-node` CI pins to Node.js 24.15.0, the minimum
+  Node 24 release line required by the existing dependency graph (including
+  the `abbrev` and `nopt` versions brought in by Dependabot #1288). The
+  supported engine range is `^24.15.0 || >=26.0.0`, and a contract test keeps
+  dependency engines and CI pins aligned without admitting Node 25.
+
+### Fixed
+
+- Static pod overrides now serialize explicitly empty command and argument lists through server-side apply, so an administrator can clear a previous override. Job workloads retain exact owner-chain cleanup and spoke workload RBAC for batch resources.
+- Helm chart provenance reruns use the canonical package digest, preserving deterministic release identity across archive timestamps.
+
+- Hardened catalogue release verification and debug workload rendering: exact
+  OCI attestation links, byte-identical chart reruns, strict release tags,
+  complete workload selectors, and rejected unknown pod overrides. (#1256)
+- Debug-session pod-template cleanup now preserves live unmarked resources
+  whose names were reused, requiring exact original UID ownership; legacy
+  sessions require explicit operator recovery before cleanup.
+
+- Preserve independently managed escalation validation and group-sync status fields during concurrent updates.
+
+- Keep debug session CRUD fixtures in the hub namespace while using the default
+  `breakglass-debug` target, and use valid exact node names in Helm scheduling
+  fixtures.
+
+- **OIDC credential and issuer boundaries**: Refuse discovery and token-endpoint
+  redirects, preserve explicit issuer bindings in runtime selection and admission,
+  and invalidate cluster credentials
+  when an inherited IdentityProvider client Secret changes. An escalation with an
+  updated specification remains unavailable until its Ready condition reflects
+  the current generation.
+
+- Hardened bgctl OAuth endpoint and redirect handling, device timing, bounded response reads, terminal output, token-cache isolation, config redaction, and Windows private-file creation. Existing token caches require reauthentication; see [CLI security safeguards](docs/security-defender-cli.md).
+
+- Preserve healthy, known-empty, and provider-scoped privacy group snapshots for
+  restricted session notifications without changing approver readiness.
+
+- Refresh workload-debug Alpine bind-tools, curl and jq pins and the node-maintenance flock pin so image validation can build against the current Alpine 3.24 repositories.
+
+- Reject ambiguous normalized IdentityProvider issuers at authentication and
+  duplicate effective issuers at admission. An explicit `spec.issuer` now takes
+  precedence over `oidc.authority`; configure it to match the token issuer.
+
+- Prevent debug bindings from widening template duration and renewal limits,
+  including the default renewal cap, and ignore legacy empty cluster selectors.
+
+- Reject nonfinite numeric variables and overflowing extended durations, and
+  avoid disclosing restricted extra-deploy options in validation errors.
+
+- Recheck debug-session state and participant authority before spoke mutations,
+  retain late ephemeral-injection evidence, and compensate copied/node pods with
+  UID-guarded deletion. Cross-cluster revocation remains non-atomic.
+
+- Enforce resolved node affinity and legacy target namespaces, preserve empty
+  affinity restrictions, and deny approver reads when a recorded binding is missing.
+
+- Resolve debug-notification excluded group members before filtering mailboxes,
+  and preserve historical participant leave timestamps across repeated requests.
+
+- Bind debug resource cleanup, readiness, and pod access to original UIDs; retain cleanup inventory when cluster access is unavailable. Legacy sessions have an explicit operator recovery path. Reject unsupported denied-node globs at admission instead of silently ignoring them; migrate these entries to exact node names or denied node labels before upgrading.
+
+- **Authorization webhook session selection**: Register shared BreakglassSession
+  field indexes even when reconcilers are disabled, so approved sessions remain
+  discoverable by the SubjectAccessReview path (PR #1297).
+- **`bgctl session drop` empty requests**: Omit the JSON `Content-Type` header
+  for empty drop requests, matching the API's empty-body contract (PR #1298).
+- **Authorization webhook cache consistency**: Refresh session selection from
+  the live API reader when an indexed cache lookup has no currently eligible
+  session, avoiding transient denials after approval or cache lag (PR #1300).
+- **Diagnostic collector traversal bound**: Crashdump enumeration now uses
+  bounded NUL spools and fixed directory/regular-file filters while retaining
+  the 30-second process-group deadline, exact entry/candidate diagnostics, and
+  copy-time no-follow validation. A wrapper-forked traversal descendant is
+  terminated and verified absent before any spool is consumed. Expired
+  controller upload responses are terminal and are not retried. A concurrent
+  enumeration deadline deterministically retains its timeout diagnostic.
+- **Network-debug script guard checks**: Replaced ambiguous shell guard chains
+  with explicit conditionals to keep static checks and runtime behavior aligned.
+- **Network-debug Docker collision diagnostics**: Distinguish foreign or
+  occupied resources from Docker inspection failures during integration
+  preflight, so only a proven-absent name can be claimed and collision cleanup
+  remains fail-closed.
+- **Storage image behavior CI cleanup**: The storage-debug integration cleanup
+  now tolerates auto-removed Docker containers recorded in cidfiles while still
+  refusing to delete foreign, still-existing containers.
+- **Storage image behavior Kind image resolution**: The Kind integration proof
+  now accepts both explicit and implicit `:latest` containerd references and
+  deduplicates by manifest digest before creating the immutable local image
+  reference.
+- Debug-session workload rendering now applies selector ownership labels to
+  DaemonSet pod templates, matching Deployment and Job behavior and preserving
+  Kubernetes selector validity.
+- `debug-kube-api` now writes a valid bearer Authorization header and workload-
+  debug helper tests validate authenticated calls without leaking credentials.
+- Workload-debug integration diagnostics now always use the fixture kubeconfig,
+  preventing accidental fallback to a developer's ambient cluster context.
+- Debug-session catalogue chart docs now show valid list-based profile override
+  patterns and point to complete fixture values for Helm rendering.
+- Debug-session docs now include `workloadType: Job` behavior and bounded
+  one-shot execution semantics.
+- Debug-session catalogue schema now uses the same grouped duration grammar as
+  the CRD (`^([0-9]+(ns|us|ms|s|m|h|d))+$`) for `defaultDuration` and
+  `maxDuration`.
+- Catalogue utility integration now runs storage image mounted-volume checks
+  through the `storage-diagnostics` dispatcher and removes a stale network job
+  build reference to a non-existent kubestr fixture path.
+
+## [0.1.0-rc.8] - 2026-08-22
+
+### Added
+
+- **User-flow recordings**: Added reproducible, narrated and paced E2E API/webhook, `bgctl`/`kubectl`, standalone browser/console, and synchronized browser-plus-console recordings covering denial, approval, Kubernetes identity/API access, deny-policy precedence, DebugSession creation, and debug-pod `tcpdump` usage.
+
+### Fixed
+
+- Persist empty approver-group membership as `[]` instead of invalid `null`, and
+  avoid repeated warning logs for an unchanged expected-empty group state. (#1244)
+
+## [0.1.0-rc.7] - 2026-08-12
+
+### Changed
+
+- Updated the frontend minifier to Terser 5.50.0 after completing the dependency audit.
+
+### Fixed
+
+- Bumped `escalation-config` to chart version `0.3.4` so the release can publish a unique OCI chart artifact.
+
+## [0.1.0-rc.6] - 2026-08-11
+
+### Fixed
+
+- **Helm chart release version**: Bumped `escalation-config` to chart version `0.3.3` so the next release can be published without colliding with the existing GHCR package version `0.3.2`.
+- Frontend error banners now explicitly open their Scale notification and place details and retry actions in its visible text slot.
+
+## [0.1.0-rc.5] - 2026-08-11
+
+### Fixed
+
+- Disabled IdentityProviders now report `Ready=False` with reason `Disabled`, clear stale group-sync health, and emit an unavailable event instead of claiming a successful configuration reload.
+- **Group-less JWT tokens could trigger an unintended cluster-based group lookup fallback** (security): the JWT auth middleware only set the request `groups` context key when the token's `groups`/`realm_access` claim resolved to a non-empty list, so a token that legitimately asserted "user belongs to zero groups" was indistinguishable from a token that carried no group claim at all. `GET /api/breakglassEscalations` and `POST /api/breakglassSessions` used this ambiguous empty state as their trigger to fall back to a live cluster-based group lookup (impersonated `SelfSubjectReview`), silently replacing the token's explicit "no groups" assertion with whatever groups the cluster happened to report for the user, which could surface or authorize escalations the token itself did not grant. The middleware now always sets the `groups` context key (with an empty slice) whenever the token carries a `groups`/`realm_access` claim, and both consumers now key their cluster fallback on context-key presence rather than list length, so an empty-but-present token claim is honored as-is.
+- **AD/Keycloak approver group reporting**: Existing empty groups are reported as `GroupMembersEmpty`, while missing groups return an explicit sync failure, remove stale cached approvers, and emit a `GroupNotFound` warning instead of being treated as successful empty groups. (#1224)
+- Preserve notification exclusions and hidden approver filtering when a follow-up group resolver is unavailable by reusing request-resolved group memberships.
+
+## [0.1.0-rc.4] - 2026-08-05
+
+### Fixed
+
+- **TOFU CA pinning was silently ineffective** (security): the TOFU-captured spoke CA was written to Secret key `ca.crt` but read back from `value`, so with `allowTOFU: true` and `caSecretRef.key` omitted the persisted trust anchor was never re-read and TOFU re-bootstrapped trust on every controller restart or reschedule — turning the documented "MITM possible on first connect only" guarantee into "MITM possible on every restart, undetected". The pre-flight `ClusterConfig` checker saw the Secret present and stayed silent. All secret-key defaults are now defined once in `api/v1alpha1/secretref_defaults.go` and shared by every read, write and admission path; a CA found only under the legacy key `value` is still honoured, warned about via a `ClusterCASecretLegacyKey` event, and migrated on the next write; and a CA that contradicts the persisted pin is now a hard `TOFU CA pin mismatch` failure instead of a silent re-pin. See [Upgrade impact](docs/keycloak-configuration.md#upgrade-impact--tofu-ca-pinning-and-secret-key-defaults).
+- **Rotated refresh token could overwrite the seed token** (security): admission validated `rotatedRefreshTokenKey` against the CRD default `value` while the runtime resolves an omitted `refreshTokenSecretRef.key` to `token`, so `rotatedRefreshTokenKey: token` was accepted as a distinct key and then aliased onto the seed token at runtime — risking permanent loss of spoke access. Admission now rejects any `rotatedRefreshTokenKey` that a refresh-token read could resolve to.
+- **Impersonation no longer leaks onto the shared cached spoke REST config**: `createImpersonatedClient`
+  wrote `Impersonate` directly onto the `*rest.Config` returned by `ClientProvider.GetRESTConfig`,
+  which is the shared cached pointer for that spoke. The impersonated ServiceAccount identity
+  persisted on the cache entry, so subsequent unrelated consumers of the same spoke config (the
+  authorization webhook's SAR checks, session cleanup, workload deployment, cached clientsets)
+  silently acted as that ServiceAccount until the TTL expired, and concurrent reconciles raced on
+  one struct. The config is now copied with `rest.CopyConfig` before any mutation, matching the
+  existing pattern in `group_checker.go` and `session_controller_approval_utils.go`. `GetRESTConfig`
+  now documents the read-only ownership contract for its return value.
+- **DebugSession no longer activates without approval when an explicit `bindingRef` is unresolvable**:
+  a failed `DebugSessionClusterBinding` lookup was only logged as a warning before falling through
+  to auto-discovery. Since the binding carries the approver configuration, a transient API error
+  made `requiresApproval` see no approvers and the session activated with no approval at all. An
+  unresolvable explicit `spec.bindingRef` is now treated as *indeterminate*: the session state is
+  left untouched (no access granted, nothing terminally failed), the reconcile is requeued with
+  backoff, and the condition is surfaced via an Error log, the new
+  `debug_session.binding_unresolved` audit event and the new
+  `breakglass_debug_session_binding_unresolved_total` metric. Sessions without a `bindingRef` still
+  auto-discover exactly as before.
+- **DenyPolicy risk scoring now inspects ephemeral containers**: `detectRiskFactors`,
+  `calculateRiskScore` and `isHostPathWritable` each built their container list from
+  `spec.containers` plus `spec.initContainers` only, so `spec.ephemeralContainers` — the primary
+  debug primitive this operator injects — was exempt from the guardrail meant to police it. All
+  three now evaluate ephemeral containers as well. **This tightens enforcement:** see
+  [Upgrade impact](#upgrade-impact-denypolicy-ephemeral-containers) below.
+- **`ClientProvider.GetAcrossAllNamespaces` is deterministic and fails closed on ambiguity**: it
+  returned the first Go map-iteration / list match on cluster name, so when two namespaces held a
+  `ClusterConfig` with the same `metadata.name` the same cluster name could resolve to a different
+  spoke cluster across calls — and this path is reached from the authorization webhook. It now
+  errors on ambiguity, matching the semantics its unexported `getAcrossAllNamespacesLocked` twin
+  already had. Single-match and not-found behaviour are unchanged. `ensureClusterWideUniqueName`
+  admission validation already prevented duplicates, so this is defence in depth. The fail-closed
+  path is observable: the cache-hit ambiguity branch now still counts the lookup in
+  `breakglass_cluster_cache_hits_total` and both branches increment the new
+  `breakglass_cluster_cache_ambiguous_total{cluster,source}`, so repeated ambiguity errors are
+  visible in monitoring instead of only in logs.
+- **OIDC proxy CORS header**: API CORS preflight responses now allow `X-OIDC-Authority` for browser-based multi-IDP OIDC proxy flows. (#1130)
+- **Audit Kafka requiredAcks**: Kafka audit sinks now preserve an explicit `requiredAcks: 0` no-ack configuration instead of treating it as unset and defaulting to all replicas.
+- **BreakglassSession list filters**: Session status listing now pushes exact state filters through the cache index and deduplicates multi-state results before applying cluster, user, or group filters.
+- **Frontend My Sessions history**: My Sessions now includes expired and idle-expired breakglass sessions without duplicating sessions returned by multiple state queries.
+- **bgctl update archive downloads**: Release archive downloads are now capped before extraction, with bounded error-body reads for failed download responses.
+- **Frontend auto-logout warning**: Session-expiry warnings now read OIDC users from session storage, tolerate blocked browser storage, and hide when stored user data disappears.
+- **bgctl OIDC device login bounds**: Device-code login polling now honors context cancellation promptly and bounds OIDC response body reads.
+- **Frontend direct approval route refresh**: Direct approval pages now reload session details when navigating between `/session/{name}/approve` links within the same mounted view.
+- **Frontend debug refresh accessibility**: The Debug Sessions refresh icon button now exposes a screen-reader label through Scale's `inner-aria-label`.
+- **BreakglassSession ownership filters**: `mine=true` and `approvedByMe=true` no longer implicitly include sessions where the caller is only an approver unless `approver=true` is also requested.
+- **Scheduled activation stale-state guard**: Scheduled activation now re-reads each waiting session before granting access and skips sessions that already left `WaitingForScheduledTime`, preserving concurrent terminal transitions.
+- **Cleanup cancellation propagation**: Background cleanup now threads cancellation through scheduled activation and session-expiry passes so shutdown and timeout signals stop the whole pass promptly.
+- **DebugSession operation authorization**: Usernames loaded from request context are trimmed before debug-session read and kubectl-debug authorization checks, and viewer participants now receive `403 Forbidden` for mutating kubectl-debug endpoints.
+- **BreakglassSession state filters**: `GET /api/breakglassSessions` now returns `400 Bad Request` for unknown non-empty `state` filter tokens.
+- **DebugSession reconciler audit and failure mail wiring**: Lifecycle audit events and requester failure emails now use the configured audit and mail services, while invalid failure-mail recipients are rejected before enqueueing.
+- **Audit webhook sink auth and TLS**: Webhook audit sinks now apply `authSecretRef` bearer/basic credentials and `tls.caSecretRef`/`insecureSkipVerify` settings when constructing the outbound HTTP client, while preserving explicitly configured `Authorization` headers. (#1141)
+- **Audit filtering enforcement**: Global `AuditConfig.spec.filtering` event-type filters now run before manager queueing and synchronous writes, and configured user, namespace, resource, event-type, and sink severity filters are enforced before events reach audit sinks. (PR #1143)
+- **BreakglassSession duplicate cleanup live guard**: Duplicate-session cleanup now revalidates live session state before terminating duplicates, preserving concurrent rejection, withdrawal, expiry, or activity transitions.
 - Added `maxItems` limit to `PodSecurityScope.Subresources`.
-- ClusterConfig cleanup now persists finalizer removal with a regular update, and container builds compile the complete `cmd` package.
-### Fixed
-
+- **Frontend modal dismissal**: Approval, review, and withdraw modals now keep destructive actions mounted while requests are in flight, and support Escape or modal-close dismissal only when closing is safe.
+- **Frontend: review owner actions**: Session review cards now match owners from profile email and preferred username claims so owners see the correct Drop/Cancel actions. (#859)
+- **Frontend debug-session creation**: Scheduling options now only affect pod placement, and the create form no longer submits delayed-start fields unsupported by the DebugSession API.
 - Prevent unbound growth of BreakglassSession status conditions by deduplicating updates.
 
 - Fixed single resource table formatting in `bgctl` commands.
 
 - Fixed duplicate session error when status initialization fails.
 
+### Added
+
+- **`breakglass_cluster_cache_ambiguous_total{cluster,source}` metric**, incremented when a
+  cluster-name lookup is rejected because the name resolved to multiple `ClusterConfig` objects
+  (`source` is `cache` or `list`). Alert on any non-zero value: cluster-wide name uniqueness has
+  been violated and name-based lookups — including the authorization webhook path — are failing
+  closed.
+- **`debug_session.binding_unresolved` audit event** (severity `warning`, classified sensitive so it
+  is never sampled or dropped) and **`breakglass_debug_session_binding_unresolved_total{cluster,reason}`
+  metric**, emitted when a `DebugSession` names an explicit `spec.bindingRef` that cannot be
+  resolved. `reason` is `binding_not_found` or `binding_lookup_failed`.
+
+### Upgrade impact: DenyPolicy ephemeral containers
+
+<a id="upgrade-impact-denypolicy-ephemeral-containers"></a>
+
+DenyPolicy risk scoring now evaluates `spec.ephemeralContainers` in addition to `spec.containers`
+and `spec.initContainers`. This **tightens** enforcement and is a behaviour change.
+
+**Config shape whose meaning changes** — any `DenyPolicy` with `spec.podSecurityRules`:
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DenyPolicy
+spec:
+  podSecurityRules:
+    riskFactors:            # <- these weights now also apply to ephemeral containers
+      privilegedContainer: 50
+      runAsRoot: 20
+      hostPathWritable: 25
+      capabilities:
+        SYS_ADMIN: 40
+    thresholds:             # <- an unchanged threshold may now be crossed
+      - maxScore: 40
+        action: allow
+      - maxScore: 100
+        action: deny
+```
+
+No field was added, removed or renamed, and no field's syntax changed. What changes is the computed
+`score`: a pod whose only risky container is an *ephemeral* one previously scored 0 for that
+container and could fall in an `allow` band; it now scores the configured weights and may cross a
+`warn` or `deny` threshold.
+
+- **Who is affected:** clusters that run a `DenyPolicy` with `podSecurityRules` **and** whose debug
+  sessions inject privileged / root / capability-granting / writable-`hostPath` ephemeral containers.
+  If your DenyPolicy has no `podSecurityRules`, or your debug templates inject only unprivileged
+  ephemeral containers, nothing changes.
+- **Direction of change:** allow → warn/deny only. Nothing that was previously denied becomes
+  allowed.
+- **Before upgrading:** review `breakglass_pod_security_risk_score` and your `thresholds`. If you
+  had (unknowingly) relied on the under-scoring, raise the relevant `maxScore` bands, or add the
+  affected factors to `podSecurityOverrides.exemptFactors` for the escalations that legitimately
+  need them.
+- **Detection after upgrade:** a step change in `breakglass_pod_security_denied_total` or
+  `breakglass_pod_security_warnings_total` for a given `policy` label.
+
+The other three fixes in this release are pure correctness fixes with no behaviour change in the
+non-buggy case:
+
+- The impersonation copy and the `GetAcrossAllNamespaces` determinism fix are behaviour-identical
+  whenever the buggy condition is absent (no impersonation configured; exactly one `ClusterConfig`
+  per cluster name — which admission validation already enforces).
+- The `bindingRef` fix is scoped strictly to "explicit `spec.bindingRef` that failed to resolve".
+  Sessions without a `bindingRef`, and sessions whose `bindingRef` resolves, behave exactly as
+  before. It introduces **no new lockout path**: the session state is left untouched rather than
+  being set to the terminal `Failed` state, so a transient error resolves on the next reconcile and
+  no operator is locked out mid-incident.
+
 ### Security
 
+- **DebugSession `extraDeployValues` YAML injection**: End-user supplied values are now escaped where they enter the template render context (`buildVarsFromSession`), instead of relying on template authors remembering the opt-in `yamlQuote`/`yamlSafe` helpers — which the auxiliary-resource renderer did not even expose. A value containing a line terminator (LF, CR, CRLF, NEL, U+2028, U+2029) could previously close the scalar it was substituted into and inject **sibling YAML keys**; via `podOverridesTemplate` this let an unprivileged requester set `hostNetwork`, `hostPID` or `hostIPC` on the debug pod, which `applyPodOverridesStruct` applied verbatim. Line terminators are now collapsed to a single space and leading `---`/`...` document markers are defused. Values are escaped rather than rejected, and altered variables are logged. **Upgrade impact**: a template that deliberately relied on a multi-line variable to inject YAML structure will no longer do so — inline structural interpolation must be expressed in the template itself (or via `nindent`), not smuggled through a user-supplied value.
+- **DebugSession approval with an empty approver set**: An absent or empty `approvers` set (`nil`, `{}`, or `users: [] / groups: []`) no longer authorizes every authenticated user to approve or reject a session. The read authorizer already required a configured approver set via `debugSessionApproversConfigured`; the approve/reject path now applies the same predicate, so the two agree. Self-approval remains blocked. **Upgrade impact**: none in practice — `requiresApproval()` uses the same predicate, so sessions with an empty approver set are auto-approved and never enter `PendingApproval`, and both endpoints reject sessions that are not in that state. No session that was approvable before is unapprovable now. Operators who intended four-eyes control must name approvers explicitly; an empty set gates nothing and never did.
+- **Required IdentityProvider JWT audience validation**: `IdentityProvider.spec.oidc.expectedAudience` is now required and CRD-backed auth refuses providers without it. Existing IdentityProvider resources must be updated with an expected audience and the OIDC provider must issue tokens whose `aud` claim contains that value before upgrading.
+- **DebugSession denial and HTTP log redaction**: Frontend HTTP error logging and unauthorized DebugSession cluster-denial responses now avoid exposing bearer tokens or template cluster patterns.
+- **bgctl self-update checksum enforcement**: `bgctl update` now refuses to install
+  release archives when the matching `.sha256` asset is missing or cannot be
+  downloaded, instead of proceeding without verification.
+- **BreakglassEscalation admission validation**: Escalation duration fields now reject non-positive or malformed values consistently, `idleTimeout` and `approvalTimeout` are checked against the effective `maxValidFor`, and invalid cluster glob patterns are rejected before they can affect session admission.
+- **OIDC upstream response handling**: OIDC discovery, JWKS, userinfo, token, and Keycloak API reads now enforce bounded response bodies, preventing oversized identity-provider responses from exhausting controller memory. (#1131)
+- **BreakglassSession approver IDP enforcement**: Approval and rejection requests now enforce `BreakglassEscalation.spec.allowedIdentityProvidersForApprovers`, denying approvers whose authenticated IdentityProvider is missing or not allowed.
+- **Frontend debug logging hardening**: Production builds no longer enable verbose debug logging from URL or localStorage flags, group and claim refresh diagnostics log only counts and claim keys instead of sensitive group memberships or full profile claims, and stale OIDC refresh tokens are removed from browser session state when users are loaded.
 - **BreakglassSession approval safety**: Classic session approval now rejects pending sessions whose approval timeout has already elapsed, scopes approval authorization to the `BreakglassEscalation` that owns the session when an owner reference is present, and checks approval/rejection authorization before body validation or state-specific errors so unrelated callers cannot infer session details.
 - **DebugSession leave access revocation**: Debug session participant indexes, webhook pod-operation authorization, and kubectl-debug active-session lookup now ignore participants after `status.participants[].leftAt` is set, ensuring leaving a session revokes debug pod access immediately.
 - **DebugSession renewal authorization**: Debug session renewals now require the requester or an active `owner`/`participant` status entry; `viewer` entries and participants with `leftAt` set can no longer extend session lifetime.
+- **No-body action request validation**: Classic session `withdraw`, `drop`, and `cancel`, plus debug session `join`, `leave`, and `terminate`, now reject non-empty request bodies instead of silently ignoring unexpected payloads. Frontend and `bgctl` clients now send these lifecycle actions without placeholder JSON bodies.
+- **BreakglassSession approver group cache isolation**: Approval authorization now caches approver group membership per target cluster and user, uses resolved escalation approver group members when available, falls back to target-cluster groups while resolved approver membership is missing, and only falls back to authenticated request-token groups when the target lookup fails or returns only Kubernetes `system:*` groups. This prevents group membership resolved for one cluster from authorizing approval checks for another cluster during the same request context without breaking identity-provider approver groups that are not visible through Kubernetes SelfSubjectReview.
+- **Cluster approval policy lookup**: Breakglass session approval checks now resolve cluster-level `blockSelfApproval` and `allowedApproverDomains` from the unique `ClusterConfig` name, so platform-namespace cluster safeguards apply to tenant-namespace escalations unless the escalation explicitly overrides them. Ambiguous duplicate `ClusterConfig` names now fail closed instead of falling back to permissive defaults. (#858)
+- **BreakglassSession approval-link metadata authorization**: `GET /api/breakglassSessions?token=<session-name>` now applies the same requester, approver, and historical-approver read authorization as named session reads before returning `valid`, `canApprove`, or `alreadyActive` metadata.
 - **BreakglassSession approval body validation**: Classic session approve and reject endpoints now reject malformed optional approver bodies, unknown JSON fields, and trailing JSON values instead of approving or rejecting with silently discarded payloads.
 - **DebugSession API request body validation**: Debug session create, join, renew, approve, reject, and kubectl-debug operation endpoints now reject unknown JSON fields, trailing JSON values, and malformed optional bodies instead of silently ignoring client typos or invalid payloads.
 - **DebugSession cluster authorization precedence**: Debug session creation now checks template or binding access before returning ClusterConfig readiness, missing-cluster, or tenant-alias errors, preventing unauthorized callers from probing cluster state through error messages.
@@ -31,8 +886,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **DebugSession binding label hardening**: `DebugSessionClusterBinding.spec.labels` can no longer overwrite controller-owned DebugSession identity labels, preserving name-based lookup, template/cluster attribution, and audit correlation while still propagating ordinary custom labels.
 - **DebugSession self-approval identity matching**: Debug session approve/reject authorization now blocks requester self-approval when either the authenticated username or email matches `spec.requestedBy` or `spec.requestedByEmail`, preventing requester email aliases from approving their own pending sessions through approver groups.
 - **DebugSession binding-scoped approvers**: Debug sessions created through a `DebugSessionClusterBinding` now authorize approve/reject actions only against the recorded binding's approvers, preventing sibling bindings for the same template and cluster from granting approval.
+- **DebugSession namespace constraint enforcement**: `DebugSessionClusterBinding.spec.namespaceConstraints` can no longer widen template namespace boundaries. Bindings cannot enable user-selected namespaces when the template disables them, requested namespaces must satisfy both template and binding allow filters, and binding denied namespaces are added without removing template denies.
 - **Reason policy enforcement**: Debug session request, approval, and rejection endpoints now enforce the effective template or cluster-binding reason policy, including mandatory and minimum-length rules. Breakglass session approval/rejection endpoints now enforce the session's stored mandatory approval reason policy instead of relying on UI-only validation.
 - **DebugSession scheduling option ACL enforcement**: `DebugSessionTemplate` and `DebugSessionClusterBinding` scheduling option `allowedUsers` and `allowedGroups` are now enforced at session creation for selected options and required defaults. Unauthorized requests receive `403 Forbidden` instead of creating a debug session with restricted scheduling constraints.
+- **DebugSession implicit binding ACL enforcement**: Debug session creation now authorizes the requester against the selected `DebugSessionClusterBinding.spec.allowed` when a matching binding is applied implicitly, preventing template-allowed users from receiving binding-scoped constraints or privileges that the binding does not grant them.
 - **OIDC group path matching hardening**: JWT group claims now preserve hierarchical group paths such as `/tenant/admin` instead of collapsing them to the leaf name `admin`, keeping `BreakglassEscalation` group matching exact and preventing same-leaf group collisions across OIDC hierarchies.
 - **DenyPolicy webhook evaluation now fails closed**: Authorization requests are denied when DenyPolicy listing/evaluation fails or when namespace labels required for selector-based DenyPolicy rules cannot be loaded, preventing policy bypass during cache or spoke-cluster lookup errors.
 - **Breakglass session detail authorization**: `GET /api/breakglassSessions/{name}` now only returns session details to the requester, an authorized approver, or a recorded historical approver. Requester/self-approval comparisons consistently match email, preferred username, or subject claims. Other authenticated users receive `403 Forbidden` instead of the session spec/status.
@@ -41,12 +898,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Scheduled breakglass session slot accounting**: `WaitingForScheduledTime` sessions now block duplicate requests and count against per-user and per-escalation session limits while they wait for their scheduled start, without granting access before activation.
 - **Breakglass session expiry race guard**: Approved-session time expiry and pending-session approval timeout now re-check the live session state with conflict retries before writing terminal status, preventing cleanup from overwriting concurrent withdraw/reject/drop transitions. Approval-timeout sessions now also set `status.reasonEnded=approvalTimeout`.
 - **Debug session authorization hardening**: Debug session creation now enforces `DebugSessionTemplate`/`DebugSessionClusterBinding` requester allowlists, validates explicit `bindingRef` values against the selected template and cluster, requires invited users plus enabled terminal sharing for join requests, prevents join callers from self-selecting the privileged `participant` role, and ignores stale `Active` debug sessions after `status.expiresAt` for renewals, leave/terminate requests, and pod-operation authorization.
+- **Debug session kubectl-debug operation hardening**: Ephemeral-container injection, pod-copy creation, and node-debug pod creation now reject stale `Active` debug sessions after `status.expiresAt` instead of allowing mutations until cleanup flips the session state. Ephemeral-container namespace selector policies now evaluate live namespace labels and fail closed when labels cannot be fetched, `allowPrivileged: false` rejects privileged ephemeral-container requests, `allowedImages` entries are treated as exact references or explicit glob patterns instead of implicit prefixes, and node-debug pods use the session's resolved `targetNamespace`. Kubectl-debug policy or request failures, including missing pod targets for ephemeral-container injection, now return 4xx responses instead of generic internal errors.
 - **Frontend dependency audit fixes**: Updated vulnerable Babel and brace-expansion transitive dependencies in the frontend lockfile, deduplicated Babel parser/types resolutions, and raised the frontend Node.js minimum plus CI runtime baseline to 24.11.0.
 - **IdentityProvider TLS hardening**: Admission, JWT/JWKS validation, the OIDC proxy, and Keycloak group sync now fail closed when `spec.oidc.insecureSkipVerify` or `spec.keycloak.insecureSkipVerify` is enabled. Configure `certificateAuthority` for private or self-signed identity provider certificates. The single-cluster E2E setup now injects the generated Keycloak CA instead of disabling TLS verification, and TOFU handshakes are bounded by a fallback deadline.
+- **OIDC proxy multi-IDP TLS selection**: Requests that use `X-OIDC-Authority` now build their upstream TLS trust from the selected enabled `IdentityProvider` instead of falling back to the default provider. Missing, disabled, or unlisted authorities fail closed.
 - **Per-user rate limiting on session creation**: `POST /api/breakglassSessions` now enforces a per-user rate limit (10 requests/minute, burst of 1) keyed on the authenticated user's email. Requests exceeding the limit receive `429 Too Many Requests` with a `Retry-After` header indicating when to retry. A valid `email` claim is required; requests without one are rejected.
 
 ### Added
 
+- **Helm ValidatingAdmissionPolicy opt-in**: The `escalation-config` chart can optionally render phase-1 ValidatingAdmissionPolicy and binding resources with Kubernetes 1.30+ server-side validation coverage.
 - **`--disable-session-rate-limit` flag**: New CLI flag (`BREAKGLASS_DISABLE_SESSION_RATE_LIMIT` env var) replaces the strict session-creation rate limiter with a permissive one (1000 req/s, burst 10000). Intended for E2E testing and development environments only. Do not use in production.
 
 ### Fixed
@@ -58,14 +918,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Frontend: share Multi-IDP contract types across model and service layers**: `frontend/src/services/multiIDP.ts` now imports and re-exports the canonical `IDPInfo` and `MultiIDPConfig` definitions from `frontend/src/model/multiIDP.ts`, and the frontend multi-IDP tests now exercise the real shared service/model contract instead of duplicating local interfaces.
 - **BreakglassEscalation reconciliation and events**: Escalation reconciliation now reacts to all spec generation changes and deletion timestamp updates, and Kubernetes Events emitted through the breakglass recorder retain a valid involved-object namespace when the scheme reference omits one.
+- **DebugSession allowed pod refresh preserves live status**: The DebugSession reconciler now updates `status.allowedPods` with a field-scoped status merge patch, preventing a stale active-session reconcile from overwriting newer API-side participants, renewal count, or expiration updates while refreshing the pod list.
 - **Debug session hidden binding discovery**: The template cluster-options API now omits `DebugSessionClusterBinding` resources with `spec.hidden: true` from UI discovery responses while preserving explicit `bindingRef` API usage for callers that already know the hidden binding.
 - **Audit sampling selectors**: `AuditConfig.spec.sampling.highVolumeEventTypes` and `alwaysCaptureEventTypes` are now honored at runtime, and an explicit `sampleRate: "0.0"` drops every eligible sampled event while always-capture selectors remain exempt.
 - **Frontend: debug session create wizard focus**: The debug session create flow now moves keyboard focus to the cluster configuration step after advancing from template selection, keeping keyboard and screen-reader users in the newly rendered workflow context.
+- **E2E session approval races**: Audit logging and multi-cluster spoke-hub authorization E2E tests now wait for newly created Breakglass sessions to reach `Pending` through the API before approving them, avoiding status-subresource races where the approval API rejected a session whose persisted status was still empty.
+- **Scheduled session expiry before activation**: Scheduled `BreakglassSession` objects whose `expiresAt` has already elapsed when cleanup reaches their `scheduledStartTime` are now marked `Expired` instead of being activated after their validity window.
+- **Frontend: prevent mobile horizontal overflow on debug-session views**: Screen-reader-only toolbar labels no longer contribute to narrow viewport scroll width, and DebugSession detail cards now shrink/wrap correctly on mobile while preserving scrollable command snippets.
 - **CI: pin ORT scan image**: The ORT workflow now uses a digest-pinned `ghcr.io/oss-review-toolkit/ort:89.2.0` image instead of the moving `latest` tag, avoiding transient ORT CLI startup failures from mutable container image updates.
 - **Frontend: hide review actions for scheduled sessions**: Session review cards and direct review modals no longer expose approve/reject controls for `WaitingForScheduledTime` sessions, which are already approved and waiting for their scheduled start.
 - **Debug session namespace semantics**: `POST /api/debugSessions` now treats legacy body `namespace` as a deprecated alias for `targetNamespace` and rejects conflicting values. DebugSession objects are always created in the matching `ClusterConfig` namespace, and named debug-session routes honor an explicit `?namespace=` hint strictly instead of falling back to another namespace.
 - **DebugSession cluster binding ClusterConfig lookup**: `DebugSessionClusterBinding.spec.clusters`, DebugSession creation, DebugSession template cluster listings, and `GET /api/clusterBindings/forCluster/{cluster}` now resolve `ClusterConfig` resources by name across namespaces, while duplicate names remain ambiguous and fail closed with `409 Conflict` during debug session creation and direct cluster-binding lookups.
 - **Session drop preserves scheduled approval history**: Owner `POST /api/breakglassSessions/{name}/drop` now treats approved sessions waiting for their scheduled start like active approved sessions, expiring them while preserving `approvedAt`, `approver`, `approvers`, and `approvalReason` audit metadata.
+- **Breakglass approval timeout metadata**: Approval-link token validation and session detail approval metadata now fail closed for pending sessions whose `timeoutAt` has elapsed, keeping them readable to approvers but disabling approve/reject actions until cleanup records the terminal `ApprovalTimeout` state.
 - **Session drop preserves terminal audit history**: Owner `POST /api/breakglassSessions/{name}/drop` now rejects sessions that are already in a terminal state instead of rewriting Rejected, Expired, IdleExpired, Withdrawn, or ApprovalTimeout sessions to `Withdrawn`.
 - **Session retention is terminal-state only**: `RetainedUntil` is no longer set while sessions are pending, active, or waiting for a scheduled start. Cleanup and webhook session filtering now ignore stale retained-until timestamps on live sessions, and automatic time/idle expiry stamps retention only after the session enters a terminal state.
 - **Breakglass session active filters**: `GET /api/breakglassSessions?activeOnly=true` and `state=active` now return only approved sessions that are currently granting access, excluding pending approval requests that still count toward internal session limits.
@@ -74,6 +939,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Operator runbook command accuracy**: Updated installation, upgrade, troubleshooting, deployment-targets, and leader-election documentation to use the rendered `breakglass-manager` deployment, current `app=breakglass` pod label, complete Breakglass CR backup/restore set, and current split release manifest assets instead of stale controller names or non-deployable raw directories.
 - **Audit sink circuit breaker probe handling**: Half-open audit sink probes now count the request that transitions from open to half-open as in flight, release probe slots after success or failure, and retain the latest sink error without panicking when different concrete error types are observed.
 - **Frontend: prevent debug panel from overlapping application modals**: The developer debug panel now closes and disables its toggle while any Scale modal is open, avoiding stacked dialogs during request, approval, and debug-session workflows.
+- **Frontend: hide unauthorized debug approval actions**: Debug session list and detail APIs now return `canApprove`/`canReject` for the current caller, and the UI only renders pending-session approve/reject controls when those flags are true.
 - **Frontend: enforce mandatory approval notes on direct approval links**: The dedicated session approval page now blocks approve/reject actions until a required approver note is entered, matching the pending approvals modal and backend validation policy.
 - **bgctl session approver filter**: `bgctl session list --approver=false` and `bgctl session watch --approver=false` now send `approver=false` to the API instead of falling back to the server default that includes approvable sessions.
 - **API request correlation compatibility**: API request tracing now accepts a valid `X-Correlation-ID` header as a compatibility alias when `X-Request-ID` is absent or invalid, keeping released `bgctl` and E2E clients correlated with server logs while continuing to return canonical `X-Request-ID` responses.
@@ -122,7 +988,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **OIDC discovery JWKS URI origin validation (SEC-003)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Discovered `jwks_uri` origin (hostname and port) must match the configured authority to prevent SSRF if a compromised IDP discovery endpoint returns a malicious JWKS URI pointing to an internal, unrelated, or different-port host
 - **Audience refresh singleflight deduplication** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Periodic audience refresh from IdentityProvider now uses singleflight to prevent thundering herd when many requests arrive simultaneously after the refresh interval elapses
 - **Issuer trailing slash normalization** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): `LoadIdentityProviderByIssuer` now normalizes trailing slashes in both the incoming issuer and `IdentityProvider.spec.issuer` for the primary match, consistent with the auth layer's canonicalization
-- **JWT audience claim validation (SEC-005a)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): Conditional JWT `aud` claim validation when `IdentityProvider.spec.oidc.expectedAudience` is configured. Prevents cross-service token confusion from other OIDC clients at the same provider. Requires a matching audience protocol mapper in the IDP. When unconfigured (default), audience validation is skipped for backwards compatibility
+- **JWT audience claim validation (SEC-005a)** ([#472](https://github.com/telekom/k8s-breakglass/issues/472)): JWT `aud` claim validation now uses `IdentityProvider.spec.oidc.expectedAudience` to prevent cross-service token confusion from other OIDC clients at the same provider. Requires a matching audience protocol mapper in the IDP.
 - **JWT expiration required (SEC-005b)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): JWT parser now rejects tokens without an `exp` claim via `jwt.WithExpirationRequired()`
 - **TLS minimum version (SEC-003)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Set `tls.VersionTLS12` as minimum on the API server and all OIDC proxy / JWKS HTTP clients
 - **X-Request-ID sanitization (SEC-004)** ([#459](https://github.com/telekom/k8s-breakglass/issues/459)): Validate `X-Request-ID` header (alphanumeric + `-_.:`; max 128 chars) and replace invalid values with a generated UUID to prevent log injection
@@ -1020,7 +1886,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-beta.0...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.6...HEAD
+[0.1.0-rc.6]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.5...v0.1.0-rc.6
+[0.1.0-rc.5]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...v0.1.0-rc.5
+[0.1.0-rc.4]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.3...v0.1.0-rc.4
 
 - Fixed single resource table formatting in `bgctl` commands.
 

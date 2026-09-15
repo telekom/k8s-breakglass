@@ -18,6 +18,7 @@ package utils
 
 import (
 	"path/filepath"
+	"slices"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -36,22 +37,15 @@ func NewNamespaceMatcher(filter *breakglassv1alpha1.NamespaceFilter) *NamespaceM
 
 // Matches checks if a namespace matches the filter using only the namespace name.
 // For label-based matching, use MatchesWithLabels.
-// Returns true if:
-// - Filter is nil or empty (matches nothing for explicit filters, depends on semantics)
-// - Namespace name matches any pattern
-// Note: This method cannot evaluate selectorTerms without labels.
+// Returns true if the namespace name matches any pattern.
+// This method returns false for nil or empty filters and cannot evaluate selectorTerms without labels.
 func (m *NamespaceMatcher) Matches(namespace string) bool {
 	if m.filter == nil || m.filter.IsEmpty() {
 		return false
 	}
 
-	// Check patterns first
-	if m.matchesPatterns(namespace) {
-		return true
-	}
-
-	// Cannot evaluate selector terms without labels
-	return false
+	// Cannot evaluate selector terms without labels.
+	return m.matchesPatterns(namespace)
 }
 
 // MatchesWithLabels checks if a namespace with known labels matches the filter.
@@ -73,10 +67,27 @@ func (m *NamespaceMatcher) MatchesWithLabels(namespace string, labels map[string
 	return m.matchesSelectorTerms(labels)
 }
 
+func (m *NamespaceMatcher) hasInvalidPattern() bool {
+	if m.filter == nil {
+		return false
+	}
+	for _, pattern := range m.filter.Patterns {
+		if _, err := filepath.Match(pattern, ""); err != nil {
+			return true
+		}
+	}
+	return false
+}
+
 // MatchesAny returns true if the filter is empty (matching all namespaces by convention).
 // This is useful for allow-lists where an empty filter means "allow all".
 func (m *NamespaceMatcher) MatchesAny() bool {
 	return m.filter == nil || m.filter.IsEmpty()
+}
+
+// RequiresNamespaceLabels reports whether selector terms need labels to evaluate.
+func (m *NamespaceMatcher) RequiresNamespaceLabels() bool {
+	return m.filter != nil && len(m.filter.SelectorTerms) > 0
 }
 
 // matchesPatterns checks if namespace matches any pattern.
@@ -99,10 +110,6 @@ func (m *NamespaceMatcher) matchesPatterns(namespace string) bool {
 func (m *NamespaceMatcher) matchesSelectorTerms(labels map[string]string) bool {
 	if m.filter == nil || len(m.filter.SelectorTerms) == 0 {
 		return false
-	}
-
-	if labels == nil {
-		labels = map[string]string{}
 	}
 
 	// OR between terms: any term matching is sufficient
@@ -142,16 +149,10 @@ func (m *NamespaceMatcher) expressionMatches(expr breakglassv1alpha1.NamespaceSe
 
 	switch expr.Operator {
 	case breakglassv1alpha1.NamespaceSelectorOpIn:
-		if !exists {
-			return false
-		}
-		return contains(expr.Values, value)
+		return exists && slices.Contains(expr.Values, value)
 
 	case breakglassv1alpha1.NamespaceSelectorOpNotIn:
-		if !exists {
-			return true // Key doesn't exist, so value is not in the set
-		}
-		return !contains(expr.Values, value)
+		return !exists || !slices.Contains(expr.Values, value)
 
 	case breakglassv1alpha1.NamespaceSelectorOpExists:
 		return exists
@@ -162,16 +163,6 @@ func (m *NamespaceMatcher) expressionMatches(expr breakglassv1alpha1.NamespaceSe
 	default:
 		return false
 	}
-}
-
-// contains checks if a slice contains a value.
-func contains(slice []string, value string) bool {
-	for _, v := range slice {
-		if v == value {
-			return true
-		}
-	}
-	return false
 }
 
 // NamespaceAllowDenyMatcher combines allow and deny filters for namespace access control.
@@ -194,32 +185,32 @@ func NewNamespaceAllowDenyMatcher(allow, deny *breakglassv1alpha1.NamespaceFilte
 // IsAllowed checks if a namespace is allowed based on allow/deny filters.
 // Uses only namespace name for matching (no labels).
 func (m *NamespaceAllowDenyMatcher) IsAllowed(namespace string) bool {
+	if m.allow.hasInvalidPattern() {
+		return false
+	}
 	// Check deny first (deny takes precedence if matched)
+	if m.deny.hasInvalidPattern() {
+		return false
+	}
 	if m.deny.Matches(namespace) {
 		return false
 	}
 
-	// If allow filter is empty, allow all (that weren't denied)
-	if m.allow.MatchesAny() {
-		return true
-	}
-
-	// Otherwise, must match allow filter
-	return m.allow.Matches(namespace)
+	return m.allow.MatchesAny() || m.allow.Matches(namespace)
 }
 
 // IsAllowedWithLabels checks if a namespace with labels is allowed.
 func (m *NamespaceAllowDenyMatcher) IsAllowedWithLabels(namespace string, labels map[string]string) bool {
+	if m.allow.hasInvalidPattern() {
+		return false
+	}
 	// Check deny first (deny takes precedence if matched)
+	if m.deny.hasInvalidPattern() {
+		return false
+	}
 	if m.deny.MatchesWithLabels(namespace, labels) {
 		return false
 	}
 
-	// If allow filter is empty, allow all (that weren't denied)
-	if m.allow.MatchesAny() {
-		return true
-	}
-
-	// Otherwise, must match allow filter
-	return m.allow.MatchesWithLabels(namespace, labels)
+	return m.allow.MatchesAny() || m.allow.MatchesWithLabels(namespace, labels)
 }

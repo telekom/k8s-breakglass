@@ -2,6 +2,7 @@ package policy
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 
@@ -941,6 +942,49 @@ func TestEvaluatorPodSecurityOverridesDisabled(t *testing.T) {
 	}
 	if !denied {
 		t.Fatalf("expected disabled override to have no effect")
+	}
+}
+
+func TestEvaluatorUsesPodRunAsUserAndAllowsApprovedOverride(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	pol := &breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-root"}, Spec: breakglassv1alpha1.DenyPolicySpec{
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			RiskFactors: breakglassv1alpha1.RiskFactors{RunAsRoot: 20},
+			Thresholds:  []breakglassv1alpha1.RiskThreshold{{MaxScore: 10, Action: "allow"}},
+		},
+	}}
+	eval := NewEvaluator(fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build(), zap.NewNop().Sugar())
+	root := int64(0)
+	denied, _, err := eval.Match(context.Background(), Action{Resource: "pods", Subresource: "exec", Pod: &corev1.Pod{Spec: corev1.PodSpec{
+		SecurityContext: &corev1.PodSecurityContext{RunAsUser: &root}, Containers: []corev1.Container{{Name: "app"}},
+	}}})
+	if err != nil || !denied {
+		t.Fatalf("expected inherited pod-level root to deny, denied=%v err=%v", denied, err)
+	}
+	denied, _, err = eval.Match(context.Background(), Action{Resource: "pods", Subresource: "exec", Pod: &corev1.Pod{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "app"}},
+	}}, PodSecurityOverrides: &breakglassv1alpha1.PodSecurityOverrides{Enabled: true, MaxAllowedScore: ptr.To(100), RequireApproval: true}, PodSecurityOverrideApproved: true})
+	if err != nil || denied {
+		t.Fatalf("expected approved override to allow, denied=%v err=%v", denied, err)
+	}
+}
+
+func TestEvaluatorPodLabelExemptionRequiresKey(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	pol := &breakglassv1alpha1.DenyPolicy{ObjectMeta: metav1.ObjectMeta{Name: "deny-root"}, Spec: breakglassv1alpha1.DenyPolicySpec{
+		PodSecurityRules: &breakglassv1alpha1.PodSecurityRules{
+			Exemptions:  &breakglassv1alpha1.PodSecurityExemptions{PodLabels: map[string]string{"security": ""}},
+			RiskFactors: breakglassv1alpha1.RiskFactors{HostPID: 20}, BlockFactors: []string{"hostPID"},
+		},
+	}}
+	eval := NewEvaluator(fake.NewClientBuilder().WithScheme(scheme).WithObjects(pol).Build(), zap.NewNop().Sugar())
+	denied, _, err := eval.Match(context.Background(), Action{Resource: "pods", Subresource: "exec", Pod: &corev1.Pod{Spec: corev1.PodSpec{HostPID: true}}})
+	if err != nil || !denied {
+		t.Fatalf("expected missing label key not to exempt pod, denied=%v err=%v", denied, err)
 	}
 }
 
@@ -3890,5 +3934,45 @@ func TestEvaluatorMatchWithDetailsWarnThenDeny(t *testing.T) {
 	}
 	if result.Action != "deny" {
 		t.Errorf("expected result.Action to be 'deny', got %q", result.Action)
+	}
+}
+
+func TestEffectiveRootPolicyAndApproval(t *testing.T) {
+	evaluator := NewEvaluator(nil, zap.NewNop().Sugar())
+	rules := &breakglassv1alpha1.PodSecurityRules{RiskFactors: breakglassv1alpha1.RiskFactors{RunAsRoot: 20}, BlockFactors: []string{"runAsRoot"}, Thresholds: []breakglassv1alpha1.RiskThreshold{{MaxScore: 10, Action: "allow"}}}
+	for _, tc := range []struct {
+		name                       string
+		podUID, containerUID       *int64
+		approved, override, denied bool
+	}{
+		{name: "inherited root", podUID: ptr.To(int64(0)), denied: true},
+		{name: "container nonroot overrides root", podUID: ptr.To(int64(0)), containerUID: ptr.To(int64(1000))},
+		{name: "unknown identity"},
+		{name: "unapproved risky override", podUID: ptr.To(int64(0)), override: true, denied: true},
+		{name: "approved risky override", podUID: ptr.To(int64(0)), override: true, approved: true},
+		{name: "unapproved safe override", containerUID: ptr.To(int64(1000)), override: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pod := &corev1.Pod{Spec: corev1.PodSpec{SecurityContext: &corev1.PodSecurityContext{RunAsUser: tc.podUID}, Containers: []corev1.Container{{Name: "app", SecurityContext: &corev1.SecurityContext{RunAsUser: tc.containerUID}}}}}
+			action := Action{Resource: "pods", Subresource: "exec", Pod: pod, PodSecurityOverrideApproved: tc.approved}
+			if tc.override {
+				action.PodSecurityOverrides = &breakglassv1alpha1.PodSecurityOverrides{Enabled: true, RequireApproval: true, ExemptFactors: []string{"runAsRoot"}, MaxAllowedScore: ptr.To(100)}
+			}
+			result := evaluator.evaluatePodSecurity(action, rules)
+			if result.OverrideApplied != tc.approved {
+				t.Fatalf("override applied=%v want=%v", result.OverrideApplied, tc.approved)
+			}
+			if tc.podUID != nil && tc.containerUID == nil && !slices.Contains(result.Factors, "runAsRoot:app") {
+				t.Fatalf("inherited root factor missing: %#v", result.Factors)
+			}
+
+			if result.Denied != tc.denied {
+				t.Fatalf("denied=%v want=%v: %s", result.Denied, tc.denied, result.Reason)
+			}
+		})
+	}
+	exemption := &breakglassv1alpha1.PodSecurityExemptions{PodLabels: map[string]string{"security": ""}}
+	if !evaluator.isPodExempt(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"security": ""}}}, exemption) {
+		t.Fatal("present empty label must match")
 	}
 }

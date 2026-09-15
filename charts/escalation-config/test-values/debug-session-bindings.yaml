@@ -88,8 +88,8 @@ debugSessionBindings:
             matchLabels:
               app: debug-session
       deniedNodes:
-        - "control-plane-*"
-        - "etcd-*"
+        - "control-plane-1"
+        - "etcd-1"
       deniedNodeLabels:
         node-role.kubernetes.io/control-plane: "*"
     allowed:

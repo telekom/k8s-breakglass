@@ -42,4 +42,20 @@ describe("BreakglassSessionService", () => {
       params: { mine: false, approver: true },
     });
   });
+
+  it("normalizes session status list envelopes", async () => {
+    mockClient.get.mockResolvedValueOnce({
+      status: 200,
+      data: { items: [{ metadata: { name: "session-a" } }], total: 1 },
+    });
+
+    const service = new BreakglassSessionService(fakeAuth);
+    const response = await service.getSessionStatus({ user: "alice@example.com", cluster: "prod-a" });
+
+    expect(response.status).toBe(200);
+    expect(response.data).toEqual([{ metadata: { name: "session-a" } }]);
+    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions", {
+      params: { user: "alice@example.com", cluster: "prod-a", mine: true, approver: false },
+    });
+  });
 });

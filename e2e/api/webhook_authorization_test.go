@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/require"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -356,14 +357,12 @@ func TestSessionBasedAuthorization(t *testing.T) {
 		require.NoError(t, err, "Failed to approve session via API")
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 
-		// Set to expired state (simulating time passage)
+		// End through the owner API so the fixture follows the supported state
+		// transition and lease rules.
 		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: namespace}, &toExpire)
 		require.NoError(t, err)
-
-		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ReasonEnded = "timeExpired"
-		err = cli.Status().Update(ctx, &toExpire)
+		err = apiClient.DropSessionViaAPI(ctx, t, session.Name, namespace)
 		require.NoError(t, err)
 
 		// Wait for expired state to be fully persisted before next subtest runs
@@ -544,11 +543,20 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	session, err := requesterClient.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{
 		TemplateRef: sessionTemplateName,
 		Cluster:     clusterName,
-		Namespace:   namespace,
 		Reason:      "Debug session webhook authorization test",
 	})
 	require.NoError(t, err, "Failed to create debug session via API")
 	t.Logf("Created debug session %s via API", session.Name)
+
+	// The API has authenticated this token. Decode only to reproduce the issuer
+	// extra a Kubernetes authenticator forwards with its SAR, including host overrides.
+	claims := &jwt.RegisteredClaims{}
+	_, _, err = jwt.NewParser().ParseUnverified(requesterClient.AuthToken, claims)
+	require.NoError(t, err)
+	require.NotEmpty(t, claims.Issuer)
+	issuerExtra := map[string]authorizationv1.ExtraValue{
+		"identity.t-caas.telekom.com/issuer": {claims.Issuer},
+	}
 
 	// Add session to cleanup (need to refetch to get proper resource version)
 	var sessionToCleanup breakglassv1alpha1.DebugSession
@@ -560,6 +568,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	t.Log("Waiting for debug session to become Active...")
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 		breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
+	require.Equal(t, claims.Issuer, session.Spec.IdentityProviderIssuer)
 	t.Logf("Debug session is now Active, AllowedPods count: %d", len(session.Status.AllowedPods))
 
 	// Wait for AllowedPods to be populated by the reconciler
@@ -593,6 +602,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   testUser.Username,
 				Groups: testUser.Groups,
+				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace:   allowedPodNamespace,
 					Verb:        "create",
@@ -613,6 +623,33 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 		require.True(t, sarResp.Status.Allowed, "Pod exec should be allowed for allowed pod")
 	})
 
+	for _, tc := range []struct {
+		name  string
+		extra map[string]authorizationv1.ExtraValue
+	}{
+		{name: "PodExecDeniedWithoutIssuer"},
+		{name: "PodExecDeniedWithWrongIssuer", extra: map[string]authorizationv1.ExtraValue{
+			"identity.t-caas.telekom.com/issuer": {claims.Issuer + "/different-provider"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sar := &authorizationv1.SubjectAccessReview{
+				TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+				Spec: authorizationv1.SubjectAccessReviewSpec{
+					User: testUser.Username, Groups: testUser.Groups, Extra: tc.extra,
+					ResourceAttributes: &authorizationv1.ResourceAttributes{
+						Namespace: allowedPodNamespace, Name: allowedPodName,
+						Verb: "create", Resource: "pods", Subresource: "exec",
+					},
+				},
+			}
+			response, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, statusCode)
+			require.False(t, response.Status.Allowed, "issuer provenance must match the participant")
+		})
+	}
+
 	t.Run("PodExecDeniedForNonAllowedPod", func(t *testing.T) {
 		// Create SAR for pods/exec to a pod NOT in the allowed list
 		// Use Username because debug sessions store RequestedBy as preferred_username claim
@@ -624,6 +661,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   testUser.Username,
 				Groups: testUser.Groups,
+				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace:   "default",
 					Verb:        "create",
@@ -655,8 +693,9 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   nonParticipant,
 				Groups: helpers.TestUsers.WebhookTestApprover.Groups,
+				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace:   "default",
+					Namespace:   allowedPodNamespace,
 					Verb:        "create",
 					Resource:    "pods",
 					Subresource: "exec",
@@ -693,6 +732,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User:   testUser.Username,
 				Groups: testUser.Groups,
+				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
 					Namespace:   allowedPodNamespace,
 					Verb:        "create",

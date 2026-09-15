@@ -108,6 +108,7 @@ func TestEmitDebugSessionAuditEvent_AllEventTypes(t *testing.T) {
 		audit.EventDebugSessionCreated,
 		audit.EventDebugSessionStarted,
 		audit.EventDebugSessionTerminated,
+		audit.EventDebugSessionRejected,
 	}
 
 	for _, eventType := range eventTypes {

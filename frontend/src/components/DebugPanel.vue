@@ -158,7 +158,7 @@ function applyMockAccessToken() {
   debugInfo.value.accessTokenClaims = MOCK_ACCESS_TOKEN_CLAIMS;
   debugInfo.value.groups = extractGroups(MOCK_ACCESS_TOKEN_CLAIMS);
   debugInfo.value.error = null;
-  debug("DebugPanel", "Using mock access token claims", MOCK_ACCESS_TOKEN_CLAIMS);
+  debug("DebugPanel", "Using mock access token claims");
 }
 
 async function collectDebugInfo() {
@@ -182,7 +182,7 @@ async function collectDebugInfo() {
       if (at) {
         debugInfo.value.accessTokenClaims = decodeJwt(at);
         debugInfo.value.groups = extractGroups(debugInfo.value.accessTokenClaims);
-        debug("DebugPanel", "Access token claims", debugInfo.value.accessTokenClaims);
+        debug("DebugPanel", "Access token claims keys", Object.keys(debugInfo.value.accessTokenClaims));
       } else {
         applyMockAccessToken();
       }
@@ -196,7 +196,7 @@ async function collectDebugInfo() {
     try {
       if (user.value?.id_token) {
         debugInfo.value.idTokenClaims = decodeJwt(user.value.id_token);
-        debug("DebugPanel", "ID token claims", debugInfo.value.idTokenClaims);
+        debug("DebugPanel", "ID token claims keys", Object.keys(debugInfo.value.idTokenClaims));
       }
     } catch (err) {
       warn("DebugPanel", "Error decoding ID token", err);
@@ -350,18 +350,10 @@ const debugToggleTitle = computed(() =>
               <span class="label">Source:</span>
               <span class="value mock-indicator">Mock token (no authenticated user)</span>
             </div>
-            <details class="token-details">
-              <summary>Full Claims</summary>
-              <pre>{{ JSON.stringify(debugInfo.accessTokenClaims, null, 2) }}</pre>
-            </details>
           </div>
 
           <div v-if="debugInfo.idTokenClaims" class="debug-section">
             <h4>ID Token</h4>
-            <details class="token-details">
-              <summary>ID Token Claims</summary>
-              <pre>{{ JSON.stringify(debugInfo.idTokenClaims, null, 2) }}</pre>
-            </details>
           </div>
 
           <div v-if="debugInfo.error" class="debug-section error">

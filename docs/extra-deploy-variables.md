@@ -1,6 +1,16 @@
 # Extra Deploy Variables
 
-ExtraDeployVariables allow template authors to define customizable parameters that users can provide when requesting a debug session. This enables a single template to support multiple use cases with different configurations.
+`DebugSessionTemplate.spec.extraDeployVariables` lets template authors declare
+customizable parameters that users may provide as values in
+`DebugSession.spec.extraDeployValues` when requesting a debug session. The
+template owns the variable names, types, defaults, and constraints. A declared
+value can select an administrator-approved variant and change fields that the
+template deliberately interpolates. The current renderer also carries
+additional request keys into `.vars`; only declared variables are validated and
+subject to group restrictions, so templates must not use undeclared values for
+sensitive interpolation. Provider admission remains authoritative. This enables
+a single template to support multiple use cases with different bounded
+configurations.
 
 ## Overview
 
@@ -35,7 +45,7 @@ Simple on/off toggle.
 
 **Usage in templates:**
 ```yaml
-{{- if eq .Vars.enableTcpdump "true" }}
+{{- if eq .vars.enableTcpdump "true" }}
 # Conditional content when enabled
 {{- end }}
 ```
@@ -58,7 +68,7 @@ Free-form text input with optional validation.
 
 **Usage in templates:**
 ```yaml
-namespace: customer-{{ .Vars.customerName | k8sName }}
+namespace: customer-{{ .vars.customerName | k8sName }}
 ```
 
 ### Number (`inputType: number`)
@@ -77,7 +87,7 @@ Numeric value with optional min/max constraints.
 
 **Usage in templates:**
 ```yaml
---iodepth={{ .Vars.ioDepth }}
+--iodepth={{ .vars.ioDepth }}
 ```
 
 ### Storage Size (`inputType: storageSize`)
@@ -96,7 +106,7 @@ Kubernetes quantity format for storage.
 
 **Usage in templates:**
 ```yaml
-sizeLimit: {{ .Vars.storageSize }}
+sizeLimit: {{ .vars.storageSize }}
 ```
 
 ### Select (`inputType: select`)
@@ -120,7 +130,7 @@ Single selection from predefined options.
 
 **Usage in templates:**
 ```yaml
-{{- if eq .Vars.networkMode "host" }}
+{{- if eq .vars.networkMode "host" }}
 hostNetwork: true
 {{- end }}
 ```
@@ -147,7 +157,7 @@ Multiple selections from predefined options.
 ```yaml
 capabilities:
   add:
-    {{- range $cap := split "," .Vars.capabilities }}
+    {{- range $cap := split "," .vars.capabilities }}
     - {{ $cap }}
     {{- end }}
 ```
@@ -203,30 +213,38 @@ The API error response includes the required groups:
 ```json
 {
   "error": "extraDeployValues validation failed",
-  "errors": [
-    "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser schiff-admin]"
-  ]
+  "code": "BAD_REQUEST",
+  "details": "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser schiff-admin]"
 }
 ```
+
+## YAML injection is blocked during template validation
+
+Both variable builders preserve submitted values and defaults, including line
+breaks and document markers. They do not sanitize or emit sanitization warnings.
+`ValidateTemplateOutput` checks every template before pod and auxiliary-resource
+rendering. Dynamic output must use an approved serializer (`yamlQuote`,
+`yamlSafe`, `quote`, or `k8sName`); quoted serializers must occupy a complete YAML
+scalar. Raw interpolation, surrounding quotes, and literal fragments around a
+quoted serialized value are rejected before rendering.
+
+For example, a value containing `worker-1\nhostNetwork: true` remains one quoted
+string when rendered as `{{ .vars.node | yamlQuote }}`. It cannot create a sibling
+`hostNetwork` key. The rendered pod still undergoes pod-security validation.
 
 ## Template Functions
 
 ### `yamlQuote`
 
-**CRITICAL: Always use for user-provided values to prevent YAML injection.**
+Use `yamlQuote` to preserve a user-provided string as one YAML scalar:
 
 ```yaml
-# SAFE: User input is properly quoted
-label: {{ .Vars.customerName | yamlQuote }}
-
-# UNSAFE: Could break YAML if input contains special chars
-label: {{ .Vars.customerName }}
+label: {{ .vars.customerName | yamlQuote }}
 ```
 
-The `yamlQuote` function:
-- Wraps values in double quotes when needed
-- Escapes special characters (`:`, `#`, `\n`, `"`, etc.)
-- Handles YAML keywords (`true`, `false`, `null`)
+It always emits a double-quoted string, escaping line breaks and quotes and
+preserving values such as `true` or `null` as strings. Do not add another pair
+of quotes or concatenate literal text outside the serialized output.
 
 ### `yamlSafe`
 
@@ -235,7 +253,7 @@ Sanitizes strings by replacing dangerous characters:
 ```yaml
 # Input: "test:value#comment"
 # Output: "test-value-comment"
-safe-label: {{ .Vars.userInput | yamlSafe }}
+safe-label: {{ .vars.userInput | yamlSafe }}
 ```
 
 ### `k8sName`
@@ -245,7 +263,7 @@ Converts strings to valid Kubernetes names:
 ```yaml
 # Input: "My Customer Name!"
 # Output: "my-customer-name"
-namespace: test-{{ .Vars.customerName | k8sName }}
+namespace: test-{{ .vars.customerName | k8sName }}
 ```
 
 ### `truncName`
@@ -254,110 +272,23 @@ Truncates strings to a maximum length:
 
 ```yaml
 # Keep within 63 char limit
-name: {{ .Session.Name | truncName 50 }}-suffix
+name: {{ printf "%s-suffix" (.session.name | truncName 50) | k8sName }}
 ```
 
 ## Complete Example
 
-### DebugPodTemplate with Variables
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: unified-network
-spec:
-  displayName: "Unified Network Debug"
-  description: "Network debugging with configurable access level"
-  
-  extraDeployVariables:
-    - name: networkMode
-      displayName: "Network Mode"
-      inputType: select
-      default: "pod"
-      options:
-        - value: "pod"
-          displayName: "Pod Network"
-        - value: "host"
-          displayName: "Host Network"
-          allowedGroups: ["platform_poweruser"]
-    
-    - name: enableCapture
-      displayName: "Enable Packet Capture"
-      inputType: boolean
-      default: false
-    
-    - name: captureSize
-      displayName: "Capture Storage"
-      inputType: storageSize
-      default: "5Gi"
-      validation:
-        minStorage: "1Gi"
-        maxStorage: "50Gi"
-
-  podTemplateString: |
-    apiVersion: v1
-    kind: Pod
-    metadata:
-      labels:
-        network-mode: {{ .Vars.networkMode | yamlQuote }}
-    spec:
-      {{- if eq .Vars.networkMode "host" }}
-      hostNetwork: true
-      {{- end }}
-      containers:
-        - name: debug
-          image: nicolaka/netshoot:v0.13
-          command: ["sleep", "infinity"]
-          {{- if eq .Vars.enableCapture "true" }}
-          volumeMounts:
-            - name: captures
-              mountPath: /captures
-          {{- end }}
-      {{- if eq .Vars.enableCapture "true" }}
-      volumes:
-        - name: captures
-          emptyDir:
-            sizeLimit: {{ .Vars.captureSize }}
-      {{- end }}
-```
-
-### DebugSessionTemplate Using the Pod Template
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-debug
-spec:
-  displayName: "Network Debug Session"
-  mode: workload
-  
-  podTemplateRef:
-    name: unified-network
-  
-  # Session-level variables (in addition to pod template vars)
-  extraDeployVariables:
-    - name: severity
-      displayName: "Incident Severity"
-      inputType: select
-      default: "standard"
-      options:
-        - value: "standard"
-          displayName: "Standard (2h max)"
-        - value: "incident"
-          displayName: "Incident (8h max)"
-          allowedGroups: ["platform_poweruser"]
-  
-  constraints:
-    maxDuration: "{{ if eq .Vars.severity \"incident\" }}8h{{ else }}2h{{ end }}"
-```
+Start with the current paired CRDs in the
+[DebugSession authoring guide](debug-session-authoring.md#minimal-workload-template).
+Declare variables in `DebugSessionTemplate.spec.extraDeployVariables`; the pod
+uses `DebugPodTemplate.spec.templateString` for dynamic rendering. Duration
+constraints are static values, not Go templates. Use separate administrator
+session templates when different users need different duration limits.
 
 ## Security Best Practices
 
 1. **Always use `yamlQuote` for user values:**
    ```yaml
-   label: {{ .Vars.userInput | yamlQuote }}
+   label: {{ .vars.userInput | yamlQuote }}
    ```
 
 2. **Use `allowedGroups` for sensitive options:**
@@ -380,7 +311,7 @@ spec:
 
 5. **Use `k8sName` for generated resource names:**
    ```yaml
-   name: test-{{ .Vars.customerName | k8sName }}
+   name: test-{{ .vars.customerName | k8sName }}
    ```
 
 ## Validation Rules

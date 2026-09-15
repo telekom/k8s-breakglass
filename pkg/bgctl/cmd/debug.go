@@ -184,7 +184,7 @@ func newDebugSessionWatchCommand() *cobra.Command {
 								return err
 							}
 						} else {
-							_, _ = fmt.Fprintf(rt.Writer(), "%s\t%s\t%s\t%s\n", s.Name, s.Cluster, s.RequestedBy, s.State)
+							output.WriteDebugSessionWatchLine(rt.Writer(), s)
 						}
 					}
 				}
@@ -372,9 +372,9 @@ func newDebugSessionJoinCommand() *cobra.Command {
 			return writeRuntimeObject(rt, session, output.FormatJSON, output.FormatYAML, output.FormatTable)
 		},
 	}
-	cmd.Flags().StringVar(&role, "role", "viewer", "Role: participant|viewer")
+	cmd.Flags().StringVar(&role, "role", "viewer", "Role to join as; only viewer is supported")
 	_ = cmd.RegisterFlagCompletionFunc("role", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		return []string{"participant", "viewer"}, cobra.ShellCompDirectiveNoFileComp
+		return []string{"viewer"}, cobra.ShellCompDirectiveNoFileComp
 	})
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Namespace hint")
 	return cmd

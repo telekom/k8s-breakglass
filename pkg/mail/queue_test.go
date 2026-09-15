@@ -216,6 +216,52 @@ func TestQueue_RetryWithBackoff(t *testing.T) {
 	assert.Greater(t, sender.Attempts(), 1, "should have retried")
 }
 
+func TestQueue_RetryCountZeroDisablesRetries(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	sender := &MockSender{successAfter: 100, host: "test.example.com"}
+	queue := NewQueue(sender, sugar, 0, 10, 10)
+	queue.Start()
+	defer func() {
+		if err := queue.Stop(context.Background()); err != nil {
+			t.Errorf("failed to stop queue: %v", err)
+		}
+	}()
+
+	err := queue.Enqueue("test-no-retry", []string{"user@example.com"}, "Subject", "Body")
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		return sender.Attempts() == 1
+	}, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 1, sender.Attempts(), "retry count 0 should make exactly one send attempt")
+}
+
+func TestQueue_RetryCountIsRetriesAfterInitialAttempt(t *testing.T) {
+	logger := zap.NewNop()
+	sugar := logger.Sugar()
+
+	sender := &MockSender{successAfter: 100, host: "test.example.com"}
+	queue := NewQueue(sender, sugar, 2, 10, 10)
+	queue.Start()
+	defer func() {
+		if err := queue.Stop(context.Background()); err != nil {
+			t.Errorf("failed to stop queue: %v", err)
+		}
+	}()
+
+	err := queue.Enqueue("test-two-retries", []string{"user@example.com"}, "Subject", "Body")
+	require.NoError(t, err)
+
+	assert.Eventually(t, func() bool {
+		return sender.Attempts() == 3
+	}, 2*time.Second, 10*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, 3, sender.Attempts(), "retry count 2 should make initial attempt plus two retries")
+}
+
 func TestQueue_Shutdown(t *testing.T) {
 	logger, _ := zap.NewProduction()
 	defer func() {
@@ -401,7 +447,7 @@ func TestNewSenderWithQueue(t *testing.T) {
 
 	queue := NewQueue(sender, sugar, mpConfig.RetryCount, mpConfig.RetryBackoffMs, mpConfig.QueueSize)
 	assert.NotNil(t, queue)
-	assert.Equal(t, 5, queue.maxRetries)
+	assert.Equal(t, 6, queue.maxAttempts)
 	assert.Equal(t, 10000, queue.initialBackoffMs)
 	assert.Equal(t, 1000, queue.maxQueueSize)
 }

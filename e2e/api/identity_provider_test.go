@@ -90,8 +90,9 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 				DisplayName: "Corporate OIDC",
 				Issuer:      "https://corp-auth.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://corp-auth.example.com",
-					ClientID:  "breakglass-ui",
+					Authority:        "https://corp-auth.example.com",
+					ClientID:         "breakglass-ui",
+					ExpectedAudience: "breakglass-ui",
 				},
 			},
 		}
@@ -110,8 +111,9 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 				DisplayName: "Partner SSO",
 				Issuer:      "https://partner-sso.example.com",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://partner-sso.example.com",
-					ClientID:  "breakglass-partner",
+					Authority:        "https://partner-sso.example.com",
+					ClientID:         "breakglass-partner",
+					ExpectedAudience: "breakglass-partner",
 				},
 			},
 		}
@@ -146,8 +148,9 @@ func TestIdentityProviderMultipleSelection(t *testing.T) {
 				DisplayName: "Duplicate",
 				Issuer:      "https://corp-auth.example.com", // Same as idp1
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://corp-auth.example.com",
-					ClientID:  "duplicate-client",
+					Authority:        "https://corp-auth.example.com",
+					ClientID:         "duplicate-client",
+					ExpectedAudience: "duplicate-client",
 				},
 			},
 		}
@@ -195,6 +198,7 @@ func TestIdentityProviderStatusHealth(t *testing.T) {
 				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:            keycloakURL,
 					ClientID:             "breakglass-ui",
+					ExpectedAudience:     "breakglass-ui",
 					CertificateAuthority: keycloakCA,
 				},
 			},
@@ -248,8 +252,9 @@ func TestIdentityProviderInvalidIssuer(t *testing.T) {
 				DisplayName: "Invalid Issuer IDP",
 				Issuer:      "https://nonexistent.invalid.local",
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://nonexistent.invalid.local",
-					ClientID:  "test-client",
+					Authority:        "https://nonexistent.invalid.local",
+					ClientID:         "test-client",
+					ExpectedAudience: "test-client",
 				},
 			},
 		}
@@ -293,8 +298,9 @@ func TestIdentityProviderDisabled(t *testing.T) {
 				Issuer:      "https://disabled-idp.example.com",
 				Disabled:    true,
 				OIDC: breakglassv1alpha1.OIDCConfig{
-					Authority: "https://disabled-idp.example.com",
-					ClientID:  "disabled-client",
+					Authority:        "https://disabled-idp.example.com",
+					ClientID:         "disabled-client",
+					ExpectedAudience: "disabled-client",
 				},
 			},
 		}
@@ -355,6 +361,7 @@ func TestIdentityProviderKeycloakGroupSync(t *testing.T) {
 				OIDC: breakglassv1alpha1.OIDCConfig{
 					Authority:            keycloakURL,
 					ClientID:             "breakglass-ui",
+					ExpectedAudience:     "breakglass-ui",
 					CertificateAuthority: keycloakCA,
 				},
 				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{

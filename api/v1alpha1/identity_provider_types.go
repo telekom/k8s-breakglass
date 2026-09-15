@@ -76,17 +76,17 @@ type OIDCConfig struct {
 	// +kubebuilder:validation:Pattern=`^\S+$`
 	ClientID string `json:"clientID"`
 
-	// ExpectedAudience is the expected JWT audience (aud) claim value.
-	// When set, the API server validates that incoming JWTs contain this value
-	// in their aud claim. This prevents cross-service token confusion from other
-	// OIDC clients at the same identity provider.
+	// ExpectedAudience is the required JWT audience (aud) claim value.
+	// The API server validates that incoming JWTs contain this value in their
+	// aud claim. This prevents cross-service token confusion from other OIDC
+	// clients at the same identity provider.
 	// Requires a matching audience protocol mapper in the identity provider
 	// that adds this value to the aud claim in issued tokens.
-	// If empty, audience validation is skipped.
-	// +optional
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^\S+$`
-	ExpectedAudience string `json:"expectedAudience,omitempty"`
+	ExpectedAudience string `json:"expectedAudience"`
 
 	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
 	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
@@ -124,12 +124,12 @@ type KeycloakGroupSync struct {
 
 	// CacheTTL is the duration to cache user/group memberships (default: 10m)
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	CacheTTL string `json:"cacheTTL,omitempty"`
 
 	// RequestTimeout is the timeout for Keycloak API requests (default: 10s)
 	// +optional
-	// +kubebuilder:validation:Pattern=`^([0-9]+(ns|us|µs|ms|s|m|h))+$`
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	RequestTimeout string `json:"requestTimeout,omitempty"`
 
 	// InsecureSkipVerify is not supported for Keycloak group synchronization.
@@ -279,7 +279,13 @@ func (idp *IdentityProvider) ValidateCreate(ctx context.Context, obj *IdentityPr
 	allErrs = append(allErrs, result.Errors...)
 
 	// Multi-IDP: Validate Issuer field for multi-IDP mode (must be unique - requires k8s client)
-	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, obj.Spec.Issuer, obj.Name, field.NewPath("spec").Child("issuer"))...)
+	issuer := obj.Spec.Issuer
+	issuerPath := field.NewPath("spec", "issuer")
+	if issuer == "" {
+		issuer = obj.Spec.OIDC.Authority
+		issuerPath = field.NewPath("spec", "oidc", "authority")
+	}
+	allErrs = append(allErrs, ensureClusterWideUniqueIssuer(ctx, issuer, obj.Name, issuerPath)...)
 
 	var warnings admission.Warnings
 	if len(allErrs) == 0 {

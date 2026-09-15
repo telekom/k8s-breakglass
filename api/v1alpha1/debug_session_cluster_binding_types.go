@@ -486,6 +486,14 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 			"either clusters or clusterSelector must be specified",
 		))
 	}
+	if spec.ClusterSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(spec.ClusterSelector)
+		if err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("clusterSelector"), spec.ClusterSelector, err.Error()))
+		} else if selector.Empty() {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("clusterSelector"), spec.ClusterSelector, "empty selector is not allowed"))
+		}
+	}
 
 	// Validate constraints if specified
 	if spec.Constraints != nil {
@@ -499,6 +507,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 	}
 
 	// Validate schedulingOptions if specified
+	if spec.SchedulingConstraints != nil {
+		result.Errors = append(result.Errors, validateSchedulingConstraints(spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if spec.SchedulingOptions != nil {
 		result.Errors = append(result.Errors, validateSchedulingOptions(spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}
@@ -512,7 +523,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 
 	// Validate impersonation config if specified
 	if spec.Impersonation != nil {
-		result.Errors = append(result.Errors, validateImpersonationConfig(spec.Impersonation, specPath.Child("impersonation"))...)
+		impPath := specPath.Child("impersonation")
+		result.Errors = append(result.Errors, validateImpersonationConfig(spec.Impersonation, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationConfigIssues(spec.Impersonation, impPath)...)
 	}
 
 	// Validate notification config if specified
@@ -595,9 +608,18 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		templateDisplayNames[t.Name] = displayName
 	}
 
+	var clusters []ClusterConfig
+	if bindingUsesClusterSelector(binding) || bindingsUseClusterSelector(bindingList.Items) {
+		clusterList := &ClusterConfigList{}
+		if err := bindingReader.List(ctx, clusterList); err != nil {
+			return nil, err
+		}
+		clusters = clusterList.Items
+	}
+
 	// Get the template names this binding references
 	thisTemplateNames := getBindingTemplateNames(binding, templateList.Items)
-	thisClusterNames := binding.Spec.Clusters
+	thisClusterNames := getBindingClusterNames(binding, clusters)
 
 	var collisions []NameCollision
 
@@ -613,7 +635,7 @@ func CheckNameCollisions(ctx context.Context, binding *DebugSessionClusterBindin
 		}
 
 		otherTemplateNames := getBindingTemplateNames(&other, templateList.Items)
-		otherClusterNames := other.Spec.Clusters
+		otherClusterNames := getBindingClusterNames(&other, clusters)
 
 		// Check for overlapping template+cluster combinations
 		for _, thisTemplate := range thisTemplateNames {
@@ -675,6 +697,65 @@ func getBindingTemplateNames(binding *DebugSessionClusterBinding, templates []De
 		if selector.Matches(labelset) {
 			names = append(names, t.Name)
 		}
+	}
+
+	return names
+}
+
+func bindingUsesClusterSelector(binding *DebugSessionClusterBinding) bool {
+	if binding == nil || binding.Spec.ClusterSelector == nil {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	return err == nil && !selector.Empty()
+}
+
+func bindingsUseClusterSelector(bindings []DebugSessionClusterBinding) bool {
+	for i := range bindings {
+		if bindingUsesClusterSelector(&bindings[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+// getBindingClusterNames returns the effective cluster names referenced by a binding.
+func getBindingClusterNames(binding *DebugSessionClusterBinding, clusters []ClusterConfig) []string {
+	if binding == nil {
+		return nil
+	}
+
+	seen := make(map[string]struct{})
+	names := make([]string, 0, len(binding.Spec.Clusters))
+	for _, clusterName := range binding.Spec.Clusters {
+		if clusterName == "" {
+			continue
+		}
+		if _, ok := seen[clusterName]; ok {
+			continue
+		}
+		seen[clusterName] = struct{}{}
+		names = append(names, clusterName)
+	}
+
+	if binding.Spec.ClusterSelector == nil {
+		return names
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+	if err != nil || selector.Empty() {
+		return names
+	}
+
+	for _, cluster := range clusters {
+		if !selector.Matches(labels.Set(cluster.Labels)) {
+			continue
+		}
+		if _, ok := seen[cluster.Name]; ok {
+			continue
+		}
+		seen[cluster.Name] = struct{}{}
+		names = append(names, cluster.Name)
 	}
 
 	return names

@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	"golang.org/x/sync/singleflight"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -21,11 +23,21 @@ import (
 
 // SessionManager is kubernetes client based object for managing CRUD operation on BreakglassSession custom resource.
 type SessionManager struct {
+	quotaNamespace string
+	quotaEnabled   bool
 	client.Client
-	reader          client.Reader
-	log             *zap.SugaredLogger
-	logFallbackOnce sync.Once
+	reader              client.Reader
+	liveReader          client.Reader
+	liveFallbackMu      sync.Mutex
+	liveFallbackAt      map[string]time.Time
+	liveFallbackSweepAt time.Time
+	liveFallbackFlight  singleflight.Group
+	log                 *zap.SugaredLogger
+	logFallbackOnce     sync.Once
 }
+
+const liveReaderNegativeCacheTTL = time.Second
+const liveReaderRefreshTimeout = 10 * time.Second
 
 // getLogger returns the injected logger or falls back to the global logger.
 // Callers should prefer passing a logger via WithSessionLogger to avoid
@@ -42,6 +54,11 @@ func (c *SessionManager) getLogger() *zap.SugaredLogger {
 
 // SessionManagerOption configures a SessionManager during construction.
 type SessionManagerOption func(*SessionManager)
+
+// WithQuotaNamespace enables durable admission in the configured controller namespace.
+func WithQuotaNamespace(namespace string) SessionManagerOption {
+	return func(sm *SessionManager) { sm.quotaNamespace = namespace; sm.quotaEnabled = true }
+}
 
 // WithSessionLogger sets a custom logger for the SessionManager.
 // If not provided, the global zap.S() logger is used as fallback.
@@ -82,17 +99,19 @@ func NewSessionManager(contextName string) (*SessionManager, error) {
 // configured with the Breakglass scheme.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClient(c client.Client, opts ...SessionManagerOption) *SessionManager {
-	return NewSessionManagerWithClientAndReader(c, c, opts...)
+	return NewSessionManagerWithClientAndReader(c, nil, opts...)
 }
 
 // NewSessionManagerWithClientAndReader allows using a cached client for writes and an optional reader
 // (e.g., APIReader) for consistent reads when required.
 // Configuration is applied via functional options (WithSessionLogger).
 func NewSessionManagerWithClientAndReader(c client.Client, reader client.Reader, opts ...SessionManagerOption) *SessionManager {
-	if reader == nil {
-		reader = c
-	}
 	sm := &SessionManager{Client: c, reader: reader}
+	if reader == nil {
+		sm.reader = c
+	} else {
+		sm.liveReader = reader
+	}
 	for _, opt := range opts {
 		if opt != nil {
 			opt(sm)
@@ -112,6 +131,13 @@ func (c *SessionManager) Reader() client.Reader {
 	return c.Client
 }
 
+// QuotaNamespace returns the controller namespace configured for durable
+// admission. DebugSessions are created in this namespace, so callers that
+// need a bounded live discovery can scope reads there.
+func (c *SessionManager) QuotaNamespace() string {
+	return c.quotaNamespace
+}
+
 func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	if c.reader != nil {
 		return c.reader.List(ctx, list, opts...)
@@ -119,7 +145,7 @@ func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts 
 	return c.Client.List(ctx, list, opts...)
 }
 
-// isFieldIndexError returns true if the error indicates a missing field index
+// IsFieldIndexError returns true if the error indicates a missing field index
 // or unsupported field selector—i.e. it is safe to fall back to a full list +
 // client-side filter.  All other errors (RBAC, network, etcd) are real failures.
 //
@@ -128,7 +154,7 @@ func (c *SessionManager) list(ctx context.Context, list client.ObjectList, opts 
 // against known error messages. If controller-runtime changes wording in a
 // future release, the regression tests in session_manager_test.go
 // (TestIsFieldIndexError*) will catch the change.
-func isFieldIndexError(err error) bool {
+func IsFieldIndexError(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -183,33 +209,70 @@ func (c *SessionManager) GetAllBreakglassSessions(ctx context.Context) ([]breakg
 func (c *SessionManager) GetSessionsByState(ctx context.Context,
 	state breakglassv1alpha1.BreakglassSessionState,
 ) ([]breakglassv1alpha1.BreakglassSession, error) {
+	return c.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{state})
+}
+
+// GetSessionsByStates returns all sessions matching any of the specified states.
+// It uses the status.state field index for efficient lookup when available. If
+// the index is missing, it falls back to a single full list plus client-side
+// filtering instead of issuing one full-list fallback per requested state.
+func (c *SessionManager) GetSessionsByStates(ctx context.Context,
+	states []breakglassv1alpha1.BreakglassSessionState,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
 	log := c.getLogger()
-	log.Debugw("Fetching BreakglassSessions by state (using field index)", "state", state)
-	bsl := breakglassv1alpha1.BreakglassSessionList{}
-	// Use the cached client (c.Client.List) for indexed queries.
-	// Field indexes are only available in the cache, not via APIReader.
-	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
-		if !isFieldIndexError(err) {
-			// Real error (RBAC, network, etc.) — return it directly.
-			log.Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
-			return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
+
+	stateSet := make(map[breakglassv1alpha1.BreakglassSessionState]struct{}, len(states))
+	uniqueStates := make([]breakglassv1alpha1.BreakglassSessionState, 0, len(states))
+	for _, state := range states {
+		if _, exists := stateSet[state]; exists {
+			continue
 		}
-		// Field index not available — fall back to client-side filtering.
-		log.Debugw("Field index not available; falling back to client-side filtering", "state", state, "error", err)
-		all, err := c.GetAllBreakglassSessions(ctx)
-		if err != nil {
-			return nil, err
-		}
-		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
-		for _, s := range all {
-			if s.Status.State == state {
-				filtered = append(filtered, s)
-			}
-		}
-		return filtered, nil
+		stateSet[state] = struct{}{}
+		uniqueStates = append(uniqueStates, state)
 	}
-	log.Infow("Fetched BreakglassSessions by state (indexed)", "count", len(bsl.Items), "state", state)
-	return bsl.Items, nil
+	if len(uniqueStates) == 0 {
+		return nil, nil
+	}
+
+	log.Debugw("Fetching BreakglassSessions by states (using field index)", "states", uniqueStates)
+	sessions := make([]breakglassv1alpha1.BreakglassSession, 0)
+	seen := make(map[string]struct{})
+	for _, state := range uniqueStates {
+		bsl := breakglassv1alpha1.BreakglassSessionList{}
+		// Use the cached client (c.Client.List) for indexed queries.
+		// Field indexes are only available in the cache, not via APIReader.
+		if err := c.Client.List(ctx, &bsl, client.MatchingFields{"status.state": string(state)}); err != nil {
+			if !IsFieldIndexError(err) {
+				// Real error (RBAC, network, etc.) — return it directly.
+				log.Errorw("Failed to list BreakglassSessions by state", "state", state, "error", err)
+				return nil, fmt.Errorf("failed to list BreakglassSessions by state: %w", err)
+			}
+			// Field index not available — fall back to one full list and filter
+			// all requested states in-memory.
+			log.Debugw("Field index not available; falling back to client-side filtering", "states", uniqueStates, "error", err)
+			all, err := c.GetAllBreakglassSessions(ctx)
+			if err != nil {
+				return nil, err
+			}
+			filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+			for _, s := range all {
+				if _, ok := stateSet[s.Status.State]; ok {
+					filtered = append(filtered, s)
+				}
+			}
+			return filtered, nil
+		}
+		for _, session := range bsl.Items {
+			key := session.Namespace + "/" + session.Name
+			if _, exists := seen[key]; exists {
+				continue
+			}
+			seen[key] = struct{}{}
+			sessions = append(sessions, session)
+		}
+	}
+	log.Infow("Fetched BreakglassSessions by states (indexed)", "count", len(sessions), "states", uniqueStates)
+	return sessions, nil
 }
 
 // Get all stored GetClusterGroupAccess
@@ -222,7 +285,8 @@ func (c *SessionManager) GetBreakglassSessionByName(ctx context.Context, name st
 	// controller-runtime client requires a namespace when a name is provided in ObjectKey.
 	// If the object was created with a namespace, a direct Get with empty namespace will fail.
 	// In that case, fall back to listing sessions across all namespaces using a field selector on metadata.name.
-	if err := c.Get(ctx, client.ObjectKey{Name: name}, &bs); err == nil {
+	reader := c.Reader()
+	if err := reader.Get(ctx, client.ObjectKey{Name: name}, &bs); err == nil {
 		log.Infow("Fetched BreakglassSession by name (direct GET)", system.NamespacedFields(name, bs.Namespace)...)
 		return bs, nil
 	} else {
@@ -231,7 +295,7 @@ func (c *SessionManager) GetBreakglassSessionByName(ctx context.Context, name st
 
 	// Try cache-backed field index before falling back to selector-based listing
 	indexed := breakglassv1alpha1.BreakglassSessionList{}
-	if err := c.List(ctx, &indexed, client.MatchingFields{"metadata.name": name}); err == nil {
+	if err := reader.List(ctx, &indexed, client.MatchingFields{"metadata.name": name}); err == nil {
 		switch len(indexed.Items) {
 		case 0:
 			log.Debugw("Field index lookup returned no sessions; falling back to selector", "name", name)
@@ -300,7 +364,7 @@ func (c *SessionManager) GetUserBreakglassSessions(ctx context.Context,
 	// Use the cached client (c.Client.List) for indexed queries.
 	// Field indexes are only available in the cache, not via APIReader.
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.user": user}); err != nil {
-		if !isFieldIndexError(err) {
+		if !IsFieldIndexError(err) {
 			log.Errorw("Failed to list BreakglassSessions for user", "user", user, "error", err)
 			return nil, fmt.Errorf("failed to list BreakglassSessions for user: %w", err)
 		}
@@ -335,7 +399,7 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 	// Use the cached client (c.Client.List) for indexed queries.
 	// Field indexes are only available in the cache, not via APIReader.
 	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster, "spec.user": user}); err != nil {
-		if !isFieldIndexError(err) {
+		if !IsFieldIndexError(err) {
 			log.Errorw("Failed to list BreakglassSessions for cluster/user", "cluster", cluster, "user", user, "error", err)
 			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster/user: %w", err)
 		}
@@ -353,8 +417,264 @@ func (c *SessionManager) GetClusterUserBreakglassSessions(ctx context.Context,
 		}
 		return filtered, nil
 	}
+	if c.liveReader != nil && !hasAuthorizationEligibleSession(bsl.Items, time.Now()) {
+		fallbackKey := cluster + "\x00" + user
+		fallback, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, log)
+		if !refreshed || len(fallback) == 0 {
+			return bsl.Items, nil
+		}
+
+		result := mergeSessionResults(bsl.Items, fallback)
+		log.Infow("Fetched BreakglassSessions from live reader after cache lookup found no eligible session",
+			"count", len(result), "cluster", cluster, "user", user)
+		return result, nil
+	}
 	log.Infow("Fetched BreakglassSessions (indexed)", "count", len(bsl.Items), "cluster", cluster, "user", user)
 	return bsl.Items, nil
+}
+
+// GetClusterBreakglassSessions lists sessions for a cluster when the caller
+// needs to resolve an identity alias that cannot be represented by the
+// spec.user field index.
+func (c *SessionManager) GetClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, error) {
+	bsl := breakglassv1alpha1.BreakglassSessionList{}
+	if err := c.Client.List(ctx, &bsl, client.MatchingFields{"spec.cluster": cluster}); err != nil {
+		if !IsFieldIndexError(err) {
+			return nil, fmt.Errorf("failed to list BreakglassSessions for cluster %q: %w", cluster, err)
+		}
+		all, err := c.GetAllBreakglassSessions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(all))
+		for _, s := range all {
+			if s.Spec.Cluster == cluster {
+				filtered = append(filtered, s)
+			}
+		}
+		return filtered, nil
+	}
+	if c.liveReader != nil && !hasAuthorizationEligibleSession(bsl.Items, time.Now()) {
+		fallback, refreshed := c.fetchLiveClusterBreakglassSessions(ctx, cluster, "\x00cluster\x00"+cluster, c.getLogger())
+		if !refreshed || len(fallback) == 0 {
+			return bsl.Items, nil
+		}
+
+		result := mergeSessionResults(bsl.Items, fallback)
+		c.getLogger().Infow("Fetched BreakglassSessions from live reader after cluster cache lookup",
+			"count", len(result), "cluster", cluster)
+		return result, nil
+	}
+	return bsl.Items, nil
+}
+
+// RefreshClusterBreakglassSessions refreshes the live cluster list when an
+// alias lookup found no eligible cached session.
+func (c *SessionManager) RefreshClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReader == nil {
+		return nil, false
+	}
+	return c.fetchLiveClusterBreakglassSessions(ctx, cluster, "\x00cluster\x00"+cluster, c.getLogger())
+}
+
+// RefreshClusterUserBreakglassSessions refreshes a cached cluster/user lookup
+// after the cached sessions failed to authorize a specific request.
+func (c *SessionManager) RefreshClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	cached, err := c.GetClusterUserBreakglassSessions(ctx, cluster, user)
+	if err != nil || c.liveReader == nil {
+		return cached, false, err
+	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+// RefreshClusterUserBreakglassSessionsWithCached refreshes a previously loaded
+// cluster/user result without issuing a second cached lookup.
+func (c *SessionManager) RefreshClusterUserBreakglassSessionsWithCached(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	if c.liveReader == nil {
+		return cached, false, nil
+	}
+	return c.refreshClusterUserBreakglassSessions(ctx, cluster, user, cached)
+}
+
+func (c *SessionManager) refreshClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+	cached []breakglassv1alpha1.BreakglassSession,
+) ([]breakglassv1alpha1.BreakglassSession, bool, error) {
+	fallbackKey := cluster + "\x00" + user
+	live, refreshed := c.fetchLiveClusterUserBreakglassSessions(ctx, cluster, user, fallbackKey, c.getLogger())
+	if !refreshed {
+		return cached, refreshed, nil
+	}
+	return live, true, nil
+}
+
+func (c *SessionManager) fetchLiveClusterUserBreakglassSessions(ctx context.Context,
+	cluster string,
+	user string,
+	fallbackKey string,
+	log *zap.SugaredLogger,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
+		return nil, false
+	}
+	resultCh := c.liveFallbackFlight.DoChan(fallbackKey, func() (interface{}, error) {
+		opCtx, cancel := context.WithTimeout(context.Background(), liveReaderRefreshTimeout)
+		defer cancel()
+		var liveList breakglassv1alpha1.BreakglassSessionList
+		err := c.liveReader.List(opCtx, &liveList, client.MatchingFields{
+			"spec.cluster": cluster,
+			"spec.user":    user,
+		})
+		if err != nil && IsFieldIndexError(err) {
+			err = c.liveReader.List(opCtx, &liveList)
+		}
+		if err != nil {
+			log.Warnw("Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session",
+				"cluster", cluster, "user", user, "error", err)
+			return liveFallbackResult{}, nil
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+		for _, s := range liveList.Items {
+			if s.Spec.Cluster == cluster && s.Spec.User == user {
+				filtered = append(filtered, s)
+			}
+		}
+		if hasAuthorizationEligibleSession(filtered, time.Now()) {
+			return liveFallbackResult{sessions: filtered, success: true}, nil
+		}
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
+		return liveFallbackResult{sessions: filtered, success: true}, nil
+	})
+	var value interface{}
+	select {
+	case result := <-resultCh:
+		value = result.Val
+	case <-ctx.Done():
+		return nil, false
+	}
+	fallback, ok := value.(liveFallbackResult)
+	if !ok || !fallback.success {
+		return nil, false
+	}
+	return fallback.sessions, true
+}
+
+func (c *SessionManager) fetchLiveClusterBreakglassSessions(ctx context.Context,
+	cluster string,
+	fallbackKey string,
+	log *zap.SugaredLogger,
+) ([]breakglassv1alpha1.BreakglassSession, bool) {
+	if c.liveReaderFallbackSuppressed(fallbackKey, time.Now()) {
+		return nil, false
+	}
+	resultCh := c.liveFallbackFlight.DoChan(fallbackKey, func() (interface{}, error) {
+		opCtx, cancel := context.WithTimeout(context.Background(), liveReaderRefreshTimeout)
+		defer cancel()
+		var liveList breakglassv1alpha1.BreakglassSessionList
+		err := c.liveReader.List(opCtx, &liveList, client.MatchingFields{"spec.cluster": cluster})
+		if err != nil && IsFieldIndexError(err) {
+			err = c.liveReader.List(opCtx, &liveList)
+		}
+		if err != nil {
+			log.Warnw("Failed to refresh BreakglassSessions from live reader after cluster cache lookup found no eligible session",
+				"cluster", cluster, "error", err)
+			return liveFallbackResult{}, nil
+		}
+		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(liveList.Items))
+		for _, s := range liveList.Items {
+			if s.Spec.Cluster == cluster {
+				filtered = append(filtered, s)
+			}
+		}
+		if hasAuthorizationEligibleSession(filtered, time.Now()) {
+			return liveFallbackResult{sessions: filtered, success: true}, nil
+		}
+		c.recordLiveReaderFallback(fallbackKey, time.Now())
+		return liveFallbackResult{sessions: filtered, success: true}, nil
+	})
+	var value interface{}
+	select {
+	case result := <-resultCh:
+		value = result.Val
+	case <-ctx.Done():
+		return nil, false
+	}
+	fallback, ok := value.(liveFallbackResult)
+	if !ok || !fallback.success {
+		return nil, false
+	}
+	return fallback.sessions, true
+}
+
+type liveFallbackResult struct {
+	sessions []breakglassv1alpha1.BreakglassSession
+	success  bool
+}
+
+func hasAuthorizationEligibleSession(sessions []breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	for _, session := range sessions {
+		if IsSessionAuthorizationEligible(session, now) {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeSessionResults(cached, live []breakglassv1alpha1.BreakglassSession) []breakglassv1alpha1.BreakglassSession {
+	result := append([]breakglassv1alpha1.BreakglassSession(nil), cached...)
+	positions := make(map[string]int, len(result))
+	for _, session := range result {
+		positions[session.Namespace+"/"+session.Name] = len(positions)
+	}
+	for _, session := range live {
+		key := session.Namespace + "/" + session.Name
+		if position, exists := positions[key]; exists {
+			result[position] = session
+			continue
+		}
+		positions[key] = len(result)
+		result = append(result, session)
+	}
+	return result
+}
+
+func (c *SessionManager) liveReaderFallbackSuppressed(key string, now time.Time) bool {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+
+	if c.liveFallbackSweepAt.IsZero() || now.Sub(c.liveFallbackSweepAt) >= liveReaderNegativeCacheTTL {
+		for cachedKey, last := range c.liveFallbackAt {
+			if now.Sub(last) >= liveReaderNegativeCacheTTL {
+				delete(c.liveFallbackAt, cachedKey)
+			}
+		}
+		c.liveFallbackSweepAt = now
+	}
+	if last, ok := c.liveFallbackAt[key]; ok && now.Sub(last) < liveReaderNegativeCacheTTL {
+		return true
+	}
+	return false
+}
+
+func (c *SessionManager) recordLiveReaderFallback(key string, now time.Time) {
+	c.liveFallbackMu.Lock()
+	defer c.liveFallbackMu.Unlock()
+	if c.liveFallbackAt == nil {
+		c.liveFallbackAt = make(map[string]time.Time)
+	}
+	c.liveFallbackAt[key] = now
 }
 
 // GetBreakglassSessions with custom field selector string.
@@ -442,12 +762,35 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 
 	// Always fetch current state once to get Namespace, ResourceVersion, and Generation
 	// This avoids duplicate API calls while ensuring kstatus compliance
-	current, err := c.GetBreakglassSessionByName(ctx, bs.Name)
+	var current breakglassv1alpha1.BreakglassSession
+	var err error
+	if c.quotaEnabled && bs.Namespace != "" {
+		// Quota reservations identify namespace/name/UID; do not route their
+		// status updates through a cross-namespace name index.
+		err = c.Reader().Get(ctx, client.ObjectKeyFromObject(&bs), &current)
+	} else {
+		current, err = c.GetBreakglassSessionByName(ctx, bs.Name)
+	}
 	if err != nil {
 		log.Errorw("Failed to resolve BreakglassSession before status update", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to resolve BreakglassSession %s before status update: %w", bs.Name, err)
 	}
+	if bs.ResourceVersion != "" && current.ResourceVersion != bs.ResourceVersion {
+		return apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), bs.Name, fmt.Errorf("stale resource version %q (current %q)", bs.ResourceVersion, current.ResourceVersion))
+	}
 
+	if c.quotaEnabled && !IsSessionTerminalState(bs.Status.State) {
+		if IsSessionTerminalState(current.Status.State) {
+			return fmt.Errorf("refusing to revive terminal session")
+		}
+		if bs.UID != "" && bs.UID != current.UID {
+			return fmt.Errorf("session UID changed")
+		}
+		if err := c.admitSession(ctx, &current); err != nil {
+			return err
+		}
+		bs.ResourceVersion = current.ResourceVersion
+	}
 	// Populate missing fields from current state
 	if bs.Namespace == "" {
 		bs.Namespace = current.Namespace
@@ -457,6 +800,12 @@ func (c *SessionManager) UpdateBreakglassSessionStatus(ctx context.Context, bs b
 	}
 	// Set observedGeneration for kstatus compliance
 	bs.Status.ObservedGeneration = current.Generation
+	if c.quotaEnabled {
+		if bs.ResourceVersion == "" {
+			return fmt.Errorf("quota status update requires resourceVersion")
+		}
+		return c.Client.Status().Update(ctx, &bs)
+	}
 	if err := applyBreakglassSessionStatus(ctx, c, &bs); err != nil {
 		log.Errorw("Failed to update BreakglassSession status", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to update BreakglassSession status %s/%s: %w", bs.Namespace, bs.Name, err)

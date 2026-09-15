@@ -1,0 +1,18 @@
+[
+  "Lint",
+  "Controller Unit Tests",
+  "CLI Unit Tests",
+  "CRD Schema & API Server Validation",
+  "Frontend Security Audit",
+  "Manifest Validation & Comparison",
+  "Frontend Tests",
+  "Helm Chart Lint",
+  "Build Image",
+  "Single-Cluster E2E Tests",
+  "OIDC Comprehensive E2E Tests",
+  "UI E2E Tests",
+  "Multi-Cluster E2E Tests",
+  "Publish Image",
+  "Utility Publication Compatibility",
+  "Utility image vulnerability scan"
+]

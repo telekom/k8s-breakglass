@@ -87,29 +87,29 @@ spec:
 
 ## Session State and Validation
 
-The breakglass API implements a **state-first validation architecture**:
+The breakglass API implements a **state-and-lease validation architecture**:
 
-### State Priority Rules
+### State and Lease Priority Rules
 
-1. **State is ultimate authority** - A session's `state` field determines validity, not timestamps
-2. **Terminal states override timestamps** - Sessions in Rejected, Withdrawn, Expired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
-3. **Timestamp preservation** - Timestamps are never cleared, only added/updated, creating a complete audit history
+1. **Terminal state takes precedence** - Sessions in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout states can NEVER be valid, regardless of timestamp values
+2. **Approved requires a live lease** - An `Approved` session is valid only when `expiresAt` is present and strictly later than the authorization decision time; a missing, zero, or equal/past expiry fails closed
+3. **Timestamp preservation** - Timestamps are never cleared, and regular sessions have no renewal operation; terminal cleanup may shorten a still-live lease but never move an elapsed expiry forward
 
 ### Session Validity Rules
 
 A session is considered valid for access ONLY if:
 
 1. **State is Approved** - Session must be in `Approved` state
-2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, or ApprovalTimeout
+2. **Not in terminal state** - Must not be in Rejected, Withdrawn, Expired, IdleExpired, or ApprovalTimeout
 3. **Not scheduled for future** - If `scheduledStartTime` is in the future, session is not yet valid
-4. **Not expired** - `expiresAt` timestamp must be in the future
+4. **Not expired** - `expiresAt` must be present and in the future; a missing or zero expiry fails closed
 
 **Pseudocode:**
 
 ```go
 isSessionValid(session) {
     // Terminal states override everything
-    if (session.state in [Rejected, Withdrawn, Expired, ApprovalTimeout]) {
+    if (session.state in [Rejected, Withdrawn, Expired, IdleExpired, ApprovalTimeout]) {
         return false
     }
     
@@ -120,7 +120,7 @@ isSessionValid(session) {
             return false
         }
         // Check expiration only for Approved
-        if (session.status.expiresAt <= now) {
+        if (session.status.expiresAt is missing || session.status.expiresAt <= now) {
             return false
         }
         return true
@@ -135,14 +135,18 @@ isSessionValid(session) {
 
 The `state` parameter in list/filter operations supports filtering by session state. Valid values:
 
+- `all` - Disable state filtering
 - `pending` - Sessions awaiting approval
-- `approved` - Active sessions granting privileges
+- `approved` - Sessions whose recorded `status.state` is `Approved`
+- `active` - Currently valid approved sessions according to scheduled-start and expiry checks
+- `waiting`, `waitingforscheduledtime`, `scheduled` - Sessions waiting for their scheduled start time
 - `rejected` - Rejected by approver (terminal)
 - `withdrawn` - Withdrawn by requester (terminal)
-- `expired` - Exceeded max duration (terminal)
-- `timeout` - Approval request timed out (terminal)
+- `expired` - Recorded `Expired` state, or an approved session whose `status.expiresAt` has passed
+- `idleexpired` - Exceeded configured idle timeout (terminal)
+- `timeout`, `approvaltimeout` - Approval request timed out (terminal)
 
-**Note:** Filtering by state uses the session's `state` field directly. Timestamp-based validation (e.g., expiration) happens at access time via `isSessionValid()`.
+**Note:** Most state tokens compare the session's recorded `status.state`. The `expired` token also matches approved sessions whose `status.expiresAt` has passed, and `active` matches only approved sessions that are currently valid according to access-time checks.
 
 ## Breakglass Session API
 
@@ -153,7 +157,7 @@ The API provides endpoints for managing breakglass sessions.
 Query sessions with server-side filtering.
 
 ```http
-GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>
+GET /api/breakglassSessions?cluster=<cluster>&user=<user>&group=<group>&mine=<true|false>&state=<state>&approver=<true|false>&approvedByMe=<true|false>&activeOnly=<true|false>&token=<session-name>
 Authorization: Bearer <token>
 ```
 
@@ -166,11 +170,12 @@ Authorization: Bearer <token>
 | `cluster` | string | Filter by cluster name |
 | `user` | string | Filter by user |
 | `group` | string | Filter by granted group |
-| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions) |
-| `approver` | boolean | Sessions user can approve (default: `true`) |
-| `approvedByMe` | boolean | Sessions the user has already approved |
+| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions). Matches the authenticated user's email, preferred username, or subject/user ID; requests with no usable identity return `401 Unauthorized`. |
+| `approver` | boolean | Sessions user can approve. Defaults to `true` only when neither `mine=true` nor `approvedByMe=true` is requested; set `approver=true` explicitly to combine filters. |
+| `approvedByMe` | boolean | Sessions the caller has already approved. This filter matches the caller's email claim against recorded approver identifiers; missing email returns `401 Unauthorized`. |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
-| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. |
+| `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. Unknown non-empty tokens return `400 Bad Request`. |
+| `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |
 
 **Response:** Array of `BreakglassSession` resources filtered by query parameters:
 
@@ -200,12 +205,34 @@ Authorization: Bearer <token>
 ]
 ```
 
+When `token=<session-name>` is present, the API treats the token value as a
+BreakglassSession `metadata.name` and returns only approval-link metadata:
+
+```json
+{
+  "valid": true,
+  "alreadyActive": false,
+  "canApprove": true
+}
+```
+
+The token metadata response is authorization-gated. The caller must be allowed
+to read the referenced session, for example as the requester, a currently
+authorized approver, or a historical approver. Missing sessions return
+`404 Not Found` with `{"valid": false}`. Existing sessions that the caller may
+not read return `403 Forbidden`. If user identity cannot be verified, the
+endpoint returns `401 Unauthorized`.
+
 **Examples:**
 
 ```bash
 # Your pending sessions
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglassSessions?cluster=prod&mine=true&state=pending"
+
+# Your sessions plus sessions you can approve
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglassSessions?mine=true&approver=true"
 
 # All approved sessions for a group
 curl -H "Authorization: Bearer <token>" \
@@ -218,6 +245,10 @@ curl -H "Authorization: Bearer <token>" \
 # Sessions you have approved that are still active or timed out
 curl -H "Authorization: Bearer <token>" \
   "https://breakglass.example.com/api/breakglassSessions?approvedByMe=true&state=approved,timeout"
+
+# Validate approval-link metadata for a session
+curl -H "Authorization: Bearer <token>" \
+  "https://breakglass.example.com/api/breakglassSessions?token=session-abc123"
 ```
 
 ### Request Session
@@ -244,6 +275,12 @@ Authorization: Bearer <token>
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
+
+**User group resolution:** As with the escalations list endpoint, the
+requester's groups are resolved from the JWT `groups`/`realm_access` claim
+when present, falling back to a live cluster-based group lookup only when
+the token carries no group claim at all. A token whose group claim resolves
+to zero groups is honored as-is and does not trigger the cluster fallback.
 
 **Status Code:** `201 Created`
 
@@ -315,11 +352,9 @@ learning whether the session is terminal, timed out, or has malformed request
 details.
 
 **Request validation:** `reason` is required when the session's stored
-`approvalReasonConfig.mandatory` is `true`.
-
-If the pending session's approval timeout has already elapsed, the endpoint returns
-`409 Conflict` and leaves the session pending until cleanup records the
-`ApprovalTimeout` terminal state.
+`approvalReasonConfig.mandatory` is `true`. If `status.timeoutAt` has already
+elapsed, approval fails with `400 Bad Request` and the stale pending session is
+left unchanged for cleanup to transition to `ApprovalTimeout`.
 
 **Response:** Complete updated `BreakglassSession` resource with approved status.
 
@@ -378,11 +413,14 @@ Authorization: Bearer <token>
 **Status Code:** `200 OK`
 
 **Authorization:** Approvers can reject any pending request. Session requesters can also reject their own pending requests.
+Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 Approver authorization is checked before request-body validation and
 state-specific responses; unrelated callers receive only authorization errors.
 
 **Request validation:** `reason` is required when the session's stored
-`approvalReasonConfig.mandatory` is `true`.
+`approvalReasonConfig.mandatory` is `true`. If `status.timeoutAt` has already
+elapsed, rejection fails with `400 Bad Request` and the stale pending session is
+left unchanged for cleanup to transition to `ApprovalTimeout`.
 
 **Response:** Complete updated `BreakglassSession` resource with rejected status:
 
@@ -481,6 +519,12 @@ Authorization: Bearer <token>
 }
 ```
 
+If a session is still stored as `Pending` but its `status.timeoutAt` has already
+elapsed, approval metadata treats it as timed out immediately: `canApprove` and
+`canReject` are `false`, approvers keep read access, and `stateMessage` explains
+that the session timed out waiting for approval. The token validation endpoint
+also returns `valid: false` and `canApprove: false` for those stale approval links.
+
 ### Withdraw Session Request
 
 Withdraw your own pending session request (before approval).
@@ -490,9 +534,11 @@ POST /api/breakglassSessions/{session-name}/withdraw
 Authorization: Bearer <token>
 ```
 
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
 **Status Code:** `200 OK`
 
-**Authorization:** Only the session requester can withdraw a pending request
+**Authorization:** Only the session requester can withdraw a pending request. Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
 
 **Response:** Complete updated `BreakglassSession` resource with withdrawn status:
 
@@ -541,6 +587,9 @@ POST /api/breakglassSessions/{session-name}/drop
 Authorization: Bearer <token>
 ```
 
+This action does not accept a request body. Clients should omit `Content-Type`
+when sending an empty request. Non-empty bodies return `400 Bad Request`.
+
 **Status Codes:**
 
 - `200 OK` - Session was dropped and updated
@@ -548,8 +597,15 @@ Authorization: Bearer <token>
 
 **Authorization:**
 
-- **Session owner/requester**: Can drop pending, approved scheduled, or active
-  non-terminal sessions
+- **Session owner/requester**: Can drop pending requests, approved scheduled
+  sessions waiting for their start, or active non-terminal sessions
+
+Requester/owner matching uses the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
+
+The UI matches owner actions against the authenticated user's OIDC identity in
+this order: `profile.email`, `profile.preferred_username`, top-level `email`,
+then top-level `preferred_username`; subject-claim owners remain manageable
+through the backend requester/owner matching above.
 
 Terminal sessions (`Rejected`, `Withdrawn`, `Expired`, `IdleExpired`, `ApprovalTimeout`)
 return `400 Bad Request` and are not modified.
@@ -568,6 +624,8 @@ Approver cancels/terminates a running or approved session.
 POST /api/breakglassSessions/{session-name}/cancel
 Authorization: Bearer <token>
 ```
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
 
 **Status Code:** `200 OK`
 
@@ -591,6 +649,15 @@ Authorization: Bearer <token>
 |-----------|------|-------------|
 | `activeOnly` | boolean | Only return ready escalations for ready clusters (default: `true`). With a concrete or glob `cluster` filter, escalations are hidden when every matching registered `ClusterConfig` is `Ready=False` or has an ambiguous duplicate name. Unfiltered multi-cluster/global escalations can still be returned when they match at least one ready registered cluster. |
 | `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
+
+**User group resolution:** The user's groups are resolved from the JWT
+`groups` claim (or Keycloak's `realm_access.roles`) when present, falling
+back to a live cluster-based group lookup only when the token carries **no**
+group claim at all. A token that carries a `groups`/`realm_access` claim
+resolving to zero groups is treated as an explicit "user belongs to no
+groups" assertion and does **not** trigger the cluster-based fallback; this
+avoids replacing the token's group assertion with unrelated cluster RBAC
+group bindings.
 
 **Response:** Array of `BreakglassEscalation` resources filtered by user's groups and readiness:
 
@@ -795,6 +862,8 @@ GET /api/oidc/authority/protocol/openid-connect/certs
 
 Proxies requests to the configured OIDC authority, allowing the browser to fetch OIDC metadata through the breakglass server origin.
 
+In multi-IDP deployments, clients may send `X-OIDC-Authority` with the exact authority URL of an enabled `IdentityProvider`. The proxy only accepts configured authorities and uses the selected provider's `spec.oidc.certificateAuthority` for upstream TLS validation.
+
 ### Metrics Discovery
 
 The `/api/metrics` endpoint is a discovery/helper endpoint that returns a JSON pointer to the actual Prometheus metrics endpoint, which is served by controller-runtime on a separate port. It does not serve Prometheus metrics directly.
@@ -921,7 +990,7 @@ POST /api/debugSessions
   },
   "reason": "Investigating issue #12345",
   "targetNamespace": "debug-team-sre",
-  "selectedSchedulingOption": "sriov"
+  "selectedSchedulingOption": "network-capable"
 }
 ```
 
@@ -940,9 +1009,16 @@ POST /api/debugSessions
 
 JSON bodies for debug-session create requests must contain only known field names and exactly one JSON object. Unknown fields, malformed JSON, and trailing JSON values are rejected with `400 Bad Request`.
 
+`DebugSessionTemplate.spec.expirationBehavior: notify-only` is deprecated. It
+now requests the configured expiry notification and still performs mandatory
+hard expiry, access revocation, and cleanup. Use `expirationBehavior: terminate`
+with `notification.notifyOnExpiry` for new templates.
+
 ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned only after the request is authorized by the selected template or binding.
 
-The same strict JSON parsing applies to DebugSession join, renew, approve, reject, and kubectl-debug operation bodies. Optional bodies may be omitted only where the endpoint documents that behavior; non-empty bodies must contain only known fields and one JSON object.
+The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
+
+Status-changing DebugSession actions such as renew, terminate, approve, reject, join, and leave use optimistic locking. If another request updates the same session between the API read and status write, the endpoint returns `409 Conflict`; clients should refresh the session before retrying.
 
 **Response:** Created `DebugSession` object (201 Created).
 
@@ -956,15 +1032,12 @@ The same strict JSON parsing applies to DebugSession join, renew, approve, rejec
 POST /api/debugSessions/:name/join
 ```
 
-**Request Body:**
-
-```json
-{
-  "role": "viewer"
-}
-```
-
 Only invited users can join an active, unexpired session, and only when terminal sharing is enabled for that session. The join endpoint adds callers as `viewer` participants; callers cannot self-select the privileged `participant` role.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording the joined participant, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 ### Leave Debug Session
 
@@ -976,6 +1049,11 @@ Allows a participant (not owner) to leave a session. Owners must use terminate i
 The API sets the participant's `leftAt` timestamp; users with `leftAt` set are
 excluded from active participant checks and cannot use debug-session pod
 operations.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording `leftAt`, the endpoint
+returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 ### Renew Debug Session
 
@@ -993,9 +1071,16 @@ POST /api/debugSessions/:name/renew
 
 Extends the session duration. Subject to template constraints (`maxDuration`,
 `maxRenewals`); the renewed expiration cannot exceed
-`status.startsAt + maxDuration`. Only the requester or an active `owner` or
+`status.startsAt + maxDuration`. For a Job-backed workload, the renewed expiry
+and count are committed before the tracked Job's `activeDeadlineSeconds` is
+synchronized. A target update failure is retried by the active reconciler and
+does not reject an otherwise committed renewal; each target patch rechecks the
+live session and privileged cluster configuration. Only the requester or an active `owner` or
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
+
+If the session changes concurrently while updating expiration status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 ### Terminate Debug Session
 
@@ -1004,6 +1089,11 @@ POST /api/debugSessions/:name/terminate
 ```
 
 Terminates the session early. Only the session owner can terminate.
+
+This action does not accept a request body. Non-empty bodies return `400 Bad Request`.
+
+If the session changes concurrently while recording termination status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 **Response:** Updated `DebugSession` object with `state: Terminated`.
 
@@ -1025,10 +1115,20 @@ When present, the optional approval body must contain only the known `reason` fi
 
 Approves a session in `PendingApproval` state.
 
+If the `DEBUG_SESSION_APPROVAL_TIMEOUT` deadline has elapsed, the handler
+returns `409 Conflict`. Before returning the conflict, it reloads the latest
+session state and may mark the session `Failed` with an approval-timeout
+message; already decided approvals and already recorded timeout failures also
+return `409 Conflict`.
+
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 is `true`, and must satisfy the configured `minLength` after sanitization.
 
-**Response:** Updated `DebugSession` object with `state: Approved`.
+If the session changes concurrently while recording approval status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+**Response:** Updated `DebugSession` object with recorded approval fields. The
+controller transitions approved sessions after the API update.
 
 ### Reject Debug Session
 
@@ -1046,11 +1146,20 @@ POST /api/debugSessions/:name/reject
 
 Rejects a session in `PendingApproval` state.
 
+If the `DEBUG_SESSION_APPROVAL_TIMEOUT` deadline has elapsed, the handler
+returns `409 Conflict`. Before returning the conflict, it reloads the latest
+session state and may mark the session `Failed` with an approval-timeout
+message; already decided approvals and already recorded timeout failures also
+return `409 Conflict`.
+
 When present, the rejection body must contain only the known `reason` field and exactly one JSON object.
 
 `reason` is required when the session's stored `approvalReasonConfig.mandatory`
 or `approvalReasonConfig.mandatoryForRejection` is `true`, and must satisfy the
 configured `minLength` after sanitization.
+
+If the session changes concurrently while recording rejection status, the
+endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
 **Response:** Updated `DebugSession` object with `state: Rejected`.
 
@@ -1060,7 +1169,14 @@ configured `minLength` after sanitization.
 GET /api/debugSessions/templates
 ```
 
-Returns templates the current user has access to (based on group membership).
+Returns templates the current requester can use directly through
+`DebugSessionTemplate.spec.allowed` or indirectly through at least one active
+matching `DebugSessionClusterBinding`. User, email, group, and binding-granted
+access are all considered before a template is included in the response.
+
+`workloadType` accepts `DaemonSet`, `Deployment`, or `Job`. `Job` is the
+bounded one-shot workload form; it is not normalized into a long-running
+Deployment or DaemonSet.
 
 **Query Parameters:**
 - `includeHidden` (optional, boolean): When `true`, includes templates marked `hidden`.
@@ -1073,10 +1189,10 @@ Returns templates the current user has access to (based on group membership).
     {
       "name": "standard-debug",
       "displayName": "Standard Debug Access",
-      "description": "Network debugging tools on all nodes",
+      "description": "Bounded workload diagnostic tools",
       "mode": "workload",
       "workloadType": "DaemonSet",
-      "podTemplateRef": "netshoot-base",
+      "podTemplateRef": "workload-diagnostics",
       "targetNamespace": "breakglass-debug",
       "constraints": {
         "maxDuration": "4h",
@@ -1154,7 +1270,11 @@ Returns templates the current user has access to (based on group membership).
 GET /api/debugSessions/templates/:name
 ```
 
-Returns full `DebugSessionTemplate` CRD object.
+Returns the same flattened template summary shape as the list endpoint. The
+requester must be allowed by the template itself or by at least one active
+`DebugSessionClusterBinding` that references the template; otherwise the
+endpoint returns `403 Forbidden`. Scheduling options and extra deploy variables
+that are restricted to other users or groups are omitted from the response.
 
 ### Get Template Clusters
 
@@ -1163,6 +1283,13 @@ GET /api/debugSessions/templates/:name/clusters
 ```
 
 Returns available clusters for a template with resolved constraints from cluster bindings. Used by the two-step session creation wizard to show users cluster-specific options. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, or no ready condition are hidden and cannot be selected for new debug sessions. `DebugSessionClusterBinding` resources with `spec.hidden: true` are omitted from this discovery response and cannot become the default `bindingRef` here, but explicit `POST /api/debugSessions` requests may still use a hidden binding by providing `bindingRef`.
+
+The response is filtered for the authenticated requester. A template is readable
+only when the requester is allowed by `DebugSessionTemplate.spec.allowed` or by
+at least one active matching `DebugSessionClusterBinding.spec.allowed`. Cluster
+and `bindingOptions` entries are returned only for direct template or binding
+paths the requester can use at session creation time. Restricted scheduling
+options are omitted.
 
 **Response (200 OK):**
 
@@ -1237,7 +1364,7 @@ Returns available clusters for a template with resolved constraints from cluster
 | `clusters[].approval` | object | Approval requirements |
 | `clusters[].approval.required` | boolean | Whether the session requires approval |
 | `clusters[].approval.approverGroups` | string[] | Groups that can approve sessions |
-| `clusters[].approval.approverUsers` | string[] | Individual users that can approve sessions |
+| `clusters[].approval.approverUsers` | string[] | Individual users that can approve sessions; matched against username and email claims |
 | `clusters[].approval.canAutoApprove` | boolean | Whether the requesting user qualifies for auto-approval |
 | `clusters[].status` | object | Cluster health status |
 
@@ -1258,9 +1385,9 @@ GET /api/debugSessions/podTemplates
 {
   "templates": [
     {
-      "name": "netshoot-base",
-      "displayName": "Netshoot Debug Pod",
-      "description": "Network troubleshooting tools",
+      "name": "workload-diagnostics",
+      "displayName": "Workload Diagnostics",
+      "description": "Bounded workload diagnostic tools",
       "containers": 1
     }
   ],
@@ -1282,41 +1409,67 @@ Returns full `DebugPodTemplate` CRD object.
 
 These endpoints provide kubectl-debug style operations for sessions in `kubectl-debug` or `hybrid` mode.
 
+The request schemas below are the wire-compatible API contract in this release. They
+are not an image, command, node, or security-profile approval mechanism. Providers
+must expose only an administrator-authored operation profile (normally one of the
+[utility images](./README.md#debug-utility-images), pinned by digest) and
+validate the selected target before calling these endpoints. The API accepts some
+caller-supplied fields for compatibility; an upstream deployment must not treat
+those fields as an unrestricted debugging interface. See the [DebugSession authoring
+guide](./debug-session-authoring.md) for the provider boundary and cleanup contract.
+
 ### Inject Ephemeral Container
 
 ```http
 POST /api/debugSessions/:name/injectEphemeralContainer
 ```
 
-Injects an ephemeral container into a running pod for live debugging without restarting the pod.
+Injects an ephemeral container into a running pod for live debugging without
+restarting the pod. This is the only Breakglass-mediated ephemeral-container
+path: the manager validates the authenticated session and policy and fences the
+live session and target Pod UID immediately before the target update. It
+persists a `Prepared` operation intent, including the target Pod UID and a
+canonical digest of the complete submitted container request, before the
+target update. The manager then records a terminal `Completed`, `Failed`, or
+`Unknown` outcome. On restart, stale prepared intents are recovered by
+comparing the exact Pod UID and request; ambiguous outcomes remain `Unknown`
+for operator handling. Recovery leaves a prepared intent untouched for the
+duration of the API mutation timeout so a slow in-flight request keeps ownership
+of its outcome. Deterministic target `Forbidden`, `Invalid`, and `Conflict`
+responses are recorded as `Failed`. Cleanup removes copied Pods while retaining
+operation evidence; if the target `ClusterConfig` was deleted, cleanup retains
+all inventories and operation states unchanged and returns a retryable error
+for operator handling.
+Direct writes to
+`pods/ephemeralcontainers` through
+the target cluster API are governed by target-cluster RBAC and are outside
+Breakglass.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "containerName": "debug",
-  "image": "busybox:latest",
-  "command": ["sh"]
-}
-```
+Send the required fields `namespace`, `podName`, `containerName`, and `image`.
+`command` and `securityContext` are optional wire fields. This reference omits
+sample values intentionally: the provider must select the image, entrypoint, and
+security context from its approved profile rather than accepting arbitrary values
+from the caller.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `namespace` | string | Yes | Target pod's namespace |
 | `podName` | string | Yes | Target pod's name |
-| `containerName` | string | No | Name for the ephemeral container (default: "debug") |
-| `image` | string | Yes | Container image to use |
-| `command` | string[] | No | Command to run in the container |
+| `containerName` | string | Yes | Name for the ephemeral container |
+| `image` | string | Yes | Provider-selected image; the resolved template validates its allowlist and, when configured, requires an `@sha256:` digest |
+| `command` | string[] | No | Provider-selected command; an upstream deployment must not expose this as unrestricted caller input |
+| `securityContext` | object | No | Provider-selected security context; capabilities, privileged mode, and non-root requirements are checked against the resolved template |
 
 **Response (200 OK):**
 
 ```json
 {
-  "success": true,
-  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
-  "containerName": "debug"
+  "message": "ephemeral container injected successfully",
+  "pod": "my-app-pod-xyz",
+  "namespace": "default",
+  "container": "debug"
 }
 ```
 
@@ -1333,28 +1486,31 @@ POST /api/debugSessions/:name/createPodCopy
 
 Creates a copy of an existing pod for debugging. The original pod is not modified.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "debugImage": "busybox:latest"
-}
-```
+Send `namespace` and `podName`. `debugImage` is an optional compatibility field;
+the provider should omit it unless the selected, administrator-authored copy
+profile explicitly requires it. The current handler does not apply the ephemeral
+container image allowlist to this field, so callers must not be allowed to choose
+it directly. The copied pod uses the source pod specification and, when
+`debugImage` is supplied, adds a debugger container with the fixed `sleep
+infinity` command.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `namespace` | string | Yes | Target pod's namespace |
 | `podName` | string | Yes | Target pod's name |
-| `debugImage` | string | No | Optional image to replace container image |
+| `debugImage` | string | No | Optional provider-selected debugger image; not a general image replacement or caller-controlled profile |
 
 **Response (200 OK):**
 
 ```json
 {
+  "message": "pod copy created successfully",
   "copyName": "my-app-pod-xyz-debug-abc123",
-  "copyNamespace": "default"
+  "copyNamespace": "default",
+  "originalPod": "my-app-pod-xyz",
+  "originalNamespace": "default"
 }
 ```
 
@@ -1369,15 +1525,18 @@ Creates a copy of an existing pod for debugging. The original pod is not modifie
 POST /api/debugSessions/:name/createNodeDebugPod
 ```
 
-Creates a privileged debug pod on a specific node for node-level debugging.
+Creates a privileged debug pod on a specific node for node-level debugging. The
+operation is intentionally high risk: the implementation uses host namespaces and
+a read-write `/host` host-path, and its debugger container is privileged. Expose it
+only through a separately approved node-maintenance or artifact-collection profile
+with the required admission policy and short expiry.
 
-**Request Body:**
+**Request body fields:**
 
-```json
-{
-  "nodeName": "worker-node-1"
-}
-```
+Send the required `nodeName` field. This reference does not provide a concrete
+node value: the provider must resolve the target from an approved maintenance
+workflow and the resolved template's node selector. It must not turn this field
+into arbitrary caller-selected node access.
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -1387,8 +1546,10 @@ Creates a privileged debug pod on a specific node for node-level debugging.
 
 ```json
 {
+  "message": "node debug pod created successfully",
   "podName": "node-debug-worker-node-1-abc123",
-  "namespace": "breakglass-debug"
+  "namespace": "breakglass-debug",
+  "node": "worker-node-1"
 }
 ```
 

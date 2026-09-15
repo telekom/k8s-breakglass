@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,34 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestEffectiveMaxValidForDurationUsesDefaultString(t *testing.T) {
+	expectedDefault, err := ParseDuration(defaultBreakglassMaxValidFor)
+	assert.NoError(t, err)
+
+	duration, label := effectiveMaxValidForDuration("", 0)
+	assert.Equal(t, expectedDefault, duration)
+	assert.Equal(t, "default "+defaultBreakglassMaxValidFor, label)
+
+	explicitDuration := 30 * time.Minute
+	duration, label = effectiveMaxValidForDuration("30m", explicitDuration)
+	assert.Equal(t, explicitDuration, duration)
+	assert.Equal(t, "30m", label)
+}
+
+func TestDefaultBreakglassMaxValidForMatchesKubebuilderMarkers(t *testing.T) {
+	defaultMarker := fmt.Sprintf("// +default=%q", defaultBreakglassMaxValidFor)
+
+	for _, file := range []string{"breakglass_escalation_types.go", "breakglass_session_types.go"} {
+		t.Run(file, func(t *testing.T) {
+			content, err := os.ReadFile(file)
+			if !assert.NoError(t, err) {
+				return
+			}
+			assert.Contains(t, string(content), defaultMarker)
+		})
+	}
+}
 
 // TestValidateSessionIdentityProviderAuthorization_EmptyIDPName tests backward compatibility
 // when session has no IDP name (single-IDP or manual creation mode)
@@ -435,6 +464,23 @@ func TestValidateTimeoutRelationships_ApprovalTimeoutTooLarge(t *testing.T) {
 	assert.NotNil(t, errs, "approvalTimeout > maxValidFor should fail")
 }
 
+func TestValidateTimeoutRelationships_ApprovalTimeoutUsesDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		ApprovalTimeout: "30m",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.Nil(t, errs, "approvalTimeout <= default maxValidFor should pass")
+}
+
+func TestValidateTimeoutRelationships_ApprovalTimeoutExceedsDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		ApprovalTimeout: "2h",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "approvalTimeout > default maxValidFor should fail")
+	assert.Contains(t, errs.ToAggregate().Error(), "default 1h")
+}
+
 func TestValidateTimeoutRelationships_InvalidMaxValidFor(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		MaxValidFor: "invalid",
@@ -495,12 +541,35 @@ func TestValidateTimeoutRelationships_IdleTimeoutExceedsMaxValidFor(t *testing.T
 	assert.NotNil(t, errs, "idleTimeout > maxValidFor should fail")
 }
 
+func TestValidateTimeoutRelationships_IdleTimeoutExceedsDefaultMaxValidFor(t *testing.T) {
+	spec := &BreakglassEscalationSpec{
+		IdleTimeout: "2h",
+	}
+	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+	assert.NotNil(t, errs, "idleTimeout > default maxValidFor should fail")
+	assert.Contains(t, errs.ToAggregate().Error(), "default 1h")
+}
+
 func TestValidateTimeoutRelationships_IdleTimeoutInvalidFormat(t *testing.T) {
 	spec := &BreakglassEscalationSpec{
 		IdleTimeout: "garbage",
 	}
 	errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
 	assert.NotNil(t, errs, "invalid idleTimeout format should fail")
+}
+
+func TestValidateTimeoutRelationships_RetainForInvalid(t *testing.T) {
+	testCases := []string{"garbage", "0s", "-1h"}
+	for _, retainFor := range testCases {
+		t.Run(retainFor, func(t *testing.T) {
+			spec := &BreakglassEscalationSpec{
+				RetainFor: retainFor,
+			}
+			errs := validateTimeoutRelationships(spec, field.NewPath("spec"))
+			assert.NotNil(t, errs, "invalid retainFor should fail")
+			assert.Contains(t, errs.ToAggregate().Error(), "retainFor")
+		})
+	}
 }
 
 // TestEnsureClusterWideUniqueName tests cluster-wide name uniqueness validation
@@ -678,37 +747,214 @@ func TestValidateSessionIdentityProviderAuthorization_WithMatchingEscalation(t *
 	assert.NotNil(t, errs, "should reject non-matching IDP")
 }
 
-func TestValidateSessionIdentityProviderAuthorization_SharedGroupUsesMatchingProvider(t *testing.T) {
+func TestClusterMatchesValidationPattern(t *testing.T) {
+	cases := []struct {
+		name    string
+		cluster string
+		pattern string
+		want    bool
+	}{
+		{
+			name:    "exact non-glob match",
+			cluster: "prod-eu",
+			pattern: "prod-eu",
+			want:    true,
+		},
+		{
+			name:    "exact non-glob mismatch",
+			cluster: "prod-eu",
+			pattern: "prod-us",
+			want:    false,
+		},
+		{
+			name:    "glob match",
+			cluster: "prod-eu",
+			pattern: "prod-*",
+			want:    true,
+		},
+		{
+			name:    "glob mismatch",
+			cluster: "dev-eu",
+			pattern: "prod-*",
+			want:    false,
+		},
+		{
+			name:    "malformed glob does not exact match",
+			cluster: "prod-[",
+			pattern: "prod-[",
+			want:    false,
+		},
+		{
+			name:    "malformed glob does not match other cluster",
+			cluster: "prod-eu",
+			pattern: "prod-[",
+			want:    false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, clusterMatchesValidationPattern(tc.cluster, tc.pattern))
+		})
+	}
+}
+
+func TestValidateSessionIdentityProviderAuthorization_MatchesAllowedClusterGlob(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = AddToScheme(scheme)
-	escTDI := &BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{Name: "debug-tdi", Namespace: "default"},
-		Spec: BreakglassEscalationSpec{
-			EscalatedGroup:                    "debug-session",
-			Allowed:                           BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
-			AllowedIdentityProvidersForRequests: []string{"tdi"},
-		},
-	}
-	escTDG := &BreakglassEscalation{
-		ObjectMeta: metav1.ObjectMeta{Name: "debug-tdg", Namespace: "default"},
-		Spec: BreakglassEscalationSpec{
-			EscalatedGroup:                    "debug-session",
-			Allowed:                           BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
-			AllowedIdentityProvidersForRequests: []string{"tdg"},
-		},
-	}
-	oldClient := webhookClient
-	defer func() { webhookClient = oldClient }()
-	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(escTDI, escTDG).Build()
 
-	assert.Empty(t, validateSessionIdentityProviderAuthorization(
-		context.Background(), "test-cluster", "debug-session", "tdi",
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"prod-*"},
+			},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"unauthorized-idp",
 		field.NewPath("spec").Child("identityProviderName"),
-	))
-	assert.NotEmpty(t, validateSessionIdentityProviderAuthorization(
-		context.Background(), "test-cluster", "debug-session", "unknown",
+	)
+	assert.NotNil(t, errs, "glob-matched escalation should enforce allowed IDPs")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_InvalidAllowedClusterGlob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-invalid-cluster-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			Allowed: BreakglassEscalationAllowed{
+				Clusters: []string{"prod-["},
+			},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"corporate-idp",
 		field.NewPath("spec").Child("identityProviderName"),
-	))
+	)
+	assert.Nil(t, errs, "invalid stored glob should be ignored during session authorization matching")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_MatchesClusterConfigRef(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-clusterconfig", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup:                       "cluster-admin",
+			ClusterConfigRefs:                    []string{"prod-*"},
+			Allowed:                              BreakglassEscalationAllowed{},
+			Approvers:                            BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProvidersForRequests:  []string{"requester-idp"},
+			AllowedIdentityProvidersForApprovers: []string{"approver-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"requester-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.Nil(t, errs, "clusterConfigRefs glob should match and allow requester IDP")
+
+	errs = validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"unauthorized-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.NotNil(t, errs, "clusterConfigRefs glob should match and reject disallowed IDP")
+}
+
+func TestValidateSessionIdentityProviderAuthorization_InvalidClusterConfigRefGlob(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+
+	escalation := &BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "esc-invalid-clusterconfig-glob", Namespace: "default"},
+		Spec: BreakglassEscalationSpec{
+			EscalatedGroup: "cluster-admin",
+			ClusterConfigRefs: []string{
+				"prod-[",
+			},
+			Allowed:                  BreakglassEscalationAllowed{},
+			Approvers:                BreakglassEscalationApprovers{Users: []string{"approver@test.com"}},
+			AllowedIdentityProviders: []string{"corporate-idp"},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(escalation).Build()
+
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+	webhookClient = fakeClient
+	webhookCache = nil
+
+	errs := validateSessionIdentityProviderAuthorization(
+		context.Background(),
+		"prod-eu",
+		"cluster-admin",
+		"corporate-idp",
+		field.NewPath("spec").Child("identityProviderName"),
+	)
+	assert.Nil(t, errs, "invalid stored clusterConfigRefs glob should be ignored during session authorization matching")
 }
 
 func TestValidateSessionIdentityProviderAuthorization_DifferentGroup(t *testing.T) {
@@ -1006,8 +1252,9 @@ func TestEnsureClusterWideUniqueIssuer_WithConflict(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://auth.example.com", // same issuer
 		},
@@ -1031,8 +1278,9 @@ func TestEnsureClusterWideUniqueIssuer_SameName(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://auth.example.com",
 		},
@@ -1123,8 +1371,9 @@ func TestValidateIdentityProviderFields_NilContext(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://issuer.com",
 		},
@@ -1171,8 +1420,9 @@ func TestValidateIdentityProviderFields_IDPDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Disabled: true,
 		},
@@ -1200,8 +1450,9 @@ func TestValidateIdentityProviderFields_IssuerMismatch(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://auth.example.com",
 		},
@@ -1229,8 +1480,9 @@ func TestValidateIdentityProviderFields_ValidMatch(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Issuer: "https://auth.example.com",
 		},
@@ -1261,8 +1513,9 @@ func TestValidateIdentityProviderFields_AuthorityFallback(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			// Issuer intentionally NOT set
 		},
@@ -1292,8 +1545,9 @@ func TestValidateIdentityProviderFields_AuthorityFallbackWithTrailingSlash(t *te
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com/", // with trailing slash
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com/", // with trailing slash
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -1454,8 +1708,9 @@ func TestValidateIdentityProviderRefs_ValidExisting(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "existing-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -1477,8 +1732,9 @@ func TestValidateIdentityProviderRefs_DisabledIDP(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 			Disabled: true,
 		},
@@ -1501,8 +1757,9 @@ func TestValidateIdentityProviderRefs_NilContext(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "my-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client-id",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client-id",
+				ExpectedAudience: "client-id",
 			},
 		},
 	}
@@ -2299,6 +2556,8 @@ func TestParseDuration_StandardDurations(t *testing.T) {
 		{"30m", 30 * time.Minute},
 		{"1h30m", 90 * time.Minute},
 		{"2h30m", 150 * time.Minute},
+		{"1.5h", 90 * time.Minute},
+		{"0.5m", 30 * time.Second},
 		{"10s", 10 * time.Second},
 		{"500ms", 500 * time.Millisecond},
 		{"1h15m30s", time.Hour + 15*time.Minute + 30*time.Second},
@@ -2321,6 +2580,8 @@ func TestParseDuration_DayDurations(t *testing.T) {
 	}{
 		{"1d", 24 * time.Hour},
 		{"7d", 7 * 24 * time.Hour},
+		{"1w", 7 * 24 * time.Hour},
+		{"1y", 365 * 24 * time.Hour},
 		{"30d", 30 * 24 * time.Hour},
 		{"90d", 90 * 24 * time.Hour},
 		{"365d", 365 * 24 * time.Hour},
@@ -2343,7 +2604,9 @@ func TestParseDuration_MixedDayHours(t *testing.T) {
 	}{
 		{"1d12h", 36 * time.Hour},
 		{"2d6h", 54 * time.Hour},
+		{"1w2d3h", 219 * time.Hour},
 		{"1d1h", 25 * time.Hour},
+		{"1d1.5h", 25*time.Hour + 30*time.Minute},
 		{"7d12h30m", 7*24*time.Hour + 12*time.Hour + 30*time.Minute},
 	}
 
@@ -2365,6 +2628,14 @@ func TestParseDuration_InvalidFormats(t *testing.T) {
 		{"abc", "non-numeric"},
 		{"1x", "unknown unit"},
 		{"1d1x", "invalid unit after days"},
+		{"1y1d", "exceeds max days via mixed extended units"},
+		{"53w", "exceeds max days via week units"},
+		{"-1w", "negative week duration"},
+		{"-1y", "negative year duration"},
+		{"-1h", "negative standard duration"},
+		{"+1w", "explicitly signed week duration"},
+		{"+1h", "explicitly signed standard duration"},
+		{"1d-25h", "negative mixed remainder"},
 		{fmt.Sprintf("%dd", maxDurationDays+1), "exceeds max days"},
 		{"999999999d", "exceeds max days (large value)"},
 	}
@@ -2473,7 +2744,7 @@ func TestValidateAuxiliaryResources(t *testing.T) {
 		res := []AuxiliaryResource{
 			{
 				Name:           "test",
-				TemplateString: "kind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+				TemplateString: "kind: ConfigMap\nmetadata:\n  name: {{ .session.name }}",
 			},
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
@@ -2592,11 +2863,16 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 		{"large days value", "365d", false, 31536000},
 		{"days exceed maximum", overMaxStr, true, 0},
 		{"zero days", "0d", false, 0},
-		{"negative hours are valid in Go", "-1h", false, -3600}, // Go stdlib accepts negative
+		{"negative hours are rejected", "-1h", true, 0},
 		{"invalid unit", "1x", true, 0},
 		{"text only", "invalid", true, 0},
 		{"spaces not allowed", "1 h", true, 0},
-		{"mixed days and negative", "1d-1h", false, 82800}, // 24h - 1h = 23h
+		{"negative days", "-1d", true, 0},
+		{"negative weeks", "-1w", true, 0},
+		{"negative years", "-1y", true, 0},
+		{"mixed days and negative hours", "1d-1h", true, 0},
+		{"mixed weeks and negative hours", "1w-1h", true, 0},
+		{"mixed years and negative minutes", "1y-1m", true, 0},
 	}
 
 	for _, tt := range tests {
@@ -2610,6 +2886,11 @@ func TestParseDuration_EdgeCases(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestParseDuration_RejectsOverflowingRemainder(t *testing.T) {
+	_, err := ParseDuration("1d2562047h")
+	assert.Error(t, err)
 }
 
 func TestValidateHTTPSURL_EdgeCases(t *testing.T) {
@@ -2792,12 +3073,12 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid template with variable",
-			template: "Hello {{ .Name }}",
+			template: "name: {{ .Name | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
 			name:     "valid template with sprig function",
-			template: "{{ .Name | default \"unknown\" }}",
+			template: "{{ .Name | default \"unknown\" | yamlQuote }}",
 			wantErr:  false,
 		},
 		{
@@ -2812,7 +3093,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "valid range",
-			template: "{{- range .Items }}{{ . }}{{- end }}",
+			template: "{{ range .Items }}\n- {{ . | yamlQuote }}\n{{ end }}",
 			wantErr:  false,
 		},
 		{
@@ -2837,7 +3118,7 @@ func TestValidateGoTemplateSyntax(t *testing.T) {
 		},
 		{
 			name:     "complex valid template",
-			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .Session.Name }}\n  labels:\n    {{- range $k, $v := .Labels }}\n    {{ $k }}: {{ $v | yamlQuote }}\n    {{- end }}",
+			template: "apiVersion: v1\nkind: Pod\nmetadata:\n  name: {{ .session.name }}\n  labels:\n    {{- range $k, $v := .labels }}\n    {{ $k | yamlQuote }}: {{ $v | yamlQuote }}\n    {{- end }}",
 			wantErr:  false,
 		},
 	}
@@ -2880,7 +3161,7 @@ func TestValidateAuxiliaryResources_InvalidTemplateSyntax(t *testing.T) {
 		res := []AuxiliaryResource{
 			{
 				Name:           "test",
-				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Session.Name }}",
+				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .session.name }}",
 			},
 		}
 		errs := validateAuxiliaryResources(res, fieldPath)
@@ -3472,4 +3753,91 @@ func TestValidateSessionIdentityProviderAuthorization_ListError(t *testing.T) {
 	assert.Equal(t, field.ErrorTypeInternal, errs[0].Type)
 	assert.Contains(t, errs[0].Error(), "failed to list escalations for IDP authorization")
 	assert.Contains(t, errs[0].Error(), "injected list error")
+}
+
+func TestIdentityProviderEffectiveIssuerAdmission(t *testing.T) {
+	scheme := runtime.NewScheme()
+	assert.NoError(t, AddToScheme(scheme))
+	existing := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "existing"}, Spec: IdentityProviderSpec{
+		OIDC: OIDCConfig{Authority: "https://auth.example.com/", ClientID: "client", ExpectedAudience: "client"},
+	}}
+	oldClient, oldCache := webhookClient, webhookCache
+	t.Cleanup(func() { webhookClient, webhookCache = oldClient, oldCache })
+	webhookCache = nil
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	for _, issuer := range []string{"", "https://auth.example.com"} {
+		candidate := existing.DeepCopy()
+		candidate.Name = "candidate"
+		candidate.Spec.Issuer = issuer
+		candidate.Spec.OIDC.Authority = "https://auth.example.com"
+		_, err := candidate.ValidateCreate(context.Background(), candidate)
+		assert.ErrorContains(t, err, "issuer must be unique")
+		_, err = candidate.ValidateUpdate(context.Background(), existing, candidate)
+		assert.ErrorContains(t, err, "issuer must be unique")
+	}
+	_, err := existing.ValidateUpdate(context.Background(), existing, existing.DeepCopy())
+	assert.NoError(t, err)
+	candidate := existing.DeepCopy()
+	candidate.Name = "distinct"
+	candidate.ResourceVersion = ""
+	candidate.Spec.Issuer = "https://distinct.example.com"
+	_, err = candidate.ValidateCreate(context.Background(), candidate)
+	assert.NoError(t, err)
+	// An explicit issuer is authoritative, even if the authority differs.
+	assert.NoError(t, webhookClient.Create(context.Background(), candidate))
+	errs := validateIdentityProviderFields(context.Background(), candidate.Name, candidate.Spec.OIDC.Authority, field.NewPath("name"), field.NewPath("issuer"))
+	assert.NotEmpty(t, errs)
+	errs = validateIdentityProviderFields(context.Background(), candidate.Name, candidate.Spec.Issuer+"/", field.NewPath("name"), field.NewPath("issuer"))
+	assert.Empty(t, errs)
+}
+
+func TestParseDurationCombinedRepresentableBoundaries(t *testing.T) {
+	const maximum = time.Duration(1<<63 - 1)
+	for _, tc := range []struct {
+		input string
+		want  time.Duration
+	}{
+		{"1d12h", 36 * time.Hour},
+		{"1d" + (maximum - 24*time.Hour).String(), maximum},
+	} {
+		got, err := ParseDuration(tc.input)
+		assert.NoError(t, err, tc.input)
+		assert.Equal(t, tc.want, got, tc.input)
+	}
+	_, err := ParseDuration("1d" + (maximum - 24*time.Hour + 1).String())
+	assert.Error(t, err)
+	_, err = ParseDuration("1d-2562047h")
+	assert.Error(t, err)
+}
+
+func TestValidateIdentityProviderFields_ExplicitIssuerIsAuthoritative(t *testing.T) {
+	scheme := runtime.NewScheme()
+	assert.NoError(t, AddToScheme(scheme))
+	idp := &IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "provider"}, Spec: IdentityProviderSpec{
+		Issuer: "https://issuer.example.com",
+		OIDC:   OIDCConfig{Authority: "https://authority.example.com"},
+	}}
+	oldClient, oldCache := webhookClient, webhookCache
+	t.Cleanup(func() { webhookClient, webhookCache = oldClient, oldCache })
+	webhookCache = nil
+	webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
+	for _, tc := range []struct {
+		issuer string
+		valid  bool
+	}{
+		{idp.Spec.OIDC.Authority, false},
+		{idp.Spec.Issuer, true},
+		{idp.Spec.Issuer + "/", true},
+	} {
+		t.Run(tc.issuer, func(t *testing.T) {
+			errs := validateIdentityProviderFields(context.Background(), idp.Name, tc.issuer, field.NewPath("name"), field.NewPath("issuer"))
+			if tc.valid {
+				assert.Empty(t, errs)
+			} else if assert.Len(t, errs, 1) {
+				assert.Equal(t, field.ErrorTypeInvalid, errs[0].Type)
+				assert.Equal(t, "issuer", errs[0].Field)
+				assert.Contains(t, errs[0].Detail, idp.Spec.Issuer)
+			}
+		})
+	}
 }

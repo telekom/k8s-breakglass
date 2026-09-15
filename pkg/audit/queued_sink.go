@@ -18,6 +18,7 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -39,7 +40,7 @@ type QueuedSinkConfig struct {
 	WorkerCount int
 
 	// Batching config for underlying BatchSinks
-	BatchSize int
+	BatchSize    int
 	BatchTimeout time.Duration
 
 	// WriteTimeout is the timeout for writing to the underlying sink.
@@ -124,6 +125,34 @@ type QueuedSink struct {
 	// Lifecycle
 	wg     sync.WaitGroup
 	closed atomic.Bool
+
+	// sendMu serialises sends on queue against the close in Close.
+	// Every send goes through [QueuedSink.enqueue], which holds the read lock
+	// and re-checks closed; Close takes the write lock before closing the
+	// channel, so no send can be in flight when the channel is closed.
+	sendMu sync.RWMutex
+}
+
+// enqueue performs a non-blocking send on the event queue that is safe against a
+// concurrent Close. It returns false when the sink is already closed or the
+// queue is full; callers distinguish the two via qs.closed.
+func (qs *QueuedSink) enqueue(event *Event) bool {
+	qs.sendMu.RLock()
+	defer qs.sendMu.RUnlock()
+
+	// Re-check under the lock: Close sets closed before taking the write lock,
+	// so observing closed==false here guarantees the channel is still open for
+	// as long as we hold the read lock.
+	if qs.closed.Load() {
+		return false
+	}
+
+	select {
+	case qs.queue <- event:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewQueuedSink creates a new QueuedSink wrapper around an existing sink.
@@ -157,7 +186,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 		logger: logger.Named("queued-sink").With(zap.String("sink", sink.Name())),
 	}
 
-		batchSink, isBatchSink := sink.(BatchSink)
+	batchSink, isBatchSink := sink.(BatchSink)
 
 	// Start workers
 	for i := 0; i < cfg.WorkerCount; i++ {
@@ -178,7 +207,9 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	return qs
 }
 
-// Write enqueues an event for async processing (non-blocking).
+// Write enqueues an event for async processing. A sensitive event may
+// synchronously fall back to the underlying sink when a queue is full or its
+// circuit is open.
 func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 	if qs.closed.Load() {
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
@@ -197,29 +228,50 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 				qs.consecutiveFails.Store(0)
 			}
 		} else {
-			// Circuit still open, drop event
+			// Circuit still open
+			if IsSensitiveEvent(event.Type) {
+				// Synchronous fallback for sensitive events
+				qs.logger.Warn("circuit open but event is sensitive, attempting synchronous write",
+					zap.String("sink", qs.sink.Name()),
+					zap.String("event_type", string(event.Type)))
+				ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+				defer cancel()
+				return qs.sink.Write(ctx, event)
+			}
+			// Non-sensitive event: drop silently
 			qs.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open").Inc()
-			return nil // Don't return error - just drop silently
+			return nil
 		}
 	}
 
-	// Non-blocking send to queue
-	select {
-	case qs.queue <- event:
+	// Non-blocking send to queue (safe against a concurrent Close).
+	if qs.enqueue(event) {
 		return nil
-	default:
-		// Queue is full - drop event
-		qs.droppedEvents.Add(1)
-		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
-		if !qs.config.DropOnFull {
-			qs.logger.Warn("audit queue full, dropping event",
-				zap.String("sink", qs.sink.Name()),
-				zap.String("event_type", string(event.Type)),
-				zap.String("event_id", event.ID))
-		}
-		return nil // Don't return error - just drop silently
 	}
+	if qs.closed.Load() {
+		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+	}
+	// Queue is full
+	if IsSensitiveEvent(event.Type) {
+		// Synchronous fallback for sensitive events
+		qs.logger.Warn("queue full but event is sensitive, attempting synchronous write",
+			zap.String("sink", qs.sink.Name()),
+			zap.String("event_type", string(event.Type)))
+		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		defer cancel()
+		return qs.sink.Write(ctx, event)
+	}
+	// Non-sensitive event: drop
+	qs.droppedEvents.Add(1)
+	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
+	if !qs.config.DropOnFull {
+		qs.logger.Warn("audit queue full, dropping event",
+			zap.String("sink", qs.sink.Name()),
+			zap.String("event_type", string(event.Type)),
+			zap.String("event_id", event.ID))
+	}
+	return nil
 }
 
 // processQueue is the worker goroutine that processes events from the queue.
@@ -238,11 +290,33 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
+		// Wait if circuit is open
+		for qs.circuitOpen.Load() {
+			if qs.closed.Load() {
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+
 		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
 		err := qs.sink.Write(ctx, event)
 		cancel()
 
 		if err != nil {
+			if errors.Is(err, ErrCircuitOpen) {
+				// Try to push it back into the queue if the circuit opened during Write.
+				// This must NOT be done from an untracked goroutine: Close() closes
+				// qs.queue once the tracked workers are accounted for, and a detached
+				// send would then panic with "send on closed channel" — precisely when
+				// the backend is down during shutdown. enqueue() is non-blocking and
+				// serialised against Close, so requeue inline instead.
+				if !qs.enqueue(event) {
+					qs.droppedEvents.Add(1)
+					metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open_requeue").Inc()
+				}
+				continue
+			}
+
 			qs.failedEvents.Add(1)
 			fails := qs.consecutiveFails.Add(1)
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "write").Inc()
@@ -323,7 +397,13 @@ func (qs *QueuedSink) Close() error {
 		return nil // Already closed
 	}
 
+	// Take the write lock so no enqueue() is in flight, then close. Every send
+	// site re-checks qs.closed under the read lock, so after this point no
+	// goroutine can send on qs.queue.
+	qs.sendMu.Lock()
 	close(qs.queue)
+	qs.sendMu.Unlock()
+
 	qs.wg.Wait()
 
 	// Close underlying sink
@@ -356,14 +436,18 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 	}
 }
 
-// Write broadcasts the event to all queued sinks (non-blocking).
-// Each sink receives the event independently in its own queue.
+// Write broadcasts the event to all queued sinks. Ordinary events are
+// enqueued without waiting; sensitive events may synchronously fall back to
+// the underlying sink when a queue is full or its circuit is open.
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
+	var errs []error
 	for _, qs := range ims.sinks {
-		// Each QueuedSink.Write is non-blocking
-		_ = qs.Write(ctx, event)
+		// Each sink may synchronously write sensitive events on fallback paths.
+		if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+			errs = append(errs, err)
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Close shuts down all queued sinks.
@@ -482,7 +566,9 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 	}
 }
 
-// WriteBatch enqueues multiple events for async processing (non-blocking).
+// WriteBatch enqueues multiple events for async processing. A sensitive event
+// may synchronously fall back to the underlying sink when a queue is full or
+// its circuit is open.
 func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 	for _, event := range events {
 		if err := qs.Write(ctx, event); err != nil {
@@ -492,10 +578,17 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 	return nil
 }
 
-// WriteBatch broadcasts the batch to all queued sinks (non-blocking).
+// WriteBatch broadcasts the batch to all queued sinks. Ordinary events are
+// enqueued without waiting; sensitive events may synchronously fall back to
+// the underlying sinks when a queue is full or a circuit is open.
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
+	var errs []error
 	for _, qs := range ims.sinks {
-		_ = qs.WriteBatch(ctx, events)
+		for _, event := range events {
+			if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+				errs = append(errs, err)
+			}
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }

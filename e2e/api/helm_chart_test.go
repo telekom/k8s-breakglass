@@ -370,7 +370,8 @@ users:
 		assert.NotEmpty(t, binding.Spec.SchedulingConstraints.Tolerations)
 		assert.NotEmpty(t, binding.Spec.SchedulingConstraints.TopologySpreadConstraints)
 		assert.NotEmpty(t, binding.Spec.SchedulingConstraints.DeniedNodes)
-		assert.Contains(t, binding.Spec.SchedulingConstraints.DeniedNodes, "control-plane-*")
+		assert.Contains(t, binding.Spec.SchedulingConstraints.DeniedNodes, "control-plane-1")
+		assert.Contains(t, binding.Spec.SchedulingConstraints.DeniedNodes, "etcd-1")
 
 		t.Logf("✓ scheduled-debug-binding with scheduling constraints deployed correctly")
 	})

@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -44,6 +45,35 @@ func TestSessionsList(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	require.Equal(t, "session-1", result[0].Name)
+}
+
+func TestSessionsList_DecodesItemsEnvelope(t *testing.T) {
+	sessions := []breakglassv1alpha1.BreakglassSession{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "session-envelope"},
+			Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "user@example.com"},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
+		require.Equal(t, http.MethodGet, r.Method)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"items": sessions,
+			"total": len(sessions),
+		})
+	}))
+	defer server.Close()
+
+	client, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+
+	result, err := client.Sessions().List(context.Background(), SessionListOptions{})
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	require.Equal(t, "session-envelope", result[0].Name)
 }
 
 func TestSessionsList_ApproverQuery(t *testing.T) {
@@ -135,6 +165,7 @@ func TestSessionsRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 
 		var req SessionRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -227,6 +258,9 @@ func TestSessionsWithdraw(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions/session-123/withdraw", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Empty(t, body)
 
 		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
@@ -251,6 +285,12 @@ func TestSessionsDrop(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions/session-123/drop", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		require.Empty(t, r.Header.Get("Content-Type"))
+		_, contentTypePresent := r.Header["Content-Type"]
+		require.False(t, contentTypePresent)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Empty(t, body)
 
 		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},
@@ -275,6 +315,9 @@ func TestSessionsCancel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions/session-123/cancel", r.URL.Path)
 		require.Equal(t, http.MethodPost, r.Method)
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		require.Empty(t, body)
 
 		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-123"},

@@ -23,7 +23,7 @@ const (
 
 // DenyPolicySpec defines deny rules applicable to sessions / clusters / tenants.
 //
-// +kubebuilder:validation:XValidation:rule="(has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules)",message="at least one deny rule or podSecurityRules must be specified"
+// +kubebuilder:validation:XValidation:rule="(has(self.rules) && size(self.rules) > 0) || has(self.podSecurityRules) || (has(self.impersonationRules) && size(self.impersonationRules) > 0)",message="at least one deny rule, impersonationRules or podSecurityRules must be specified"
 type DenyPolicySpec struct {
 	// appliesTo scopes the policy. Empty means global.
 	// Any listed selector must match (logical AND within struct, lists are OR).
@@ -34,6 +34,20 @@ type DenyPolicySpec struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=200
 	Rules []DenyRule `json:"rules,omitempty"`
+
+	// impersonationRules deny impersonation specifically, covering both the
+	// classic `impersonate` verb and the constrained-impersonation verbs
+	// (`impersonate:<mode>` and `impersonate-on:<mode>:<verb>`) introduced by
+	// KEP-5284.
+	//
+	// A plain `rules` entry cannot express these cleanly: the constrained identity
+	// checks live in the authentication.k8s.io API group while legacy impersonation
+	// lives in the core group, and the action checks carry the target request's own
+	// resource attributes rather than the impersonation target's. These rules
+	// understand that split.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	ImpersonationRules []ImpersonationDenyRule `json:"impersonationRules,omitempty"`
 
 	// podSecurityRules evaluates pod specifications for exec/attach/portforward requests.
 	// When a user attempts to exec into a pod, the pod's security context is analyzed
@@ -85,6 +99,89 @@ type DenyRule struct {
 	// +optional
 	// +kubebuilder:validation:MaxItems=20
 	Subresources []string `json:"subresources,omitempty"`
+}
+
+// ImpersonationDenyRule blocks impersonation matching the given attributes.
+//
+// An empty rule ({}) denies ALL impersonation — legacy and constrained, every
+// mode, every identity, every action. That is the intended way to write "this
+// cluster does not do impersonation".
+//
+// +kubebuilder:validation:XValidation:rule="!(has(self.actionVerbs) && size(self.actionVerbs) > 0 && has(self.identities) && size(self.identities) > 0)",message="identities and actionVerbs cannot be combined in one rule: the API server evaluates identity and action checks as separate authorization requests, so a rule requiring both would never match. Write two rules."
+type ImpersonationDenyRule struct {
+	// modes restricts the rule to specific impersonation modes.
+	// Valid values: user-info, serviceaccount, arbitrary-node, associated-node, legacy.
+	// If empty, the rule matches every mode.
+	//
+	// Include "legacy" to close the fallback escape hatch. Denying only the
+	// constrained modes accomplishes nothing on a cluster that still carries a
+	// blanket `impersonate` grant, because the API server falls back to it.
+	// +optional
+	// +kubebuilder:validation:MaxItems=5
+	Modes []ImpersonationMode `json:"modes,omitempty"`
+
+	// identityResources restricts the rule to specific identity resource kinds.
+	// Valid values: users, groups, uids, userextras, serviceaccounts, nodes.
+	// If empty, the rule matches every kind.
+	// +optional
+	// +kubebuilder:validation:MaxItems=6
+	// +kubebuilder:validation:items:Enum=users;groups;uids;userextras;serviceaccounts;nodes
+	IdentityResources []string `json:"identityResources,omitempty"`
+
+	// identities restricts the rule to specific impersonation targets: usernames,
+	// group names, UIDs, node names, ServiceAccount names or extra values.
+	// Supports glob-style wildcards. If empty, the rule matches any target.
+	//
+	// Note that the API server collapses per-item checks into a single "*" check
+	// once a request names four or more items, so a wildcard entry here is what
+	// catches those requests.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	Identities []string `json:"identities,omitempty"`
+
+	// namespaces restricts the rule to ServiceAccount identity checks in matching
+	// namespaces. Only meaningful for the serviceaccounts identity resource, which
+	// is the sole namespaced identity kind.
+	// +optional
+	Namespaces *NamespaceFilter `json:"namespaces,omitempty"`
+
+	// extraKeys restricts the rule to userextras checks for specific extra keys.
+	// Supports glob-style wildcards. Only meaningful with the userextras identity
+	// resource.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	ExtraKeys []string `json:"extraKeys,omitempty"`
+
+	// actionVerbs restricts the rule to `impersonate-on:<mode>:<verb>` action
+	// checks for the named underlying verbs (get, list, create, …). Use "*" to
+	// match any. If empty, the rule does not consider action checks at all unless
+	// no other action-specific field is set.
+	//
+	// Cannot be combined with identities: the API server issues the identity and
+	// action checks as two separate authorization requests, so no single request
+	// carries both an impersonation target and an underlying verb.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	ActionVerbs []string `json:"actionVerbs,omitempty"`
+
+	// targetResources restricts action checks to the resources being acted on
+	// under impersonation (the target request's own resources). Supports "*".
+	// Only meaningful together with actionVerbs.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	TargetResources []string `json:"targetResources,omitempty"`
+
+	// targetAPIGroups restricts action checks to the target request's API groups.
+	// Use "" for the core group and "*" for any. Only meaningful with actionVerbs.
+	// +optional
+	// +kubebuilder:validation:MaxItems=50
+	TargetAPIGroups []string `json:"targetAPIGroups,omitempty"`
+
+	// reason is returned to the user when this rule denies. If empty, breakglass
+	// generates a description of what was denied.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	Reason string `json:"reason,omitempty"`
 }
 
 // PodSecurityRules defines risk-based evaluation for pod exec/attach/portforward operations.
@@ -290,6 +387,9 @@ func validateDenyPolicySpec(policy *DenyPolicy) field.ErrorList {
 			allErrs = append(allErrs, field.Required(rulePath.Child("resources"), "resources are required"))
 		}
 	}
+
+	allErrs = append(allErrs, validateImpersonationDenyRules(
+		policy.Spec.ImpersonationRules, specPath.Child("impersonationRules"))...)
 
 	if policy.Spec.Precedence != nil && *policy.Spec.Precedence < 0 {
 		allErrs = append(allErrs, field.Invalid(specPath.Child("precedence"), *policy.Spec.Precedence, "precedence must be non-negative"))

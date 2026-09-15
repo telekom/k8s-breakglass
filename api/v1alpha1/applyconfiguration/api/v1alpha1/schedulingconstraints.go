@@ -37,8 +37,8 @@ type SchedulingConstraintsApplyConfiguration struct {
 	Tolerations []v1.Toleration `json:"tolerations,omitempty"`
 	// topologySpreadConstraints controls how debug pods are spread.
 	TopologySpreadConstraints []v1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
-	// deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-	// Evaluated as glob patterns.
+	// deniedNodes is a list of exact node names that MUST NOT run debug pods.
+	// Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
 	DeniedNodes []string `json:"deniedNodes,omitempty"`
 	// deniedNodeLabels blocks nodes with any of these labels.
 	// Key-value pairs where value can be "*" for any value.

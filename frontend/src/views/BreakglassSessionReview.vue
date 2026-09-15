@@ -13,6 +13,8 @@ import { pushError, pushSuccess } from "@/services/toast";
 import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
+import { useModalBehavior } from "@/composables/useModalBehavior";
+import { currentUserIdentifier } from "@/utils/currentUserIdentity";
 
 const route = useRoute();
 const user = useUser();
@@ -62,26 +64,36 @@ function openReviewModal(session: SessionCR) {
 }
 
 function closeReviewModal() {
+  if (isSubmitting.value) return;
+  resetReviewModal();
+}
+
+function resetReviewModal() {
   showReviewModal.value = false;
   modalSession.value = null;
   approverNote.value = "";
 }
+
+useModalBehavior(showReviewModal, closeReviewModal);
 
 function updateApproverNote(note: string) {
   approverNote.value = note;
 }
 
 async function confirmApprove() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name || modalSession.value.name || "";
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name || session.name || "";
   if (!name) return;
+  const note = approverNote.value || undefined;
+  const sessionUser = session.spec?.user;
 
   isSubmitting.value = true;
   try {
-    const response = await service.approveReview({ name, reason: approverNote.value || undefined });
+    const response = await service.approveReview({ name, reason: note });
     if (response.status === 200) {
-      pushSuccess(`Approved session for ${modalSession.value.spec?.user}`);
-      closeReviewModal();
+      pushSuccess(`Approved session for ${sessionUser}`);
+      resetReviewModal();
       await getActiveBreakglasses();
     }
   } catch (errResponse: unknown) {
@@ -90,21 +102,25 @@ async function confirmApprove() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmApprove", errResponse, "Failed to approve session");
+  } finally {
+    isSubmitting.value = false;
   }
-  isSubmitting.value = false;
 }
 
 async function confirmReject() {
-  if (!modalSession.value) return;
-  const name = modalSession.value.metadata?.name || modalSession.value.name || "";
+  const session = modalSession.value;
+  if (!session) return;
+  const name = session.metadata?.name || session.name || "";
   if (!name) return;
+  const note = approverNote.value || undefined;
+  const sessionUser = session.spec?.user;
 
   isSubmitting.value = true;
   try {
-    const response = await service.rejectReview({ name, reason: approverNote.value || undefined });
+    const response = await service.rejectReview({ name, reason: note });
     if (response.status === 200) {
-      pushSuccess(`Rejected session for ${modalSession.value.spec?.user}`);
-      closeReviewModal();
+      pushSuccess(`Rejected session for ${sessionUser}`);
+      resetReviewModal();
       await getActiveBreakglasses();
     }
   } catch (errResponse: unknown) {
@@ -113,8 +129,9 @@ async function confirmReject() {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.confirmReject", errResponse, "Failed to reject session");
+  } finally {
+    isSubmitting.value = false;
   }
-  isSubmitting.value = false;
 }
 
 async function getActiveBreakglasses() {
@@ -262,9 +279,10 @@ const filteredBreakglasses = computed(() => {
   return sessions;
 });
 
+const reviewSessionCountLabel = computed(() => (state.breakglasses.length === 1 ? "session" : "sessions"));
+
 const currentUserEmail = computed(() => {
-  const u = user.value as { email?: string; preferred_username?: string } | null;
-  return u?.email || u?.preferred_username || "";
+  return currentUserIdentifier(user.value);
 });
 
 async function onDrop(bg: SessionCR) {
@@ -334,8 +352,18 @@ async function onCancel(bg: SessionCR) {
         <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
       </div>
 
-      <div class="toolbar-info">
-        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} sessions
+      <div
+        v-if="!state.loading && !state.getBreakglassesMsg"
+        class="toolbar-info"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="review-results-status"
+      >
+        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
+      </div>
+      <div v-else class="toolbar-info" data-testid="review-results-status">
+        Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
       </div>
     </section>
 
@@ -369,6 +397,7 @@ async function onCancel(bg: SessionCR) {
       v-if="showReviewModal && modalSession"
       :opened="showReviewModal"
       heading="Review Session"
+      data-testid="review-modal"
       @scale-close="closeReviewModal"
     >
       <ApprovalModalContent

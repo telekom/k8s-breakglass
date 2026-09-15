@@ -5,37 +5,91 @@ package audit
 
 import (
 	"context"
+	"crypto/x509"
+	"encoding/pem"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+type countingAuditClient struct {
+	ctrlclient.Client
+	gets int
+}
+
+func (c *countingAuditClient) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	c.gets++
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func newServiceTestScheme(t *testing.T) *runtime.Scheme {
+	t.Helper()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	return scheme
+}
+
 func TestNewService(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
 	assert.NotNil(t, svc)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured(), "startup must fail closed until absence of enabled AuditConfigs is proven")
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+}
+
+func TestService_ReloadStateTransitions(t *testing.T) {
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	valid := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "valid"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks:   []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+		},
+	}
+
+	require.NoError(t, svc.Reload(context.Background(), valid))
+	assert.True(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
+
+	err := svc.ReloadMultipleWithAvailability(context.Background(), nil, true)
+	require.Error(t, err)
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+	assert.ErrorContains(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}), "disabled")
+
+	require.NoError(t, svc.Reload(context.Background(), valid))
+	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
+	require.NoError(t, svc.Reload(context.Background(), nil))
+	assert.False(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationDisabled, svc.ConfigurationState())
 }
 
 func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -47,9 +101,7 @@ func TestService_ReloadDisablesOnNilConfig(t *testing.T) {
 
 func TestService_ReloadDisablesOnDisabledConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -68,9 +120,7 @@ func TestService_ReloadDisablesOnDisabledConfig(t *testing.T) {
 
 func TestService_ReloadWithLogSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -104,9 +154,7 @@ func TestService_ReloadWithLogSink(t *testing.T) {
 
 func TestService_ReloadWithQueueConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -139,9 +187,7 @@ func TestService_ReloadWithQueueConfig(t *testing.T) {
 
 func TestService_ReloadWithSampling(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -182,11 +228,79 @@ func TestService_ReloadWithSampling(t *testing.T) {
 	_ = svc.Close()
 }
 
-func TestService_ReloadNoSinks(t *testing.T) {
+func TestService_ReloadMultipleUsesSharedEventTypeFilters(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+	configs := []*breakglassv1alpha1.AuditConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-a"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}, ExcludeEventTypes: []string{"session.denied"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-a", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-b"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}, ExcludeEventTypes: []string{"session.denied"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-b", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+	}
+
+	err := svc.ReloadMultiple(context.Background(), configs)
+	require.NoError(t, err)
+	require.NotNil(t, svc.manager)
+	assert.Equal(t, []string{"session.*"}, svc.manager.config.IncludeEventTypes)
+	assert.Equal(t, []string{"session.denied"}, svc.manager.config.ExcludeEventTypes)
+	_ = svc.Close()
+}
+
+func TestService_ReloadMultipleDisablesManagerEventFilterForDifferentConfigs(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+	configs := []*breakglassv1alpha1.AuditConfig{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-a"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"session.*"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-a", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "config-b"},
+			Spec: breakglassv1alpha1.AuditConfigSpec{
+				Enabled:   true,
+				Filtering: &breakglassv1alpha1.AuditFilterConfig{IncludeEventTypes: []string{"access.*"}},
+				Sinks:     []breakglassv1alpha1.AuditSinkConfig{{Name: "log-b", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+			},
+		},
+	}
+
+	err := svc.ReloadMultiple(context.Background(), configs)
+	require.NoError(t, err)
+	require.NotNil(t, svc.manager)
+	assert.Empty(t, svc.manager.config.IncludeEventTypes)
+	assert.Empty(t, svc.manager.config.ExcludeEventTypes)
+	_ = svc.Close()
+}
+
+func TestService_EnabledConfigWithoutSinksIsUnavailable(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -200,16 +314,15 @@ func TestService_ReloadNoSinks(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// No sinks means disabled
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_EmitWhenDisabled(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -225,16 +338,14 @@ func TestService_EmitWhenDisabled(t *testing.T) {
 	// Should not panic
 	svc.Emit(context.Background(), event)
 
-	// Sync emit should return nil
+	// Required synchronous delivery must fail closed while auditing is disabled.
 	err := svc.EmitSync(context.Background(), event)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 }
 
 func TestService_EmitWhenEnabled(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -266,9 +377,9 @@ func TestService_EmitWhenEnabled(t *testing.T) {
 	// Should not panic
 	svc.Emit(context.Background(), event)
 
-	// Sync emit
+	// A log write has no durable receipt and cannot satisfy required delivery.
 	err = svc.EmitSync(context.Background(), event)
-	assert.NoError(t, err)
+	assert.Error(t, err)
 
 	// Cleanup
 	_ = svc.Close()
@@ -276,9 +387,7 @@ func TestService_EmitWhenEnabled(t *testing.T) {
 
 func TestService_CloseWhenNotInitialized(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -290,9 +399,7 @@ func TestService_CloseWhenNotInitialized(t *testing.T) {
 
 func TestService_ReloadMultipleTimes(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -339,9 +446,7 @@ func TestService_ReloadMultipleTimes(t *testing.T) {
 
 func TestService_BuildWebhookSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -374,11 +479,341 @@ func TestService_BuildWebhookSink(t *testing.T) {
 	_ = svc.Close()
 }
 
-func TestService_BuildKubernetesSink(t *testing.T) {
+func TestService_BuildWebhookSinkAuthSecretBearer(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)
 	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"token": []byte("secret-token"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "bearer", Type: EventSessionRequested}))
+	assert.Equal(t, "Bearer secret-token", authHeader)
+}
+
+func TestService_BuildWebhookSinkAuthSecretBasic(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"username": []byte("audit-user"),
+			"password": []byte("audit-pass"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "basic", Type: EventSessionRequested}))
+	assert.Equal(t, "Basic YXVkaXQtdXNlcjphdWRpdC1wYXNz", authHeader)
+}
+
+func TestService_BuildWebhookSinkAuthorizationHeaderPrecedence(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	authSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-auth",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"token": []byte("secret-token"),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(authSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	var authHeader string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			Headers: map[string]string{
+				"Authorization": "Bearer explicit-token",
+			},
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "webhook-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "precedence", Type: EventSessionRequested}))
+	assert.Equal(t, "Bearer explicit-token", authHeader)
+}
+
+func TestService_BuildWebhookSinkTLSWithCASecret(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+
+	var received bool
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		received = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"ca.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: server.URL,
+			TLS: &breakglassv1alpha1.WebhookTLSSpec{
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "webhook-ca",
+					Namespace: "test-namespace",
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "tls", Type: EventSessionRequested}))
+	assert.True(t, received)
+}
+
+func TestService_BuildWebhookTLSConfigUsesCustomCAWhenSystemPoolFails(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	caSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+		Data: map[string][]byte{
+			"ca.crt": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw}),
+		},
+	}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(caSecret).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	oldSystemCertPool := systemCertPool
+	systemCertPool = func() (*x509.CertPool, error) {
+		return nil, errors.New("system roots unavailable")
+	}
+	defer func() {
+		systemCertPool = oldSystemCertPool
+	}()
+
+	cfg, err := svc.buildWebhookTLSConfig(context.Background(), &breakglassv1alpha1.WebhookTLSSpec{
+		CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+			Name:      "webhook-ca",
+			Namespace: "test-namespace",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cfg.RootCAs)
+
+	httpClient := server.Client()
+	httpClient.Transport = &http.Transport{TLSClientConfig: cfg}
+	resp, err := httpClient.Get(server.URL)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusNoContent, resp.StatusCode)
+}
+
+func TestService_BuildWebhookSinkMissingSecretErrors(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: "https://example.com/audit",
+			AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+				Name:      "missing-auth",
+				Namespace: "test-namespace",
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to get webhook auth secret")
+
+	_, err = svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink",
+		Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+		Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+			URL: "https://example.com/audit",
+			TLS: &breakglassv1alpha1.WebhookTLSSpec{
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "missing-ca",
+					Namespace: "test-namespace",
+				},
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to load webhook CA certificate")
+}
+
+func TestService_BuildWebhookSinkRejectsNonControllerSecretNamespaces(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = breakglassv1alpha1.AddToScheme(scheme)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	t.Run("auth secret namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name:      "webhook-auth",
+					Namespace: "other-namespace",
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook auth secret "webhook-auth" namespace must be controller namespace "test-namespace", got "other-namespace"`)
+	})
+
+	t.Run("auth secret missing namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				AuthSecretRef: &breakglassv1alpha1.SecretKeySelector{
+					Name: "webhook-auth",
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook auth secret "webhook-auth" namespace must be controller namespace "test-namespace", got ""`)
+	})
+
+	t.Run("CA secret namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				TLS: &breakglassv1alpha1.WebhookTLSSpec{
+					CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+						Name:      "webhook-ca",
+						Namespace: "other-namespace",
+					},
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook CA secret "webhook-ca" namespace must be controller namespace "test-namespace", got "other-namespace"`)
+	})
+
+	t.Run("CA secret missing namespace", func(t *testing.T) {
+		_, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+			Name: "webhook-sink",
+			Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+				URL: "https://example.com/audit",
+				TLS: &breakglassv1alpha1.WebhookTLSSpec{
+					CASecretRef: &breakglassv1alpha1.SecretKeySelector{
+						Name: "webhook-ca",
+					},
+				},
+			},
+		})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), `webhook CA secret "webhook-ca" namespace must be controller namespace "test-namespace", got ""`)
+	})
+}
+
+func TestService_BuildKubernetesSink(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -404,11 +839,9 @@ func TestService_BuildKubernetesSink(t *testing.T) {
 	_ = svc.Close()
 }
 
-func TestService_SkipsInvalidSinkType(t *testing.T) {
+func TestService_ConfiguredSinkConstructionFailureDisablesRequiredAudit(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -431,19 +864,48 @@ func TestService_SkipsInvalidSinkType(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Still enabled because valid log sink exists
-	assert.True(t, svc.IsEnabled())
+	require.Error(t, err)
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+	assert.Error(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}))
 
 	// Cleanup
 	_ = svc.Close()
 }
 
+func TestService_MissingSinkSecretIsConfiguredButUnavailable(t *testing.T) {
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "missing-secret"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "kafka",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers: []string{"localhost:9092"},
+					Topic:   "audit",
+					TLS: &breakglassv1alpha1.KafkaTLSSpec{
+						Enabled:     true,
+						CASecretRef: &breakglassv1alpha1.SecretKeySelector{Name: "missing", Namespace: "test-namespace"},
+					},
+				},
+			}},
+		},
+	}
+
+	err := svc.Reload(context.Background(), config)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "missing")
+	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+}
+
 func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -463,16 +925,84 @@ func TestService_KafkaSinkMissingConfig(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Disabled because no valid sinks
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
+}
+
+func TestService_BuildKafkaSinkRequiredAcks(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
+	client := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	svc := NewService(client, nil, logger, "test-namespace")
+
+	tests := []struct {
+		name        string
+		requiredAck int
+	}{
+		{name: "all replicas", requiredAck: -1},
+		{name: "no acks", requiredAck: 0},
+		{name: "leader only", requiredAck: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sink, err := svc.buildKafkaSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+				Name: "kafka-sink",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers:      []string{"localhost:9092"},
+					Topic:        "audit-events",
+					RequiredAcks: tt.requiredAck,
+				},
+			})
+			require.NoError(t, err)
+			defer func() { _ = sink.Close() }()
+
+			kafkaSink, ok := sink.(*KafkaSink)
+			require.True(t, ok)
+			assert.Equal(t, tt.requiredAck, int(kafkaSink.writer.RequiredAcks))
+		})
+	}
+}
+
+func TestService_EmitSyncRejectsConfiguredAsyncKafka(t *testing.T) {
+	logger := zap.NewNop()
+	scheme := newServiceTestScheme(t)
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	svc := NewService(kubeClient, nil, logger, "test-namespace")
+
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "async-kafka"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "async-kafka",
+				Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{
+					Brokers: []string{"localhost:9092"},
+					Topic:   "audit-events",
+					Async:   true,
+				},
+			}},
+		},
+	}
+
+	require.NoError(t, svc.Reload(context.Background(), config))
+	defer func() { require.NoError(t, svc.Close()) }()
+
+	err := svc.EmitSync(context.Background(), &Event{Type: EventSessionExpired})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "async-kafka")
+	assert.Contains(t, err.Error(), "uses asynchronous delivery")
+	assert.Zero(t, svc.manager.Stats().ProcessedEvents)
 }
 
 func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -492,16 +1022,15 @@ func TestService_WebhookSinkMissingConfig(t *testing.T) {
 	}
 
 	err := svc.Reload(context.Background(), config)
-	assert.NoError(t, err)
-	// Disabled because no valid sinks
+	require.Error(t, err)
 	assert.False(t, svc.IsEnabled())
+	assert.True(t, svc.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
 }
 
 func TestService_GetSecretKey(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -549,9 +1078,7 @@ func TestDefaultQueuedSinkConfig(t *testing.T) {
 
 func TestService_GetSinkHealth_NoSinks(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -562,9 +1089,7 @@ func TestService_GetSinkHealth_NoSinks(t *testing.T) {
 
 func TestService_GetSinkHealth_WithLogSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -598,9 +1123,7 @@ func TestService_GetSinkHealth_WithLogSink(t *testing.T) {
 
 func TestService_GetQueuedSinkHealth_NoSinks(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -611,9 +1134,7 @@ func TestService_GetQueuedSinkHealth_NoSinks(t *testing.T) {
 
 func TestService_GetQueuedSinkHealth_WithSink(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -649,9 +1170,7 @@ func TestService_GetQueuedSinkHealth_WithSink(t *testing.T) {
 
 func TestService_BuildKafkaTLSConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	caSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -775,9 +1294,7 @@ func TestService_BuildKafkaTLSConfig(t *testing.T) {
 
 func TestService_BuildKafkaSASLConfig(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 
 	saslSecret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -892,17 +1409,15 @@ func TestService_BuildKafkaSASLConfig(t *testing.T) {
 			},
 		}
 
-		cfg, err := svcOtherNS.buildKafkaSASLConfig(ctx, saslCfg)
-		require.NoError(t, err)
-		assert.Equal(t, "other-user", cfg.Username)
+		_, err := svcOtherNS.buildKafkaSASLConfig(ctx, saslCfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace must be controller namespace")
 	})
 }
 
 func TestService_GetStats_NoManager(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -914,9 +1429,7 @@ func TestService_GetStats_NoManager(t *testing.T) {
 
 func TestService_GetStats_WithManager(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -951,9 +1464,7 @@ func TestService_GetStats_WithManager(t *testing.T) {
 
 func TestService_Manager_NilBeforeReload(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -962,9 +1473,7 @@ func TestService_Manager_NilBeforeReload(t *testing.T) {
 
 func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
 	logger := zap.NewNop()
-	scheme := runtime.NewScheme()
-	_ = corev1.AddToScheme(scheme)
-	_ = breakglassv1alpha1.AddToScheme(scheme)
+	scheme := newServiceTestScheme(t)
 	client := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	svc := NewService(client, nil, logger, "test-namespace")
@@ -987,4 +1496,59 @@ func TestService_Manager_NonNilAfterSuccessfulReload(t *testing.T) {
 	assert.NotNil(t, svc.Manager())
 
 	_ = svc.Close()
+}
+
+func TestServiceRejectsSelectorExclusionsBeforeReplacingActiveManager(t *testing.T) {
+	core, logs := observer.New(zap.InfoLevel)
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.New(core), "controller")
+	defer func() { require.NoError(t, svc.Close()) }()
+	cfg := &breakglassv1alpha1.AuditConfig{Spec: breakglassv1alpha1.AuditConfigSpec{
+		Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+	}}
+	require.NoError(t, svc.ReloadMultiple(context.Background(), []*breakglassv1alpha1.AuditConfig{cfg}))
+	active := svc.manager
+	cfg.Spec.Filtering = &breakglassv1alpha1.AuditFilterConfig{ExcludeNamespaces: &breakglassv1alpha1.NamespaceFilter{
+		SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"private": "true"}}},
+	}}
+	err := svc.ReloadMultiple(context.Background(), []*breakglassv1alpha1.AuditConfig{cfg})
+	require.ErrorContains(t, err, "unsupported namespace selector exclusions")
+	assert.Same(t, active, svc.manager)
+	assert.True(t, svc.enabled)
+	svc.Emit(context.Background(), &Event{ID: "still-delivered", Type: EventAccessChecked, Target: Target{Namespace: "unrelated"}})
+	require.Eventually(t, func() bool {
+		return len(logs.FilterMessage("audit_event").All()) == 1
+	}, time.Second, 10*time.Millisecond)
+	require.NoError(t, svc.Close())
+	entries := logs.FilterMessage("audit_event").All()
+	require.Len(t, entries, 1)
+	assert.Equal(t, "still-delivered", entries[0].ContextMap()["event_id"])
+}
+
+func TestServiceRejectsSecretLookupWithoutControllerNamespace(t *testing.T) {
+	scheme := newServiceTestScheme(t)
+	base := fake.NewClientBuilder().WithScheme(scheme).Build()
+	counting := &countingAuditClient{Client: base}
+	svc := NewService(counting, nil, zap.NewNop(), "")
+
+	for _, namespace := range []string{"", "explicit-secret-namespace"} {
+		_, err := svc.getSecretKey(context.Background(), "credentials", namespace, "token")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "controller namespace is not configured")
+	}
+	assert.Zero(t, counting.gets)
+}
+
+func TestServiceKafkaTLSRejectsForeignSecrets(t *testing.T) {
+	foreign := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: "foreign"}, Data: map[string][]byte{
+		"ca.crt": []byte("CA"), "tls.crt": []byte("cert"), "tls.key": []byte("private key"),
+	}}
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).WithObjects(foreign).Build(), nil, zap.NewNop(), "controller")
+	assert.Equal(t, "controller", svc.ControllerNamespace())
+	ref := &breakglassv1alpha1.SecretKeySelector{Name: foreign.Name, Namespace: foreign.Namespace}
+	for _, cfg := range []*breakglassv1alpha1.KafkaTLSSpec{{CASecretRef: ref}, {ClientCertSecretRef: ref}} {
+		_, err := svc.buildKafkaTLSConfig(context.Background(), cfg)
+		require.ErrorContains(t, err, "namespace must be controller namespace")
+	}
+	_, err := svc.getSecretKey(context.Background(), foreign.Name, foreign.Namespace, "tls.key")
+	require.ErrorContains(t, err, "namespace must be controller namespace")
 }

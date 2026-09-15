@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -12,7 +13,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 	"golang.org/x/oauth2"
+)
+
+const (
+	oidcErrorBodyLimit = 4 * 1024
+	oidcJSONBodyLimit  = 1 * 1024 * 1024
+	maxDeviceInterval  = 5 * time.Minute
+	maxDeviceLifetime  = 24 * time.Hour
 )
 
 type oidcDiscovery struct {
@@ -57,10 +66,27 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 	if endpoints.TokenEndpoint == "" {
 		return nil, errors.New("token endpoint not advertised")
 	}
+	allowHTTP := authorityAllowsHTTP(cfg.Authority)
+	for name, endpoint := range map[string]string{"device authorization": endpoints.DeviceAuthorizationEndpoint, "token": endpoints.TokenEndpoint} {
+		if err := validateCredentialURLFor(endpoint, allowHTTP); err != nil {
+			return nil, fmt.Errorf("invalid %s endpoint: %w", name, err)
+		}
+	}
 
 	deviceResp, err := requestDeviceCode(ctx, client, endpoints.DeviceAuthorizationEndpoint, cfg)
 	if err != nil {
 		return nil, err
+	}
+	for name, raw := range map[string]string{
+		"verification URL":          deviceResp.VerificationURI,
+		"complete verification URL": deviceResp.VerificationURIComplete,
+	} {
+		if raw == "" {
+			continue
+		}
+		if err := validateBrowserURLFor(raw, allowHTTP); err != nil {
+			return nil, fmt.Errorf("invalid %s: %w", name, err)
+		}
 	}
 
 	verificationURL := deviceResp.VerificationURIComplete
@@ -68,14 +94,20 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 		verificationURL = deviceResp.VerificationURI
 	}
 
-	fmt.Printf("Visit %s and enter code: %s\n", deviceResp.VerificationURI, deviceResp.UserCode)
+	fmt.Printf("Visit %s and enter code: %s\n", sanitizeTerminalText(deviceResp.VerificationURI), sanitizeTerminalText(deviceResp.UserCode))
 	if verificationURL != "" && !strings.EqualFold(os.Getenv("BGCTL_NO_BROWSER"), "true") {
-		_ = openBrowser(verificationURL)
+		_ = openBrowserFor(verificationURL, allowHTTP)
 	}
 
+	if deviceResp.Interval < 0 || time.Duration(deviceResp.Interval) > maxDeviceInterval/time.Second {
+		return nil, fmt.Errorf("device poll interval exceeds %s", maxDeviceInterval)
+	}
 	interval := time.Duration(deviceResp.Interval) * time.Second
-	if interval == 0 {
+	if deviceResp.Interval <= 0 {
 		interval = 5 * time.Second
+	}
+	if deviceResp.ExpiresIn <= 0 || time.Duration(deviceResp.ExpiresIn) > maxDeviceLifetime/time.Second {
+		return nil, fmt.Errorf("device code lifetime exceeds %s", maxDeviceLifetime)
 	}
 	deadline := time.Now().Add(time.Duration(deviceResp.ExpiresIn) * time.Second)
 
@@ -86,12 +118,19 @@ func DeviceCodeLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) 
 		tokenResp, err := pollDeviceToken(ctx, client, endpoints.TokenEndpoint, cfg, deviceResp.DeviceCode)
 		if err != nil {
 			if errors.Is(err, errAuthorizationPending) {
-				time.Sleep(interval)
+				if err := waitForDevicePoll(ctx, interval); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			if errors.Is(err, errSlowDown) {
 				interval += 5 * time.Second
-				time.Sleep(interval)
+				if interval > maxDeviceInterval {
+					return nil, errors.New("device poll interval exceeded maximum")
+				}
+				if err := waitForDevicePoll(ctx, interval); err != nil {
+					return nil, err
+				}
 				continue
 			}
 			return nil, err
@@ -126,12 +165,11 @@ func discoverOIDCEndpoints(ctx context.Context, client *http.Client, authority s
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("discovery failed: %s", string(body))
+		return nil, fmt.Errorf("discovery failed: %s", readOIDCErrorBody(resp.Body))
 	}
 	var discovery oidcDiscovery
-	if err := json.NewDecoder(resp.Body).Decode(&discovery); err != nil {
-		return nil, err
+	if err := decodeLimitedJSON(resp.Body, &discovery); err != nil {
+		return nil, fmt.Errorf("decode OIDC discovery response from %s: %w", url, err)
 	}
 	return &discovery, nil
 }
@@ -142,7 +180,7 @@ func requestDeviceCode(ctx context.Context, client *http.Client, endpoint string
 	if len(cfg.Scopes) > 0 {
 		values.Set("scope", strings.Join(cfg.Scopes, " "))
 	}
-	resp, err := client.PostForm(endpoint, values)
+	resp, err := postFormWithContext(ctx, client, endpoint, values)
 	if err != nil {
 		return nil, err
 	}
@@ -150,12 +188,11 @@ func requestDeviceCode(ctx context.Context, client *http.Client, endpoint string
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("device authorization failed: %s", string(body))
+		return nil, fmt.Errorf("device authorization failed: %s", readOIDCErrorBody(resp.Body))
 	}
 	var payload deviceCodeResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
+	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
+		return nil, fmt.Errorf("decode device authorization response from %s: %w", endpoint, err)
 	}
 	return &payload, nil
 }
@@ -165,7 +202,7 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 	values.Set("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
 	values.Set("device_code", deviceCode)
 	values.Set("client_id", cfg.ClientID)
-	resp, err := client.PostForm(endpoint, values)
+	resp, err := postFormWithContext(ctx, client, endpoint, values)
 	if err != nil {
 		return nil, err
 	}
@@ -173,18 +210,108 @@ func pollDeviceToken(ctx context.Context, client *http.Client, endpoint string, 
 		_ = resp.Body.Close()
 	}()
 	var payload tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, err
-	}
-	if payload.Error != "" {
-		switch payload.Error {
-		case "authorization_pending":
-			return nil, errAuthorizationPending
-		case "slow_down":
-			return nil, errSlowDown
-		default:
-			return nil, fmt.Errorf("device token error: %s", payload.Error)
+	if resp.StatusCode >= 400 {
+		body, truncated, err := readLimitedBody(resp.Body, oidcErrorBodyLimit)
+		if err != nil {
+			return nil, fmt.Errorf("read device token error response from %s: %w", endpoint, err)
 		}
+		if err := json.NewDecoder(bytes.NewReader(body)).Decode(&payload); err != nil {
+			return nil, fmt.Errorf("decode device token error response from %s: %w (HTTP %d: %s)", endpoint, err, resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
+		}
+		if err := deviceTokenPayloadError(payload); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("device token failed: HTTP %d: %s", resp.StatusCode, formatLimitedBody(body, truncated, oidcErrorBodyLimit))
+	}
+	if err := decodeLimitedJSON(resp.Body, &payload); err != nil {
+		return nil, fmt.Errorf("decode device token response from %s: %w", endpoint, err)
+	}
+	if err := deviceTokenPayloadError(payload); err != nil {
+		return nil, err
 	}
 	return &payload, nil
 }
+
+func deviceTokenPayloadError(payload tokenResponse) error {
+	if payload.Error != "" {
+		switch payload.Error {
+		case "authorization_pending":
+			return errAuthorizationPending
+		case "slow_down":
+			return errSlowDown
+		default:
+			if description := strings.TrimSpace(payload.ErrorDesc); description != "" {
+				return fmt.Errorf("device token error: %s: %s", sanitizeTerminalText(payload.Error), sanitizeTerminalText(description))
+			}
+			return fmt.Errorf("device token error: %s", sanitizeTerminalText(payload.Error))
+		}
+	}
+	return nil
+}
+
+func postFormWithContext(ctx context.Context, client *http.Client, endpoint string, values url.Values) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(values.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	return client.Do(req)
+}
+
+func waitForDevicePoll(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func readOIDCErrorBody(body io.Reader) string {
+	data, truncated, err := readLimitedBody(body, oidcErrorBodyLimit)
+	if err != nil {
+		return fmt.Sprintf("failed to read response body: %v", err)
+	}
+	return formatLimitedBody(data, truncated, oidcErrorBodyLimit)
+}
+
+func decodeLimitedJSON(body io.Reader, target interface{}) error {
+	return decodeLimitedJSONWithLimit(body, target, oidcJSONBodyLimit)
+}
+
+func decodeLimitedJSONWithLimit(body io.Reader, target interface{}, limit int64) error {
+	data, truncated, err := readLimitedBody(body, limit)
+	if err != nil {
+		return err
+	}
+	if truncated {
+		return fmt.Errorf("oidc json response exceeds %d bytes", limit)
+	}
+	return json.NewDecoder(bytes.NewReader(data)).Decode(target)
+}
+
+func readLimitedBody(body io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(data)) > limit {
+		return data[:limit], true, nil
+	}
+	return data, false, nil
+}
+
+func formatLimitedBody(data []byte, truncated bool, limit int64) string {
+	text := sanitizeTerminalText(strings.TrimSpace(string(data)))
+	if text == "" {
+		text = "<empty response body>"
+	}
+	if truncated {
+		return fmt.Sprintf("%s... (truncated after %d bytes)", text, limit)
+	}
+	return text
+}
+
+func sanitizeTerminalText(value string) string { return terminal.SafeText(value) }

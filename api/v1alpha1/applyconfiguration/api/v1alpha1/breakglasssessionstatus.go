@@ -51,9 +51,13 @@ type BreakglassSessionStatusApplyConfiguration struct {
 	State *apiv1alpha1.BreakglassSessionState `json:"state,omitempty"`
 	// approver is the identity (email) of the last approver who changed the session state.
 	Approver *string `json:"approver,omitempty"`
+	// approverIdentityProvider is the provider that authenticated the last approver.
+	ApproverIdentityProvider *string `json:"approverIdentityProvider,omitempty"`
 	// approvers is a list of identities (emails) who have approved this session.
 	// This is useful when multiple approvers are involved.
 	Approvers []string `json:"approvers,omitempty"`
+	// approverIdentityProviders aligns with approvers by index.
+	ApproverIdentityProviders []string `json:"approverIdentityProviders,omitempty"`
 	// approvalReason stores the free-text reason supplied by the approver when approving/rejecting the session.
 	ApprovalReason *string `json:"approvalReason,omitempty"`
 	// reasonEnded stores a short reason for why the session ended or entered a terminal state.
@@ -167,12 +171,30 @@ func (b *BreakglassSessionStatusApplyConfiguration) WithApprover(value string) *
 	return b
 }
 
+// WithApproverIdentityProvider sets the ApproverIdentityProvider field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApproverIdentityProvider field is set to the value of the last call.
+func (b *BreakglassSessionStatusApplyConfiguration) WithApproverIdentityProvider(value string) *BreakglassSessionStatusApplyConfiguration {
+	b.ApproverIdentityProvider = &value
+	return b
+}
+
 // WithApprovers adds the given value to the Approvers field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Approvers field.
 func (b *BreakglassSessionStatusApplyConfiguration) WithApprovers(values ...string) *BreakglassSessionStatusApplyConfiguration {
 	for i := range values {
 		b.Approvers = append(b.Approvers, values[i])
+	}
+	return b
+}
+
+// WithApproverIdentityProviders adds the given value to the ApproverIdentityProviders field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ApproverIdentityProviders field.
+func (b *BreakglassSessionStatusApplyConfiguration) WithApproverIdentityProviders(values ...string) *BreakglassSessionStatusApplyConfiguration {
+	for i := range values {
+		b.ApproverIdentityProviders = append(b.ApproverIdentityProviders, values[i])
 	}
 	return b
 }

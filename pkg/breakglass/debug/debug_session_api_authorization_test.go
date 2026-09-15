@@ -111,7 +111,15 @@ func TestIsUserAuthorizedToApprove_TemplateFetchFails(t *testing.T) {
 }
 
 func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
-	// When template has no approvers configured, allow any authenticated user
+	// A template with no approvers configured means nobody is an approver.
+	//
+	// This assertion was previously inverted: it required that any authenticated
+	// user be allowed to approve, which made the whole authenticated population an
+	// approver and defeated four-eyes control. It is not a compatibility break for
+	// operators, because requiresApproval() uses the same "configured" predicate:
+	// a session with no effective approvers is auto-approved and never reaches
+	// PendingApproval, and the approve/reject endpoints only accept sessions in
+	// that state.
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -141,7 +149,7 @@ func TestIsUserAuthorizedToApprove_TemplateNoApprovers(t *testing.T) {
 
 	ctx := context.Background()
 	result := ctrl.isUserAuthorizedToApprove(ctx, session, "anyuser@example.com", nil)
-	assert.True(t, result, "any authenticated user should be able to approve when no approvers configured")
+	assert.False(t, result, "no approvers configured must not make every authenticated user an approver")
 }
 
 func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T) {
@@ -180,14 +188,14 @@ func TestCanReadDebugSession_RequesterParticipantInviteeAndApprover(t *testing.T
 		identity debugSessionReadIdentity
 		want     bool
 	}{
-		{name: "requester username", identity: debugSessionReadIdentity{username: "alice"}, want: true},
-		{name: "requester email", identity: debugSessionReadIdentity{username: "subject", email: "alice@example.com"}, want: true},
-		{name: "active participant email", identity: debugSessionReadIdentity{username: "subject", email: "bob@example.com"}, want: true},
-		{name: "invited participant", identity: debugSessionReadIdentity{username: "invitee@example.com"}, want: true},
-		{name: "historical approver", identity: debugSessionReadIdentity{username: "historical-approver@example.com"}, want: true},
-		{name: "historical rejector", identity: debugSessionReadIdentity{username: "historical-rejector@example.com"}, want: true},
-		{name: "configured approver group", identity: debugSessionReadIdentity{username: "approver@example.com", groups: []string{"debug-approvers"}}, want: true},
-		{name: "unrelated user", identity: debugSessionReadIdentity{username: "mallory@example.com"}, want: false},
+		{name: "requester username", identity: debugSessionReadIdentity{legacyAllowed: true, username: "alice"}, want: true},
+		{name: "requester email", identity: debugSessionReadIdentity{legacyAllowed: true, username: "subject", email: "alice@example.com"}, want: true},
+		{name: "active participant email", identity: debugSessionReadIdentity{legacyAllowed: true, username: "subject", email: "bob@example.com"}, want: true},
+		{name: "invited participant", identity: debugSessionReadIdentity{legacyAllowed: true, username: "invitee@example.com"}, want: true},
+		{name: "historical approver", identity: debugSessionReadIdentity{legacyAllowed: true, username: "historical-approver@example.com"}, want: true},
+		{name: "historical rejector", identity: debugSessionReadIdentity{legacyAllowed: true, username: "historical-rejector@example.com"}, want: true},
+		{name: "configured approver group", identity: debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com", groups: []string{"debug-approvers"}}, want: true},
+		{name: "unrelated user", identity: debugSessionReadIdentity{legacyAllowed: true, username: "mallory@example.com"}, want: false},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			got, err := ctrl.canReadDebugSession(ctx, session, tt.identity)
@@ -224,7 +232,7 @@ func TestCanReadDebugSession_EmptyApproversDoNotGrantReadAccess(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "anyuser@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "anyuser@example.com"})
 	require.NoError(t, err)
 	assert.False(t, result, "empty approvers must not make debug session reads world-readable")
 }
@@ -254,11 +262,11 @@ func TestCanReadDebugSession_BindingApproverCanRead(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "binding-approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "binding-approver@example.com"})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "other@example.com"})
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "other@example.com"})
 	require.NoError(t, err)
 	assert.False(t, result)
 }
@@ -296,18 +304,75 @@ func TestCanReadDebugSession_BindingApproversAreAuthoritative(t *testing.T) {
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-subject",
 		email:    "binding-approver@example.com",
 	})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "template-approver@example.com",
 	})
 	require.NoError(t, err)
 	assert.False(t, result)
+}
+
+func TestCanReadDebugSession_BindingApproversEmptyVsNil(t *testing.T) {
+	for _, tt := range []struct {
+		name             string
+		bindingApprovers *breakglassv1alpha1.DebugSessionApprovers
+		want             bool
+	}{
+		{
+			name:             "empty binding approvers replace template",
+			bindingApprovers: &breakglassv1alpha1.DebugSessionApprovers{},
+			want:             false,
+		},
+		{
+			name:             "nil binding approvers inherit template",
+			bindingApprovers: nil,
+			want:             true,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			logger := zaptest.NewLogger(t).Sugar()
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "prod-binding", Namespace: "breakglass"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					Approvers: tt.bindingApprovers,
+				},
+			}
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"template-approver@example.com"},
+					},
+				},
+			}
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(Scheme).
+				WithObjects(binding, template).
+				Build()
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					TemplateRef: "test-template",
+					RequestedBy: "alice@example.com",
+					BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+				},
+			}
+
+			result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
+				username: "template-approver@example.com",
+			})
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, result)
+		})
+	}
 }
 
 func TestCanReadDebugSession_ResolvedTemplateApproversAreAuthoritative(t *testing.T) {
@@ -341,14 +406,14 @@ func TestCanReadDebugSession_ResolvedTemplateApproversAreAuthoritative(t *testin
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "opaque-subject",
 		email:    "snapshot-approver@example.com",
 	})
 	require.NoError(t, err)
 	assert.True(t, result)
 
-	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+	result, err = ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
 		username: "live-template-approver@example.com",
 	})
 	require.NoError(t, err)
@@ -409,7 +474,7 @@ func TestDebugSessionReadAuthorizerCachesTemplateApprovers(t *testing.T) {
 		gets:   map[string]int{},
 	}
 	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
-	authorizer := ctrl.newDebugSessionReadAuthorizer(debugSessionReadIdentity{
+	authorizer := ctrl.newDebugSessionReadAuthorizer(debugSessionReadIdentity{legacyAllowed: true,
 		username: "approver@example.com",
 		groups:   []string{"debug-approvers"},
 	})
@@ -458,7 +523,7 @@ func TestCanReadDebugSession_ReturnsErrorWhenBindingApproverLookupFails(t *testi
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com"})
 	require.Error(t, err)
 	assert.False(t, result)
 	assert.Contains(t, err.Error(), "fetch debug session binding")
@@ -482,10 +547,172 @@ func TestCanReadDebugSession_ReturnsErrorWhenTemplateApproverLookupFails(t *test
 		},
 	}
 
-	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{username: "approver@example.com"})
+	result, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true, username: "approver@example.com"})
 	require.Error(t, err)
 	assert.False(t, result)
 	assert.Contains(t, err.Error(), "fetch debug session template")
+}
+
+func TestCanActOnDebugSessionApproval_DeniesMissingIdentity(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(template).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true}, nil)
+
+	assert.False(t, result)
+}
+
+func TestCanActOnDebugSessionApproval_UsesEmailAuthorization(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:      "test-template",
+			RequestedBy:      "requester-subject",
+			RequestedByEmail: "requester@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
+		username: "opaque-subject",
+		email:    "approver@example.com",
+	}, nil)
+
+	assert.True(t, result)
+}
+
+func TestCanActOnDebugSessionApproval_CachesBindingApprovers(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"binding-approver@example.com"},
+			},
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(binding).
+		Build()
+	countingClient := &debugSessionReadCountingClient{
+		Client: baseClient,
+		gets:   map[string]int{},
+	}
+	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
+	authorizer := ctrl.newDebugSessionApprovalAuthorizer()
+
+	sessionA := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "alice@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+	sessionB := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test-template",
+			RequestedBy: "bob@example.com",
+			BindingRef:  &breakglassv1alpha1.BindingReference{Name: "prod-binding", Namespace: "breakglass"},
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{legacyAllowed: true,
+		username: "binding-approver@example.com",
+	}, authorizer)
+	require.True(t, result)
+
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{legacyAllowed: true,
+		username: "binding-approver@example.com",
+	}, authorizer)
+	require.True(t, result)
+
+	require.Equal(t, 1, countingClient.gets["binding:breakglass/prod-binding"])
+}
+
+func TestCanActOnDebugSessionApproval_CachesMissingTemplate(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		Build()
+	countingClient := &debugSessionReadCountingClient{
+		Client: baseClient,
+		gets:   map[string]int{},
+	}
+	ctrl := NewDebugSessionAPIController(logger, countingClient, nil, nil)
+	authorizer := ctrl.newDebugSessionApprovalAuthorizer()
+
+	sessionA := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-a"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "missing-template",
+			RequestedBy: "alice@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+	sessionB := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-b"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "missing-template",
+			RequestedBy: "bob@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+		},
+	}
+
+	result := ctrl.canActOnDebugSessionApproval(context.Background(), sessionA, debugSessionReadIdentity{legacyAllowed: true,
+		username: "approver@example.com",
+	}, authorizer)
+	require.False(t, result)
+
+	result = ctrl.canActOnDebugSessionApproval(context.Background(), sessionB, debugSessionReadIdentity{legacyAllowed: true,
+		username: "approver@example.com",
+	}, authorizer)
+	require.False(t, result)
+
+	require.Equal(t, 1, countingClient.gets["template:missing-template"])
 }
 
 func TestIsUserAuthorizedToApprove_ResolvedTemplateUserMatch(t *testing.T) {
@@ -670,8 +897,106 @@ func TestIsUserAuthorizedToApprove_GroupsAsInterfaceSlice(t *testing.T) {
 	assert.True(t, result, "should handle []interface{} groups")
 }
 
-func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
-	// When approvers has empty users and groups, allow any authenticated user
+func TestIsIdentityAuthorizedToApprove_EmailListedApprover(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-approver-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  "requester@example.com",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
+		username: "opaque-approver-subject",
+		email:    "approver@example.com",
+	})
+	assert.True(t, result, "email-listed approver should be authorized when username differs")
+}
+
+func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "self-email-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  "requester@example.com",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"requester@example.com"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
+		username: "opaque-requester-subject",
+		email:    "requester@example.com",
+	})
+	assert.False(t, result, "requester should not self-approve through email-listed approver match")
+}
+
+func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmailCaseInsensitive(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "self-email-case-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef:       "test",
+			RequestedBy:       "requester-subject",
+			RequestedByEmail:  " requester@example.com ",
+			TargetNamespace:   "default",
+			RequestedDuration: "30m",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"REQUESTER@EXAMPLE.COM"},
+				},
+			},
+		},
+	}
+
+	result := ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{legacyAllowed: true,
+		username: "opaque-requester-subject",
+		email:    "Requester@Example.com",
+	})
+	assert.False(t, result, "requester email self-approval should be blocked despite casing or surrounding whitespace")
+}
+
+func TestIsUserAuthorizedToApprove_EmptyApproversDeniesAll(t *testing.T) {
+	// An approver set that is present but has neither users nor groups names
+	// nobody, so it must authorize nobody.
+	//
+	// This test previously asserted the opposite and so locked in the defect: it
+	// encoded "empty approver set == every authenticated user may approve". The
+	// read authorizer never agreed -- isExplicitDebugSessionApprover guards the
+	// identical check with debugSessionApproversConfigured -- so the two paths
+	// disagreed about the same approver set. The approve path now applies that same
+	// predicate.
 
 	logger := zaptest.NewLogger(t).Sugar()
 
@@ -694,7 +1019,7 @@ func TestIsUserAuthorizedToApprove_EmptyApproversAllowsAll(t *testing.T) {
 
 	ctx := context.Background()
 	result := ctrl.isUserAuthorizedToApprove(ctx, session, "anyone@example.com", nil)
-	assert.True(t, result, "empty approvers lists should allow any authenticated user")
+	assert.False(t, result, "empty approvers lists must not make every authenticated user an approver")
 }
 
 // ============================================================================
@@ -713,6 +1038,34 @@ func TestCheckApproverAuthorization_DirectUserMatch(t *testing.T) {
 	assert.True(t, ctrl.checkApproverAuthorization(approvers, "user1@example.com", nil))
 	assert.True(t, ctrl.checkApproverAuthorization(approvers, "user2@example.com", nil))
 	assert.False(t, ctrl.checkApproverAuthorization(approvers, "user3@example.com", nil))
+}
+
+func TestCheckApproverAuthorization_DirectUserMatchNormalizesExactEntries(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
+		Users: []string{" Approver@Example.COM "},
+	}
+
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, "approver@example.com", nil))
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, " APPROVER@example.com ", nil))
+	assert.False(t, ctrl.checkApproverAuthorization(approvers, "other@example.com", nil))
+}
+
+func TestCheckApproverAuthorization_GlobUserMatchKeepsPatternSemantics(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	approvers := &breakglassv1alpha1.DebugSessionApprovers{
+		Users: []string{" *@Example.COM "},
+	}
+
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, "approver@Example.COM", nil))
+	assert.True(t, ctrl.checkApproverAuthorization(approvers, " approver@Example.COM ", nil))
+	assert.False(t, ctrl.checkApproverAuthorization(approvers, "approver@example.com", nil))
 }
 
 func TestCheckApproverAuthorization_DirectGroupMatch(t *testing.T) {
@@ -892,6 +1245,153 @@ func TestIsUserParticipant_LeftParticipant(t *testing.T) {
 	assert.False(t, ctrl.isUserParticipant(session, "left-participant@example.com"))
 }
 
+func TestCanUserOperateDebugResources(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+	now := metav1.Now()
+	leftAt := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			RequestedBy:            "owner@example.com",
+			RequestedByEmail:       "owner@example.com",
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://issuer.example",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{
+					User:                   "participant@example.com",
+					Email:                  "participant@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleParticipant,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+				{
+					User:                   "status-owner@example.com",
+					Email:                  "status-owner@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleOwner,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+				{User: "viewer@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				{User: "left-participant@example.com", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now, LeftAt: &leftAt},
+				{User: "unknown-role@example.com", Role: breakglassv1alpha1.ParticipantRole("operator"), JoinedAt: now},
+				{User: "empty-role@example.com", JoinedAt: now},
+				{
+					User:                   "upgraded@example.com",
+					Email:                  "upgraded@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleViewer,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+				{
+					User:                   "upgraded@example.com",
+					Email:                  "upgraded@example.com",
+					Role:                   breakglassv1alpha1.ParticipantRoleParticipant,
+					JoinedAt:               now,
+					IdentityProviderName:   "idp-a",
+					IdentityProviderIssuer: "https://issuer.example",
+				},
+			},
+		},
+	}
+
+	tests := []struct {
+		name     string
+		identity debugSessionReadIdentity
+		want     bool
+	}{
+		{
+			name: "session requester",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "owner@example.com", email: "owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "requester email alias with same provider can mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "requester-subject", email: "owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "active participant",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "participant@example.com", email: "participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "participant email alias with same provider can mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "participant-subject", email: "participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "status owner",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "status-owner@example.com", email: "status-owner@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "viewer cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "viewer@example.com", email: "viewer@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "left participant cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "left-participant@example.com", email: "left-participant@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "unknown role cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "unknown-role@example.com", email: "unknown-role@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "empty role cannot mutate",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "empty-role@example.com", email: "empty-role@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+		{
+			name: "later participant role can mutate after viewer entry",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "upgraded@example.com", email: "upgraded@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: true,
+		},
+		{
+			name: "unrelated user",
+			identity: debugSessionReadIdentity{
+				legacyAllowed: false, username: "other@example.com", email: "other@example.com", provider: "idp-a", issuer: "https://issuer.example",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, ctrl.canUserOperateDebugResources(session, tt.identity))
+		})
+	}
+}
+
 // ============================================================================
 // Tests for extractCapabilities and extractRunAsNonRoot
 // ============================================================================
@@ -968,6 +1468,39 @@ func TestExtractRunAsNonRoot(t *testing.T) {
 			RunAsNonRoot: &falseVal,
 		}
 		result := extractRunAsNonRoot(sc)
+		assert.False(t, result)
+	})
+}
+
+func TestExtractPrivileged(t *testing.T) {
+	t.Run("nil security context", func(t *testing.T) {
+		result := extractPrivileged(nil)
+		assert.False(t, result)
+	})
+
+	t.Run("nil privileged", func(t *testing.T) {
+		sc := &corev1.SecurityContext{
+			Privileged: nil,
+		}
+		result := extractPrivileged(sc)
+		assert.False(t, result)
+	})
+
+	t.Run("privileged true", func(t *testing.T) {
+		trueVal := true
+		sc := &corev1.SecurityContext{
+			Privileged: &trueVal,
+		}
+		result := extractPrivileged(sc)
+		assert.True(t, result)
+	})
+
+	t.Run("privileged false", func(t *testing.T) {
+		falseVal := false
+		sc := &corev1.SecurityContext{
+			Privileged: &falseVal,
+		}
+		result := extractPrivileged(sc)
 		assert.False(t, result)
 	})
 }
@@ -1197,6 +1730,24 @@ func TestShouldSendNotification(t *testing.T) {
 				NotifyOnExpiry: false,
 			},
 			event:    notificationEventExpiry,
+			expected: false,
+		},
+		{
+			name: "enabled config - termination event with notify on termination",
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnTermination: true,
+			},
+			event:    notificationEventTermination,
+			expected: true,
+		},
+		{
+			name: "enabled config - termination event without notify on termination",
+			cfg: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:             true,
+				NotifyOnTermination: false,
+			},
+			event:    notificationEventTermination,
 			expected: false,
 		},
 		{

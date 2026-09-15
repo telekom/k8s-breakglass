@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"golang.org/x/oauth2/clientcredentials"
 )
 
@@ -22,7 +23,7 @@ func ClientCredentialsLogin(ctx context.Context, cfg OIDCConfig) (*LoginResult, 
 		TokenURL:     result.OAuthConfig.Endpoint.TokenURL,
 		Scopes:       cfg.Scopes,
 	}
-	token, err := cc.Token(ctx)
+	token, err := cc.Token(oidc.ClientContext(ctx, result.Client))
 	if err != nil {
 		return nil, fmt.Errorf("client credentials token failed: %w", err)
 	}

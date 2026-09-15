@@ -61,6 +61,25 @@ func TestAPIClientDoesNotRefreshIntentionalUnauthorizedRequests(t *testing.T) {
 	assert.Equal(t, "invalid-token", client.AuthToken)
 }
 
+func TestAPIClientListSessionsDecodesItemsEnvelope(t *testing.T) {
+	var requestPath string
+	client := NewAPIClientWithAuth("token")
+	client.BaseURL = "http://breakglass.test"
+	client.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requestPath = r.URL.Path
+		return testResponse(http.StatusOK, `{"items":[{"spec":{"cluster":"dev","grantedGroup":"admin-group","user":"alice@example.com"}}],"total":1}`), nil
+	})}
+
+	sessions, err := client.ListSessions(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, sessionsBasePath, requestPath)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, "dev", sessions[0].Spec.Cluster)
+	assert.Equal(t, "admin-group", sessions[0].Spec.GrantedGroup)
+	assert.Equal(t, "alice@example.com", sessions[0].Spec.User)
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {

@@ -2,6 +2,9 @@ package breakglass
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -77,8 +80,8 @@ func TestCollectApproversFromEscalations_FindsMatch(t *testing.T) {
 	assert.Contains(t, result.possibleGroups, "admin")
 	require.NotNil(t, result.matchedEscalation)
 	assert.Equal(t, "admin", result.matchedEscalation.Spec.EscalatedGroup)
-	assert.Contains(t, result.allApprovers, "bob@example.com")
 	assert.Contains(t, result.allApprovers, "alice@example.com")
+	assert.NotContains(t, result.allApprovers, "bob@example.com")
 	assert.Equal(t, []string{"deny-destructive"}, result.selectedDenyPolicies)
 }
 
@@ -126,7 +129,7 @@ func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 
 	result := wc.collectApproversFromEscalations(context.Background(), escals, "admin", "", log)
 
-	// alice appears in both escalations but should only appear once in allApprovers
+	// Only the requested escalation contributes notification recipients.
 	count := 0
 	for _, a := range result.allApprovers {
 		if a == "alice@example.com" {
@@ -135,7 +138,7 @@ func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 	}
 	assert.Equal(t, 1, count, "alice should appear exactly once (deduplication)")
 	assert.Contains(t, result.allApprovers, "bob@example.com")
-	assert.Contains(t, result.allApprovers, "charlie@example.com")
+	assert.NotContains(t, result.allApprovers, "charlie@example.com")
 }
 
 // ----- escalationResolutionResult tests -----
@@ -448,4 +451,309 @@ func TestResolveUserGroupsRedactsRawTokenGroupsWhenEnabled(t *testing.T) {
 				"rawTokenGroups must be redacted when log redaction is enabled (found in: %q)", entry.Message)
 		}
 	}
+}
+
+// TestResolveUserGroupsRespectsEmptyTokenGroupsClaim ensures that when the JWT
+// asserts the user belongs to zero groups (the "groups" context key is
+// present but holds an empty slice, as set by the auth middleware for a
+// present-but-empty groups/realm_access claim), resolveUserGroups does not
+// fall back to cluster-based group resolution. Falling back in this case
+// would silently replace the token's explicit "no groups" assertion with
+// whatever groups the cluster happens to report for the user, which can
+// grant unintended escalation access.
+func TestResolveUserGroupsRespectsEmptyTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		t.Fatal("cluster-based group lookup must not be called when the token asserts empty groups")
+		return nil, nil
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("groups", []string{}) // token carried a groups claim that resolved to zero groups
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.True(t, ok, "resolveUserGroups should succeed when the token asserts empty groups")
+	require.Empty(t, groups, "resolveUserGroups must respect the token's empty groups assertion")
+}
+
+// TestResolveUserGroupsFallsBackWhenNoTokenGroupsClaim ensures that
+// resolveUserGroups still falls back to cluster-based group resolution when
+// the token carries no group information at all (the "groups" context key is
+// absent), preserving backward-compatible behavior for IDPs without a groups
+// claim.
+func TestResolveUserGroupsFallsBackWhenNoTokenGroupsClaim(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return []string{"cluster-admin"}, nil
+	}
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	// No "groups" key set at all, simulating a token without a groups claim.
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.True(t, ok)
+	require.ElementsMatch(t, []string{"cluster-admin"}, groups)
+}
+
+// TestResolveUserGroupsFallbackPropagatesClusterLookupError ensures that when
+// resolveUserGroups falls back to cluster-based group resolution (because the
+// token carried no group claim) and the cluster lookup fails, the error is
+// surfaced as a failed HTTP response rather than silently ignored.
+func TestResolveUserGroupsFallbackPropagatesClusterLookupError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	wc := newTestSessionController(t)
+	lookupErr := errors.New("cluster unreachable")
+	wc.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return nil, lookupErr
+	}
+
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	// No "groups" key set at all, simulating a token without a groups claim.
+
+	cug := ClusterUserGroup{Username: "alice@example.com", Clustername: "prod"}
+	groups, ok := wc.resolveUserGroups(ctx, context.Background(), cug, nil, zaptest.NewLogger(t).Sugar())
+
+	require.False(t, ok, "resolveUserGroups must fail when the cluster-based fallback lookup errors")
+	require.Nil(t, groups)
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+}
+
+func TestResolveAndAddGroupMembersPreservesResolutionForExclusions(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		members map[string][]string
+		known   bool
+	}{
+		{name: "unavailable"},
+		{name: "failed", members: map[string][]string{}},
+		{name: "empty", members: map[string][]string{"team": nil}, known: true},
+		{name: "capped", members: map[string][]string{"team": {"first@example.com", "excluded@example.com"}}, known: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctrl := &BreakglassSessionController{}
+			if tc.members != nil {
+				ctrl.escalationManager = &testEscalationLookup{resolver: &MockGroupResolver{members: tc.members}}
+			}
+			result := &escalationResolutionResult{approversByGroup: map[string][]string{}, allApprovers: make([]string, MaxTotalApprovers-1)}
+			for i := range result.allApprovers {
+				result.allApprovers[i] = fmt.Sprintf("existing-%d@example.com", i)
+			}
+			esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}},
+			}}
+			ctrl.resolveAndAddGroupMembers(context.Background(), esc, result, zap.NewNop().Sugar())
+			members, known := result.approversByGroup["team"]
+			assert.Equal(t, tc.known, known)
+			assert.Equal(t, tc.members["team"], members)
+			assert.LessOrEqual(t, len(result.allApprovers), MaxTotalApprovers)
+		})
+	}
+}
+
+// A default-provider resolver must never supply restricted-provider recipients.
+type notificationDefaultResolver struct{ called bool }
+
+func (r *notificationDefaultResolver) Members(context.Context, string) ([]string, error) {
+	r.called = true
+	return []string{"outside@example.com"}, nil
+}
+
+func TestRestrictedNotificationProvidersNeverUseDefaultResolver(t *testing.T) {
+	for _, legacy := range []bool{false, true} {
+		for _, tc := range []struct {
+			name   string
+			status map[string]map[string][]string
+			want   []string
+			known  bool
+		}{
+			{name: "missing map"},
+			{name: "missing provider", status: map[string]map[string][]string{"outside": {"team": {"outside@example.com"}}}},
+			{name: "missing group", status: map[string]map[string][]string{"allowed": {}}},
+			{name: "known empty", status: map[string]map[string][]string{"allowed": {"team": nil}}, known: true},
+			{name: "scoped members", status: map[string]map[string][]string{"allowed": {"team": {"inside@example.com"}}, "outside": {"team": {"outside@example.com"}}}, want: []string{"inside@example.com"}, known: true},
+		} {
+			t.Run(map[bool]string{false: "role", true: "legacy"}[legacy]+"/"+tc.name, func(t *testing.T) {
+				resolver := &notificationDefaultResolver{}
+				ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{resolver: resolver}}
+				esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}}}}
+				if legacy {
+					esc.Spec.AllowedIdentityProviders = []string{"allowed"}
+				} else {
+					esc.Spec.AllowedIdentityProvidersForApprovers = []string{"allowed"}
+					// Role-specific restrictions take precedence if an old object
+					// contains both forms despite current admission validation.
+					esc.Spec.AllowedIdentityProviders = []string{"outside"}
+				}
+				esc.Status.IDPGroupMemberships = tc.status
+				// A stale aggregate must not reintroduce another provider.
+				esc.Status.ApproverGroupMembers = map[string][]string{"team": {"outside@example.com"}}
+				result := &escalationResolutionResult{approversByGroup: map[string][]string{}}
+				ctrl.resolveAndAddGroupMembers(context.Background(), esc, result, zap.NewNop().Sugar())
+				assert.False(t, resolver.called)
+				assert.Equal(t, tc.want, result.allApprovers)
+				_, known := result.approversByGroup["team"]
+				assert.Equal(t, tc.known, known)
+				assert.NotContains(t, result.allApprovers, "outside@example.com")
+			})
+		}
+	}
+}
+
+type notificationEmptyDefaultResolver struct{ called bool }
+
+func (r *notificationEmptyDefaultResolver) Members(context.Context, string) ([]string, error) {
+	r.called = true
+	return nil, nil // A successful empty group in the wrong provider is not proof.
+}
+
+func TestRestrictedNotificationPrivacyFilters(t *testing.T) {
+	for _, filter := range []string{"excluded", "hidden"} {
+		for _, legacy := range []bool{false, true} {
+			for _, tc := range []struct {
+				name     string
+				status   map[string]map[string][]string
+				snapshot map[string][]string
+				want     []string
+				suppress bool
+			}{
+				{name: "unknown suppresses despite default successful empty", suppress: true},
+				{name: "scoped excludes member", status: map[string]map[string][]string{"allowed": {"secret": {"private@example.com"}}}, want: []string{"visible@example.com"}},
+				{name: "scoped empty permits recipients", status: map[string]map[string][]string{"allowed": {"secret": nil}}, want: []string{"private@example.com", "visible@example.com"}},
+				{name: "request snapshot remains authoritative", snapshot: map[string][]string{"secret": {"private@example.com"}}, want: []string{"visible@example.com"}},
+			} {
+				t.Run(filter+"/"+map[bool]string{false: "role", true: "legacy"}[legacy]+"/"+tc.name, func(t *testing.T) {
+					resolver := &notificationEmptyDefaultResolver{}
+					ctrl := &BreakglassSessionController{escalationManager: &testEscalationLookup{resolver: resolver}}
+					esc := &breakglassv1alpha1.BreakglassEscalation{}
+					if legacy {
+						esc.Spec.AllowedIdentityProviders = []string{"allowed"}
+					} else {
+						esc.Spec.AllowedIdentityProvidersForApprovers = []string{"allowed"}
+					}
+					esc.Status.IDPGroupMemberships = tc.status
+					esc.Spec.NotificationExclusions = &breakglassv1alpha1.NotificationExclusions{Groups: []string{"secret"}}
+					esc.Spec.Approvers.HiddenFromUI = []string{"secret"}
+					// secret is deliberately not an approver group, so normal
+					// candidate collection need not have resolved it.
+					candidates := []string{"private@example.com", "visible@example.com"}
+					var got []string
+					var suppressed bool
+					if filter == "excluded" {
+						got, suppressed = ctrl.filterExcludedNotificationRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+					} else {
+						got, suppressed = ctrl.filterHiddenFromUIRecipients(zap.NewNop().Sugar(), candidates, tc.snapshot, esc)
+					}
+					assert.Equal(t, tc.want, got)
+					assert.Equal(t, tc.suppress, suppressed)
+					assert.False(t, resolver.called)
+				})
+			}
+		}
+	}
+}
+
+func TestRestrictedNotificationPrivacySnapshotFiltersAndSendsVisibleRecipient(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForApprovers: []string{"allowed"},
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+				Groups: []string{"team"},
+			},
+			NotificationExclusions: &breakglassv1alpha1.NotificationExclusions{Groups: []string{"private"}},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{
+			"allowed": {"private": {"private@example.com"}},
+		}},
+	}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	approvers := []string{"private@example.com", "visible@example.com"}
+	groups := map[string][]string{
+		"team":    {"visible@example.com"},
+		"private": {"private@example.com"},
+	}
+
+	filtered, suppressed := controller.filterExcludedNotificationRecipients(controller.log, approvers, groups, esc)
+	require.False(t, suppressed)
+	assert.Equal(t, []string{"visible@example.com"}, filtered)
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, groups, esc)
+
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{"visible@example.com"}, sender.LastRecivers)
+}
+
+func TestRestrictedNotificationMembershipPreservesOrderAndExactIdentity(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{AllowedIdentityProvidersForApprovers: []string{"first", "second"}}, Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{
+		"first":  {"team": {"b@example.com", "a@example.com", "b@example.com"}},
+		"second": {"team": {"a@example.com", "A@example.com", "c@example.com", "c@example.com"}},
+	}}}
+	members, known := restrictedNotificationGroupMembers(esc, "team")
+	require.True(t, known)
+	assert.Equal(t, []string{"b@example.com", "a@example.com", "A@example.com", "c@example.com"}, members)
+	assert.Equal(t, []string{"b@example.com", "a@example.com", "b@example.com"}, esc.Status.IDPGroupMemberships["first"]["team"])
+}
+
+func TestLargeNotificationSnapshotExcludesTailMemberBeyondRecipientCap(t *testing.T) {
+	members := make([]string, MaxApproverGroupMembers+10)
+	for i := range members {
+		members[i] = fmt.Sprintf("member-%d@example.com", i)
+	}
+	members[len(members)-1] = "excluded@example.com"
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+		AllowedIdentityProvidersForApprovers: []string{"provider"},
+		Approvers:                            breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"team"}, Users: []string{"excluded@example.com", "visible@example.com"}},
+		NotificationExclusions:               &breakglassv1alpha1.NotificationExclusions{Groups: []string{"team"}},
+	}, Status: breakglassv1alpha1.BreakglassEscalationStatus{IDPGroupMemberships: map[string]map[string][]string{"provider": {"team": members}}}}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	result := &escalationResolutionResult{allApprovers: []string{"excluded@example.com", "visible@example.com"}, approversByGroup: map[string][]string{"_explicit_users": {"excluded@example.com", "visible@example.com"}}}
+	controller.resolveAndAddGroupMembers(context.Background(), esc, result, controller.log)
+	require.Equal(t, members, result.approversByGroup["team"], "privacy snapshot must remain complete")
+	expected := append([]string{"excluded@example.com", "visible@example.com"}, members[:MaxApproverGroupMembers]...)
+	require.Equal(t, expected, result.allApprovers, "candidate cap and first-seen order must remain unchanged")
+	filtered, _ := controller.filterExcludedNotificationRecipients(controller.log, result.allApprovers, result.approversByGroup, esc)
+	require.Equal(t, []string{"visible@example.com"}, filtered, "tail membership must exclude even an explicit recipient")
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", filtered, result.approversByGroup, esc)
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{"visible@example.com"}, sender.LastRecivers)
+	// A recipient remains eligible through the explicit-user path; its tail group
+	// attribution is omitted because the render scan is capped.
+	sender.SendCallCount = 0
+	result.approversByGroup["_explicit_users"] = append(result.approversByGroup["_explicit_users"], members[len(members)-2])
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{members[len(members)-2], members[len(members)-2]}, result.approversByGroup, esc)
+	assert.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{members[len(members)-2]}, sender.LastRecivers)
+	assert.NotContains(t, sender.LastBody, `<span class="group-badge">team</span>`, "tail member must not receive a group attribution from the capped prefix")
+	hiddenEsc := esc.DeepCopy()
+	hiddenEsc.Spec.NotificationExclusions = nil
+	hiddenEsc.Spec.Approvers.HiddenFromUI = []string{"team"}
+	hidden, _ := controller.filterHiddenFromUIRecipients(controller.log, []string{"excluded@example.com"}, result.approversByGroup, hiddenEsc)
+	assert.Empty(t, hidden, "tail member hidden through the complete group snapshot must not receive email")
+}
+
+func TestLargeNotificationAttributionKeepsCrossGroupTailRecipient(t *testing.T) {
+	members := make([]string, MaxApproverGroupMembers+1)
+	for i := range members {
+		members[i] = fmt.Sprintf("large-%d@example.com", i)
+	}
+	tail := members[len(members)-1]
+	esc := &breakglassv1alpha1.BreakglassEscalation{Spec: breakglassv1alpha1.BreakglassEscalationSpec{Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"large", "overlap"}}}}
+	sender := &FakeMailSender{}
+	controller := &BreakglassSessionController{log: zap.NewNop().Sugar(), mail: sender}
+	groups := map[string][]string{"large": members, "overlap": {tail}}
+	controller.sendOnRequestEmailsByGroup(controller.log, breakglassv1alpha1.BreakglassSession{}, "requester@example.com", "requester", []string{tail}, groups, esc)
+	require.Equal(t, 1, sender.SendCallCount)
+	assert.Equal(t, []string{tail}, sender.LastRecivers)
+	assert.Contains(t, sender.LastBody, "overlap")
+	assert.NotContains(t, sender.LastBody, `<span class="group-badge">large</span>`)
 }

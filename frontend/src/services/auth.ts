@@ -8,6 +8,9 @@ import { debug, info as logInfo, warn, error as logError } from "@/services/logg
 // Store the current direct authority for header injection during OIDC requests
 // We use sessionStorage so it persists across page reloads during OAuth redirect flow
 const DIRECT_AUTHORITY_STORAGE_KEY = "oidc_direct_authority";
+const CURRENT_IDP_SESSION_STORAGE_KEY = "oidc_idp_name";
+const CURRENT_IDP_LOCAL_STORAGE_KEY = "breakglass_current_idp_name";
+const ACTIVE_OIDC_USER_STORAGE_KEY = "breakglass_active_oidc_user_storage_key";
 const TOKEN_PERSISTENCE_KEY = "breakglass_oidc_token_persistence";
 export type TokenPersistenceMode = "session" | "persistent";
 const isBrowser = typeof window !== "undefined";
@@ -26,7 +29,7 @@ const DEFAULT_MOCK_PROFILE: MockProfile = {
 
 const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   "production-keycloak": {
-    email: "mock.keycloak.user@breakglass.dev",
+    email: "mock.user@breakglass.dev",
     displayName: "Production Keycloak (Mock)",
     groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
   },
@@ -47,9 +50,15 @@ const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   },
 };
 
-const resolvedNodeEnv = (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env
-  ?.NODE_ENV;
-const isProdBuild = resolvedNodeEnv === "production";
+function isProductionBuild(): boolean {
+  if (import.meta.env.PROD) {
+    return true;
+  }
+
+  return (
+    (globalThis as { process?: { env?: { NODE_ENV?: string } } } | undefined)?.process?.env?.NODE_ENV === "production"
+  );
+}
 
 type UserLoadedHandler = (loadedUser: User) => void;
 
@@ -146,30 +155,140 @@ class MemoryStorage implements Storage {
 
 const fallbackStorage: Storage = new MemoryStorage();
 
-function getTokenPersistenceMode(): TokenPersistenceMode {
-  if (!isBrowser || typeof window.localStorage === "undefined") {
-    return "session";
+function getBrowserStorage(name: "localStorage" | "sessionStorage"): Storage | undefined {
+  if (!isBrowser) {
+    return undefined;
   }
-  const stored = window.localStorage.getItem(TOKEN_PERSISTENCE_KEY);
+  try {
+    return window[name];
+  } catch (error) {
+    warn("AuthService", `Unable to access browser ${name}`, error);
+    return undefined;
+  }
+}
+
+function getBrowserStorageItem(name: "localStorage" | "sessionStorage", key: string): string | null {
+  const storage = getBrowserStorage(name);
+  if (!storage) {
+    return null;
+  }
+  try {
+    return storage.getItem(key);
+  } catch (error) {
+    warn("AuthService", `Unable to read browser ${name}`, error);
+    return null;
+  }
+}
+
+function setBrowserStorageItem(name: "localStorage" | "sessionStorage", key: string, value: string | undefined): void {
+  const storage = getBrowserStorage(name);
+  if (!storage) {
+    return;
+  }
+  try {
+    if (value !== undefined) {
+      storage.setItem(key, value);
+    } else {
+      storage.removeItem(key);
+    }
+  } catch (error) {
+    warn("AuthService", `Unable to update browser ${name}`, error);
+  }
+}
+
+export const __authTestHooks =
+  import.meta.env.MODE === "test"
+    ? {
+        setBrowserStorageItem,
+      }
+    : undefined;
+
+function getTokenPersistenceMode(): TokenPersistenceMode {
+  const stored = getBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY);
   return stored === "persistent" ? "persistent" : "session";
 }
 
 function setTokenPersistencePreference(mode: TokenPersistenceMode) {
-  if (!isBrowser || typeof window.localStorage === "undefined") {
+  setBrowserStorageItem("localStorage", TOKEN_PERSISTENCE_KEY, mode);
+}
+
+function shouldUseLocalOIDCStorage(): boolean {
+  return !isProductionBuild() && getTokenPersistenceMode() === "persistent";
+}
+
+function purgeLegacyLocalOIDCArtifacts(storage: Storage | undefined): void {
+  if (!storage) {
     return;
   }
-  window.localStorage.setItem(TOKEN_PERSISTENCE_KEY, mode);
+  try {
+    for (let i = storage.length - 1; i >= 0; i -= 1) {
+      const key = storage.key(i);
+      if (key?.startsWith("oidc.")) {
+        storage.removeItem(key);
+      }
+    }
+    storage.removeItem(CURRENT_IDP_LOCAL_STORAGE_KEY);
+  } catch (error) {
+    warn("AuthService", "Unable to purge legacy localStorage OIDC artifacts", error);
+  }
 }
 
 function getOIDCStorage(): Storage {
   if (!isBrowser) {
     return fallbackStorage;
   }
-  const prefersPersistent = getTokenPersistenceMode() === "persistent";
-  if (prefersPersistent && typeof window.localStorage !== "undefined") {
-    return window.localStorage;
+  if (getTokenPersistenceMode() === "persistent") {
+    if (isProductionBuild()) {
+      const localStorage = getBrowserStorage("localStorage");
+      const sessionStorage = getBrowserStorage("sessionStorage");
+      setTokenPersistencePreference("session");
+      purgeLegacyLocalOIDCArtifacts(localStorage);
+      warn(
+        "AuthService",
+        `Persistent OIDC token storage is disabled in production; using ${sessionStorage ? "sessionStorage" : "in-memory fallback storage"}`,
+      );
+      return sessionStorage ?? fallbackStorage;
+    } else {
+      const localStorage = getBrowserStorage("localStorage");
+      if (localStorage) {
+        warn(
+          "AuthService",
+          "SECURITY WARNING: Persistent OIDC token storage (localStorage) is used. This is vulnerable to XSS and should be avoided for high-privilege breakglass sessions.",
+        );
+        return localStorage;
+      }
+    }
   }
-  return typeof window.sessionStorage !== "undefined" ? window.sessionStorage : fallbackStorage;
+  return getBrowserStorage("sessionStorage") ?? fallbackStorage;
+}
+
+export function getOIDCUserStorageKey(authority: string | undefined, clientID: string | undefined): string | undefined {
+  if (!authority || !clientID) {
+    return undefined;
+  }
+  return `oidc.user:${authority}:${clientID}`;
+}
+
+function readBrowserStorageItem(getStorage: () => Storage | undefined, key: string): string | null {
+  try {
+    return getStorage()?.getItem(key) ?? null;
+  } catch (err) {
+    debug("AuthService", "Unable to read OIDC user from browser storage", err);
+    return null;
+  }
+}
+
+export function getStoredOIDCUser(authority: string | undefined, clientID: string | undefined): string | null {
+  const storageKey = getOIDCUserStorageKey(authority, clientID);
+  if (!storageKey) {
+    return null;
+  }
+  if (!isBrowser) {
+    return fallbackStorage.getItem(storageKey);
+  }
+
+  const sessionUser = readBrowserStorageItem(() => window.sessionStorage, storageKey);
+  return sessionUser ?? readBrowserStorageItem(() => window.localStorage, storageKey);
 }
 
 /**
@@ -179,19 +298,11 @@ function getOIDCStorage(): Storage {
  * Stored in sessionStorage to survive page reloads during OAuth redirects.
  */
 function setCurrentDirectAuthority(authority: string | undefined) {
-  if (!isBrowser || typeof window.sessionStorage === "undefined") {
-    return;
-  }
   debug("AuthService", "Setting current direct authority for header injection:", {
     newAuthority: authority,
     previousAuthority: getCurrentDirectAuthority(),
   });
-  const storage = window.sessionStorage;
-  if (authority) {
-    storage.setItem(DIRECT_AUTHORITY_STORAGE_KEY, authority);
-  } else {
-    storage.removeItem(DIRECT_AUTHORITY_STORAGE_KEY);
-  }
+  setBrowserStorageItem("sessionStorage", DIRECT_AUTHORITY_STORAGE_KEY, authority);
 }
 
 /**
@@ -199,10 +310,44 @@ function setCurrentDirectAuthority(authority: string | undefined) {
  * This survives page reloads during OAuth redirect flow
  */
 function getCurrentDirectAuthority(): string | undefined {
-  if (!isBrowser || typeof window.sessionStorage === "undefined") {
+  return getBrowserStorageItem("sessionStorage", DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
+}
+
+function buildOIDCUserStorageKey(settings: { authority?: string; client_id?: string }): string | undefined {
+  if (!settings.authority || !settings.client_id) {
     return undefined;
   }
-  return window.sessionStorage.getItem(DIRECT_AUTHORITY_STORAGE_KEY) || undefined;
+  return `oidc.user:${settings.authority}:${settings.client_id}`;
+}
+
+function setActiveOIDCUserStorageKey(key: string | undefined) {
+  setBrowserStorageItem("sessionStorage", ACTIVE_OIDC_USER_STORAGE_KEY, key);
+}
+
+function getStoredActiveOIDCUserStorageKey(): string | undefined {
+  return getBrowserStorageItem("sessionStorage", ACTIVE_OIDC_USER_STORAGE_KEY) || undefined;
+}
+
+function setStoredIdentityProviderName(idpName: string | undefined) {
+  setBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY, idpName);
+  if (shouldUseLocalOIDCStorage()) {
+    setBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY, idpName);
+  } else {
+    setBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY, undefined);
+  }
+}
+
+function getStoredIdentityProviderName(): string | undefined {
+  const sessionStorageValue = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY);
+  if (sessionStorageValue) {
+    return sessionStorageValue;
+  }
+
+  if (shouldUseLocalOIDCStorage()) {
+    return getBrowserStorageItem("localStorage", CURRENT_IDP_LOCAL_STORAGE_KEY) || undefined;
+  }
+
+  return undefined;
 }
 
 function safeBtoa(value: string): string {
@@ -236,7 +381,7 @@ function base64UrlEncodeObject(obj: Record<string, unknown>): string {
  * Consumers must NEVER rely on the signature because the header uses alg "none".
  */
 function createMockJWT(payload: Record<string, unknown>): string {
-  if (isProdBuild) {
+  if (isProductionBuild()) {
     throw new Error("Mock JWT generation is disabled in production builds.");
   }
   const header = { alg: "none", typ: "JWT" };
@@ -307,7 +452,7 @@ export default class AuthService {
 
     this.mockMode = options?.mock ?? false;
 
-    if (this.mockMode && isProdBuild) {
+    if (this.mockMode && isProductionBuild()) {
       throw new Error("Mock authentication cannot be enabled in production builds.");
     }
 
@@ -323,9 +468,9 @@ export default class AuthService {
     this.userManager = this.buildUserManager(config.oidcAuthority, config.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
     // Store the initialization promise so callers can await it
-    this.ready = this.userManager.getUser().then((u) => {
+    this.ready = this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       }
     });
   }
@@ -405,6 +550,8 @@ export default class AuthService {
     }
     this.currentIDPName = state?.idpName;
     currentIDPName.value = state?.idpName;
+    setStoredIdentityProviderName(state?.idpName);
+    setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(this.userManager.settings));
   }
 
   private clearMockSession() {
@@ -415,13 +562,16 @@ export default class AuthService {
     }
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
+    setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(undefined);
   }
 
   public async getUser(): Promise<User | null> {
     if (this.mockMode) {
       return this.mockUser;
     }
-    return this.userManager.getUser();
+    const data = await this.userManager.getUser();
+    return data ? this.stripAndStoreRefreshToken(this.userManager, data) : null;
   }
 
   public async login(state?: State): Promise<void> {
@@ -476,18 +626,16 @@ export default class AuthService {
         // Store the current IDP name for later retrieval
         this.currentIDPName = state.idpName;
         currentIDPName.value = state.idpName;
+        setStoredIdentityProviderName(state.idpName);
 
-        // Also store IDP name in sessionStorage so it survives the OAuth redirect
-        if (state.idpName) {
-          sessionStorage.setItem("oidc_idp_name", state.idpName);
-          debug("AuthService", "Stored IDP name in sessionStorage:", {
-            idpName: state.idpName,
-          });
-        }
+        debug("AuthService", "Stored IDP name for session continuity:", {
+          idpName: state.idpName,
+        });
 
         // Get or create UserManager for this IDP with the proxy authority
         // Also pass the direct authority so we can tell the backend which IDP to proxy to
         const manager = this.getOrCreateUserManagerForIDP(state.idpName, proxyAuthority, oidcClientID, directAuthority);
+        setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(manager.settings));
 
         debug("AuthService", "About to initiate signin redirect for IDP:", {
           idpName: state.idpName,
@@ -518,16 +666,87 @@ export default class AuthService {
     }
 
     debug("AuthService", "Logging in with default IDP (no specific IDP selected)");
-    if (isBrowser) {
-      sessionStorage.removeItem("oidc_idp_name");
-    }
+    setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(this.userManager.settings));
     // Clear any previously set direct authority for default login
     setCurrentDirectAuthority(undefined);
     return this.userManager.signinRedirect({ state: resolveState(state) });
   }
 
+  public async handleSilentSigninCallback() {
+    if (this.mockMode) return;
+
+    const preferredIdpName = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY) || undefined;
+    const directAuthority = getCurrentDirectAuthority();
+
+    if (preferredIdpName || directAuthority) {
+      const manager = await this.resolveSilentCallbackManager(preferredIdpName, directAuthority);
+      if (directAuthority) {
+        setCurrentDirectAuthority(directAuthority);
+      }
+      await manager.signinSilentCallback();
+      return;
+    }
+
+    await this.userManager.signinSilentCallback();
+  }
+
+  private async resolveSilentCallbackManager(
+    preferredIdpName: string | undefined,
+    directAuthority: string | undefined,
+  ): Promise<UserManager> {
+    if (preferredIdpName) {
+      const cached = this.idpManagers.get(preferredIdpName);
+      if (cached) {
+        return cached.manager;
+      }
+    }
+
+    if (directAuthority) {
+      for (const cached of this.idpManagers.values()) {
+        if (cached.directAuthority === directAuthority) {
+          return cached.manager;
+        }
+      }
+    }
+
+    const multiIDP = await getMultiIDPConfig();
+    const idp = multiIDP.identityProviders.find((candidate: IDPInfo) => {
+      if (!candidate.enabled || !candidate.oidcAuthority) {
+        return false;
+      }
+      if (preferredIdpName && candidate.name === preferredIdpName) {
+        return true;
+      }
+      return !!directAuthority && candidate.oidcAuthority === directAuthority;
+    });
+    if (!idp?.oidcAuthority) {
+      throw new Error("Failed to process silent renew callback: no matching identity provider found");
+    }
+
+    return this.getOrCreateUserManagerForIDP(
+      idp.name,
+      "/api/oidc/authority",
+      idp.oidcClientID || "k8s-breakglass",
+      idp.oidcAuthority,
+    );
+  }
+
   public getIdentityProviderName(): string | undefined {
-    return this.currentIDPName;
+    return this.currentIDPName ?? getStoredIdentityProviderName();
+  }
+
+  public getActiveOIDCUserStorageKeys(): string[] {
+    const activeIDPName = this.getIdentityProviderName();
+    if (activeIDPName) {
+      const activeIDPManager = this.idpManagers.get(activeIDPName)?.manager;
+      const activeIDPKey = activeIDPManager ? buildOIDCUserStorageKey(activeIDPManager.settings) : undefined;
+      const storedActiveKey = getStoredActiveOIDCUserStorageKey();
+      return [...new Set([activeIDPKey, storedActiveKey].filter((key): key is string => !!key))];
+    }
+
+    const defaultKey = buildOIDCUserStorageKey(this.userManager.settings);
+    return defaultKey ? [defaultKey] : [];
   }
 
   public logout(): Promise<void> {
@@ -539,6 +758,9 @@ export default class AuthService {
     // Clear the current IDP name on logout
     this.currentIDPName = undefined;
     currentIDPName.value = undefined;
+    setStoredIdentityProviderName(undefined);
+    setActiveOIDCUserStorageKey(undefined);
+    setCurrentDirectAuthority(undefined);
     return this.userManager.signoutRedirect();
   }
 
@@ -584,13 +806,8 @@ export default class AuthService {
   }
 
   /**
-   * Try to silently renew the token. Returns true if successful.
-   * This can be called manually if the automatic silent renew failed.
-   *
-   * Strategy:
-   * 1. First try signinSilent() which uses iframe by default
-   * 2. If iframe fails (e.g., CSP frame-ancestors blocks it), try using refresh_token directly
-   *    via signinSilent with silentRequestTimeoutInSeconds set low to fail fast
+   * Silent renewal is intentionally disabled for breakglass sessions.
+   * Users must explicitly re-authenticate when their short-lived token expires.
    */
   public async trySilentRenew(): Promise<boolean> {
     if (this.mockMode) {
@@ -598,58 +815,8 @@ export default class AuthService {
       return true;
     }
 
-    // First, check if we have a valid user with a refresh token
-    const currentUser = await this.userManager.getUser();
-    if (!currentUser) {
-      warn("AuthService", "No user found for silent renew");
-      return false;
-    }
-
-    try {
-      debug("AuthService", "Attempting silent renew (iframe method)");
-      const renewedUser = await this.userManager.signinSilent();
-      if (renewedUser) {
-        debug("AuthService", "Silent renew successful (iframe)", {
-          email: renewedUser.profile?.email,
-          expiresAt: renewedUser.expires_at,
-        });
-        user.value = renewedUser;
-        return true;
-      }
-      warn("AuthService", "Silent renew returned no user");
-      return false;
-    } catch (iframeError) {
-      // iframe method failed - likely CSP blocking
-      warn("AuthService", "Silent renew via iframe failed, trying refresh token fallback", iframeError);
-
-      // Check if we have a refresh token to try
-      if (!currentUser.refresh_token) {
-        logError("AuthService", "Silent renew failed and no refresh token available", iframeError);
-        return false;
-      }
-
-      try {
-        debug("AuthService", "Attempting token refresh via refresh_token");
-        // Use the token endpoint directly via signinSilent with refresh token
-        // oidc-client-ts will use the refresh_token if available when signinSilent fails
-        const renewedUser = await this.userManager.signinSilent({
-          silentRequestTimeoutInSeconds: 5,
-          extraTokenParams: { grant_type: "refresh_token" },
-        });
-        if (renewedUser) {
-          debug("AuthService", "Refresh token renewal successful", {
-            email: renewedUser.profile?.email,
-            expiresAt: renewedUser.expires_at,
-          });
-          user.value = renewedUser;
-          return true;
-        }
-      } catch (refreshError) {
-        logError("AuthService", "Both iframe and refresh token renewal failed", refreshError);
-      }
-
-      return false;
-    }
+    warn("AuthService", "Silent token renewal is disabled for breakglass sessions");
+    return false;
   }
 
   public async getUserEmail(): Promise<string> {
@@ -698,7 +865,7 @@ export default class AuthService {
       hasIssuer: !!issuerParam,
     });
 
-    const preferredIdpName = isBrowser ? sessionStorage.getItem("oidc_idp_name") || undefined : undefined;
+    const preferredIdpName = getBrowserStorageItem("sessionStorage", CURRENT_IDP_SESSION_STORAGE_KEY) || undefined;
     const candidateManagers: Array<{ manager: UserManager; idpName?: string; directAuthority?: string }> = [];
     const seenManagers = new Set<UserManager>();
 
@@ -766,6 +933,9 @@ export default class AuthService {
         }
 
         const result = await candidate.manager.signinCallback();
+        if (result instanceof User) {
+          await this.stripAndStoreRefreshToken(candidate.manager, result);
+        }
         debug("AuthService", "Successfully processed signin callback with manager", {
           authority: candidate.manager.settings.authority,
           directAuthority,
@@ -794,9 +964,8 @@ export default class AuthService {
 
         this.currentIDPName = restoredIdpName;
         currentIDPName.value = restoredIdpName;
-        if (preferredIdpName && isBrowser) {
-          sessionStorage.removeItem("oidc_idp_name");
-        }
+        setStoredIdentityProviderName(restoredIdpName);
+        setActiveOIDCUserStorageKey(buildOIDCUserStorageKey(candidate.manager.settings));
 
         return result;
       } catch (error) {
@@ -826,20 +995,23 @@ export default class AuthService {
   }
 
   private buildUserManager(authority: string, clientID: string): UserManager {
+    const oidcStorage = getOIDCStorage();
     const settings: UserManagerSettingsWithFetch = {
-      userStore: new WebStorageStateStore({ store: getOIDCStorage() }),
+      stateStore: new WebStorageStateStore({ store: oidcStorage }),
+      userStore: new WebStorageStateStore({ store: oidcStorage }),
       authority,
       client_id: clientID,
       redirect_uri: this.baseURL + AuthRedirect,
       silent_redirect_uri: this.baseURL + AuthSilentRedirect,
       response_type: "code",
-      // Include offline_access to get refresh tokens for CSP-blocked iframe fallback
-      scope: "openid profile email offline_access",
+      // offline_access intentionally omitted: breakglass tokens are short-lived emergency credentials; silent refresh would allow sessions to outlive their intended window
+      // automaticSilentRenew is also disabled to prevent iframe-based silent session extension
+      scope: "openid profile email",
       post_logout_redirect_uri: this.baseURL,
       filterProtocolClaims: true,
-      automaticSilentRenew: true,
+      automaticSilentRenew: false,
       accessTokenExpiringNotificationTimeInSeconds: 60,
-      // Prefer refresh tokens over iframe when available (works around CSP frame-ancestors issues)
+      // Revoke provider-side tokens during sign-out when supported by the IdP
       revokeTokensOnSignout: true,
     };
 
@@ -875,7 +1047,14 @@ export default class AuthService {
           expiresAt: loadedUser.expires_at,
           expiresIn: loadedUser.expires_in,
         });
-        user.value = loadedUser;
+        void this.stripAndStoreRefreshToken(manager, loadedUser)
+          .then((sanitizedUser) => {
+            user.value = sanitizedUser;
+          })
+          .catch((error) => {
+            logError("AuthService", "Failed to store sanitized OIDC user", { error });
+            user.value = loadedUser;
+          });
       });
     }
 
@@ -884,21 +1063,35 @@ export default class AuthService {
       events.addUserUnloaded(() => {
         debug("AuthService", "User unloaded event - session cleared");
         user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
+        setCurrentDirectAuthority(undefined);
       });
     }
 
     // Token about to expire
     if (typeof events.addAccessTokenExpiring === "function") {
       events.addAccessTokenExpiring(() => {
-        debug("AuthService", "Access token expiring soon, silent renew should trigger");
+        debug("AuthService", "Access token expiring soon, user will need to re-authenticate");
       });
     }
 
-    // Token expired (silent renew didn't work)
+    // Token expired. Automatic silent renewal is disabled, so clear local auth state immediately.
     if (typeof events.addAccessTokenExpired === "function") {
       events.addAccessTokenExpired(() => {
-        warn("AuthService", "Access token expired - silent renew failed or not configured");
+        warn("AuthService", "Access token expired - clearing local session");
         logError("AuthService", "Access token expired, user needs to re-authenticate");
+        user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
+        setCurrentDirectAuthority(undefined);
+        manager.removeUser().catch((error: unknown) => {
+          logError("AuthService", "Failed to remove expired OIDC user", error);
+        });
       });
     }
 
@@ -920,6 +1113,11 @@ export default class AuthService {
       events.addUserSignedOut(() => {
         debug("AuthService", "User signed out event (possibly from another tab)");
         user.value = undefined;
+        this.currentIDPName = undefined;
+        currentIDPName.value = undefined;
+        setStoredIdentityProviderName(undefined);
+        setActiveOIDCUserStorageKey(undefined);
+        setCurrentDirectAuthority(undefined);
       });
     }
   }
@@ -931,13 +1129,33 @@ export default class AuthService {
     this.idpManagers.clear();
     this.userManager = this.buildUserManager(this.baseConfig.oidcAuthority, this.baseConfig.oidcClientID);
     this.registerUserManagerEvents(this.userManager);
-    this.userManager.getUser().then((u) => {
+    this.userManager.getUser().then(async (u) => {
       if (u) {
-        user.value = u;
+        user.value = await this.stripAndStoreRefreshToken(this.userManager, u);
       } else {
         user.value = undefined;
       }
     });
+  }
+
+  private async stripAndStoreRefreshToken(manager: UserManager, loadedUser: User): Promise<User> {
+    if (!loadedUser.refresh_token) {
+      return loadedUser;
+    }
+
+    delete loadedUser.refresh_token;
+    try {
+      await manager.storeUser(loadedUser);
+      warn("AuthService", "Removed refresh token from persisted OIDC user state");
+    } catch (error) {
+      logError("AuthService", "Failed to persist sanitized OIDC user; clearing persisted user", { error });
+      try {
+        await manager.removeUser();
+      } catch (cleanupError) {
+        logError("AuthService", "Failed to clear persisted OIDC user after sanitization failure", { cleanupError });
+      }
+    }
+    return loadedUser;
   }
 }
 

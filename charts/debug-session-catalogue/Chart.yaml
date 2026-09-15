@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: v2
+name: debug-session-catalogue
+description: >-
+  Generic, standalone DebugSessionTemplate and DebugPodTemplate catalogue for
+  k8s-breakglass. Profiles are restricted by default and configurable for the
+  requesters, approvers, and clusters of an installation.
+type: application
+version: 0.2.0
+appVersion: "0.2.0"
+home: https://github.com/telekom/k8s-breakglass
+icon: https://raw.githubusercontent.com/telekom/k8s-breakglass/main/frontend/public/favicon.svg
+keywords:
+  - breakglass
+  - debug
+  - kubernetes
+  - troubleshooting
+maintainers:
+  - name: Telekom OSS
+    url: https://github.com/telekom/k8s-breakglass

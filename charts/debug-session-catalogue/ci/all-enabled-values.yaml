@@ -1,0 +1,119 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+requesters:
+  groups: [catalogue-requesters]
+  users: []
+approvers:
+  groups: [catalogue-approvers]
+  users: []
+targets:
+  clusters: [catalogue-cluster]
+targetNamespace: catalogue-debug
+profiles:
+  - name: workload-diagnostics
+    intent: workload-diagnostics
+    displayName: Workload diagnostics
+    description: Restricted workload diagnostics.
+    enabled: true
+    elevated: false
+    imageKey: workload
+    workloadType: Job
+    command: ["/usr/local/bin/workload-debug"]
+    args: ["report"]
+  - name: network-diagnostics
+    intent: network-diagnostics
+    displayName: Network diagnostics
+    description: Explicitly elevated network diagnostics.
+    enabled: true
+    elevated: true
+    hostNetwork: true
+    requiredElevation: true
+    preset: elevated-node
+    imageKey: network
+    command: ["/usr/local/bin/net-debug"]
+    args: ["report"]
+    capabilities: [NET_ADMIN, NET_RAW, BPF, PERFMON]
+    workloadType: Job
+    pod:
+      volumeMounts:
+        - name: work
+          mountPath: /work
+      volumes:
+        - name: work
+          emptyDir: {}
+  - name: storage-diagnostics
+    intent: storage-diagnostics
+    displayName: Storage diagnostics
+    description: Restricted storage diagnostics.
+    enabled: true
+    elevated: false
+    imageKey: storage
+    workloadType: Job
+    command: ["/usr/local/bin/storage-report"]
+    args: ["--path", "/scratch"]
+    pod:
+      volumeMounts:
+        - name: scratch
+          mountPath: /scratch
+        - name: reports
+          mountPath: /reports
+        - name: tmp
+          mountPath: /tmp
+      env:
+        - name: TMPDIR
+          value: /tmp
+      volumes:
+        - name: scratch
+          emptyDir: {}
+        - name: reports
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+  - name: dump-access
+    intent: dump-access
+    displayName: Dump access
+    description: Bounded approved dump copy.
+    enabled: true
+    elevated: false
+    hostNetwork: false
+    imageKey: dumpAccess
+    workloadType: Job
+    command: ["/usr/local/bin/dump-reader"]
+    args: ["copy", "/input/catalogue-fixture.dump"]
+    sourcePath: /input/catalogue-fixture.dump
+    allowExec: false
+    pod:
+      volumeMounts:
+        - name: input
+          mountPath: /input
+          readOnly: true
+        - name: output
+          mountPath: /output
+      volumes:
+        - name: input
+          hostPath:
+            path: /var/lib/catalogue-fixtures/dumps
+            type: Directory
+        - name: output
+          emptyDir:
+            sizeLimit: 1Gi
+  - name: cluster-validation
+    intent: cluster-validation
+    displayName: Cluster validation
+    description: Read-only validation with an explicitly constrained identity.
+    enabled: true
+    elevated: false
+    imageKey: clusterValidation
+    workloadType: Job
+    command: ["/cluster-validator"]
+    args: ["--mode", "one-time", "--report", "-"]
+    serviceAccountName: cluster-validator
+    automountServiceAccountToken: true
+    pod:
+      volumeMounts:
+        - name: reports
+          mountPath: /reports
+      volumes:
+        - name: reports
+          emptyDir: {}

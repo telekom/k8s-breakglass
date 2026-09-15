@@ -183,7 +183,7 @@ func (c *ClusterBindingAPIController) handleListClusterBindings(ctx *gin.Context
 		return responses[i].Name < responses[j].Name
 	})
 
-	ctx.JSON(http.StatusOK, responses)
+	ctx.JSON(http.StatusOK, gin.H{"items": responses, "total": len(responses)})
 }
 
 // handleGetClusterBinding returns a single cluster binding by namespace and name
@@ -258,7 +258,7 @@ func (c *ClusterBindingAPIController) handleListBindingsForCluster(ctx *gin.Cont
 		return matchingBindings[i].Name < matchingBindings[j].Name
 	})
 
-	ctx.JSON(http.StatusOK, matchingBindings)
+	ctx.JSON(http.StatusOK, gin.H{"items": matchingBindings, "total": len(matchingBindings)})
 }
 
 // bindingMatchesCluster checks if a binding applies to the given cluster

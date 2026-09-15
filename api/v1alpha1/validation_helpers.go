@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,16 +23,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// dayPattern matches duration strings with day units (e.g., "90d", "7d", "1d12h")
-var dayPattern = regexp.MustCompile(`^(\d+)d(.*)$`)
+// extendedDurationTermPattern parses duration terms, including day/week/year
+// units that Go's time.ParseDuration does not support.
+var extendedDurationTermPattern = regexp.MustCompile(`(\d+(?:\.\d+)?)(ns|us|µs|ms|s|m|h|d|w|y)`)
 
 // maxDurationDays is the upper bound for day values in ParseDuration to prevent
 // integer overflow when converting to time.Duration (int64 nanoseconds).
 const maxDurationDays = 365
 
-// ParseDuration parses a duration string with extended support for day units.
+// defaultBreakglassMaxValidFor mirrors the +default markers on
+// BreakglassEscalationSpec.MaxValidFor and BreakglassSessionSpec.MaxValidFor.
+// Test coverage pins those markers to this value so admission validation cannot
+// drift from Kubernetes defaulting silently.
+const defaultBreakglassMaxValidFor = "1h"
+
+// ParseDuration parses a duration string with extended support for day/week/year units.
 // Go's time.ParseDuration only supports up to hours (h), but this function
-// also accepts days (d) where 1d = 24h. Day values are bounded to maxDurationDays.
+// also accepts days (d), weeks (w), and years (y) where:
+//   - 1d = 24h
+//   - 1w = 7d
+//   - 1y = 365d
+//
+// Positive d/w/y contribution is bounded to maxDurationDays.
 //
 // Examples:
 //   - "90d" -> 90 days (2160 hours)
@@ -38,40 +52,86 @@ const maxDurationDays = 365
 //   - "1d12h" -> 1 day and 12 hours (36 hours)
 //   - "2h30m" -> 2 hours and 30 minutes (standard Go duration)
 //
-// Returns an error if the duration string is invalid or exceeds maxDurationDays.
+// Returns an error if the duration string is invalid or positive d/w/y units exceed maxDurationDays.
 func ParseDuration(s string) (time.Duration, error) {
 	if s == "" {
 		return 0, nil
 	}
-
-	// Check if the duration contains day units
-	if matches := dayPattern.FindStringSubmatch(s); matches != nil {
-		days, err := strconv.Atoi(matches[1])
-		if err != nil {
-			return 0, fmt.Errorf("invalid day value: %w", err)
-		}
-		if days > maxDurationDays {
-			return 0, fmt.Errorf("day value %d exceeds maximum of %d", days, maxDurationDays)
-		}
-
-		// Convert days to hours
-		daysDuration := time.Duration(days) * 24 * time.Hour
-
-		// Parse the remainder if present (e.g., "12h" in "1d12h")
-		remainder := matches[2]
-		if remainder != "" {
-			remainderDuration, err := time.ParseDuration(remainder)
-			if err != nil {
-				return 0, fmt.Errorf("invalid duration after days: %w", err)
-			}
-			return daysDuration + remainderDuration, nil
-		}
-
-		return daysDuration, nil
+	// Durations are used for positive limits and timeouts throughout the API.
+	// Reject explicit signs so runtime validation matches the unsigned CRD
+	// duration patterns, and mixed expressions cannot bypass validation.
+	if strings.ContainsAny(s, "-+") {
+		return 0, fmt.Errorf("duration must be unsigned")
+	}
+	if !strings.ContainsAny(s, "dwy") {
+		return time.ParseDuration(s)
 	}
 
-	// No day units, use standard Go parsing
-	return time.ParseDuration(s)
+	var (
+		total             time.Duration
+		totalPositiveDays int64
+		pos               int
+	)
+	for pos < len(s) {
+		match := extendedDurationTermPattern.FindStringSubmatchIndex(s[pos:])
+		if match == nil || match[0] != 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+
+		value := s[pos+match[2] : pos+match[3]]
+		unit := s[pos+match[4] : pos+match[5]]
+
+		var term time.Duration
+		switch unit {
+		case "d", "w", "y":
+			if strings.Contains(value, ".") {
+				return 0, fmt.Errorf("invalid %s value %q", unit, value)
+			}
+			n, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return 0, fmt.Errorf("invalid %s value %q: %w", unit, value, err)
+			}
+			multiplier := int64(1)
+			switch unit {
+			case "w":
+				multiplier = 7
+			case "y":
+				multiplier = 365
+			}
+			if n > math.MaxInt64/multiplier {
+				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
+			}
+			days := n * multiplier
+			if totalPositiveDays > math.MaxInt64-days {
+				return 0, fmt.Errorf("duration %q overflows", s)
+			}
+			totalPositiveDays += days
+			if totalPositiveDays > maxDurationDays {
+				return 0, fmt.Errorf("day value %d exceeds maximum of %d", totalPositiveDays, maxDurationDays)
+			}
+			if days > int64(time.Duration(math.MaxInt64)/(24*time.Hour)) {
+				return 0, fmt.Errorf("duration component %q overflows", s[pos+match[0]:pos+match[1]])
+			}
+			term = time.Duration(days) * 24 * time.Hour
+		default:
+			var err error
+			term, err = time.ParseDuration(value + unit)
+			if err != nil {
+				return 0, err
+			}
+		}
+
+		if (term > 0 && total > time.Duration(math.MaxInt64)-term) || (term < 0 && total < time.Duration(math.MinInt64)-term) {
+			return 0, fmt.Errorf("duration %q overflows", s)
+		}
+
+		total += term
+		pos += match[1]
+	}
+	if total < 0 {
+		return 0, fmt.Errorf("duration must be positive")
+	}
+	return total, nil
 }
 
 // getWebhookReader returns the preferred client.Reader for webhook validations.
@@ -154,6 +214,7 @@ func ensureClusterWideUniqueIssuer(
 	currentName string,
 	path *field.Path,
 ) field.ErrorList {
+	issuer = strings.TrimRight(issuer, "/")
 	if issuer == "" {
 		return nil
 	}
@@ -194,7 +255,11 @@ func ensureClusterWideUniqueIssuer(
 			return nil
 		}
 		// Check for issuer conflict
-		if idp.Spec.Issuer != "" && idp.Spec.Issuer == issuer {
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if strings.TrimRight(effectiveIssuer, "/") == issuer {
 			msg := fmt.Sprintf("issuer must be unique cluster-wide; conflicting IdentityProvider=%s", idp.Name)
 			errs = append(errs, field.Duplicate(path, msg))
 			return errors.New("issuer conflict detected")
@@ -401,22 +466,13 @@ func validateIdentityProviderFields(
 		} else if idp.Spec.Disabled {
 			errs = append(errs, field.Invalid(namePath, idpName, "referenced IdentityProvider is disabled"))
 		} else if idpIssuer != "" {
-			// If both name and issuer are set, verify they match the IDP's issuer or authority
-			// Normalize for comparison (remove trailing slashes)
-			issuerNorm := strings.TrimRight(idpIssuer, "/")
-			idpIssuerNorm := strings.TrimRight(idp.Spec.Issuer, "/")
-			idpAuthorityNorm := strings.TrimRight(idp.Spec.OIDC.Authority, "/")
-
-			// Match if issuer matches Spec.Issuer (when set) OR OIDC.Authority (as fallback)
-			// This mirrors the runtime behavior in identity_provider_loader.go
-			issuerMatch := (idp.Spec.Issuer != "" && idpIssuerNorm == issuerNorm) ||
-				(idpAuthorityNorm == issuerNorm)
-
-			if !issuerMatch {
-				expectedIssuer := idp.Spec.Issuer
-				if expectedIssuer == "" {
-					expectedIssuer = idp.Spec.OIDC.Authority
-				}
+			// Use the same effective issuer as authentication: authority is only
+			// a fallback when the provider has no explicit issuer.
+			expectedIssuer := idp.Spec.Issuer
+			if expectedIssuer == "" {
+				expectedIssuer = idp.Spec.OIDC.Authority
+			}
+			if strings.TrimRight(idpIssuer, "/") != strings.TrimRight(expectedIssuer, "/") {
 				errs = append(errs, field.Invalid(issuerPath, idpIssuer, fmt.Sprintf("issuer does not match IdentityProvider %s (expected %s)", idpName, expectedIssuer)))
 			}
 		}
@@ -425,69 +481,137 @@ func validateIdentityProviderFields(
 	return errs
 }
 
-// validateTimeoutRelationships ensures that timeout values have proper relationships:
-// - approvalTimeout must be less than or equal to maxValidFor (if both are set)
-// - All timeout values must be positive durations
+// validateTimeoutRelationships ensures timeout values use valid durations and relationships:
+// - approvalTimeout and idleTimeout must not exceed the effective maxValidFor
+// - idleTimeout must be at least one minute
+// - maxValidFor, approvalTimeout, retainFor, and idleTimeout must be positive when set
 func validateTimeoutRelationships(spec *BreakglassEscalationSpec, specPath *field.Path) field.ErrorList {
 	var errs field.ErrorList
 
-	// Get durations - these have defaults ("1h") in the spec comments
 	maxValidFor := spec.MaxValidFor
 	approvalTimeout := spec.ApprovalTimeout
 
-	// Helper to parse and validate duration string (supports day units like "7d", "90d")
-	parseDuration := func(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
-		if durationStr == "" {
-			return 0, nil // Not set, return zero
-		}
-
-		duration, err := ParseDuration(durationStr)
-		if err != nil {
-			return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
-		}
-
-		if duration <= 0 {
-			return 0, field.Invalid(path, durationStr, fieldName+" must be greater than 0")
-		}
-
-		return duration, nil
-	}
-
 	// Parse and validate maxValidFor
-	maxValidForDuration, maxValidForErr := parseDuration(maxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
+	maxValidForDuration, maxValidForErr := parsePositiveDurationField(maxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
 	if maxValidForErr != nil {
 		errs = append(errs, maxValidForErr)
-		return errs // Can't compare if maxValidFor is invalid
 	}
+	effectiveMaxValidFor, effectiveMaxValidForLabel := effectiveMaxValidForDuration(maxValidFor, maxValidForDuration)
 
 	// Parse and validate approvalTimeout
-	approvalTimeoutDuration, approvalTimeoutErr := parseDuration(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
+	approvalTimeoutDuration, approvalTimeoutErr := parsePositiveDurationField(approvalTimeout, "approvalTimeout", specPath.Child("approvalTimeout"))
 	if approvalTimeoutErr != nil {
 		errs = append(errs, approvalTimeoutErr)
-	} else if approvalTimeout != "" && approvalTimeoutDuration > maxValidForDuration {
+	} else if approvalTimeout != "" && maxValidForErr == nil && approvalTimeoutDuration > effectiveMaxValidFor {
 		errs = append(errs, field.Invalid(
 			specPath.Child("approvalTimeout"),
 			approvalTimeout,
-			fmt.Sprintf("approvalTimeout (%v) must be less than or equal to maxValidFor (%v)", approvalTimeout, maxValidFor),
+			fmt.Sprintf("approvalTimeout (%s) must be less than or equal to maxValidFor (%s)", approvalTimeout, effectiveMaxValidForLabel),
 		))
+	}
+
+	// Parse and validate retainFor
+	retainFor := spec.RetainFor
+	if _, retainForErr := parsePositiveDurationField(retainFor, "retainFor", specPath.Child("retainFor")); retainForErr != nil {
+		errs = append(errs, retainForErr)
 	}
 
 	// Parse and validate idleTimeout
 	idleTimeout := spec.IdleTimeout
-	idleTimeoutDuration, idleTimeoutErr := parseDuration(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+	idleTimeoutDuration, idleTimeoutErr := parsePositiveDurationField(idleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
 	if idleTimeoutErr != nil {
 		errs = append(errs, idleTimeoutErr)
 	} else if idleTimeout != "" {
 		if idleTimeoutDuration < time.Minute {
 			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
 				"idleTimeout must be at least 1m"))
-		} else if maxValidForDuration > 0 && idleTimeoutDuration > maxValidForDuration {
+		} else if maxValidForErr == nil && idleTimeoutDuration > effectiveMaxValidFor {
 			errs = append(errs, field.Invalid(specPath.Child("idleTimeout"), idleTimeout,
-				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", idleTimeout, maxValidFor)))
+				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", idleTimeout, effectiveMaxValidForLabel)))
 		}
 	}
 
 	return errs
+}
+
+func parsePositiveDurationField(durationStr string, fieldName string, path *field.Path) (time.Duration, *field.Error) {
+	if durationStr == "" {
+		return 0, nil
+	}
+
+	duration, err := ParseDuration(durationStr)
+	if err != nil {
+		return 0, field.Invalid(path, durationStr, fmt.Sprintf("invalid duration format: %v", err))
+	}
+
+	if duration <= 0 {
+		return 0, field.Invalid(path, durationStr, fieldName+" must be positive")
+	}
+
+	return duration, nil
+}
+
+func effectiveMaxValidForDuration(raw string, parsed time.Duration) (time.Duration, string) {
+	if raw != "" {
+		return parsed, raw
+	}
+	defaultDuration, err := ParseDuration(defaultBreakglassMaxValidFor)
+	if err != nil {
+		// This is a compile-time constant; keep the fallback defensive.
+		return time.Hour, "default " + defaultBreakglassMaxValidFor
+	}
+	return defaultDuration, "default " + defaultBreakglassMaxValidFor
+}
+
+func validateClusterGlobPatterns(patterns []string, fieldPath *field.Path) field.ErrorList {
+	if len(patterns) == 0 || fieldPath == nil {
+		return nil
+	}
+
+	var errs field.ErrorList
+	for i, pattern := range patterns {
+		if pattern == "" {
+			continue
+		}
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, field.Invalid(
+				fieldPath.Index(i),
+				pattern,
+				fmt.Sprintf("invalid cluster glob pattern: %v", err),
+			))
+		}
+	}
+	return errs
+}
+
+func clusterMatchesValidationPattern(cluster string, pattern string) bool {
+	if !strings.ContainsAny(pattern, "*?[") {
+		return pattern == cluster
+	}
+	matched, err := path.Match(pattern, cluster)
+	if err != nil {
+		// Existing malformed escalations should not make new BreakglassSession
+		// admission fail. BreakglassEscalation admission rejects invalid globs.
+		return false
+	}
+	return matched
+}
+
+func escalationMatchesSessionClusterForValidation(escalation *BreakglassEscalation, cluster string) bool {
+	if escalation == nil {
+		return false
+	}
+	for _, allowedCluster := range escalation.Spec.Allowed.Clusters {
+		if clusterMatchesValidationPattern(cluster, allowedCluster) {
+			return true
+		}
+	}
+	for _, clusterConfigRef := range escalation.Spec.ClusterConfigRefs {
+		if clusterMatchesValidationPattern(cluster, clusterConfigRef) {
+			return true
+		}
+	}
+	return false
 }
 
 // the session is allowed by the associated escalation rule.
@@ -547,16 +671,7 @@ func validateSessionIdentityProviderAuthorization(
 			continue
 		}
 
-		// Check if escalation's clusters include this session's cluster
-		clusterMatches := false
-		for _, allowedCluster := range esc.Spec.Allowed.Clusters {
-			if allowedCluster == sessionCluster {
-				clusterMatches = true
-				break
-			}
-		}
-
-		if clusterMatches {
+		if escalationMatchesSessionClusterForValidation(esc, sessionCluster) {
 			relevantEscalations = append(relevantEscalations, esc)
 		}
 	}
@@ -967,15 +1082,9 @@ func validateOIDCFromIdentityProviderConfig(cfg *OIDCFromIdentityProviderConfig,
 		if cfg.RefreshTokenSecretRef == nil {
 			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
 				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
-		} else {
-			originalKey := cfg.RefreshTokenSecretRef.Key
-			if originalKey == "" {
-				originalKey = "value"
-			}
-			if cfg.RotatedRefreshTokenKey == originalKey {
-				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), cfg.RotatedRefreshTokenKey,
-					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
-			}
+		} else if err := validateRotatedRefreshTokenKey(cfg.RotatedRefreshTokenKey,
+			cfg.RefreshTokenSecretRef, fieldPath); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
@@ -1090,15 +1199,9 @@ func validateOIDCAuthConfig(oidc *OIDCAuthConfig, fieldPath *field.Path) field.E
 		if oidc.RefreshTokenSecretRef == nil {
 			errs = append(errs, field.Required(fieldPath.Child("refreshTokenSecretRef"),
 				"refreshTokenSecretRef is required when rotatedRefreshTokenKey is set"))
-		} else {
-			originalKey := oidc.RefreshTokenSecretRef.Key
-			if originalKey == "" {
-				originalKey = "value"
-			}
-			if oidc.RotatedRefreshTokenKey == originalKey {
-				errs = append(errs, field.Invalid(fieldPath.Child("rotatedRefreshTokenKey"), oidc.RotatedRefreshTokenKey,
-					"must differ from the key in refreshTokenSecretRef to avoid overwriting the original token"))
-			}
+		} else if err := validateRotatedRefreshTokenKey(oidc.RotatedRefreshTokenKey,
+			oidc.RefreshTokenSecretRef, fieldPath); err != nil {
+			errs = append(errs, err)
 		}
 	}
 
@@ -1173,6 +1276,9 @@ func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) f
 
 	for i, opt := range opts.Options {
 		optPath := fieldPath.Child("options").Index(i)
+		if opt.SchedulingConstraints != nil {
+			errs = append(errs, validateSchedulingConstraints(opt.SchedulingConstraints, optPath.Child("schedulingConstraints"))...)
+		}
 
 		// Validate name is set
 		if opt.Name == "" {
@@ -1202,6 +1308,19 @@ func validateSchedulingOptions(opts *SchedulingOptions, fieldPath *field.Path) f
 			"only one option can be marked as default"))
 	}
 
+	return errs
+}
+
+func validateSchedulingConstraints(constraints *SchedulingConstraints, path *field.Path) field.ErrorList {
+	if constraints == nil {
+		return nil
+	}
+	var errs field.ErrorList
+	for i, node := range constraints.DeniedNodes {
+		if strings.ContainsAny(node, "*?[") {
+			errs = append(errs, field.Invalid(path.Child("deniedNodes").Index(i), node, "glob patterns are unsupported; use an exact node name or deniedNodeLabels"))
+		}
+	}
 	return errs
 }
 
@@ -1296,6 +1415,14 @@ func warnNamespaceConstraintIssues(nc *NamespaceConstraints, targetNamespace str
 				"the patterns will be ignored since users cannot specify namespaces.")
 	}
 
+	// Warn when both switches are set: denyUserNamespace narrows and wins,
+	// which makes allowUserNamespace inert.
+	if nc.DenyUserNamespace && nc.AllowUserNamespace {
+		warnings = append(warnings,
+			"namespaceConstraints.denyUserNamespace is true and overrides allowUserNamespace; "+
+				"user-selected namespaces are rejected and only defaultNamespace is used.")
+	}
+
 	// Warn if allowUserNamespace is true but no defaultNamespace is set
 	// If a user doesn't specify a namespace, what happens?
 	if nc.AllowUserNamespace && nc.DefaultNamespace == "" {
@@ -1336,6 +1463,9 @@ func validateImpersonationConfig(ic *ImpersonationConfig, fieldPath *field.Path)
 				"service account namespace is required"))
 		}
 	}
+
+	// Constrained impersonation (KEP-5284) restrictions and guardrails.
+	errs = append(errs, validateImpersonationConstraints(ic, fieldPath)...)
 
 	return errs
 }
@@ -1737,6 +1867,8 @@ func validateGoTemplateSyntax(templateStr string) error {
 	// This ensures template functions like yamlQuote, default, etc. are recognized
 	// Use sprig.FuncMap() (not TxtFuncMap) to match runtime template rendering behavior
 	funcMap := sprig.FuncMap()
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
 
 	// Add custom breakglass template functions that are used at runtime.
 	// These are stubs - we only need them to parse, not execute correctly.
@@ -1757,10 +1889,10 @@ func validateGoTemplateSyntax(templateStr string) error {
 	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
 
 	// Parse the template - this validates syntax
-	_, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
+	tmpl, err := template.New("syntax-check").Funcs(funcMap).Parse(templateStr)
 	if err != nil {
 		return err
 	}
 
-	return nil
+	return ValidateTemplateOutput(tmpl)
 }

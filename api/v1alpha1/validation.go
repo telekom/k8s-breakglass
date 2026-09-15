@@ -21,7 +21,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -132,6 +134,7 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	for i, cluster := range escalation.Spec.Allowed.Clusters {
 		result.Errors = append(result.Errors, validateIdentifierFormat(cluster, allowedClustersPath.Index(i))...)
 	}
+	result.Errors = append(result.Errors, validateClusterGlobPatterns(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
 
 	// Validate approvers
 	approverGroupsPath := specPath.Child("approvers").Child("groups")
@@ -244,31 +247,28 @@ func ValidateBreakglassSession(session *BreakglassSession) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("grantedGroup"), "grantedGroup is required"))
 	}
 
-	// Validate durations
-	if session.Spec.MaxValidFor != "" {
-		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.MaxValidFor, specPath.Child("maxValidFor"))...)
+	maxValidForDuration, maxValidForErr := parsePositiveDurationField(session.Spec.MaxValidFor, "maxValidFor", specPath.Child("maxValidFor"))
+	if maxValidForErr != nil {
+		result.Errors = append(result.Errors, maxValidForErr)
+	}
+	effectiveMaxValidFor, effectiveMaxValidForLabel := effectiveMaxValidForDuration(session.Spec.MaxValidFor, maxValidForDuration)
+
+	if _, retainForErr := parsePositiveDurationField(session.Spec.RetainFor, "retainFor", specPath.Child("retainFor")); retainForErr != nil {
+		result.Errors = append(result.Errors, retainForErr)
 	}
 
-	if session.Spec.RetainFor != "" {
-		result.Errors = append(result.Errors, validateDurationFormat(session.Spec.RetainFor, specPath.Child("retainFor"))...)
-	}
-
+	// Validate idleTimeout if set
 	if session.Spec.IdleTimeout != "" {
-		idleTimeout, err := ParseDuration(session.Spec.IdleTimeout)
-		if err != nil {
-			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, fmt.Sprintf("invalid duration: %v", err)))
-		} else if idleTimeout <= 0 {
-			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be positive"))
+		idleTimeout, idleTimeoutErr := parsePositiveDurationField(session.Spec.IdleTimeout, "idleTimeout", specPath.Child("idleTimeout"))
+		if idleTimeoutErr != nil {
+			result.Errors = append(result.Errors, idleTimeoutErr)
 		} else if idleTimeout < time.Minute {
 			// Minimum 1 minute to avoid premature expiry from the 30s activity flush buffer.
 			// Activity is flushed to status every ~30s; shorter idle timeouts would race with the buffer.
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout, "idleTimeout must be at least 1m"))
-		} else if session.Spec.MaxValidFor != "" {
-			maxValid, mvErr := ParseDuration(session.Spec.MaxValidFor)
-			if mvErr == nil && idleTimeout > maxValid {
-				result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout,
-					fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", session.Spec.IdleTimeout, session.Spec.MaxValidFor)))
-			}
+		} else if maxValidForErr == nil && idleTimeout > effectiveMaxValidFor {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("idleTimeout"), session.Spec.IdleTimeout,
+				fmt.Sprintf("idleTimeout (%s) must not exceed maxValidFor (%s)", session.Spec.IdleTimeout, effectiveMaxValidForLabel)))
 		}
 	}
 
@@ -338,6 +338,12 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 	} else {
 		// Validate clientID format (should not contain spaces or special chars)
 		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ClientID, oidcPath.Child("clientID"))...)
+	}
+
+	if idp.Spec.OIDC.ExpectedAudience == "" {
+		result.Errors = append(result.Errors, field.Required(oidcPath.Child("expectedAudience"), "OIDC expectedAudience is required"))
+	} else {
+		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ExpectedAudience, oidcPath.Child("expectedAudience"))...)
 	}
 
 	if idp.Spec.OIDC.InsecureSkipVerify {
@@ -471,8 +477,15 @@ func ValidateDenyPolicy(dp *DenyPolicy) *ValidationResult {
 	specPath := field.NewPath("spec")
 
 	// Validate at least one rule type is specified (mirrors CEL rule)
-	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil {
-		result.Errors = append(result.Errors, field.Required(specPath, "at least one deny rule or podSecurityRules must be specified"))
+	if len(dp.Spec.Rules) == 0 && dp.Spec.PodSecurityRules == nil && len(dp.Spec.ImpersonationRules) == 0 {
+		result.Errors = append(result.Errors, field.Required(specPath, "at least one deny rule, impersonationRules or podSecurityRules must be specified"))
+	}
+
+	// Validate impersonation deny rules (constrained impersonation, KEP-5284)
+	if len(dp.Spec.ImpersonationRules) > 0 {
+		impPath := specPath.Child("impersonationRules")
+		result.Errors = append(result.Errors, validateImpersonationDenyRules(dp.Spec.ImpersonationRules, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationDenyRuleIssues(dp.Spec.ImpersonationRules, impPath)...)
 	}
 
 	// Validate rules
@@ -563,6 +576,10 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("sinks"), "at least one audit sink must be configured"))
 	}
 
+	if ac.Spec.Filtering != nil {
+		result.Errors = append(result.Errors, validateAuditFiltering(ac.Spec.Filtering, specPath.Child("filtering"))...)
+	}
+
 	// Track sink names for duplicate detection
 	seenNames := make(map[string]bool)
 
@@ -582,6 +599,7 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 			}
 			seenNames[sink.Name] = true
 		}
+		result.Errors = append(result.Errors, validateGlobPatterns(sink.EventTypes, sinkPath.Child("eventTypes"))...)
 
 		// Validate sink-specific configuration based on type
 		switch sink.Type {
@@ -597,6 +615,40 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 	}
 
 	return result
+}
+
+func validateAuditFiltering(filter *AuditFilterConfig, filterPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	if filter == nil {
+		return errs
+	}
+
+	errs = append(errs, validateGlobPatterns(filter.IncludeEventTypes, filterPath.Child("includeEventTypes"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeEventTypes, filterPath.Child("excludeEventTypes"))...)
+	errs = append(errs, validateGlobPatterns(filter.IncludeUsers, filterPath.Child("includeUsers"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeUsers, filterPath.Child("excludeUsers"))...)
+	errs = append(errs, validateNamespaceFilterGlobPatterns(filter.IncludeNamespaces, filterPath.Child("includeNamespaces"))...)
+	errs = append(errs, validateNamespaceFilterGlobPatterns(filter.ExcludeNamespaces, filterPath.Child("excludeNamespaces"))...)
+	errs = append(errs, validateGlobPatterns(filter.IncludeResources, filterPath.Child("includeResources"))...)
+	errs = append(errs, validateGlobPatterns(filter.ExcludeResources, filterPath.Child("excludeResources"))...)
+	return errs
+}
+
+func validateNamespaceFilterGlobPatterns(filter *NamespaceFilter, filterPath *field.Path) field.ErrorList {
+	if filter == nil {
+		return nil
+	}
+	return validateGlobPatterns(filter.Patterns, filterPath.Child("patterns"))
+}
+
+func validateGlobPatterns(patterns []string, patternsPath *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	for i, pattern := range patterns {
+		if _, err := path.Match(pattern, ""); err != nil {
+			errs = append(errs, field.Invalid(patternsPath.Index(i), pattern, fmt.Sprintf("invalid glob pattern: %v", err)))
+		}
+	}
+	return errs
 }
 
 // validateKafkaSink validates Kafka sink configuration
@@ -759,11 +811,8 @@ func ValidateDebugPodTemplate(template *DebugPodTemplate) *ValidationResult {
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.TemplateString, specPath.Child("templateString"))...)
-
-		// Dry-run render for templates with Go directives to catch execution issues early
-		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.TemplateString, nil)...)
 
 		return result
 	}
@@ -827,32 +876,13 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
 		}
 
-		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, or DaemonSet)
+		// Validate the first-document format (must be bare PodSpec, Pod, Deployment, DaemonSet, or Job)
 		result.Errors = append(result.Errors, validateTemplateStringFormat(template.Spec.PodTemplateString, specPath.Child("podTemplateString"))...)
 
 		// Warn if workload kind doesn't match configured workloadType
 		if template.Spec.WorkloadType != "" {
 			result.Warnings = append(result.Warnings, warnTemplateStringWorkloadMismatch(template.Spec.PodTemplateString, template.Spec.WorkloadType)...)
 		}
-
-		// Dry-run render for templates with Go directives.
-		// Populate Vars from ExtraDeployVariables defaults if available.
-		dryRunVars := map[string]string{}
-		for _, v := range template.Spec.ExtraDeployVariables {
-			if v.Default != nil {
-				// Extract string value from *apiextensionsv1.JSON
-				raw := string(v.Default.Raw)
-				// JSON strings are quoted, strip quotes for template vars
-				if len(raw) >= 2 && raw[0] == '"' && raw[len(raw)-1] == '"' {
-					raw = raw[1 : len(raw)-1]
-				}
-				dryRunVars[v.Name] = raw
-			} else {
-				// Variable has no default; use placeholder so template doesn't fail
-				dryRunVars[v.Name] = "PLACEHOLDER"
-			}
-		}
-		result.Warnings = append(result.Warnings, tryRenderTemplateString(template.Spec.PodTemplateString, dryRunVars)...)
 	}
 
 	// Validate podOverridesTemplate syntax if present
@@ -870,15 +900,32 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate constraints if specified
 	if template.Spec.Constraints != nil {
-		if template.Spec.Constraints.MaxDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.MaxDuration, specPath.Child("constraints").Child("maxDuration"))...)
+		constraintsPath := specPath.Child("constraints")
+		constraintDurations := []struct {
+			name  string
+			value string
+		}{
+			{name: "maxDuration", value: template.Spec.Constraints.MaxDuration},
+			{name: "defaultDuration", value: template.Spec.Constraints.DefaultDuration},
 		}
-		if template.Spec.Constraints.DefaultDuration != "" {
-			result.Errors = append(result.Errors, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
+		for _, item := range constraintDurations {
+			if item.value != "" {
+				result.Errors = append(result.Errors, validatePositiveDurationFormat(item.value, constraintsPath.Child(item.name))...)
+			}
 		}
 	}
 
+	if template.Spec.Audit != nil && template.Spec.Audit.RecordingRetention != "" {
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(
+			template.Spec.Audit.RecordingRetention,
+			specPath.Child("audit").Child("recordingRetention"),
+		)...)
+	}
+
 	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingConstraints != nil {
+		result.Errors = append(result.Errors, validateSchedulingConstraints(template.Spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if template.Spec.SchedulingOptions != nil {
 		result.Errors = append(result.Errors, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}
@@ -891,14 +938,18 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 
 	// Validate impersonation config if specified
 	if template.Spec.Impersonation != nil {
-		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, specPath.Child("impersonation"))...)
+		impPath := specPath.Child("impersonation")
+		result.Errors = append(result.Errors, validateImpersonationConfig(template.Spec.Impersonation, impPath)...)
+		result.Warnings = append(result.Warnings, warnImpersonationConfigIssues(template.Spec.Impersonation, impPath)...)
 	}
 
 	// Validate notification config if specified
 	if template.Spec.Notification != nil {
 		result.Errors = append(result.Errors, validateDebugSessionNotificationConfig(template.Spec.Notification, specPath.Child("notification"))...)
 	}
-
+	if template.Spec.ExpirationBehavior == "notify-only" {
+		result.Warnings = append(result.Warnings, "spec.expirationBehavior notify-only is deprecated; use terminate with notification.notifyOnExpiry")
+	}
 	// Validate request reason config if specified
 	if template.Spec.RequestReason != nil {
 		result.Errors = append(result.Errors, validateDebugRequestReasonConfig(template.Spec.RequestReason, specPath.Child("requestReason"))...)
@@ -952,7 +1003,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 // It builds a sample AuxiliaryResourceContext with placeholder values, executes the template,
 // and checks that the rendered output is valid YAML. Returns warnings (never errors) because
 // the sample data may not satisfy all template conditions.
-// vars provides extra deploy variable defaults to populate .Vars in the context.
+// vars provides extra deploy variable defaults to populate .vars in the context.
 func tryRenderTemplateString(templateStr string, vars map[string]string) []string {
 	if templateStr == "" || !strings.Contains(templateStr, "{{") {
 		return nil // Not a templated string, nothing to dry-run
@@ -1009,7 +1060,9 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 
 	// Build function map matching the runtime renderer
 	funcMap := sprig.FuncMap()
-	funcMap["yamlQuote"] = func(s string) string { return "\"" + s + "\"" }
+	delete(funcMap, "env")
+	delete(funcMap, "expandenv")
+	funcMap["yamlQuote"] = strconv.Quote
 	funcMap["toYaml"] = func(v interface{}) string { return "" }
 	funcMap["fromYaml"] = func(s string) map[string]interface{} { return nil }
 	funcMap["resourceQuantity"] = func(s string) string { return s }
@@ -1040,7 +1093,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 		padding := strings.Repeat(" ", spaces)
 		return "\n" + padding + strings.ReplaceAll(s, "\n", "\n"+padding)
 	}
-	funcMap["yamlSafe"] = func(v interface{}) interface{} { return v }
+	funcMap["yamlSafe"] = func(v interface{}) string { return strconv.Quote(fmt.Sprint(v)) }
 
 	// Parse template
 	tmpl, err := template.New("dry-run").Funcs(funcMap).Parse(templateStr)
@@ -1050,7 +1103,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 	}
 
 	// Execute template with sample context
-	var buf bytes.Buffer
+	var buf cappedTemplateBuffer
 	if err := tmpl.Execute(&buf, ctxMap); err != nil {
 		return []string{fmt.Sprintf("dry-run render warning: template execution failed with sample data: %v", err)}
 	}
@@ -1078,8 +1131,21 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 	return warnings
 }
 
+const maxTemplateOutputBytes = 1 << 20
+
+type cappedTemplateBuffer struct {
+	bytes.Buffer
+}
+
+func (b *cappedTemplateBuffer) Write(p []byte) (int, error) {
+	if b.Len()+len(p) > maxTemplateOutputBytes {
+		return 0, fmt.Errorf("rendered template exceeds %d bytes", maxTemplateOutputBytes)
+	}
+	return b.Buffer.Write(p)
+}
+
 // validateTemplateStringFormat validates the first YAML document in a templateString
-// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, or DaemonSet.
+// to ensure it uses a supported format: bare PodSpec, Pod, Deployment, DaemonSet, or Job.
 // This validation is best-effort because Go templates may produce dynamic content,
 // so it only checks templates where the first document can be statically analyzed.
 // yamlDocSeparator matches a YAML document separator line (--- optionally followed by whitespace).
@@ -1141,9 +1207,14 @@ func validateTemplateStringFormat(templateStr string, fldPath *field.Path) field
 			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
 				fmt.Sprintf("%s requires apiVersion apps/v1, got %q", kindStr, apiVersionStr)))
 		}
+	case "Job":
+		if apiVersionStr != "batch/v1" {
+			errs = append(errs, field.Invalid(fldPath, apiVersionStr,
+				fmt.Sprintf("Job requires apiVersion batch/v1, got %q", apiVersionStr)))
+		}
 	default:
 		errs = append(errs, field.Invalid(fldPath, kindStr,
-			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, and DaemonSet are supported", kindStr)))
+			fmt.Sprintf("unsupported kind %q: only bare PodSpec, Pod, Deployment, DaemonSet, and Job are supported", kindStr)))
 	}
 
 	return errs
@@ -1173,8 +1244,8 @@ func warnTemplateStringWorkloadMismatch(templateStr string, workloadType DebugWo
 	}
 
 	kindStr, _ := kind.(string)
-	// Only check for Deployment/DaemonSet manifests
-	if kindStr != "Deployment" && kindStr != "DaemonSet" {
+	// Only check for workload manifests
+	if kindStr != "Deployment" && kindStr != "DaemonSet" && kindStr != "Job" {
 		return warnings
 	}
 

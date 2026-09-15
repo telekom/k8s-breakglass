@@ -29,7 +29,7 @@ IMAGE=${IMAGE:-breakglass:e2e}
 UI_FLAVOUR=${UI_FLAVOUR:-oss}
 export VITE_UI_FLAVOUR=$UI_FLAVOUR
 echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.5.0}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
 
 # --- Cluster / service names (defaults kept from original script) ---
 CLUSTER_NAME=${CLUSTER_NAME:-breakglass-hub}
@@ -48,6 +48,38 @@ MAILHOG_UI_PORT=${MAILHOG_UI_PORT:-8025}
 
 # --- Kind node image ---
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
+
+# The authorization configuration below uses cacheAuthorizedRequests, which is
+# available only in Kubernetes 1.34+. Refuse older images rather than starting
+# an apiserver that silently falls back to positive webhook caching.
+if [[ "$KIND_NODE_IMAGE" =~ :v([0-9]+)\.([0-9]+) ]]; then
+  KIND_K8S_MAJOR="${BASH_REMATCH[1]}"
+  KIND_K8S_MINOR="${BASH_REMATCH[2]}"
+  if (( KIND_K8S_MAJOR != 1 || KIND_K8S_MINOR < 34 )); then
+    log "ERROR: KIND_NODE_IMAGE=$KIND_NODE_IMAGE requires Kubernetes 1.34+ for cacheAuthorizedRequests=false"
+    exit 1
+  fi
+else
+  log "ERROR: cannot determine Kubernetes version from KIND_NODE_IMAGE=$KIND_NODE_IMAGE"
+  exit 1
+fi
+
+# --- Constrained impersonation (KEP-5284) feature gate ---
+# The ConstrainedImpersonation gate is beta and ON BY DEFAULT from Kubernetes 1.36,
+# which is the version of the node image above, so the default here matches what a
+# real 1.36 cluster does without any configuration.
+#
+# Set CONSTRAINED_IMPERSONATION=false to run the cluster with the gate explicitly
+# disabled. That reproduces two production situations that must both keep working:
+# a spoke on Kubernetes below 1.35 where the feature does not exist, and a 1.36+
+# spoke where an operator turned it off. The e2e suite runs both.
+CONSTRAINED_IMPERSONATION=${CONSTRAINED_IMPERSONATION:-true}
+if [ "$CONSTRAINED_IMPERSONATION" = "true" ]; then
+  APISERVER_FEATURE_GATES=${APISERVER_FEATURE_GATES:-ConstrainedImpersonation=true}
+else
+  APISERVER_FEATURE_GATES=${APISERVER_FEATURE_GATES:-ConstrainedImpersonation=false}
+fi
+echo "Constrained impersonation (KEP-5284): $CONSTRAINED_IMPERSONATION (apiserver feature-gates=$APISERVER_FEATURE_GATES)"
 
 # --- TLS / temp directories (kept as before, but configurable) ---
 TDIR=${TDIR:-}
@@ -779,7 +811,7 @@ fi
 # Authorization config (webhook authorizer) for single apiserver
 # Aligned with production config but using NoOpinion for e2e bootstrap
 cat > "$AUTHZ_FILE" <<'EOF'
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
 - type: Node
@@ -790,6 +822,7 @@ authorizers:
   name: breakglass
   webhook:
     timeout: 3s
+    authorizedTTL: 5m
     subjectAccessReviewVersion: v1
     matchConditionSubjectAccessReviewVersion: v1
     cacheAuthorizedRequests: false
@@ -952,6 +985,10 @@ nodes:
         audit-log-maxsize: "100"
         # Verbosity for debugging OIDC issues
         v: "6"
+        # Constrained impersonation (KEP-5284). Beta and on by default in 1.36, so
+        # this is normally a no-op; it is set explicitly so the e2e suite can also
+        # run with the gate OFF and prove the legacy fallback path still authorizes.
+        feature-gates: "${APISERVER_FEATURE_GATES}"
       extraVolumes:
         - name: authorization-config
           hostPath: /etc/kubernetes/authorization-config.yaml
@@ -1056,7 +1093,8 @@ load_image_into_kind "nicolaka/netshoot"
 # Preload tmux debug image for terminal sharing tests
 load_image_into_kind "$TMUX_DEBUG_IMAGE"
 # Preload busybox for debug session tests (used by test-basic-debug template)
-load_image_into_kind "busybox:latest"
+ensure_busybox_image
+load_image_into_kind "$BUSYBOX_IMAGE"
 # Preload the audit webhook receiver image so the in-cluster deployment does not pull it.
 ensure_image_exists "python:3.11-slim"
 load_image_into_kind "python:3.11-slim"
@@ -1855,6 +1893,7 @@ spec:
     authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     # Trust the generated Keycloak CA for self-signed E2E certificates.
     certificateAuthority: |
 $KEYCLOAK_CA_INLINE

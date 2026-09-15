@@ -15,7 +15,54 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestCleanupRoutinePendingDuplicateAuditBlocksRetentionDeletion(t *testing.T) {
+	intentTime := metav1.NewTime(time.Unix(100, 0))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-audit-delete", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateWithdrawn,
+			RetainedUntil: metav1.NewTime(time.Now().Add(-time.Hour)),
+			Conditions: []metav1.Condition{{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+				Status:             metav1.ConditionFalse,
+				Reason:             "PendingDelivery",
+				LastTransitionTime: intentTime,
+			}},
+		},
+	}
+	fc := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).Build()
+	routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: NewSessionManagerWithClient(fc)}
+	routine.markCleanupExpiredSession(context.Background())
+
+	var retained breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fc.Get(context.Background(), client.ObjectKeyFromObject(session), &retained), "pending audit outbox must retain the terminal object")
+}
+
+func TestCleanupRoutinePendingExpiryNotificationBlocksRetentionDeletion(t *testing.T) {
+	intentTime := metav1.NewTime(time.Unix(100, 0))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-expiry-email-delete", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:         breakglassv1alpha1.SessionStateExpired,
+			RetainedUntil: metav1.NewTime(time.Now().Add(-time.Hour)),
+			Conditions: []metav1.Condition{
+				{Type: string(breakglassv1alpha1.SessionConditionTypeExpired), Status: metav1.ConditionTrue, Reason: "ExpiredByTime", LastTransitionTime: intentTime},
+				{Type: string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent), Status: metav1.ConditionFalse, Reason: "PendingEnqueue", LastTransitionTime: intentTime},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).Build()
+	routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: NewSessionManagerWithClient(fakeClient)}
+	routine.markCleanupExpiredSession(context.Background())
+
+	var retained breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &retained), "pending expiry notification must retain the terminal object")
+}
 
 func TestCleanupRoutine_markCleanupExpiredSession(t *testing.T) {
 	// TestCleanupRoutine_markCleanupExpiredSession
@@ -664,6 +711,61 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		assert.Contains(t, updated.Status.Message, "expired")
 	})
 
+	t.Run("stale active expiration list does not overwrite renewed session", func(t *testing.T) {
+		pastTime := metav1.NewTime(time.Now().Add(-1 * time.Hour).Truncate(time.Second))
+		renewedTime := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+		staleListItem := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "active-renewed-from-stale-list",
+				Namespace:       "default",
+				ResourceVersion: "1",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:        breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt:    &pastTime,
+				RenewalCount: 0,
+			},
+		}
+		liveSession := staleListItem.DeepCopy()
+		liveSession.ResourceVersion = "2"
+		liveSession.Status.ExpiresAt = &renewedTime
+		liveSession.Status.RenewalCount = 1
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if debugSessions, ok := list.(*breakglassv1alpha1.DebugSessionList); ok {
+						debugSessions.Items = []breakglassv1alpha1.DebugSession{*staleListItem}
+						return nil
+					}
+					return cl.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		manager := &SessionManager{Client: fakeClient}
+		routine := CleanupRoutine{Log: logger, Manager: manager}
+
+		routine.cleanupExpiredDebugSessions(context.Background())
+
+		var updated breakglassv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+		assert.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		require.NotNil(t, updated.Status.ExpiresAt)
+		assert.True(t, updated.Status.ExpiresAt.Equal(&renewedTime),
+			"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedTime.Time)
+		assert.Equal(t, int32(1), updated.Status.RenewalCount)
+		assert.Empty(t, updated.Status.Message)
+	})
+
 	t.Run("terminated session within retention period", func(t *testing.T) {
 		recentTime := metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))
 		ds := &breakglassv1alpha1.DebugSession{
@@ -735,6 +837,57 @@ func TestCleanupRoutine_cleanupExpiredDebugSessions(t *testing.T) {
 		assert.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "timed out")
+	})
+
+	t.Run("stale pending approval timeout list does not overwrite approved session", func(t *testing.T) {
+		oldCreationTime := time.Now().Add(-25 * time.Hour)
+		staleListItem := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:              "pending-approved-from-stale-list",
+				Namespace:         "default",
+				CreationTimestamp: metav1.NewTime(oldCreationTime),
+				ResourceVersion:   "1",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster: "test-cluster",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				Approval: &breakglassv1alpha1.DebugSessionApproval{
+					Required: true,
+				},
+			},
+		}
+		liveSession := staleListItem.DeepCopy()
+		liveSession.ResourceVersion = "2"
+		liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		liveSession.Status.Message = ""
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveSession).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if debugSessions, ok := list.(*breakglassv1alpha1.DebugSessionList); ok {
+						debugSessions.Items = []breakglassv1alpha1.DebugSession{*staleListItem}
+						return nil
+					}
+					return cl.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		manager := &SessionManager{Client: fakeClient}
+		routine := CleanupRoutine{Log: logger, Manager: manager}
+
+		routine.cleanupExpiredDebugSessions(context.Background())
+
+		var updated breakglassv1alpha1.DebugSession
+		err := fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+		assert.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Empty(t, updated.Status.Message)
 	})
 
 	t.Run("active session expired sends email notification", func(t *testing.T) {

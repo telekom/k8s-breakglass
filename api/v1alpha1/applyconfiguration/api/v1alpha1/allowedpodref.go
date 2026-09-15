@@ -17,6 +17,8 @@ type AllowedPodRefApplyConfiguration struct {
 	Namespace *string `json:"namespace,omitempty"`
 	// name is the pod's name.
 	Name *string `json:"name,omitempty"`
+	// uid is the immutable identity of the authorized pod.
+	UID *string `json:"uid,omitempty"`
 	// nodeName is the node the pod is running on.
 	NodeName *string `json:"nodeName,omitempty"`
 	// ready indicates if the pod is ready for exec.
@@ -47,6 +49,14 @@ func (b *AllowedPodRefApplyConfiguration) WithNamespace(value string) *AllowedPo
 // If called multiple times, the Name field is set to the value of the last call.
 func (b *AllowedPodRefApplyConfiguration) WithName(value string) *AllowedPodRefApplyConfiguration {
 	b.Name = &value
+	return b
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *AllowedPodRefApplyConfiguration) WithUID(value string) *AllowedPodRefApplyConfiguration {
+	b.UID = &value
 	return b
 }
 

@@ -13,6 +13,18 @@ The breakglass authorization webhook integrates with the Kubernetes API server t
 - Enforce `DenyPolicy` restrictions
 - Provide real-time access control without modifying cluster RBAC
 
+The authorization webhook covers SubjectAccessReview requests for supported
+Breakglass operations. It does not intercept direct `pods/ephemeralcontainers`
+updates: no target-cluster validating webhook is deployed for that subresource,
+and such writes are governed solely by the target cluster's RBAC. Use the
+authenticated DebugSession API injection operation for Breakglass-mediated
+ephemeral-container debugging; it performs the session, policy, and target-Pod
+identity checks before updating the target Pod. PR
+[#1277](https://github.com/telekom/k8s-breakglass/pull/1277) records ephemeral
+operation evidence after the effect. Durable pre-effect intent and
+interrupted-write recovery depend on the operation outbox in PR
+[#1278](https://github.com/telekom/k8s-breakglass/pull/1278).
+
 ## Architecture
 
 ```text
@@ -35,11 +47,12 @@ The breakglass authorization webhook integrates with the Kubernetes API server t
 
 ### Authorization Configuration
 
-Configure the API server with webhook authorization:
+Configure the API server with webhook authorization. On Kubernetes 1.34 and
+later, use this structured configuration:
 
 ```yaml
 # /etc/kubernetes/authorization-config.yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   # Node authorizer for kubelet operations (first for performance)
@@ -58,7 +71,10 @@ authorizers:
       # Connection settings
       timeout: 3s
       unauthorizedTTL: 30s
-      authorizedTTL: 30s
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       
       # Webhook endpoint configuration
       connectionInfo:
@@ -82,6 +98,27 @@ authorizers:
         # recursive webhook calls (see "Preventing Recursive Webhook Calls" below)
         - expression: "request.user != 'breakglass-group-sync@service.local'"
 ```
+
+Disabling positive authorization caching adds a webhook round trip to each
+authorization request, but it is required for exact session expiry. Keep the
+webhook path low-latency and size its capacity for that request rate; the
+ordinary in-flight native stream limitation is documented in the session
+lifecycle guide.
+
+On Kubernetes versions older than 1.34, use the legacy webhook mode and
+disable both decision caches:
+
+```text
+--authorization-mode=Node,RBAC,Webhook
+--authorization-webhook-config-file=/etc/kubernetes/breakglass-webhook-config.yaml
+--authorization-webhook-cache-authorized-ttl=0s
+--authorization-webhook-cache-unauthorized-ttl=0s
+```
+
+The structured `cacheAuthorizedRequests` field is not available there, so set
+the legacy authorized cache TTL flag to `0s`. In structured configuration,
+`cacheAuthorizedRequests: false` is the invariant; `authorizedTTL` is inactive
+while that cache is disabled.
 
 > **Important:** The last matchCondition excludes the breakglass manager's OIDC identity from webhook processing. This is critical for multi-cluster setups using OIDC authentication. See [Preventing Recursive Webhook Calls](#preventing-recursive-webhook-calls) for details.
 
@@ -185,36 +222,36 @@ Notes on matching behavior
 
 - If a ClusterConfig is not present for the provided `{cluster-name}`, the webhook immediately denies the request with a human-friendly message (`Cluster "foo" is not registered with Breakglass`) and emits a `cluster-missing` reason in metrics. This reduces confusion for platform users and surfaces onboarding gaps early. Create the missing ClusterConfig or update the webhook URL path to match an existing name.
 
-### Authentication Methods
+### Split deployments
 
-#### Bearer Token (Recommended)
+The API and authorization webhook use the reconciler manager's shared cache to
+select `BreakglassSession` resources. The session field indexes remain enabled
+when controller reconcilers are disabled, so split deployments continue to
+discover approved sessions by cluster and user.
 
-```yaml
-users:
-  - name: kube-apiserver
-    user:
-      token: <secure-bearer-token>
-```
+### Cache consistency after approval
 
-Generate a secure token:
+Authorization selection normally uses the indexed shared cache. If that cache
+has not observed a newly approved session yet, the selection path refreshes
+from the live API reader before deciding that no session exists.
 
-```bash
-# Generate random token
-openssl rand -base64 32
+### Transport authentication
 
-# Or use JWT with appropriate claims
-# (implementation-specific)
-```
+The built-in SAR HTTP handler does not authenticate bearer tokens or client
+certificates. Adding a token or certificate to the API server's webhook
+kubeconfig alone does not protect the receiver. When enabled and configured
+with a trusted CA, TLS server verification protects the API server's connection
+to its configured webhook endpoint. Setting `insecure-skip-tls-verify: true`
+disables that server verification.
 
-#### Client Certificates
-
-```yaml
-users:
-  - name: kube-apiserver
-    user:
-      client-certificate-data: <base64-client-cert>
-      client-key-data: <base64-client-key>
-```
+If mutual TLS or bearer authentication is required, configure a gateway,
+reverse proxy, or dedicated listener that actually validates those credentials
+before forwarding to Breakglass. Restrict direct access so callers cannot
+bypass that component. Protect both the `/breakglass/webhook/authorize/` and
+`/api/breakglass/webhook/authorize/` route prefixes, including ingress routes.
+The supplied SAR identities are trusted only within that caller/network
+boundary; rate limiting is not authentication. See the
+[SAR security model](security-best-practices.md#sar-authorization-webhook-design-decision).
 
 ## Hub Cluster Configuration
 
@@ -300,9 +337,9 @@ The webhook evaluates requests in this order:
 
 ### Authentication
 
-- Rotate webhook tokens regularly
-- Use strong credentials
-- Grant minimal required permissions
+- Validate caller credentials at the gateway or proxy when configured; the built-in SAR handler does not validate them.
+- Rotate credentials used by that validating component.
+- Restrict direct listener access and both SAR route aliases to trusted callers.
 
 ### Availability
 
@@ -380,7 +417,7 @@ journalctl -u kubelet | grep authorization
 kubectl --kubeconfig=/etc/kubernetes/breakglass-webhook-kubeconfig.yaml cluster-info
 
 # Check breakglass logs
-kubectl logs -n breakglass-system deployment/breakglass-controller
+kubectl logs -n breakglass-system deployment/breakglass-manager
 ```
 
 ## Preventing Recursive Webhook Calls

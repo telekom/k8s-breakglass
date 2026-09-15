@@ -24,8 +24,6 @@ const baseProps = {
   targetNamespace: "default",
   requestedDuration: "1h",
   reason: "",
-  scheduledStartTime: "",
-  useScheduledStart: false,
   extraDeployValues: {},
   showAdvancedOptions: false,
 };
@@ -124,18 +122,9 @@ describe("SessionConfigForm", () => {
     expect(wrapper.find('[data-testid="extra-variables-section"]').exists()).toBe(true);
   });
 
-  it("renders schedule checkbox", () => {
+  it("does not render unsupported delayed-start controls", () => {
     const wrapper = factory();
-    expect(wrapper.find('[data-testid="schedule-checkbox"]').exists()).toBe(true);
-  });
-
-  it("shows scheduled time input when useScheduledStart is true", () => {
-    const wrapper = factory({ useScheduledStart: true });
-    expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(true);
-  });
-
-  it("hides scheduled time input when useScheduledStart is false", () => {
-    const wrapper = factory({ useScheduledStart: false });
+    expect(wrapper.find('[data-testid="schedule-checkbox"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(false);
   });
 });

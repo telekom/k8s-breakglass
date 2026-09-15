@@ -24,6 +24,45 @@
 - **Automatic Cluster Cache Invalidation** - Watches ClusterConfig and kubeconfig Secret changes to refresh connectivity instantly
 - **Rich Prometheus Signals** - API endpoints expose dedicated request/error/duration metrics for fine-grained SLOs
 
+## Standalone cluster-validator image
+
+This repository also contains a provider-neutral, read-only
+`cluster-validator` image definition for one-time and post-upgrade Kubernetes
+readiness reports. It uses only public Kubernetes APIs, has no T-CaaS-specific
+checks or assumptions, and supports `linux/amd64` and `linux/arm64`. This tree
+builds the image and local OCI archive but does not publish a release image;
+follow the deployment pipeline's signing and registry instructions before use.
+See the
+[cluster-validator contract and image guide](./docs/cluster-validator.md) and
+the [post-upgrade runbook](./docs/runbooks/cluster-validator.md). The image's
+in-container operator bundle is in
+[`utils/cluster-validator`](./utils/cluster-validator/).
+
+## 🎬 User-flow recordings
+
+The repository includes real E2E recordings of the Breakglass user journey:
+
+| Perspective | Recording |
+| --- | --- |
+| CLI, `kubectl` identity/API access, and debug-pod `tcpdump` | [Play/download asciinema cast](./docs/demos/breakglass-user-flow.cast) |
+| 4:3 browser UI only | [Watch/download WebM](./docs/demos/breakglass-ui-browser-flow.webm) |
+| Synchronized `bgctl`/`kubectl` console only | [Play asciinema](./docs/demos/breakglass-console-flow.cast) · [Watch WebM](./docs/demos/breakglass-console-flow.webm) |
+| 4:3 browser UI plus synchronized console | [Watch/download WebM](./docs/demos/breakglass-ui-flow.webm) |
+| REST API and authorization webhook details | [Play/download asciinema cast](./docs/demos/breakglass-api-flow.cast) |
+
+**CLI recording — inline preview; click it for the full asciinema cast:**
+
+[![Breakglass CLI recording](./docs/demos/breakglass-user-flow.gif)](./docs/demos/breakglass-user-flow.cast)
+
+<video controls width="960" src="./docs/demos/breakglass-ui-flow.webm">
+  Browser UI plus narrated kubectl console recording.
+</video>
+
+```bash
+asciinema play docs/demos/breakglass-user-flow.cast
+asciinema play docs/demos/breakglass-api-flow.cast
+```
+
 ## Architecture
 
 **Components:**
@@ -66,6 +105,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[AuditConfig](./docs/audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
 - **[MailProvider](./docs/mail-provider.md)** - Email notification configuration
 - **[Debug Session](./docs/debug-session.md)** - Debug sessions and templates
+- **[Workload diagnostics image runbook](./docs/runbooks/workload-debug.md)** - Restricted standalone DNS/TLS/HTTP/Kubernetes API diagnostics (`workload-diagnostics` intent)
 
 **Integration & Advanced Topics:**
 
@@ -145,7 +185,7 @@ make install                            # install CRDs
 make deploy_dev                         # deploy breakglass and dependencies
 
 # Access the application
-# Breakglass UI:  https://breakglass-dev:30081
+# Breakglass UI:  https://breakglass-dev:31081
 # Keycloak:       https://breakglass-dev:30083
 # MailHog:        http://breakglass-dev:30084
 ```
@@ -204,8 +244,10 @@ See [Webhook Setup Guide](./docs/webhook-setup.md) for complete configuration in
 
 **API Server Configuration Example:**
 
+For Kubernetes 1.34 and later (structured authorization configuration):
+
 ```yaml
-apiVersion: apiserver.config.k8s.io/v1beta1
+apiVersion: apiserver.config.k8s.io/v1
 kind: AuthorizationConfiguration
 authorizers:
   - type: Node
@@ -215,13 +257,32 @@ authorizers:
   - type: Webhook
     name: breakglass
     webhook:
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       timeout: 3s
+      subjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
         kubeConfigFile: /etc/kubernetes/breakglass-authz.kubeconfig
 ```
+
+Clusters older than 1.34 must use the legacy webhook mode and disable both
+decision caches:
+
+```text
+--authorization-mode=Node,RBAC,Webhook
+--authorization-webhook-config-file=/etc/kubernetes/breakglass-webhook-config.yaml
+--authorization-webhook-cache-authorized-ttl=0s
+--authorization-webhook-cache-unauthorized-ttl=0s
+```
+
+For structured configuration, keep `cacheAuthorizedRequests: false` for
+session-derived access; `authorizedTTL` is inactive while that cache is
+disabled. In legacy mode, set the authorized cache TTL flag to `0s`.
 
 ## 📖 Custom Resources
 

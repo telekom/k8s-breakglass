@@ -2,7 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Page } from "@playwright/test";
+import type { Page } from "@playwright/test";
+
+interface CleanupSession {
+  metadata?: {
+    name?: string;
+  };
+  name?: string;
+  status?: {
+    state?: string;
+  };
+  state?: string;
+}
 
 /**
  * Helper class for cleaning up test data via API calls.
@@ -65,7 +76,7 @@ export class APICleanupHelper {
    * Get pending sessions for the current user.
    * Makes an authenticated API call using the OIDC Bearer token.
    */
-  async getPendingSessions(): Promise<unknown[]> {
+  async getPendingSessions(): Promise<CleanupSession[]> {
     try {
       const token = await this.getAccessToken();
       if (!token) {
@@ -90,7 +101,7 @@ export class APICleanupHelper {
         },
         { apiBase: this.baseUrl, authToken: token },
       );
-      return response;
+      return response as CleanupSession[];
     } catch (e) {
       console.warn("Failed to get pending sessions:", e);
       return [];
@@ -113,10 +124,8 @@ export class APICleanupHelper {
           const resp = await fetch(`${apiBase}/api/breakglassSessions/${encodeURIComponent(name)}/withdraw`, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
               Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({}),
           });
           return resp.ok;
         },
@@ -170,10 +179,8 @@ export class APICleanupHelper {
           const resp = await fetch(`${apiBase}/api/breakglassSessions/${encodeURIComponent(name)}/drop`, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
               Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({}),
           });
           return resp.ok;
         },

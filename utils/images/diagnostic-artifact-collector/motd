@@ -1,0 +1,24 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC-BY-4.0
+
+Diagnostic artifact collector
+
+This image executes only immutable, reviewed recipes. See:
+  /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection/README.md
+  /usr/share/breakglass/runbooks/upstream/diagnostic-artifact-collection/RUNBOOK.md
+
+Optional internal documentation (read-only, never executed):
+  /usr/share/breakglass/runbooks/internal
+
+Recipes:
+  system-summary.v1 (detailLevel basic|extended, 2m, 16 MiB)
+  crashdump-collection.v1 (nodeName + maxAgeMinutes, 15m, 512 MiB)
+The crashdump recipe requires its controller host-path capability; both
+recipes require session upload-egress. No arbitrary commands, paths, mounts,
+credentials, or storage fallback are accepted.
+
+The uploader consumes /output/artifact.tar.gz only after /output/artifact.ready
+exists. The archive is bounded, private, and never overwrites an output.
+The collector is offline; only the UID 65532 uploader connects to the exact
+controller endpoint using the bundled verified CA roots. Crashdump collection
+may run as UID 0 with all capabilities dropped when host files require it.

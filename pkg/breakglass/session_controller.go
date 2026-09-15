@@ -19,17 +19,19 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/ratelimit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	durationutils "github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 )
 
 const (
-	MonthDuration            = time.Hour * 24 * 30
-	WeekDuration             = time.Hour * 24 * 7
-	DefaultValidForDuration  = time.Hour
-	DefaultRetainForDuration = MonthDuration
+	MonthDuration            = durationutils.MonthDuration
+	WeekDuration             = durationutils.WeekDuration
+	DefaultValidForDuration  = durationutils.DefaultValidForDuration
+	DefaultRetainForDuration = durationutils.DefaultRetainForDuration
 	APIContextTimeout        = 30 * time.Second // Timeout for API operations like session listing
 
 	// MaxApproverGroupMembers limits the number of members resolved from a single approver group.
@@ -72,10 +74,16 @@ const (
 	ApprovalDenialSelfApprovalBlocked ApprovalDenialReason = "SELF_APPROVAL_BLOCKED"
 	// ApprovalDenialDomainNotAllowed indicates the approver's email domain is not in the allowed list.
 	ApprovalDenialDomainNotAllowed ApprovalDenialReason = "DOMAIN_NOT_ALLOWED"
+	// ApprovalDenialIdentityProviderNotAllowed indicates the approver authenticated through a disallowed IdentityProvider.
+	ApprovalDenialIdentityProviderNotAllowed ApprovalDenialReason = "IDP_NOT_ALLOWED"
 	// ApprovalDenialNotAnApprover indicates the user is not in any approver group/list for matching escalations.
 	ApprovalDenialNotAnApprover ApprovalDenialReason = "NOT_AN_APPROVER"
 	// ApprovalDenialNoMatchingEscalation indicates no escalation was found for the session's granted group.
 	ApprovalDenialNoMatchingEscalation ApprovalDenialReason = "NO_MATCHING_ESCALATION"
+	// ApprovalDenialClusterApprovalPolicyAmbiguous indicates the cluster approval policy could not be resolved safely.
+	ApprovalDenialClusterApprovalPolicyAmbiguous ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_AMBIGUOUS"
+	// ApprovalDenialClusterApprovalPolicyLookupFailed indicates the cluster approval policy lookup failed before uniqueness could be determined.
+	ApprovalDenialClusterApprovalPolicyLookupFailed ApprovalDenialReason = "CLUSTER_APPROVAL_POLICY_LOOKUP_FAILED"
 )
 
 // BreakglassSessionRequest is defined in clusteruser.go and includes an optional Reason field.
@@ -127,6 +135,16 @@ type AuditEmitter interface {
 // State takes absolute priority over timestamps. Terminal states (Rejected, Withdrawn, Expired, Timeout)
 // are never pending, regardless of timestamp values.
 func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool {
+	if session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+		return false
+	}
+	return isSessionPendingApprovalAt(session, time.Now())
+}
+
+// isSessionPendingApprovalAt is the clock-injectable implementation used by
+// the public helper and its boundary tests. A timeout reached at exactly now
+// is no longer an open approval window.
+func isSessionPendingApprovalAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
 	// CRITICAL: Check STATE FIRST - terminal states are never pending
 	if session.Status.State == breakglassv1alpha1.SessionStateRejected ||
 		session.Status.State == breakglassv1alpha1.SessionStateWithdrawn ||
@@ -143,7 +161,7 @@ func IsSessionPendingApproval(session breakglassv1alpha1.BreakglassSession) bool
 
 	// Now verify timeout status (secondary check after state verification)
 	// If TimeoutAt is set and has passed, session is in timeout state (not pending)
-	if !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time) {
+	if !session.Status.TimeoutAt.IsZero() && !now.Before(session.Status.TimeoutAt.Time) {
 		return false
 	}
 
@@ -258,8 +276,11 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
 		if !allowed {
 			retrySecs := int(math.Ceil(retryAfter.Seconds()))
-			c.Header("Retry-After", fmt.Sprintf("%d", retrySecs))
-			c.JSON(http.StatusTooManyRequests, gin.H{"error": "session creation rate limit exceeded, please try again later"})
+			apiresponses.RespondTooManyRequestsWithRetryAfter(
+				c,
+				fmt.Sprintf("%d", retrySecs),
+				"session creation rate limit exceeded, please try again later",
+			)
 			return
 		}
 	}
@@ -275,6 +296,14 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	}
 
 	// Phase 4: Resolve user groups from token or cluster lookup
+	if !wc.validateClusterIdentityProvider(c, ctx, request.Clustername) {
+		return
+	}
+	userIdentifier, clusterConfig, ok := wc.resolveUserIdentifierClaim(c, ctx, request, globalCfg, reqLog)
+	if !ok {
+		return
+	}
+	cug.Username = userIdentifier
 	userGroups, ok := wc.resolveUserGroups(c, ctx, cug, globalCfg, reqLog)
 	if !ok {
 		return
@@ -310,19 +339,13 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		}
 	}
 
-	// Phase 7: Resolve user identifier claim from config
-	userIdentifier, clusterConfig, ok := wc.resolveUserIdentifierClaim(c, ctx, request, globalCfg, reqLog)
-	if !ok {
-		return
-	}
-
 	// Phase 8: Guard against concurrent creation + check for duplicates
 	if wc.inFlightCreates != nil {
 		createKey := request.Clustername + "/" + userIdentifier + "/" + request.GroupName
 		if _, loaded := wc.inFlightCreates.LoadOrStore(createKey, true); loaded {
 			reqLog.Infow("Concurrent session creation already in-flight, returning conflict",
 				"cluster", request.Clustername, "user", userIdentifier, "group", system.RedactGroupName(request.GroupName))
-			c.JSON(http.StatusConflict, gin.H{"error": "session creation already in progress"})
+			apiresponses.RespondConflict(c, "session creation already in progress")
 			return
 		}
 		defer wc.inFlightCreates.Delete(createKey)

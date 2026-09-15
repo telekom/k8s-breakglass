@@ -234,11 +234,35 @@ func TestValidateBreakglassEscalation(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "must not exceed maxValidFor")
 	})
 
+	t.Run("escalation idleTimeout exceeds default maxValidFor", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.IdleTimeout = "2h"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "default 1h")
+	})
+
 	t.Run("escalation idleTimeout exactly at minimum floor", func(t *testing.T) {
 		e := validEscalation()
 		e.Spec.IdleTimeout = "1m"
 		result := ValidateBreakglassEscalation(e)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("escalation retainFor invalid", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.RetainFor = "garbage"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
+
+	t.Run("escalation retainFor must be positive", func(t *testing.T) {
+		e := validEscalation()
+		e.Spec.RetainFor = "0s"
+		result := ValidateBreakglassEscalation(e)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
 	})
 }
 
@@ -359,6 +383,14 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
 	})
 
+	t.Run("idleTimeout exceeds default maxValidFor", func(t *testing.T) {
+		s := validSession()
+		s.Spec.IdleTimeout = "2h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "default 1h")
+	})
+
 	t.Run("idleTimeout within maxValidFor", func(t *testing.T) {
 		s := validSession()
 		s.Spec.IdleTimeout = "30m"
@@ -367,9 +399,19 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.True(t, result.IsValid())
 	})
 
+	t.Run("decimal durations", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "1.5h"
+		s.Spec.IdleTimeout = "0.5h"
+		s.Spec.RetainFor = "1.5h"
+		result := ValidateBreakglassSession(s)
+		assert.True(t, result.IsValid(), result.ErrorMessage())
+	})
+
 	t.Run("idleTimeout with day unit", func(t *testing.T) {
 		s := validSession()
 		s.Spec.IdleTimeout = "1d"
+		s.Spec.MaxValidFor = "2d"
 		result := ValidateBreakglassSession(s)
 		assert.True(t, result.IsValid())
 	})
@@ -403,6 +445,38 @@ func TestValidateBreakglassSession(t *testing.T) {
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "positive")
 	})
+
+	t.Run("invalid maxValidFor format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("maxValidFor must be positive", func(t *testing.T) {
+		s := validSession()
+		s.Spec.MaxValidFor = "0s"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "maxValidFor")
+	})
+
+	t.Run("invalid retainFor format", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "not-a-duration"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
+
+	t.Run("retainFor must be positive", func(t *testing.T) {
+		s := validSession()
+		s.Spec.RetainFor = "-1h"
+		result := ValidateBreakglassSession(s)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "retainFor")
+	})
 }
 
 // ==================== IdentityProvider Validation Tests ====================
@@ -416,8 +490,9 @@ func TestValidateIdentityProvider(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "https://auth.example.com",
-					ClientID:  "breakglass-client",
+					Authority:        "https://auth.example.com",
+					ClientID:         "breakglass-client",
+					ExpectedAudience: "breakglass-client",
 				},
 			},
 		}
@@ -448,6 +523,14 @@ func TestValidateIdentityProvider(t *testing.T) {
 		result := ValidateIdentityProvider(idp)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "clientID")
+	})
+
+	t.Run("missing OIDC expectedAudience", func(t *testing.T) {
+		idp := validIDP()
+		idp.Spec.OIDC.ExpectedAudience = ""
+		result := ValidateIdentityProvider(idp)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "expectedAudience")
 	})
 
 	t.Run("invalid OIDC authority URL", func(t *testing.T) {
@@ -717,7 +800,7 @@ func TestValidateDenyPolicy(t *testing.T) {
 		// Empty DenyPolicy with no rules and no podSecurityRules is now invalid
 		// (also rejected by CEL rule at admission time)
 		assert.False(t, result.IsValid())
-		assert.Contains(t, result.ErrorMessage(), "at least one deny rule or podSecurityRules must be specified")
+		assert.Contains(t, result.ErrorMessage(), "at least one deny rule, impersonationRules or podSecurityRules must be specified")
 	})
 }
 
@@ -858,6 +941,39 @@ func TestValidateAuditConfig(t *testing.T) {
 		result := ValidateAuditConfig(ac)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "Duplicate")
+	})
+
+	t.Run("invalid filtering glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Filtering = &AuditFilterConfig{
+			IncludeUsers: []string{"["},
+		}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.filtering.includeUsers[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
+	})
+
+	t.Run("invalid namespace filtering glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Filtering = &AuditFilterConfig{
+			IncludeNamespaces: &NamespaceFilter{
+				Patterns: []string{"prod-["},
+			},
+		}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.filtering.includeNamespaces.patterns[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
+	})
+
+	t.Run("invalid sink event type glob pattern", func(t *testing.T) {
+		ac := validAC()
+		ac.Spec.Sinks[0].EventTypes = []string{"session.["}
+		result := ValidateAuditConfig(ac)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "spec.sinks[0].eventTypes[0]")
+		assert.Contains(t, result.ErrorMessage(), "invalid glob pattern")
 	})
 }
 
@@ -1423,8 +1539,9 @@ func TestValidateIdentityProvider_MalformedResources(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "://not-a-valid-url",
-					ClientID:  "client",
+					Authority:        "://not-a-valid-url",
+					ClientID:         "client",
+					ExpectedAudience: "client",
 				},
 			},
 		}
@@ -1440,8 +1557,9 @@ func TestValidateIdentityProvider_MalformedResources(t *testing.T) {
 			},
 			Spec: IdentityProviderSpec{
 				OIDC: OIDCConfig{
-					Authority: "https://auth.example.com",
-					ClientID:  "client",
+					Authority:        "https://auth.example.com",
+					ClientID:         "client",
+					ExpectedAudience: "client",
 				},
 				GroupSyncProvider: GroupSyncProviderKeycloak,
 				Keycloak:          &KeycloakGroupSync{}, // Empty config
@@ -1775,7 +1893,7 @@ func TestValidateDebugPodTemplate(t *testing.T) {
 				TemplateString: `apiVersion: v1
 kind: Pod
 metadata:
-  name: {{ .session.name | truncName 63 }}
+  name: {{ .session.name | truncName 63 | k8sName }}
   labels:
     app: {{ .session.name | k8sName }}
 spec:
@@ -1784,10 +1902,10 @@ spec:
     image: busybox
     resources:
       limits:
-        memory: {{ parseQuantity "1Gi" | formatQuantity }}
+        memory: {{ parseQuantity "1Gi" | formatQuantity | yamlQuote }}
     env:
     - name: REQUIRED_VAR
-      value: {{ required "REQUIRED_VAR is required" .vars.requiredValue }}
+      value: {{ required "REQUIRED_VAR is required" .vars.requiredValue | yamlQuote }}
   volumes:
   - name: config
     configMap:
@@ -1822,6 +1940,20 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
+	})
+
+	t.Run("deprecated notify-only expiration remains valid", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "notify-only"},
+			Spec: DebugSessionTemplateSpec{
+				Mode:               DebugSessionModeWorkload,
+				PodTemplateRef:     &DebugPodTemplateReference{Name: "pod-template"},
+				ExpirationBehavior: "notify-only",
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.True(t, result.IsValid(), "legacy notify-only templates must remain writable: %s", result.ErrorMessage())
+		assert.Contains(t, result.Warnings, "spec.expirationBehavior notify-only is deprecated; use terminate with notification.notifyOnExpiry")
 	})
 
 	t.Run("invalid podCopy TTL", func(t *testing.T) {
@@ -1967,6 +2099,29 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		assert.Contains(t, result.ErrorMessage(), "defaultDuration")
 	})
 
+	t.Run("constraint duration validation order is deterministic", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-template",
+			},
+			Spec: DebugSessionTemplateSpec{
+				Mode: DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{
+					Name: "pod-template",
+				},
+				Constraints: &DebugSessionConstraints{
+					MaxDuration:     "invalid-max",
+					DefaultDuration: "invalid-default",
+				},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		require.False(t, result.IsValid())
+		require.Len(t, result.Errors, 2)
+		assert.Equal(t, "spec.constraints.maxDuration", result.Errors[0].Field)
+		assert.Equal(t, "spec.constraints.defaultDuration", result.Errors[1].Field)
+	})
+
 	t.Run("default mode (empty) uses workload", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
@@ -2022,7 +2177,7 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 				PodTemplateRef: &DebugPodTemplateReference{
 					Name: "pod-template",
 				},
-				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ .vars.customLabel | default \"default\" }}",
+				PodOverridesTemplate: "metadata:\n  labels:\n    custom: {{ .vars.customLabel | default \"default\" | yamlQuote }}",
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
@@ -2323,7 +2478,7 @@ func TestDebugSessionTemplate_WithSchedulingOptions(t *testing.T) {
 					NodeSelector: map[string]string{
 						"node-pool": "general",
 					},
-					DeniedNodes: []string{"control-plane-*"},
+					DeniedNodes: []string{"control-plane-1"},
 					DeniedNodeLabels: map[string]string{
 						"node-role.kubernetes.io/control-plane": "*",
 					},
@@ -3189,7 +3344,7 @@ spec:
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
 				TemplateString: `apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: test
 spec:
@@ -3204,7 +3359,7 @@ spec:
 		result := ValidateDebugPodTemplate(template)
 		assert.False(t, result.IsValid())
 		assert.Contains(t, result.ErrorMessage(), "unsupported kind")
-		assert.Contains(t, result.ErrorMessage(), "Job")
+		assert.Contains(t, result.ErrorMessage(), "CronJob")
 	})
 
 	t.Run("wrong apiVersion for Pod is rejected", func(t *testing.T) {
@@ -3267,7 +3422,7 @@ kind: Pod
 spec:
   containers:
     - name: debug-{{ .session.name }}
-      image: {{ .vars.image | default "busybox:latest" }}
+      image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
 `,
 			},
 		}
@@ -3674,7 +3829,7 @@ kind: Pod
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image }}
+      image: {{ .vars.image | yamlQuote }}
 `, map[string]string{"image": "busybox:latest"})
 		assert.Empty(t, warnings, "template with provided var should render cleanly")
 	})
@@ -3782,16 +3937,16 @@ spec:
     spec:
       containers:
         - name: debug
-          image: {{ .vars.image | default "busybox:latest" }}
+          image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
           command: ["sleep", "infinity"]
 `, map[string]string{"image": "alpine:3.21"})
 		assert.Empty(t, warnings, "real-world DaemonSet template should render cleanly")
 	})
 }
 
-// ==================== DebugPodTemplate Dry-Run Integration Tests ====================
+// ==================== DebugPodTemplate Non-Executing Admission Tests ====================
 
-func TestValidateDebugPodTemplate_DryRunWarnings(t *testing.T) {
+func TestValidateDebugPodTemplate_DoesNotExecuteTemplates(t *testing.T) {
 	t.Run("valid Go template produces no warnings", func(t *testing.T) {
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
@@ -3802,16 +3957,16 @@ metadata:
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image | default "busybox:latest" }}
+      image: {{ .vars.image | default "busybox:latest" | yamlQuote }}
 `,
 			},
 		}
 		result := ValidateDebugPodTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
-		assert.Empty(t, result.Warnings, "no dry-run warnings expected for valid template")
+		assert.Empty(t, result.Warnings, "no execution warnings expected for valid template")
 	})
 
-	t.Run("template with execution error gets warning", func(t *testing.T) {
+	t.Run("template with execution error is not executed", func(t *testing.T) {
 		// Use `call` on a non-function value to force an execution error
 		template := &DebugPodTemplate{
 			Spec: DebugPodTemplateSpec{
@@ -3819,7 +3974,7 @@ spec:
 kind: Pod
 spec:
   containers:
-    - name: {{ call .session.name }}
+    - name: {{ call .session.name | yamlQuote }}
       image: busybox
 `,
 			},
@@ -3827,14 +3982,14 @@ spec:
 		result := ValidateDebugPodTemplate(template)
 		// Template syntax is valid, format is skipped (has {{), no format errors expected
 		assert.True(t, result.IsValid(), "template syntax is valid")
-		// But dry-run should warn about execution failure
-		assert.NotEmpty(t, result.Warnings, "expected dry-run warning for execution error")
+		// Admission must not execute the call expression.
+		assert.Empty(t, result.Warnings, "admission must not execute template expressions")
 	})
 }
 
-// ==================== DebugSessionTemplate Dry-Run Integration Tests ====================
+// ==================== DebugSessionTemplate Non-Executing Admission Tests ====================
 
-func TestValidateDebugSessionTemplate_DryRunWarnings(t *testing.T) {
+func TestValidateDebugSessionTemplate_DoesNotExecuteTemplates(t *testing.T) {
 	t.Run("valid Go template with ExtraDeployVariables defaults", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
@@ -3846,7 +4001,7 @@ metadata:
 spec:
   containers:
     - name: debug
-      image: {{ .vars.image }}
+      image: {{ .vars.image | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -3862,7 +4017,7 @@ spec:
 		assert.Empty(t, result.Warnings, "valid template with var defaults should produce no warnings")
 	})
 
-	t.Run("var without default gets PLACEHOLDER", func(t *testing.T) {
+	t.Run("var without default is accepted without evaluation", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
 				Mode: DebugSessionModeWorkload,
@@ -3871,25 +4026,25 @@ kind: Pod
 spec:
   containers:
     - name: debug
-      image: {{ .vars.customImage }}
+      image: {{ .vars.customImage | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
 						Name:      "customImage",
 						InputType: InputTypeText,
 						Required:  true,
-						// No default — should get PLACEHOLDER
+						// No default: admission does not evaluate the variable.
 					},
 				},
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
-		// PLACEHOLDER is valid YAML, so no warnings expected
-		assert.Empty(t, result.Warnings, "PLACEHOLDER should be valid YAML")
+		// Admission checks output syntax without substituting defaults.
+		assert.Empty(t, result.Warnings, "missing defaults do not trigger execution warnings")
 	})
 
-	t.Run("template with execution error gets warning", func(t *testing.T) {
+	t.Run("template with execution error is not executed", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			Spec: DebugSessionTemplateSpec{
 				Mode: DebugSessionModeWorkload,
@@ -3897,15 +4052,14 @@ spec:
 kind: Pod
 spec:
   containers:
-    - name: {{ call .session.name }}
+    - name: {{ call .session.name | yamlQuote }}
       image: busybox
 `,
 			},
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid(), "syntax is valid, format skipped due to {{")
-		assert.NotEmpty(t, result.Warnings, "execution failure should produce dry-run warning")
-		assert.Contains(t, result.Warnings[0], "dry-run render warning")
+		assert.Empty(t, result.Warnings, "admission must not execute template expressions")
 	})
 
 	t.Run("non-templated podTemplateString skips dry-run", func(t *testing.T) {
@@ -3920,7 +4074,7 @@ spec:
 		}
 		result := ValidateDebugSessionTemplate(template)
 		assert.True(t, result.IsValid())
-		// No {{ in template, so tryRenderTemplateString returns nil immediately
+		// Plain manifests require no template execution.
 		assert.Empty(t, result.Warnings)
 	})
 
@@ -4397,7 +4551,10 @@ spec:
   containers:
     - name: debug
       image: busybox
-      args: {{ .vars.args }}
+      args:
+{{ range .vars.args | fromJson }}
+        - {{ . | yamlQuote }}
+{{ end }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4424,7 +4581,7 @@ spec:
       image: busybox
       env:
         - name: CONFIG
-          value: {{ .vars.config }}
+          value: {{ .vars.config | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4505,7 +4662,7 @@ spec:
       image: busybox
       env:
         - name: REPLICAS
-          value: {{ .vars.replicas }}
+          value: {{ .vars.replicas | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{
@@ -4533,7 +4690,7 @@ spec:
       image: busybox
       env:
         - name: RATIO
-          value: {{ .vars.ratio }}
+          value: {{ .vars.ratio | yamlQuote }}
 `,
 				ExtraDeployVariables: []ExtraDeployVariable{
 					{

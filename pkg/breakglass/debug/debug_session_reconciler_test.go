@@ -21,21 +21,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"github.com/telekom/k8s-breakglass/pkg/cluster"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
 // Helper to create a fake client with status subresource support
@@ -110,6 +117,7 @@ func newTestDebugSession(name, templateRef, cluster, user string) *breakglassv1a
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: "breakglass",
+			UID:       types.UID(name + "-uid"),
 		},
 		Spec: breakglassv1alpha1.DebugSessionSpec{
 			Cluster:           cluster,
@@ -401,7 +409,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		fetchedSession.Status.Message = "Session rejected: Insufficient justification"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -416,7 +424,7 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
 		assert.NotNil(t, fetchedSession.Status.Approval.RejectedAt)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("session approval times out in reconciler", func(t *testing.T) {
@@ -459,6 +467,47 @@ func TestDebugSessionReconciler_ApprovalWorkflow(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "Approval timed out")
+	})
+
+	t.Run("session approval timeout conflict preserves live status", func(t *testing.T) {
+		timeout := breakglass.DebugSessionApprovalTimeout
+
+		stale := newTestDebugSession("timeout-conflict-session", "test-template", "production", "user@example.com")
+		stale.ResourceVersion = "1"
+		stale.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * timeout))
+		stale.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		stale.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
+			Required: true,
+		}
+
+		live := stale.DeepCopy()
+		live.ResourceVersion = "2"
+		live.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		live.Status.Message = "activated concurrently"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(live).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := NewDebugSessionController(
+			zap.NewNop().Sugar(), fakeClient, nil,
+		)
+
+		result, err := controller.handlePendingApproval(context.Background(), stale)
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, stale.Status.State)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{
+			Name:      "timeout-conflict-session",
+			Namespace: "breakglass",
+		}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+		assert.Equal(t, "activated concurrently", updated.Status.Message)
 	})
 
 	t.Run("session within approval timeout requeues", func(t *testing.T) {
@@ -614,6 +663,73 @@ func TestDebugSessionReconciler_ExpirationHandling(t *testing.T) {
 	})
 }
 
+func TestDebugSessionReconciler_ExpiryNotificationAndHardExpiry(t *testing.T) {
+	tests := []struct {
+		name               string
+		expirationBehavior string
+		notification       *breakglassv1alpha1.DebugSessionNotificationConfig
+		wantMessages       int
+	}{
+		{
+			name:               "terminate sends the requested expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: true,
+			},
+			wantMessages: 1,
+		},
+		{
+			name:               "terminate respects a disabled expiry email",
+			expirationBehavior: "terminate",
+			notification: &breakglassv1alpha1.DebugSessionNotificationConfig{
+				Enabled:        true,
+				NotifyOnExpiry: false,
+			},
+		},
+		{
+			name:               "deprecated notify-only still emails and expires",
+			expirationBehavior: "notify-only",
+			wantMessages:       1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pastTime := metav1.NewTime(time.Now().UTC().Add(-time.Minute))
+			session := newTestDebugSession("expired-session", "test-template", "test-cluster", "user@example.com")
+			session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+			session.Status.ExpiresAt = &pastTime
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+				ExpirationBehavior: tt.expirationBehavior,
+				Notification:       tt.notification,
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			mailService := NewMockMailEnqueuer(true)
+			controller := &DebugSessionController{
+				log:          zap.NewNop().Sugar(),
+				client:       fakeClient,
+				mailService:  mailService,
+				brandingName: "Breakglass",
+			}
+
+			result, err := controller.handleActive(context.Background(), session.DeepCopy())
+			require.NoError(t, err)
+			assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+			var stored breakglassv1alpha1.DebugSession
+			require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+			assert.Equal(t, "Session expired", stored.Status.Message)
+			require.Len(t, mailService.GetMessages(), tt.wantMessages)
+			if tt.wantMessages == 1 {
+				assert.Contains(t, mailService.GetMessages()[0].Subject, "Debug Session Expired")
+			}
+		})
+	}
+}
+
 func TestDebugSessionReconciler_DeployedResourcesTracking(t *testing.T) {
 	scheme := testScheme()
 
@@ -767,6 +883,185 @@ func TestDebugSessionReconciler_AllowedPodsTracking(t *testing.T) {
 	})
 }
 
+func TestAllowedPodRefFromPodPreservesUID(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       types.UID("debug-pod-uid"),
+	}}
+
+	ref := allowedPodRefFromPod(pod, true, nil)
+
+	require.Equal(t, breakglassv1alpha1.AllowedPodRef{
+		Namespace: "breakglass-debug",
+		Name:      "debug-pod",
+		UID:       "debug-pod-uid",
+		Ready:     true,
+	}, ref)
+}
+
+func TestDebugSessionReconciler_UpdateAllowedPodsDoesNotOverwriteRenewalOrParticipants(t *testing.T) {
+	scheme := testScheme()
+
+	oldExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute).Truncate(time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(2 * time.Hour).Truncate(time.Second))
+	joinedAt := metav1.Now()
+
+	session := newTestDebugSession("pods-live-merge-session", "test-template", "test-cluster", "owner@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &renewedExpiry
+	session.Status.RenewalCount = 1
+	session.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{
+		{
+			User:     "owner@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleOwner,
+			JoinedAt: joinedAt,
+		},
+		{
+			User:     "peer@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleParticipant,
+			JoinedAt: joinedAt,
+		},
+	}
+	session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+		{
+			Namespace: "breakglass-debug",
+			Name:      "old-pod",
+			Ready:     true,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	staleSession := session.DeepCopy()
+	staleSession.Status.ExpiresAt = &oldExpiry
+	staleSession.Status.RenewalCount = 0
+	staleSession.Status.Participants = staleSession.Status.Participants[:1]
+
+	controller := &DebugSessionController{
+		client: fakeClient,
+		log:    zap.NewNop().Sugar(),
+	}
+	allowedPods := []breakglassv1alpha1.AllowedPodRef{
+		{
+			Namespace: "breakglass-debug",
+			Name:      "new-pod",
+			NodeName:  "worker-1",
+			Ready:     true,
+			Phase:     string(corev1.PodRunning),
+		},
+	}
+
+	err := controller.patchDebugSessionAllowedPods(context.Background(), staleSession, allowedPods)
+	require.NoError(t, err)
+
+	var fetchedSession breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      "pods-live-merge-session",
+		Namespace: "breakglass",
+	}, &fetchedSession)
+	require.NoError(t, err)
+
+	require.NotNil(t, fetchedSession.Status.ExpiresAt)
+	assert.True(t, fetchedSession.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", fetchedSession.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), fetchedSession.Status.RenewalCount)
+	require.Len(t, fetchedSession.Status.Participants, 2)
+	assert.Equal(t, "peer@example.com", fetchedSession.Status.Participants[1].User)
+	assert.Equal(t, allowedPods, fetchedSession.Status.AllowedPods)
+}
+
+func TestDebugSessionController_UpdateAuxiliaryResourceReadiness(t *testing.T) {
+	scheme := testScheme()
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-config", Namespace: "debug-ns", UID: types.UID("ready-config-uid")},
+	}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "ready-secret", Namespace: "debug-ns", UID: types.UID("ready-secret-uid")},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, secret).Build()
+	session := newTestDebugSession("aux-readiness", "test-template", "test-cluster", "user@example.com")
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+		{
+			Name:         "ready-config",
+			Kind:         "ConfigMap",
+			APIVersion:   "v1",
+			ResourceName: "ready-config",
+			Namespace:    "debug-ns",
+			UID:          "ready-config-uid",
+			Created:      true,
+			AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{
+				{
+					Kind:         "Secret",
+					APIVersion:   "v1",
+					ResourceName: "ready-secret",
+					Namespace:    "debug-ns",
+					UID:          "ready-secret-uid",
+				},
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := &DebugSessionController{
+		log:          zap.NewNop().Sugar(),
+		auxiliaryMgr: NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil),
+	}
+
+	require.NoError(t, controller.updateAuxiliaryResourceReadiness(context.Background(), session, targetClient))
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.True(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	require.Equal(t, "Current", session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+
+	require.NoError(t, breakglass.ApplyDebugSessionStatus(context.Background(), fakeClient, session))
+
+	var persisted breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      "aux-readiness",
+		Namespace: "breakglass",
+	}, &persisted))
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].ReadinessStatus)
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources, 1)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Ready)
+	assert.Equal(t, "Current", persisted.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].ReadinessStatus)
+}
+
+func TestStartAuxiliaryStatusTracking(t *testing.T) {
+	t.Run("configured resources force explicit empty status list", func(t *testing.T) {
+		session := newTestDebugSession("aux-empty-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, true)
+
+		if statuses == nil {
+			t.Fatal("expected non-nil auxiliary status slice")
+		}
+		if session.Status.AuxiliaryResourceStatuses == nil {
+			t.Fatal("expected non-nil session auxiliary status slice")
+		}
+		assert.Empty(t, statuses)
+		assert.Empty(t, session.Status.AuxiliaryResourceStatuses)
+	})
+
+	t.Run("unconfigured resources leave status untouched", func(t *testing.T) {
+		session := newTestDebugSession("aux-no-status", "test-template", "test-cluster", "user@example.com")
+
+		statuses := startAuxiliaryStatusTracking(session, false)
+
+		assert.Nil(t, statuses)
+		assert.Nil(t, session.Status.AuxiliaryResourceStatuses)
+	})
+}
+
 func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 	scheme := testScheme()
 
@@ -796,6 +1091,227 @@ func TestDebugSessionReconciler_TerminalSharing(t *testing.T) {
 		assert.True(t, fetchedSession.Status.TerminalSharing.Enabled)
 		assert.Contains(t, fetchedSession.Status.TerminalSharing.AttachCommand, "tmux")
 	})
+}
+
+func TestDebugSessionReconciler_HandleActiveDoesNotExpireRenewedStaleSnapshot(t *testing.T) {
+	scheme := testScheme()
+	pastExpiry := metav1.NewTime(time.Now().Add(-time.Minute))
+	renewedExpiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+	liveSession := newTestDebugSession("renewed-active-session", "test-template", "test-cluster", "user@example.com")
+	liveSession.ResourceVersion = "2"
+	liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	liveSession.Status.ExpiresAt = &renewedExpiry
+	liveSession.Status.RenewalCount = 1
+
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &pastExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	metrics.DebugSessionsActive.WithLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef).Set(3)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef)
+	})
+
+	result, err := controller.handleActive(context.Background(), staleSession)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+	assert.Equal(t, float64(3), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(liveSession.Spec.Cluster, liveSession.Spec.TemplateRef)))
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      liveSession.Name,
+		Namespace: liveSession.Namespace,
+	}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updated.Status.State)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	assert.Empty(t, updated.Status.Message)
+}
+
+func TestDebugSessionReconcilerFailsActiveSessionWithoutExpiry(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("missing-expiry", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Annotations = map[string]string{quotas.AdmissionAnnotation: quotas.Pending}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		Status:     breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session, template).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
+		Build()
+	controller := &DebugSessionController{
+		log:            zap.NewNop().Sugar(),
+		client:         fakeClient,
+		apiReader:      fakeClient,
+		quotaNamespace: "controller",
+		quotaEnabled:   true,
+	}
+	metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef).Set(1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)
+	})
+
+	result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{
+		Name: session.Name, Namespace: session.Namespace,
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+	assert.Contains(t, stored.Status.Message, "has no expiry")
+	assert.Nil(t, stored.Status.ExpiresAt)
+	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DebugSessionsActive.WithLabelValues(session.Spec.Cluster, session.Spec.TemplateRef)))
+}
+
+func TestDebugSessionReconciler_HandleActiveDoesNotMarkRenewedSessionExpiringSoonFromStaleSnapshot(t *testing.T) {
+	scheme := testScheme()
+	staleExpiry := metav1.NewTime(time.Now().Add(30 * time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+
+	liveSession := newTestDebugSession("renewed-grace-session", "test-template", "test-cluster", "user@example.com")
+	liveSession.ResourceVersion = "2"
+	liveSession.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	liveSession.Status.ExpiresAt = &renewedExpiry
+	liveSession.Status.RenewalCount = 1
+	liveSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+		GracePeriodBeforeExpiry: "1m",
+	}
+
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &staleExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	result, err := controller.handleActive(context.Background(), staleSession)
+	require.NoError(t, err)
+	assert.Equal(t, reconcile.Result{}, result)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), types.NamespacedName{
+		Name:      liveSession.Name,
+		Namespace: liveSession.Namespace,
+	}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	assert.Empty(t, updated.Status.Message)
+}
+
+func TestDebugSessionReconciler_HandleActiveExpiresWhenRecoveryFails(t *testing.T) {
+	scheme := testScheme()
+	expiredAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	session := newTestDebugSession("expired-recovery-session", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &expiredAt
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+		Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+			ID:    "prepared-op",
+			Kind:  "ephemeral-container",
+			State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			TargetPod: breakglassv1alpha1.KubectlDebugOperationTargetPod{
+				Namespace: "default",
+				Name:      "target-pod",
+				UID:       "target-uid",
+			},
+			EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{
+				Name:                  "debugger",
+				Image:                 "busybox:latest",
+				Command:               []string{"sh"},
+				SecurityContextDigest: "digest",
+				TTY:                   true,
+				Stdin:                 true,
+			},
+			RequestedBy: "user@example.com",
+			PreparedAt:  stalePreparedAt(),
+		}},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	result, err := controller.handleActive(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, updated.Status.State)
+	assert.Equal(t, "Session expired", updated.Status.Message)
+}
+
+func TestDebugSessionReconciler_HandleActiveUsesExtendedGracePeriod(t *testing.T) {
+	scheme := testScheme()
+	expiresAt := metav1.NewTime(time.Now().Add(12 * time.Hour))
+	session := newTestDebugSession("extended-grace-session", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	session.Status.ExpiresAt = &expiresAt
+	session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+		GracePeriodBeforeExpiry: "1d",
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	controller := &DebugSessionController{
+		log:    zap.NewNop().Sugar(),
+		client: fakeClient,
+	}
+
+	_, err := controller.handleActive(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{
+		Name: session.Name, Namespace: session.Namespace,
+	}, &updated))
+	assert.Equal(t, "Session expiring soon", updated.Status.Message)
 }
 
 func TestDebugSessionReconciler_KubectlDebugStatus(t *testing.T) {
@@ -1276,6 +1792,12 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 			shouldError: true,
 		},
 		{
+			name:        "rejected cannot go to active",
+			fromState:   breakglassv1alpha1.DebugSessionStateRejected,
+			toState:     breakglassv1alpha1.DebugSessionStateActive,
+			shouldError: true,
+		},
+		{
 			name:        "active can go to terminated",
 			fromState:   breakglassv1alpha1.DebugSessionStateActive,
 			toState:     breakglassv1alpha1.DebugSessionStateTerminated,
@@ -1296,6 +1818,7 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 
 			// Terminal states should not transition back to active
 			isTerminalState := tt.fromState == breakglassv1alpha1.DebugSessionStateExpired ||
+				tt.fromState == breakglassv1alpha1.DebugSessionStateRejected ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateTerminated ||
 				tt.fromState == breakglassv1alpha1.DebugSessionStateFailed
 
@@ -1304,6 +1827,93 @@ func TestDebugSessionReconciler_InvalidStateTransitions(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDebugSessionController_RejectedCleanupAndLegacyRejectedMetadata(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("rejected_with_owned_resource_requeues_cleanup", func(t *testing.T) {
+		session := newTestDebugSession("rejected-cleanup", "test-template", "test-cluster", "user@example.com")
+		session.Finalizers = []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "owned-debug-config", Namespace: "breakglass-debug", Source: "pod-template"},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.NotEqual(t, reconcile.Result{}, result, "rejected sessions with owned resources must retry cleanup")
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, stored.Status.State)
+		assert.Equal(t, []string{"breakglass.t-caas.telekom.com/debug-session-cleanup"}, stored.Finalizers)
+	})
+
+	t.Run("legacy_terminated_rejection_metadata_remains_terminal", func(t *testing.T) {
+		rejectedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+		session := newTestDebugSession("legacy-rejected", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{RejectedAt: &rejectedAt, RejectedBy: "approver"}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "test-template"}}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+			WithObjects(session, template).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+		controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{NamespacedName: client.ObjectKeyFromObject(session)})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result)
+		var stored breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, stored.Status.State)
+		assert.NotNil(t, stored.Status.Approval.RejectedAt)
+	})
+}
+
+func TestDebugSessionController_CleanupAccountingOnlyReleasesActiveSessionsOnce(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "accounting-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+		},
+		Status: breakglassv1alpha1.DebugSessionTemplateStatus{ActiveSessionCount: 1},
+	}
+	startedAt := metav1.NewTime(time.Now().Add(-time.Minute))
+	activeTerminated := newTestDebugSession("accounted-terminated", template.Name, "test-cluster", "user@example.com")
+	activeTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	activeTerminated.Status.StartsAt = &startedAt
+	rejected := newTestDebugSession("never-active-rejected", template.Name, "test-cluster", "user@example.com")
+	rejected.Spec.Cluster = "other-cluster"
+	rejected.Status.State = breakglassv1alpha1.DebugSessionStateRejected
+
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(template, activeTerminated, rejected).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), fakeClient, nil)
+	activeMetric := metrics.DebugSessionsActive.WithLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+	rejectedMetric := metrics.DebugSessionsActive.WithLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	activeBaseline := testutil.ToFloat64(activeMetric)
+	activeMetric.Set(activeBaseline + 1)
+	t.Cleanup(func() {
+		metrics.DebugSessionsActive.DeleteLabelValues(activeTerminated.Spec.Cluster, activeTerminated.Spec.TemplateRef)
+		metrics.DebugSessionsActive.DeleteLabelValues(rejected.Spec.Cluster, rejected.Spec.TemplateRef)
+	})
+
+	_, err := controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+	_, err = controller.handleCleanup(context.Background(), activeTerminated)
+	require.NoError(t, err)
+	assert.Equal(t, activeBaseline, testutil.ToFloat64(activeMetric))
+
+	_, err = controller.handleCleanup(context.Background(), rejected)
+	require.NoError(t, err)
+	assert.Equal(t, float64(0), testutil.ToFloat64(rejectedMetric), "never-active rejection must not contribute to active metrics")
 }
 
 func TestDebugSessionReconciler_RenewalErrors(t *testing.T) {
@@ -1408,7 +2018,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 	t.Run("cannot approve already rejected session", func(t *testing.T) {
 		now := metav1.Now()
 		session := newTestDebugSession("already-rejected-session", "test-template", "production", "user@example.com")
-		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 			Required:   true,
 			RejectedBy: "security@example.com",
@@ -1431,7 +2041,7 @@ func TestDebugSessionReconciler_ApprovalErrors(t *testing.T) {
 
 		// Session is already rejected - approval should be prevented
 		assert.NotEmpty(t, fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 
 	t.Run("cannot approve active session", func(t *testing.T) {
@@ -1945,7 +2555,12 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("increment active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, true)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		now := metav1.Now()
+		session.Status.StartsAt = &now
+		require.NoError(t, fakeClient.Create(ctx, session))
+		err := ctrl.reconcileActiveAccounting(ctx, session, true)
 		require.NoError(t, err)
 
 		// Verify template status was updated
@@ -1963,7 +2578,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 	})
 
 	t.Run("decrement active session count", func(t *testing.T) {
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		// Verify template status was decremented
@@ -1975,7 +2592,9 @@ func TestUpdateTemplateStatus(t *testing.T) {
 
 	t.Run("does not go below zero", func(t *testing.T) {
 		// Decrement again - should stay at 0
-		err := ctrl.updateTemplateStatus(ctx, sessionTemplate, false)
+		session := newTestDebugSession("accounting-live", sessionTemplate.Name, "cluster", "user")
+		require.NoError(t, client.IgnoreNotFound(fakeClient.Delete(ctx, session)))
+		err := ctrl.reconcileActiveAccounting(ctx, session, false)
 		require.NoError(t, err)
 
 		updatedTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
@@ -2652,7 +3271,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		assert.Equal(t, "hybrid-binding", result2.Name)
 	})
 
-	t.Run("does not match cluster without ClusterConfig when using clusterSelector", func(t *testing.T) {
+	t.Run("fails closed without ClusterConfig when using clusterSelector", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "test-template",
@@ -2680,7 +3299,7 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unknown-cluster")
-		require.NoError(t, err)
+		require.ErrorContains(t, err, "cluster config required")
 		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
 }
@@ -3141,7 +3760,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		spec := &corev1.PodSpec{
 			NodeSelector: map[string]string{"existing": "selector"},
 		}
-		ctrl.applySchedulingConstraints(spec, nil)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, nil))
 		assert.Equal(t, map[string]string{"existing": "selector"}, spec.NodeSelector)
 	})
 
@@ -3153,7 +3772,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				"zone":      "us-east-1a",
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{
 			"node-pool": "debug",
 			"zone":      "us-east-1a",
@@ -3167,7 +3786,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"constraint": "value"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{
 			"existing":   "value",
 			"constraint": "value",
@@ -3181,7 +3800,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "new-value"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Equal(t, map[string]string{"key": "new-value"}, spec.NodeSelector)
 	})
 
@@ -3196,7 +3815,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				{Key: "new", Value: "value", Effect: corev1.TaintEffectNoSchedule},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.Tolerations, 2)
 		assert.Equal(t, "existing", spec.Tolerations[0].Key)
 		assert.Equal(t, "new", spec.Tolerations[1].Key)
@@ -3215,7 +3834,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
@@ -3249,9 +3868,11 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
-		// Both terms should be present (AND logic via multiple terms)
-		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 2)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		// Kubernetes ORs node selector terms, so AND requires combining both
+		// expressions into the same resulting term.
+		require.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms, 1)
+		assert.Len(t, spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions, 2)
 	})
 
 	t.Run("applies preferred node affinity", func(t *testing.T) {
@@ -3268,7 +3889,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.NodeAffinity)
 		assert.Len(t, spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3287,7 +3908,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.PodAntiAffinity)
 		assert.Len(t, spec.Affinity.PodAntiAffinity.RequiredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3310,7 +3931,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		require.NotNil(t, spec.Affinity)
 		require.NotNil(t, spec.Affinity.PodAntiAffinity)
 		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
@@ -3350,7 +3971,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 			DeniedNodes:      []string{"node-1"},
 			DeniedNodeLabels: map[string]string{"exclude": "true"},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 
 		// Verify all constraints applied
 		assert.Equal(t, map[string]string{"pool": "debug"}, spec.NodeSelector)
@@ -3364,16 +3985,88 @@ func TestApplySchedulingConstraints(t *testing.T) {
 		assert.Len(t, spec.Affinity.PodAntiAffinity.PreferredDuringSchedulingIgnoredDuringExecution, 1)
 	})
 
-	t.Run("handles denied nodes logging", func(t *testing.T) {
-		// This test ensures the code path for denied nodes is covered
+	t.Run("enforces denied exact nodes and labels as required node affinity", func(t *testing.T) {
 		spec := &corev1.PodSpec{}
 		constraints := &breakglassv1alpha1.SchedulingConstraints{
-			DeniedNodes:      []string{"bad-node-1", "bad-node-2"},
-			DeniedNodeLabels: map[string]string{"tainted": "true"},
+			DeniedNodes: []string{"bad-node-2", "bad-node-1"},
+			DeniedNodeLabels: map[string]string{
+				"tainted":                               "true",
+				"node-role.kubernetes.io/control-plane": "*",
+			},
 		}
-		// Should not panic, just log
-		ctrl.applySchedulingConstraints(spec, constraints)
-		// No assertions needed - just verifying no panic
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		require.NotNil(t, spec.Affinity)
+		require.NotNil(t, spec.Affinity.NodeAffinity)
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchFields, 1)
+		assert.Equal(t, "metadata.name", term.MatchFields[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchFields[0].Operator)
+		assert.Equal(t, []string{"bad-node-1", "bad-node-2"}, term.MatchFields[0].Values)
+		require.Len(t, term.MatchExpressions, 2)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+		assert.Equal(t, "tainted", term.MatchExpressions[1].Key)
+		assert.Equal(t, corev1.NodeSelectorOpNotIn, term.MatchExpressions[1].Operator)
+		assert.Equal(t, []string{"true"}, term.MatchExpressions[1].Values)
+
+		selector, err := labels.Parse("tainted notin (true)")
+		require.NoError(t, err)
+		assert.True(t, selector.Matches(labels.Set{}), "Kubernetes NotIn permits nodes without the label key")
+		assert.True(t, selector.Matches(labels.Set{"tainted": "false"}))
+		assert.False(t, selector.Matches(labels.Set{"tainted": "true"}))
+	})
+
+	t.Run("enforces denied wildcard labels as label absence", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+		}
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
+		required := spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+		require.NotNil(t, required)
+		require.Len(t, required.NodeSelectorTerms, 1)
+		term := required.NodeSelectorTerms[0]
+		require.Len(t, term.MatchExpressions, 1)
+		assert.Equal(t, "node-role.kubernetes.io/control-plane", term.MatchExpressions[0].Key)
+		assert.Equal(t, corev1.NodeSelectorOpDoesNotExist, term.MatchExpressions[0].Operator)
+		assert.Empty(t, term.MatchExpressions[0].Values)
+	})
+
+	t.Run("ignores denied node glob patterns that cannot be rendered as hard affinity", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodes: []string{"control-plane-*"},
+		}
+		require.ErrorContains(t, ctrl.applySchedulingConstraints(spec, constraints), "deniedNodes pattern")
+	})
+
+	t.Run("rejects invalid denied node label key before rendering", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"invalid/key/too/many": "true"},
+		}
+
+		err := ctrl.applySchedulingConstraints(spec, constraints)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deniedNodeLabels key")
+		assert.Nil(t, spec.Affinity)
+	})
+
+	t.Run("rejects invalid denied node label value before rendering", func(t *testing.T) {
+		spec := &corev1.PodSpec{}
+		constraints := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/debug": "bad/value"},
+		}
+
+		err := ctrl.applySchedulingConstraints(spec, constraints)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "deniedNodeLabels")
+		assert.Contains(t, err.Error(), "value")
+		assert.Nil(t, spec.Affinity)
 	})
 
 	t.Run("applies topology spread constraints", func(t *testing.T) {
@@ -3390,7 +4083,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.TopologySpreadConstraints, 1)
 		assert.Equal(t, int32(1), spec.TopologySpreadConstraints[0].MaxSkew)
 		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[0].TopologyKey)
@@ -3416,7 +4109,7 @@ func TestApplySchedulingConstraints(t *testing.T) {
 				},
 			},
 		}
-		ctrl.applySchedulingConstraints(spec, constraints)
+		require.NoError(t, ctrl.applySchedulingConstraints(spec, constraints))
 		assert.Len(t, spec.TopologySpreadConstraints, 2)
 		assert.Equal(t, "kubernetes.io/hostname", spec.TopologySpreadConstraints[0].TopologyKey)
 		assert.Equal(t, "topology.kubernetes.io/zone", spec.TopologySpreadConstraints[1].TopologyKey)
@@ -3478,6 +4171,40 @@ func TestConvertDebugPodSpec(t *testing.T) {
 		spec := ctrl.convertDebugPodSpec(dps)
 		assert.Len(t, spec.Volumes, 1)
 		assert.Equal(t, "config", spec.Volumes[0].Name)
+	})
+
+	t.Run("preserves an immutable image volume for a runbook bundle", func(t *testing.T) {
+		dps := breakglassv1alpha1.DebugPodSpecInner{
+			Containers: []corev1.Container{
+				{
+					Name:  "debug",
+					Image: "example/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+					VolumeMounts: []corev1.VolumeMount{
+						{Name: "internal-runbooks", MountPath: "/usr/share/breakglass/runbooks/internal", ReadOnly: true},
+					},
+				},
+			},
+			Volumes: []corev1.Volume{
+				{
+					Name: "internal-runbooks",
+					VolumeSource: corev1.VolumeSource{
+						Image: &corev1.ImageVolumeSource{
+							Reference:  "example/runbooks/network-diagnostics@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+							PullPolicy: corev1.PullIfNotPresent,
+						},
+					},
+				},
+			},
+		}
+
+		spec := ctrl.convertDebugPodSpec(dps)
+		require.Len(t, spec.Volumes, 1)
+		require.NotNil(t, spec.Volumes[0].Image)
+		assert.Equal(t, "example/runbooks/network-diagnostics@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", spec.Volumes[0].Image.Reference)
+		assert.Equal(t, corev1.PullIfNotPresent, spec.Volumes[0].Image.PullPolicy)
+		require.Len(t, spec.Containers[0].VolumeMounts, 1)
+		assert.Equal(t, "/usr/share/breakglass/runbooks/internal", spec.Containers[0].VolumeMounts[0].MountPath)
+		assert.True(t, spec.Containers[0].VolumeMounts[0].ReadOnly)
 	})
 
 	t.Run("converts pod spec with node selector", func(t *testing.T) {
@@ -4108,7 +4835,7 @@ func TestRequiresApproval(t *testing.T) {
 		assert.False(t, result, "Should not require approval when approvers struct exists but has no users/groups")
 	})
 
-	t.Run("binding_with_empty_approvers_struct_falls_through_to_template", func(t *testing.T) {
+	t.Run("binding_with_empty_approvers_struct_replaces_template", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
@@ -4125,8 +4852,23 @@ func TestRequiresApproval(t *testing.T) {
 			},
 		}
 		result := controller.requiresApproval(template, binding, baseSession)
-		// Binding approvers is empty, so it falls through to template check
-		assert.True(t, result, "Should fall through to template when binding has empty approvers")
+		assert.False(t, result, "Should not require approval when binding explicitly replaces template approvers with an empty list")
+	})
+
+	t.Run("binding_with_nil_approvers_inherits_template", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-binding", Namespace: "default"},
+			Spec:       breakglassv1alpha1.DebugSessionClusterBindingSpec{},
+		}
+		result := controller.requiresApproval(template, binding, baseSession)
+		assert.True(t, result, "Should inherit template approvers when binding approvers are nil")
 	})
 
 	t.Run("wildcard_cluster_pattern_auto_approve", func(t *testing.T) {
@@ -4383,7 +5125,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 			controller := &DebugSessionController{
 				log:    zap.NewNop().Sugar(),
 				client: fakeClient,
-				// ccProvider is nil → cleanupResources is a no-op
+				// No spoke resources are tracked, so failure cleanup remains terminal.
 			}
 
 			result, err := controller.failSession(context.Background(), session, tt.reason)
@@ -4407,7 +5149,7 @@ func TestDebugSessionController_FailSession(t *testing.T) {
 func TestDebugSessionController_CleanupResources(t *testing.T) {
 	scheme := testScheme()
 
-	t.Run("cleanup_with_nil_ccProvider_returns_nil", func(t *testing.T) {
+	t.Run("cleanup_with_nil_ccProvider_retries_tracked_resources", func(t *testing.T) {
 		session := newTestDebugSession("cleanup-session", "test-template", "test-cluster", "user@example.com")
 		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 			{Kind: "DaemonSet", Name: "test-ds", Namespace: "breakglass-debug", Source: "debug-pod"},
@@ -4426,7 +5168,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "cleanupResources with nil ccProvider should return nil")
+		assert.Error(t, err, "cleanupResources must retry when tracked resources have no provider")
 		// Resources remain in status since we couldn't actually clean them up
 		assert.NotNil(t, session.Status.DeployedResources)
 	})
@@ -4471,7 +5213,7 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with auxiliary resources")
+		assert.Error(t, err, "cleanupResources must retry tracked auxiliary resources without a provider")
 	})
 
 	t.Run("cleanup_with_nil_ccProvider_and_pod_template_resources", func(t *testing.T) {
@@ -4495,8 +5237,417 @@ func TestDebugSessionController_CleanupResources(t *testing.T) {
 		}
 
 		err := controller.cleanupResources(context.Background(), session)
-		assert.NoError(t, err, "Should return nil with nil ccProvider even with pod template resources")
+		assert.Error(t, err, "cleanupResources must retry tracked pod-template resources without a provider")
 	})
+
+	t.Run("empty_kubectl_cleanup_skips_target_cluster_client", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-kubectl-rest-config", "test-template", "test-cluster", "user@example.com")
+		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-cluster",
+				Namespace: "default",
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session, clusterConfig).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.NoError(t, err)
+
+		current := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), current))
+		assert.Nil(t, current.Status.KubectlDebugStatus)
+	})
+
+	t.Run("missing_cluster_config_retains_all_cleanup_inventory", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-missing-cluster-kubectl", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 3
+		session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{
+			Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+				ID: "orphaned-operation", Kind: "ephemeral-container", State: breakglassv1alpha1.KubectlDebugOperationPrepared,
+			}},
+			CopiedPods: []breakglassv1alpha1.CopiedPodRef{
+				{
+					OriginalPod:       "app",
+					OriginalNamespace: "default",
+					CopyName:          "app-copy",
+					CopyNamespace:     "default",
+				},
+			},
+		}
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "app-copy", Namespace: "default", Source: "kubectl-debug-copy"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "app-copy", Namespace: "default"},
+		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		before := session.Status.DeepCopy()
+		err := controller.cleanupResources(context.Background(), session)
+		require.ErrorIs(t, err, cluster.ErrClusterConfigNotFound)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Equal(t, *before, updated.Status)
+	})
+
+	t.Run("missing_rest_config_retains_deployed_tracking", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-missing-cluster-rest", "test-template", "missing-cluster", "user@example.com")
+		session.Generation = 5
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+		session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{
+			{Name: "debug-config", Kind: "ConfigMap", Namespace: "default", Created: true},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "Secret", ResourceName: "debug-secret", Namespace: "default", Created: true},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:        zap.NewNop().Sugar(),
+			client:     fakeClient,
+			ccProvider: cluster.NewClientProvider(fakeClient, zap.NewNop().Sugar()),
+		}
+
+		err := controller.cleanupResources(context.Background(), session)
+		require.Error(t, err)
+
+		var updated breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
+		require.NoError(t, err)
+		assert.Len(t, updated.Status.DeployedResources, 1)
+		assert.Len(t, updated.Status.AllowedPods, 1)
+		assert.Len(t, updated.Status.AuxiliaryResourceStatuses, 1)
+		assert.Len(t, updated.Status.PodTemplateResourceStatuses, 1)
+		assert.Zero(t, updated.Status.ObservedGeneration)
+	})
+}
+
+func TestDebugSessionController_HandleCleanupRequeuesFreshPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	preparedAt := metav1.NewTime(time.Now().UTC())
+	session := newTestDebugSession("fresh-prepared-cleanup", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "fresh-operation", Kind: kubectlDebugOperationKindEphemeralContainer,
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared, PreparedAt: preparedAt,
+		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "missing", UID: "pod-uid"},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{Name: "debugger", Image: "busybox", ContainerDigest: "digest", SecurityContextDigest: "security"},
+		RequestedBy:        "user@example.com",
+	}}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	target := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar()), targetClients: &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}}}
+	result, err := controller.handleCleanup(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.True(t, hasPreparedKubectlDebugOperation(&stored))
+}
+
+func TestDebugSessionController_HandleCleanupFinishesAgedPreparedOperation(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := newTestDebugSession("aged-prepared-cleanup", "test-template", "test-cluster", "user@example.com")
+	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{Operations: []breakglassv1alpha1.KubectlDebugOperation{{
+		ID: "aged-operation", Kind: kubectlDebugOperationKindEphemeralContainer,
+		State: breakglassv1alpha1.KubectlDebugOperationPrepared, PreparedAt: stalePreparedAt(),
+		TargetPod:          breakglassv1alpha1.KubectlDebugOperationTargetPod{Namespace: "default", Name: "missing", UID: "pod-uid"},
+		EphemeralContainer: breakglassv1alpha1.KubectlDebugEphemeralContainerIntent{Name: "debugger", Image: "busybox", ContainerDigest: "digest", SecurityContextDigest: "security"},
+		RequestedBy:        "user@example.com",
+	}}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	target := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar()), targetClients: &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}}}
+	result, err := controller.handleCleanup(context.Background(), session.DeepCopy())
+	require.NoError(t, err)
+	assert.Zero(t, result.RequeueAfter)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.False(t, hasPreparedKubectlDebugOperation(&stored))
+	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
+}
+
+func TestDebugSessionController_CleanupDeployedResources(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("deletes node debug pod and clears tracking", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-node-pod", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.NoError(t, err)
+		assert.Empty(t, session.Status.DeployedResources)
+		assert.Empty(t, session.Status.AllowedPods)
+
+		var pod corev1.Pod
+		err = targetClient.Get(context.Background(), types.NamespacedName{Name: "node-debug-pod", Namespace: "default"}, &pod)
+		assert.True(t, apierrors.IsNotFound(err), "node debug pod should be deleted, got: %v", err)
+	})
+
+	t.Run("preserves failed deployed resource for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-delete-failure", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+				},
+			}).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteOption) error {
+					return apierrors.NewForbidden(corev1.Resource("pods"), obj.GetName(), assert.AnError)
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "delete debug resource Pod default/node-debug-pod")
+		require.Len(t, session.Status.DeployedResources, 1)
+		assert.Equal(t, "node-debug-pod", session.Status.DeployedResources[0].Name)
+		assert.Len(t, session.Status.AllowedPods, 1)
+	})
+
+	t.Run("preserves skipped refs while dependent cleanup failed", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-skipped-refs", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "aux-config", Namespace: "default", Source: "auxiliary:config"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "pod-template-config", Namespace: "default", Source: "pod-template"},
+			{APIVersion: "v1", Kind: "Pod", Name: "node-debug-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "node-debug-uid"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "node-debug-pod", Namespace: "default"},
+		}
+		session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+			{Kind: "ConfigMap", ResourceName: "pod-template-config", Namespace: "default", Created: true},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "node-debug-pod",
+					Namespace: "default",
+					UID:       "node-debug-uid",
+					Annotations: map[string]string{
+						sourceSessionUIDAnnotation: string(session.UID),
+					},
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, true, true)
+		require.NoError(t, err)
+		require.Len(t, session.Status.DeployedResources, 2)
+		assert.Equal(t, "auxiliary:config", session.Status.DeployedResources[0].Source)
+		assert.Equal(t, "pod-template", session.Status.DeployedResources[1].Source)
+		assert.Empty(t, session.Status.AllowedPods, "allowed pods are cleared when only non-Pod cleanup refs remain")
+	})
+
+	t.Run("filters allowed pods to remaining pod refs", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-filter-allowed-pods", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "v1", Kind: "Pod", Name: "failed-delete-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "failed-delete-uid"},
+			{APIVersion: "v1", Kind: "Pod", Name: "deleted-pod", Namespace: "default", Source: "kubectl-debug-node", UID: "deleted-uid"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "remaining-config", Namespace: "default", Source: "pod-template"},
+		}
+		session.Status.AllowedPods = []breakglassv1alpha1.AllowedPodRef{
+			{Name: "failed-delete-pod", Namespace: "default"},
+			{Name: "deleted-pod", Namespace: "default"},
+			{Name: "untracked-pod", Namespace: "default"},
+		}
+
+		targetClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "failed-delete-pod",
+						Namespace: "default",
+						UID:       "failed-delete-uid",
+					},
+				},
+				&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "deleted-pod",
+						Namespace: "default",
+						UID:       "deleted-uid",
+					},
+				},
+			).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+					if obj.GetName() == "failed-delete-pod" {
+						return apierrors.NewForbidden(corev1.Resource("pods"), obj.GetName(), assert.AnError)
+					}
+					return cl.Delete(ctx, obj, opts...)
+				},
+			}).
+			Build()
+
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, true)
+		require.Error(t, err)
+		require.Len(t, session.Status.DeployedResources, 2)
+		assert.Equal(t, "failed-delete-pod", session.Status.DeployedResources[0].Name)
+		assert.Equal(t, "remaining-config", session.Status.DeployedResources[1].Name)
+		require.Len(t, session.Status.AllowedPods, 1)
+		assert.Equal(t, "failed-delete-pod", session.Status.AllowedPods[0].Name)
+	})
+
+	t.Run("preserves unsupported resource kind for retry", func(t *testing.T) {
+		session := newTestDebugSession("cleanup-unsupported-kind", "test-template", "test-cluster", "user@example.com")
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{APIVersion: "batch/v1", Kind: "Job", Name: "unsupported-job", Namespace: "default", Source: "workload"},
+		}
+
+		targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+		controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+		err := controller.cleanupDeployedResources(context.Background(), session, targetClient, false, false)
+		require.NoError(t, err)
+		require.Empty(t, session.Status.DeployedResources)
+	})
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesFailures(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-failure", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{
+			Kind:         "ConfigMap",
+			APIVersion:   "v1",
+			ResourceName: "debug-script",
+			Namespace:    "default",
+			UID:          "debug-script-uid",
+			Created:      true,
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "debug-script",
+				Namespace: "default",
+				UID:       "debug-script-uid",
+			},
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.DeleteOption) error {
+				return apierrors.NewForbidden(corev1.Resource("configmaps"), obj.GetName(), assert.AnError)
+			},
+		}).
+		Build()
+
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "delete pod template resource ConfigMap default/debug-script")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "forbidden")
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesPreservesParseFailures(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-parse-failure", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{
+			Kind:         "ConfigMap",
+			APIVersion:   "invalid/group/version",
+			ResourceName: "debug-script",
+			Namespace:    "default",
+			Created:      true,
+		},
+	}
+
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse GVK for pod template resource default/debug-script")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "failed to parse GVK")
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
 }
 
 // TestDebugSessionController_Reconcile_FailSessionCleanup tests the full reconcile loop
@@ -4875,4 +6026,139 @@ func TestDebugSessionController_FailSession_PartialDeployScenarios(t *testing.T)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
 		assert.Contains(t, updated.Status.Message, "failed to apply workload")
 	})
+}
+
+// TestDebugSessionController_FailedStateRetriesCleanup is the regression test for
+// #237. failSession does best-effort cleanup, logs any error, then sets the
+// terminal Failed state. The Failed branch of Reconcile returned an empty
+// ctrl.Result, which never requeues, so spoke-cluster resources that the
+// best-effort cleanup could not delete leaked permanently.
+func TestDebugSessionController_FailedStateRetriesCleanup(t *testing.T) {
+	scheme := testScheme()
+
+	t.Run("failed_with_tracked_resources_requeues_for_cleanup", func(t *testing.T) {
+		session := newTestDebugSession("failed-leak", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.Message = "cleanup previously failed"
+		// Resources are still tracked in status: the spoke was not cleaned up.
+		session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+			{Kind: "DaemonSet", Name: "debug-ds-failed-leak", Namespace: "breakglass-debug", Source: "debug-pod"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+			// nil ccProvider makes cleanupResources a no-op that cannot reach the
+			// spoke, standing in for an unreachable spoke cluster.
+		}
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+
+		// The state must remain terminal...
+		var updated breakglassv1alpha1.DebugSession
+		require.NoError(t, fakeClient.Get(context.Background(),
+			types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated))
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State,
+			"Failed must stay terminal; only cleanup is retried")
+
+		// ...but reconciliation must not give up while spoke resources are tracked.
+		assert.NotEqual(t, reconcile.Result{}, result,
+			"a failed session with untracked-cleanup spoke resources must be revisited, "+
+				"otherwise the spoke resources leak permanently")
+	})
+
+	t.Run("failed_with_no_tracked_resources_is_terminal", func(t *testing.T) {
+		session := newTestDebugSession("failed-clean", "test-template", "test-cluster", "user@example.com")
+		session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		session.Status.Message = "template not found"
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(session).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+			Build()
+
+		controller := &DebugSessionController{
+			log:    zap.NewNop().Sugar(),
+			client: fakeClient,
+		}
+
+		result, err := controller.Reconcile(context.Background(), reconcile.Request{
+			NamespacedName: types.NamespacedName{Name: session.Name, Namespace: session.Namespace},
+		})
+		require.NoError(t, err)
+		assert.Equal(t, reconcile.Result{}, result,
+			"nothing was deployed, so there is nothing to retry")
+	})
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesRetainsPendingFinalizer(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-pod-template-finalizer", "test-template", "test-cluster", "user@example.com")
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", UID: "tracked-uid", Namespace: "default", Created: true},
+	}
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+		{APIVersion: "v1", Kind: "ConfigMap", Name: "debug-config", UID: "tracked-uid", Namespace: "default", Source: "pod-template"},
+	}
+	resource := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "debug-config", Namespace: "default", UID: "tracked-uid",
+		Labels:      map[string]string{"breakglass.t-caas.telekom.com/session": session.Name},
+		Annotations: map[string]string{"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name},
+	}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(resource).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.DeleteOption) error {
+			return nil
+		},
+	}).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	err := controller.cleanupPodTemplateResources(context.Background(), session, targetClient)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pending finalizers")
+	require.Len(t, session.Status.PodTemplateResourceStatuses, 1)
+	assert.False(t, session.Status.PodTemplateResourceStatuses[0].Deleted)
+	assert.Contains(t, session.Status.PodTemplateResourceStatuses[0].Error, "pending finalizers")
+
+	// The generic pass must retain the inventory while specialized cleanup is
+	// waiting for the finalizer to finish.
+	require.NoError(t, controller.cleanupDeployedResources(context.Background(), session, targetClient, false, true))
+	require.Len(t, session.Status.DeployedResources, 1)
+}
+
+func TestDebugSessionController_CleanupPodTemplateResourcesRetiresSameSessionReplacement(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("cleanup-same-session-replacement", "test-template", "test-cluster", "user@example.com")
+	session.UID = "current-session-uid"
+	session.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{Kind: "ConfigMap", APIVersion: "v1", ResourceName: "debug-config", UID: "tracked-uid", Namespace: "default", Created: true},
+	}
+	replacement := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{
+		Name: "debug-config", Namespace: "default", UID: "replacement-uid",
+		Labels: map[string]string{
+			"breakglass.t-caas.telekom.com/session": session.Name,
+			DebugSessionUIDLabelKey:                 debugSessionIdentity(session),
+		},
+		Annotations: map[string]string{
+			"breakglass.t-caas.telekom.com/source-session": session.Namespace + "/" + session.Name,
+			DebugSessionUIDAnnotationKey:                   debugSessionIdentity(session),
+		},
+	}}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(replacement).Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+
+	require.NoError(t, controller.cleanupPodTemplateResources(context.Background(), session, targetClient))
+	assert.Empty(t, session.Status.PodTemplateResourceStatuses)
+	var unchanged corev1.ConfigMap
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
+	assert.Equal(t, types.UID("replacement-uid"), unchanged.UID)
 }

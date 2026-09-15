@@ -396,4 +396,82 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       expect(isHighContrast).toBeNull();
     });
   });
+
+  test.describe("Landmark Semantics", () => {
+    test("App shell exposes one main landmark and skip link still focuses content", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+
+      await expect(page.getByRole("main")).toHaveCount(1);
+
+      const skipLink = page.getByRole("link", { name: "Skip to content", exact: true });
+      await skipLink.focus();
+      await expect(skipLink).toBeFocused();
+
+      await page.keyboard.press("Enter");
+      await expect(page.locator("#main")).toBeFocused();
+    });
+  });
+
+  test.describe("Heading Semantics", () => {
+    test("Debug session details uses ordered heading levels", async ({ page }) => {
+      await performMockLogin(page);
+      await page.route("**/api/debugSessions/debug-heading-kubectl", async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            metadata: {
+              name: "debug-heading-kubectl",
+              namespace: "breakglass-system",
+              creationTimestamp: new Date().toISOString(),
+              labels: { "breakglass.telekom.de/mode": "kubectl-debug" },
+            },
+            spec: {
+              templateRef: "kubectl-debug",
+              cluster: "t-sec-1st.dtmd11",
+              requestedBy: "mock.user@example.com",
+              requestedByEmail: "mock.user@example.com",
+              requestedDuration: "1h",
+              reason: "Heading accessibility regression coverage",
+            },
+            status: {
+              state: "Active",
+              startsAt: new Date().toISOString(),
+              expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+              renewalCount: 0,
+              participants: [],
+              allowedPods: [],
+              allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
+            },
+          }),
+        });
+      });
+      await navigateTo(page, "/debug-sessions/debug-heading-kubectl");
+
+      await expect(page.getByRole("heading", { name: "debug-heading-kubectl", level: 1 })).toBeVisible();
+
+      for (const heading of [
+        "Status",
+        "Session Information",
+        /^Participants/,
+        /^Debug Pods/,
+        "Allowed Pod Operations",
+        "Kubectl Debug Operations",
+      ]) {
+        await expect(page.getByRole("heading", { name: heading, level: 2 })).toBeVisible();
+      }
+    });
+  });
+
+  test.describe("Scale Component Semantics", () => {
+    test("Debug sessions refresh icon button has an accessible name", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+
+      const refreshButton = page.getByRole("button", { name: "Refresh debug sessions", exact: true });
+      await expect(refreshButton).toHaveCount(1);
+      await expect(refreshButton).toBeVisible();
+    });
+  });
 });

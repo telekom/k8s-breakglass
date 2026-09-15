@@ -21,10 +21,14 @@ type DebugSessionApprovalApplyConfiguration struct {
 	Required *bool `json:"required,omitempty"`
 	// approvedBy is the email/identifier of the approver.
 	ApprovedBy *string `json:"approvedBy,omitempty"`
+	// approvedByIdentityProvider identifies the provider that authenticated the approver.
+	ApprovedByIdentityProvider *string `json:"approvedByIdentityProvider,omitempty"`
 	// approvedAt is when the session was approved.
 	ApprovedAt *v1.Time `json:"approvedAt,omitempty"`
 	// rejectedBy is the email/identifier of the rejector.
 	RejectedBy *string `json:"rejectedBy,omitempty"`
+	// rejectedByIdentityProvider identifies the provider that authenticated the rejector.
+	RejectedByIdentityProvider *string `json:"rejectedByIdentityProvider,omitempty"`
 	// rejectedAt is when the session was rejected.
 	RejectedAt *v1.Time `json:"rejectedAt,omitempty"`
 	// reason is the reason for approval/rejection.
@@ -53,6 +57,14 @@ func (b *DebugSessionApprovalApplyConfiguration) WithApprovedBy(value string) *D
 	return b
 }
 
+// WithApprovedByIdentityProvider sets the ApprovedByIdentityProvider field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ApprovedByIdentityProvider field is set to the value of the last call.
+func (b *DebugSessionApprovalApplyConfiguration) WithApprovedByIdentityProvider(value string) *DebugSessionApprovalApplyConfiguration {
+	b.ApprovedByIdentityProvider = &value
+	return b
+}
+
 // WithApprovedAt sets the ApprovedAt field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the ApprovedAt field is set to the value of the last call.
@@ -66,6 +78,14 @@ func (b *DebugSessionApprovalApplyConfiguration) WithApprovedAt(value v1.Time) *
 // If called multiple times, the RejectedBy field is set to the value of the last call.
 func (b *DebugSessionApprovalApplyConfiguration) WithRejectedBy(value string) *DebugSessionApprovalApplyConfiguration {
 	b.RejectedBy = &value
+	return b
+}
+
+// WithRejectedByIdentityProvider sets the RejectedByIdentityProvider field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RejectedByIdentityProvider field is set to the value of the last call.
+func (b *DebugSessionApprovalApplyConfiguration) WithRejectedByIdentityProvider(value string) *DebugSessionApprovalApplyConfiguration {
+	b.RejectedByIdentityProvider = &value
 	return b
 }
 

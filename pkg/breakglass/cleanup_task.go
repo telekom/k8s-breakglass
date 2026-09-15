@@ -13,6 +13,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -117,14 +119,26 @@ func (cr CleanupRoutine) CleanupRoutine(ctx context.Context) {
 
 func (cr CleanupRoutine) clean(ctx context.Context) {
 	cr.Log.Info("Running breakglass session cleanup task")
+	cleanupCtx := ctx
+	if cleanupCtx == nil {
+		cleanupCtx = context.Background()
+	}
+	// Bound all cleanup operations under a single timeout so shutdown is
+	// predictable and we don't accumulate slow API calls.
+	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
+	defer cancel()
+
 	// Activate scheduled sessions first (before expiry checks)
 	if cr.Manager != nil {
+		if err := cr.Manager.recoverSessionAdmissions(opCtx); err != nil {
+			cr.Log.Warnw("Session admission recovery failed", "error", err)
+		}
 		activator := NewScheduledSessionActivator(cr.Log, cr.Manager).
 			WithMailService(cr.MailService, cr.BrandingName, cr.DisableEmail)
 		if cr.AuditService != nil {
 			activator = activator.WithAuditService(cr.AuditService)
 		}
-		activator.ActivateScheduledSessions()
+		activator.ActivateScheduledSessions(opCtx)
 	}
 
 	// Build session controller once for the expiry operations below.
@@ -137,24 +151,19 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 			disableEmail:   cr.DisableEmail,
 			config:         config.Config{Frontend: config.Frontend{BrandingName: cr.BrandingName}},
 		}
-		sessionCtrl.ExpirePendingSessions()
+		sessionCtrl.ExpirePendingSessions(opCtx)
 		// Expire approved sessions whose ExpiresAt has passed
-		sessionCtrl.ExpireApprovedSessions()
+		sessionCtrl.ExpireApprovedSessions(opCtx)
 	}
-
-	cleanupCtx := ctx
-	if cleanupCtx == nil {
-		cleanupCtx = context.Background()
-	}
-	// Bound all cleanup operations under a single timeout so shutdown is
-	// predictable and we don't accumulate slow API calls.
-	opCtx, cancel := context.WithTimeout(cleanupCtx, DefaultCleanupOperationTimeout)
-	defer cancel()
 
 	if cr.Manager != nil {
 		// Remove duplicate active sessions (same cluster/user/grantedGroup triple).
 		// Duplicates can arise from TOCTOU races in multi-replica deployments.
-		CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
+		if cr.AuditService != nil {
+			CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager, cr.AuditService)
+		} else {
+			CleanupDuplicateSessions(opCtx, cr.Log, cr.Manager)
+		}
 	}
 
 	// Expire approved sessions that have been idle longer than their idleTimeout.
@@ -179,6 +188,13 @@ func (cr CleanupRoutine) clean(ctx context.Context) {
 		}
 	}
 	cr.Log.Info("Finished breakglass session cleanup task")
+}
+
+func optionalCleanupContext(ctxs ...context.Context) context.Context {
+	if len(ctxs) > 0 && ctxs[0] != nil {
+		return ctxs[0]
+	}
+	return context.Background()
 }
 
 // pruneActivityTracker builds a set of active (approved) session NamespacedNames
@@ -228,6 +244,25 @@ func (routine CleanupRoutine) markCleanupExpiredSession(ctx context.Context) {
 			return
 		default:
 			// continue processing
+		}
+		if !ses.DeletionTimestamp.IsZero() {
+			routine.Log.Debugw("Skipping session already marked for deletion", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			continue
+		}
+		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete)); condition != nil && condition.Status == metav1.ConditionFalse && !condition.LastTransitionTime.IsZero() &&
+			((condition.Reason == "ExpireDecision" && ses.Status.State == breakglassv1alpha1.SessionStateExpired) ||
+				(condition.Reason == "WithdrawDecision" && ses.Status.State == breakglassv1alpha1.SessionStateWithdrawn) ||
+				(condition.Reason == "PendingDelivery" && IsTerminalSessionState(ses.Status.State))) {
+			routine.Log.Warnw("Retaining terminal session while duplicate cleanup audit is pending", system.NamespacedFields(ses.Name, ses.Namespace)...)
+			continue
+		}
+		if condition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent)); condition != nil && condition.Status == metav1.ConditionFalse && condition.Reason == "PendingEnqueue" &&
+			!condition.LastTransitionTime.IsZero() && (ses.Status.State == breakglassv1alpha1.SessionStateExpired || ses.Status.State == breakglassv1alpha1.SessionStateTimeout) {
+			expiredCondition := ses.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpired))
+			if expiredCondition != nil && expiredCondition.Status == metav1.ConditionTrue && expiredCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
+				routine.Log.Warnw("Retaining terminal session while expiry notification enqueue is pending", system.NamespacedFields(ses.Name, ses.Namespace)...)
+				continue
+			}
 		}
 
 		routine.Log.Debugw("Checking session for expiration", system.NamespacedFields(ses.Name, ses.Namespace)...)
@@ -302,8 +337,9 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		routine.Log.Debugw("Checking debug session for expiration",
 			system.NamespacedFields(ds.Name, ds.Namespace)...)
 
-		// Skip sessions that are already in terminal states (Expired, Terminated, Failed)
+		// Skip sessions that are already in terminal states (Rejected, Expired, Terminated, Failed)
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
+			ds.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			ds.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 			// Check if session should be deleted after retention period
@@ -336,6 +372,19 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		// Check if active session has expired
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStateActive {
 			if ds.Status.ExpiresAt != nil && now.After(ds.Status.ExpiresAt.Time) {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateExpired
+					status.Message = "Session expired (cleanup routine)"
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping expired debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
+					routine.Log.Errorw("error updating expired debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
 				routine.Log.Infow("Debug session expired, marking as Expired",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"cluster", ds.Spec.Cluster,
@@ -344,15 +393,6 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"startsAt", ds.Status.StartsAt,
 						"expiresAt", ds.Status.ExpiresAt,
 					)...)
-
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-				ds.Status.Message = "Session expired (cleanup routine)"
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
-					routine.Log.Errorw("error updating expired debug session status",
-						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
-					continue
-				}
 
 				// Emit audit event for expired debug session
 				if routine.AuditService != nil {
@@ -373,6 +413,19 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 		if ds.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval {
 			// If approval times out, mark as failed
 			if ds.Status.Approval != nil && ds.CreationTimestamp.Add(DebugSessionApprovalTimeout).Before(now) {
+				if err := PatchDebugSessionStatusWithOptimisticLock(ctx, routine.Manager, &ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+					status.State = breakglassv1alpha1.DebugSessionStateFailed
+					status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
+				}); err != nil {
+					if apierrors.IsConflict(err) {
+						routine.Log.Debugw("skipping approval-timeout debug session status update after concurrent change",
+							append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+						continue
+					}
+					routine.Log.Errorw("error updating timed-out debug session status",
+						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
+					continue
+				}
 				routine.Log.Infow("Debug session approval timed out, marking as Failed",
 					append(system.NamespacedFields(ds.Name, ds.Namespace),
 						"cluster", ds.Spec.Cluster,
@@ -381,15 +434,6 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 						"createdAt", ds.CreationTimestamp,
 						"approvalTimeout", DebugSessionApprovalTimeout.String(),
 					)...)
-
-				ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-				ds.Status.Message = fmt.Sprintf("Approval timed out after %s", DebugSessionApprovalTimeout)
-
-				if err := ApplyDebugSessionStatus(ctx, routine.Manager, &ds); err != nil {
-					routine.Log.Errorw("error updating timed-out debug session status",
-						append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
-					continue
-				}
 
 				// Emit audit event for approval timeout
 				if routine.AuditService != nil {
@@ -462,6 +506,13 @@ func (routine CleanupRoutine) sendDebugSessionExpiredEmail(ds breakglassv1alpha1
 		routine.Log.Errorw("failed to enqueue debug session expired email",
 			append(system.NamespacedFields(ds.Name, ds.Namespace), "error", err)...)
 	}
+}
+
+// SendDebugSessionExpiredEmail sends the configured expiry notification.
+// It is exported so the DebugSession reconciler can use the same rendering and
+// recipient rules when it commits the expiry transition first.
+func (routine CleanupRoutine) SendDebugSessionExpiredEmail(ds breakglassv1alpha1.DebugSession) {
+	routine.sendDebugSessionExpiredEmail(ds)
 }
 
 func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession) []string {

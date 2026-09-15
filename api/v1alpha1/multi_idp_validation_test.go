@@ -38,8 +38,9 @@ func TestIdentityProviderIssuerValidationUnique(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-1"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client1",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client1",
+				ExpectedAudience: "client1",
 			},
 			Issuer: "https://auth.example.com",
 		},
@@ -53,8 +54,9 @@ func TestIdentityProviderIssuerValidationUnique(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-2"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "client2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "client2",
+				ExpectedAudience: "client2",
 			},
 			Issuer: "https://auth.example.com", // Same issuer as idp1
 		},
@@ -78,8 +80,9 @@ func TestIdentityProviderIssuerValidationURL(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "idp-invalid"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Issuer: ":", // Will fail url.Parse
 		},
@@ -99,8 +102,9 @@ func TestClusterConfigIdentityProviderRefsValidation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Disabled: false,
 		},
@@ -135,8 +139,9 @@ func TestClusterConfigIdentityProviderRefsValidationDisabled(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Disabled: true,
 		},
@@ -197,8 +202,9 @@ func TestBreakglassEscalationAllowedIdentityProvidersValidation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Disabled: false,
 		},
@@ -277,8 +283,9 @@ func TestBreakglassSessionIdentityProviderFieldsValidation(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Issuer:   "https://auth.example.com",
 			Disabled: false,
@@ -317,8 +324,9 @@ func TestBreakglassSessionIdentityProviderIssuerMismatch(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Issuer:   "https://auth.example.com",
 			Disabled: false,
@@ -384,8 +392,9 @@ func TestValidateIdentityProviderRefsHelper(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "enabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Disabled: false,
 		},
@@ -395,8 +404,9 @@ func TestValidateIdentityProviderRefsHelper(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "client2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "client2",
+				ExpectedAudience: "client2",
 			},
 			Disabled: true,
 		},
@@ -477,8 +487,9 @@ func TestValidateIdentityProviderFieldsHelper(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "tenant-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth.example.com",
-				ClientID:  "client",
+				Authority:        "https://auth.example.com",
+				ClientID:         "client",
+				ExpectedAudience: "client",
 			},
 			Issuer:   "https://auth.example.com",
 			Disabled: false,
@@ -489,8 +500,9 @@ func TestValidateIdentityProviderFieldsHelper(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "disabled-idp"},
 		Spec: IdentityProviderSpec{
 			OIDC: OIDCConfig{
-				Authority: "https://auth2.example.com",
-				ClientID:  "client2",
+				Authority:        "https://auth2.example.com",
+				ClientID:         "client2",
+				ExpectedAudience: "client2",
 			},
 			Issuer:   "https://auth2.example.com",
 			Disabled: true,

@@ -2,8 +2,10 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -11,12 +13,27 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass/jsonutil"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+var errAuthenticatedIdentityNotFound = errors.New("authenticated identity claims not found in token")
+
+func (wc *BreakglassSessionController) authenticatedUserIdentifiers(c *gin.Context) (string, []string, error) {
+	email := c.GetString("email")
+	username := c.GetString("username")
+	userID := c.GetString("user_id")
+	authIdentifiers := collectAuthIdentifiers(email, username, userID)
+	if len(authIdentifiers) == 0 {
+		return "", nil, errAuthenticatedIdentityNotFound
+	}
+	return firstNonEmpty(email, username, userID), authIdentifiers, nil
+}
 
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
 func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
@@ -36,13 +53,17 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Only allow the original requester to withdraw
-	requesterEmail, err := wc.identityProvider.GetEmail(c)
+	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
-		reqLog.Error("error getting user identity email", zap.Error(err))
-		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
+		if errors.Is(err, errAuthenticatedIdentityNotFound) {
+			apiresponses.RespondUnauthorizedWithMessage(c, "authenticated identity claims not found in token")
+			return
+		}
+		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if bs.Spec.User != requesterEmail {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
@@ -53,10 +74,16 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		apiresponses.RespondBadRequest(c, "Session is not pending and cannot be withdrawn")
 		return
 	}
+	if rejectUnexpectedActionBody(c) {
+		return
+	}
 
 	// Set status to Withdrawn
 	// IMPORTANT: Do NOT clear existing timestamps (ApprovedAt, ExpiresAt, etc.)
-	// We want to preserve history. Only set state and withdrawal-specific timestamp.
+	// We want to preserve history. Clamp any malformed lease so the terminal
+	// transition cannot make the recorded expiry later than the natural boundary.
+	now := time.Now().UTC()
+	bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 	bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
 	bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 	// short reason for UI
@@ -64,10 +91,12 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	// clear approver info for withdrawn sessions
 	bs.Status.Approver = ""
 	bs.Status.Approvers = nil
+	bs.Status.ApproverIdentityProvider = ""
+	bs.Status.ApproverIdentityProviders = nil
 
 	// Set RetainedUntil for withdrawn sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 	bs.SetCondition(metav1.Condition{
 		Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
@@ -90,7 +119,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Emit audit event for session withdrawal by requester
-	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionWithdrawn, &bs, requesterEmail, "Session withdrawn by requester")
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionWithdrawn, &bs, requester, "Session withdrawn by requester")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -114,13 +143,17 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// Only allow the original requester to drop
-	requesterEmail, err := wc.identityProvider.GetEmail(c)
+	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
-		reqLog.Error("error getting user identity email", zap.Error(err))
-		apiresponses.RespondInternalError(c, "extract email from token", err, reqLog)
+		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
+		if errors.Is(err, errAuthenticatedIdentityNotFound) {
+			apiresponses.RespondUnauthorizedWithMessage(c, "authenticated identity claims not found in token")
+			return
+		}
+		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if bs.Spec.User != requesterEmail {
+	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return
@@ -130,6 +163,9 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		apiresponses.RespondBadRequest(c, fmt.Sprintf("session is in terminal state %s and cannot be dropped", bs.Status.State))
 		return
 	}
+	if rejectUnexpectedActionBody(c) {
+		return
+	}
 
 	// If already approved or waiting for scheduled activation, mark as Expired and retain approval history.
 	if (bs.Status.State == breakglassv1alpha1.SessionStateApproved ||
@@ -137,7 +173,8 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		!bs.Status.ApprovedAt.IsZero() {
 		// Approved session dropped - transition to Expired
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 		bs.Status.State = breakglassv1alpha1.SessionStateExpired
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeExpired),
@@ -150,18 +187,22 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 
 		// Set RetainedUntil for expired sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 	} else {
 		// Pending or other state -> behave like withdraw
 		// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-		bs.Status.WithdrawnAt = metav1.Now() // Record when withdrawn
+		now := time.Now().UTC()
+		bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
+		bs.Status.WithdrawnAt = metav1.NewTime(now) // Record when withdrawn
 		bs.Status.State = breakglassv1alpha1.SessionStateWithdrawn
 		bs.Status.Approver = ""
 		bs.Status.Approvers = nil
+		bs.Status.ApproverIdentityProvider = ""
+		bs.Status.ApproverIdentityProviders = nil
 
 		// Set RetainedUntil for withdrawn sessions
 		retainFor := ParseRetainFor(bs.Spec, reqLog)
-		bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+		bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 		bs.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.SessionConditionTypeCanceled),
@@ -186,7 +227,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// Emit audit event for session dropped by owner
-	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requesterEmail, "Session dropped by owner")
+	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionDropped, &bs, requester, "Session dropped by owner")
 
 	c.JSON(http.StatusOK, bs)
 }
@@ -221,22 +262,27 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 		apiresponses.RespondBadRequest(c, "Session is not active/approved and cannot be canceled by approver")
 		return
 	}
+	if rejectUnexpectedActionBody(c) {
+		return
+	}
 
 	// Transition to expired immediately
 	// IMPORTANT: Do NOT clear existing timestamps. We want to preserve history.
-	bs.Status.ExpiresAt = metav1.NewTime(time.Now().UTC())
+	now := time.Now().UTC()
+	bs.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(bs.Status.ExpiresAt, now)
 	bs.Status.State = breakglassv1alpha1.SessionStateExpired
 
 	// Set RetainedUntil for expired sessions
 	retainFor := ParseRetainFor(bs.Spec, reqLog)
-	bs.Status.RetainedUntil = metav1.NewTime(time.Now().UTC().Add(retainFor))
+	bs.Status.RetainedUntil = metav1.NewTime(now.Add(retainFor))
 
 	// record approver who canceled
 	approverEmail, _ := wc.identityProvider.GetEmail(c)
 	if approverEmail != "" {
 		bs.Status.Approver = approverEmail
+		bs.Status.ApproverIdentityProvider = c.GetString("identity_provider_name")
 		// append if not present
-		bs.Status.Approvers = addIfNotPresent(bs.Status.Approvers, approverEmail)
+		recordApprover(&bs.Status, approverEmail, c.GetString("identity_provider_name"))
 	}
 
 	bs.SetCondition(metav1.Condition{
@@ -264,6 +310,14 @@ func (wc *BreakglassSessionController) handleApproverCancel(c *gin.Context) {
 	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRevoked, &bs, approverEmail, "Session canceled by approver")
 
 	c.JSON(http.StatusOK, bs)
+}
+
+func rejectUnexpectedActionBody(c *gin.Context) bool {
+	if err := jsonutil.RequireEmptyBody(c.Request.Body); err != nil {
+		apiresponses.RespondBadRequest(c, err.Error())
+		return true
+	}
+	return false
 }
 
 // formatDuration converts a time.Duration to a human-readable string (e.g., "2 hours", "30 minutes")
@@ -448,8 +502,24 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 
 	// Build RequestedApprovalGroups string
 	requestedApprovalGroupsStr := ""
+	visibleApproverGroups := append([]string(nil), approverGroupsToShow...)
 	if matchedEscalation != nil && len(matchedEscalation.Spec.Approvers.Groups) > 0 {
-		groupNames := matchedEscalation.Spec.Approvers.Groups
+		hiddenGroups := make(map[string]struct{}, len(matchedEscalation.Spec.Approvers.HiddenFromUI))
+		for _, hidden := range matchedEscalation.Spec.Approvers.HiddenFromUI {
+			hiddenGroups[hidden] = struct{}{}
+		}
+		groupNames := make([]string, 0, len(matchedEscalation.Spec.Approvers.Groups))
+		for _, group := range matchedEscalation.Spec.Approvers.Groups {
+			if _, hidden := hiddenGroups[group]; !hidden {
+				groupNames = append(groupNames, group)
+			}
+		}
+		visibleApproverGroups = visibleApproverGroups[:0]
+		for _, group := range approverGroupsToShow {
+			if _, hidden := hiddenGroups[group]; !hidden {
+				visibleApproverGroups = append(visibleApproverGroups, group)
+			}
+		}
 		if len(groupNames) == 1 {
 			requestedApprovalGroupsStr = groupNames[0]
 		} else {
@@ -469,7 +539,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 		CalculatedExpiresAt:     calculatedExpiresAtStr,
 		FormattedDuration:       formattedDurationStr,
 		RequestedAt:             requestedAtStr,
-		ApproverGroups:          approverGroupsToShow,
+		ApproverGroups:          visibleApproverGroups,
 		RequestedApprovalGroups: requestedApprovalGroupsStr,
 		TimeRemaining:           timeRemaining,
 		URL:                     fmt.Sprintf("%s/session/%s/approve", wc.config.Frontend.BaseURL, bs.Name),
@@ -559,9 +629,9 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	return nil
 }
 
-// sendOnRequestEmailsByGroup sends separate emails for each approver group, where each email shows
-// only the specific group that matched. This allows approvers to understand which group they're
-// being notified on behalf of.
+// sendOnRequestEmailsByGroup sends each group-attributed recipient one email with
+// all matching groups found in the bounded snapshots. Explicit-only recipients
+// receive a notification without group attribution.
 func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 	log *zap.SugaredLogger,
 	bs breakglassv1alpha1.BreakglassSession,
@@ -580,27 +650,35 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		"totalApprovers", len(filteredApprovers),
 		"groupCount", len(approversByGroup))
 
-	// Build a map of approver email -> groups they belong to (across ALL groups)
-	// This ensures we send one email per approver, showing all their groups
+	// Build a map of approver email -> groups they belong to across the bounded
+	// render prefixes. This keeps attribution work bounded per group.
 	approverToGroups := make(map[string][]string)
+	eligible := make(map[string]bool, len(filteredApprovers))
+	for _, approver := range filteredApprovers {
+		eligible[approver] = true
+	}
 
 	// For each configured approver group, collect which groups each approver belongs to
 	for _, groupName := range matchedEscalation.Spec.Approvers.Groups {
 		groupMembers := approversByGroup[groupName]
+		// Keep the complete snapshot above for privacy exclusions and hidden
+		// filtering, but bound this render-only attribution scan. A tail member
+		// remains eligible through filteredApprovers; this only omits the capped
+		// group name from that recipient's rendered attribution.
+		if len(groupMembers) > MaxApproverGroupMembers {
+			groupMembers = groupMembers[:MaxApproverGroupMembers]
+		}
 
 		// Filter the group members to only include those in filteredApprovers
 		for _, member := range groupMembers {
-			for _, filtered := range filteredApprovers {
-				if member == filtered {
-					// Record this approver -> group mapping
-					approverToGroups[member] = append(approverToGroups[member], groupName)
-					break
-				}
+			if eligible[member] && !slices.Contains(approverToGroups[member], groupName) {
+				// Record this approver -> group mapping in configured group order.
+				approverToGroups[member] = append(approverToGroups[member], groupName)
 			}
 		}
 	}
 
-	// Send one email to each approver, showing all groups they belong to
+	// Send one email to each approver, showing the groups found in the bounded prefixes.
 	for approver, groups := range approverToGroups {
 		log.Debugw("Sending email for approver",
 			"session", bs.Name,
@@ -624,11 +702,11 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 		// Filter explicit users to only include those in filteredApprovers
 		var approversForExplicit []string
 		for _, user := range explicitUsers {
-			for _, filtered := range filteredApprovers {
-				if user == filtered {
-					approversForExplicit = append(approversForExplicit, user)
-					break
+			if eligible[user] {
+				if _, alreadyMappedToGroup := approverToGroups[user]; alreadyMappedToGroup {
+					continue
 				}
+				approversForExplicit = append(approversForExplicit, user)
 			}
 		}
 
@@ -652,8 +730,9 @@ func (wc *BreakglassSessionController) sendOnRequestEmailsByGroup(
 func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
+	approversByGroup map[string][]string,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
-) []string {
+) ([]string, bool) {
 	log.Debugw("filterExcludedNotificationRecipients called",
 		"approverCount", len(approvers),
 		"escalationNil", escalation == nil,
@@ -662,7 +741,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 	if escalation == nil || escalation.Spec.NotificationExclusions == nil {
 		log.Debugw("No notification exclusions configured",
 			"escalationNil", escalation == nil)
-		return approvers
+		return approvers, false
 	}
 
 	exclusions := escalation.Spec.NotificationExclusions
@@ -680,7 +759,21 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 
 	// Get members of excluded groups
 	excludedGroupMembers := make(map[string]bool)
-	if len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
+	restrictedProviders := len(notificationApproverProviders(escalation)) > 0
+	for _, group := range exclusions.Groups {
+		members, known := approversByGroup[group]
+		if restrictedProviders && !known {
+			members, known = restrictedNotificationGroupMembers(escalation, group)
+			if !known {
+				return nil, true
+			}
+		}
+		for _, member := range members {
+			excludedGroupMembers[member] = true
+		}
+	}
+	requestResolvedMemberCount := len(excludedGroupMembers)
+	if !restrictedProviders && len(exclusions.Groups) > 0 && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
@@ -696,6 +789,9 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 					"group", system.RedactGroupName(group),
 					"error", err,
 					"errorType", fmt.Sprintf("%T", err))
+				if _, known := approversByGroup[group]; !known {
+					return nil, true
+				}
 				continue
 			}
 			log.Infow("Successfully resolved excluded group members",
@@ -711,13 +807,20 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 		log.Infow("Excluded group resolution summary",
 			"resolvedGroupCount", resolvedGroupsCount,
 			"totalGroupMemberCount", totalMembersCount,
+			"requestResolvedGroupMemberCount", requestResolvedMemberCount,
 			"uniqueExcludedGroupMemberCount", len(excludedGroupMembers))
-	} else {
+	} else if !restrictedProviders {
 		resolverNil := wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil
-		log.Debugw("Cannot resolve excluded group members",
+		log.Debugw("Cannot resolve additional excluded group members",
 			"groupCount", len(exclusions.Groups),
 			"escalationManagerNil", wc.escalationManager == nil,
-			"resolverNil", resolverNil)
+			"resolverNil", resolverNil,
+			"knownGroupMemberCount", len(excludedGroupMembers))
+		for _, group := range exclusions.Groups {
+			if _, known := approversByGroup[group]; !known {
+				return nil, true
+			}
+		}
 	}
 
 	// Filter approvers
@@ -739,7 +842,7 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 		"totalDirectExcluded", len(excludedUsers),
 		"totalGroupMembersExcluded", len(excludedGroupMembers))
 
-	return filtered
+	return filtered, false
 }
 
 // filterHiddenFromUIRecipients filters out users/groups that are marked as hidden from UI in the escalation.
@@ -747,8 +850,9 @@ func (wc *BreakglassSessionController) filterExcludedNotificationRecipients(
 func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 	log *zap.SugaredLogger,
 	approvers []string,
+	approversByGroup map[string][]string,
 	escalation *breakglassv1alpha1.BreakglassEscalation,
-) []string {
+) ([]string, bool) {
 	hiddenFromUICount := 0
 	if escalation != nil {
 		hiddenFromUICount = len(escalation.Spec.Approvers.HiddenFromUI)
@@ -762,7 +866,7 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		log.Debugw("No hidden approvers configured, returning all approvers",
 			"escalationNil", escalation == nil,
 			"hiddenCount", hiddenFromUICount)
-		return approvers
+		return approvers, false
 	}
 
 	log.Infow("Hidden approvers configured",
@@ -776,25 +880,53 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 	log.Debugw("Built hidden users set",
 		"directHiddenUserCount", len(hiddenUsers))
 
+	// Only explicitly configured users can bypass group resolution. Group names
+	// may themselves be email addresses and must still have their members hidden.
+	hiddenGroups := make([]string, 0, len(escalation.Spec.Approvers.HiddenFromUI))
+	for _, item := range escalation.Spec.Approvers.HiddenFromUI {
+		_, knownGroup := approversByGroup[item]
+		if !knownGroup && !slices.Contains(escalation.Spec.Approvers.Groups, item) &&
+			slices.Contains(escalation.Spec.Approvers.Users, item) {
+			continue
+		}
+		hiddenGroups = append(hiddenGroups, item)
+	}
+
 	// Get members of hidden groups
 	hiddenGroupMembers := make(map[string]bool)
-	if wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
+	restrictedProviders := len(notificationApproverProviders(escalation)) > 0
+	for _, group := range hiddenGroups {
+		members, known := approversByGroup[group]
+		if restrictedProviders && !known {
+			members, known = restrictedNotificationGroupMembers(escalation, group)
+			if !known {
+				return nil, true
+			}
+		}
+		for _, member := range members {
+			hiddenGroupMembers[member] = true
+		}
+	}
+	requestResolvedMemberCount := len(hiddenGroupMembers)
+	if !restrictedProviders && wc.escalationManager != nil && wc.escalationManager.GetResolver() != nil {
 		// Use a timeout context to prevent hanging on slow group resolution
 		ctx, cancel := context.WithTimeout(context.Background(), APIContextTimeout)
 		defer cancel()
 		resolvedGroupsCount := 0
 		totalMembersCount := 0
 
-		for _, group := range escalation.Spec.Approvers.HiddenFromUI {
+		for _, group := range hiddenGroups {
 			log.Debugw("Attempting to resolve hidden item as group",
 				"itemHint", system.RedactGroupName(group))
 			members, err := wc.escalationManager.GetResolver().Members(ctx, group)
 			if err != nil {
-				// This might be a user, not a group - just continue
-				log.Debugw("Failed to resolve members of hidden item (treating as individual user)",
+				log.Debugw("Failed to resolve members of hidden group",
 					"itemHint", system.RedactGroupName(group),
 					"error", err,
 					"errorType", fmt.Sprintf("%T", err))
+				if _, known := approversByGroup[group]; !known {
+					return nil, true
+				}
 				continue
 			}
 			log.Infow("Successfully resolved hidden group members",
@@ -810,11 +942,18 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		log.Infow("Hidden group resolution summary",
 			"resolvedGroupCount", resolvedGroupsCount,
 			"totalGroupMemberCount", totalMembersCount,
+			"requestResolvedGroupMemberCount", requestResolvedMemberCount,
 			"uniqueHiddenGroupMemberCount", len(hiddenGroupMembers))
-	} else {
-		log.Warnw("Cannot resolve hidden group members - resolver not available",
+	} else if !restrictedProviders {
+		log.Warnw("Cannot resolve additional hidden group members - resolver not available",
 			"escalationManagerNil", wc.escalationManager == nil,
-			"resolverNil", wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil)
+			"resolverNil", wc.escalationManager != nil && wc.escalationManager.GetResolver() == nil,
+			"knownGroupMemberCount", len(hiddenGroupMembers))
+		for _, group := range hiddenGroups {
+			if _, known := approversByGroup[group]; !known {
+				return nil, true
+			}
+		}
 	}
 
 	// Filter approvers - only include those not in hidden lists
@@ -836,5 +975,5 @@ func (wc *BreakglassSessionController) filterHiddenFromUIRecipients(
 		"totalDirectHidden", len(hiddenUsers),
 		"totalGroupMembersHidden", len(hiddenGroupMembers))
 
-	return filtered
+	return filtered, false
 }

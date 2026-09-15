@@ -9,6 +9,7 @@ import { mount, flushPromises } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import { ref } from "vue";
 import DebugSessionBrowser from "@/views/DebugSessionBrowser.vue";
+import DebugSessionCard from "@/components/DebugSessionCard.vue";
 import { AuthKey } from "@/keys";
 
 const mockListSessions = vi.fn().mockResolvedValue({
@@ -143,8 +144,40 @@ describe("DebugSessionBrowser", () => {
 
       expect(refreshButton.exists()).toBe(true);
       expect(refreshButton.attributes("icon-only")).toBe("true");
-      expect(refreshButton.attributes("aria-label")).toBe("Refresh");
+      expect(refreshButton.attributes("inner-aria-label")).toBe("Refresh debug sessions");
       expect(refreshButton.classes()).toContain("ui-toolbar-icon-control");
+    });
+
+    it("announces filtered result counts as a status update", async () => {
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.exists()).toBe(true);
+      expect(status.attributes("role")).toBe("status");
+      expect(status.attributes("aria-live")).toBe("polite");
+      expect(status.attributes("aria-atomic")).toBe("true");
+      expect(status.text()).toBe("Showing 2 of 2 debug sessions");
+    });
+
+    it("uses singular debug session text when there is one result", async () => {
+      mockListSessions.mockResolvedValueOnce({
+        sessions: [
+          {
+            name: "debug-session-1",
+            namespace: "default",
+            cluster: "test-cluster",
+            state: "Active",
+            templateRef: "standard-debug",
+            requestedBy: "user@example.com",
+            createdAt: new Date().toISOString(),
+          },
+        ],
+      });
+
+      const wrapper = await createWrapper();
+      const status = wrapper.find('[data-testid="debug-session-results-status"]');
+
+      expect(status.text()).toBe("Showing 1 of 1 debug session");
     });
 
     it("shows an error state when loading debug sessions fails", async () => {
@@ -156,6 +189,7 @@ describe("DebugSessionBrowser", () => {
       expect(errorState.exists()).toBe(true);
       expect(errorState.props("variant")).toBe("error");
       expect(errorState.props("description")).toBe("debug list down");
+      expect(wrapper.find('[data-testid="debug-session-results-status"]').exists()).toBe(false);
     });
 
     it("joins sessions as a viewer", async () => {
@@ -167,7 +201,68 @@ describe("DebugSessionBrowser", () => {
       await wrapper.find('[data-testid="join-debug-session-1"]').trigger("click");
       await flushPromises();
 
-      expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1", { role: "viewer" });
+      expect(mockJoinSession).toHaveBeenCalledWith("debug-session-1");
+    });
+
+    it("renders rejected sessions through the state filter without active-session actions", async () => {
+      mockListSessions.mockResolvedValueOnce({
+        sessions: [
+          {
+            name: "rejected-session",
+            namespace: "default",
+            cluster: "test-cluster",
+            state: "Rejected",
+            templateRef: "standard-debug",
+            requestedBy: "test@example.com",
+            statusMessage: "Rejected by approver",
+          },
+        ],
+      });
+
+      await router.push("/debug-sessions");
+      await router.isReady();
+      const wrapper = mount(DebugSessionBrowser, {
+        global: {
+          plugins: [router],
+          provide: { [AuthKey as symbol]: mockAuth },
+          stubs: {
+            PageHeader: true,
+            LoadingState: true,
+            EmptyState: true,
+            DebugSessionCard,
+            "scale-button": {
+              inheritAttrs: false,
+              template: '<button v-bind="$attrs"><slot /></button>',
+            },
+            "scale-tag": { template: '<span v-bind="$attrs"><slot /></span>' },
+            "scale-text-field": true,
+            "scale-checkbox": true,
+            "scale-modal": true,
+            "scale-dropdown-select": true,
+            "scale-dropdown-select-item": true,
+            "scale-icon-alert-error": true,
+          },
+        },
+      });
+
+      await flushPromises();
+      expect(wrapper.find('[data-testid="debug-sessions-empty-state"]').exists()).toBe(true);
+
+      const rejectedFilter = wrapper.find('[data-testid="state-filter-Rejected"]');
+      Object.defineProperty(rejectedFilter.element, "checked", { value: true, configurable: true });
+      await rejectedFilter.trigger("scale-change");
+      await flushPromises();
+
+      const card = wrapper.find(".debug-session-card");
+      expect(card.exists()).toBe(true);
+      expect(card.find('[data-testid="session-state"]').text()).toBe("Rejected");
+      expect(card.find('[data-testid="status-message"]').text()).toContain("Rejected by approver");
+      expect(card.find('[data-testid="join-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="leave-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="renew-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="terminate-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="approve-button"]').exists()).toBe(false);
+      expect(card.find('[data-testid="reject-button"]').exists()).toBe(false);
     });
   });
 

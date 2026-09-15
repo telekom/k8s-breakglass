@@ -4,7 +4,7 @@
  * @vitest-environment jsdom
  */
 
-import { ref } from "vue";
+import { reactive, ref } from "vue";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { shallowMount, mount, flushPromises } from "@vue/test-utils";
 import DebugSessionDetails from "@/views/DebugSessionDetails.vue";
@@ -16,7 +16,7 @@ const mockJoinSession = vi.fn();
 const mockCopy = vi.fn().mockResolvedValue(true);
 const mockCleanup = vi.fn();
 const mockCopied = ref(false);
-const mockRouteParams = { name: "dbg-1" };
+const mockRouteParams = reactive<{ name?: string | string[] }>({ name: "dbg-1" });
 
 vi.mock("vue-router", () => ({
   useRoute: () => ({
@@ -129,6 +129,82 @@ describe("DebugSessionDetails", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("reloads details when navigating between debug session route names", async () => {
+    mockGetSession.mockImplementation(async (name: string) => ({
+      status: { state: "Terminated" },
+      metadata: { name },
+      spec: { cluster: `cluster-${name}` },
+    }));
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-1");
+    expect(wrapper.findComponent({ name: "PageHeader" }).props("title")).toBe("dbg-1");
+
+    mockRouteParams.name = "dbg-2";
+    await flushPromises();
+
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-2");
+    expect(wrapper.findComponent({ name: "PageHeader" }).props("title")).toBe("dbg-2");
+  });
+
+  it("does not start polling when a route refresh completes after unmount", async () => {
+    let resolveRouteRefresh: (session: unknown) => void = () => {};
+    mockGetSession.mockImplementation((name: string) => {
+      if (name === "dbg-1") {
+        return Promise.resolve({
+          status: { state: "Terminated" },
+          metadata: { name },
+          spec: { cluster: `cluster-${name}` },
+        });
+      }
+      return new Promise((resolve) => {
+        resolveRouteRefresh = resolve;
+      });
+    });
+
+    wrapper = shallowMount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+    mockRouteParams.name = "dbg-2";
+    await flushPromises();
+    expect(mockGetSession).toHaveBeenCalledWith("dbg-2");
+
+    wrapper.unmount();
+    wrapper = null;
+    resolveRouteRefresh({
+      status: { state: "Active" },
+      metadata: { name: "dbg-2" },
+      spec: { cluster: "cluster-dbg-2" },
+    });
+    await flushPromises();
+
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("renders copy button for each running pod and calls clipboard copy", async () => {
     mockGetSession.mockResolvedValue({
       status: {
@@ -163,6 +239,58 @@ describe("DebugSessionDetails", () => {
     // Click first copy button and verify clipboard was called with correct command
     await copyBtns[0]!.trigger("click");
     expect(mockCopy).toHaveBeenCalledWith("kubectl exec -it pod-1 -n ns-1 -- /bin/sh");
+  });
+
+  it("renders detail card headings without skipping levels", async () => {
+    mockGetSession.mockResolvedValue({
+      status: {
+        state: "Active",
+        participants: [],
+        allowedPods: [],
+        allowedPodOperations: { exec: true, attach: true, logs: true, portForward: true },
+      },
+      metadata: {
+        name: "dbg-1",
+        creationTimestamp: new Date().toISOString(),
+        labels: { "breakglass.telekom.de/mode": "kubectl-debug" },
+      },
+      spec: {
+        cluster: "test-cluster",
+        templateRef: "kubectl-debug",
+        requestedBy: "test@example.com",
+        requestedDuration: "1h",
+      },
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find("h1").text()).toBe("dbg-1");
+    expect(wrapper.findAll("h2").map((heading) => heading.text())).toEqual([
+      "Status",
+      "Session Information",
+      "Participants (0)",
+      "Debug Pods (0)",
+      "Allowed Pod Operations",
+      "Kubectl Debug Operations",
+    ]);
+
+    await wrapper.find('[data-testid="inject-ephemeral-button"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll("h3").map((heading) => heading.text())).toContain("Inject Ephemeral Container");
   });
 
   it("shows an error state when loading session details fails", async () => {
@@ -220,7 +348,63 @@ describe("DebugSessionDetails", () => {
     await wrapper.find('[data-testid="join-session-button"]').trigger("click");
     await flushPromises();
 
-    expect(mockJoinSession).toHaveBeenCalledWith("dbg-1", { role: "viewer" });
+    expect(mockJoinSession).toHaveBeenCalledWith("dbg-1");
+  });
+
+  it("shows approval actions only when the API authorizes them", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "PendingApproval" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster", requestedBy: "owner@example.com" },
+      canApprove: true,
+      canReject: true,
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="approve-session-button"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="reject-session-button"]').exists()).toBe(true);
+  });
+
+  it("hides approval actions when the API does not authorize them", async () => {
+    mockGetSession.mockResolvedValue({
+      status: { state: "PendingApproval" },
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test-cluster", requestedBy: "test@example.com" },
+      canApprove: false,
+      canReject: false,
+    });
+
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: {
+          [AuthKey as symbol]: {
+            login: vi.fn(),
+            logout: vi.fn(),
+            getAccessToken: vi.fn(),
+            userManager: { signinSilent: vi.fn() },
+          },
+        },
+      },
+    });
+
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="approve-session-button"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="reject-session-button"]').exists()).toBe(false);
   });
 
   it("calls clipboardCleanup on unmount", async () => {

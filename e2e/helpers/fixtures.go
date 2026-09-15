@@ -21,12 +21,46 @@ import (
 	"path/filepath"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
+
+// NewValidDebugSessionTemplate returns a minimal auto-approved E2E template
+// with every field required by the selected mode.
+func NewValidDebugSessionTemplate(name, displayName, cluster string, mode breakglassv1alpha1.DebugSessionTemplateMode, podTemplateName string) *breakglassv1alpha1.DebugSessionTemplate {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			DisplayName: displayName,
+			Mode:        mode,
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{cluster},
+				Groups:   []string{"*"},
+			},
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{Clusters: []string{cluster}},
+			},
+			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				MaxDuration:     "4h",
+				DefaultDuration: "1h",
+			},
+		},
+	}
+	switch mode {
+	case breakglassv1alpha1.DebugSessionModeWorkload:
+		replicas := int32(1)
+		template.Spec.PodTemplateRef = &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName}
+		template.Spec.WorkloadType = breakglassv1alpha1.DebugWorkloadDeployment
+		template.Spec.Replicas = &replicas
+	case breakglassv1alpha1.DebugSessionModeKubectlDebug:
+		template.Spec.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{}
+	}
+	return template
+}
 
 var (
 	fixtureScheme  *runtime.Scheme

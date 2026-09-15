@@ -27,9 +27,48 @@ import (
 // APIError represents a standardized error response.
 // This ensures consistent error message formatting across all API endpoints.
 type APIError struct {
-	Error   string `json:"error"`
-	Code    string `json:"code,omitempty"`
-	Details string `json:"details,omitempty"`
+	Error         string `json:"error"`
+	Code          string `json:"code,omitempty"`
+	Details       string `json:"details,omitempty"`
+	Authenticated *bool  `json:"authenticated,omitempty"`
+}
+
+func errorCodeForStatus(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "BAD_REQUEST"
+	case http.StatusUnauthorized:
+		return "UNAUTHORIZED"
+	case http.StatusForbidden:
+		return "FORBIDDEN"
+	case http.StatusNotFound:
+		return "NOT_FOUND"
+	case http.StatusConflict:
+		return "CONFLICT"
+	case http.StatusUnprocessableEntity:
+		return "UNPROCESSABLE_ENTITY"
+	case http.StatusTooManyRequests:
+		return "TOO_MANY_REQUESTS"
+	case http.StatusBadGateway:
+		return "BAD_GATEWAY"
+	case http.StatusServiceUnavailable:
+		return "SERVICE_UNAVAILABLE"
+	default:
+		if status >= http.StatusInternalServerError {
+			return "INTERNAL_ERROR"
+		}
+		return "ERROR"
+	}
+}
+
+// RespondError sends a standardized error response for middleware paths that
+// do not map to one of the specialized helpers below.
+func RespondError(c *gin.Context, status int, message, details string) {
+	c.JSON(status, APIError{
+		Error:   message,
+		Code:    errorCodeForStatus(status),
+		Details: details,
+	})
 }
 
 // RespondNotFound sends a 404 Not Found response with a standardized message.
@@ -139,6 +178,30 @@ func RespondTooManyRequestsWithRetryAfter(c *gin.Context, retryAfter string, mes
 	c.JSON(http.StatusTooManyRequests, APIError{
 		Error: message,
 		Code:  "TOO_MANY_REQUESTS",
+	})
+}
+
+// RespondTooManyRequests sends a 429 Too Many Requests response.
+func RespondTooManyRequests(c *gin.Context, message string) {
+	if message == "" {
+		message = "too many requests"
+	}
+	c.JSON(http.StatusTooManyRequests, APIError{
+		Error: message,
+		Code:  "TOO_MANY_REQUESTS",
+	})
+}
+
+// RespondTooManyRequestsWithAuthState sends a 429 response while preserving
+// the authenticated marker expected by rate-limit clients.
+func RespondTooManyRequestsWithAuthState(c *gin.Context, message string, authenticated bool) {
+	if message == "" {
+		message = "too many requests"
+	}
+	c.JSON(http.StatusTooManyRequests, APIError{
+		Error:         message,
+		Code:          "TOO_MANY_REQUESTS",
+		Authenticated: &authenticated,
 	})
 }
 

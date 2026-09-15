@@ -129,7 +129,7 @@ func (ccc ClusterConfigChecker) runOnce(ctx context.Context, lg *zap.SugaredLogg
 		}
 
 		// discovery client to attempt server version call
-		if err := CheckClusterReachable(restCfg); err != nil {
+		if err := CheckClusterReachable(ctx, restCfg); err != nil {
 			msg := "cluster unreachable: " + err.Error()
 			lg.Warnw(msg, "cluster", cc.Name)
 			if err2 := ccc.setStatusAndEvent(ctx, &cc, breakglassv1alpha1.ConditionTypeFailed, msg, corev1.EventTypeWarning, lg); err2 != nil {
@@ -340,20 +340,7 @@ func (ccc ClusterConfigChecker) validateOIDCFromIdentityProvider(ctx context.Con
 			}
 			return nil, err
 		}
-		// Note: We intentionally don't check if the CA key exists in the secret.
-		// If the secret exists but the key is missing, TOFU will discover the CA
-		// and persist it to this secret. See pkg/cluster/oidc.go configureTLS().
-		caKeyName := ref.CASecretRef.Key
-		if caKeyName == "" {
-			caKeyName = "ca.crt"
-		}
-		if _, ok := caSec.Data[caKeyName]; !ok {
-			lg.Infow("CA key not found in secret, TOFU will attempt to discover and persist",
-				"cluster", cc.Name,
-				"secret", ref.CASecretRef.Name,
-				"secretNamespace", ref.CASecretRef.Namespace,
-				"key", caKeyName)
-		}
+		ccc.reportCASecretKeyState(cc, ref.CASecretRef, &caSec, lg)
 	}
 
 	lg.Debugw("ClusterConfig OIDC from IdentityProvider validated",
@@ -605,17 +592,7 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 			}
 			return nil, err
 		}
-		caKeyName := oidcConfig.CASecretRef.Key
-		if caKeyName == "" {
-			caKeyName = "ca.crt"
-		}
-		if _, ok := caSec.Data[caKeyName]; !ok {
-			lg.Infow("CA key not found in secret, TOFU will attempt to discover and persist",
-				"cluster", cc.Name,
-				"secret", oidcConfig.CASecretRef.Name,
-				"secretNamespace", oidcConfig.CASecretRef.Namespace,
-				"key", caKeyName)
-		}
+		ccc.reportCASecretKeyState(cc, oidcConfig.CASecretRef, &caSec, lg)
 	}
 
 	lg.Debugw("ClusterConfig OIDC config validated",
@@ -640,6 +617,49 @@ func (ccc ClusterConfigChecker) validateDirectOIDCAuth(ctx context.Context, cc *
 	ccc.clearOIDCDegradedConditions(ctx, cc, lg)
 
 	return restCfg, nil
+}
+
+// reportCASecretKeyState inspects a caSecretRef target Secret and surfaces the
+// three states an operator needs to distinguish. It never fails the check: this
+// is an emergency-access tool and a CA that is merely stored under an
+// unexpected key must not block spoke access during an incident.
+//
+//  1. Pin present under the canonical key (or an explicitly configured key) —
+//     debug log only, nothing to do.
+//  2. Pin present only under the legacy read key ("value") while caSecretRef.key
+//     is omitted — the historical write/read key mismatch. Warn and emit an
+//     event; the runtime still reads it and migrates it on the next TOFU write.
+//  3. No pin under any key a read resolves to — TOFU will bootstrap and persist.
+func (ccc ClusterConfigChecker) reportCASecretKeyState(
+	cc *breakglassv1alpha1.ClusterConfig,
+	secretRef *breakglassv1alpha1.SecretKeyReference,
+	caSec *corev1.Secret,
+	lg *zap.SugaredLogger,
+) {
+	ca, key, legacy := cluster.ReadPinnedCA(caSec, secretRef)
+	switch {
+	case len(ca) == 0:
+		lg.Infow("CA key not found in secret, TOFU will attempt to discover and persist",
+			"cluster", cc.Name,
+			"secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace,
+			"key", breakglassv1alpha1.ResolveSecretKey(secretRef, breakglassv1alpha1.DefaultCASecretKey))
+	case legacy:
+		msg := fmt.Sprintf("Cluster CA secret %s/%s stores the pinned CA under the legacy key %q "+
+			"while caSecretRef.key is unset; the canonical key is %q. The CA is still honoured and will be "+
+			"migrated on the next TOFU write. Set caSecretRef.key explicitly to pin it permanently.",
+			secretRef.Namespace, secretRef.Name, key, breakglassv1alpha1.DefaultCASecretKey)
+		lg.Warnw(msg, "cluster", cc.Name, "legacyKey", key,
+			"canonicalKey", breakglassv1alpha1.DefaultCASecretKey)
+		if ccc.Recorder != nil {
+			ccc.Recorder.Eventf(cc, nil, corev1.EventTypeWarning,
+				"ClusterCASecretLegacyKey", "ClusterCASecretLegacyKey", "%s", msg)
+		}
+	default:
+		lg.Debugw("Cluster CA pin present in secret",
+			"cluster", cc.Name, "secret", secretRef.Name,
+			"secretNamespace", secretRef.Namespace, "key", key)
+	}
 }
 
 func (ccc ClusterConfigChecker) setStatusAndEvent(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig, phase, message, eventType string, lg *zap.SugaredLogger) error {
@@ -773,12 +793,14 @@ func (ccc *ClusterConfigChecker) applyStatus(ctx context.Context, config *breakg
 }
 
 // checkClusterReachable tries to perform a simple discovery (server version) to ensure the cluster is reachable
-func checkClusterReachable(cfg *rest.Config) error {
+func checkClusterReachable(ctx context.Context, cfg *rest.Config) error {
 	d, err := discovery.NewDiscoveryClientForConfig(cfg)
 	if err != nil {
 		return err
 	}
-	_, err = d.ServerVersion()
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err = d.RESTClient().Get().AbsPath("/version").Do(timeoutCtx).Raw()
 	return err
 }
 
@@ -877,6 +899,6 @@ func determineClusterConfigFailureType(message string) string {
 
 // overridable function variables for unit testing
 var RestConfigFromKubeConfig = clientcmd.RESTConfigFromKubeConfig
-var CheckClusterReachable = func(cfg *rest.Config) error { return checkClusterReachable(cfg) }
+var CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return checkClusterReachable(ctx, cfg) }
 
 // Fallback: attempt to build rest.Config via clientcmd

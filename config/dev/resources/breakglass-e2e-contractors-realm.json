@@ -59,6 +59,17 @@
             "id.token.claim": "true",
             "access.token.claim": "true"
           }
+        },
+        {
+          "name": "audience-breakglass-contractors",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "breakglass-contractors",
+            "id.token.claim": "true",
+            "access.token.claim": "true"
+          }
         }
       ]
     }

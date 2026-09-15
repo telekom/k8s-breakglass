@@ -784,7 +784,6 @@ func TestClusterBindingFullChain(t *testing.T) {
 		Cluster:           clusterName,
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNS,
 		Reason:            "E2E testing binding chain",
 	})
 	if err != nil {

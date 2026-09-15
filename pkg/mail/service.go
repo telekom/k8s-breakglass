@@ -5,6 +5,7 @@ package mail
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -92,21 +93,19 @@ func (s *Service) Reload(ctx context.Context) error {
 	return nil
 }
 
-// Enqueue adds an email to the mail queue.
-// If the queue is not initialized, the email is silently dropped.
+// Enqueue adds an email to the in-memory mail queue.
 func (s *Service) Enqueue(sessionID string, recipients []string, subject, body string) error {
 	s.mu.RLock()
-	queue := s.queue
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if queue == nil {
-		s.logger.Warnw("Mail queue not initialized, dropping email",
+	if s.queue == nil {
+		s.logger.Warnw("Mail queue not initialized, rejecting email",
 			"sessionID", sessionID,
 			"recipients", len(recipients))
-		return nil
+		return fmt.Errorf("mail queue is not initialized")
 	}
 
-	return queue.Enqueue(sessionID, recipients, subject, body)
+	return s.queue.Enqueue(sessionID, recipients, subject, body)
 }
 
 // IsEnabled returns whether the mail service has an active queue.

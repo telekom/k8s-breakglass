@@ -299,15 +299,9 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
-		return reconcile.Result{RequeueAfter: 5 * time.Minute}, nil
+		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
-
 	now := metav1.Now()
-
 	latest.Status.LastHealthCheck = &now
 	latest.Status.LastSendError = ""
 
@@ -359,7 +353,7 @@ func (r *MailProviderReconciler) updateStatusHealthy(ctx context.Context, mp *br
 }
 
 // updateStatusUnhealthy updates the status to indicate the provider is unhealthy
-func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider, healthErr error) (ctrl.Result, error) {
+func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *breakglassv1alpha1.MailProvider, healthErr error) (reconcile.Result, error) {
 	// Re-fetch the object to get the latest resource version
 	var latest breakglassv1alpha1.MailProvider
 	if err := r.Get(ctx, client.ObjectKeyFromObject(mp), &latest); err != nil {
@@ -384,10 +378,6 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
@@ -397,6 +387,7 @@ func (r *MailProviderReconciler) updateStatusUnhealthy(ctx context.Context, mp *
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
 			Status:             metav1.ConditionFalse,
+			ObservedGeneration: latest.Generation,
 			Reason:             "HealthCheckFailed",
 			Message:            fmt.Sprintf("Health check failed: %v", healthErr),
 			LastTransitionTime: metav1.Now(),
@@ -454,10 +445,6 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 			"skipReason", skipInfo.Reason,
 			"lastUpdateAge", skipInfo.LastUpdateAge,
 		)
-		if r.Recorder != nil {
-			r.Recorder.Eventf(&latest, nil, corev1.EventTypeNormal, "StatusUpdateSkipped", "StatusUpdateSkipped",
-				"Skipped status update: %s (last update %v ago)", skipInfo.Reason, skipInfo.LastUpdateAge.Truncate(time.Second))
-		}
 		return reconcile.Result{}, nil
 	}
 

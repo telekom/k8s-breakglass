@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/spf13/cobra"
 
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/auth"
@@ -63,7 +66,7 @@ func newAuthLoginCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			providerKey := resolveProviderKey(ctxCfg, resolved)
+			providerKey := rt.resolveTokenKey(ctxCfg, resolved)
 			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			stored := auth.StoredToken{
 				AccessToken:  result.Token.AccessToken,
@@ -109,7 +112,7 @@ func newAuthStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			providerKey := resolveProviderKey(ctxCfg, resolved)
+			providerKey := rt.resolveTokenKey(ctxCfg, resolved)
 			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			token, ok, err := manager.GetToken(providerKey)
 			if err != nil {
@@ -132,7 +135,8 @@ func newAuthStatusCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if _, refreshed, err := manager.RefreshIfNeeded(context.Background(), providerKey, oauthResult.OAuthConfig); err != nil {
+			oauthCtx := oidc.ClientContext(context.Background(), oauthResult.Client)
+			if _, refreshed, err := manager.RefreshIfNeeded(oauthCtx, providerKey, oauthResult.OAuthConfig); err != nil {
 				if resolved.GrantType == "client-credentials" {
 					loginResult, loginErr := auth.ClientCredentialsLogin(context.Background(), auth.OIDCConfig{
 						Authority:       resolved.Authority,
@@ -187,7 +191,7 @@ func newAuthLogoutCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			providerKey := resolveProviderKey(ctxCfg, resolved)
+			providerKey := rt.resolveTokenKey(ctxCfg, resolved)
 			manager := auth.TokenManager{CachePath: config.DefaultTokenPath(), StorageMode: rt.TokenStorage()}
 			if err := manager.DeleteToken(providerKey); err != nil {
 				return err
@@ -206,4 +210,23 @@ func resolveProviderKey(ctxCfg *config.Context, resolved *config.ResolvedOIDC) s
 		return "inline:" + ctxCfg.Name
 	}
 	return "default"
+}
+
+func resolveTokenKey(ctxCfg *config.Context, resolved *config.ResolvedOIDC) string {
+	base := resolveProviderKey(ctxCfg, resolved)
+	identity := base
+	if resolved != nil {
+		identity += "\x00" + resolved.Authority + "\x00" + resolved.ClientID + "\x00" + resolved.CAFile + "\x00" + fmt.Sprint(resolved.InsecureSkipTLS)
+	}
+	if ctxCfg != nil {
+		identity += "\x00" + ctxCfg.Server + "\x00" + ctxCfg.CAFile + "\x00" + fmt.Sprint(ctxCfg.InsecureSkipTLSVerify)
+	}
+	sum := sha256.Sum256([]byte(identity))
+	return base + ":" + hex.EncodeToString(sum[:])
+}
+
+func (rt *runtimeState) resolveTokenKey(ctxCfg *config.Context, resolved *config.ResolvedOIDC) string {
+	effective := *ctxCfg
+	effective.Server = rt.resolveServer(ctxCfg)
+	return resolveTokenKey(&effective, resolved)
 }

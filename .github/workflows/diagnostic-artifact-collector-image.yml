@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Diagnostic artifact collector image
+
+on:
+  workflow_dispatch: {}
+  pull_request:
+    paths:
+      - "utils/images/diagnostic-artifact-collector/**"
+      - "hack/docker-image-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/kind-ownership.sh"
+      - ".github/workflows/diagnostic-artifact-collector-image.yml"
+  push:
+    # Run on every main commit so release tags always have an exact, fresh
+    # behavior result for this utility in the release gate. Pull requests
+    # remain path-filtered below to avoid unrelated PR work.
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostic-artifact-collection:
+    name: Utility image checks (diagnostic-artifact-collection)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run copier and uploader tests
+        run: make -C utils/images/diagnostic-artifact-collector test
+      - name: Lint image helper shell
+        run: make -C utils/images/diagnostic-artifact-collector shellcheck
+      - name: Lint image Dockerfile
+        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
+        with:
+          dockerfile: utils/images/diagnostic-artifact-collector/Dockerfile
+      - name: Install Kind
+        env:
+          KIND_VERSION: v0.32.0
+          KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "${KIND_SHA256}" kind | sha256sum --check --status -
+          chmod 0755 ./kind
+          sudo mv ./kind /usr/local/bin/kind
+          kind version
+      - name: Prove non-root emptyDir fsGroup hand-off
+        run: make -C utils/images/diagnostic-artifact-collector kind-test
+      - name: Prove pre-existing Kind resources are preserved
+        run: make -C utils/images/diagnostic-artifact-collector kind-collision-test
+      - name: Verify collision fixture image is digest pinned
+        run: make -C utils/images/diagnostic-artifact-collector kind-collision-contract-test
+      - name: Prove Kind fixture lifecycle and image-reference contract
+        run: make -C utils/images/diagnostic-artifact-collector kind-contract-test

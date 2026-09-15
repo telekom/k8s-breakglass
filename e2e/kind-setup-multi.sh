@@ -29,7 +29,7 @@ IMAGE=${IMAGE:-breakglass:e2e}
 UI_FLAVOUR=${UI_FLAVOUR:-oss}
 export VITE_UI_FLAVOUR=$UI_FLAVOUR
 echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.5.0}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
 
 # --- Cluster names ---
 HUB_CLUSTER=${HUB_CLUSTER:-breakglass-hub}
@@ -53,6 +53,21 @@ HUB_API_URL=""
 
 # --- Kind node image ---
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
+
+# The authorization configuration below uses cacheAuthorizedRequests, which is
+# available only in Kubernetes 1.34+. Refuse older images rather than starting
+# an apiserver that silently falls back to positive webhook caching.
+if [[ "$KIND_NODE_IMAGE" =~ :v([0-9]+)\.([0-9]+) ]]; then
+  KIND_K8S_MAJOR="${BASH_REMATCH[1]}"
+  KIND_K8S_MINOR="${BASH_REMATCH[2]}"
+  if (( KIND_K8S_MAJOR != 1 || KIND_K8S_MINOR < 34 )); then
+    log "ERROR: KIND_NODE_IMAGE=$KIND_NODE_IMAGE requires Kubernetes 1.34+ for cacheAuthorizedRequests=false"
+    exit 1
+  fi
+else
+  log "ERROR: cannot determine Kubernetes version from KIND_NODE_IMAGE=$KIND_NODE_IMAGE"
+  exit 1
+fi
 
 # --- Directories ---
 TDIR=${TDIR:-"$SCRIPT_DIR/kind-setup-multi-tdir"}
@@ -161,7 +176,7 @@ EOF
   local keycloak_ca_content
   keycloak_ca_content=$(cat "$keycloak_ca_file")
   
-  # Create authorization configuration for this spoke (Kubernetes 1.32+ stable feature)
+  # Create authorization configuration for this spoke (Kubernetes 1.34+ structured config)
   # This tells the apiserver to use Node, RBAC, then Webhook for authorization
   # See: https://kubernetes.io/docs/reference/access-authn-authz/authorization/#using-configuration-file-for-authorization
   #
@@ -196,6 +211,7 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
+      authorizedTTL: 5m
       # Disable caching for e2e tests - decisions should always hit the webhook
       # Note: Setting TTL to 0 uses default, so we must set cacheXxxRequests: false
       cacheAuthorizedRequests: false
@@ -485,12 +501,13 @@ create_clusters() {
 preload_images_all_clusters() {
   log "Preloading images to all clusters..."
   ensure_tmux_debug_image
+  ensure_busybox_image
   
   local clusters=("$HUB_CLUSTER" "$SPOKE_A_CLUSTER" "$SPOKE_B_CLUSTER")
   local images=(
     "$IMAGE"
     "nicolaka/netshoot"
-    "busybox:latest"
+    "$BUSYBOX_IMAGE"
     "$TMUX_DEBUG_IMAGE"
   )
   
@@ -588,7 +605,7 @@ setup_hub_cluster() {
   
   # Apply CRDs
   log "Applying CRDs..."
-  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f config/crd/bases/
+  KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side -f config/crd/bases/
   
   # Install cert-manager to provide Certificate and Issuer CRDs
   log "Installing cert-manager..."
@@ -1141,7 +1158,8 @@ spec:
   displayName: "Main IDP (Employees)"
   oidc:
     authority: "${main_issuer_url}"
-    clientID: "breakglass"
+    clientID: "breakglass-ui"
+    expectedAudience: "breakglass-ui"
     certificateAuthority: |
 $(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${main_issuer_url}"
@@ -1167,6 +1185,7 @@ spec:
   oidc:
     authority: "${contractors_issuer_url}"
     clientID: "breakglass-contractors"
+    expectedAudience: "breakglass-contractors"
     certificateAuthority: |
 $(printf '%s\n' "$keycloak_ca_pem" | sed 's/^/      /')
   issuer: "${contractors_issuer_url}"
@@ -1548,6 +1567,10 @@ rules:
 - apiGroups: [""]
   resources: ["pods", "pods/exec", "pods/log", "pods/portforward"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Ephemeral containers use a separate Pod subresource and require update.
+- apiGroups: [""]
+  resources: ["pods/ephemeralcontainers"]
+  verbs: ["update"]
 # Allow managing services for debug sessions
 - apiGroups: [""]
   resources: ["services", "configmaps", "secrets"]
@@ -1560,6 +1583,14 @@ rules:
 - apiGroups: ["apps"]
   resources: ["deployments", "daemonsets", "replicasets"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Allow managing Job workloads for debug session workloads
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Verify admission-derived scheduling fields for workload identity checks
+- apiGroups: ["scheduling.k8s.io"]
+  resources: ["priorityclasses"]
+  verbs: ["get"]
 # Allow creating events for debug session status reporting
 - apiGroups: [""]
   resources: ["events"]
@@ -1591,7 +1622,7 @@ metadata:
   name: breakglass-pods-admin
 rules:
 - apiGroups: [""]
-  resources: ["pods", "pods/log", "pods/exec", "pods/portforward"]
+  resources: ["pods", "pods/log", "pods/exec", "pods/attach", "pods/portforward"]
   verbs: ["*"]
 - apiGroups: [""]
   resources: ["namespaces", "services", "configmaps", "secrets"]

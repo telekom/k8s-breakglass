@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 export const CURRENT_USER_EMAIL = "mock.user@breakglass.dev";
 export const PARTNER_USER_EMAIL = "partner.user@breakglass.dev";
 export const MOCK_APPROVER_GROUPS = ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"];
+export const MOCK_CURRENT_USER_GROUPS = MOCK_APPROVER_GROUPS;
 
 // ============================================================================
 // DEBUG SESSION MOCK DATA
@@ -563,6 +564,20 @@ mockDebugPodTemplates.forEach((t) => debugPodTemplates.set(t.metadata.name, t));
 // Initialize debug session templates
 mockDebugSessionTemplates.forEach((t) => debugSessionTemplates.set(t.metadata.name, t));
 
+function currentUserCanActOnDebugApproval(templateRef, requestedByEmail) {
+  if (requestedByEmail === CURRENT_USER_EMAIL) return false;
+
+  const template = debugSessionTemplates.get(templateRef);
+  const spec = template?.spec;
+  if (!spec?.requiresApproval) return false;
+
+  const approverUsers = [...(spec.approverUsers || []), ...(spec.approvers || [])];
+  if (approverUsers.includes(CURRENT_USER_EMAIL)) return true;
+
+  const approverGroups = spec.approverGroups || [];
+  return approverGroups.some((group) => MOCK_CURRENT_USER_GROUPS.includes(group));
+}
+
 // Mock debug sessions
 function baseDebugSession({
   name,
@@ -583,6 +598,8 @@ function baseDebugSession({
   rejectedBy,
   rejectionReason,
   scheduledStartTime,
+  canApprove,
+  canReject,
 }) {
   const creationTimestamp = new Date(Date.now() - 30 * 60 * 1000).toISOString();
   const startsAt =
@@ -595,6 +612,10 @@ function baseDebugSession({
         : undefined;
 
   return {
+    canApprove:
+      canApprove ?? (state === "PendingApproval" && currentUserCanActOnDebugApproval(templateRef, requestedByEmail)),
+    canReject:
+      canReject ?? (state === "PendingApproval" && currentUserCanActOnDebugApproval(templateRef, requestedByEmail)),
     metadata: {
       name,
       namespace: "breakglass-system",
@@ -672,6 +693,18 @@ const mockDebugSessions = [
     allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
   }),
   baseDebugSession({
+    name: "debug-awaiting-approval",
+    templateRef: "node-debug",
+    cluster: "production-eu-central-1",
+    requestedBy: PARTNER_USER_EMAIL,
+    requestedByDisplayName: "Partner User",
+    requestedByEmail: PARTNER_USER_EMAIL,
+    state: "PendingApproval",
+    reason: "Emergency packet capture for a customer-impacting incident",
+    expiresInMinutes: 90,
+    allowedPodOperations: { exec: true, attach: false, logs: false, portForward: false },
+  }),
+  baseDebugSession({
     name: "debug-ephemeral-002",
     templateRef: "ephemeral-debug",
     cluster: "production-us-east-1",
@@ -702,7 +735,7 @@ const mockDebugSessions = [
     name: "debug-rejected-001",
     templateRef: "node-debug",
     cluster: "production-critical",
-    state: "Failed",
+    state: "Rejected",
     reason: "Requested node access without proper justification",
     rejectedBy: "security-lead@breakglass.dev",
     rejectionReason: "Insufficient justification for node-level access",
@@ -788,6 +821,9 @@ export function listDebugSessions(query = {}) {
       expiresAt: s.status.expiresAt,
       participants: s.status.participants?.length || 0,
       allowedPods: s.status.allowedPods?.length || 0,
+      allowedPodOperations: s.status.allowedPodOperations,
+      canApprove: s.canApprove === true,
+      canReject: s.canReject === true,
     })),
     total: results.length,
   };
@@ -1678,6 +1714,7 @@ const stressSessions = LARGE_REQUESTER_STACK.map((group, index) => {
 });
 
 const seedSessions = [...permutationSessions, ...stressSessions];
+const MAX_SCALE_HINT = 1000;
 
 const initialSessions = seedSessions.map((session) => cloneSession(session));
 initialSessions.forEach((session) => {
@@ -1709,7 +1746,7 @@ function parseScaleHint(value) {
     console.warn("[mock-api] Invalid scale hint value:", value);
     return 0;
   }
-  return Math.max(parsed, 0);
+  return Math.min(Math.max(parsed, 0), MAX_SCALE_HINT);
 }
 
 function generateScaleDataset(count) {
@@ -1790,6 +1827,13 @@ export function createSessionFromRequest(body = {}) {
   });
   sessions.set(name, session);
   return cloneSession(session);
+}
+
+export function rejectDebugSession(name, reason) {
+  return updateDebugSessionState(name, "Rejected", {
+    rejectedBy: CURRENT_USER_EMAIL,
+    reason: reason || "Rejected",
+  });
 }
 
 export function findSession(name) {

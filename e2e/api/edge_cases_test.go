@@ -32,6 +32,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 )
 
 // TestSlightlyBrokenConfigs tests edge cases with configurations that are almost valid
@@ -303,12 +304,22 @@ func TestEdgeCaseStateTransitions(t *testing.T) {
 		// Wait for pending state
 		helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 
-		// Move to expired state (simulating expiration) - need to set status directly for this edge case test
+		// Move through a valid Pending -> Approved -> Expired sequence before
+		// attempting the forbidden terminal-state resurrection.
 		var toExpire breakglassv1alpha1.BreakglassSession
 		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toExpire)
 		require.NoError(t, err)
+		toExpire.Status.State = breakglassv1alpha1.SessionStateApproved
+		toExpire.Status.Approver = helpers.GetTestApproverEmail()
+		toExpire.Status.ApprovedAt = metav1.Now()
+		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+		err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
+		require.NoError(t, err)
+		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &toExpire)
+		require.NoError(t, err)
 		toExpire.Status.State = breakglassv1alpha1.SessionStateExpired
-		toExpire.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-1 * time.Hour))
+		toExpire.Status.ReasonEnded = "testCleanup"
+		toExpire.Status.ExpiresAt = utils.ClampBreakglassSessionExpiry(toExpire.Status.ExpiresAt, time.Now())
 		err = helpers.ApplySessionStatus(ctx, cli, &toExpire)
 		require.NoError(t, err)
 

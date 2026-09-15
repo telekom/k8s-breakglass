@@ -13,6 +13,8 @@ package v1alpha1
 //
 // DebugPodSpecOverrides defines overridable pod spec fields.
 type DebugPodSpecOverridesApplyConfiguration struct {
+	// nodeSelector adds mandatory scheduling constraints to the pod.
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
 	// hostNetwork overrides the hostNetwork setting.
 	HostNetwork *bool `json:"hostNetwork,omitempty"`
 	// hostPID overrides the hostPID setting.
@@ -27,6 +29,20 @@ type DebugPodSpecOverridesApplyConfiguration struct {
 // apply.
 func DebugPodSpecOverrides() *DebugPodSpecOverridesApplyConfiguration {
 	return &DebugPodSpecOverridesApplyConfiguration{}
+}
+
+// WithNodeSelector puts the entries into the NodeSelector field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the NodeSelector field,
+// overwriting an existing map entries in NodeSelector field with the same key.
+func (b *DebugPodSpecOverridesApplyConfiguration) WithNodeSelector(entries map[string]string) *DebugPodSpecOverridesApplyConfiguration {
+	if b.NodeSelector == nil && len(entries) > 0 {
+		b.NodeSelector = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.NodeSelector[k] = v
+	}
+	return b
 }
 
 // WithHostNetwork sets the HostNetwork field in the declarative configuration to the given value

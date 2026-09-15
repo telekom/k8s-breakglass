@@ -19,6 +19,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -34,9 +35,12 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -45,11 +49,362 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing.T) {
+	now := time.Now()
+	future := metav1.NewTime(now.Add(time.Hour))
+	past := metav1.NewTime(now.Add(-time.Minute))
+	client := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "username-match"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderIssuer: "https://idp-a.example/",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "email-match"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester@example.test",
+				GrantedGroup:           "breakglass:platform:diagnostics",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "username-match-duplicate"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "expired"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester@example.test",
+				GrantedGroup:           "expired",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: past,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "pending"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester@example.test",
+				GrantedGroup:           "pending",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "wrong-cluster"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-b",
+				User:                   "platform-requester@example.test",
+				GrantedGroup:           "wrong-cluster",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "wrong-user"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "other@example.test",
+				GrantedGroup:           "wrong-user",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "wrong-issuer"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "wrong-issuer",
+				IdentityProviderIssuer: "https://idp-b.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "mismatch-allowed"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "breakglass:platform:legacy",
+				IdentityProviderIssuer: "https://idp-b.example",
+				AllowIDPMismatch:       true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{
+		"breakglass:platform:debugsession",
+		"breakglass:platform:diagnostics",
+		"breakglass:platform:legacy",
+	}, groups)
+}
+
+func TestActiveBreakglassGroupsDoesNotInferEmailFromUsername(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	reader := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "alice-other-domain"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "alice@other-domain.example",
+				GrantedGroup:           "breakglass:admin",
+				IdentityProviderIssuer: "https://idp-a.example",
+				AllowIDPMismatch:       true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Empty(t, groups, "the API must require an exact authenticated username or email claim")
+}
+
+func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "indexed"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: future,
+		},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		},
+	).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		},
+	).Build()
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	require.Len(t, cached.calls, 1)
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
+}
+
+func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	usernameSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "username-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:username", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	emailSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(usernameSession, emailSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+		return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+	}).Build()
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"breakglass:username", "breakglass:email"}, groups)
+	require.Len(t, cached.calls, 2)
+	assert.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
+	for _, call := range cached.calls {
+		value, found := call.FieldSelector.RequiresExactMatch("spec.cluster")
+		require.True(t, found)
+		assert.Equal(t, "tenant-a", value)
+	}
+}
+
+func TestActiveBreakglassGroupsFallsBackToOneFullListWhenIdentityIndexMissing(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
+	missingIndex := &debugSessionMissingIndexClient{Client: base}
+	controller := &DebugSessionAPIController{client: missingIndex}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:email"}, groups)
+	require.Len(t, missingIndex.calls, 1, "one failed indexed query must trigger one full-list fallback")
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.user"))
+}
+
+func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testing.T) {
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approval"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(-time.Minute)),
+		},
+	}
+	freshSession := cachedSession.DeepCopy()
+	freshSession.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+	cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		},
+	).WithIndex(
+		&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		},
+	).Build()
+	freshBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(freshSession).Build()
+	cached := &debugSessionRecordingListClient{Client: cachedBase}
+	fresh := &debugSessionRecordingListClient{Client: freshBase}
+	controller := &DebugSessionAPIController{client: cached, apiReader: fresh}
+
+	groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	require.Len(t, cached.calls, 1)
+	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
+	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
+	assert.Empty(t, debugSessionRecordedFieldValues(fresh.calls, "spec.cluster"), "fresh fallback must use a full live read")
+}
+
+func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
+	cachedSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "approval", Namespace: "breakglass", UID: "cached-uid"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster:                "tenant-a",
+			User:                   "alice",
+			GrantedGroup:           "breakglass:debug",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	tests := []struct {
+		name       string
+		freshSetup func(*runtime.Scheme) client.Client
+	}{
+		{
+			name: "revoked",
+			freshSetup: func(scheme *runtime.Scheme) client.Client {
+				revoked := cachedSession.DeepCopy()
+				revoked.Status.State = breakglassv1alpha1.SessionStateExpired
+				return fake.NewClientBuilder().WithScheme(scheme).WithObjects(revoked).Build()
+			},
+		},
+		{
+			name: "deleted",
+			freshSetup: func(scheme *runtime.Scheme) client.Client {
+				return fake.NewClientBuilder().WithScheme(scheme).Build()
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
+				&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+				},
+			).WithIndex(
+				&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+					return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+				},
+			).Build()
+			fresh := &debugSessionRecordingGetClient{Client: tt.freshSetup(testScheme())}
+			controller := &DebugSessionAPIController{client: cachedBase, apiReader: fresh}
+
+			groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+
+			require.NoError(t, err)
+			assert.Empty(t, groups)
+			assert.Len(t, fresh.gets, 1)
+		})
+	}
+}
+
 func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, username, email string, groups []string) *gin.Engine {
 	t.Helper()
 	router := gin.New()
 	if username != "" {
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", username)
 			if email != "" {
 				c.Set("email", email)
@@ -64,6 +419,61 @@ func debugSessionAPITestRouter(t *testing.T, ctrl *DebugSessionAPIController, us
 	err := ctrl.Register(rg)
 	require.NoError(t, err)
 	return router
+}
+
+type debugSessionRecordingListClient struct {
+	client.Client
+	calls []client.ListOptions
+}
+
+func (c *debugSessionRecordingListClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&listOpts)
+	}
+	c.calls = append(c.calls, listOpts)
+	return c.Client.List(ctx, list, opts...)
+}
+
+type debugSessionRecordingGetClient struct {
+	client.Client
+	gets []client.ObjectKey
+}
+
+func (c *debugSessionRecordingGetClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	c.gets = append(c.gets, key)
+	return c.Client.Get(ctx, key, obj, opts...)
+}
+
+func debugSessionRecordedFieldValues(calls []client.ListOptions, field string) []string {
+	values := make([]string, 0, len(calls))
+	for _, call := range calls {
+		if call.FieldSelector == nil {
+			continue
+		}
+		value, ok := call.FieldSelector.RequiresExactMatch(field)
+		if ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+type debugSessionMissingIndexClient struct {
+	client.Client
+	calls []client.ListOptions
+}
+
+func (c *debugSessionMissingIndexClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	listOpts := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&listOpts)
+	}
+	c.calls = append(c.calls, listOpts)
+	if listOpts.FieldSelector != nil {
+		return errors.New(`no index with name "spec.cluster" has been registered`)
+	}
+	return c.Client.List(ctx, list, opts...)
 }
 
 func TestBuildDebugSessionNameUsesCompactSubsecondEntropy(t *testing.T) {
@@ -684,7 +1094,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		fetchedSession.Status.Approval.RejectedBy = "security@example.com"
 		fetchedSession.Status.Approval.RejectedAt = &now
 		fetchedSession.Status.Approval.Reason = "Insufficient justification"
-		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+		fetchedSession.Status.State = breakglassv1alpha1.DebugSessionStateRejected
 		fetchedSession.Status.Message = "Session rejected"
 
 		err = testApplyDebugSessionStatus(context.Background(), fakeClient, &fetchedSession)
@@ -697,7 +1107,7 @@ func TestDebugSessionAPIController_RejectSession(t *testing.T) {
 		}, &fetchedSession)
 		require.NoError(t, err)
 		assert.Equal(t, "security@example.com", fetchedSession.Status.Approval.RejectedBy)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, fetchedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, fetchedSession.Status.State)
 	})
 }
 
@@ -867,6 +1277,16 @@ func TestDebugSessionAPIController_PermissionChecks(t *testing.T) {
 		assert.NotNil(t, fetchedTemplate.Spec.Approvers)
 		assert.Contains(t, fetchedTemplate.Spec.Approvers.Groups, "team-leads")
 	})
+}
+
+func TestDebugSessionBindingRefLogValue(t *testing.T) {
+	assert.Equal(t, "<none>", debugSessionBindingRefLogValue(nil))
+	assert.Equal(t, "breakglass/sre-binding", debugSessionBindingRefLogValue(&breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: "breakglass",
+			Name:      "sre-binding",
+		},
+	}))
 }
 
 // ============================================================================
@@ -1735,6 +2155,60 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 		assert.Equal(t, 2, response.Total)
 	})
 
+	t.Run("list exposes approval actions only to authorized non-requesters", func(t *testing.T) {
+		pendingSession := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "pending-approval",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+				ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+					Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+						Users: []string{"admin@example.com"},
+					},
+				},
+			},
+		}
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(pendingSession).
+			WithStatusSubresource(pendingSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		approverRouter := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+		approverReq := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		approverW := httptest.NewRecorder()
+		approverRouter.ServeHTTP(approverW, approverReq)
+
+		var approverResponse DebugSessionListResponse
+		err := json.Unmarshal(approverW.Body.Bytes(), &approverResponse)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, approverW.Code)
+		require.Equal(t, 1, approverResponse.Total)
+		assert.True(t, approverResponse.Sessions[0].CanApprove)
+		assert.True(t, approverResponse.Sessions[0].CanReject)
+
+		requesterRouter := debugSessionAPITestRouter(t, ctrl, "alice@example.com", "", nil)
+		requesterReq := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions", nil)
+		requesterW := httptest.NewRecorder()
+		requesterRouter.ServeHTTP(requesterW, requesterReq)
+
+		var requesterResponse DebugSessionListResponse
+		err = json.Unmarshal(requesterW.Body.Bytes(), &requesterResponse)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, requesterW.Code)
+		require.Equal(t, 1, requesterResponse.Total)
+		assert.False(t, requesterResponse.Sessions[0].CanApprove)
+		assert.False(t, requesterResponse.Sessions[0].CanReject)
+	})
+
 	t.Run("filter by cluster", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -2059,6 +2533,152 @@ func TestDebugSessionAPIController_HandleListDebugSessions(t *testing.T) {
 	})
 }
 
+func TestHandleListDebugSessionsPushesIndexedFiltersAndPreservesAuthorization(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	approverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"admin@example.com"},
+		},
+	}
+	otherApproverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"other-admin@example.com"},
+		},
+	}
+	makeSession := func(name, cluster, requester string, state breakglassv1alpha1.DebugSessionState, template *breakglassv1alpha1.DebugSessionTemplateSpec) *breakglassv1alpha1.DebugSession {
+		return &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     cluster,
+				TemplateRef: "standard-debug",
+				RequestedBy: requester,
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:            state,
+				ResolvedTemplate: template,
+			},
+		}
+	}
+
+	activeProd := makeSession("active-prod", "prod", "alice@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	pendingProd := makeSession("pending-prod", "prod", "bob@example.com", breakglassv1alpha1.DebugSessionStatePending, approverTemplate)
+	activeDev := makeSession("active-dev", "dev", "carol@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	failedProd := makeSession("failed-prod", "prod", "dave@example.com", breakglassv1alpha1.DebugSessionStateFailed, approverTemplate)
+	unauthorizedActiveProd := makeSession("unauthorized-active-prod", "prod", "mallory@example.com", breakglassv1alpha1.DebugSessionStateActive, otherApproverTemplate)
+
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			session, ok := obj.(*breakglassv1alpha1.DebugSession)
+			if !ok || session.Spec.Cluster == "" {
+				return nil
+			}
+			return []string{session.Spec.Cluster}
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "status.state", func(obj client.Object) []string {
+			session, ok := obj.(*breakglassv1alpha1.DebugSession)
+			if !ok || session.Status.State == "" {
+				return nil
+			}
+			return []string{string(session.Status.State)}
+		}).
+		WithObjects(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		WithStatusSubresource(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		Build()
+	recordingClient := &debugSessionRecordingListClient{Client: baseClient}
+	ctrl := NewDebugSessionAPIController(logger, recordingClient, nil, nil)
+	router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=prod&state=Active&state=Pending", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response DebugSessionListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	gotNames := make([]string, 0, len(response.Sessions))
+	for _, session := range response.Sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"active-prod", "pending-prod"}, gotNames)
+	assert.ElementsMatch(t, []string{"prod", "prod"}, debugSessionRecordedFieldValues(recordingClient.calls, "spec.cluster"))
+	assert.ElementsMatch(t, []string{
+		string(breakglassv1alpha1.DebugSessionStateActive),
+		string(breakglassv1alpha1.DebugSessionStatePending),
+	}, debugSessionRecordedFieldValues(recordingClient.calls, "status.state"))
+}
+
+func TestHandleListDebugSessionsFieldIndexFallbackPreservesFilters(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	approverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"admin@example.com"},
+		},
+	}
+	otherApproverTemplate := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Users: []string{"other-admin@example.com"},
+		},
+	}
+	makeSession := func(name, cluster, requester string, state breakglassv1alpha1.DebugSessionState, template *breakglassv1alpha1.DebugSessionTemplateSpec) *breakglassv1alpha1.DebugSession {
+		return &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      name,
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     cluster,
+				TemplateRef: "standard-debug",
+				RequestedBy: requester,
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:            state,
+				ResolvedTemplate: template,
+			},
+		}
+	}
+
+	activeProd := makeSession("active-prod", "prod", "alice@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	pendingProd := makeSession("pending-prod", "prod", "bob@example.com", breakglassv1alpha1.DebugSessionStatePending, approverTemplate)
+	activeDev := makeSession("active-dev", "dev", "carol@example.com", breakglassv1alpha1.DebugSessionStateActive, approverTemplate)
+	failedProd := makeSession("failed-prod", "prod", "dave@example.com", breakglassv1alpha1.DebugSessionStateFailed, approverTemplate)
+	unauthorizedActiveProd := makeSession("unauthorized-active-prod", "prod", "mallory@example.com", breakglassv1alpha1.DebugSessionStateActive, otherApproverTemplate)
+
+	baseClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		WithStatusSubresource(activeProd, pendingProd, activeDev, failedProd, unauthorizedActiveProd).
+		Build()
+	missingIndexClient := &debugSessionMissingIndexClient{Client: baseClient}
+	apiReader := &debugSessionRecordingListClient{Client: baseClient}
+	ctrl := NewDebugSessionAPIController(logger, missingIndexClient, nil, nil).WithAPIReader(apiReader)
+	router := debugSessionAPITestRouter(t, ctrl, "admin@example.com", "", nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?cluster=prod&state=Active&state=Pending", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response DebugSessionListResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	gotNames := make([]string, 0, len(response.Sessions))
+	for _, session := range response.Sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"active-prod", "pending-prod"}, gotNames)
+	require.Len(t, missingIndexClient.calls, 1, "expected one cached indexed attempt")
+	assert.NotNil(t, missingIndexClient.calls[0].FieldSelector)
+	require.Len(t, apiReader.calls, 1, "expected one uncached full-list fallback")
+	assert.Nil(t, apiReader.calls[0].FieldSelector)
+}
+
 // TestDebugSessionAPIController_HandleGetDebugSession tests the handleGetDebugSession handler
 func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 	scheme := testScheme()
@@ -2240,6 +2860,68 @@ func TestDebugSessionAPIController_HandleGetDebugSession(t *testing.T) {
 		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
+	t.Run("get existing session reports approval actions for authorized approver", func(t *testing.T) {
+		approverSession := session.DeepCopy()
+		approverSession.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		approverSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Groups: []string{"debug-approvers"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(approverSession).
+			WithStatusSubresource(approverSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "approver@example.com", "", []string{"debug-approvers"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var response DebugSessionDetailResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.True(t, response.CanApprove)
+		assert.True(t, response.CanReject)
+	})
+
+	t.Run("get existing session hides approval actions from email requester", func(t *testing.T) {
+		requesterSession := session.DeepCopy()
+		requesterSession.Spec.RequestedBy = "alice-subject"
+		requesterSession.Spec.RequestedByEmail = "alice@example.com"
+		requesterSession.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+		requesterSession.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+				Users: []string{"alice@example.com"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(requesterSession).
+			WithStatusSubresource(requesterSession).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := debugSessionAPITestRouter(t, ctrl, "alice-oidc-subject", "alice@example.com", nil)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/test-session", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		var response DebugSessionDetailResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.False(t, response.CanApprove)
+		assert.False(t, response.CanReject)
+	})
+
 	t.Run("get existing session rejects participant after leaving", func(t *testing.T) {
 		leftAt := metav1.NewTime(now.Add(-30 * time.Minute))
 		leftSession := session.DeepCopy()
@@ -2343,6 +3025,34 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		assert.Equal(t, 2, response.Total)
 	})
 
+	t.Run("list templates fails closed when bindings cannot be listed", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&templates[0]).
+			WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if _, ok := list.(*breakglassv1alpha1.DebugSessionClusterBindingList); ok {
+						return fmt.Errorf("binding list unavailable")
+					}
+					return c.List(ctx, list, opts...)
+				},
+			}).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
 	t.Run("list templates with allowed groups filter", func(t *testing.T) {
 		// Add a template with group restriction
 		templateWithGroups := templates[0].DeepCopy()
@@ -2383,6 +3093,223 @@ func TestDebugSessionAPIController_HandleListTemplates(t *testing.T) {
 		require.NoError(t, err)
 		// Should include all 3 templates since user is in admins group
 		assert.Equal(t, 3, response.Total)
+	})
+
+	t.Run("list templates enforces allowed users and filters requester-scoped fields", func(t *testing.T) {
+		userTemplate := templates[0].DeepCopy()
+		userTemplate.Name = "user-restricted-template"
+		userTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users: []string{"alice@example.com"},
+		}
+		userTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{Name: "tenant-safe", DisplayName: "Tenant Safe"},
+				{Name: "alice-only", DisplayName: "Alice Only", AllowedUsers: []string{"alice@example.com"}},
+				{Name: "platform-only", DisplayName: "Platform Only", AllowedGroups: []string{"platform-admins"}},
+			},
+		}
+		userTemplate.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{
+			{
+				Name:      "logLevel",
+				InputType: breakglassv1alpha1.InputTypeText,
+			},
+			{
+				Name:          "privilegedMode",
+				InputType:     breakglassv1alpha1.InputTypeBoolean,
+				AllowedGroups: []string{"platform-admins"},
+			},
+			{
+				Name:      "targetPool",
+				InputType: breakglassv1alpha1.InputTypeSelect,
+				Options: []breakglassv1alpha1.SelectOption{
+					{Value: "tenant"},
+					{Value: "platform", AllowedGroups: []string{"platform-admins"}},
+				},
+			},
+			{
+				Name: "disabledField", InputType: breakglassv1alpha1.InputTypeText,
+				Disabled: true, Required: true,
+				Default: &apiextensionsv1.JSON{Raw: []byte(`"disabled-default"`)},
+			},
+		}
+
+		buildRouter := func(username, email string, groups interface{}) *gin.Engine {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(userTemplate).
+				Build()
+
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+				c.Set("username", username)
+				c.Set("email", email)
+				c.Set("groups", groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			err := ctrl.Register(rg)
+			require.NoError(t, err)
+			return router
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w := httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates, 1)
+		require.NotNil(t, response.Templates[0].SchedulingOptions)
+		require.Len(t, response.Templates[0].SchedulingOptions.Options, 2)
+		assert.Equal(t, []string{"tenant-safe", "alice-only"}, []string{
+			response.Templates[0].SchedulingOptions.Options[0].Name,
+			response.Templates[0].SchedulingOptions.Options[1].Name,
+		})
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 2)
+		assert.Equal(t, "logLevel", response.Templates[0].ExtraDeployVariables[0].Name)
+		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
+		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		detailRequest := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/"+userTemplate.Name, nil)
+		detailResponse := httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"platform-admins"}).ServeHTTP(detailResponse, detailRequest)
+		require.Equal(t, http.StatusOK, detailResponse.Code, detailResponse.Body.String())
+		var detail DebugSessionTemplateResponse
+		require.NoError(t, json.Unmarshal(detailResponse.Body.Bytes(), &detail))
+		var visibleNames []string
+		for _, variable := range detail.ExtraDeployVariables {
+			visibleNames = append(visibleNames, variable.Name)
+		}
+		require.Equal(t, []string{"logLevel", "privilegedMode", "targetPool"}, visibleNames)
+		require.Len(t, userTemplate.Spec.ExtraDeployVariables, 4)
+		require.True(t, userTemplate.Spec.ExtraDeployVariables[3].Disabled)
+		require.Equal(t, `"disabled-default"`, string(userTemplate.Spec.ExtraDeployVariables[3].Default.Raw))
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", nil).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 2)
+		assert.Equal(t, "logLevel", response.Templates[0].ExtraDeployVariables[0].Name)
+		assert.Equal(t, "targetPool", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[1].Options, 1)
+		assert.Equal(t, "tenant", response.Templates[0].ExtraDeployVariables[1].Options[0].Value)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []interface{}{"platform-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		require.Len(t, response.Templates[0].SchedulingOptions.Options, 3)
+		require.Len(t, response.Templates[0].ExtraDeployVariables, 3)
+		assert.Equal(t, "privilegedMode", response.Templates[0].ExtraDeployVariables[1].Name)
+		require.Len(t, response.Templates[0].ExtraDeployVariables[2].Options, 2)
+		assert.Equal(t, "platform", response.Templates[0].ExtraDeployVariables[2].Options[1].Value)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter(" alice@example.com ", "", nil).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 1, response.Total)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates?includeUnavailable=true", nil)
+		w = httptest.NewRecorder()
+		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, 0, response.Total)
+	})
+
+	t.Run("list templates includes binding-granted templates without direct allowlist metadata", func(t *testing.T) {
+		bindingGrantedTemplate := templates[0].DeepCopy()
+		bindingGrantedTemplate.Name = "binding-granted-template"
+		bindingGrantedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Groups:   []string{"platform-admins"},
+			Clusters: []string{"prod-*"},
+		}
+		cluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "binding-granted-template"},
+				Clusters:    []string{"prod-east"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(bindingGrantedTemplate, cluster, binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response struct {
+			Templates []DebugSessionTemplateResponse `json:"templates"`
+			Total     int                            `json:"total"`
+		}
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.Equal(t, 1, response.Total)
+		assert.Equal(t, "binding-granted-template", response.Templates[0].Name)
+		assert.Equal(t, 1, response.Templates[0].AvailableClusterCount)
+		assert.Empty(t, response.Templates[0].AllowedClusters)
+		assert.Empty(t, response.Templates[0].AllowedGroups)
 	})
 
 	t.Run("list templates resolves cluster patterns to actual cluster names", func(t *testing.T) {
@@ -2786,6 +3713,102 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, response.Mode)
 	})
 
+	t.Run("get existing template resolves direct cluster availability", func(t *testing.T) {
+		clusterTemplate := template.DeepCopy()
+		clusterTemplate.Name = "cluster-pattern-template"
+		clusterTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"prod-*"},
+		}
+		prodEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+		}
+		prodWest := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-west"},
+		}
+		devEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-east"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(clusterTemplate, prodEast, prodWest, devEast).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/cluster-pattern-template", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.Equal(t, "cluster-pattern-template", response.Name)
+		assert.ElementsMatch(t, []string{"prod-east", "prod-west"}, response.AllowedClusters)
+		assert.True(t, response.HasAvailableClusters)
+		assert.Equal(t, 2, response.AvailableClusterCount)
+	})
+
+	t.Run("get existing template excludes clusters when required scheduling options are unavailable", func(t *testing.T) {
+		clusterTemplate := template.DeepCopy()
+		clusterTemplate.Name = "restricted-scheduling-template"
+		clusterTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Clusters: []string{"prod-*"},
+			Groups:   []string{"*"},
+		}
+		clusterTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Required: true,
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{
+					Name:          "platform-node",
+					DisplayName:   "Platform Node",
+					AllowedGroups: []string{"platform-admins"},
+				},
+			},
+		}
+		prodEast := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "prod-east"},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(clusterTemplate, prodEast).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("groups", []string{"tenant-users"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/restricted-scheduling-template", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		assert.False(t, response.HasAvailableClusters)
+		assert.Equal(t, 0, response.AvailableClusterCount)
+		require.NotNil(t, response.SchedulingOptions)
+		assert.True(t, response.SchedulingOptions.Required)
+		assert.Empty(t, response.SchedulingOptions.Options)
+	})
+
 	t.Run("get non-existent template", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -2803,6 +3826,60 @@ func TestDebugSessionAPIController_HandleGetTemplate(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 404, w.Code)
+	})
+
+	t.Run("get restricted template requires requester allowlist", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users: []string{"alice@example.com"},
+		}
+		restrictedTemplate.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{
+			Options: []breakglassv1alpha1.SchedulingOption{
+				{Name: "safe"},
+				{Name: "platform", AllowedGroups: []string{"platform-admins"}},
+			},
+		}
+
+		buildRouter := func(username, email string, groups []string) *gin.Engine {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(restrictedTemplate).
+				Build()
+
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+				c.Set("username", username)
+				c.Set("email", email)
+				c.Set("groups", groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			err := ctrl.Register(rg)
+			require.NoError(t, err)
+			return router
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/standard-debug", nil)
+		w := httptest.NewRecorder()
+		buildRouter("bob@example.com", "bob@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+
+		req = httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions/templates/standard-debug", nil)
+		w = httptest.NewRecorder()
+		buildRouter("alice-id", "alice@example.com", []string{"tenant-admins"}).ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+
+		var response DebugSessionTemplateResponse
+		err := json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.NotNil(t, response.SchedulingOptions)
+		require.Len(t, response.SchedulingOptions.Options, 1)
+		assert.Equal(t, "safe", response.SchedulingOptions.Options[0].Name)
 	})
 }
 
@@ -3005,6 +4082,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router := gin.New()
 		// Add auth middleware
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3039,6 +4117,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", " ")
 			c.Next()
 		})
@@ -3060,6 +4139,11 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		templateWithUserNamespace.Spec.NamespaceConstraints = &breakglassv1alpha1.NamespaceConstraints{
 			AllowUserNamespace: true,
 			DefaultNamespace:   "default-debug",
+			// An allow-list is required to permit user-selected namespaces:
+			// an empty allowedNamespaces means defaultNamespace only.
+			AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+				Patterns: []string{"debug-*"},
+			},
 		}
 		clusterConfig := &breakglassv1alpha1.ClusterConfig{
 			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass-control"},
@@ -3082,6 +4166,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3113,6 +4198,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3148,6 +4234,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3202,6 +4289,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
@@ -3267,6 +4355,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3308,6 +4397,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3351,6 +4441,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3397,6 +4488,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3460,6 +4552,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3511,6 +4604,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3554,6 +4648,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3599,6 +4694,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -3628,6 +4724,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3655,6 +4752,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3682,6 +4780,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3708,6 +4807,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3734,6 +4834,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3760,6 +4861,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3786,6 +4888,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -3819,6 +4922,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -3834,6 +4938,121 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
+	})
+
+	t.Run("create session hides template cluster patterns from unauthorized requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "cluster-pattern-restricted-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"prod-*", "stage-a"},
+		}
+		devCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "breakglass"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, devCluster).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"cluster-pattern-restricted-debug","cluster":"dev-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed to request this debug session")
+		assert.NotContains(t, w.Body.String(), "Template cluster patterns")
+		assert.NotContains(t, w.Body.String(), "prod-*")
+		assert.NotContains(t, w.Body.String(), "stage-a")
+	})
+
+	t.Run("create session returns redacted cluster denial for binding-authorized requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "cluster-pattern-binding-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"prod-*", "stage-a"},
+		}
+		devCluster := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "dev-a", Namespace: "breakglass"},
+			Status: breakglassv1alpha1.ClusterConfigStatus{
+				Conditions: []metav1.Condition{
+					{
+						Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+						Status: metav1.ConditionTrue,
+						Reason: "Verified",
+					},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "sre-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "cluster-pattern-binding-debug"},
+				Clusters:    []string{"stage-b"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, devCluster, binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"cluster-pattern-binding-debug","cluster":"dev-a","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "cluster 'dev-a' is not allowed")
+		assert.Contains(t, w.Body.String(), "No bindings grant access to this cluster")
+		assert.NotContains(t, w.Body.String(), "user is not allowed to request this debug session")
+		assert.NotContains(t, w.Body.String(), "Template cluster patterns")
+		assert.NotContains(t, w.Body.String(), "prod-*")
+		assert.NotContains(t, w.Body.String(), "stage-a")
 	})
 
 	t.Run("create session accepts requester allowed by binding", func(t *testing.T) {
@@ -3869,6 +5088,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
@@ -3932,6 +5152,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
@@ -3987,6 +5208,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
@@ -4042,6 +5264,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"developers"})
@@ -4062,6 +5285,217 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), "matches multiple ClusterConfig names")
 	})
 
+	t.Run("create session rejects implicit binding denied by binding allowlist", func(t *testing.T) {
+		templateViaImplicitBinding := template.DeepCopy()
+		templateViaImplicitBinding.Name = "implicit-binding-debug"
+		templateViaImplicitBinding.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "implicit-binding-debug"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaImplicitBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"implicit-binding-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+
+		var sessions breakglassv1alpha1.DebugSessionList
+		err = fakeClient.List(context.Background(), &sessions)
+		require.NoError(t, err)
+		assert.Empty(t, sessions.Items)
+	})
+
+	t.Run("create session accepts implicit binding allowed by binding allowlist", func(t *testing.T) {
+		templateViaImplicitBinding := template.DeepCopy()
+		templateViaImplicitBinding.Name = "implicit-allowed-binding-debug"
+		templateViaImplicitBinding.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "implicit-allowed-binding-debug"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaImplicitBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"ops"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"implicit-allowed-binding-debug","cluster":"production","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusCreated, w.Code)
+
+		var response DebugSessionDetailResponse
+		err = json.Unmarshal(w.Body.Bytes(), &response)
+		require.NoError(t, err)
+		require.NotNil(t, response.Spec.BindingRef)
+		assert.Equal(t, "ops-binding", response.Spec.BindingRef.Name)
+		assert.Equal(t, "breakglass", response.Spec.BindingRef.Namespace)
+	})
+
+	t.Run("create session rejects explicit binding denied by binding allowlist", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "explicit-denied-binding-debug"
+		templateViaBinding.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "explicit-denied-binding-debug"},
+				Clusters:    []string{"production"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"explicit-denied-binding-debug","cluster":"production","bindingRef":"breakglass/ops-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("create session hides inactive explicit binding details from binding-denied requester", func(t *testing.T) {
+		templateViaBinding := template.DeepCopy()
+		templateViaBinding.Name = "inactive-explicit-denied-binding-debug"
+		templateViaBinding.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"alice@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "ops-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "inactive-explicit-denied-binding-debug"},
+				Clusters:    []string{"production"},
+				Disabled:    true,
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(templateViaBinding, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"inactive-explicit-denied-binding-debug","cluster":"production","bindingRef":"breakglass/ops-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding is not active")
+	})
+
 	t.Run("create session rejects malformed bindingRef", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -4072,6 +5506,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4109,6 +5544,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4123,6 +5559,105 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
+	})
+
+	t.Run("create session hides explicit binding selection details from unauthorized requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "selection-detail-restricted-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"ops@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "selection-detail-restricted-debug"},
+				Clusters:    []string{"staging"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"ops"},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"selection-detail-restricted-debug","cluster":"production","bindingRef":"breakglass/staging-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding")
+	})
+
+	t.Run("create session hides nil-allowed explicit binding details from template-denied requester", func(t *testing.T) {
+		restrictedTemplate := template.DeepCopy()
+		restrictedTemplate.Name = "selection-detail-template-fallback-debug"
+		restrictedTemplate.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{
+			Users:    []string{"ops@example.com"},
+			Clusters: []string{"production"},
+		}
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		binding := breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "staging-binding", Namespace: "breakglass"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "selection-detail-template-fallback-debug"},
+				Clusters:    []string{"staging"},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, &clusterConfig, &binding).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Set("groups", []string{"sre"})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"templateRef":"selection-detail-template-fallback-debug","cluster":"production","bindingRef":"breakglass/staging-binding","reason":"debugging issue"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.Contains(t, w.Body.String(), "user is not allowed")
+		assert.NotContains(t, w.Body.String(), "binding")
 	})
 
 	t.Run("create session without authentication", func(t *testing.T) {
@@ -4158,6 +5693,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4173,7 +5709,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, http.StatusBadRequest, w.Code)
-			assert.Contains(t, w.Body.String(), "requestedDuration must be positive")
+			assert.Contains(t, w.Body.String(), "must be positive")
 		}
 	})
 
@@ -4226,6 +5762,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Next()
@@ -4296,6 +5833,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Next()
@@ -4340,6 +5878,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4401,6 +5940,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4471,6 +6011,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"tenant-admins"})
@@ -4519,6 +6060,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4591,6 +6133,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4609,6 +6152,58 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
+	})
+
+	t.Run("terminate rejects unexpected body", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:    breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt: &now,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/terminate", strings.NewReader(`{"reason":"done"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updatedSession.Status.State)
 	})
 
 	t.Run("terminate session without authentication", func(t *testing.T) {
@@ -4676,7 +6271,8 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
-			c.Set("username", "bob@example.com") // Different user
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "bob@example.com")   // Different user
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4721,6 +6317,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4770,6 +6367,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4818,6 +6416,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4841,6 +6440,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -4902,6 +6502,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -4910,9 +6511,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -4963,6 +6562,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -4971,9 +6571,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -5017,6 +6615,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -5025,16 +6624,14 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
 	})
 
-	t.Run("join rejects participant role self-selection", func(t *testing.T) {
+	t.Run("join rejects unexpected body", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -5071,6 +6668,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -5079,13 +6677,19 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"participant"}`
+		body := `{"role":"viewer"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, 403, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Len(t, updatedSession.Status.Participants, 1)
 	})
 
 	t.Run("join rejects expired active session", func(t *testing.T) {
@@ -5126,6 +6730,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
@@ -5134,9 +6739,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"role":"viewer"}`
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", strings.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/join", nil)
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
@@ -5208,6 +6811,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5254,6 +6858,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5277,6 +6882,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5312,13 +6918,13 @@ func TestDebugSessionAPIController_SessionOperationStrictJSON(t *testing.T) {
 			name:     "join rejects unknown fields",
 			path:     "/api/v1/debugSessions/test-session/join",
 			body:     `{"role":"viewer","ignored":true}`,
-			wantText: "unknown field",
+			wantText: "request body must be empty",
 		},
 		{
 			name:     "join rejects trailing JSON",
 			path:     "/api/v1/debugSessions/test-session/join",
 			body:     `{"role":"viewer"} {"role":"viewer"}`,
-			wantText: "invalid request body",
+			wantText: "request body must be empty",
 		},
 		{
 			name:     "renew rejects unknown fields",
@@ -5361,6 +6967,57 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 	now := metav1.Now()
 
 	t.Run("leave session successfully", func(t *testing.T) {
+		expiresAt := metav1.NewTime(now.Add(time.Hour))
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "bob@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, 200, w.Code)
+	})
+
+	t.Run("leave rejects unexpected body", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -5394,6 +7051,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5401,11 +7059,19 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", strings.NewReader(`{"role":"viewer"}`))
+		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, 200, w.Code)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		require.Len(t, updatedSession.Status.Participants, 2)
+		assert.Nil(t, updatedSession.Status.Participants[1].LeftAt)
 	})
 
 	t.Run("leave active expired session is rejected", func(t *testing.T) {
@@ -5443,6 +7109,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5498,6 +7165,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "charlie@example.com")
 			c.Next()
 		})
@@ -5546,6 +7214,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Next()
 		})
@@ -5625,6 +7294,7 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "charlie@example.com")
 			c.Next()
 		})
@@ -5639,6 +7309,166 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		// API returns 404 "user is not a participant in this session"
 		assert.Equal(t, 404, w.Code)
 	})
+
+	t.Run("leave rejects unexpected body before participant lookup", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State: breakglassv1alpha1.DebugSessionStateActive,
+				Participants: []breakglassv1alpha1.DebugSessionParticipant{
+					{User: "alice@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: now},
+				},
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "charlie@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/leave", strings.NewReader(`{"role":"viewer"}`))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "request body must be empty")
+	})
+}
+
+func TestDebugSessionAPIController_StatusPatchOptimisticLockRejectsStaleParticipantUpdateAfterRenewal(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	oldExpiry := metav1.NewTime(time.Now().Add(30 * time.Minute).Truncate(time.Second))
+	renewedExpiry := metav1.NewTime(time.Now().Add(2 * time.Hour).Truncate(time.Second))
+	joinedAt := metav1.Now()
+
+	liveSession := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "status-lock-session",
+			Namespace:       "default",
+			ResourceVersion: "2",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "owner@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:        breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:    &renewedExpiry,
+			RenewalCount: 1,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "owner@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: joinedAt},
+			},
+		},
+	}
+	staleSession := liveSession.DeepCopy()
+	staleSession.ResourceVersion = "1"
+	staleSession.Status.ExpiresAt = &oldExpiry
+	staleSession.Status.RenewalCount = 0
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(liveSession).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	err := ctrl.patchDebugSessionStatusWithOptimisticLock(context.Background(), staleSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = append(status.Participants, breakglassv1alpha1.DebugSessionParticipant{
+			User:     "peer@example.com",
+			Role:     breakglassv1alpha1.ParticipantRoleViewer,
+			JoinedAt: joinedAt,
+		})
+	})
+	require.Error(t, err)
+	assert.True(t, apierrors.IsConflict(err), "expected conflict, got %v", err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: liveSession.Name, Namespace: liveSession.Namespace}, &updated)
+	require.NoError(t, err)
+
+	require.NotNil(t, updated.Status.ExpiresAt)
+	assert.True(t, updated.Status.ExpiresAt.Equal(&renewedExpiry),
+		"expiresAt mismatch: got %s, want %s", updated.Status.ExpiresAt.Time, renewedExpiry.Time)
+	assert.Equal(t, int32(1), updated.Status.RenewalCount)
+	require.Len(t, updated.Status.Participants, 1)
+	assert.Equal(t, "owner@example.com", updated.Status.Participants[0].User)
+}
+
+func TestDebugSessionAPIController_StatusPatchOptimisticLockUpdatesStatus(t *testing.T) {
+	scheme := testScheme()
+	logger := zap.NewNop().Sugar()
+
+	joinedAt := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:            "status-lock-session",
+			Namespace:       "default",
+			Generation:      3,
+			ResourceVersion: "1",
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "production",
+			TemplateRef: "standard-debug",
+			RequestedBy: "owner@example.com",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{User: "owner@example.com", Role: breakglassv1alpha1.ParticipantRoleOwner, JoinedAt: joinedAt},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	err := ctrl.patchDebugSessionStatusWithOptimisticLock(context.Background(), session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.Message = "terminated by owner@example.com"
+	})
+	require.NoError(t, err)
+
+	var updated breakglassv1alpha1.DebugSession
+	err = fakeClient.Get(context.Background(), client.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &updated)
+	require.NoError(t, err)
+
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updated.Status.State)
+	assert.Equal(t, "terminated by owner@example.com", updated.Status.Message)
+	assert.Equal(t, int64(3), updated.Status.ObservedGeneration)
+	require.Len(t, updated.Status.Participants, 1)
+	assert.Equal(t, "owner@example.com", updated.Status.Participants[0].User)
 }
 
 // TestDebugSessionAPIController_HandleRenewDebugSession tests the handleRenewDebugSession handler
@@ -5681,6 +7511,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router := gin.New()
 		// Add middleware to set username matching the session owner
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -5887,6 +7718,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 
 				router := gin.New()
 				router.Use(func(c *gin.Context) {
+					c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 					c.Set("username", "bob@example.com")
 					c.Next()
 				})
@@ -5911,6 +7743,72 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				assert.Equal(t, tt.wantCount, updatedSession.Status.RenewalCount)
 			})
 		}
+	})
+
+	t.Run("renew status conflict returns conflict", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels: map[string]string{
+					DebugSessionLabelKey: "test-session",
+				},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok && subResourceName == "status" {
+						return apierrors.NewConflict(schema.GroupResource{
+							Group:    breakglassv1alpha1.GroupVersion.Group,
+							Resource: "debugsessions",
+						}, obj.GetName(), fmt.Errorf("stale status"))
+					}
+					return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				},
+			}).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{"extendBy":"1h"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusConflict, w.Code)
+
+		var updatedSession breakglassv1alpha1.DebugSession
+		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
+		require.NoError(t, err)
+		assert.Equal(t, int32(0), updatedSession.Status.RenewalCount)
+		require.NotNil(t, updatedSession.Status.ExpiresAt)
+		assert.WithinDuration(t, expiresAt.Time, updatedSession.Status.ExpiresAt.Time, time.Second)
 	})
 
 	t.Run("renew rejects extension beyond max duration", func(t *testing.T) {
@@ -5951,6 +7849,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6009,6 +7908,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6057,6 +7957,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6101,6 +8002,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router := gin.New()
 		// Add middleware to set username
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6149,6 +8051,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router := gin.New()
 		// Add middleware to set username
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6175,6 +8078,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router := gin.New()
 		// Add middleware to set username
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -6663,8 +8567,9 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 				username = tt.userEmail
 			}
 			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, debugSessionReadIdentity{
-				username: username,
-				email:    tt.userEmail,
+				legacyAllowed: true, // Authenticated single-provider fixture.
+				username:      username,
+				email:         tt.userEmail,
 			})
 
 			if tt.expectError {
@@ -6837,6 +8742,31 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 			},
 			expectAllowed: true,
 			expectSource:  "binding:team-ns/dev-binding",
+		},
+		{
+			name: "multiple matching bindings use stable namespace name precedence",
+			template: &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "template-stable"},
+			},
+			clusterName: "dev-cluster",
+			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "z-binding", Namespace: "team-b"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-stable"},
+						Clusters:    []string{"dev-cluster"},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "a-binding", Namespace: "team-a"},
+					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+						TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template-stable"},
+						Clusters:    []string{"dev-cluster"},
+					},
+				},
+			},
+			expectAllowed: true,
+			expectSource:  "binding:team-a/a-binding",
 		},
 		{
 			name: "binding references wrong template",
@@ -7094,6 +9024,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7128,6 +9059,50 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		assert.Len(t, response.Spec.ExtraDeployValues, 5)
 	})
 
+	t.Run("create session rejects restricted extraDeployValues with empty groups", func(t *testing.T) {
+		restrictedTemplate := templateWithVariables.DeepCopy()
+		restrictedTemplate.Spec.ExtraDeployVariables = append(restrictedTemplate.Spec.ExtraDeployVariables, breakglassv1alpha1.ExtraDeployVariable{
+			Name:          "privilegedMode",
+			InputType:     breakglassv1alpha1.InputTypeBoolean,
+			AllowedGroups: []string{"platform-admins"},
+		})
+
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(restrictedTemplate, readyProductionCluster.DeepCopy()).
+			Build()
+
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("groups", []string{})
+			c.Next()
+		})
+		rg := router.Group("/api/v1/" + ctrl.BasePath())
+		err := ctrl.Register(rg)
+		require.NoError(t, err)
+
+		body := `{
+			"templateRef": "template-with-vars",
+			"cluster": "production",
+			"extraDeployValues": {
+				"customName": "valid-name",
+				"privilegedMode": true
+			}
+		}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "privilegedMode")
+		assert.Contains(t, w.Body.String(), "restricted")
+	})
+
 	t.Run("create session fails with invalid boolean value", func(t *testing.T) {
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
@@ -7138,6 +9113,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7172,6 +9148,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7206,6 +9183,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7240,6 +9218,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7275,6 +9254,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7309,6 +9289,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7348,6 +9329,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 
 		router := gin.New()
 		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Next()
 		})
@@ -7488,6 +9470,49 @@ func TestDebugSessionAPIController_resolveApproval(t *testing.T) {
 		result = controller.resolveApproval(template, binding, cc, []string{"privileged-team"})
 		assert.True(t, result.Required)
 		assert.True(t, result.CanAutoApprove)
+	})
+
+	t.Run("empty binding approvers disable approval", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+					Users:  []string{"template-approver@example.com"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{},
+			},
+		}
+
+		result := controller.resolveApproval(template, binding, cc, []string{"dev-team"})
+
+		assert.False(t, result.Required)
+		assert.False(t, result.CanAutoApprove)
+		assert.Empty(t, result.ApproverGroups)
+		assert.Empty(t, result.ApproverUsers)
+	})
+
+	t.Run("nil binding approvers fall back to template", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Groups: []string{"template-approvers"},
+					Users:  []string{"template-approver@example.com"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{},
+		}
+
+		result := controller.resolveApproval(template, binding, cc, []string{"dev-team"})
+
+		assert.True(t, result.Required)
+		assert.Equal(t, []string{"template-approvers"}, result.ApproverGroups)
+		assert.Equal(t, []string{"template-approver@example.com"}, result.ApproverUsers)
 	})
 
 	t.Run("no auto-approve when approval not required", func(t *testing.T) {
@@ -7673,6 +9698,15 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		var response DebugSessionListResponse
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 		assert.Equal(t, 1, response.Total)
+	})
+
+	t.Run("rejected state returns 200", func(t *testing.T) {
+		router := buildRouter("alice")
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions?state=Rejected", nil)
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
 	})
 
 	t.Run("empty state param returns 200 with all sessions", func(t *testing.T) {

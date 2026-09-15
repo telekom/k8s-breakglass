@@ -67,6 +67,31 @@ type InlineOIDC struct {
 	InsecureSkipTLS bool     `yaml:"insecure-skip-tls-verify,omitempty"`
 }
 
+// Redacted returns a copy safe for human-readable inspection.
+func (c *Config) Redacted() *Config {
+	if c == nil {
+		return nil
+	}
+	redacted := *c
+	redacted.OIDCProviders = append([]OIDCProvider(nil), c.OIDCProviders...)
+	redacted.Contexts = append([]Context(nil), c.Contexts...)
+	for i := range redacted.OIDCProviders {
+		if redacted.OIDCProviders[i].ClientSecret != "" {
+			redacted.OIDCProviders[i].ClientSecret = "REDACTED"
+		}
+	}
+	for i := range redacted.Contexts {
+		if original := redacted.Contexts[i].OIDC; original != nil {
+			inline := *original
+			if inline.ClientSecret != "" {
+				inline.ClientSecret = "REDACTED"
+			}
+			redacted.Contexts[i].OIDC = &inline
+		}
+	}
+	return &redacted
+}
+
 func DefaultConfig() Config {
 	return Config{
 		Version: VersionV1,

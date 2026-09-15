@@ -80,11 +80,37 @@ func (e *jwksFetchRateLimitedError) Unwrap() error { return errJWKSFetchRateLimi
 type jwksCacheEntry struct {
 	issuer              string
 	idpName             string // resolved IDP name, cached to avoid redundant K8s API calls
-	expectedAudience    string // from IDP config; when non-empty, JWT aud claim is validated
+	expectedAudience    string // from IDP config; JWT aud claim is validated
 	audienceRefreshedAt time.Time
 	audienceAttemptedAt time.Time
 	jwks                keyfunc.Keyfunc
 	cancel              context.CancelFunc // stops the background refresh goroutine
+	configIdentity      jwksConfigIdentity
+}
+
+type jwksConfigIdentity struct {
+	authority            string
+	certificateAuthority string
+	insecureSkipVerify   bool
+	keycloakBaseURL      string
+	keycloakRealm        string
+	keycloakCA           string
+	keycloakInsecure     bool
+}
+
+func jwksIdentity(cfg *config.IdentityProviderConfig) jwksConfigIdentity {
+	identity := jwksConfigIdentity{
+		authority:            cfg.Authority,
+		certificateAuthority: cfg.CertificateAuthority,
+		insecureSkipVerify:   cfg.InsecureSkipVerify,
+	}
+	if cfg.Keycloak != nil {
+		identity.keycloakBaseURL = cfg.Keycloak.BaseURL
+		identity.keycloakRealm = cfg.Keycloak.Realm
+		identity.keycloakCA = cfg.Keycloak.CertificateAuthority
+		identity.keycloakInsecure = cfg.Keycloak.InsecureSkipVerify
+	}
+	return identity
 }
 
 // audienceRefreshInterval controls how often expectedAudience is re-read from
@@ -134,6 +160,12 @@ func (a *AuthHandler) validateJWKSIdentityProviderConfig(idpCfg *config.Identity
 	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
 		if a.log != nil {
 			a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
+		}
+		return errUnknownIdentityProvider
+	}
+	if idpCfg.ExpectedAudience == "" {
+		if a.log != nil {
+			a.log.Warnw("refusing IDP without expected audience", "idp", idpCfg.Name)
 		}
 		return errUnknownIdentityProvider
 	}
@@ -270,6 +302,15 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 					a.jwksLRUList.Remove(currentElem)
 					return nil, err
 				}
+				if currentEntry.configIdentity != jwksIdentity(idpCfg) {
+					if currentEntry.cancel != nil {
+						currentEntry.cancel()
+					}
+					a.jwksFetchLimiter.Delete(issuer)
+					delete(a.jwksCache, issuer)
+					a.jwksLRUList.Remove(currentElem)
+					return nil, errUnknownIdentityProvider
+				}
 
 				currentEntry.expectedAudience = idpCfg.ExpectedAudience
 				currentEntry.idpName = idpCfg.Name
@@ -281,7 +322,7 @@ func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks
 				currentElem, stillCached := a.jwksCache[issuer]
 				if !stillCached || currentElem != cachedElem {
 					a.jwksMutex.Unlock()
-					return cachedJWKS, cachedAudience, cachedIDPName, true, nil
+					return nil, "", "", true, errUnknownIdentityProvider
 				}
 				currentEntry := currentElem.Value.(*jwksCacheEntry)
 				refreshedAudience := currentEntry.expectedAudience
@@ -501,7 +542,7 @@ func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jw
 
 	// Add new entry at front (most recently used)
 	now := time.Now()
-	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel}
+	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel, configIdentity: jwksIdentity(idpCfg)}
 	elem := a.jwksLRUList.PushFront(entry)
 	a.jwksCache[issuer] = elem
 
@@ -657,10 +698,10 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
 	}
 
-	// SEC-005: Audience validation when expectedAudience is configured.
+	// SEC-005: Audience validation for CRD-backed identity providers.
 	// Prevents cross-service token confusion from other OIDC clients at the
-	// same IDP. Only applied when the admin explicitly sets expectedAudience
-	// and configures a matching audience protocol mapper in their IDP.
+	// same IDP. IdentityProvider CRDs require expectedAudience and a matching
+	// audience protocol mapper in the IDP.
 	if expectedAudience != "" {
 		parserOpts = append(parserOpts, jwt.WithAudience(expectedAudience))
 	}
@@ -708,13 +749,30 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		c.Set("identity_provider_name", selectedIDP)
 	}
 
+	// This trusted middleware signal is independent of whether a JWT happens
+	// to carry an issuer. Unknown/multi-provider configuration fails closed.
+	legacyIdentityAllowed := a.idpLoader == nil
+	if loader, ok := a.idpLoader.(*config.IdentityProviderLoader); ok {
+		legacyIdentityAllowed = loader.AllowsLegacyIdentity(c.Request.Context(), selectedIDP, issuer)
+	}
+	c.Set("legacy_identity_allowed", legacyIdentityAllowed)
+
 	// Attach raw claims for downstream debugging if needed
 	// Note: this is only used for debug logs and should not be exposed to end users.
 	c.Set("raw_claims", claims)
 
-	// Attempt to extract groups from common Keycloak / OIDC claims
+	// Attempt to extract groups from common Keycloak / OIDC claims.
+	// groupsClaimPresent tracks whether the token itself carried group
+	// information (the "groups" claim or Keycloak's "realm_access" claim),
+	// as distinct from `groups` being empty because the user genuinely
+	// belongs to zero groups. Downstream consumers rely on this distinction
+	// to avoid mistaking "token asserts no groups" for "token carries no
+	// group information at all" (which would otherwise trigger an
+	// unintended fallback to cluster-based group resolution).
 	var groups []string
+	groupsClaimPresent := false
 	if rawGroups, ok := claims["groups"]; ok {
+		groupsClaimPresent = true
 		switch g := rawGroups.(type) {
 		case []interface{}:
 			for _, v := range g {
@@ -728,6 +786,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	} else if rawRealm, ok := claims["realm_access"]; ok { // Keycloak specific structure
 		if m, ok := rawRealm.(map[string]interface{}); ok {
 			if rolesRaw, ok := m["roles"]; ok {
+				groupsClaimPresent = true
 				switch roles := rolesRaw.(type) {
 				case []interface{}:
 					for _, v := range roles {
@@ -763,10 +822,15 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	}
 
 	// If groups are empty, log claims at debug so we can diagnose missing group mappers
+	// or confirm that the user legitimately belongs to no groups.
 	if len(groups) == 0 {
 		// avoid logging tokens at info level; use debug for development troubleshooting
 		if a.log != nil {
-			a.log.Debugw("JWT parsed but no groups claim found", "sub", userID, "username", username, "claims_keys", func() []string {
+			msg := "JWT parsed but no groups claim found"
+			if groupsClaimPresent {
+				msg = "JWT groups claim present but resolved to zero groups"
+			}
+			a.log.Debugw(msg, "sub", userID, "username", username, "claims_keys", func() []string {
 				keys := make([]string, 0, len(claims))
 				for k := range claims {
 					keys = append(keys, k)
@@ -784,7 +848,18 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if displayName, ok := claims["name"]; ok {
 		c.Set("displayName", displayName)
 	}
-	if len(groups) > 0 {
+	// Set the "groups" context key whenever the token carried group
+	// information, even if it resolved to zero groups. This lets downstream
+	// consumers distinguish "token asserts the user belongs to no groups"
+	// (key present, empty slice) from "token carries no group information at
+	// all" (key absent), so a legitimately group-less token is not silently
+	// treated the same as a token without a groups/realm_access claim.
+	// groupsClaimPresent is the only way `groups` is ever populated above, so
+	// this is the single, exhaustive condition for setting the context key.
+	if groupsClaimPresent {
+		if groups == nil {
+			groups = []string{}
+		}
 		c.Set("groups", groups)
 	}
 
@@ -819,10 +894,7 @@ func (a *AuthHandler) MiddlewareWithRateLimiting(rl RateLimiter) gin.HandlerFunc
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":         msg,
-				"authenticated": isAuthenticated,
-			})
+			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}
@@ -852,10 +924,7 @@ func (a *AuthHandler) OptionalAuthRateLimitMiddleware(rl RateLimiter) gin.Handle
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":         msg,
-				"authenticated": isAuthenticated,
-			})
+			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}

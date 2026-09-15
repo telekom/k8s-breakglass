@@ -5,10 +5,24 @@ import { createAuthenticatedApiClient } from "@/services/httpClient";
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } from "@/model/breakglass";
 
+function normalizeList<T>(value: unknown): T[] {
+  if (Array.isArray(value)) {
+    return value as T[];
+  }
+  if (value && typeof value === "object") {
+    const items = (value as { items?: unknown }).items;
+    if (Array.isArray(items)) {
+      return items as T[];
+    }
+  }
+  return [];
+}
+
 export type SessionSearchParams = {
   mine?: boolean;
   approver?: boolean;
   approvedByMe?: boolean;
+  activeOnly?: boolean;
   state?: string;
   cluster?: string;
   user?: string;
@@ -22,9 +36,9 @@ export default class BreakglassService {
     debug("BreakglassService.fetchMyOutstandingRequests", "Fetching outstanding requests");
     try {
       const r = await this.client.get("/breakglassSessions", {
-        params: { mine: true, approver: false, state: "pending" },
+        params: { mine: true, approver: false, state: "pending,waitingforscheduledtime" },
       });
-      const sessions = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const sessions = normalizeList<SessionCR>(r.data);
       debug("BreakglassService.fetchMyOutstandingRequests", "Fetched outstanding requests", {
         count: sessions.length,
       });
@@ -56,7 +70,7 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassEscalations");
       // Each escalation spec has: allowed (clusters, groups), approvers (users, groups), escalatedGroup, maxValidFor, retainFor, idleTimeout, clusterConfigRefs, denyPolicyRefs
       // We explode multi-cluster escalations into individual entries per cluster so UI can show sessions per cluster.
-      const data = Array.isArray(r.data) ? r.data : [];
+      const data = normalizeList<Record<string, unknown>>(r.data);
       const output: AvailableBreakglass[] = [];
       data.forEach((item: Record<string, unknown>) => {
         const spec = (item?.spec || {}) as Record<string, unknown>;
@@ -108,9 +122,9 @@ export default class BreakglassService {
     try {
       debug("BreakglassService.fetchActiveSessions", "Fetching active sessions");
       const r = await this.client.get("/breakglassSessions", {
-        params: { state: "approved", mine: true, approver: false },
+        params: { state: "approved", mine: true, approver: false, activeOnly: true },
       });
-      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const data = normalizeList<SessionCR>(r.data);
       debug("BreakglassService.fetchActiveSessions", "Fetched active sessions", { count: data.length });
       // Normalize approved sessions to a shape that includes metadata/spec/status so
       // callers (getBreakglasses) can build sessionActive/sessionPending consistently.
@@ -142,17 +156,17 @@ export default class BreakglassService {
       const r = await this.client.get("/breakglassSessions", {
         params: { state: "pending", approver: true, mine: false },
       });
-      const data = Array.isArray(r.data) ? (r.data as SessionCR[]) : [];
+      const data = normalizeList<SessionCR>(r.data);
       debug("BreakglassService.fetchPendingSessionsForApproval", "Fetched pending sessions", { count: data.length });
 
       // Backend now returns sessions with approvalReason populated from session.spec.approvalReasonConfig
       // For backward compatibility with older sessions that don't have the config stored,
       // fall back to enriching from escalations if approvalReason is missing
-      const sessionsNeedingEnrichment = data.filter(
+      const needsEnrichment = data.some(
         (p: SessionCR) => !(p as unknown as Record<string, unknown>).approvalReason && !p.spec?.approvalReasonConfig,
       );
 
-      if (sessionsNeedingEnrichment.length === 0) {
+      if (!needsEnrichment) {
         // All sessions have approvalReason from backend, no enrichment needed
         return data.map((p: SessionCR) => {
           // Normalize: if approvalReason is at top level (backend enriched), use it
@@ -213,7 +227,7 @@ export default class BreakglassService {
       const response = await this.client.get("/breakglassSessions", {
         params,
       });
-      const results = Array.isArray(response.data) ? (response.data as SessionCR[]) : [];
+      const results = normalizeList<SessionCR>(response.data);
       debug("BreakglassService.searchSessions", "Search complete", { count: results.length });
       return results;
     } catch (e) {
@@ -259,22 +273,6 @@ export default class BreakglassService {
     }
   }
 
-  public async validateBreakglassRequest(token: string): Promise<AxiosResponse> {
-    // RESTful: GET /breakglassSessions?token=...
-    try {
-      debug("BreakglassService.validateBreakglassRequest", "Validating breakglass request", { token: !!token });
-      const response = await this.client.get("/breakglassSessions", { params: { token } });
-      debug("BreakglassService.validateBreakglassRequest", "Validation complete", { status: response.status });
-      return response;
-    } catch (e) {
-      handleAxiosError("BreakglassService.validateBreakglassRequest", e, "Failed to validate breakglass request");
-      debug("BreakglassService.validateBreakglassRequest", "Validation failed", {
-        errorMessage: (e as Error)?.message,
-      });
-      throw e;
-    }
-  }
-
   // Approve a pending breakglass session by session name (metadata.name)
   public async approveBreakglass(sessionName: string, reason?: string): Promise<AxiosResponse> {
     // RESTful: POST /api/breakglassSessions/:sessionName/approve
@@ -309,15 +307,20 @@ export default class BreakglassService {
     }
   }
 
-  public async testButton(user_name: string, cluster_name: string): Promise<AxiosResponse> {
+  private async dropSessionByName(
+    sessionName: string,
+    logContext: string,
+    errorMessage: string,
+    pushToUI = true,
+  ): Promise<AxiosResponse> {
     try {
-      debug("BreakglassService.testButton", "Triggering test button", { user: user_name, cluster: cluster_name });
-      const response = await this.client.post("/test", { user: user_name, cluster: cluster_name });
-      debug("BreakglassService.testButton", "Test button response", { status: response.status });
+      debug(logContext, "Dropping breakglass session", { sessionName });
+      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/drop`);
+      debug(logContext, "Drop submitted", { status: response.status });
       return response;
     } catch (e) {
-      handleAxiosError("BreakglassService.testButton", e, "Test call failed");
-      debug("BreakglassService.testButton", "Test button failed", { errorMessage: (e as Error)?.message });
+      handleAxiosError(logContext, e, errorMessage, pushToUI);
+      debug(logContext, "Drop failed", { errorMessage: (e as Error)?.message });
       throw e;
     }
   }
@@ -332,25 +335,16 @@ export default class BreakglassService {
       bg.sessionActive?.name ||
       bg.sessionPending?.name;
     if (!name) throw new Error("Missing session name for drop");
-    try {
-      debug("BreakglassService.dropBreakglass", "Dropping breakglass", { name });
-      const response = await this.client.post(`/breakglassSessions/${encodeURIComponent(name)}/drop`, {});
-      debug("BreakglassService.dropBreakglass", "Drop submitted", { status: response.status });
-      return response;
-    } catch (e) {
-      handleAxiosError("BreakglassService.dropBreakglass", e, "Failed to drop breakglass session");
-      debug("BreakglassService.dropBreakglass", "Drop failed", { errorMessage: (e as Error)?.message });
-      throw e;
-    }
+    return this.dropSessionByName(name, "BreakglassService.dropBreakglass", "Failed to drop breakglass session");
   }
 
   public async fetchHistoricalSessions(): Promise<ActiveBreakglass[]> {
     try {
       debug("BreakglassService.fetchHistoricalSessions", "Fetching historical sessions");
       const response = await this.client.get("/breakglassSessions", {
-        params: { state: "rejected,withdrawn", mine: true, approver: false },
+        params: { state: "rejected,withdrawn,expired,idleexpired", mine: true, approver: false },
       });
-      const all = Array.isArray(response.data) ? response.data : [];
+      const all = normalizeList<SessionCR>(response.data);
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
       return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
@@ -378,16 +372,18 @@ export default class BreakglassService {
     try {
       debug("BreakglassService.fetchMySessions", "Fetching my sessions");
       const [activeResp, timedOutResp, historical] = await Promise.all([
-        this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "approved" } }),
+        this.client.get("/breakglassSessions", {
+          params: { mine: true, approver: false, state: "approved", activeOnly: true },
+        }),
         this.client.get("/breakglassSessions", { params: { mine: true, approver: false, state: "timeout" } }),
         this.fetchHistoricalSessions(),
       ]);
-      const approved = Array.isArray(activeResp.data) ? activeResp.data : [];
-      const timedOut = Array.isArray(timedOutResp.data) ? timedOutResp.data : [];
+      const approved = normalizeList<SessionCR>(activeResp.data);
+      const timedOut = normalizeList<SessionCR>(timedOutResp.data);
 
       // Normalize entries to ActiveBreakglass shape
-      const approvedNormalized = approved.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
-      const timedOutNormalized = timedOut.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
+      const approvedNormalized = approved.map((ses) => this.normalizeSessionRecord(ses));
+      const timedOutNormalized = timedOut.map((ses) => this.normalizeSessionRecord(ses));
 
       // Merge all session sources (approved + timed-out + historical) and dedupe by session name
       const combined = [...approvedNormalized, ...timedOutNormalized, ...historical];
@@ -413,9 +409,9 @@ export default class BreakglassService {
       const response = await this.client.get("/breakglassSessions", {
         params: { state: "approved,timeout", mine: false, approver: false, approvedByMe: true },
       });
-      const data = Array.isArray(response.data) ? response.data : [];
+      const data = normalizeList<SessionCR>(response.data);
 
-      const combined = data.map((ses: unknown) => this.normalizeSessionRecord(ses as SessionCR));
+      const combined = data.map((ses) => this.normalizeSessionRecord(ses));
       const seen = new Map<string, ActiveBreakglass>();
       for (const s of combined) {
         const key = s?.name || `${s.group}-${s.cluster}-${s.expiry}`;
@@ -473,7 +469,7 @@ export default class BreakglassService {
           spec: { grantedGroup: p.spec?.grantedGroup || p.group, cluster: p.spec?.cluster || p.cluster },
           status: {
             expiresAt: p.status?.expiresAt || String(p.expiry),
-            state: p.status?.state || (p.status?.state as string),
+            state: p.status?.state,
           },
         };
       }
@@ -483,8 +479,8 @@ export default class BreakglassService {
         expiry: match ? match.expiry : 0,
         cluster: av.cluster,
         state: match ? "Active" : pendingMatch ? "Pending" : historyMatch ? historyMatch.state : "Available",
-        sessionPending: sessionPending,
-        sessionActive: sessionActive,
+        sessionPending,
+        sessionActive,
       } as Breakglass;
     });
     debug("BreakglassService.getBreakglasses", "Aggregated breakglasses", { count: result.length });
@@ -511,15 +507,21 @@ export default class BreakglassService {
     const sessionName = req.metadata?.name;
     if (!sessionName) throw new Error("Missing session name");
     try {
-      // backend withdraw endpoint requires only the session name path; additional body is optional
+      // backend withdraw endpoint requires only the session name path.
       debug("BreakglassService.withdrawMyRequest", "Withdrawing request", { sessionName });
-      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`, {});
+      await this.client.post(`/breakglassSessions/${encodeURIComponent(sessionName)}/withdraw`);
       debug("BreakglassService.withdrawMyRequest", "Withdraw complete");
     } catch (e) {
       handleAxiosError("BreakglassService.withdrawMyRequest", e, "Failed to withdraw request");
       debug("BreakglassService.withdrawMyRequest", "Withdraw failed", { errorMessage: (e as Error)?.message });
       throw e;
     }
+  }
+
+  public async dropMySession(req: SessionCR): Promise<void> {
+    const sessionName = req.metadata?.name;
+    if (!sessionName) throw new Error("Missing session name");
+    await this.dropSessionByName(sessionName, "BreakglassService.dropMySession", "Failed to drop session", false);
   }
 }
 

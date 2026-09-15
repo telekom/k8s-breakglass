@@ -7,7 +7,12 @@ import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
 import { useDateFormatting, useClipboard } from "@/composables";
-import type { DebugSession, DebugSessionParticipant, DebugPodInfo, AllowedPodOperations } from "@/model/debugSession";
+import type {
+  DebugSessionDetailResponse,
+  DebugSessionParticipant,
+  DebugPodInfo,
+  AllowedPodOperations,
+} from "@/model/debugSession";
 
 const { formatDateTime, formatRelativeTime } = useDateFormatting();
 const { copy: clipboardCopy, copied: clipboardCopied, cleanup: clipboardCleanup } = useClipboard();
@@ -22,6 +27,10 @@ function getExecCommand(pod: DebugPodInfo): string {
 }
 
 function copyExecCommand(pod: DebugPodInfo) {
+  if (!isOperationAllowed("exec")) {
+    pushError("Exec is not allowed for this debug session");
+    return;
+  }
   clipboardCopy(getExecCommand(pod)).then((ok) => {
     if (ok) {
       copiedPodKey.value = podKey(pod);
@@ -60,9 +69,11 @@ const sessionName = computed(() => {
   const name = route.params.name;
   return typeof name === "string" ? name : "";
 });
-const session = ref<DebugSession | null>(null);
+const session = ref<DebugSessionDetailResponse | null>(null);
 const loading = ref(true);
 const error = ref("");
+let fetchRequestID = 0;
+let routeRefreshRequestID = 0;
 
 // Polling interval for refreshing session/pod state (10 seconds for active sessions)
 const POLL_INTERVAL_MS = 10000;
@@ -103,28 +114,44 @@ const rejectDialogOpen = ref(false);
 const rejectReason = ref("");
 
 async function fetchSession() {
+  const requestID = ++fetchRequestID;
+  const requestedName = sessionName.value;
   loading.value = true;
   error.value = "";
 
-  if (!sessionName.value) {
+  if (!requestedName) {
+    session.value = null;
     error.value = "Missing session name in URL";
     loading.value = false;
     return;
   }
 
   try {
-    session.value = await debugSessionService.getSession(sessionName.value);
+    const nextSession = await debugSessionService.getSession(requestedName);
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      session.value = nextSession;
+    }
   } catch (e: unknown) {
-    error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug session";
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      session.value = null;
+      error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug session";
+    }
   } finally {
-    loading.value = false;
+    if (requestID === fetchRequestID && requestedName === sessionName.value) {
+      loading.value = false;
+    }
   }
 }
 
 // Silently refresh session data without showing loading state
 async function refreshSession() {
+  const requestedName = sessionName.value;
+  if (!requestedName) return;
   try {
-    session.value = await debugSessionService.getSession(sessionName.value);
+    const nextSession = await debugSessionService.getSession(requestedName);
+    if (requestedName === sessionName.value) {
+      session.value = nextSession;
+    }
   } catch {
     // Ignore errors during background refresh
   }
@@ -147,7 +174,17 @@ function stopPolling() {
 }
 
 onMounted(() => {
-  fetchSession().then(() => startPolling());
+  void fetchSession();
+});
+
+watch(sessionName, async (nextName, previousName) => {
+  if (nextName === previousName) return;
+  const requestID = ++routeRefreshRequestID;
+  stopPolling();
+  session.value = null;
+  await fetchSession();
+  if (requestID !== routeRefreshRequestID || nextName !== sessionName.value) return;
+  startPolling();
 });
 
 watch(
@@ -163,6 +200,7 @@ watch(
 );
 
 onUnmounted(() => {
+  routeRefreshRequestID++;
   stopPolling();
   clipboardCleanup();
 });
@@ -210,8 +248,12 @@ const canJoin = computed(
 );
 const canTerminate = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
 const canRenew = computed(() => session.value?.status?.state === "Active" && isCurrentUserOwner.value);
-const canApprove = computed(() => session.value?.status?.state === "PendingApproval");
-const canReject = computed(() => session.value?.status?.state === "PendingApproval");
+const canApprove = computed(
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canApprove === true,
+);
+const canReject = computed(
+  () => session.value?.status?.state === "PendingApproval" && session.value?.canReject === true,
+);
 
 // Check if kubectl-debug operations are available (kubectl-debug or hybrid mode, active session)
 const canUseKubectlDebug = computed(() => {
@@ -252,7 +294,7 @@ function operationStatusVariant(allowed: boolean): string {
 
 async function handleJoin() {
   try {
-    await debugSessionService.joinSession(sessionName.value, { role: "viewer" });
+    await debugSessionService.joinSession(sessionName.value);
     pushSuccess("Joined session successfully");
     await fetchSession();
   } catch {
@@ -492,7 +534,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
         <div class="detail-card status-card" data-testid="status-card">
-          <h3>Status</h3>
+          <h2>Status</h2>
           <div class="status-header">
             <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
               {{ session.status?.state || "Unknown" }}
@@ -576,7 +618,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Session Info -->
         <div class="detail-card" data-testid="session-info-card">
-          <h3>Session Information</h3>
+          <h2>Session Information</h2>
           <dl class="info-list" data-testid="session-info-list">
             <div class="info-item">
               <dt>Template</dt>
@@ -607,7 +649,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Participants -->
         <div class="detail-card" data-testid="participants-card">
-          <h3>Participants ({{ participants.length }})</h3>
+          <h2>Participants ({{ participants.length }})</h2>
           <div v-if="participants.length === 0" class="empty-section">No participants yet.</div>
           <ul v-else class="participant-list" data-testid="participant-list">
             <li v-for="participant in participants" :key="participant.user" class="participant-item">
@@ -629,7 +671,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Debug Pods -->
         <div class="detail-card" data-testid="debug-pods-card">
-          <h3>Debug Pods ({{ allowedPods.length }})</h3>
+          <h2>Debug Pods ({{ allowedPods.length }})</h2>
           <div v-if="allowedPods.length === 0" class="empty-section">No debug pods deployed yet.</div>
           <ul v-else class="pod-list" data-testid="pod-list">
             <li
@@ -666,7 +708,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   </span>
                 </div>
               </div>
-              <div v-if="pod.phase === 'Running'" class="pod-actions">
+              <div v-if="pod.phase === 'Running' && isOperationAllowed('exec')" class="pod-actions">
                 <div class="exec-command-row">
                   <code class="exec-command">{{ getExecCommand(pod) }}</code>
                   <scale-button
@@ -681,13 +723,18 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   </scale-button>
                 </div>
               </div>
+              <div v-else-if="pod.phase === 'Running'" class="pod-actions">
+                <p class="operation-unavailable" data-testid="exec-unavailable-message">
+                  Exec is not allowed for this debug session.
+                </p>
+              </div>
             </li>
           </ul>
         </div>
 
         <!-- Allowed Pod Operations -->
         <div class="detail-card" data-testid="allowed-operations-card">
-          <h3>Allowed Pod Operations</h3>
+          <h2>Allowed Pod Operations</h2>
           <p class="card-description">
             Operations permitted on debug session pods. These control what kubectl commands can be used.
           </p>
@@ -725,7 +772,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
         <!-- Kubectl Debug Operations -->
         <div v-if="canUseKubectlDebug" class="detail-card kubectl-debug-card" data-testid="kubectl-debug-card">
-          <h3>Kubectl Debug Operations</h3>
+          <h2>Kubectl Debug Operations</h2>
           <p class="card-description">
             Use kubectl-debug style operations to debug pods and nodes in the target cluster.
           </p>
@@ -768,7 +815,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Ephemeral Container Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'ephemeral'" class="kubectl-debug-form">
-            <h4>Inject Ephemeral Container</h4>
+            <h3>Inject Ephemeral Container</h3>
             <p class="form-description">Inject a debug container into a running pod without restarting it.</p>
             <scale-text-field
               v-model="ephemeralForm.namespace"
@@ -817,7 +864,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Pod Copy Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'podCopy'" class="kubectl-debug-form">
-            <h4>Create Pod Copy</h4>
+            <h3>Create Pod Copy</h3>
             <p class="form-description">
               Create a copy of a pod for debugging. The copy can be modified without affecting the original.
             </p>
@@ -851,7 +898,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <!-- Node Debug Form -->
           <div v-if="showKubectlDebugForm && kubectlDebugType === 'nodeDebug'" class="kubectl-debug-form">
-            <h4>Create Node Debug Pod</h4>
+            <h3>Create Node Debug Pod</h3>
             <p class="form-description">Create a privileged debug pod on a specific node for node-level debugging.</p>
             <scale-text-field
               v-model="nodeDebugForm.nodeName"
@@ -916,6 +963,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 <style scoped>
 .debug-session-details {
   max-width: 1000px;
+  min-width: 0;
 }
 
 .back-link {
@@ -924,8 +972,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .details-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
   gap: var(--space-lg);
+  min-width: 0;
 }
 
 .detail-card {
@@ -933,9 +982,10 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-md);
   padding: var(--space-lg);
+  min-width: 0;
 }
 
-.detail-card h3 {
+.detail-card h2 {
   margin: 0 0 var(--space-md);
   font: var(--telekom-text-style-body);
   font-weight: 600;
@@ -953,9 +1003,10 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .status-details {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
+  min-width: 0;
 }
 
 .status-item {
@@ -972,6 +1023,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .status-item .value {
   font: var(--telekom-text-style-caption);
+  overflow-wrap: anywhere;
 }
 
 .status-item .relative {
@@ -993,7 +1045,10 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .info-item {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
+  gap: var(--space-sm);
+  min-width: 0;
   padding: var(--space-xs) 0;
   border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
 }
@@ -1003,17 +1058,22 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .info-item dt {
+  flex: 0 1 auto;
+  min-width: 0;
   font: var(--telekom-text-style-caption);
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-additional);
+  overflow-wrap: anywhere;
 }
 
 .info-item dd {
+  min-width: 0;
   margin: 0;
   text-align: right;
   font: var(--telekom-text-style-caption);
   max-width: 60%;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .empty-section {
@@ -1043,11 +1103,15 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .participant-info {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .participant-user {
   font-weight: 500;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .participant-meta {
@@ -1063,20 +1127,31 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .pod-header {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .pod-name {
   font: var(--telekom-text-style-caption);
   font-family: monospace;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pod-meta {
   display: flex;
+  flex-wrap: wrap;
   gap: var(--space-md);
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: var(--space-xs);
+  min-width: 0;
+}
+
+.pod-meta span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .pod-item.pod-has-issues {
@@ -1115,6 +1190,15 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   margin-top: var(--space-sm);
 }
 
+.operation-unavailable {
+  margin: 0;
+  padding: var(--space-sm);
+  border-radius: var(--radius-sm);
+  background: var(--telekom-color-background-surface-subtle);
+  color: var(--telekom-color-text-and-icon-additional);
+  font: var(--telekom-text-style-small);
+}
+
 .exec-command {
   display: block;
   background: var(--telekom-color-background-surface-subtle);
@@ -1130,23 +1214,27 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   display: flex;
   align-items: center;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 /* Allowed Pod Operations Section */
 .operations-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: var(--space-md);
   margin-top: var(--space-sm);
+  min-width: 0;
 }
 
 .operation-item {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-sm);
   padding: var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-sm);
+  min-width: 0;
 }
 
 .operation-name {
@@ -1158,6 +1246,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   font-family: var(--telekom-typography-font-family-mono);
+  overflow-wrap: anywhere;
 }
 
 /* Kubectl Debug Section */
@@ -1175,6 +1264,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
+  min-width: 0;
 }
 
 .kubectl-debug-form {
@@ -1184,7 +1274,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   margin-top: var(--space-md);
 }
 
-.kubectl-debug-form h4 {
+.kubectl-debug-form h3 {
   margin: 0 0 var(--space-xs);
   font: var(--telekom-text-style-body);
 }

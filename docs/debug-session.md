@@ -1,6 +1,34 @@
 # Debug Sessions
 
-Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable `kubectl debug` operations with fine-grained controls.
+Debug Sessions provide temporary, controlled access to debug pods deployed on target clusters. Unlike breakglass escalations which grant RBAC privileges, debug sessions deploy actual workloads (DaemonSets/Deployments) or enable authenticated API-mediated `kubectl debug` operations with fine-grained controls.
+
+Ephemeral-container injection is available only through the authenticated
+DebugSession API operation. The manager validates the approved image and
+security policy, rechecks the live session lease and target Pod UID, rejects a
+session whose live object has a deletion timestamp, and persists a `Prepared`
+operation containing the exact target Pod UID plus a
+canonical digest of the full submitted container request before changing the
+target. It records a terminal
+`Completed`, `Failed`, or `Unknown` outcome idempotently. A controller restart
+recovers prepared operations by comparing the exact Pod UID and container
+request; identity mismatches are never guessed or mutated. Session cleanup
+removes copied Pods while retaining terminal kubectl-debug operation evidence
+for operator handling. Independent writes to
+`pods/ephemeralcontainers` through a target cluster API server are governed by
+that cluster's RBAC and are outside Breakglass. Kubernetes cannot remove an
+ephemeral container from a live Pod, so retained containers remain only as
+inaccessible target-Pod state after the session ends.
+
+Post-mutation status reconciliation uses a bounded detached timeout when the
+request is canceled, so the target mutation can still be recorded or recovered
+without an unbounded API call. When a replacement Pod is proven by its current
+UID, the session's allowed-Pod entry is updated to that UID; an unverified
+empty UID never replaces an existing identity.
+
+Namespace selector authorization is checked against live target namespace
+labels both before the operation is prepared and again immediately before the
+target write or pod-copy creation. A label change that revokes access causes
+the operation to fail closed rather than using the earlier label snapshot.
 
 **Type Definitions:**
 - [`DebugSession`](../api/v1alpha1/debug_session_types.go)
@@ -29,14 +57,18 @@ Debug sessions support three operational modes:
 
 ### Workload Mode (default)
 
-Deploys debug pods as a DaemonSet or Deployment to the target cluster:
+Deploys debug workloads to the target cluster as a DaemonSet, Deployment, or bounded Job:
 
 ```yaml
 mode: workload
-workloadType: DaemonSet  # or Deployment
+workloadType: DaemonSet  # or Deployment/Job
 ```
 
 **Labels & annotations**: `spec.labels`/`spec.annotations` from the template (and binding overrides) are applied to created workloads, pod templates, and supporting resources (e.g., PDBs and ResourceQuotas). Session-level labels/annotations are also propagated.
+
+`workloadType: Job` is intended for one-shot diagnostics. The controller enforces a single completion (`completions: 1`, `parallelism: 1`, `backoffLimit: 0`) and an effective bounded deadline, while accepting the template's `restartPolicy` when it is `Never` or `OnFailure`. `OnFailure` permits container restarts within the pod; it does not enable additional Job retries. The completed Job is kept for inspection until normal debug-session cleanup removes it.
+
+Jobs are the supported one-shot workload type; the controller accepts `batch/v1` Job manifests (or a bare PodSpec rendered as a Job) and rejects other workload kinds in a workload template. Session constraints remain authoritative: caller-supplied retry/deadline settings are replaced with session-owned labels, one completion, `backoffLimit: 0`, and the effective bounded duration. Request selectors may add constraints only when they do not conflict with administrator-authored selectors; conflicting values are rejected. `activeDeadlineSeconds` is capped by the template or binding maximum; `ttlSecondsAfterFinished`, `suspend`, and caller-managed selectors are not retained.
 
 **Use cases:**
 - Node-level debugging requiring host namespaces
@@ -45,7 +77,8 @@ workloadType: DaemonSet  # or Deployment
 
 ### Kubectl Debug Mode
 
-Enables ephemeral container injection and pod copying via `kubectl debug`:
+Enables authenticated API-mediated ephemeral-container injection and pod
+copying with `kubectl debug`-style controls:
 
 ```yaml
 mode: kubectl-debug
@@ -90,9 +123,9 @@ Debug sessions follow a strict state machine:
      │                   │                    │
      │                   │                    │
      ▼                   ▼                    ▼
- ┌────────┐          ┌────────┐          ┌─────────┐
- │ Failed │          │ Failed │          │ Expired │
- └────────┘          └────────┘          └─────────┘
+ ┌────────┐          ┌──────────┐        ┌─────────┐
+ │ Failed │          │ Rejected │        │ Expired │
+ └────────┘          └──────────┘        └─────────┘
                                               │
                                               │
                                           ┌──────────────┐
@@ -105,9 +138,10 @@ Debug sessions follow a strict state machine:
 | `Pending` | Session is being set up | ❌ |
 | `PendingApproval` | Waiting for approver action | ❌ |
 | `Active` | Debug pods running, access granted | ✅ |
+| `Rejected` | Approver denied the request | ❌ |
 | `Expired` | Session duration exceeded | ❌ |
 | `Terminated` | Manually ended by owner or admin | ❌ |
-| `Failed` | Setup failed or rejected | ❌ |
+| `Failed` | Setup failed | ❌ |
 
 ## Resource Definitions
 
@@ -129,11 +163,17 @@ spec:
     spec:
       containers:
         - name: debug
-          image: alpine:latest
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
           securityContext:
             runAsNonRoot: true
-            runAsUser: 1000
+            runAsUser: 65532
+            runAsGroup: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+            seccompProfile:
+              type: RuntimeDefault
           resources:
             requests:
               cpu: 100m
@@ -141,8 +181,6 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
-      tolerations:
-        - operator: Exists  # Run on any node
 ```
 
 **templateString (for dynamic configurations with session context):**
@@ -158,8 +196,7 @@ spec:
   templateString: |
     containers:
       - name: debug-{{ .session.name | trunc 15 }}
-        image: {{ .vars.image | default "alpine:latest" }}
-        command: ["sleep", "infinity"]
+        image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         env:
           - name: SESSION_NAME
             value: {{ .session.name | quote }}
@@ -171,126 +208,55 @@ spec:
           limits:
             cpu: {{ .vars.cpuLimit | default "500m" }}
             memory: {{ .vars.memoryLimit | default "256Mi" }}
-    {{- if eq .vars.hostNetwork "true" }}
-    hostNetwork: true
-    {{- end }}
 ```
 
-The `templateString` supports all session context variables (`.session`, `.target`, `.vars`, etc.) using Sprout template functions. See [Template Context Variables](#template-context-variables) for the full list.
+The `templateString` supports session context variables (`.session`, `.target`,
+and `.vars` values) using Sprig template functions. Declared `.vars` values are
+validated against `extraDeployVariables`; additional request keys may also be
+carried into `.vars`, so templates must not use undeclared keys for sensitive
+interpolation. Disabled variables are omitted from requester-facing template
+list and detail responses, so the UI does not offer fields the API rejects.
+Submitting a disabled variable remains forbidden, even when it has a default
+or is marked required.
+Keep security-sensitive values such as images, commands, mounts, capabilities,
+and host namespaces literal in the administrator-owned template. See [Template
+Context Variables](#template-context-variables) for the full list.
+
+Template output that can be changed during rendering with Sprig mutation
+functions (`set`, `unset`, `merge`, `mustMerge`, `mergeOverwrite`, or
+`mustMergeOverwrite`) must use a scalar serializer such as `yamlQuote`,
+`yamlSafe`, `quote`, or `k8sName`, including for otherwise trusted session and
+target fields. This rule applies to the complete parsed template set.
 
 > **Note:** `template` and `templateString` are mutually exclusive. The webhook will reject DebugPodTemplates with both fields set.
 
+For additive operator-owned documentation supplied through a digest-pinned
+OCI image volume, see the [OCI runbook bundle contract](./runbook-bundle-contract.md).
+
 #### Multi-Document YAML in Pod Templates
 
-When using `templateString`, you can use multi-document YAML (documents separated by `---`) to define the PodSpec AND additional supporting Kubernetes resources that should be created alongside the debug pod.
+When using `templateString`, the first document is the PodSpec (the `spec`
+portion, not a full Pod object). Additional documents are complete Kubernetes
+resources separated by `---`.
 
 **Rules:**
 - The **first document** MUST be the PodSpec (just the `spec` portion, not a full Pod definition)
 - **Subsequent documents** must be complete Kubernetes resources with `apiVersion` and `kind`
 - Additional resources are created BEFORE the debug workload starts
-- Additional resources are automatically cleaned up when the session ends
+- Additional resources are tracked and cleaned up when the session reaches a
+  cleanup state; resources marked `deleteAfter: false` are retained
 - Empty documents (blank or whitespace-only) are silently skipped
 
-**Example: Debug Pod with PVC for Storage Testing**
+Template variable values are preserved exactly during validation, including
+multiline and Unicode values; YAML quoting protects their serialized form.
 
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: storage-debug-pod
-spec:
-  displayName: "Storage Debug Pod"
-  description: "Debug pod with dynamically provisioned PVC for storage testing"
-  templateString: |
-    # First document: PodSpec
-    containers:
-      - name: fio
-        image: wallnerryan/fiotools:latest
-        command: ["sleep", "infinity"]
-        volumeMounts:
-          - name: test-volume
-            mountPath: /data
-    volumes:
-      - name: test-volume
-        persistentVolumeClaim:
-          claimName: pvc-{{ .session.name | trunc 20 }}
-    ---
-    # Second document: PVC (created before pod starts)
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    metadata:
-      name: pvc-{{ .session.name | trunc 20 }}
-    spec:
-      accessModes:
-        - ReadWriteOnce
-      storageClassName: {{ .vars.storageClass | default "standard" }}
-      resources:
-        requests:
-          storage: {{ .vars.pvcSize | default "10Gi" }}
-```
-
-**Example: Debug Pod with ConfigMap and Secret**
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: app-debug-pod
-spec:
-  displayName: "Application Debug Pod"
-  templateString: |
-    containers:
-      - name: debug
-        image: alpine:latest
-        command: ["sleep", "infinity"]
-        envFrom:
-          - configMapRef:
-              name: debug-config-{{ .session.name }}
-          - secretRef:
-              name: debug-creds-{{ .session.name }}
-    ---
-    apiVersion: v1
-    kind: ConfigMap
-    metadata:
-      name: debug-config-{{ .session.name }}
-    data:
-      CLUSTER: {{ .session.cluster }}
-      DEBUG_MODE: "true"
-    ---
-    apiVersion: v1
-    kind: Secret
-    metadata:
-      name: debug-creds-{{ .session.name }}
-    type: Opaque
-    stringData:
-      api-token: {{ .vars.apiToken | default "default-token" }}
-```
-
-**Conditional Additional Resources**
-
-Use Go template conditionals to optionally include resources:
-
-```yaml
-templateString: |
-  containers:
-    - name: debug
-      image: alpine:latest
-  {{- if eq .vars.createPVC "true" }}
-  ---
-  apiVersion: v1
-  kind: PersistentVolumeClaim
-  metadata:
-    name: optional-pvc-{{ .session.name }}
-  spec:
-    accessModes:
-      - ReadWriteOnce
-    resources:
-      requests:
-        storage: 10Gi
-  {{- end }}
-```
-
-> **Tip:** Multi-document pod templates are ideal for debug scenarios that need supporting resources (PVCs, ConfigMaps, Secrets) that are tightly coupled to the pod. For shared resources or complex resource graphs, consider using [Auxiliary Resources](#auxiliary-resources) instead.
+Use this feature only for provider-reviewed, session-scoped resources such as
+a PVC or NetworkPolicy. Do not interpolate an image, command, node name,
+mount, capability, Secret value, or RBAC rule from user input. For a complete
+authoring pattern, including per-session identity and isolation, see the
+[DebugSession authoring guide](./debug-session-authoring.md). For storage
+workflows use the [storage utility contract](../utils/images/storage-debug/README.md)
+instead of a free-form fio or kubestr pod.
 
 ### DebugSessionTemplate
 
@@ -346,25 +312,22 @@ spec:
       node-pool: "general-purpose"
     deniedNodeLabels:
       node-role.kubernetes.io/control-plane: "*"
-    deniedNodes:
-      - "control-plane-*"
   
   # Optional: Scheduling options (user can choose one)
   schedulingOptions:
     required: true
     options:
-      - name: sriov
-        displayName: "SRIOV Nodes"
-        description: "Deploy on nodes with SR-IOV network interfaces"
+      - name: network-capable
+        displayName: "Network-capable Nodes"
+        description: "Deploy on nodes selected by the downstream platform"
         schedulingConstraints:
           nodeSelector:
-            network.kubernetes.io/sriov: "true"
+            debug.network.example/approved: "true"
       - name: standard
         displayName: "Standard Nodes"
         default: true
         schedulingConstraints:
-          nodeSelector:
-            network.kubernetes.io/sriov: "false"
+          nodeSelector: {}
   
   # Optional: Terminal sharing
   terminalSharing:
@@ -377,7 +340,7 @@ spec:
     notifyOnApproval: true
     notifyOnExpiry: true
     notifyOnTermination: true
-  expirationBehavior: terminate   # or notify-only
+  expirationBehavior: terminate   # notify-only is deprecated and also enforces hard expiry
   gracePeriodBeforeExpiry: 15m
 
   # Optional: Resource controls
@@ -397,7 +360,7 @@ spec:
   audit:
     logCommands: true
     sidecar:
-      image: audit-logger:v1
+      image: registry.example/audit-logger@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
   # Optional: Granular pod operation controls
   allowedPodOperations:
@@ -407,9 +370,28 @@ spec:
     portForward: true # kubectl port-forward
 ```
 
+`expirationBehavior: notify-only` is deprecated. For compatibility, it requests
+the configured expiry notification and then performs the same hard expiry as
+`terminate`. Expiry always changes the session to `Expired`, revokes new access,
+and starts resource cleanup. Use `notification.notifyOnExpiry` with `terminate`
+for new templates. Notification settings never disable hard expiry.
+An `Active` DebugSession must have a non-zero `status.expiresAt`. Admission and
+internal status writers reject adding a lease later to a malformed active
+session, and reconciliation changes that session to terminal `Failed` state.
+
+`gracePeriodBeforeExpiry` uses the same shared duration parser as the other
+session timing fields, including extended day, week, and year units.
+
+The controller updates `DebugSessionTemplate.status` with readiness conditions,
+the observed generation, pod-template reference resolution, active session
+usage, and clusters made available through active
+`DebugSessionClusterBinding` resources.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
+
+The web UI mirrors these permissions in the session details view. For example, when `exec` is disabled, running debug pods show the operation as unavailable and do not offer a copyable `kubectl exec` command.
 
 ### Configuration
 
@@ -448,101 +430,22 @@ allowedPodOperations:
 
 #### 2. Core Dump Collection from Host
 
-For collecting crash dumps or memory analysis without interactive shell access:
-
-```yaml
-# Use case: Copy core dumps from debug pod with host filesystem access
-# Security: Exec allowed only for cp operations, no interactive shell
-# Note: kubectl cp requires exec (it runs tar inside the container)
-allowedPodOperations:
-  exec: true       # Required for kubectl cp to work
-  attach: false    # No interactive process attachment
-  logs: false      # Log access not needed
-  portForward: false
-```
-
-Combined with a debug pod template that mounts the host's core dump directory:
-
-```yaml
-kind: DebugPodTemplate
-metadata:
-  name: coredump-collector
-spec:
-  displayName: "Core Dump Collector"
-  description: "Read-only access to host core dumps for collection"
-  template:
-    spec:
-      containers:
-        - name: collector
-          image: busybox:1.36
-          command: ["sleep", "infinity"]
-          volumeMounts:
-            - name: host-coredumps
-              mountPath: /host/coredumps
-              readOnly: true
-      volumes:
-        - name: host-coredumps
-          hostPath:
-            path: /var/lib/systemd/coredump
-            type: Directory
-```
-
-**Usage:**
-```bash
-# Copy core dump from debug pod to local machine
-kubectl cp breakglass-debug/coredump-collector-xyz:/host/coredumps/core.1234 ./core.1234
-```
+Use the [diagnostic artifact collector](../utils/images/diagnostic-artifact-collector/README.md)
+for its reviewed `crashdump-collection.v1` recipe. It fixes the collector
+command, read-only host mount, node placement, output path, and upload
+boundary; it is not a general-purpose shell or `kubectl cp` recipe. Binary
+core files are sensitive and are not generically redacted.
 
 ---
 
 #### 3. Storage Write Benchmark / Functionality Test
 
-For running storage benchmarks without needing logs or network access:
-
-```yaml
-# Use case: Run fio benchmarks or dd write tests
-# Security: Exec only for running test commands
-allowedPodOperations:
-  exec: true       # Run benchmark commands
-  attach: false    # No process attachment needed
-  logs: false      # Test results retrieved via exec
-  portForward: false
-```
-
-Combined with a template that provides benchmark tools and storage access:
-
-```yaml
-kind: DebugPodTemplate
-metadata:
-  name: storage-tester
-spec:
-  displayName: "Storage Benchmark"
-  description: "Run storage performance tests with fio"
-  template:
-    spec:
-      containers:
-        - name: fio
-          image: nixery.dev/shell/fio/sysstat:latest
-          command: ["sleep", "infinity"]
-          volumeMounts:
-            - name: test-storage
-              mountPath: /mnt/test
-      volumes:
-        - name: test-storage
-          emptyDir:
-            sizeLimit: 10Gi
-```
-
-**Usage:**
-```bash
-# Run write benchmark
-kubectl exec debug-storage-xyz -- fio --name=write_test --rw=write \
-  --bs=4k --size=1G --directory=/mnt/test --output-format=json
-
-# Run read benchmark
-kubectl exec debug-storage-xyz -- fio --name=read_test --rw=read \
-  --bs=4k --size=1G --directory=/mnt/test --output-format=json
-```
+Use the [storage diagnostics image](../utils/images/storage-debug/README.md).
+Its standard `mounted-volume` mode targets an already attached PVC with
+bounded `fio`/`ioping`; its controller-owned advanced operations use a fixed
+kubestr contract and a dedicated ServiceAccount. Do not expose arbitrary fio
+files, commands, images, StorageClasses, or PVC sizes through a session
+request.
 
 ---
 
@@ -669,6 +572,8 @@ This maintains backward compatibility with existing debug session templates.
 - The webhook enforces operation restrictions by checking the pod subresource (`exec`, `attach`, `log`, `portforward`) against the session's `AllowedPodOperations`.
 - `kubectl cp` uses the exec subresource internally (it runs tar in the container). Therefore, `kubectl cp` requires `exec: true` to function. If exec is disabled, all `kubectl cp` operations will be blocked.
 - The webhook operates at the subresource level and cannot distinguish between different commands executed via exec.
+- For pod operations, the webhook re-reads the named Pod and requires its UID to match the UID recorded in `status.allowedPods`; deleting and recreating a directly managed Pod with the same name is therefore denied. Pods recreated by the recorded DaemonSet or Deployment workload are admitted only after their owner and Pod template lineage is verified.
+- The webhook uses indexed cached session discovery for normal requests and retries discovery through the live API reader, scoped to the selected ClusterConfig namespace and the session's cluster label with bounded pagination, when that cache has not observed a newly active session yet. The final session, expiry, participant issuer, and target Pod UID checks still use live state and fail closed on any mismatch.
 
 ### Viewing Allowed Operations
 
@@ -688,6 +593,10 @@ The `get` command shows the full session details including `status.allowedPodOpe
 bgctl debug session get debug-abc123 -o yaml
 ```
 
+The controller persists the resolved operation set in `status.allowedPodOperations`.
+Webhook checks read this status field, so controller status updates preserve it
+across requeues while the session remains active.
+
 **Web UI**: The session details page displays an "Allowed Pod Operations" card showing which operations are enabled (✓) or disabled (✗) for the session.
 
 ### DebugSession
@@ -699,7 +608,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSession
 metadata:
   name: debug-session-abc123
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   cluster: prod-cluster-1
   templateRef: standard-debug
@@ -722,7 +631,6 @@ status:
   allowedPods:
     - namespace: breakglass-debug
       name: debug-session-abc123-ds-xyz
-      nodeName: node-1
       ready: true
   deployedResources:
     - apiVersion: apps/v1
@@ -783,10 +691,10 @@ schedulingConstraints:
       topologyKey: topology.kubernetes.io/zone
       whenUnsatisfiable: ScheduleAnyway
   
-  # Block specific nodes by name pattern (glob)
+  # Block specific nodes by exact name (replace with your node names)
   deniedNodes:
-    - "control-plane-*"
-    - "etcd-*"
+    - "control-plane-1"
+    - "etcd-1"
   
   # Block nodes with any of these labels
   deniedNodeLabels:
@@ -794,9 +702,13 @@ schedulingConstraints:
     node-role.kubernetes.io/master: "*"
 ```
 
+Exact `deniedNodes` entries and `deniedNodeLabels` are rendered into hard node affinity requirements. Glob-style `deniedNodes` entries are rejected at admission and rendering; migrate existing globs to exact names or stable labels in `deniedNodeLabels`. See [lifecycle security and upgrade recovery](security-defender-lifecycle.md).
+
 ### Scheduling Options
 
 Scheduling options allow administrators to offer users a choice of predefined scheduling configurations. This reduces the need for multiple templates for different node pools:
+
+Scheduling options affect where the debug pod is placed. They do not delay debug-session activation, and `POST /api/debugSessions` does not accept a `scheduledStartTime` field.
 
 ```yaml
 schedulingOptions:
@@ -804,12 +716,12 @@ schedulingOptions:
   required: true
   
   options:
-    - name: sriov
-      displayName: "SRIOV Nodes"
-      description: "Deploy on nodes with SR-IOV network interfaces"
+    - name: network-capable
+      displayName: "Network-capable Nodes"
+      description: "Deploy on nodes selected by the downstream platform"
       schedulingConstraints:
         nodeSelector:
-          network.kubernetes.io/sriov: "true"
+          debug.network.example/approved: "true"
       # Restrict this option to specific groups
       allowedGroups:
         - netops-admins
@@ -819,8 +731,7 @@ schedulingOptions:
       description: "Deploy on regular worker nodes"
       default: true  # Pre-selected in UI
       schedulingConstraints:
-        nodeSelector:
-          network.kubernetes.io/sriov: "false"
+        nodeSelector: {}
     
     - name: any
       displayName: "Any Worker Node"
@@ -830,12 +741,16 @@ schedulingOptions:
 
 `allowedGroups` and `allowedUsers` are enforced when a `DebugSession` request is created. The API checks the selected option, including a required option that is selected by default, against the authenticated user's username, email, and groups. Requests for restricted options return `403 Forbidden` when the requester does not match. Leave both fields empty only for options that are safe for every requester who can use the template.
 
+The controller refreshes `status.allowedPods` dynamically as debug pods start, stop, or change readiness. That refresh is scoped to the pod-list field so it does not rewrite API-owned session lifecycle details such as participants, renewal count, or `expiresAt`.
+
 **Merge Logic**: When a user selects an option, the constraints are merged in this order:
 1. Base constraints from `DebugPodTemplate`
 2. Overrides from `DebugSessionTemplate`
 3. Base `schedulingConstraints` from template (mandatory for all options)
 4. Selected option's `schedulingConstraints` (additive)
 5. User's `nodeSelector` (if allowed by template)
+
+Selected options and cluster bindings may add stricter constraints but cannot replace mandatory ones. If a binding or option sets a different value for an existing mandatory `nodeSelector` key, the request is rejected instead of silently weakening the base constraint. `deniedNodeLabels` are additive: a wildcard `*` value denies every value for that key and dominates narrower exact-value entries, while conflicting exact values for the same key are rejected. Required node affinity is combined with Kubernetes-correct AND semantics across selector terms.
 
 ## Namespace Constraints
 
@@ -924,16 +839,19 @@ selectorTerms:
 
 When a user creates a debug session:
 
-1. **No namespace specified**: Uses `defaultNamespace` from constraints
-2. **Namespace specified + `allowUserNamespace: false`**: Request rejected
-3. **Namespace specified + `allowUserNamespace: true`**: 
-   - Validated against `allowedNamespaces` patterns/selectors
-   - Validated against `deniedNamespaces` (deny takes precedence)
+1. **No namespace specified**: Uses `defaultNamespace` from constraints (falling back to `breakglass-debug`), still validated against the allow/deny filters
+2. **Namespace specified + `allowUserNamespace: false`** or **`denyUserNamespace: true`**: Request rejected. `denyUserNamespace` always wins over `allowUserNamespace`
+3. **Namespace specified + `allowUserNamespace: true`**:
+   - Validated against the **effective allow-list**, which is the intersection of every configured `allowedNamespaces` filter. If no `allowedNamespaces` is configured at all, **only `defaultNamespace` is allowed** — an empty allow-list is not "allow any".
+   - Validated against the union of every configured `deniedNamespaces` filter (deny takes precedence).
+   - `selectorTerms` on either the allow or the deny side are evaluated against **live namespace labels** read from the target cluster. If those labels cannot be read (spoke API error, namespace missing, no client configured), the request is **rejected** with an error naming the namespace and the offending filter — a selector-based policy is never silently skipped.
+   - If a `DebugSessionClusterBinding` is selected, the namespace must satisfy both the template constraints and the binding constraints
 4. **Namespace doesn't exist**: 
-   - `createIfNotExists: true`: Creates namespace with `namespaceLabels`
+   - `createIfNotExists: true`: Creates namespace with `namespaceLabels` from the effective constraints; a binding's namespace constraints take precedence when present
    - `createIfNotExists: false`: Session fails or uses fail-open mode
 
-The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace selectors and cluster state.
+The web UI validates Kubernetes namespace syntax and glob-style allowed/denied patterns before submitting a debug session request. The API and controller remain the authoritative enforcement points for namespace constraints and cluster state.
+Kubectl-debug namespace selectors for ephemeral-container injection and pod-copy creation are evaluated against live namespace labels from the target cluster; selector-based policies fail closed if those labels cannot be read.
 
 ### Example: Team-Isolated Debug Namespaces
 
@@ -1024,12 +942,12 @@ spec:
         apiVersion: networking.k8s.io/v1
         kind: NetworkPolicy
         metadata:
-          name: "debug-{{ .Session.Name }}-isolation"
-          namespace: "{{ .Session.Spec.TargetNamespace }}"
+          name: "debug-{{ .session.name }}-isolation"
+          namespace: "{{ .target.namespace }}"
         spec:
           podSelector:
             matchLabels:
-              breakglass.t-caas.telekom.com/session: "{{ .Session.Name }}"
+              breakglass.t-caas.telekom.com/session: "{{ .session.name }}"
           policyTypes:
             - Ingress
             - Egress
@@ -1057,14 +975,14 @@ spec:
         apiVersion: v1
         kind: ServiceAccount
         metadata:
-          name: debug-{{ .Session.Name }}-sa
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-sa
+          namespace: {{ .target.namespace }}
         ---
         apiVersion: rbac.authorization.k8s.io/v1
         kind: Role
         metadata:
-          name: debug-{{ .Session.Name }}-role
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-role
+          namespace: {{ .target.namespace }}
         rules:
           - apiGroups: [""]
             resources: ["pods", "pods/log"]
@@ -1073,22 +991,57 @@ spec:
         apiVersion: rbac.authorization.k8s.io/v1
         kind: RoleBinding
         metadata:
-          name: debug-{{ .Session.Name }}-binding
-          namespace: {{ .Target.Namespace }}
+          name: debug-{{ .session.name }}-binding
+          namespace: {{ .target.namespace }}
         subjects:
           - kind: ServiceAccount
-            name: debug-{{ .Session.Name }}-sa
-            namespace: {{ .Target.Namespace }}
+            name: debug-{{ .session.name }}-sa
+            namespace: {{ .target.namespace }}
         roleRef:
           kind: Role
-          name: debug-{{ .Session.Name }}-role
+          name: debug-{{ .session.name }}-role
           apiGroup: rbac.authorization.k8s.io
 ```
 
 All resources from multi-document YAML are:
 - Tracked in the session status for observability
-- Cleaned up automatically when the session ends
+- Cleaned up automatically when the session ends unless `deleteAfter: false`
 - Monitored for readiness using kstatus
+
+Auxiliary resource lifecycle is reflected in
+`status.auxiliaryResourceStatuses`. Additional objects produced by
+multi-document pod templates are reflected in
+`status.podTemplateResourceStatuses`, allowing cleanup and audit workflows to
+continue from persisted status after controller requeues or restarts.
+Terminal kubectl-debug operation outcomes are retained in a bounded history,
+while unresolved `Prepared` intents are always retained for recovery. Terminal
+history alone does not keep a ClusterConfig deletion finalizer in place.
+Terminal cleanup retries while a freshly prepared operation remains within its
+recovery grace period; once recovery can determine the outcome, cleanup can
+finish and retain the resulting terminal evidence.
+Legacy or unsupported prepared operation kinds are terminalized as `Unknown`
+during cleanup without reading or mutating a target cluster, so old status
+records cannot hold a session finalizer forever. If the request context is
+canceled after a supported intent is persisted but before the target write,
+the controller uses a bounded detached outcome context to record `Failed`;
+ambiguous target responses remain `Prepared` for recovery.
+Each operation ID is unique; new records are admitted only as `Prepared`,
+prepared intent and actor fields remain immutable, and a prepared record may
+become terminal only with a completion timestamp. Retained terminal records
+are immutable, while cleanup may compact only the oldest excess terminal
+history.
+While retained in the bounded terminal history, an `Unknown` ephemeral-container
+outcome blocks replay for the same namespace/Pod-UID/container tuple because the
+target mutation cannot be re-established safely. A different Pod UID remains a
+distinct operation. Compaction removes this duplicate suppression; a subsequent
+request must pass all current session, authorization, and target checks, and an
+existing same-name ephemeral container is rejected before mutation. Recovery
+never retries the target mutation automatically.
+New ephemeral-container authorization admits at most 256 distinct
+namespace/Pod-UID/container tuples per session; durable `Prepared` reservations
+count toward that bound. Retries and recovery of an already recorded tuple
+remain idempotent, and existing larger histories are retained. This bounds new
+growth without promising an absolute DebugSession object-byte limit.
 
 > **Note:** `template` (structured) and `templateString` (Go template) are mutually exclusive. Use `templateString` when you need multi-document YAML or dynamic templating.
 
@@ -1110,18 +1063,18 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 
 | Variable | Description |
 |----------|-------------|
-| `.Session.Name` | Debug session name |
-| `.Session.Namespace` | Session's namespace |
-| `.Session.Spec.Cluster` | Target cluster name |
-| `.Session.Spec.User` | Requesting user |
-| `.Session.Spec.TargetNamespace` | Target namespace for debug pods |
-| `.Session.Spec.Reason` | Session request reason |
-| `.Template.Name` | Template name |
+| `.session.name` | Debug session name |
+| `.session.namespace` | Session's namespace |
+| `.session.cluster` | Target cluster name |
+| `.session.requestedBy` | Requesting user |
+| `.target.namespace` | Target namespace for debug pods |
+| `.session.reason` | Session request reason |
+| `.template.name` | Template name |
 
 ### Lifecycle
 
-1. **Creation**: Auxiliary resources are created BEFORE debug pods start (when `createBefore: true`, the default)
-2. **Cleanup**: Resources are deleted when the session ends (when `deleteAfter: true`, the default)
+1. **Creation**: Auxiliary resources are created before debug pods start when `createBefore: true` (the default), or after the debug workload is applied when `createBefore: false`
+2. **Cleanup**: Resources are deleted when the session ends when `deleteAfter: true` (the default), and retained when `deleteAfter: false`
 
 ### Failure Policies
 
@@ -1140,6 +1093,8 @@ auxiliaryResources:
 | `fail` | Abort session if resource creation fails (default) |
 | `ignore` | Continue session regardless of failure |
 | `warn` | Log warning and continue |
+
+The controller also treats an omitted `failurePolicy` as `fail`. The deprecated `optional: true` field is honored as `ignore` for backwards compatibility.
 
 ### Cluster Binding Overrides
 
@@ -1171,7 +1126,7 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 | **Readiness Tracking** | Basic (created/deleted) | Full kstatus monitoring |
 | **Categories** | Not categorized | Organized by category |
 | **Binding Requirements** | N/A | Can enforce required categories |
-| **Template Context** | `.session`, `.target`, `.vars` | `.Session`, `.Target`, `.Vars` |
+| **Template Context** | `.session`, `.target`, `.vars` | `.session`, `.target`, `.vars` |
 
 **Choose Pod Template Multi-Doc when:**
 - Resources are specific to this pod template (e.g., PVC for storage testing)
@@ -1192,6 +1147,15 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 - **Constraint overrides**: Customize durations, namespaces, and approval requirements per cluster
 - **Impersonation**: Deploy debug pods using a constrained ServiceAccount
 
+When a request omits `bindingRef`, the API can still default to an applicable
+binding for the target cluster. If the selected binding has non-empty
+`spec.allowed.users` or `spec.allowed.groups`, those requester rules replace
+the template requester allowlist for that matched cluster. A caller who is
+allowed by the template but not by the selected binding is rejected instead of
+receiving that binding's constraints, labels, approvers, or impersonation
+settings. Bindings that omit `spec.allowed`, or set it without users or groups,
+still inherit the template requester allowlist.
+
 ### Basic Binding
 
 ```yaml
@@ -1199,7 +1163,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
   name: sre-production-access
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   templateRef:
     name: network-debug
@@ -1252,6 +1216,13 @@ GET /api/debugSessions/templates/:name/clusters
 
 Only ready cluster configurations are offered as debug targets. A matching `ClusterConfig` must have `Ready=True`; clusters with `Ready=False`, `Ready=Unknown`, no ready condition, or a duplicate `metadata.name` in another namespace are hidden from this response and `POST /api/debugSessions` rejects new debug sessions that target them. `DebugSessionClusterBinding` objects with `spec.hidden: true` are also omitted from this UI discovery response, but callers that already know the binding name can still use it through an explicit `bindingRef` in `POST /api/debugSessions`.
 
+Template and cluster discovery is requester-specific. The API returns a
+template only when the authenticated requester can use the template directly or
+through at least one active matching `DebugSessionClusterBinding`. Cluster
+entries, binding options, scheduling options, and extra deploy variables that
+the requester cannot use at session creation time are omitted from discovery
+responses.
+
 Response includes per-cluster details:
 
 ```json
@@ -1283,29 +1254,36 @@ Response includes per-cluster details:
 
 ### Ephemeral Containers
 
-Allow injecting ephemeral containers into running pods:
+Allow injecting ephemeral containers into running pods. If the session expires
+after the durable operation intent is recorded but before the target update,
+the controller records a Failed operation without mutating the target Pod; the
+normal expiry reconciler performs the session's terminal lifecycle effects:
 
 ```yaml
 kubectlDebug:
   ephemeralContainers:
     enabled: true
     allowedNamespaces:
-      - "app-*"
-      - "services-*"
+      patterns:
+        - "app-*"
+        - "services-*"
     deniedNamespaces:
-      - "kube-system"
-      - "breakglass"
+      patterns:
+        - "kube-system"
+        - "breakglass"
     allowedImages:
-      - "alpine:*"
-      - "busybox:*"
-      - "debug-tools:*"
-    requireImageDigest: false
-    maxCapabilities:
-      - NET_ADMIN
-      - SYS_PTRACE
+      - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    requireImageDigest: true
+    maxCapabilities: []
     allowPrivileged: false
     requireNonRoot: true
 ```
+
+`allowedImages` entries are exact image references or explicit glob patterns.
+Prefer one reviewed digest per template and set `requireImageDigest: true`.
+When `allowPrivileged` is `false`, requests with
+`securityContext.privileged: true` are rejected. The template's allowlist is
+not a reason to expose image or command selection to an untrusted caller.
 
 #### Namespace Filtering with Labels
 
@@ -1349,8 +1327,7 @@ kubectlDebug:
   nodeDebug:
     enabled: true
     allowedImages:
-      - "alpine:*"
-      - "debug-tools:*"
+      - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     hostNamespaces:
       hostNetwork: true
       hostPID: true
@@ -1358,6 +1335,10 @@ kubectlDebug:
     nodeSelector:
       node-role.kubernetes.io/worker: ""
 ```
+
+Node-debug pods are created in the debug session's resolved
+`spec.targetNamespace` first, then the template `targetNamespace`, and finally
+the default `breakglass-debug` namespace.
 
 ### Pod Copy Debugging
 
@@ -1397,12 +1378,54 @@ constraints:
 
 Requested durations must be positive and cannot exceed the effective
 `maxDuration`. When a request selects a `DebugSessionClusterBinding` through
-`bindingRef`, or the API/reconciler defaults to an applicable binding for the
-target cluster, that binding's duration constraints override the template
-constraints for that session. Renewals extend the current expiration time, but
-the renewed expiration cannot move past `status.startsAt + maxDuration`.
+`bindingRef`, or the API/reconciler defaults to a requester-authorized
+applicable binding for the target cluster, that binding's duration constraints
+override the template constraints for that session. Renewals extend the current
+expiration time, but the renewed expiration cannot move past
+`status.startsAt + maxDuration`.
+For a Job-backed workload, renewal commits the new expiry and renewal count
+before synchronizing the tracked Job's `activeDeadlineSeconds`. If the target
+update fails, the renewal remains accepted and the active reconciler retries
+the deadline sync without counting the renewal again. Each target patch is
+fenced by a live session and privileged cluster-configuration check. Jobs that
+have not started yet defer synchronization until their start time is available;
+normal reconciliation retries without warning. Once a Job has started, the
+sync adjusts its relative deadline in either direction to match the latest
+committed session expiry. Kubernetes measures this deadline from the Job start
+time and stores it as an integer number of seconds. The controller floors
+fractional seconds, so the resulting deadline may end less than one second
+early but never extends beyond the committed expiry. Delayed startup requires a
+subsequent controller reconciliation;
+controller downtime can delay that adjustment and cleanup.
 Only the requester or an active `owner`/`participant` status entry can renew a
 session; `viewer` entries and participants with `leftAt` set cannot renew.
+The active-session expiry, approval-timeout, expiring-soon message, cleanup
+timeout, and cleanup expiry writers use optimistic locking, so stale reconciler
+or cleanup passes cannot overwrite a newer renewal or participant update.
+Kubectl-debug outcome and cleanup status writes also require the session UID
+captured by the operation; a same-name replacement is rejected. Cleanup stays
+pending when tracked spoke resources exist but the cluster client provider is
+unavailable.
+Cleanup status merges the latest persisted inventory with the entries retired
+by the current attempt, preserving targets recorded concurrently by the same
+session, including nested auxiliary-document identities. ClusterConfig deletion
+keeps its finalizer while any DebugSession state still retains spoke inventory,
+including a session just transitioned to a terminal state.
+Every resource-create intent records a non-empty operation identity, and recovery
+requires the target object's exact matching marker before reusing a same-name
+resource from the same session.
+Ephemeral-container operation evidence records the canonical username, optional
+email, identity-provider name, and issuer so recovery and audit retain the
+provider binding used for authorization.
+Auxiliary documents continue to be retried after their primary resource is
+deleted; once the primary and every child are deleted, their history no longer
+counts as outstanding cleanup inventory.
+Failed sessions finish cleanup once all primary and child auxiliary resources
+are marked deleted; retained history alone does not trigger another retry.
+Terminal DebugSession states cannot transition again on the status mutation
+path or status admission path. Renewal performs its final uncached state and
+strict `now < expiresAt` check immediately before the optimistic status patch,
+so a request that reaches the boundary cannot extend or resurrect the lease.
 
 ## Terminal Sharing
 
@@ -1424,15 +1447,40 @@ When enabled, participants can attach to shared terminals:
 **Implementation details:**
 - When terminal sharing is enabled, the controller wraps the container command with `tmux new-session` or `screen` 
 - The attach command is populated in `status.terminalSharing.attachCommand`
-- Invited viewers can attach to the shared terminal. The join API does not grant the privileged `participant` role; only existing owner or participant status entries can use debug pod operations.
+- Invited viewers can attach to the shared terminal. The join API does not accept a request body and does not grant the privileged `participant` role; only existing owner or participant status entries can use debug pod operations.
 - The debug image must include the selected terminal sharing binary (`tmux` or `screen`)
 
 **Tmux image for E2E:**
 - The repository provides a tmux-enabled image at [e2e/images/tmux-debug/Dockerfile](../e2e/images/tmux-debug/Dockerfile)
-- E2E setup scripts build it as `breakglass-tmux-debug:latest` and load it into kind
+- E2E setup scripts build it as `breakglass-tmux-debug:e2e` and load it into Kind before terminal-sharing tests run
+- Test pod templates set `imagePullPolicy: IfNotPresent`, and pod-copy E2E requests use the fixed-tag `breakglass-tmux-debug:e2e` image so Kubernetes uses a preloaded Kind image when it is already present instead of pulling from a registry
 - Override the image name via `TMUX_DEBUG_IMAGE` if needed
 
 ## Approval Workflow
+
+### What counts as a configured approver set
+
+An approver set is *configured* only when it names at least one user or group.
+All of the following mean "no approvers configured":
+
+```yaml
+# omitted entirely
+# ---
+approvers: {}
+# ---
+approvers:
+  users: []
+  groups: []
+```
+
+When no approvers are configured, sessions using that template or binding are
+**auto-approved** — they never enter `PendingApproval`, so no approval is needed.
+Consistently with that, an unconfigured approver set makes **nobody** an approver:
+it does not mean "any authenticated user may approve". Approval and read
+authorization apply the same rule.
+
+If you want four-eyes control, you must name approvers explicitly. An empty
+approver set grants no approval rights and gates nothing.
 
 ### Automatic Approval
 
@@ -1514,6 +1562,7 @@ Debug sessions support multiple participant roles:
 | `viewer` | Read-only access, can observe terminal sharing |
 
 Joining an existing session requires an entry in `spec.invitedParticipants`, an active unexpired session, and terminal sharing enabled by the resolved template/status. Leaving or terminating through the API also requires the session to still be active and unexpired. Self-service join requests always create `viewer` entries; users cannot request the `participant` role for themselves.
+Kubectl-debug mutation endpoints require the requester, an active `owner`, or an active `participant`; active `viewer` entries remain read-only and receive `403 Forbidden` for pod mutation requests.
 
 Leaving a session sets `status.participants[].leftAt`. Participants with
 `leftAt` set are no longer treated as active participants for kubectl-debug
@@ -1530,12 +1579,18 @@ audit:
     - "history"
     - "clear"
   sidecar:
-    image: audit-logger:v1
+    image: registry.example/audit-logger@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     resources:
       requests:
         cpu: 50m
         memory: 64Mi
 ```
+
+The DebugSession reconciler emits lifecycle audit events through configured
+`AuditConfig` sinks for approval timeouts, session failures, pod failures,
+container restarts, and auxiliary resource deploy/cleanup operations. Failure
+notifications to the requester use the configured `MailProvider` and honor
+`--disable-email`.
 
 ## API Endpoints
 
@@ -1543,107 +1598,137 @@ Debug sessions can be managed via the REST API:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/v1/debugSessions` | List debug sessions visible to the caller |
-| `GET` | `/api/v1/debugSessions/{name}` | Get a specific visible session |
-| `POST` | `/api/v1/debugSessions` | Create a new session |
-| `POST` | `/api/v1/debugSessions/{name}/join` | Join an existing session |
-| `POST` | `/api/v1/debugSessions/{name}/leave` | Leave an existing session |
-| `POST` | `/api/v1/debugSessions/{name}/renew` | Renew session duration |
-| `POST` | `/api/v1/debugSessions/{name}/terminate` | Terminate session |
-| `POST` | `/api/v1/debugSessions/{name}/approve` | Approve session |
-| `POST` | `/api/v1/debugSessions/{name}/reject` | Reject session |
-| `GET` | `/api/v1/debugSessions/templates` | List available templates |
-| `GET` | `/api/v1/debugSessions/podTemplates` | List pod templates |
-| `POST` | `/api/v1/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
-| `POST` | `/api/v1/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
-| `POST` | `/api/v1/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+| `GET` | `/api/debugSessions` | List debug sessions visible to the caller |
+| `GET` | `/api/debugSessions/{name}` | Get a specific visible session |
+| `POST` | `/api/debugSessions` | Create a new session |
+| `POST` | `/api/debugSessions/{name}/join` | Join an existing session |
+| `POST` | `/api/debugSessions/{name}/leave` | Leave an existing session |
+| `POST` | `/api/debugSessions/{name}/renew` | Renew session duration |
+| `POST` | `/api/debugSessions/{name}/terminate` | Terminate session |
+| `POST` | `/api/debugSessions/{name}/approve` | Approve session |
+| `POST` | `/api/debugSessions/{name}/reject` | Reject session |
+| `GET` | `/api/debugSessions/templates` | List available templates |
+| `GET` | `/api/debugSessions/podTemplates` | List pod templates |
+| `POST` | `/api/debugSessions/{name}/injectEphemeralContainer` | Inject ephemeral container into a pod |
+| `POST` | `/api/debugSessions/{name}/createPodCopy` | Create a debug copy of a pod |
+| `POST` | `/api/debugSessions/{name}/createNodeDebugPod` | Create a debug pod on a node |
+
+Lifecycle actions `join`, `leave`, and `terminate` reject non-empty request bodies.
 
 List and detail responses require an authenticated caller. A caller can read a
 debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
+When creating a session, active Breakglass grants are added only when the
+authenticated username or email claim exactly matches `BreakglassSession.spec.user`
+and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
+infer an email address from a username's local part, because the same local part
+can belong to different domains. The authorization webhook has a separate,
+issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
+does not broaden the DebugSession creation check. Grant lookup uses the cached
+`spec.cluster` and `spec.user` field indexes when available and re-reads positive
+candidates through the fresh reader. If the indexes are unavailable, it performs
+one full-list fallback. If no eligible exact grant remains, it performs a fresh
+full-reader fallback, so newly approved grants are not hidden by cache
+propagation delay and revoked or deleted cached grants are not trusted.
+
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
 Request`. The join endpoint may omit its body and defaults to the `viewer` role;
 non-empty join bodies must still be strict JSON.
 
+List and detail responses include `canApprove` and `canReject` booleans for the
+current caller. The web UI uses these fields to show approve/reject controls
+only to authorized approvers for sessions in `PendingApproval`; unauthorized
+callers may still read visible sessions but do not see approval actions.
+
+Status-changing actions use optimistic locking. If another request changes the
+same `DebugSession` between read and write, the API returns `409 Conflict`; the
+client should refresh the session and retry when appropriate.
+
 ### Kubectl Debug API Endpoints
 
-These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode:
+These endpoints are available for sessions in `kubectl-debug` or `hybrid` mode.
+The session must still be active and unexpired at request time; operations are
+rejected after `status.expiresAt` even if cleanup has not yet marked the session
+`Expired`. Policy denials such as disallowed namespaces or node selector
+mismatches return `403 Forbidden`; unsupported or malformed operation requests
+return `400 Bad Request`.
+They require the requester, an active `owner`, or an active `participant` role
+on the session. `viewer` participants can observe shared terminals but cannot
+inject ephemeral containers, create pod copies, or create node debug pods.
 
 Kubectl-debug operations merge their operation-specific status fields into the
-latest `DebugSession` status before returning. Concurrent renewals, participant
+current `DebugSession` status before returning. Concurrent renewals, participant
 changes, and lifecycle updates are preserved while the operation records copied
 pods, injected containers, allowed pods, or cleanup state.
 
 #### Inject Ephemeral Container
 
-**POST** `/api/v1/debugSessions/{name}/injectEphemeralContainer`
+**POST** `/api/debugSessions/{name}/injectEphemeralContainer`
 
 Inject a debug container into a running pod without restarting it.
 
-**Request Body:**
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "containerName": "debug",
-  "image": "busybox:latest",
-  "command": ["sh"]
-}
-```
+The wire request contains the target namespace/pod and container name plus the
+operation's image and command fields. The upstream API surface does not select
+safe values for a deployment. Generate those fields only from an
+administrator-owned, digest-pinned profile and enforce that profile with
+admission; this page intentionally provides no free-form request example.
 
 **Response:**
 ```json
 {
-  "success": true,
-  "message": "Ephemeral container 'debug' injected into pod 'my-app-pod-xyz'",
-  "containerName": "debug"
+  "message": "ephemeral container injected successfully",
+  "pod": "my-app-pod-xyz",
+  "namespace": "default",
+  "container": "debug"
 }
 ```
 
 #### Create Pod Copy
 
-**POST** `/api/v1/debugSessions/{name}/createPodCopy`
+**POST** `/api/debugSessions/{name}/createPodCopy`
 
 Create a copy of an existing pod for debugging without affecting the original.
 
-**Request Body:**
-```json
-{
-  "namespace": "default",
-  "podName": "my-app-pod-xyz",
-  "debugImage": "busybox:latest"  // optional - replaces container image
-}
-```
+The wire request identifies the source namespace/pod and may carry a debug
+image. The image, if used, must come from an administrator-owned,
+digest-pinned profile. Do not expose that field as caller-selected input; this
+page intentionally provides no free-form request example.
 
 **Response:**
 ```json
 {
+  "message": "pod copy created successfully",
   "copyName": "my-app-pod-xyz-debug-abc123",
-  "copyNamespace": "default"
+  "copyNamespace": "default",
+  "originalPod": "my-app-pod-xyz",
+  "originalNamespace": "default"
 }
 ```
 
 #### Create Node Debug Pod
 
-**POST** `/api/v1/debugSessions/{name}/createNodeDebugPod`
+**POST** `/api/debugSessions/{name}/createNodeDebugPod`
 
 Create a privileged debug pod on a specific node for node-level debugging.
 
-**Request Body:**
-```json
-{
-  "nodeName": "worker-node-1"
-}
-```
+The wire request carries a node name. Resolve it from a controller-owned,
+allowlisted scheduling policy and verify the target at admission; a requester
+must not be able to select an arbitrary node. This page intentionally provides
+no free-form request example. The current implementation creates a privileged
+pod with host namespaces and a read-write `/host` host-path; expose this
+endpoint only through a separately reviewed, short-lived node-maintenance
+profile and admission policy.
 
 **Response:**
 ```json
 {
+  "message": "node debug pod created successfully",
   "podName": "node-debug-worker-node-1-abc123",
-  "namespace": "breakglass-debug"
+  "namespace": "breakglass-debug",
+  "node": "worker-node-1"
 }
 ```
 
@@ -1664,8 +1749,7 @@ spec:
     spec:
       containers:
         - name: debug
-          image: busybox:latest
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
@@ -1689,60 +1773,14 @@ spec:
 
 ### Network Debug Template
 
-Privileged networking tools for SRE:
-
-```yaml
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugPodTemplate
-metadata:
-  name: network-debug-pod
-spec:
-  displayName: "Network Debug Pod"
-  description: "Pod with network troubleshooting tools"
-  template:
-    spec:
-      hostNetwork: true
-      hostPID: true
-      containers:
-        - name: debug
-          image: nicolaka/netshoot:latest
-          command: ["sleep", "infinity"]
-          securityContext:
-            privileged: true
-      tolerations:
-        - operator: Exists
----
-apiVersion: breakglass.t-caas.telekom.com/v1alpha1
-kind: DebugSessionTemplate
-metadata:
-  name: network-debug
-spec:
-  displayName: "Network Debug"
-  description: "Privileged network debugging on all nodes"
-  mode: workload
-  podTemplateRef:
-    name: network-debug-pod
-  workloadType: DaemonSet
-  targetNamespace: breakglass-debug
-  allowed:
-    groups:
-      - network-sre
-    clusters:
-      - "*"
-  approvers:
-    groups:
-      - sre-leads
-  constraints:
-    maxDuration: "4h"
-    defaultDuration: "1h"
-    allowRenewal: true
-    maxRenewals: 2
-  terminalSharing:
-    enabled: true
-    method: tmux
-  audit:
-    logCommands: true
-```
+Use the [network-debug utility contract](../utils/network-debug/README.md)
+and the [DebugSession authoring guide](./debug-session-authoring.md). The
+public `network-diagnostics` catalogue profile is report/bounded-capture-only
+for ordinary pod-network diagnostics; it does not authorize full host `pwru`
+tracing. Full host-network/host-PID `pwru` tracing is an image capability only
+and requires a separate custom DebugSessionTemplate/profile with independent
+privilege review and approval plus a provider-enforced security context. Do
+not copy a privileged or all-node template into a general-purpose session.
 
 ### Ephemeral Container Debug Template
 
@@ -1761,15 +1799,15 @@ spec:
     ephemeralContainers:
       enabled: true
       allowedNamespaces:
-        - "app-*"
-        - "services-*"
+        patterns:
+          - "app-*"
+          - "services-*"
       deniedNamespaces:
-        - "kube-system"
-        - "breakglass"
+        patterns:
+          - "kube-system"
+          - "breakglass"
       allowedImages:
-        - "alpine:*"
-        - "busybox:*"
-        - "nicolaka/netshoot:*"
+        - "ghcr.io/telekom/k8s-breakglass/utils/network-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
       requireNonRoot: true
       allowPrivileged: false
   allowed:
@@ -1796,8 +1834,7 @@ spec:
     spec:
       containers:
         - name: debug
-          image: debug-tools:v2
-          command: ["sleep", "infinity"]
+          image: ghcr.io/telekom/k8s-breakglass/utils/workload-debug@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionTemplate
@@ -1815,9 +1852,11 @@ spec:
     ephemeralContainers:
       enabled: true
       allowedNamespaces:
-        - "*"
+        patterns:
+          - "app-*"
       deniedNamespaces:
-        - "kube-system"
+        patterns:
+          - "kube-system"
     nodeDebug:
       enabled: true
       hostNamespaces:
@@ -1864,6 +1903,23 @@ spec:
 1. **Monitor expired sessions**: Sessions clean up automatically
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
+4. **Investigate cleanup retries**: Failed debug-resource deletes and resources held by finalizers keep their status tracking entries so the controller can retry cleanup on the next reconciliation
+5. **Bound Job lifetimes**: Job workloads reconcile their active deadline against the committed session expiry after a delayed start
+
+Terminal cleanup recomputes active-resource accounting from live sessions. This
+makes repeated reconciliation idempotent and leaves never-active rejected or
+pre-activation terminated sessions out of active template and metric counts.
+
+Template and cluster-binding `constraints.maxDuration` and `defaultDuration`
+accept weeks (`1w`), years (`1y`), and fractional sub-day values (`1.5h`),
+consistent with runtime duration parsing. Day, week, and year terms must be integers.
+
+The same duration syntax is accepted for `requestedDuration`, pod-copy `ttl`,
+and audit `recordingRetention`, so admission validation matches the shared
+runtime parser.
+
+When `spec.audit.recordingRetention` is supplied, it must be a positive duration,
+even when terminal recording is disabled. Invalid values produce one field error.
 
 ## Troubleshooting
 
@@ -1878,7 +1934,15 @@ spec:
 - Verify approver groups/users are configured
 - Check if user is in autoApproveFor groups
 - Contact an approver to approve/reject
-- Sessions automatically fail after `DEBUG_SESSION_APPROVAL_TIMEOUT` (default: 24h) — the reconciler checks this on every requeue cycle
+- Sessions automatically fail after `DEBUG_SESSION_APPROVAL_TIMEOUT` (default: 24h) — approve/reject API calls enforce the deadline immediately, and the reconciler also checks this on every requeue cycle
+
+### Debug session templates or compatible clusters fail to load in the UI
+
+- Use the retry action on the create page to reload the template list or compatible-cluster list after transient API errors
+- Verify the API server can list `DebugSessionTemplate`, `DebugSessionClusterBinding`, and `ClusterConfig` resources
+- Check controller/API logs for the request correlation ID shown in the toast notification
+- Treat this differently from `No Debug Session Templates Available`, which means the API request succeeded but no templates were returned
+- Treat `No clusters are available for this template` differently from a cluster-load error; the former means the compatible-cluster request succeeded with an empty list
 
 ### Debug pods not starting
 
@@ -1908,7 +1972,8 @@ This means:
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
 
 - **Namespace restrictions** — `allowedNamespaces` / `deniedNamespaces` control where debug pods can be created
-- **Image allow-lists** — `allowedImages` restricts which debug container images can be used
+- **Image allow-lists** — `allowedImages` restricts which debug container images can be used by exact reference or explicit glob pattern
+- **Privileged ephemeral containers** — `allowPrivileged: false` blocks ephemeral container requests with `securityContext.privileged: true`
 - **Approval requirements** — `approvalConfig` can require explicit approver sign-off
 - **Time limits** — `maxDuration` caps session lifetime
 - **Operation restrictions** — `status.allowedPodOperations` (resolved from template/binding) limits which subresources are accessible
@@ -1980,6 +2045,12 @@ The debug session create wizard moves keyboard focus to the cluster and
 configuration step after the template step advances, so keyboard and screen
 reader users are placed in the newly rendered workflow context.
 
+The Debug Session browser and detail routes are covered by mobile Playwright screenshots. Their responsive layouts must not introduce document-level horizontal scrolling; long pod names, participant identifiers, and kubectl command snippets wrap or scroll inside their local controls instead.
+
+`DebugSessionDetails` reloads based on the `:name` route parameter, so navigating
+between detail URLs in the same browser view always shows the session named in
+the current URL.
+
 **Routes:**
 
 - `/debug-sessions` - Browse all debug sessions
@@ -2011,3 +2082,24 @@ The following test categories are implemented:
 - **Bad case tests**: Invalid inputs, unauthorized access, invalid state transitions
 - **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
+
+The workload-debug image pins its Alpine packages in `utils/workload-debug/deps.lock`, `Dockerfile`, and `IMAGE-METADATA.yaml`. Refresh all three together when Alpine replaces package revisions; the image behavior workflow verifies the resulting build.
+The node-maintenance image similarly keeps its Alpine flock pin aligned in its Dockerfile and dependency inventory.
+
+Tracked-resource cleanup keeps the recorded resource UID and cleanup status after
+an accepted deletion until the original resource is absent. Finalizers and
+failed verification reads keep cleanup pending; a same-name replacement is
+left untouched.
+
+If a tracked-resource create response is lost to a bounded timeout, the
+controller recovers only a live object carrying the session and operation
+markers and matching the requested content, then records its returned UID. Canceled, permanent, and non-timeout
+transport errors do not trigger adoption.
+
+Active accounting is recomputed from live session state: template counts include all clusters, while active gauges remain per cluster and template. Optimistic template conflicts repeat the live list, and Active reconciliation repairs accounting after a transient publication failure. Accounting failures do not prevent spoke resource cleanup.
+
+Active accounting uses the CRD selectable `spec.templateRef` field to bound each authoritative paginated list to the affected template, rather than scanning unrelated session history.
+
+Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
+
+Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.

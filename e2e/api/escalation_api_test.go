@@ -120,13 +120,45 @@ func (c *EscalationAPIClient) ListEscalationsWithOptions(ctx context.Context, t 
 		return nil, resp.StatusCode, fmt.Errorf("failed to list escalations: status=%d, body=%s", resp.StatusCode, string(body))
 	}
 
-	// API returns array of BreakglassEscalation objects directly
-	var escalations []breakglassv1alpha1.BreakglassEscalation
-	if err := json.Unmarshal(body, &escalations); err != nil {
+	escalations, err := decodeEscalationListBody(body)
+	if err != nil {
 		return nil, resp.StatusCode, fmt.Errorf("failed to parse escalations: %w", err)
 	}
 
 	return escalations, resp.StatusCode, nil
+}
+
+func decodeEscalationListBody(body []byte) ([]breakglassv1alpha1.BreakglassEscalation, error) {
+	var itemsEnvelope struct {
+		Items []breakglassv1alpha1.BreakglassEscalation `json:"items"`
+	}
+	if err := json.Unmarshal(body, &itemsEnvelope); err == nil && itemsEnvelope.Items != nil {
+		return itemsEnvelope.Items, nil
+	}
+
+	var escalations []breakglassv1alpha1.BreakglassEscalation
+	if err := json.Unmarshal(body, &escalations); err != nil {
+		return nil, err
+	}
+	return escalations, nil
+}
+
+func TestDecodeEscalationListBody(t *testing.T) {
+	t.Run("items envelope", func(t *testing.T) {
+		escalations, err := decodeEscalationListBody([]byte(`{"items":[{"metadata":{"name":"esc-a"},"spec":{"escalatedGroup":"admin"}}],"total":1}`))
+		require.NoError(t, err)
+		require.Len(t, escalations, 1)
+		assert.Equal(t, "esc-a", escalations[0].Name)
+		assert.Equal(t, "admin", escalations[0].Spec.EscalatedGroup)
+	})
+
+	t.Run("legacy array", func(t *testing.T) {
+		escalations, err := decodeEscalationListBody([]byte(`[{"metadata":{"name":"esc-b"},"spec":{"escalatedGroup":"viewer"}}]`))
+		require.NoError(t, err)
+		require.Len(t, escalations, 1)
+		assert.Equal(t, "esc-b", escalations[0].Name)
+		assert.Equal(t, "viewer", escalations[0].Spec.EscalatedGroup)
+	})
 }
 
 // ListEscalationsForCluster lists all escalations for a specific cluster (defaults to activeOnly=true)

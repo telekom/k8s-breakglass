@@ -103,6 +103,13 @@ func TestNamespaceMatcher_Matches(t *testing.T) {
 	}
 }
 
+func TestNamespaceAllowDenyMatcher_InvalidGlobFailsClosed(t *testing.T) {
+	matcher := NewNamespaceAllowDenyMatcher(nil, &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}})
+	assert.False(t, matcher.IsAllowed("default"))
+	allow := NewNamespaceAllowDenyMatcher(&breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}}, nil)
+	assert.False(t, allow.IsAllowed("default"))
+}
+
 func TestNamespaceMatcher_MatchesWithLabels(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -559,8 +566,8 @@ func TestMatchesWithLabels_InOperatorMissingKey(t *testing.T) {
 	assert.False(t, got)
 }
 
-// TestContainsHelper tests the contains helper function directly
-func TestContainsHelper(t *testing.T) {
+// TestNamespaceSelectorMembershipRefactor exercises exact membership through selector evaluation.
+func TestNamespaceSelectorMembershipRefactor(t *testing.T) {
 	tests := []struct {
 		name   string
 		slice  []string
@@ -601,7 +608,12 @@ func TestContainsHelper(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := contains(tt.slice, tt.value)
+			expr := breakglassv1alpha1.NamespaceSelectorRequirement{
+				Key:      "value",
+				Operator: breakglassv1alpha1.NamespaceSelectorOpIn,
+				Values:   tt.slice,
+			}
+			got := NewNamespaceMatcher(nil).expressionMatches(expr, map[string]string{"value": tt.value})
 			assert.Equal(t, tt.expect, got)
 		})
 	}
@@ -738,5 +750,14 @@ func TestNamespaceAllowDenyMatcher_IsAllowed(t *testing.T) {
 			got := m.IsAllowed(tt.namespace)
 			assert.Equal(t, tt.want, got)
 		})
+	}
+}
+
+func TestInvalidNamespaceGlobCannotUseMatchingLabels(t *testing.T) {
+	invalid := &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"["}, SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{{MatchLabels: map[string]string{"env": "prod"}}}}
+	for _, matcher := range []*NamespaceAllowDenyMatcher{NewNamespaceAllowDenyMatcher(invalid, nil), NewNamespaceAllowDenyMatcher(nil, invalid)} {
+		if matcher.IsAllowedWithLabels("prod", map[string]string{"env": "prod"}) {
+			t.Fatal("invalid filter allowed via matching labels")
+		}
 	}
 }

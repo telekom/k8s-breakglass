@@ -8,7 +8,7 @@ import (
 )
 
 // EventType represents the type of audit event.
-// The audit trail is EXTREMELY granular and captures all actions on a cluster.
+// The audit trail is granular and captures configured Breakglass actions on a cluster.
 type EventType string
 
 const (
@@ -25,6 +25,14 @@ const (
 	EventSessionExtended    EventType = "session.extended"
 	EventSessionValidated   EventType = "session.validated"
 	EventSessionInvalidated EventType = "session.invalidated"
+	// EventSessionTerminationIntent records the terminal decision alongside the
+	// corresponding session status transition in one durable status update.
+	EventSessionTerminationIntent EventType = "session.termination_intent"
+	// EventSessionApprovalUnverifiedGroups records that an approval authorization
+	// decision was made using unverified (JWT-claim) approver groups because the
+	// cluster-side group lookup failed. The approval is still granted to avoid
+	// creating a lockout during a spoke outage, but the weaker basis is audited.
+	EventSessionApprovalUnverifiedGroups EventType = "session.approval_unverified_groups"
 
 	// === Escalation events ===
 	EventEscalationCreated   EventType = "escalation.created"
@@ -106,6 +114,7 @@ const (
 	EventDebugSessionCreated         EventType = "debug_session.created"
 	EventDebugSessionStarted         EventType = "debug_session.started"
 	EventDebugSessionTerminated      EventType = "debug_session.terminated"
+	EventDebugSessionRejected        EventType = "debug_session.rejected"
 	EventDebugSessionFailed          EventType = "debug_session.failed"
 	EventDebugSessionExpired         EventType = "debug_session.expired"
 	EventDebugSessionApprovalTimeout EventType = "debug_session.approval_timeout"
@@ -120,6 +129,11 @@ const (
 	EventDebugSessionPodRestarted    EventType = "debug_session.pod_restarted"
 	EventDebugSessionResourceDeploy  EventType = "debug_session.resource_deployed"
 	EventDebugSessionResourceCleanup EventType = "debug_session.resource_cleanup"
+	// EventDebugSessionBindingUnresolved is emitted when a DebugSession names an
+	// explicit BindingRef that cannot be resolved. The binding carries the approver
+	// configuration, so an unresolvable ref means the approval requirement is
+	// INDETERMINATE and the session must not be activated on a guess.
+	EventDebugSessionBindingUnresolved EventType = "debug_session.binding_unresolved"
 
 	// === Pod and container events ===
 	EventPodCreated     EventType = "pod.created"
@@ -293,6 +307,9 @@ type Target struct {
 
 	// APIGroup is the API group of the resource
 	APIGroup string `json:"apiGroup,omitempty"`
+
+	// NamespaceLabels contains labels for namespace selector filtering when known.
+	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
 }
 
 // RequestContext contains correlation and context information
@@ -322,10 +339,13 @@ func SeverityForEventType(eventType EventType) Severity {
 
 	// Warning events - should be reviewed
 	case EventAccessDenied, EventAccessDeniedPolicy, EventSessionRejected, EventSessionDenied,
+		EventDebugSessionRejected,
+		EventSessionApprovalUnverifiedGroups,
 		EventEscalationRejected, EventPolicyViolation, EventAdmissionDenied,
 		EventSecretAccessed, EventSecretUpdated, EventResourceExec, EventResourceDelete,
 		EventPodExec, EventPodAttach, EventResourceImpersonate, EventWebhookTimeout,
-		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning:
+		EventDebugSessionCommand, EventAuditBackpressure, EventPodSecurityWarning,
+		EventDebugSessionBindingUnresolved:
 		return SeverityWarning
 
 	// Info events - normal operation
@@ -458,13 +478,16 @@ func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
 		EventSessionRejected, EventSessionExpired,
-		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped,
+		EventSessionRevoked, EventSessionWithdrawn, EventSessionDropped, EventSessionInvalidated,
+		EventSessionTerminationIntent,
+		EventSessionApprovalUnverifiedGroups,
 		EventAccessDenied, EventAccessDeniedPolicy,
 		EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 		EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
 		EventDebugSessionCreated, EventDebugSessionStarted,
-		EventDebugSessionTerminated, EventDebugSessionFailed,
+		EventDebugSessionTerminated, EventDebugSessionRejected, EventDebugSessionFailed,
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

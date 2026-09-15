@@ -20,6 +20,11 @@ import (
 	"go.uber.org/zap"
 )
 
+func cbAllow(cb *clusterBreaker) error {
+	_, err := cb.Allow()
+	return err
+}
+
 func testLogger() *zap.SugaredLogger {
 	l, _ := zap.NewDevelopment()
 	return l.Sugar()
@@ -57,7 +62,7 @@ func TestCircuitState_String(t *testing.T) {
 func TestClusterBreaker_InitialState(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", testConfig(), testLogger())
 	assert.Equal(t, CircuitClosed, cb.State())
-	assert.Nil(t, cb.Allow())
+	assert.Nil(t, cbAllow(cb))
 }
 
 func TestClusterBreaker_ClosedToOpen(t *testing.T) {
@@ -67,13 +72,13 @@ func TestClusterBreaker_ClosedToOpen(t *testing.T) {
 
 	// Record 3 transient failures
 	for i := 0; i < 3; i++ {
-		cb.RecordFailure(fmt.Errorf("connection refused"))
+		cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	}
 
 	assert.Equal(t, CircuitOpen, cb.State())
 
 	// Further requests should be rejected
-	err := cb.Allow()
+	err := cbAllow(cb)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCircuitOpen))
 }
@@ -89,11 +94,11 @@ func TestClusterBreaker_MixedErrorTypes(t *testing.T) {
 	// Alternate between different concrete error types — this panicked before
 	// the storedError wrapper was introduced.
 	require.NotPanics(t, func() {
-		cb.RecordFailure(fmt.Errorf("connection refused"))
-		cb.RecordFailure(&TransientServerError{StatusCode: 503, ClusterName: "test"})
-		cb.RecordFailure(&net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("connection refused")})
-		cb.RecordFailure(fmt.Errorf("broken pipe"))
-		cb.RecordFailure(&TransientServerError{StatusCode: 502, ClusterName: "test"})
+		cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+		cb.RecordFailure(cb.generation.Load(), &TransientServerError{StatusCode: 503, ClusterName: "test"})
+		cb.RecordFailure(cb.generation.Load(), &net.OpError{Op: "dial", Net: "tcp", Err: fmt.Errorf("connection refused")})
+		cb.RecordFailure(cb.generation.Load(), fmt.Errorf("broken pipe"))
+		cb.RecordFailure(cb.generation.Load(), &TransientServerError{StatusCode: 502, ClusterName: "test"})
 	})
 
 	// Verify Stats() correctly retrieves the last error
@@ -108,14 +113,36 @@ func TestClusterBreaker_OpenToHalfOpen(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
 	// Trip the breaker
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 
 	// Wait for open duration to elapse using require.Eventually to avoid flaky timing
 	require.Eventually(t, func() bool {
-		return cb.Allow() == nil
+		return cbAllow(cb) == nil
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, CircuitHalfOpen, cb.State())
+}
+
+func TestClusterBreaker_AllowReturnsHalfOpenGeneration(t *testing.T) {
+	cfg := testConfig()
+	cfg.FailureThreshold = 1
+	cfg.OpenDuration = 50 * time.Millisecond
+	cb := newClusterBreaker("test-cluster", cfg, testLogger())
+
+	cb.RecordFailure(cb.Generation(), fmt.Errorf("connection refused"))
+	openGeneration := cb.Generation()
+	require.Equal(t, CircuitOpen, cb.State())
+
+	var probeGeneration int64
+	require.Eventually(t, func() bool {
+		var err error
+		probeGeneration, err = cb.Allow()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+
+	require.Equal(t, CircuitHalfOpen, cb.State())
+	assert.Greater(t, probeGeneration, openGeneration)
+	assert.Equal(t, cb.Generation(), probeGeneration)
 }
 
 func TestClusterBreaker_HalfOpenToClosed(t *testing.T) {
@@ -126,20 +153,20 @@ func TestClusterBreaker_HalfOpenToClosed(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
 	// Trip the breaker
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 
 	// Wait and transition to half-open
 	require.Eventually(t, func() bool {
-		return cb.Allow() == nil
+		return cbAllow(cb) == nil
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, CircuitHalfOpen, cb.State())
 
 	// First success frees the half-open slot
-	cb.RecordSuccess()
+	cb.RecordSuccess(cb.generation.Load())
 	// Must call Allow() again to re-admit a probe request before second success
-	require.NoError(t, cb.Allow())
-	cb.RecordSuccess()
+	require.NoError(t, cbAllow(cb))
+	cb.RecordSuccess(cb.generation.Load())
 
 	assert.Equal(t, CircuitClosed, cb.State())
 }
@@ -151,18 +178,36 @@ func TestClusterBreaker_HalfOpenToOpen(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
 	// Trip the breaker
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 
 	// Transition to half-open
 	require.Eventually(t, func() bool {
-		return cb.Allow() == nil
+		return cbAllow(cb) == nil
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, CircuitHalfOpen, cb.State())
 
 	// Failure in half-open should trip back to open
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
+}
+
+func TestClusterBreaker_StaleSuccessDoesNotMutateStats(t *testing.T) {
+	cfg := testConfig()
+	cfg.FailureThreshold = 1
+	cb := newClusterBreaker("test-cluster", cfg, testLogger())
+
+	staleGeneration := cb.Generation()
+	cb.RecordFailure(staleGeneration, fmt.Errorf("connection refused"))
+	require.Equal(t, CircuitOpen, cb.State())
+	require.NotEqual(t, staleGeneration, cb.Generation())
+
+	cb.RecordSuccess(staleGeneration)
+
+	stats := cb.Stats()
+	assert.Equal(t, int64(0), stats.TotalSuccesses)
+	assert.Equal(t, int64(0), stats.ConsecutiveSuccs)
+	assert.Equal(t, int64(1), stats.TotalRequests)
 }
 
 func TestClusterBreaker_HalfOpenMaxRequests(t *testing.T) {
@@ -173,16 +218,16 @@ func TestClusterBreaker_HalfOpenMaxRequests(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
 	// Trip the breaker
-	cb.RecordFailure(fmt.Errorf("dial tcp: connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("dial tcp: connection refused"))
 
 	// Wait for open duration to elapse
 	require.Eventually(t, func() bool {
-		return cb.Allow() == nil
+		return cbAllow(cb) == nil
 	}, 5*time.Second, 10*time.Millisecond)
 	assert.Equal(t, CircuitHalfOpen, cb.State())
 
 	// Second request should be denied (max 1 in half-open)
-	err := cb.Allow()
+	err := cbAllow(cb)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCircuitOpen))
 }
@@ -193,13 +238,13 @@ func TestClusterBreaker_NonTransientErrorDoesNotTripBreaker(t *testing.T) {
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
 	// Auth errors should NOT trip the breaker
-	cb.RecordFailure(fmt.Errorf("Unauthorized"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("Unauthorized"))
 	assert.Equal(t, CircuitClosed, cb.State())
 
-	cb.RecordFailure(fmt.Errorf("Forbidden"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("Forbidden"))
 	assert.Equal(t, CircuitClosed, cb.State())
 
-	cb.RecordFailure(fmt.Errorf("resource not found"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("resource not found"))
 	assert.Equal(t, CircuitClosed, cb.State())
 }
 
@@ -208,9 +253,9 @@ func TestClusterBreaker_Stats(t *testing.T) {
 	cfg.FailureThreshold = 5
 	cb := newClusterBreaker("test-cluster", cfg, testLogger())
 
-	cb.RecordSuccess()
-	cb.RecordSuccess()
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordSuccess(cb.generation.Load())
+	cb.RecordSuccess(cb.generation.Load())
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 
 	stats := cb.Stats()
 	assert.Equal(t, "test-cluster", stats.Name)
@@ -233,7 +278,7 @@ func TestClusterBreaker_IsDefinitelyOpen(t *testing.T) {
 	assert.False(t, cb.IsDefinitelyOpen())
 
 	// Trip to Open
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 	assert.True(t, cb.IsDefinitelyOpen(), "should be true while within OpenDuration")
 
@@ -263,11 +308,11 @@ func TestClusterBreaker_DefaultConfigValidation(t *testing.T) {
 	assert.Equal(t, CircuitClosed, cb.State())
 
 	// With default threshold of 3, need 3 failures to trip
-	cb.RecordFailure(fmt.Errorf("connection refused"))
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitClosed, cb.State())
 
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 }
 
@@ -277,17 +322,17 @@ func TestClusterBreaker_SuccessResetsConsecutiveFailures(t *testing.T) {
 	cb := newClusterBreaker("test", cfg, testLogger())
 
 	// 2 failures, then a success
-	cb.RecordFailure(fmt.Errorf("connection refused"))
-	cb.RecordFailure(fmt.Errorf("connection refused"))
-	cb.RecordSuccess()
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+	cb.RecordSuccess(cb.generation.Load())
 
 	// Counter should be reset, so 2 more failures shouldn't trip it
-	cb.RecordFailure(fmt.Errorf("connection refused"))
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitClosed, cb.State())
 
 	// One more failure should trip it (3 consecutive)
-	cb.RecordFailure(fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitOpen, cb.State())
 }
 
@@ -323,8 +368,10 @@ func TestRegistry_Remove(t *testing.T) {
 func TestRegistry_AllStats(t *testing.T) {
 	r := NewCircuitBreakerRegistry(testConfig(), testLogger())
 
-	r.Get("cluster-a").RecordSuccess()
-	r.Get("cluster-b").RecordFailure(fmt.Errorf("connection refused"))
+	cbA := r.Get("cluster-a")
+	cbA.RecordSuccess(cbA.Generation())
+	cbB := r.Get("cluster-b")
+	cbB.RecordFailure(cbB.Generation(), fmt.Errorf("connection refused"))
 
 	stats := r.AllStats()
 	assert.Len(t, stats, 2)
@@ -364,39 +411,39 @@ func TestCircuitBreaker_FullLifecycle(t *testing.T) {
 
 	// Phase 1: Normal operation (closed)
 	assert.Equal(t, CircuitClosed, cb.State())
-	assert.NoError(t, cb.Allow())
-	cb.RecordSuccess()
-	cb.RecordSuccess()
+	assert.NoError(t, cbAllow(cb))
+	cb.RecordSuccess(cb.generation.Load())
+	cb.RecordSuccess(cb.generation.Load())
 
 	// Phase 2: Failures accumulate
-	cb.RecordFailure(fmt.Errorf("connection refused"))
-	cb.RecordFailure(fmt.Errorf("dial tcp: i/o timeout"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("connection refused"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("dial tcp: i/o timeout"))
 	assert.Equal(t, CircuitClosed, cb.State()) // Still closed, need 3
 
-	cb.RecordFailure(fmt.Errorf("no route to host"))
+	cb.RecordFailure(cb.generation.Load(), fmt.Errorf("no route to host"))
 	assert.Equal(t, CircuitOpen, cb.State()) // Now open
 
 	// Phase 3: Requests rejected while open
-	err := cb.Allow()
+	err := cbAllow(cb)
 	assert.Error(t, err)
 	assert.True(t, errors.Is(err, ErrCircuitOpen))
 
 	// Phase 4: Wait for probe interval
 	require.Eventually(t, func() bool {
-		return cb.Allow() == nil
+		return cbAllow(cb) == nil
 	}, 5*time.Second, 10*time.Millisecond)
 
 	// Phase 5: Half-open — one request allowed
 	assert.Equal(t, CircuitHalfOpen, cb.State())
 
 	// Phase 6: Success → close the circuit
-	cb.RecordSuccess()
-	require.NoError(t, cb.Allow()) // re-admit probe after first success
-	cb.RecordSuccess()
+	cb.RecordSuccess(cb.generation.Load())
+	require.NoError(t, cbAllow(cb)) // re-admit probe after first success
+	cb.RecordSuccess(cb.generation.Load())
 	assert.Equal(t, CircuitClosed, cb.State())
 
 	// Phase 7: Normal operation resumes
-	assert.NoError(t, cb.Allow())
+	assert.NoError(t, cbAllow(cb))
 }
 
 // --- IsTransientError tests ---
@@ -526,11 +573,11 @@ func TestCircuitBreakerRegistry_MaxBreakers(t *testing.T) {
 	extra := reg.Get("overflow-cluster")
 	require.NotNil(t, extra, "should return a breaker even at capacity")
 	assert.Same(t, alwaysClosedBreaker, extra, "overflow should return shared sentinel")
-	assert.NoError(t, extra.Allow(), "sentinel should always allow")
+	assert.NoError(t, cbAllow(extra), "sentinel should always allow")
 
 	// Sentinel should be a no-op for record methods (no panic, no metrics leak)
-	extra.RecordSuccess()
-	extra.RecordFailure(fmt.Errorf("connection refused"))
+	extra.RecordSuccess(extra.Generation())
+	extra.RecordFailure(extra.Generation(), fmt.Errorf("connection refused"))
 	assert.Equal(t, CircuitClosed, extra.State(), "sentinel should stay closed")
 
 	reg.mu.RLock()
@@ -558,7 +605,7 @@ func TestCircuitBreakerTransport_AllowCheck(t *testing.T) {
 
 	// Trip the breaker by recording enough failures.
 	for i := 0; i < cfg.FailureThreshold; i++ {
-		cb.RecordFailure(errors.New("connection refused"))
+		cb.RecordFailure(cb.generation.Load(), errors.New("connection refused"))
 	}
 	require.Equal(t, CircuitOpen, cb.State(), "breaker should be open")
 
@@ -695,9 +742,9 @@ func TestClusterBreaker_ConcurrentAccess(t *testing.T) {
 		go func() {
 			defer func() { done <- struct{}{} }()
 			for j := 0; j < ops; j++ {
-				_ = cb.Allow()
-				cb.RecordSuccess()
-				cb.RecordFailure(errors.New("connection refused"))
+				_ = cbAllow(cb)
+				cb.RecordSuccess(cb.generation.Load())
+				cb.RecordFailure(cb.generation.Load(), errors.New("connection refused"))
 			}
 		}()
 	}

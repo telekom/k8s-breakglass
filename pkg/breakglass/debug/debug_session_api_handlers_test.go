@@ -18,9 +18,13 @@ package debug
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -28,11 +32,42 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap/zaptest"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+type stagedDebugSessionReader struct {
+	mu     sync.Mutex
+	first  client.Reader
+	second client.Reader
+	key    client.ObjectKey
+}
+
+func (r *stagedDebugSessionReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok && key == r.key {
+		r.mu.Lock()
+		reader := r.first
+		if reader == nil {
+			reader = r.second
+		}
+		r.first = nil
+		r.mu.Unlock()
+		return reader.Get(ctx, key, obj, opts...)
+	}
+	return r.second.Get(ctx, key, obj, opts...)
+}
+
+func (r *stagedDebugSessionReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return r.second.List(ctx, list, opts...)
+}
 
 // setupTestRouter creates a gin router with the debug session controller for testing
 func setupTestRouter(t *testing.T, objects ...client.Object) (*gin.Engine, *DebugSessionAPIController) {
@@ -60,6 +95,7 @@ func setupAuthenticatedDebugSessionRouter(t *testing.T, ctrl *DebugSessionAPICon
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", username)
 		if email != "" {
 			c.Set("email", email)
@@ -87,6 +123,122 @@ func assertErrorResponse(t *testing.T, rr *httptest.ResponseRecorder, wantCode s
 	assert.Contains(t, body, "code", "response should contain 'code' field")
 	if wantCode != "" {
 		assert.Equal(t, wantCode, body["code"], "unexpected error code")
+	}
+}
+
+func TestRespondKubectlDebugOperationError(t *testing.T) {
+	tests := []struct {
+		name     string
+		err      error
+		wantHTTP int
+		wantCode string
+	}{
+		{
+			name:     "namespace policy denial is forbidden",
+			err:      kubectlDebugPolicyErrorf("namespace prod is not allowed for pod copy"),
+			wantHTTP: http.StatusForbidden,
+			wantCode: "FORBIDDEN",
+		},
+		{
+			name:     "node selector mismatch is forbidden",
+			err:      kubectlDebugPolicyErrorf("node worker-1 does not match required selector pool=debug"),
+			wantHTTP: http.StatusForbidden,
+			wantCode: "FORBIDDEN",
+		},
+		{
+			name:     "unsupported request is bad request",
+			err:      kubectlDebugRequestErrorf("pod copy not configured in template"),
+			wantHTTP: http.StatusBadRequest,
+			wantCode: "BAD_REQUEST",
+		},
+		{
+			name:     "wrapped kubernetes not found is bad request",
+			err:      fmt.Errorf("failed to get pod default/missing: %w", apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, "missing")),
+			wantHTTP: http.StatusBadRequest,
+			wantCode: "BAD_REQUEST",
+		},
+		{
+			name:     "plain policy-like string remains internal",
+			err:      errors.New("namespace prod is not allowed for pod copy"),
+			wantHTTP: http.StatusInternalServerError,
+			wantCode: "INTERNAL_ERROR",
+		},
+		{
+			name:     "backend failure remains internal",
+			err:      errors.New("failed to get client for cluster production"),
+			wantHTTP: http.StatusInternalServerError,
+			wantCode: "INTERNAL_ERROR",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+
+			respondKubectlDebugOperationError(ctx, tt.err, "operation failed")
+
+			assert.Equal(t, tt.wantHTTP, w.Code)
+			assertErrorResponse(t, w, tt.wantCode)
+		})
+	}
+}
+
+func TestRespondKubectlDebugOperationErrorDoesNotExposeBackendForbidden(t *testing.T) {
+	backend := apierrors.NewForbidden(schema.GroupResource{Resource: "pods"}, "debug", errors.New("secret-marker"))
+	for _, tc := range []struct {
+		name          string
+		err           error
+		status        int
+		code, message string
+	}{
+		{name: "typed policy denial", err: fmt.Errorf("outer secret-marker: %w", kubectlDebugPolicyErrorf("policy context: %w", backend)), status: http.StatusForbidden, code: "FORBIDDEN", message: "debug operation is not allowed"},
+		{name: "raw backend forbidden", err: backend, status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "operation failed"},
+		{name: "wrapped backend forbidden", err: fmt.Errorf("backend context: %w", backend), status: http.StatusInternalServerError, code: "INTERNAL_ERROR", message: "operation failed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(w)
+			respondKubectlDebugOperationError(ctx, tc.err, "operation failed")
+			assert.Equal(t, tc.status, w.Code)
+			assertErrorResponse(t, w, tc.code)
+			var body map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+			assert.Equal(t, tc.message, body["error"])
+			assert.NotContains(t, w.Body.String(), "secret-marker")
+			assert.NotContains(t, w.Body.String(), "backend context")
+		})
+	}
+}
+
+func setupAuthenticatedDebugSessionRouterWithObjects(t *testing.T, username string, objects ...client.Object) *gin.Engine {
+	t.Helper()
+	_, ctrl := setupTestRouter(t, objects...)
+	return setupAuthenticatedDebugSessionRouter(t, ctrl, username, "", nil)
+}
+
+func newActiveKubectlDebugSession(name, requester string, expiresAt time.Time) *breakglassv1alpha1.DebugSession {
+	expiresAtTime := metav1.NewTime(expiresAt)
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: name,
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: requester,
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAtTime,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			},
+		},
 	}
 }
 
@@ -211,6 +363,70 @@ func TestDebugKubectlOperationsStrictJSON(t *testing.T) {
 	}
 }
 
+func TestDebugKubectlOperationsRejectNonStringUsername(t *testing.T) {
+	_, ctrl := setupTestRouter(t)
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("username", 12345)
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	require.NoError(t, ctrl.Register(rg))
+
+	tests := []struct {
+		name string
+		path string
+		body interface{}
+	}{
+		{
+			name: "inject ephemeral container",
+			path: "/api/debugSessions/test-session/injectEphemeralContainer",
+			body: InjectEphemeralContainerRequest{
+				Namespace:     "default",
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			},
+		},
+		{
+			name: "create pod copy",
+			path: "/api/debugSessions/test-session/createPodCopy",
+			body: CreatePodCopyRequest{
+				Namespace: "default",
+				PodName:   "test-pod",
+			},
+		},
+		{
+			name: "create node debug pod",
+			path: "/api/debugSessions/test-session/createNodeDebugPod",
+			body: CreateNodeDebugPodRequest{
+				NodeName: "node-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, tt.path, bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusUnauthorized, rr.Code)
+			assertErrorResponse(t, rr, "UNAUTHORIZED")
+			assert.Contains(t, rr.Body.String(), "user not authenticated")
+		})
+	}
+}
+
 func TestHandleInjectEphemeralContainer_Unauthorized(t *testing.T) {
 	router, _ := setupTestRouter(t)
 
@@ -240,6 +456,7 @@ func TestHandleInjectEphemeralContainer_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	testRouter := gin.New()
 	testRouter.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -297,6 +514,7 @@ func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -321,6 +539,92 @@ func TestHandleInjectEphemeralContainer_SessionNotActive(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assertErrorResponse(t, rr, "BAD_REQUEST")
 	assert.Contains(t, rr.Body.String(), "not active")
+}
+
+func TestHandleInjectEphemeralContainer_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := InjectEphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       "test-pod",
+		ContainerName: "debug",
+		Image:         "busybox",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
+func TestHandleInjectEphemeralContainer_RejectsUnsafeSecurityContextBeforeIntent(t *testing.T) {
+	session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+	session.UID = "session-uid"
+	session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+		EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+	}
+	_, controller := setupTestRouter(t, session)
+	updates := 0
+	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl client.Client, name string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+		if name == "ephemeralcontainers" {
+			updates++
+		}
+		return cl.Update(ctx, obj)
+	}}).Build()
+	controller.WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, controller, "test-user", "", nil)
+	value := true
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:       "default",
+		PodName:         "target",
+		ContainerName:   "debugger",
+		Image:           "busybox",
+		SecurityContext: &corev1.SecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{HostProcess: &value}},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assertErrorResponse(t, rr, "FORBIDDEN")
+	assert.Zero(t, updates)
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, controller.client.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+	assert.Nil(t, stored.Status.KubectlDebugStatus)
+
+	safeBody, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:       "default",
+		PodName:         "target",
+		ContainerName:   "safe-debugger",
+		Image:           "busybox",
+		SecurityContext: &corev1.SecurityContext{},
+	})
+	require.NoError(t, err)
+	safeReq, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewReader(safeBody))
+	require.NoError(t, err)
+	safeReq.Header.Set("Content-Type", "application/json")
+	safeResponse := httptest.NewRecorder()
+	router.ServeHTTP(safeResponse, safeReq)
+
+	assert.Equal(t, http.StatusOK, safeResponse.Code)
+	assert.Equal(t, 1, updates)
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "target"}, storedPod))
+	require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+	assert.Equal(t, "safe-debugger", storedPod.Spec.EphemeralContainers[0].Name)
 }
 
 func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
@@ -356,6 +660,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized-user") // Different from owner
 		c.Next()
 	})
@@ -378,7 +683,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusForbidden, rr.Code)
-	assert.Contains(t, rr.Body.String(), "not a participant")
+	assert.Contains(t, rr.Body.String(), "not allowed to modify debug resources")
 }
 
 func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
@@ -416,6 +721,7 @@ func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -439,6 +745,254 @@ func TestHandleInjectEphemeralContainer_TemplateNotKubectlDebug(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Contains(t, rr.Body.String(), "kubectl-debug")
+}
+
+func TestHandleInjectEphemeralContainer_ValidationErrorClassification(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*breakglassv1alpha1.DebugSession)
+		namespace   string
+		wantHTTP    int
+		wantCode    string
+		wantMessage string
+	}{
+		{
+			name: "unsupported ephemeral configuration is bad request",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = nil
+			},
+			namespace:   "default",
+			wantHTTP:    http.StatusBadRequest,
+			wantCode:    "BAD_REQUEST",
+			wantMessage: "ephemeral containers not configured",
+		},
+		{
+			name: "namespace policy denial is forbidden",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled:          true,
+						DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"prod"}},
+					},
+				}
+			},
+			namespace:   "prod",
+			wantHTTP:    http.StatusForbidden,
+			wantCode:    "FORBIDDEN",
+			wantMessage: "debug operation is not allowed",
+		},
+		{
+			name: "namespace label lookup failure is internal",
+			mutate: func(session *breakglassv1alpha1.DebugSession) {
+				session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled: true,
+						AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+							SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+								{MatchLabels: map[string]string{"env": "prod"}},
+							},
+						},
+					},
+				}
+			},
+			namespace:   "prod",
+			wantHTTP:    http.StatusInternalServerError,
+			wantCode:    "INTERNAL_ERROR",
+			wantMessage: "failed to validate ephemeral container request",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+			tt.mutate(session)
+			router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+			reqBody := InjectEphemeralContainerRequest{
+				Namespace:     tt.namespace,
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			}
+			body, err := json.Marshal(reqBody)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, tt.wantHTTP, rr.Code)
+			assertErrorResponse(t, rr, tt.wantCode)
+			assert.Contains(t, rr.Body.String(), tt.wantMessage)
+		})
+	}
+}
+
+func TestHandleInjectEphemeralContainer_UsesLiveSessionBeforeUpdate(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels:    map[string]string{DebugSessionLabelKey: "active-session"},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+						Enabled:           true,
+						AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{Patterns: []string{"default"}},
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	liveReader := &stagedDebugSessionReader{
+		first:  fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().WithScheme(scheme).WithObjects(liveTerminated).Build(),
+		key:    client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "default", UID: "target-pod-uid"},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "busybox"}}},
+		}).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(liveReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace:     "default",
+		PodName:       "app-pod",
+		ContainerName: "debugger",
+		Image:         "busybox",
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
+
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "app-pod"}, storedPod))
+	assert.Empty(t, storedPod.Spec.EphemeralContainers, "a terminated live session must not update the target Pod")
+}
+
+func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "active-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "owner-user",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{
+				{
+					User:     "viewer-user",
+					Role:     breakglassv1alpha1.ParticipantRoleViewer,
+					JoinedAt: now,
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "viewer-user", "", nil)
+
+	tests := []struct {
+		name string
+		path string
+		body interface{}
+	}{
+		{
+			name: "inject ephemeral container",
+			path: "/api/debugSessions/active-session/injectEphemeralContainer",
+			body: InjectEphemeralContainerRequest{
+				Namespace:     "default",
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			},
+		},
+		{
+			name: "create pod copy",
+			path: "/api/debugSessions/active-session/createPodCopy",
+			body: CreatePodCopyRequest{
+				Namespace: "default",
+				PodName:   "test-pod",
+			},
+		},
+		{
+			name: "create node debug pod",
+			path: "/api/debugSessions/active-session/createNodeDebugPod",
+			body: CreateNodeDebugPodRequest{
+				NodeName: "node-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, tt.path, bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusForbidden, rr.Code)
+			assert.Contains(t, rr.Body.String(), "not allowed to modify debug resources")
+		})
+	}
 }
 
 // ============================================================================
@@ -489,6 +1043,7 @@ func TestHandleCreatePodCopy_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -543,6 +1098,7 @@ func TestHandleCreatePodCopy_SessionNotActive(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -564,6 +1120,113 @@ func TestHandleCreatePodCopy_SessionNotActive(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Contains(t, rr.Body.String(), "not active")
+}
+
+func TestHandleCreatePodCopy_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := CreatePodCopyRequest{
+		Namespace: "default",
+		PodName:   "test-pod",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/createPodCopy", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
+func TestHandleCreatePodCopy_FinalFenceUsesLiveReader(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session-12345678",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session-12345678",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{
+						Enabled:         true,
+						TargetNamespace: "debug-copies",
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	stageReader := &stagedDebugSessionReader{
+		first: fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveTerminated.DeepCopy()).
+			Build(),
+		key: client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
+			&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "app-pod",
+					Namespace: "production",
+					UID:       "source-pod-uid",
+				},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "nginx:stable"}}},
+			},
+		).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(stageReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+
+	body, err := json.Marshal(CreatePodCopyRequest{Namespace: "production", PodName: "app-pod"})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/test-session-12345678/createPodCopy?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
+
+	copyName := fmt.Sprintf("debug-copy-%s-%s", "app-pod", active.Name[:8])
+	storedCopy := &corev1.Pod{}
+	err = targetClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-copies", Name: copyName}, storedCopy)
+	assert.True(t, apierrors.IsNotFound(err))
 }
 
 func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
@@ -597,6 +1260,7 @@ func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "not-owner")
 		c.Next()
 	})
@@ -653,6 +1317,7 @@ func TestHandleCreatePodCopy_TemplateNotKubectlDebug(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -722,6 +1387,7 @@ func TestHandleCreateNodeDebugPod_SessionNotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "test-user")
 		c.Next()
 	})
@@ -741,6 +1407,104 @@ func TestHandleCreateNodeDebugPod_SessionNotFound(t *testing.T) {
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+func TestHandleCreateNodeDebugPod_ActiveSessionExpired(t *testing.T) {
+	session := newActiveKubectlDebugSession("expired-active-session", "test-user", time.Now().Add(-time.Hour))
+	router := setupAuthenticatedDebugSessionRouterWithObjects(t, "test-user", session)
+
+	reqBody := CreateNodeDebugPodRequest{
+		NodeName: "node-1",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/expired-active-session/createNodeDebugPod", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusBadRequest, rr.Code)
+	assertErrorResponse(t, rr, "BAD_REQUEST")
+	assert.Contains(t, rr.Body.String(), "expired session")
+}
+
+func TestHandleCreateNodeDebugPod_FinalFenceUsesLiveReader(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	active := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-session-12345678",
+			Namespace: "default",
+			UID:       "debug-session-uid",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "test-session-12345678",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				TargetNamespace: "breakglass-debug",
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					NodeDebug: &breakglassv1alpha1.NodeDebugConfig{
+						Enabled: true,
+					},
+				},
+			},
+		},
+	}
+	liveTerminated := active.DeepCopy()
+	liveTerminated.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+
+	cachedClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(active.DeepCopy()).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	stageReader := &stagedDebugSessionReader{
+		first: fake.NewClientBuilder().WithScheme(scheme).WithObjects(active.DeepCopy()).Build(),
+		second: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(liveTerminated.DeepCopy()).
+			Build(),
+		key: client.ObjectKey{Name: active.Name, Namespace: active.Namespace},
+	}
+
+	targetClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(
+			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "breakglass-debug-uid"}},
+			&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "worker-uid"}},
+		).
+		Build()
+
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), cachedClient, nil, nil).
+		WithAPIReader(stageReader).
+		WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+
+	body, err := json.Marshal(CreateNodeDebugPodRequest{NodeName: "worker-1"})
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/test-session-12345678/createNodeDebugPod?namespace=default", bytes.NewBuffer(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.Contains(t, rr.Body.String(), "debug operation is not allowed")
+
+	debugPodName := fmt.Sprintf("node-debugger-%s-%s", "worker-1", active.Name[:8])
+	debugPod := &corev1.Pod{}
+	err = targetClient.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: debugPodName}, debugPod)
+	assert.True(t, apierrors.IsNotFound(err))
 }
 
 // ============================================================================
@@ -998,6 +1762,7 @@ func TestHandleListDebugSessions_WithAllowedPodOperations(t *testing.T) {
 	assert.Equal(t, 1, response.Total)
 
 	// Verify AllowedPodOperations is included in summary
+	require.Len(t, response.Sessions, 1)
 	ops := response.Sessions[0].AllowedPodOperations
 	require.NotNil(t, ops)
 	assert.True(t, *ops.Exec)
@@ -1077,6 +1842,57 @@ func TestHandleGetDebugSession_NotFound(t *testing.T) {
 // Tests for handleApproveDebugSession
 // ============================================================================
 
+func TestDebugSessionApprovalTimedOut(t *testing.T) {
+	now := time.Now()
+	timeout := breakglass.DebugSessionApprovalTimeout
+
+	tests := []struct {
+		name      string
+		createdAt metav1.Time
+		approval  *breakglassv1alpha1.DebugSessionApproval
+		want      bool
+	}{
+		{name: "zero timestamp is not treated as timed out", createdAt: metav1.Time{}, want: false},
+		{name: "before timeout", createdAt: metav1.NewTime(now.Add(-timeout + time.Second)), want: false},
+		{name: "at timeout", createdAt: metav1.NewTime(now.Add(-timeout)), want: false},
+		{name: "after timeout", createdAt: metav1.NewTime(now.Add(-timeout - time.Second)), want: true},
+		{
+			name:      "approved pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				ApprovedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
+		{
+			name:      "rejected pending status is not timed out",
+			createdAt: metav1.NewTime(now.Add(-timeout - time.Second)),
+			approval: &breakglassv1alpha1.DebugSessionApproval{
+				RejectedAt: &metav1.Time{Time: now},
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.createdAt},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					Approval: tt.approval,
+				},
+			}
+			got, reason := debugSessionApprovalTimedOut(session, now)
+			assert.Equal(t, tt.want, got)
+			if tt.want {
+				assert.Contains(t, reason, "Approval timed out")
+			} else {
+				assert.Empty(t, reason)
+			}
+		})
+	}
+}
+
 func TestHandleApproveDebugSession_Unauthorized(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
@@ -1110,6 +1926,7 @@ func TestHandleApproveDebugSession_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1158,6 +1975,7 @@ func TestHandleApproveDebugSession_NotPendingApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1174,6 +1992,14 @@ func TestHandleApproveDebugSession_NotPendingApproval(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Contains(t, rr.Body.String(), "not pending approval")
+}
+
+func TestHandleApproveDebugSession_PendingApprovalWithRecordedDecisionConflicts(t *testing.T) {
+	runDebugApprovalDecisionConflictTest(t, "approve")
+}
+
+func TestHandleApproveDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "approve")
 }
 
 func TestHandleApproveDebugSession_NotAuthorized(t *testing.T) {
@@ -1213,6 +2039,7 @@ func TestHandleApproveDebugSession_NotAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized@example.com")
 		c.Set("groups", []string{"users"}) // Not in admins group
 		c.Next()
@@ -1279,6 +2106,75 @@ func TestHandleApproveDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T
 	require.Nil(t, fetched.Status.Approval)
 }
 
+func TestHandleApproveDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
+}
+
 func TestHandleApproveDebugSession_Success(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1315,6 +2211,7 @@ func TestHandleApproveDebugSession_Success(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1371,6 +2268,7 @@ func TestHandleApproveDebugSession_RejectsUnknownJSONFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1431,6 +2329,7 @@ func TestHandleApproveDebugSession_RejectsMissingMandatoryReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1489,6 +2388,7 @@ func TestHandleApproveDebugSession_AllowsEmptyReasonWhenOnlyRejectionMandatory(t
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1543,6 +2443,7 @@ func TestHandleRejectDebugSession_NotFound(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1591,6 +2492,7 @@ func TestHandleRejectDebugSession_NotPendingApproval(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{"approvers"})
 		c.Next()
@@ -1607,6 +2509,139 @@ func TestHandleRejectDebugSession_NotPendingApproval(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
 	assert.Contains(t, rr.Body.String(), "not pending approval")
+}
+
+func TestHandleRejectDebugSession_PendingApprovalWithRecordedDecisionConflicts(t *testing.T) {
+	runDebugApprovalDecisionConflictTest(t, "reject")
+}
+
+func TestHandleRejectDebugSession_UnauthorizedRecordedDecisionForbidden(t *testing.T) {
+	runDebugApprovalDecisionUnauthorizedTest(t, "reject")
+}
+
+func runDebugApprovalDecisionConflictTest(t *testing.T, action string) {
+	t.Helper()
+
+	for _, decision := range []string{"approved", "rejected"} {
+		t.Run(action+"_"+decision, func(t *testing.T) {
+			now := metav1.Now()
+			approval := &breakglassv1alpha1.DebugSessionApproval{
+				Required: true,
+			}
+			if decision == "approved" {
+				approval.ApprovedBy = "first-approver@example.com"
+				approval.ApprovedAt = &now
+			} else {
+				approval.RejectedBy = "first-approver@example.com"
+				approval.RejectedAt = &now
+				approval.Reason = "Already rejected"
+			}
+
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pending-session-" + decision,
+					Namespace: "default",
+					Labels: map[string]string{
+						DebugSessionLabelKey: "pending-session-" + decision,
+					},
+				},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					Cluster:     "test-cluster",
+					RequestedBy: "requester@example.com",
+					TemplateRef: "test-template",
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:    breakglassv1alpha1.DebugSessionStatePendingApproval,
+					Approval: approval,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+							Users: []string{"approver@example.com"},
+						},
+					},
+				},
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(Scheme).
+				WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+				Build()
+			ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil)
+			router := setupAuthenticatedDebugSessionRouter(t, ctrl, "approver@example.com", "approver@example.com", []string{})
+
+			req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/"+session.Name+"/"+action+"?namespace=default", nil)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+
+			assert.Equal(t, http.StatusConflict, rr.Code)
+			assert.Contains(t, rr.Body.String(), "already been decided")
+
+			var updated breakglassv1alpha1.DebugSession
+			require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: session.Name}, &updated))
+			require.NotNil(t, updated.Status.Approval)
+			if decision == "approved" {
+				assert.NotNil(t, updated.Status.Approval.ApprovedAt)
+				assert.Nil(t, updated.Status.Approval.RejectedAt)
+			} else {
+				assert.NotNil(t, updated.Status.Approval.RejectedAt)
+				assert.Nil(t, updated.Status.Approval.ApprovedAt)
+			}
+			assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, updated.Status.State)
+		})
+	}
+}
+
+func runDebugApprovalDecisionUnauthorizedTest(t *testing.T, action string) {
+	t.Helper()
+
+	now := metav1.Now()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pending-session-decided",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session-decided",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			Approval: &breakglassv1alpha1.DebugSessionApproval{
+				Required:   true,
+				ApprovedBy: "first-approver@example.com",
+				ApprovedAt: &now,
+			},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"admin@example.com"},
+				},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil)
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "unauthorized@example.com", "unauthorized@example.com", []string{})
+
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/"+session.Name+"/"+action+"?namespace=default", nil)
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusForbidden, rr.Code)
+	assert.NotContains(t, rr.Body.String(), "already been decided")
 }
 
 func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {
@@ -1646,6 +2681,7 @@ func TestHandleRejectDebugSession_NotAuthorized(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "unauthorized@example.com")
 		c.Set("groups", []string{"users"}) // Not in admins group
 		c.Next()
@@ -1712,6 +2748,76 @@ func TestHandleRejectDebugSession_BlocksRequesterEmailSelfApproval(t *testing.T)
 	require.Nil(t, fetched.Status.Approval)
 }
 
+func TestHandleRejectDebugSession_ApprovalTimedOut(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "pending-session",
+			Namespace:         "default",
+			CreationTimestamp: metav1.NewTime(time.Now().Add(-breakglass.DebugSessionApprovalTimeout - time.Minute)),
+			Labels: map[string]string{
+				DebugSessionLabelKey: "pending-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "requester@example.com",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		},
+	}
+
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).
+		WithMailService(mockMail, "Test Breakglass", "https://breakglass.example.com")
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+		c.Set("username", "approver@example.com")
+		c.Set("groups", []string{})
+		c.Next()
+	})
+	api := router.Group("/api")
+	rg := api.Group("/debugSessions")
+	_ = ctrl.Register(rg)
+
+	body := bytes.NewBuffer([]byte(`{"reason": "Too late"}`))
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/reject?namespace=default", body)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	router.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusConflict, rr.Code)
+	assert.Contains(t, rr.Body.String(), "Approval timed out")
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
+	assert.Contains(t, updated.Status.Message, "Approval timed out")
+	assert.Nil(t, updated.Status.Approval)
+
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"requester@example.com"}, messages[0].Recipients)
+	assert.Contains(t, messages[0].Subject, "Debug Session Failed")
+}
+
 func TestHandleRejectDebugSession_Success(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1743,11 +2849,13 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 
-	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	emitter := NewMockAuditEmitter(true)
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil).WithAuditService(emitter)
 
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1766,8 +2874,18 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	// Response now returns the session object, verify it contains expected fields
 	assert.Contains(t, rr.Body.String(), "pending-session")
-	assert.Contains(t, rr.Body.String(), "Terminated")
+	assert.Contains(t, rr.Body.String(), "Rejected")
 	assert.Contains(t, rr.Body.String(), "Rejected by approver@example.com")
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updated.Status.State)
+
+	events := emitter.GetEvents()
+	require.Len(t, events, 1)
+	assert.Equal(t, audit.EventDebugSessionRejected, events[0].Type)
+	assert.Equal(t, "pending-session", events[0].Target.Name)
+	assert.Equal(t, "default", events[0].Target.Namespace)
+	assert.Equal(t, "approver@example.com", events[0].Actor.User)
 }
 
 func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {
@@ -1806,6 +2924,7 @@ func TestHandleRejectDebugSession_RejectsTrailingJSON(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1866,6 +2985,7 @@ func TestHandleRejectDebugSession_RejectsMissingMandatoryReason(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
+		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "approver@example.com")
 		c.Set("groups", []string{})
 		c.Next()
@@ -1896,7 +3016,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -1905,7 +3025,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "custom-ns", ns)
 	})
@@ -1918,7 +3038,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "my-debug-ns", ns)
 	})
@@ -1932,7 +3052,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
@@ -1948,7 +3068,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 				},
 			},
 		}
-		ns, err := ctrl.resolveTargetNamespace(template, "breakglass-debug", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "breakglass-debug", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
@@ -1966,12 +3086,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-my-session", ns)
 
 		// Not allowed namespace
-		_, err = ctrl.resolveTargetNamespace(template, "prod-ns", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "prod-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -1980,6 +3100,12 @@ func TestResolveTargetNamespace(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					// An explicit "*" allow-list is required to opt into
+					// "any namespace except the denied ones"; an empty
+					// allowedNamespaces means defaultNamespace only.
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*", "default"},
 					},
@@ -1989,17 +3115,73 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Allowed namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-ns", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-ns", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-ns", ns)
 
 		// Denied namespace
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
-	t.Run("binding overrides template AllowUserNamespace", func(t *testing.T) {
+	t.Run("rejects selector-only allowed filters when namespace labels are unavailable", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+							{MatchLabels: map[string]string{"debug-enabled": "true"}},
+						},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-ns", nil)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
+	t.Run("does not treat denied namespace selector terms as global name matches", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"kube-*"},
+						SelectorTerms: []breakglassv1alpha1.NamespaceSelectorTerm{
+							{MatchLabels: map[string]string{"environment": "production"}},
+						},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		labelledCtrl := NewDebugSessionAPIController(logger, nil, nil, nil).
+			WithClusterClients(newNamespaceLabelProvider(t, "spoke", map[string]map[string]string{
+				"debug-ns":    {"environment": "staging"},
+				"kube-system": {"environment": "production"},
+			}))
+
+		// A namespace whose labels do not match the selector is still allowed.
+		ns, err := labelledCtrl.resolveTargetNamespace(context.Background(), "spoke", template, "debug-ns", nil)
+
+		require.NoError(t, err)
+		assert.Equal(t, "debug-ns", ns)
+
+		_, err = labelledCtrl.resolveTargetNamespace(context.Background(), "spoke", template, "kube-system", nil)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+
+	t.Run("binding cannot enable template user namespaces", func(t *testing.T) {
 		// Template disallows user-specified namespaces
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-restricted"},
@@ -2011,7 +3193,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding enables user-specified namespaces
+		// Binding attempts to enable user-specified namespaces
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-binding",
@@ -2024,18 +3206,16 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Without binding - should reject user namespace
-		_, err := ctrl.resolveTargetNamespace(template, "custom-ns", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding override - should allow user namespace
-		ns, err := ctrl.resolveTargetNamespace(template, "custom-ns", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "custom-ns", ns)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
 
-	t.Run("binding merges allowed namespace patterns", func(t *testing.T) {
+	t.Run("binding narrows allowed namespace patterns", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-patterns"},
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
@@ -2048,7 +3228,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding adds more allowed patterns
+		// Binding narrows the template's debug-* allowance to debug-team-*.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-binding",
@@ -2057,7 +3237,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"tenant-*"}, // Additional pattern from binding
+						Patterns: []string{"debug-team-*"},
 					},
 					AllowUserNamespace: true,
 				},
@@ -2065,22 +3245,95 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - only debug-* is allowed
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-app", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-app", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "debug-app", ns)
 
-		_, err = ctrl.resolveTargetNamespace(template, "tenant-app", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
-		// With binding - both debug-* and tenant-* are allowed
-		ns, err = ctrl.resolveTargetNamespace(template, "debug-app", binding)
+		// With binding - only namespaces matching both template and binding filters are allowed.
+		ns, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-team-app", binding)
 		require.NoError(t, err)
-		assert.Equal(t, "debug-app", ns)
+		assert.Equal(t, "debug-team-app", ns)
 
-		ns, err = ctrl.resolveTargetNamespace(template, "tenant-app", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "tenant-app", ns)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+	})
+
+	t.Run("binding allowed namespace filter is surfaced in response constraints", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-response-patterns"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"safe-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "response-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"safe-team-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		response := ctrl.resolveNamespaceConstraints(template, binding)
+
+		require.NotNil(t, response)
+		assert.Equal(t, []string{"safe-team-*"}, response.AllowedPatterns)
+	})
+
+	t.Run("binding response does not widen template allowed namespace hints", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-response-intersection"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"debug-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "response-binding-widening",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"team-*"},
+					},
+					AllowUserNamespace: true,
+				},
+			},
+		}
+
+		response := ctrl.resolveNamespaceConstraints(template, binding)
+
+		require.NotNil(t, response)
+		assert.Empty(t, response.AllowedPatterns)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "team-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
 
 	// =========================================================================
@@ -2111,22 +3364,92 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - uses template default
-		ns, err := ctrl.resolveTargetNamespace(template, "", nil)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
 		require.NoError(t, err)
 		assert.Equal(t, "template-default", ns)
 
 		// With binding - uses binding default
-		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "binding-default", ns)
 	})
 
-	t.Run("binding denied namespaces override template denied", func(t *testing.T) {
+	t.Run("binding denial rejects template default namespace", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "template-default-denied-by-binding"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DefaultNamespace: "template-default",
+				},
+			},
+		}
+
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "deny-template-default-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"template-default"},
+					},
+				},
+			},
+		}
+
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "template-default", ns)
+
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+
+	t.Run("binding denial rejects implicit fallback namespace", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "fallback-denied-by-binding"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{},
+			},
+		}
+
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "deny-fallback-binding",
+				Namespace: "test-ns",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"breakglass-debug"},
+					},
+				},
+			},
+		}
+
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", nil)
+		require.NoError(t, err)
+		assert.Equal(t, "breakglass-debug", ns)
+
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+	})
+
+	t.Run("binding denied namespaces add to template denied", func(t *testing.T) {
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-denied-ns"},
 			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
+					// Explicit "*" allow-list: an empty allowedNamespaces means
+					// defaultNamespace only, so the deny patterns below would
+					// otherwise never be the reason for a rejection.
+					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
+						Patterns: []string{"*"},
+					},
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
 						Patterns: []string{"kube-*", "system-*"}, // Template denies kube-* and system-*
 					},
@@ -2134,7 +3457,7 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding has more permissive denied list (only denies kube-system specifically)
+		// Binding has its own denied list, which must not remove template denies.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "permissive-denied-binding",
@@ -2144,31 +3467,36 @@ func TestResolveTargetNamespace(t *testing.T) {
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
 					DeniedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"kube-system"}, // Only deny kube-system
+						Patterns: []string{"tenant-*"},
 					},
 				},
 			},
 		}
 
 		// Without binding - kube-system denied
-		_, err := ctrl.resolveTargetNamespace(template, "kube-system", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// Without binding - system-test also denied
-		_, err = ctrl.resolveTargetNamespace(template, "system-test", nil)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "system-test", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
 		// With binding - kube-system still denied
-		_, err = ctrl.resolveTargetNamespace(template, "kube-system", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "kube-system", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "explicitly denied")
 
-		// With binding - system-test now allowed (binding overrode denied list)
-		ns, err := ctrl.resolveTargetNamespace(template, "system-test", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "system-test", ns)
+		// With binding - system-test remains denied by the template.
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "system-test", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
+
+		// With binding - tenant namespaces are additionally denied by the binding.
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "tenant-app", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "explicitly denied")
 	})
 
 	t.Run("binding with nil namespaceConstraints uses template constraints", func(t *testing.T) {
@@ -2194,20 +3522,20 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// With binding that has no constraints - uses template's default
-		ns, err := ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "template-ns", ns)
 
 		// User namespace still blocked because binding didn't override
-		_, err = ctrl.resolveTargetNamespace(template, "custom-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "custom-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 	})
 
-	t.Run("real-world schiff scenario: developer-basic template with developer-workload binding", func(t *testing.T) {
-		// This replicates the exact scenario from schiff-cp:
-		// Template developer-basic has allowUserNamespace: false
-		// Binding has allowUserNamespace: true with allowed patterns [breakglass-*, debug-*]
+	t.Run("binding cannot widen developer-basic template namespace policy", func(t *testing.T) {
+		// Template developer-basic has allowUserNamespace: false.
+		// A binding with allowUserNamespace: true and allowed patterns must not
+		// bypass that template-level boundary.
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: "developer-basic",
@@ -2255,32 +3583,29 @@ func TestResolveTargetNamespace(t *testing.T) {
 		}
 
 		// Without binding - user namespace blocked by template
-		_, err := ctrl.resolveTargetNamespace(template, "debug-my-session", nil)
+		_, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
-		// With binding - user namespace allowed via binding override
-		ns, err := ctrl.resolveTargetNamespace(template, "debug-my-session", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "debug-my-session", ns)
-
-		// With binding - namespace matching allowed pattern
-		ns, err = ctrl.resolveTargetNamespace(template, "breakglass-test", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "breakglass-test", ns)
-
-		// With binding - namespace NOT matching allowed pattern should fail
-		_, err = ctrl.resolveTargetNamespace(template, "production-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "debug-my-session", binding)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "breakglass-test", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
+
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "production-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "does not allow user-specified namespaces")
 
 		// With binding - empty namespace uses default
-		ns, err = ctrl.resolveTargetNamespace(template, "", binding)
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "", binding)
 		require.NoError(t, err)
 		assert.Equal(t, "breakglass-debug", ns)
 	})
 
-	t.Run("bad path: binding cannot remove allowed namespaces requirement", func(t *testing.T) {
+	t.Run("bad path: binding cannot widen allowed namespaces requirement", func(t *testing.T) {
 		// Template requires namespace to be in allowed list
 		template := &breakglassv1alpha1.DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "template-with-allowed"},
@@ -2294,34 +3619,39 @@ func TestResolveTargetNamespace(t *testing.T) {
 			},
 		}
 
-		// Binding also has an allowed list - they get merged
+		// Binding also has an allowed list; requested namespaces must satisfy both.
 		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:      "extends-allowed-binding",
+				Name:      "narrows-allowed-binding",
 				Namespace: "test-ns",
 			},
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 				NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 					AllowUserNamespace: true,
 					AllowedNamespaces: &breakglassv1alpha1.NamespaceFilter{
-						Patterns: []string{"extra-*"},
+						Patterns: []string{"safe-team-*"},
 					},
 				},
 			},
 		}
 
-		// With binding - safe-* still allowed (from template)
-		ns, err := ctrl.resolveTargetNamespace(template, "safe-ns", binding)
+		// With binding - safe-team-* matches both the template and binding filters.
+		ns, err := ctrl.resolveTargetNamespace(context.Background(), "", template, "safe-team-ns", binding)
 		require.NoError(t, err)
-		assert.Equal(t, "safe-ns", ns)
+		assert.Equal(t, "safe-team-ns", ns)
 
-		// With binding - extra-* now also allowed (from binding)
-		ns, err = ctrl.resolveTargetNamespace(template, "extra-ns", binding)
-		require.NoError(t, err)
-		assert.Equal(t, "extra-ns", ns)
+		// With binding - safe-* alone no longer satisfies the binding filter.
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "safe-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
+
+		// With binding - binding-only patterns cannot widen the template boundary.
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "extra-ns", binding)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 
 		// With binding - random namespace still blocked
-		_, err = ctrl.resolveTargetNamespace(template, "random-ns", binding)
+		_, err = ctrl.resolveTargetNamespace(context.Background(), "", template, "random-ns", binding)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not in the allowed namespaces")
 	})
@@ -2713,6 +4043,53 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 		// Option overlay
 		assert.Equal(t, "nvidia", resolved.NodeSelector["accelerator"])
 	})
+
+	t.Run("rejects option that conflicts with mandatory node selector", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "restricted"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{
+							Name: "general",
+							SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+								NodeSelector: map[string]string{"node-pool": "general"},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "general", nil, requester)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "conflicts with mandatory constraints")
+		assert.Contains(t, err.Error(), "nodeSelector")
+	})
+
+	t.Run("rejects binding that conflicts with template mandatory node selector", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "restricted"},
+				},
+			},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				SchedulingConstraints: &breakglassv1alpha1.SchedulingConstraints{
+					NodeSelector: map[string]string{"node-pool": "general"},
+				},
+			},
+		}
+
+		_, _, err := ctrl.resolveSchedulingConstraints(template, "", binding, requester)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "binding scheduling constraints conflict")
+		assert.Contains(t, err.Error(), "nodeSelector")
+	})
 }
 
 // ============================================================================
@@ -2720,8 +4097,23 @@ func TestResolveSchedulingConstraints(t *testing.T) {
 // ============================================================================
 
 func TestMergeSchedulingConstraints(t *testing.T) {
+	nodeSelectorWithTerms := func(count int, key string) *corev1.NodeSelector {
+		terms := make([]corev1.NodeSelectorTerm, 0, count)
+		for i := 0; i < count; i++ {
+			terms = append(terms, corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key:      key,
+					Operator: corev1.NodeSelectorOpIn,
+					Values:   []string{fmt.Sprintf("value-%d", i)},
+				}},
+			})
+		}
+		return &corev1.NodeSelector{NodeSelectorTerms: terms}
+	}
+
 	t.Run("nil base and option returns nil", func(t *testing.T) {
-		result := mergeSchedulingConstraints(nil, nil)
+		result, err := mergeSchedulingConstraints(nil, nil)
+		require.NoError(t, err)
 		assert.Nil(t, result)
 	})
 
@@ -2729,7 +4121,8 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		option := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "value"},
 		}
-		result := mergeSchedulingConstraints(nil, option)
+		result, err := mergeSchedulingConstraints(nil, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "value", result.NodeSelector["key"])
 		// Ensure it's a copy
@@ -2741,23 +4134,38 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"key": "value"},
 		}
-		result := mergeSchedulingConstraints(base, nil)
+		result, err := mergeSchedulingConstraints(base, nil)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "value", result.NodeSelector["key"])
 	})
 
-	t.Run("option overrides base for conflicts", func(t *testing.T) {
+	t.Run("option adds node selector keys without replacing mandatory keys", func(t *testing.T) {
 		base := &breakglassv1alpha1.SchedulingConstraints{
 			NodeSelector: map[string]string{"shared": "base-value", "base-only": "base"},
 		}
 		option := &breakglassv1alpha1.SchedulingConstraints{
-			NodeSelector: map[string]string{"shared": "option-value", "option-only": "option"},
+			NodeSelector: map[string]string{"shared": "base-value", "option-only": "option"},
 		}
-		result := mergeSchedulingConstraints(base, option)
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "option-value", result.NodeSelector["shared"])
+		assert.Equal(t, "base-value", result.NodeSelector["shared"])
 		assert.Equal(t, "base", result.NodeSelector["base-only"])
 		assert.Equal(t, "option", result.NodeSelector["option-only"])
+	})
+
+	t.Run("option cannot replace mandatory node selector value", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "base-value"},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			NodeSelector: map[string]string{"shared": "option-value"},
+		}
+		result, err := mergeSchedulingConstraints(base, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "nodeSelector")
 	})
 
 	t.Run("denied nodes are additive", func(t *testing.T) {
@@ -2767,11 +4175,132 @@ func TestMergeSchedulingConstraints(t *testing.T) {
 		option := &breakglassv1alpha1.SchedulingConstraints{
 			DeniedNodes: []string{"node-c"},
 		}
-		result := mergeSchedulingConstraints(base, option)
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.DeniedNodes, 3)
 		assert.Contains(t, result.DeniedNodes, "node-a")
 		assert.Contains(t, result.DeniedNodes, "node-c")
+	})
+
+	t.Run("required node affinity is ANDed by cross product", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"debug"}}}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "pool", Operator: corev1.NodeSelectorOpIn, Values: []string{"ops"}}}},
+			}},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: &corev1.NodeSelector{NodeSelectorTerms: []corev1.NodeSelectorTerm{
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"a"}}}},
+				{MatchExpressions: []corev1.NodeSelectorRequirement{{Key: "zone", Operator: corev1.NodeSelectorOpIn, Values: []string{"b"}}}},
+			}},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.RequiredNodeAffinity)
+		require.Len(t, result.RequiredNodeAffinity.NodeSelectorTerms, 4)
+		for _, term := range result.RequiredNodeAffinity.NodeSelectorTerms {
+			assert.Len(t, term.MatchExpressions, 2)
+		}
+	})
+
+	t.Run("required node affinity permits single-term fast path up to limit", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(1, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(maxRequiredNodeSelectorTerms, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.NotNil(t, result.RequiredNodeAffinity)
+		require.Len(t, result.RequiredNodeAffinity.NodeSelectorTerms, maxRequiredNodeSelectorTerms)
+		for _, term := range result.RequiredNodeAffinity.NodeSelectorTerms {
+			assert.Len(t, term.MatchExpressions, 2)
+		}
+	})
+
+	t.Run("required node affinity rejects oversized cross product", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(13, "pool"),
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			RequiredNodeAffinity: nodeSelectorWithTerms(10, "zone"),
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "would exceed maximum")
+	})
+
+	t.Run("topology spread constraints are additive", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           1,
+				TopologyKey:       "kubernetes.io/hostname",
+				WhenUnsatisfiable: corev1.DoNotSchedule,
+			}},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			TopologySpreadConstraints: []corev1.TopologySpreadConstraint{{
+				MaxSkew:           2,
+				TopologyKey:       "topology.kubernetes.io/zone",
+				WhenUnsatisfiable: corev1.ScheduleAnyway,
+			}},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		require.Len(t, result.TopologySpreadConstraints, 2)
+		assert.Equal(t, "kubernetes.io/hostname", result.TopologySpreadConstraints[0].TopologyKey)
+		assert.Equal(t, "topology.kubernetes.io/zone", result.TopologySpreadConstraints[1].TopologyKey)
+
+		result.TopologySpreadConstraints[0].TopologyKey = "mutated"
+		assert.Equal(t, "kubernetes.io/hostname", base.TopologySpreadConstraints[0].TopologyKey)
+	})
+
+	t.Run("denied node label wildcard cannot be weakened by exact value", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "*"},
+		}
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/control-plane": "false"},
+		}
+
+		result, err := mergeSchedulingConstraints(base, option)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Equal(t, "*", result.DeniedNodeLabels["node-role.kubernetes.io/control-plane"])
+	})
+
+	t.Run("invalid denied node label key is rejected", func(t *testing.T) {
+		base := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"invalid/key/too/many": "true"},
+		}
+
+		result, err := mergeSchedulingConstraints(base, nil)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels key")
+	})
+
+	t.Run("invalid denied node label value is rejected", func(t *testing.T) {
+		option := &breakglassv1alpha1.SchedulingConstraints{
+			DeniedNodeLabels: map[string]string{"node-role.kubernetes.io/debug": "bad/value"},
+		}
+
+		result, err := mergeSchedulingConstraints(nil, option)
+		require.Error(t, err)
+		assert.Nil(t, result)
+		assert.Contains(t, err.Error(), "deniedNodeLabels")
+		assert.Contains(t, err.Error(), "value")
 	})
 }
 
@@ -2836,7 +4365,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 	}
 
 	t.Run("returns clusters for template without bindings", func(t *testing.T) {
-		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -2872,7 +4402,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 				Reason: "ConnectionFailed",
 			},
 		}
-		router, _ := setupTestRouter(t, template, clusterA, unreadyCluster)
+		_, ctrl := setupTestRouter(t, template, clusterA, unreadyCluster)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -2929,7 +4460,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, clusterB, binding)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB, binding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -2997,7 +4529,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 	})
 
 	t.Run("filters clusters by environment query param", func(t *testing.T) {
-		router, _ := setupTestRouter(t, template, clusterA, clusterB)
+		_, ctrl := setupTestRouter(t, template, clusterA, clusterB)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters?environment=production", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3061,7 +4594,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, binding1, binding2)
+		_, ctrl := setupTestRouter(t, template, clusterA, binding1, binding2)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3144,7 +4678,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, template, clusterA, visibleBinding, hiddenBinding)
+		_, ctrl := setupTestRouter(t, template, clusterA, visibleBinding, hiddenBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3171,6 +4706,134 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 
 		require.Len(t, clusterADetail.BindingOptions, 1)
 		assert.Equal(t, "binding-visible", clusterADetail.BindingOptions[0].BindingRef.Name)
+	})
+
+	t.Run("filters binding options by requester allowlist", func(t *testing.T) {
+		bindingSRE := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{Name: "tenant-safe", DisplayName: "Tenant Safe"},
+						{Name: "platform-node", DisplayName: "Platform Node", AllowedGroups: []string{"platform-admins"}},
+					},
+				},
+			},
+		}
+		bindingPlatform := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-platform",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"platform-admins"},
+				},
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+					MaxDuration: "12h",
+				},
+				Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
+						Name:      "platform-debug",
+						Namespace: "kube-system",
+					},
+				},
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+					Users: []string{"platform-approver@example.com"},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, bindingSRE, bindingPlatform)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-platform")
+		assert.NotContains(t, w.Body.String(), "platform-debug")
+		assert.NotContains(t, w.Body.String(), "platform-approver@example.com")
+		assert.NotContains(t, w.Body.String(), "platform-node")
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		require.Len(t, resp.Clusters, 1)
+		require.NotNil(t, resp.Clusters[0].BindingRef)
+		assert.Equal(t, "binding-sre", resp.Clusters[0].BindingRef.Name)
+		require.Len(t, resp.Clusters[0].BindingOptions, 1)
+		assert.Equal(t, "binding-sre", resp.Clusters[0].BindingOptions[0].BindingRef.Name)
+		require.NotNil(t, resp.Clusters[0].BindingOptions[0].SchedulingOptions)
+		require.Len(t, resp.Clusters[0].BindingOptions[0].SchedulingOptions.Options, 1)
+		assert.Equal(t, "tenant-safe", resp.Clusters[0].BindingOptions[0].SchedulingOptions.Options[0].Name)
+	})
+
+	t.Run("omits clusters when required binding scheduling options are unavailable", func(t *testing.T) {
+		bindingSRE := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-sre",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"sre"},
+				},
+				SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+					Required: true,
+					Options: []breakglassv1alpha1.SchedulingOption{
+						{
+							Name:          "platform-node",
+							DisplayName:   "Platform Node",
+							AllowedGroups: []string{"platform-admins"},
+						},
+					},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, bindingSRE)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusOK, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-sre")
+		assert.NotContains(t, w.Body.String(), "platform-node")
+
+		var resp TemplateClustersResponse
+		err := json.Unmarshal(w.Body.Bytes(), &resp)
+		require.NoError(t, err)
+		assert.Empty(t, resp.Clusters)
 	})
 
 	t.Run("omits cluster available only through hidden binding", func(t *testing.T) {
@@ -3200,7 +4863,8 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 			},
 		}
 
-		router, _ := setupTestRouter(t, bindingOnlyTemplate, clusterA, hiddenBinding)
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, hiddenBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "alice@example.com", "alice@example.com", []string{"sre"})
 
 		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/binding-only-template/clusters", nil)
 		req.Header.Set("Accept", "application/json")
@@ -3214,5 +4878,44 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		err := json.Unmarshal(w.Body.Bytes(), &resp)
 		require.NoError(t, err)
 		assert.Empty(t, resp.Clusters)
+	})
+
+	t.Run("forbids cluster discovery when only bindings exist and requester matches none", func(t *testing.T) {
+		restrictedBinding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "binding-platform",
+				Namespace: "breakglass",
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef: &breakglassv1alpha1.TemplateReference{
+					Name: "test-template",
+				},
+				Clusters: []string{"cluster-a"},
+				Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+					Groups: []string{"platform-admins"},
+				},
+				Impersonation: &breakglassv1alpha1.ImpersonationConfig{
+					ServiceAccountRef: &breakglassv1alpha1.ServiceAccountReference{
+						Name:      "platform-debug",
+						Namespace: "kube-system",
+					},
+				},
+			},
+		}
+		bindingOnlyTemplate := template.DeepCopy()
+		bindingOnlyTemplate.Spec.Allowed = nil
+
+		_, ctrl := setupTestRouter(t, bindingOnlyTemplate, clusterA, restrictedBinding)
+		router := setupAuthenticatedDebugSessionRouter(t, ctrl, "mallory@example.com", "mallory@example.com", []string{"tenant-users"})
+
+		req := httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/test-template/clusters", nil)
+		req.Header.Set("Accept", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		assert.Equal(t, http.StatusForbidden, w.Code)
+		assert.NotContains(t, w.Body.String(), "binding-platform")
+		assert.NotContains(t, w.Body.String(), "platform-debug")
 	})
 }

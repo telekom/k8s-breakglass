@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,7 +124,7 @@ func TestNewSessionManagerWithClientAndReader(t *testing.T) {
 // TestIsFieldIndexError_KnownMessages is a regression test that pins the
 // expected error strings from controller-runtime v0.23.x. If a future upgrade
 // changes the wording, this test will fail, alerting maintainers to update
-// isFieldIndexError accordingly.
+// IsFieldIndexError accordingly.
 func TestIsFieldIndexError_KnownMessages(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -143,7 +144,7 @@ func TestIsFieldIndexError_KnownMessages(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := isFieldIndexError(tt.err)
+			got := IsFieldIndexError(tt.err)
 			assert.Equal(t, tt.expected, got)
 		})
 	}
@@ -439,6 +440,49 @@ func TestSessionManager_GetSessionsByState(t *testing.T) {
 	})
 }
 
+func TestSessionManager_GetSessionsByStatesFallsBackToSingleFullList(t *testing.T) {
+	ctx := context.Background()
+	session1 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+	session2 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	session3 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-3", Namespace: "default"},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateRejected,
+		},
+	}
+	baseClient := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithObjects(session1, session2, session3).
+		Build()
+	recordingClient := &recordingListClient{Client: baseClient}
+	mgr := NewSessionManagerWithClient(recordingClient)
+
+	sessions, err := mgr.GetSessionsByStates(ctx, []breakglassv1alpha1.BreakglassSessionState{
+		breakglassv1alpha1.SessionStatePending,
+		breakglassv1alpha1.SessionStateApproved,
+	})
+
+	require.NoError(t, err)
+	gotNames := make([]string, 0, len(sessions))
+	for _, session := range sessions {
+		gotNames = append(gotNames, session.Name)
+	}
+	assert.ElementsMatch(t, []string{"session-1", "session-2"}, gotNames)
+	assert.Equal(t, []string{string(breakglassv1alpha1.SessionStatePending)}, recordedFieldSelectorValues(recordingClient.calls, "status.state"))
+	require.Len(t, recordingClient.calls, 2, "expected one indexed attempt and one full-list fallback")
+	assert.Nil(t, recordingClient.calls[1].FieldSelector)
+}
+
 func TestSessionManager_UpdateBreakglassSession(t *testing.T) {
 	ctx := context.Background()
 
@@ -614,4 +658,27 @@ func TestSessionManager_GetBreakglassSessionByName(t *testing.T) {
 		_, err := mgr.GetBreakglassSessionByName(ctx, "non-existent")
 		require.Error(t, err)
 	})
+}
+
+func TestSessionManager_GetBreakglassSessionByNameUsesLiveReader(t *testing.T) {
+	ctx := context.Background()
+	expiredAt := metav1.NewTime(time.Now().Truncate(time.Second).Add(-time.Minute))
+	cacheSession := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "stale-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{User: "alice", Cluster: "prod", GrantedGroup: "admin"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+	liveSession := cacheSession.DeepCopy()
+	liveSession.Status.ExpiresAt = expiredAt
+	liveSession.Status.State = breakglassv1alpha1.SessionStateExpired
+	cacheClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(cacheSession).Build()
+	liveClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(liveSession).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", metadataNameIndexer).
+		Build()
+	mgr := NewSessionManagerWithClientAndReader(cacheClient, liveClient)
+
+	result, err := mgr.GetBreakglassSessionByName(ctx, "stale-session")
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, result.Status.State)
+	assert.Equal(t, expiredAt.Time, result.Status.ExpiresAt.Time)
 }

@@ -129,6 +129,19 @@ func RespondInternalErrorSimple(c *gin.Context, message string) {
 	})
 }
 
+// RespondTooManyRequestsWithRetryAfter sends a 429 Too Many Requests response
+// with a Retry-After header indicating when the client should retry.
+func RespondTooManyRequestsWithRetryAfter(c *gin.Context, retryAfter string, message string) {
+	if message == "" {
+		message = "too many requests"
+	}
+	c.Header("Retry-After", retryAfter)
+	c.JSON(http.StatusTooManyRequests, APIError{
+		Error: message,
+		Code:  "TOO_MANY_REQUESTS",
+	})
+}
+
 // RespondBadGateway sends a 502 Bad Gateway response.
 // Useful when proxying upstream services.
 func RespondBadGateway(c *gin.Context, message string) {

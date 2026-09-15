@@ -1,4 +1,3 @@
-// IsSessionApprovalTimedOut returns true if the session is still pending and TimeoutAt has passed.
 package breakglass
 
 import (
@@ -7,15 +6,24 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+// IsSessionApprovalTimedOut returns true if the session is still pending and
+// its approval window is not provably open. A missing TimeoutAt is fail-closed
+// because an approver must never be able to promote a session without a
+// trustworthy deadline.
 func IsSessionApprovalTimedOut(session breakglassv1alpha1.BreakglassSession) bool {
-	// If session is already in timeout state, it's not "approval timed out" anymore - it's already timed out
-	if session.Status.State == breakglassv1alpha1.SessionStateTimeout {
+	return isSessionApprovalTimedOutAt(session, time.Now())
+}
+
+func isSessionApprovalTimedOutAt(session breakglassv1alpha1.BreakglassSession, now time.Time) bool {
+	// Only Pending sessions can newly time out; all other states are state-machine
+	// outcomes that must not be reclassified by a stale TimeoutAt timestamp.
+	if session.Status.State != breakglassv1alpha1.SessionStatePending {
 		return false
 	}
 	// Session must be pending (not approved or rejected)
 	if !session.Status.ApprovedAt.IsZero() || !session.Status.RejectedAt.IsZero() {
 		return false
 	}
-	// Timeout must be set and must have passed
-	return !session.Status.TimeoutAt.IsZero() && time.Now().After(session.Status.TimeoutAt.Time)
+	// Timeout must be set and strictly in the future. Equality is timed out.
+	return session.Status.TimeoutAt.IsZero() || !now.Before(session.Status.TimeoutAt.Time)
 }

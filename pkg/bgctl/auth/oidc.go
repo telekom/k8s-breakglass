@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -55,6 +56,10 @@ func BuildOAuthConfig(ctx context.Context, cfg OIDCConfig, redirectURL string) (
 	if err != nil {
 		return nil, fmt.Errorf("failed to discover OIDC provider: %w", err)
 	}
+	if err := validateCredentialURLFor(provider.Endpoint().TokenURL, authorityAllowsHTTP(cfg.Authority)); err != nil {
+		return nil, fmt.Errorf("invalid token endpoint: %w", err)
+	}
+	httpClient.CheckRedirect = credentialRedirectPolicy
 	scopes := []string{oidc.ScopeOpenID, "email", "profile"}
 	if len(cfg.Scopes) > 0 {
 		scopes = cfg.Scopes
@@ -119,6 +124,9 @@ func Login(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) {
 		authOpts = append(authOpts, oauth2.SetAuthURLParam(k, v))
 	}
 	authURL := oauthCfg.AuthCodeURL(state, authOpts...)
+	if err := validateBrowserURLFor(authURL, authorityAllowsHTTP(cfg.Authority)); err != nil {
+		return nil, fmt.Errorf("invalid authorization URL: %w", err)
+	}
 
 	resultCh := make(chan *LoginResult, 1)
 	errCh := make(chan error, 1)
@@ -144,7 +152,8 @@ func Login(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) {
 				http.Error(w, "missing code", http.StatusBadRequest)
 				return
 			}
-			token, err := oauthCfg.Exchange(ctx, code, oauth2.SetAuthURLParam("code_verifier", codeVerifier))
+			exchangeCtx := oidc.ClientContext(ctx, oauthResult.Client)
+			token, err := oauthCfg.Exchange(exchangeCtx, code, oauth2.SetAuthURLParam("code_verifier", codeVerifier))
 			if err != nil {
 				errCh <- fmt.Errorf("token exchange failed: %w", err)
 				http.Error(w, "token exchange failed", http.StatusInternalServerError)
@@ -160,8 +169,8 @@ func Login(ctx context.Context, cfg OIDCConfig) (*LoginResult, error) {
 		_ = server.Serve(listener)
 	}()
 
-	_, _ = fmt.Fprintf(os.Stdout, "Open the following URL in your browser:\n%s\n", authURL)
-	_ = openBrowser(authURL)
+	_, _ = fmt.Fprintf(os.Stdout, "Open the following URL in your browser:\n%s\n", sanitizeTerminalText(authURL))
+	_ = openBrowserFor(authURL, authorityAllowsHTTP(cfg.Authority))
 
 	select {
 	case <-ctx.Done():
@@ -194,15 +203,18 @@ func randomToken(length int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(bytes), nil
 }
 
-func openBrowser(url string) error {
+func openBrowserFor(raw string, allowHTTP bool) error {
+	if err := validateBrowserURLFor(raw, allowHTTP); err != nil {
+		return err
+	}
 	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		cmd = exec.Command("open", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
+		cmd = exec.Command("open", raw) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", raw) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	default:
-		cmd = exec.Command("xdg-open", url) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
+		cmd = exec.Command("xdg-open", raw) // #nosec G204 -- opening the OIDC authorization URL in the user's browser is intended
 	}
 	if cmd == nil {
 		return errors.New("no browser command available")
@@ -212,12 +224,53 @@ func openBrowser(url string) error {
 	return cmd.Start()
 }
 
+func validateCredentialURLFor(raw string, allowHTTP bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return errors.New("endpoint must be an absolute URL")
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return nil
+	}
+	if strings.EqualFold(u.Scheme, "http") && allowHTTP {
+		return nil
+	}
+	return errors.New("credential endpoints must use HTTPS (HTTP requires an explicitly configured HTTP authority)")
+}
+
+func validateBrowserURLFor(raw string, allowHTTP bool) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return errors.New("invalid browser URL")
+	}
+	if strings.EqualFold(u.Scheme, "https") || (strings.EqualFold(u.Scheme, "http") && allowHTTP) {
+		return nil
+	}
+	return errors.New("browser URL must use HTTPS (HTTP requires an explicitly configured HTTP authority)")
+}
+
+func authorityAllowsHTTP(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && strings.EqualFold(u.Scheme, "http")
+}
+
+func credentialRedirectPolicy(req *http.Request, via []*http.Request) error {
+	allowHTTP := len(via) == 0 || strings.EqualFold(via[0].URL.Scheme, "http")
+	if err := validateCredentialURLFor(req.URL.String(), allowHTTP); err != nil {
+		return err
+	}
+	if len(via) > 0 && strings.EqualFold(via[0].URL.Scheme, "https") && !strings.EqualFold(req.URL.Scheme, "https") {
+		return errors.New("credential redirect cannot downgrade from HTTPS")
+	}
+	return http.ErrUseLastResponse
+}
+
 func newHTTPClient(caFile string, insecure bool) (*http.Client, error) {
 	transport, err := buildTransport(caFile, insecure)
 	if err != nil {
 		return nil, err
 	}
-	return &http.Client{Transport: transport, Timeout: 30 * time.Second}, nil
+	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: credentialRedirectPolicy}, nil
 }
 
 func buildTransport(caFile string, insecure bool) (http.RoundTripper, error) {

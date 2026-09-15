@@ -123,39 +123,25 @@ func ensureTestSessionTemplate(t *testing.T, cli client.Client, ctx context.Cont
 	}
 
 	// Create session template with auto-approval
-	replicas := int32(1)
-	sessionTemplate := &breakglassv1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "e2e-test-session-template",
-		},
-		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-			DisplayName: "E2E Test Session Template",
-			Mode:        breakglassv1alpha1.DebugSessionModeWorkload,
-			PodTemplateRef: &breakglassv1alpha1.DebugPodTemplateReference{
-				Name: podTemplate.Name,
-			},
-			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
-			Replicas:        &replicas,
-			TargetNamespace: "breakglass-debug",
-			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
-				Clusters: []string{"*"},
-				Groups:   []string{"*"},
-			},
-			Approvers: &breakglassv1alpha1.DebugSessionApprovers{
-				AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{
-					Clusters: []string{"*"},
-				},
-			},
-			Constraints: &breakglassv1alpha1.DebugSessionConstraints{
-				MaxDuration:     "4h",
-				DefaultDuration: "1h",
-				AllowRenewal:    ptrBool(true),
-				MaxRenewals:     ptrInt32(3),
-			},
-		},
-	}
+	sessionTemplate := newE2ETestSessionTemplate(podTemplate.Name)
 	err = cli.Create(ctx, sessionTemplate)
 	require.NoError(t, err, "Failed to create shared e2e-test-session-template")
+}
+
+func newE2ETestSessionTemplate(podTemplateName string) *breakglassv1alpha1.DebugSessionTemplate {
+	template := helpers.NewValidDebugSessionTemplate("e2e-test-session-template", "E2E Test Session Template", "*",
+		breakglassv1alpha1.DebugSessionModeWorkload, podTemplateName)
+	template.Spec.TargetNamespace = "breakglass-debug"
+	template.Spec.Constraints.AllowRenewal = ptrBool(true)
+	template.Spec.Constraints.MaxRenewals = ptrInt32(3)
+	return template
+}
+
+func TestE2ETestSessionTemplateFixtureValid(t *testing.T) {
+	template := newE2ETestSessionTemplate("e2e-shared-pod-template")
+	assert.Equal(t, breakglassv1alpha1.DebugSessionModeWorkload, template.Spec.Mode)
+	require.NotNil(t, template.Spec.PodTemplateRef)
+	assert.Empty(t, breakglassv1alpha1.ValidateDebugSessionTemplate(template).Errors)
 }
 
 func TestDebugSession_E2E_DebugPodTemplateCreation(t *testing.T) {
@@ -305,12 +291,25 @@ func TestDebugSession_E2E_SessionCreation(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "E2E testing",
 	})
 	defer func() {
 		_ = cli.Delete(ctx, session)
 	}()
+
+	// The hub object belongs to the selected ClusterConfig namespace, which
+	// need not be the namespace used for test fixtures or the spoke workload.
+	var clusterConfigs breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, cli.List(ctx, &clusterConfigs))
+	var hubNamespaces []string
+	for _, clusterConfig := range clusterConfigs.Items {
+		if clusterConfig.Name == "tenant-a" {
+			hubNamespaces = append(hubNamespaces, clusterConfig.Namespace)
+		}
+	}
+	require.Len(t, hubNamespaces, 1, "expected one ClusterConfig for the requested cluster")
+	assert.Equal(t, hubNamespaces[0], session.Namespace)
+	assert.Equal(t, "breakglass-debug", session.Spec.TargetNamespace)
 
 	// Wait for session to be processed using helpers
 	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
@@ -332,7 +331,6 @@ func TestDebugSession_E2E_SessionStateTransitions(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing state transitions",
 	})
 	defer func() {
@@ -366,15 +364,16 @@ func TestDebugSession_E2E_SessionTermination(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing termination",
 	})
 	defer func() {
 		_ = cli.Delete(ctx, session)
 	}()
 
-	// Wait for session to have a state
-	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+	// Wait for the valid Pending -> Active controller transition before checking
+	// the lease and its natural terminal transition.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Terminate the session via API (preferred method)
 	err := api.TerminateDebugSession(ctx, t, session.Name)
@@ -400,7 +399,6 @@ func TestDebugSession_E2E_SessionCleanup(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing cleanup",
 	})
 
@@ -428,7 +426,6 @@ func TestDebugSession_E2E_MultipleParticipants(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing participants",
 		InvitedParticipants: []string{
 			"participant1@example.com",
@@ -665,7 +662,6 @@ func TestDebugSession_E2E_ManualApprovalWorkflow(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing manual approval workflow",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -765,7 +761,6 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing rejection workflow",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -783,10 +778,9 @@ func TestDebugSession_E2E_RejectionWorkflow(t *testing.T) {
 	err = approverAPI.RejectDebugSession(ctx, t, session.Name, "Insufficient justification provided")
 	require.NoError(t, err, "Failed to reject session via API")
 
-	// Verify rejection - the reject API sets state to Terminated (not Failed)
-	// When a session is rejected, it immediately goes to Terminated state with the rejection reason
-	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateTerminated, defaultTimeout)
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, session.Status.State)
+	// Verify rejection - rejected sessions remain distinct from failed or terminated sessions.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateRejected, defaultTimeout)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, session.Status.State)
 	assert.NotNil(t, session.Status.Approval)
 }
 
@@ -806,7 +800,6 @@ func TestDebugSession_E2E_SessionRenewal(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing session renewal",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -849,31 +842,21 @@ func TestDebugSession_E2E_SessionExpiration(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1m", // Very short duration
-		Namespace:         testNamespace,
 		Reason:            "Testing session expiration",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
 
-	// Wait for session to have a state
-	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
+	// Start from the valid Active state before waiting for natural expiry.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
-	// Simulate expiration by setting state to Expired
-	// Note: This simulates controller behavior - no API for expiration
-	var fetched breakglassv1alpha1.DebugSession
-	err := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-	require.NoError(t, err)
+	require.NotNil(t, session.Status.ExpiresAt)
+	require.True(t, session.Status.ExpiresAt.After(time.Now()), "active session must start with a future expiry")
 
-	// Set expiry to past time and state to expired
-	pastTime := metav1.Time{Time: time.Now().Add(-1 * time.Hour)}
-	fetched.Status.ExpiresAt = &pastTime
-	fetched.Status.State = breakglassv1alpha1.DebugSessionStateExpired
-	fetched.Status.Message = "Session expired"
-	err = cli.Status().Update(ctx, &fetched)
-	require.NoError(t, err)
-
-	// Verify expiration
-	err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-	require.NoError(t, err)
+	// Let the persisted lease expire naturally and require the controller-owned
+	// Active -> Expired transition.
+	fetched := helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateExpired, 2*time.Minute)
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, fetched.Status.State)
 	t.Logf("Session expired at: %v", fetched.Status.ExpiresAt)
 }
@@ -953,7 +936,6 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing constraints enforcement",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -970,7 +952,6 @@ func TestDebugSession_E2E_ConstraintsEnforcement(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "4h",
-		Namespace:         testNamespace,
 		Reason:            "Testing constraints enforcement rejection",
 	})
 	require.Error(t, err)
@@ -1061,7 +1042,6 @@ func TestDebugSession_E2E_WorkloadDeployment(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       "e2e-test-session-template",
 		RequestedDuration: "1h",
-		Namespace:         testNamespace,
 		Reason:            "Testing workload deployment",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1180,7 +1160,6 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing ephemeral container injection",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1190,30 +1169,52 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
 	// Inject ephemeral container via API
+	runAsNonRoot := true
 	err = api.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
 		Namespace:     "default",
 		PodName:       targetPod.Name,
 		ContainerName: "debugger",
 		Image:         "busybox:latest",
 		Command:       []string{"sh"},
+		SecurityContext: &corev1.SecurityContext{
+			RunAsNonRoot: &runAsNonRoot,
+		},
 	})
+	require.NoError(t, err, "ephemeral container injection must use the supported API-mediated path")
+	t.Log("Ephemeral container injected successfully")
 
-	if err != nil {
-		// This may fail if the cluster doesn't support ephemeral containers
-		t.Logf("Ephemeral container injection failed (may not be supported): %v", err)
-	} else {
-		t.Log("Ephemeral container injected successfully")
-
-		// Verify the session status was updated
-		var fetched breakglassv1alpha1.DebugSession
-		err = cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched)
-		require.NoError(t, err)
-
-		if fetched.Status.KubectlDebugStatus != nil {
-			assert.NotEmpty(t, fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
-			t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+	// Verify the target API actually persisted the ephemeral container. A
+	// successful API response without a target mutation is not a useful E2E
+	// proof and must fail the lane.
+	var injectedPod corev1.Pod
+	require.Eventually(t, func() bool {
+		if getErr := cli.Get(ctx, types.NamespacedName{Name: targetPod.Name, Namespace: targetPod.Namespace}, &injectedPod); getErr != nil {
+			return false
 		}
-	}
+		for _, container := range injectedPod.Spec.EphemeralContainers {
+			if container.Name == "debugger" && container.Image == "busybox:latest" {
+				return true
+			}
+		}
+		return false
+	}, defaultTimeout, defaultInterval, "target pod must contain the injected ephemeral container")
+
+	// Verify the hub session status records the same operation, including the
+	// actor and target, so subsequent cleanup and audit processing have durable
+	// evidence of what was requested.
+	var fetched breakglassv1alpha1.DebugSession
+	require.Eventually(t, func() bool {
+		if getErr := cli.Get(ctx, types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &fetched); getErr != nil || fetched.Status.KubectlDebugStatus == nil {
+			return false
+		}
+		for _, ref := range fetched.Status.KubectlDebugStatus.EphemeralContainersInjected {
+			if ref.Namespace == targetPod.Namespace && ref.PodName == targetPod.Name && ref.ContainerName == "debugger" && ref.Image == "busybox:latest" && ref.InjectedBy != "" {
+				t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
+				return true
+			}
+		}
+		return false
+	}, defaultTimeout, defaultInterval, "session status must record the injected ephemeral container")
 }
 
 // D-016: DebugSession kubectl-debug pod copy
@@ -1303,7 +1304,6 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing pod copy",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1316,7 +1316,7 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 	copyResult, err := api.CreatePodCopy(ctx, t, session.Name, helpers.PodCopyRequest{
 		Namespace:  "default",
 		PodName:    targetPod.Name,
-		DebugImage: "busybox:latest",
+		DebugImage: helpers.GetTmuxDebugImage(),
 	})
 
 	if err != nil {
@@ -1406,7 +1406,6 @@ func TestDebugSession_E2E_NodeDebugPod(t *testing.T) {
 		Cluster:           "tenant-a",
 		TemplateRef:       template.Name,
 		RequestedDuration: "30m",
-		Namespace:         testNamespace,
 		Reason:            "Testing node debug pod",
 	})
 	defer func() { _ = cli.Delete(ctx, session) }()
@@ -1790,7 +1789,6 @@ func TestDebugSession_E2E_SchedulingOptions(t *testing.T) {
 		Cluster:                  "tenant-a",
 		TemplateRef:              template.Name,
 		RequestedDuration:        "30m",
-		Namespace:                testNamespace,
 		Reason:                   "Testing scheduling option selection",
 		SelectedSchedulingOption: "high-memory", // Select high-memory option
 	})

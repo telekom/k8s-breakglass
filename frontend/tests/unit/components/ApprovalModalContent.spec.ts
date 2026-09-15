@@ -51,7 +51,10 @@ describe("ApprovalModalContent", () => {
 
     expect(isDisabled('[data-testid="approve-button"]', wrapper)).toBe(true);
     expect(isDisabled('[data-testid="reject-button"]', wrapper)).toBe(true);
-    expect(wrapper.find(".approval-note-required").text()).toBe("This field is required.");
+    expect(wrapper.find('[data-testid="approval-reason-input"]').attributes("label")).toBe("Approver Note");
+    expect(wrapper.find('[data-testid="approval-reason-input"]').attributes("placeholder")).toBe(
+      "Document the incident ticket",
+    );
   });
 
   it("enables approve and reject when the required approver note is filled", () => {
@@ -71,7 +74,7 @@ describe("ApprovalModalContent", () => {
 
     expect(isDisabled('[data-testid="approve-button"]', wrapper)).toBe(false);
     expect(isDisabled('[data-testid="reject-button"]', wrapper)).toBe(false);
-    expect(wrapper.find(".approval-note-required").exists()).toBe(false);
+    expect(wrapper.find('[data-testid="approval-reason-input"]').attributes("label")).toBe("Approver Note");
   });
 
   it("shows approval controls for lowercase pending state", () => {

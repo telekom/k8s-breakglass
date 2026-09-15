@@ -51,7 +51,7 @@ func TestActivityTracker_RecordActivity(t *testing.T) {
 		)
 		defer tracker.Stop(context.Background())
 
-		tracker.RecordActivity("breakglass", "session-1", time.Now())
+		tracker.RecordActivity("breakglass", "session-1", "", time.Now())
 		assert.Equal(t, 1, tracker.Pending())
 	})
 
@@ -65,9 +65,9 @@ func TestActivityTracker_RecordActivity(t *testing.T) {
 		defer tracker.Stop(context.Background())
 
 		now := time.Now()
-		tracker.RecordActivity("breakglass", "session-1", now)
-		tracker.RecordActivity("breakglass", "session-1", now.Add(1*time.Second))
-		tracker.RecordActivity("breakglass", "session-1", now.Add(2*time.Second))
+		tracker.RecordActivity("breakglass", "session-1", "", now)
+		tracker.RecordActivity("breakglass", "session-1", "", now.Add(1*time.Second))
+		tracker.RecordActivity("breakglass", "session-1", "", now.Add(2*time.Second))
 		assert.Equal(t, 1, tracker.Pending(), "Multiple activities for same session should be buffered as one entry")
 	})
 
@@ -81,8 +81,8 @@ func TestActivityTracker_RecordActivity(t *testing.T) {
 		defer tracker.Stop(context.Background())
 
 		now := time.Now()
-		tracker.RecordActivity("breakglass", "session-1", now)
-		tracker.RecordActivity("breakglass", "session-2", now)
+		tracker.RecordActivity("breakglass", "session-1", "", now)
+		tracker.RecordActivity("breakglass", "session-2", "", now)
 		assert.Equal(t, 2, tracker.Pending())
 	})
 }
@@ -118,9 +118,9 @@ func TestActivityTracker_Flush(t *testing.T) {
 	defer tracker.Stop(context.Background())
 
 	now := time.Now()
-	tracker.RecordActivity("breakglass", "session-flush", now)
-	tracker.RecordActivity("breakglass", "session-flush", now.Add(5*time.Second))
-	tracker.RecordActivity("breakglass", "session-flush", now.Add(10*time.Second))
+	tracker.RecordActivity("breakglass", "session-flush", "", now)
+	tracker.RecordActivity("breakglass", "session-flush", "", now.Add(5*time.Second))
+	tracker.RecordActivity("breakglass", "session-flush", "", now.Add(10*time.Second))
 
 	// Manually trigger flush
 	tracker.flush(context.Background())
@@ -170,7 +170,7 @@ func TestActivityTracker_FlushSkipsTerminalSessions(t *testing.T) {
 	)
 	defer tracker.Stop(context.Background())
 
-	tracker.RecordActivity("breakglass", "session-expired", time.Now())
+	tracker.RecordActivity("breakglass", "session-expired", "", time.Now())
 	tracker.flush(context.Background())
 
 	// Verify the session status was NOT updated (terminal state)
@@ -217,12 +217,12 @@ func TestActivityTracker_CumulativeFlushes(t *testing.T) {
 	now := time.Now()
 
 	// First batch
-	tracker.RecordActivity("breakglass", "session-cumulative", now)
-	tracker.RecordActivity("breakglass", "session-cumulative", now.Add(1*time.Second))
+	tracker.RecordActivity("breakglass", "session-cumulative", "", now)
+	tracker.RecordActivity("breakglass", "session-cumulative", "", now.Add(1*time.Second))
 	tracker.flush(context.Background())
 
 	// Second batch
-	tracker.RecordActivity("breakglass", "session-cumulative", now.Add(30*time.Second))
+	tracker.RecordActivity("breakglass", "session-cumulative", "", now.Add(30*time.Second))
 	tracker.flush(context.Background())
 
 	// Verify cumulative counts
@@ -283,7 +283,7 @@ func TestActivityTracker_Stop(t *testing.T) {
 		WithActivityLogger(zap.NewNop().Sugar()),
 	)
 
-	tracker.RecordActivity("breakglass", "session-stop", time.Now())
+	tracker.RecordActivity("breakglass", "session-stop", "", time.Now())
 
 	// Stop should flush remaining entries
 	tracker.Stop(context.Background())
@@ -444,7 +444,7 @@ func TestActivityTracker_FlushRetriesOnError(t *testing.T) {
 	)
 	defer tracker.Stop(context.Background())
 
-	tracker.RecordActivity("breakglass", "session-retry", time.Now())
+	tracker.RecordActivity("breakglass", "session-retry", "", time.Now())
 
 	// First flush — should fail and re-queue with retries=1
 	tracker.flush(context.Background())
@@ -470,7 +470,7 @@ func TestActivityTracker_FlushDiscardsAfterMaxRetries(t *testing.T) {
 	)
 	defer tracker.Stop(context.Background())
 
-	tracker.RecordActivity("breakglass", "session-discard", time.Now())
+	tracker.RecordActivity("breakglass", "session-discard", "", time.Now())
 
 	// Flush maxFlushRetries times to exhaust retries
 	for i := 0; i < maxFlushRetries; i++ {
@@ -492,7 +492,7 @@ func TestActivityTracker_FlushDeletedSession(t *testing.T) {
 	)
 	defer tracker.Stop(context.Background())
 
-	tracker.RecordActivity("breakglass", "deleted-session", time.Now())
+	tracker.RecordActivity("breakglass", "deleted-session", "", time.Now())
 	tracker.flush(context.Background())
 
 	assert.Equal(t, 0, tracker.Pending(),
@@ -517,7 +517,7 @@ func TestActivityTracker_FlushMergesFailedWithNewActivity(t *testing.T) {
 	defer tracker.Stop(context.Background())
 
 	now := time.Now()
-	tracker.RecordActivity("breakglass", "session-merge", now)
+	tracker.RecordActivity("breakglass", "session-merge", "", now)
 
 	flushDone := make(chan struct{})
 	go func() {
@@ -529,7 +529,7 @@ func TestActivityTracker_FlushMergesFailedWithNewActivity(t *testing.T) {
 	<-reader.enterCh
 
 	// Record new activity while flush is blocked — writes to the new (swapped) map
-	tracker.RecordActivity("breakglass", "session-merge", now.Add(10*time.Second))
+	tracker.RecordActivity("breakglass", "session-merge", "", now.Add(10*time.Second))
 
 	// Release the reader so flush fails and re-queues, merging with the new entry
 	close(reader.blockCh)
@@ -568,7 +568,7 @@ func TestActivityTracker_StopContextExpired(t *testing.T) {
 		close(at.done)
 	}()
 
-	at.RecordActivity("breakglass", "session-ctx", time.Now())
+	at.RecordActivity("breakglass", "session-ctx", "", time.Now())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -610,7 +610,7 @@ func TestActivityTracker_RunTickerFlush(t *testing.T) {
 	)
 	defer tracker.Stop(context.Background())
 
-	tracker.RecordActivity("breakglass", "session-ticker", time.Now())
+	tracker.RecordActivity("breakglass", "session-ticker", "", time.Now())
 
 	// Verify the ticker-driven flush processes the pending entry.
 	// Status updates are already validated by TestActivityTracker_Flush;
@@ -635,16 +635,16 @@ func TestActivityTracker_MaxEntriesCap(t *testing.T) {
 
 	// Fill up to the cap
 	for i := 0; i < maxEntries; i++ {
-		tracker.RecordActivity("ns", fmt.Sprintf("session-%d", i), now)
+		tracker.RecordActivity("ns", fmt.Sprintf("session-%d", i), "", now)
 	}
 	assert.Equal(t, maxEntries, tracker.Pending(), "Should accept entries up to maxEntries")
 
 	// One more should be dropped
-	tracker.RecordActivity("ns", "session-overflow", now)
+	tracker.RecordActivity("ns", "session-overflow", "", now)
 	assert.Equal(t, maxEntries, tracker.Pending(), "Should not exceed maxEntries")
 
 	// Existing entry should still be updateable
-	tracker.RecordActivity("ns", "session-0", now.Add(time.Second))
+	tracker.RecordActivity("ns", "session-0", "", now.Add(time.Second))
 	assert.Equal(t, maxEntries, tracker.Pending(), "Updating existing entry should not change count")
 }
 
@@ -662,7 +662,7 @@ func TestActivityTracker_Cleanup(t *testing.T) {
 
 	// Record activity for 5 sessions
 	for i := 0; i < 5; i++ {
-		tracker.RecordActivity("breakglass", fmt.Sprintf("session-%d", i), now)
+		tracker.RecordActivity("breakglass", fmt.Sprintf("session-%d", i), "", now)
 	}
 	assert.Equal(t, 5, tracker.Pending())
 

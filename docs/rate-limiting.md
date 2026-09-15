@@ -130,6 +130,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 ```json
 {
   "error": "Rate limit exceeded. Please authenticate for higher limits.",
+  "code": "TOO_MANY_REQUESTS",
   "authenticated": false
 }
 ```
@@ -138,6 +139,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 ```json
 {
   "error": "Rate limit exceeded, please try again later",
+  "code": "TOO_MANY_REQUESTS",
   "authenticated": true
 }
 ```
@@ -229,7 +231,7 @@ done | sort | uniq -c
 # Expected: ~50 200s followed by 429s
 
 # Check logs for rate limiting (if using structured logging)
-kubectl logs -n breakglass-system -l app=breakglass-manager | grep -i "rate"
+kubectl logs -n breakglass-system -l app=breakglass | grep -i "rate"
 ```
 
 ### Memory usage concerns

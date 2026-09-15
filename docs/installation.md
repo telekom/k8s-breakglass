@@ -341,7 +341,8 @@ current-context: webhook
 
 ### 9b. Create Authorization Config
 
-Create `/etc/kubernetes/breakglass-authz.yaml`:
+Create `/etc/kubernetes/breakglass-authz.yaml` on Kubernetes 1.34 or later
+(structured authorization configuration):
 
 ```yaml
 apiVersion: apiserver.config.k8s.io/v1
@@ -353,9 +354,13 @@ authorizers:
     name: breakglass
     webhook:
       timeout: 3s
-      authorizedTTL: 30s
+      # Required for exact BreakglassSession expiry; do not cache allows.
+      authorizedTTL: 5m
+      cacheAuthorizedRequests: false
+      cacheUnauthorizedRequests: false
       unauthorizedTTL: 30s
       subjectAccessReviewVersion: v1
+      matchConditionSubjectAccessReviewVersion: v1
       failurePolicy: Deny
       connectionInfo:
         type: KubeConfigFile
@@ -365,6 +370,12 @@ authorizers:
         - expression: "!request.user.startsWith('system:')"
         - expression: "!('system:serviceaccounts' in request.groups)"
 ```
+
+On older Kubernetes versions, configure legacy webhook mode with
+`--authorization-mode=Node,RBAC,Webhook`, the webhook kubeconfig, and
+`--authorization-webhook-cache-authorized-ttl=0s` plus
+`--authorization-webhook-cache-unauthorized-ttl=0s`; do not enable positive
+webhook authorization caching in legacy mode.
 
 ### 9c. Update API Server
 
@@ -620,6 +631,7 @@ containers:
     - --enable-api=true
     - --enable-cleanup=true
     - --enable-webhooks=true
+    - --breakglass-namespace=breakglass-system
     - --config-path=/etc/breakglass/config.yaml
     - --pod-namespace=breakglass-system
 ```
@@ -633,7 +645,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=true \
-  --enable-webhooks=true
+  --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system
 ```
 
 **Multi-Replica (Production)**:
@@ -644,6 +657,7 @@ breakglass-controller \
   --enable-api=true \
   --enable-cleanup=true \
   --enable-webhooks=true \
+  --breakglass-namespace=breakglass-system \
   --pod-namespace=breakglass-system
 ```
 
@@ -652,6 +666,7 @@ breakglass-controller \
 breakglass-controller \
   --enable-frontend=false \
   --enable-api=false \
+  --enable-controllers=false \
   --enable-cleanup=false \
   --enable-webhooks=true \
   --webhook-bind-address=0.0.0.0:9443
@@ -663,7 +678,8 @@ breakglass-controller \
   --enable-frontend=true \
   --enable-api=true \
   --enable-cleanup=false \
-  --enable-webhooks=false
+  --enable-webhooks=false \
+  --breakglass-namespace=breakglass-system
 ```
 
 **Email Notifications (Optional)**:

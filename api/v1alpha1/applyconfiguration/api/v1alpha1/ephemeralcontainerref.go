@@ -21,6 +21,8 @@ type EphemeralContainerRefApplyConfiguration struct {
 	PodName *string `json:"podName,omitempty"`
 	// namespace is the pod's namespace.
 	Namespace *string `json:"namespace,omitempty"`
+	// podUID is the immutable identity of the pod receiving the container.
+	PodUID *string `json:"podUID,omitempty"`
 	// containerName is the name of the ephemeral container.
 	ContainerName *string `json:"containerName,omitempty"`
 	// image is the container image.
@@ -50,6 +52,14 @@ func (b *EphemeralContainerRefApplyConfiguration) WithPodName(value string) *Eph
 // If called multiple times, the Namespace field is set to the value of the last call.
 func (b *EphemeralContainerRefApplyConfiguration) WithNamespace(value string) *EphemeralContainerRefApplyConfiguration {
 	b.Namespace = &value
+	return b
+}
+
+// WithPodUID sets the PodUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodUID field is set to the value of the last call.
+func (b *EphemeralContainerRefApplyConfiguration) WithPodUID(value string) *EphemeralContainerRefApplyConfiguration {
+	b.PodUID = &value
 	return b
 }
 

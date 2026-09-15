@@ -34,7 +34,7 @@ import (
 type DebugSessionTemplateMode string
 
 const (
-	// DebugSessionModeWorkload deploys debug pods (DaemonSet/Deployment) to target cluster.
+	// DebugSessionModeWorkload deploys debug pods (DaemonSet/Deployment/Job) to target cluster.
 	DebugSessionModeWorkload DebugSessionTemplateMode = "workload"
 	// DebugSessionModeKubectlDebug allows ephemeral container injection via kubectl debug.
 	DebugSessionModeKubectlDebug DebugSessionTemplateMode = "kubectl-debug"
@@ -43,7 +43,7 @@ const (
 )
 
 // DebugWorkloadType defines the type of workload to deploy.
-// +kubebuilder:validation:Enum=DaemonSet;Deployment
+// +kubebuilder:validation:Enum=DaemonSet;Deployment;Job
 type DebugWorkloadType string
 
 const (
@@ -51,6 +51,8 @@ const (
 	DebugWorkloadDaemonSet DebugWorkloadType = "DaemonSet"
 	// DebugWorkloadDeployment deploys a specified number of debug pods.
 	DebugWorkloadDeployment DebugWorkloadType = "Deployment"
+	// DebugWorkloadJob runs a bounded diagnostic once and retains its logs until cleanup.
+	DebugWorkloadJob DebugWorkloadType = "Job"
 )
 
 // DebugSessionTemplateConditionType defines condition types for DebugSessionTemplate.
@@ -81,7 +83,7 @@ type DebugSessionTemplateSpec struct {
 
 	// podTemplateRef references a DebugPodTemplate for the pod specification.
 	// Required when mode is "workload" or "hybrid".
-	// The referenced template can itself contain {{ .Vars.* }} placeholders.
+	// The referenced template can itself contain {{ .vars.* }} placeholders.
 	// Mutually exclusive with podTemplateString.
 	// +optional
 	PodTemplateRef *DebugPodTemplateReference `json:"podTemplateRef,omitempty"`
@@ -100,17 +102,17 @@ type DebugSessionTemplateSpec struct {
 
 	// extraDeployVariables defines user-provided variables for template rendering.
 	// These values are collected from the user at session request time
-	// and made available as {{ .Vars.<name> }} in all templates.
+	// and made available as {{ .vars.<name> }} in all templates.
 	// +optional
 	ExtraDeployVariables []ExtraDeployVariable `json:"extraDeployVariables,omitempty"`
 
-	// workloadType specifies the type of workload to create (DaemonSet or Deployment).
+	// workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).
 	// Required when mode is "workload" or "hybrid".
 	// +optional
 	WorkloadType DebugWorkloadType `json:"workloadType,omitempty"`
 
 	// replicas specifies the number of replicas for Deployment workloads.
-	// Defaults to 1. Ignored for DaemonSet workloads.
+	// Defaults to 1. Ignored for DaemonSet and Job workloads.
 	// +optional
 	// +kubebuilder:default=1
 	// +kubebuilder:validation:Minimum=1
@@ -257,7 +259,8 @@ type DebugSessionTemplateSpec struct {
 	DeprecationMessage string `json:"deprecationMessage,omitempty"`
 
 	// expirationBehavior controls what happens when a session expires.
-	// Options: "terminate" (default) or "notify-only".
+	// "notify-only" is a deprecated alias that requests an expiry notification;
+	// it still expires the session, revokes access, and starts resource cleanup.
 	// +optional
 	// +kubebuilder:default="terminate"
 	// +kubebuilder:validation:Enum=terminate;notify-only
@@ -421,6 +424,10 @@ type DebugPodOverrides struct {
 
 // DebugPodSpecOverrides defines overridable pod spec fields.
 type DebugPodSpecOverrides struct {
+	// nodeSelector adds mandatory scheduling constraints to the pod.
+	// +optional
+	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
 	// hostNetwork overrides the hostNetwork setting.
 	// +optional
 	HostNetwork *bool `json:"hostNetwork,omitempty"`
@@ -443,6 +450,16 @@ type DebugContainerOverride struct {
 	// name is the name of the container to override.
 	// +required
 	Name string `json:"name"`
+
+	// command replaces the container command when an administrator-authored
+	// podOverridesTemplate deliberately binds it to a session variable.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// args replaces the container arguments when an administrator-authored
+	// podOverridesTemplate deliberately binds them to session variables.
+	// +optional
+	Args []string `json:"args,omitempty"`
 
 	// securityContext overrides the container's security context.
 	// +optional
@@ -721,7 +738,7 @@ type PodCopyConfig struct {
 	// ttl specifies how long copied pods live before auto-deletion.
 	// +optional
 	// +kubebuilder:default="2h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	TTL string `json:"ttl,omitempty"`
 }
 
@@ -778,13 +795,13 @@ type DebugSessionConstraints struct {
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	MaxDuration string `json:"maxDuration,omitempty"`
 
 	// defaultDuration is the default session duration if not specified.
 	// +optional
 	// +kubebuilder:default="1h"
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	DefaultDuration string `json:"defaultDuration,omitempty"`
 
 	// allowRenewal controls whether session renewal is permitted.
@@ -844,8 +861,8 @@ type SchedulingConstraints struct {
 	// +optional
 	TopologySpreadConstraints []corev1.TopologySpreadConstraint `json:"topologySpreadConstraints,omitempty"`
 
-	// deniedNodes is a list of node name patterns that MUST NOT run debug pods.
-	// Evaluated as glob patterns.
+	// deniedNodes is a list of exact node names that MUST NOT run debug pods.
+	// Glob patterns are rejected; use deniedNodeLabels for node-pool exclusions.
 	// +optional
 	DeniedNodes []string `json:"deniedNodes,omitempty"`
 
@@ -933,6 +950,18 @@ type NamespaceConstraints struct {
 	// +kubebuilder:default=false
 	AllowUserNamespace bool `json:"allowUserNamespace,omitempty"`
 
+	// denyUserNamespace disables user-selected namespaces regardless of
+	// allowUserNamespace. It exists so that a DebugSessionClusterBinding can
+	// narrow a permissive template: allowUserNamespace cannot express that
+	// intent because its zero value is indistinguishable from "unset".
+	// Absent or false preserves existing behaviour exactly. When true, only
+	// defaultNamespace is used, even if the template sets
+	// allowUserNamespace: true.
+	// This field intentionally carries no default so that stored objects
+	// written before it existed keep behaving as before.
+	// +optional
+	DenyUserNamespace bool `json:"denyUserNamespace,omitempty"`
+
 	// createIfNotExists creates the target namespace if it doesn't exist.
 	// Requires appropriate RBAC permissions.
 	// +optional
@@ -945,14 +974,135 @@ type NamespaceConstraints struct {
 	NamespaceLabels map[string]string `json:"namespaceLabels,omitempty"`
 }
 
+// ImpersonationMode selects a Kubernetes constrained-impersonation mode
+// (KEP-5284). The mode is not sent as a header: the API server derives it from the
+// shape of the impersonated identity. Setting it here tells breakglass which
+// mode it must construct the identity for, so that mismatches are rejected at
+// admission instead of silently degrading to legacy impersonation at runtime.
+//
+// +kubebuilder:validation:Enum=user-info;serviceaccount;arbitrary-node;associated-node;legacy
+type ImpersonationMode string
+
+const (
+	// ImpersonationModeUserInfo impersonates a regular user identity. The only
+	// mode that supports uid, groups and extra.
+	ImpersonationModeUserInfo ImpersonationMode = "user-info"
+
+	// ImpersonationModeServiceAccount impersonates a ServiceAccount by its
+	// system:serviceaccount:<ns>:<name> username. Only the username may be set.
+	ImpersonationModeServiceAccount ImpersonationMode = "serviceaccount"
+
+	// ImpersonationModeArbitraryNode impersonates any node by its
+	// system:node:<name> username. Only the username may be set.
+	ImpersonationModeArbitraryNode ImpersonationMode = "arbitrary-node"
+
+	// ImpersonationModeAssociatedNode impersonates only the node the requesting
+	// ServiceAccount is itself scheduled on. Requires the requestor to carry the
+	// authentication.kubernetes.io/node-name extra.
+	//
+	// NOT CONFIGURABLE on an ImpersonationConfig: validateImpersonationConstraints
+	// rejects it. Breakglass authorizes human users via OIDC and has no node-bound
+	// ServiceAccount identity, so the mode could only ever impersonate whichever node
+	// the controller pod happened to land on — arbitrary with respect to the spoke,
+	// the session and the target workload, and a silent fake success if wired.
+	//
+	// The constant remains part of the enum and of pkg/impersonation deliberately, as
+	// defence-in-depth: the verb parser must still classify
+	// impersonate:associated-node and impersonate-on:associated-node:<verb>, and a
+	// DenyPolicy must still be able to name the mode in order to deny a grant applied
+	// out-of-band. Removing it would turn deniable verbs into unrecognised ones.
+	ImpersonationModeAssociatedNode ImpersonationMode = "associated-node"
+
+	// ImpersonationModeLegacy uses the classic unconstrained `impersonate` verb in
+	// the core API group. Required for spokes older than Kubernetes 1.35 or with
+	// the ConstrainedImpersonation gate disabled. Carries no constraints — the API
+	// server does not apply the constrained restrictions to it.
+	ImpersonationModeLegacy ImpersonationMode = "legacy"
+)
+
 // ImpersonationConfig controls which identity is used to deploy debug resources.
 // This enables least-privilege deployment where the controller impersonates
 // a constrained ServiceAccount rather than using its own permissions.
+//
+// The XValidation rules below enforce the KEP-5284 header-mixing trap at
+// admission time. Sending uid, groups or extra alongside a ServiceAccount or node
+// username makes the API server skip constrained impersonation entirely and fall
+// back to legacy (unconstrained) impersonation — the request may still succeed
+// with no constraint applied and no audit record saying so. Rejecting the
+// combination is the only way to make that failure visible.
+//
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && (self.mode == 'serviceaccount' || self.mode == 'arbitrary-node' || self.mode == 'associated-node') && (has(self.uid) || has(self.groups) || has(self.extra)))",message="modes serviceaccount, arbitrary-node and associated-node require that ONLY the username is set; setting uid, groups or extra makes the API server silently fall back to legacy unconstrained impersonation"
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && self.mode == 'user-info' && has(self.serviceAccountRef))",message="mode user-info cannot impersonate a ServiceAccount; use mode serviceaccount"
+// +kubebuilder:validation:XValidation:rule="!(has(self.mode) && (self.mode == 'arbitrary-node' || self.mode == 'associated-node') && has(self.serviceAccountRef))",message="node impersonation modes cannot target a ServiceAccount; unset serviceAccountRef"
 type ImpersonationConfig struct {
 	// serviceAccountRef references an existing ServiceAccount to impersonate.
 	// The breakglass controller must have impersonation permissions for this SA.
 	// +optional
 	ServiceAccountRef *ServiceAccountReference `json:"serviceAccountRef,omitempty"`
+
+	// mode selects the constrained-impersonation mode (KEP-5284) to use.
+	// If unset, breakglass infers the mode from the identity: a serviceAccountRef
+	// implies "serviceaccount", a userName implies "user-info". Set it explicitly
+	// to have admission reject identities that do not fit the mode.
+	//
+	// Spokes that do not support constrained impersonation fall back to "legacy"
+	// at runtime regardless of this setting — see
+	// ClusterConfig.spec.constrainedImpersonation.
+	// +optional
+	Mode ImpersonationMode `json:"mode,omitempty"`
+
+	// userName is the identity to impersonate when mode is "user-info",
+	// "arbitrary-node" or "associated-node". Mutually exclusive with
+	// serviceAccountRef. For node modes it must be "system:node:<name>".
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	UserName string `json:"userName,omitempty"`
+
+	// uid is the impersonated identity's UID. ONLY valid in "user-info" mode.
+	// Setting it in any other constrained mode disables constrained impersonation.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	UID string `json:"uid,omitempty"`
+
+	// groups are the groups to impersonate. ONLY valid in "user-info" mode: the
+	// API server forces groups=[system:nodes] for node identities and computes
+	// them from the namespace for ServiceAccounts.
+	//
+	// system:masters is rejected. Four or more groups reach the API server's
+	// hardcoded wildcard-collapse threshold, above which grants naming individual
+	// groups stop being consulted.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	Groups []string `json:"groups,omitempty"`
+
+	// extra are additional identity attributes, sent as Impersonate-Extra-<key>.
+	// ONLY valid in "user-info" mode. Keys must be lowercase, valid
+	// domain-prefixed paths; value lists must be non-empty with no empty strings.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=32
+	Extra map[string][]string `json:"extra,omitempty"`
+
+	// allowedIdentities restricts which identities this configuration may
+	// impersonate, mirroring the resourceNames of the generated RBAC identity
+	// rule. Supports exact values only — the API server matches resourceNames
+	// exactly, so wildcards other than a bare "*" have no effect.
+	//
+	// If empty, no allowlist is enforced by breakglass and the spoke's RBAC is the
+	// only control.
+	// +optional
+	// +kubebuilder:validation:MaxItems=100
+	AllowedIdentities []string `json:"allowedIdentities,omitempty"`
+
+	// actionVerbs is the set of underlying request verbs this configuration may
+	// perform under impersonation. Breakglass turns each into an
+	// `impersonate-on:<mode>:<verb>` grant.
+	//
+	// Kubernetes has no prefix wildcard for these verbs: you cannot write
+	// `impersonate-on:user-info:*`. Use "*" here to mean "every verb", which
+	// breakglass renders as an RBAC `verbs: ["*"]` rule.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	ActionVerbs []string `json:"actionVerbs,omitempty"`
 }
 
 // ServiceAccountReference references a ServiceAccount in a specific namespace.
@@ -996,7 +1146,8 @@ type DebugSessionAuditConfig struct {
 	// +optional
 	Destinations []AuditDestination `json:"destinations,omitempty"`
 
-	// enableTerminalRecording enables recording of terminal sessions.
+	// enableTerminalRecording requests terminal-byte recording. Rendering fails
+	// closed while the transport is unavailable.
 	// +optional
 	// +kubebuilder:default=false
 	EnableTerminalRecording bool `json:"enableTerminalRecording,omitempty"`
@@ -1004,6 +1155,7 @@ type DebugSessionAuditConfig struct {
 	// recordingRetention specifies how long recordings are kept.
 	// +optional
 	// +kubebuilder:default="90d"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	RecordingRetention string `json:"recordingRetention,omitempty"`
 
 	// enableShellHistory enables shell command history capture.
@@ -1173,6 +1325,9 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 	}
 
 	// Validate schedulingOptions if specified
+	if template.Spec.SchedulingConstraints != nil {
+		allErrs = append(allErrs, validateSchedulingConstraints(template.Spec.SchedulingConstraints, specPath.Child("schedulingConstraints"))...)
+	}
 	if template.Spec.SchedulingOptions != nil {
 		allErrs = append(allErrs, validateSchedulingOptions(template.Spec.SchedulingOptions, specPath.Child("schedulingOptions"))...)
 	}

@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Run a curl command while keeping both response headers and body bounded even
+# when the server uses chunked transfer encoding or omits Content-Length. The
+# header stream is read through a FIFO into a bounded (max+1 byte) file, while
+# the body is streamed into a separate bounded file. This prevents an
+# untrusted peer from growing either temporary storage area without limit.
+set -Eeuo pipefail
+
+[ "$#" -ge 2 ] || {
+    printf '%s\n' 'limit-response: max bytes and a command are required' >&2
+    exit 2
+}
+max_bytes=$1
+shift
+case "$max_bytes" in
+    ''|*[!0-9]*) printf '%s\n' 'limit-response: max bytes must be a non-negative integer' >&2; exit 2 ;;
+esac
+
+temporary_dir=
+# A read-only root filesystem makes the conventional /tmp unavailable. Most
+# container runtimes still provide a writable /dev/shm; prefer an explicitly
+# supplied TMPDIR when it is usable and then fall back to the two conventional
+# ephemeral locations. The directory is private and removed on every exit.
+for temporary_base in "${TMPDIR:-}" /dev/shm /tmp; do
+    [ -n "$temporary_base" ] || continue
+    if [ ! -d "$temporary_base" ] || [ ! -w "$temporary_base" ]; then
+        continue
+    fi
+    if temporary_dir=$(mktemp -d "$temporary_base/workload-debug-response.XXXXXX" 2>/dev/null); then
+        break
+    fi
+    temporary_dir=
+done
+[ -n "$temporary_dir" ] || {
+    printf '%s\n' 'limit-response: no writable ephemeral directory; mount /tmp or set TMPDIR' >&2
+    exit 1
+}
+header_file=$temporary_dir/headers
+body_file=$temporary_dir/body
+header_pipe=$temporary_dir/header.pipe
+mkfifo "$header_pipe"
+header_guard_pid=
+header_dummy_open=0
+cleanup() {
+    # Keep the FIFO reader from waiting forever when curl rejects a URL before
+    # opening --dump-header. Closing this read/write descriptor supplies EOF to
+    # the guard after the curl/body pipeline has finished.
+    if [ "$header_dummy_open" -eq 1 ]; then
+        exec 3>&- || true
+        header_dummy_open=0
+    fi
+    if [ -n "$header_guard_pid" ]; then
+        kill "$header_guard_pid" 2>/dev/null || true
+        wait "$header_guard_pid" 2>/dev/null || true
+    fi
+    rm -rf -- "$temporary_dir"
+}
+trap cleanup EXIT HUP INT TERM
+
+# Opening a FIFO read/write avoids the early-curl failure deadlock: curl may
+# reject malformed input before opening the dump-header path, while this
+# descriptor keeps the guard's read side open until the pipeline is complete.
+exec 3<>"$header_pipe"
+header_dummy_open=1
+
+guard_headers() {
+    local input=$1
+    local output=$2
+    local limit=$3
+    local read_status=0
+
+    # The background guard inherits the parent's read/write FIFO descriptor;
+    # close its copy or it would keep the FIFO writer side alive forever.
+    exec 3>&-
+    set +e
+    head -c "$((limit + 1))" <"$input" >"$output"
+    read_status=$?
+    set -e
+    [ "$read_status" -eq 0 ] || return "$read_status"
+    [ "$(wc -c <"$output")" -le "$limit" ]
+}
+
+guard_headers "$header_pipe" "$header_file" "$max_bytes" &
+header_guard_pid=$!
+curl_status=0
+head_status=0
+set +e
+# Do not leak the dummy FIFO descriptor into either pipeline child. In
+# particular, a curl implementation that rejects the URL before opening the
+# dump-header path must still be able to exit without leaving a writer alive.
+3>&- "$@" --dump-header "$header_pipe" --output - |
+    { exec 3>&-; head -c "$((max_bytes + 1))"; } >"$body_file"
+pipeline_status=("${PIPESTATUS[@]}")
+curl_status=${pipeline_status[0]}
+head_status=${pipeline_status[1]}
+set -e
+# Let the guard observe EOF now that curl has finished. Keeping the descriptor
+# open until EXIT would make every otherwise successful request wait forever.
+exec 3>&-
+header_dummy_open=0
+header_status=0
+wait "$header_guard_pid" || header_status=$?
+header_guard_pid=
+
+body_size=$(wc -c <"$body_file")
+header_size=$(wc -c <"$header_file")
+if [ "$header_status" -ne 0 ] || [ "$header_size" -gt "$max_bytes" ]; then
+    printf 'limit-response: response headers exceed %s bytes\n' "$max_bytes" >&2
+    exit 1
+fi
+if [ "$body_size" -gt "$max_bytes" ]; then
+    # Do not emit the byte that proved the limit was exceeded.
+    cat "$header_file"
+    head -c "$max_bytes" "$body_file"
+    printf 'limit-response: response body exceeds %s bytes\n' "$max_bytes" >&2
+    exit 1
+fi
+cat "$header_file"
+cat "$body_file"
+
+# A failed curl request (DNS, TLS, HTTP --fail, timeout, etc.) remains a
+# failure even if it produced no or a short response body.
+[ "$head_status" -eq 0 ] || exit "$head_status"
+[ "$curl_status" -eq 0 ] || exit "$curl_status"

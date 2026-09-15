@@ -158,6 +158,102 @@ func TestAuthMiddleware_GroupNormalizationCases(t *testing.T) {
 	}
 }
 
+// TestAuthMiddleware_GroupsClaimPresenceVsAbsence verifies that the "groups"
+// context key is set to an empty (non-nil) list whenever the token carries a
+// groups/realm_access claim that resolves to zero groups, and is left unset
+// when the token has no group information at all. Downstream consumers rely
+// on this distinction (context key presence, not slice length) to decide
+// whether to fall back to cluster-based group resolution: a token that
+// legitimately asserts zero groups must not be treated the same as one
+// carrying no group claim at all.
+func TestAuthMiddleware_GroupsClaimPresenceVsAbsence(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	kid := "groups-presence-kid"
+	nB64 := base64.RawURLEncoding.EncodeToString(priv.N.Bytes())
+	eBytes := big.NewInt(int64(priv.E)).Bytes()
+	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
+	jwksObj := map[string]interface{}{"keys": []interface{}{map[string]interface{}{"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256", "n": nB64, "e": eB64}}}
+	jwksBytes, err := json.Marshal(jwksObj)
+	require.NoError(t, err)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(jwksBytes)
+	}))
+	defer srv.Close()
+
+	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
+	require.NoError(t, err)
+
+	logger := zaptest.NewLogger(t).Sugar()
+	auth := &AuthHandler{jwks: jwks, log: logger}
+
+	cases := []struct {
+		name       string
+		claims     jwt.MapClaims
+		wantExists bool
+		wantEmpty  bool
+	}{
+		{
+			name:       "empty_groups_array_still_sets_key",
+			claims:     jwt.MapClaims{"groups": []interface{}{}},
+			wantExists: true,
+			wantEmpty:  true,
+		},
+		{
+			name:       "empty_realm_access_roles_still_sets_key",
+			claims:     jwt.MapClaims{"realm_access": map[string]interface{}{"roles": []interface{}{}}},
+			wantExists: true,
+			wantEmpty:  true,
+		},
+		{
+			name:       "no_group_claim_leaves_key_unset",
+			claims:     jwt.MapClaims{},
+			wantExists: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.Use(auth.Middleware())
+			router.GET("/test", func(c *gin.Context) {
+				v, exists := c.Get("groups")
+				resp := gin.H{"exists": exists}
+				if exists {
+					resp["groups"] = v
+				}
+				c.JSON(http.StatusOK, resp)
+			})
+
+			claims := tc.claims
+			claims["sub"] = "uid-presence"
+			claims["exp"] = time.Now().Add(time.Minute).Unix()
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+			tok.Header["kid"] = kid
+			tokStr, err := tok.SignedString(priv)
+			require.NoError(t, err)
+
+			req := httptest.NewRequest(http.MethodGet, "/test", nil)
+			req.Header.Set("Authorization", "Bearer "+tokStr)
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+
+			var got map[string]interface{}
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &got))
+			require.Equal(t, tc.wantExists, got["exists"])
+			if tc.wantExists && tc.wantEmpty {
+				arr, ok := got["groups"].([]interface{})
+				require.True(t, ok, "expected groups to be a JSON array, got %T", got["groups"])
+				require.Empty(t, arr)
+			}
+		})
+	}
+}
+
 // Negative test: JWKS has no matching key and refresh returns HTTP 500 -> middleware returns 401.
 func TestAuthMiddleware_JWKSRefreshFails(t *testing.T) {
 	gin.SetMode(gin.TestMode)

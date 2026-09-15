@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# Execute a diagnostic command while bounding its combined stdout/stderr.
+# Output is streamed through head so an untrusted endpoint cannot grow a
+# temporary capture file without limit. The command status is preserved.
+set -Eeuo pipefail
+
+[ "$#" -ge 3 ] || {
+    printf '%s\n' 'limit-output: max bytes, timeout, and a command are required' >&2
+    exit 2
+}
+max_bytes=$1
+timeout_seconds=$2
+shift 2
+case "$max_bytes" in
+    ''|*[!0-9]*) printf '%s\n' 'limit-output: max bytes must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$max_bytes" -lt 1 ] || [ "$max_bytes" -gt 1048576 ]; then
+    printf '%s\n' 'limit-output: max bytes must be between 1 and 1048576' >&2
+    exit 2
+fi
+case "$timeout_seconds" in
+    ''|*[!0-9]*) printf '%s\n' 'limit-output: timeout must be a positive integer' >&2; exit 2 ;;
+esac
+if [ "$timeout_seconds" -lt 1 ] || [ "$timeout_seconds" -gt 300 ]; then
+    printf '%s\n' 'limit-output: timeout must be between 1 and 300' >&2
+    exit 2
+fi
+
+temporary_dir=
+for temporary_base in "${TMPDIR:-}" /dev/shm /tmp; do
+    [ -n "$temporary_base" ] || continue
+    if [ ! -d "$temporary_base" ] || [ ! -w "$temporary_base" ]; then
+        continue
+    fi
+    if temporary_dir=$(mktemp -d "$temporary_base/workload-debug-output.XXXXXX" 2>/dev/null); then
+        break
+    fi
+    temporary_dir=
+done
+[ -n "$temporary_dir" ] || {
+    printf '%s\n' 'limit-output: no writable ephemeral directory; mount /tmp or set TMPDIR' >&2
+    exit 1
+}
+output_file=$temporary_dir/output
+cleanup() { rm -rf -- "$temporary_dir"; }
+trap cleanup EXIT HUP INT TERM
+
+command_status=0
+head_status=0
+set +e
+timeout "$timeout_seconds" "$@" 2>&1 | head -c "$((max_bytes + 1))" >"$output_file"
+pipeline_status=("${PIPESTATUS[@]}")
+command_status=${pipeline_status[0]}
+head_status=${pipeline_status[1]}
+set -e
+
+output_size=$(wc -c <"$output_file")
+if [ "$output_size" -gt "$max_bytes" ]; then
+    head -c "$max_bytes" "$output_file"
+    printf 'limit-output: command output exceeds %s bytes\n' "$max_bytes" >&2
+    exit 1
+fi
+cat "$output_file"
+[ "$head_status" -eq 0 ] || exit "$head_status"
+[ "$command_status" -eq 0 ] || exit "$command_status"

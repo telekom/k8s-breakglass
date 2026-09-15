@@ -1,8 +1,10 @@
 package debug
 
 import (
-	"strings"
 	"testing"
+	"unicode/utf8"
+
+	"sigs.k8s.io/yaml"
 )
 
 // FuzzYamlQuote tests the yamlQuote function with fuzzed inputs to ensure
@@ -41,20 +43,15 @@ func FuzzYamlQuote(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		// yamlQuote should never panic
-		result := yamlQuote(input)
-
-		// Result should not be empty if input was non-empty
-		// (empty input returns '""')
-		if len(result) == 0 && len(input) > 0 {
-			t.Errorf("yamlQuote(%q) returned empty string", input)
+		if !utf8.ValidString(input) {
+			t.Skip()
 		}
-
-		// If the result is quoted, it should start and end with quotes
-		if len(result) > 1 && result[0] == '"' {
-			if result[len(result)-1] != '"' {
-				t.Errorf("yamlQuote(%q) has unbalanced quotes: %q", input, result)
-			}
+		var value interface{}
+		if err := yaml.Unmarshal([]byte(yamlQuote(input)), &value); err != nil {
+			t.Fatal(err)
+		}
+		if value != input {
+			t.Fatalf("scalar changed: %q -> %#v", input, value)
 		}
 	})
 }
@@ -77,15 +74,15 @@ func FuzzYamlSafe(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, input string) {
-		// yamlSafe should never panic
-		result := yamlSafe(input)
-
-		// Result should not contain dangerous YAML characters
-		dangerousChars := []rune{':', '#', '{', '}', '[', ']', '|', '>', '!', '&', '*', '?', '\'', '"', '\\', '`', '@'}
-		for _, char := range dangerousChars {
-			if strings.ContainsRune(result, char) {
-				t.Errorf("yamlSafe(%q) still contains dangerous char %q: %q", input, char, result)
-			}
+		if !utf8.ValidString(input) {
+			t.Skip()
+		}
+		var value interface{}
+		if err := yaml.Unmarshal([]byte(yamlSafe(input)), &value); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := value.(string); !ok {
+			t.Fatalf("expected string, got %#v", value)
 		}
 	})
 }

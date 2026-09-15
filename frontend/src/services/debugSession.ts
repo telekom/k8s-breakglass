@@ -13,7 +13,6 @@ import type {
   DebugSessionTemplateResponse,
   DebugPodTemplateResponse,
   CreateDebugSessionRequest,
-  JoinDebugSessionRequest,
   RenewDebugSessionRequest,
   ApproveDebugSessionRequest,
   RejectDebugSessionRequest,
@@ -78,9 +77,9 @@ export default class DebugSessionService {
   /**
    * Get a single debug session by name
    */
-  public async getSession(name: string): Promise<DebugSession> {
+  public async getSession(name: string): Promise<DebugSessionDetailResponse> {
     try {
-      const response = await this.client.get<DebugSession>(`/debugSessions/${encodeURIComponent(name)}`);
+      const response = await this.client.get<DebugSessionDetailResponse>(`/debugSessions/${encodeURIComponent(name)}`);
       return response.data;
     } catch (e) {
       handleAxiosError("DebugSessionService.getSession", e, "Failed to get debug session");
@@ -101,92 +100,47 @@ export default class DebugSessionService {
     }
   }
 
-  /**
-   * Join an existing debug session
-   */
-  public async joinSession(name: string, request?: JoinDebugSessionRequest): Promise<DebugSession> {
+  private async postSessionAction(
+    name: string,
+    action: string,
+    errorMessage: string,
+    body?: unknown,
+  ): Promise<DebugSession> {
     try {
-      const body = request || { role: "viewer" };
-      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/join`, body);
+      const endpoint = `/debugSessions/${encodeURIComponent(name)}/${action}`;
+      const response =
+        body === undefined
+          ? await this.client.post<DebugSession>(endpoint)
+          : await this.client.post<DebugSession>(endpoint, body);
       return response.data;
     } catch (e) {
-      handleAxiosError("DebugSessionService.joinSession", e, "Failed to join debug session");
+      handleAxiosError(`DebugSessionService.${action}Session`, e, errorMessage);
       throw e;
     }
   }
 
-  /**
-   * Leave a debug session (participants only, not owner)
-   */
+  public async joinSession(name: string): Promise<DebugSession> {
+    return this.postSessionAction(name, "join", "Failed to join debug session");
+  }
+
   public async leaveSession(name: string): Promise<DebugSession> {
-    try {
-      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/leave`);
-      return response.data;
-    } catch (e) {
-      handleAxiosError("DebugSessionService.leaveSession", e, "Failed to leave debug session");
-      throw e;
-    }
+    return this.postSessionAction(name, "leave", "Failed to leave debug session");
   }
 
-  /**
-   * Renew a debug session (extend duration)
-   */
   public async renewSession(name: string, request: RenewDebugSessionRequest): Promise<DebugSession> {
-    try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/renew`,
-        request,
-      );
-      return response.data;
-    } catch (e) {
-      handleAxiosError("DebugSessionService.renewSession", e, "Failed to renew debug session");
-      throw e;
-    }
+    return this.postSessionAction(name, "renew", "Failed to renew debug session", request);
   }
 
-  /**
-   * Terminate a debug session (owner only)
-   */
   public async terminateSession(name: string): Promise<DebugSession> {
-    try {
-      const response = await this.client.post<DebugSession>(`/debugSessions/${encodeURIComponent(name)}/terminate`);
-      return response.data;
-    } catch (e) {
-      handleAxiosError("DebugSessionService.terminateSession", e, "Failed to terminate debug session");
-      throw e;
-    }
+    return this.postSessionAction(name, "terminate", "Failed to terminate debug session");
   }
 
-  /**
-   * Approve a debug session in PendingApproval state
-   */
   public async approveSession(name: string, request?: ApproveDebugSessionRequest): Promise<DebugSession> {
-    try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/approve`,
-        request || {},
-      );
-      return response.data;
-    } catch (e) {
-      handleAxiosError("DebugSessionService.approveSession", e, "Failed to approve debug session");
-      throw e;
-    }
+    return this.postSessionAction(name, "approve", "Failed to approve debug session", request || {});
   }
 
-  /**
-   * Reject a debug session in PendingApproval state
-   */
   public async rejectSession(name: string, request: RejectDebugSessionRequest): Promise<DebugSession> {
-    try {
-      const response = await this.client.post<DebugSession>(
-        `/debugSessions/${encodeURIComponent(name)}/reject`,
-        request,
-      );
-      return response.data;
-    } catch (e) {
-      handleAxiosError("DebugSessionService.rejectSession", e, "Failed to reject debug session");
-      throw e;
-    }
+    return this.postSessionAction(name, "reject", "Failed to reject debug session", request);
   }
 
   /**

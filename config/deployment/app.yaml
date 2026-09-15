@@ -48,6 +48,7 @@ spec:
             # Webhook metrics server (optional separate endpoint)
             - --webhooks-metrics-bind-address=:8083
             - --webhooks-metrics-secure=false
+            - --breakglass-namespace=$(POD_NAMESPACE)
           env:
             - name: POD_NAMESPACE
               valueFrom:

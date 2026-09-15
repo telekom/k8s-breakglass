@@ -57,7 +57,7 @@ type DebugPodTemplateSpec struct {
 	Template *DebugPodSpec `json:"template,omitempty"`
 
 	// templateString is an inline Go template that produces pod spec YAML.
-	// Supports Go templating with session context variables using Sprout functions.
+	// Supports Go templating with session context variables using Sprig functions.
 	// Mutually exclusive with template. Use this for dynamic pod specifications.
 	// +optional
 	TemplateString string `json:"templateString,omitempty"`

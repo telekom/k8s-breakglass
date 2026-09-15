@@ -2,7 +2,10 @@ package config
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,14 +15,16 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
+	"github.com/telekom/k8s-breakglass/pkg/indexer"
 )
 
 // EscalationReconciler watches BreakglassEscalation CRs and validates their configuration.
@@ -46,7 +51,36 @@ type EscalationReconciler struct {
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	return ssa.ApplyBreakglassEscalationStatus(ctx, r.client, escalation)
+	current := &breakglassv1alpha1.BreakglassEscalation{}
+	if err := r.client.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
+		return err
+	}
+	if current.UID != escalation.UID || current.Generation != escalation.Generation {
+		return fmt.Errorf("escalation %s/%s changed while updating validation status", escalation.Namespace, escalation.Name)
+	}
+	base := current.DeepCopy()
+	copyEscalationValidationStatus(current, escalation)
+	return r.client.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+}
+
+func copyEscalationValidationStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {
+	for _, conditionType := range []breakglassv1alpha1.BreakglassEscalationConditionType{
+		breakglassv1alpha1.BreakglassEscalationConditionConfigValidated,
+		breakglassv1alpha1.BreakglassEscalationConditionClusterRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionIDPRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionDenyPolicyRefsValid,
+		breakglassv1alpha1.BreakglassEscalationConditionMailProviderValid,
+		breakglassv1alpha1.BreakglassEscalationConditionReady,
+	} {
+		typeName := string(conditionType)
+		condition := apimeta.FindStatusCondition(desired.Status.Conditions, typeName)
+		if condition == nil {
+			apimeta.RemoveStatusCondition(&current.Status.Conditions, typeName)
+		} else {
+			apimeta.SetStatusCondition(&current.Status.Conditions, *condition)
+		}
+	}
+	current.Status.ObservedGeneration = desired.Status.ObservedGeneration
 }
 
 // NewEscalationReconciler creates a new EscalationReconciler instance.
@@ -226,19 +260,32 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 			r.logger.Warnw("Failed to update escalation status with validation errors",
 				"escalation", escalation.Name,
 				"error", err)
+			return reconcile.Result{}, fmt.Errorf("update escalation validation failure status: %w", err)
 		}
 
 		// Reference validation errors (cluster, IDP, deny policy, mail provider) may be
-		// transient if the referenced resource hasn't been created yet. Requeue to retry.
-		hasRefError := false
+		// transient if the referenced resource hasn't been created yet, so retry.
+		//
+		// Return the error rather than a fixed RequeueAfter: controller-runtime then
+		// applies its exponential backoff rate limiter. A flat 3s requeue never backs
+		// off, so a permanently-broken reference (a typo'd ref that will never
+		// resolve) drove ~20 reconciles per minute forever, each performing full
+		// reference validation, a status write and a Warning event — indefinitely, per
+		// bad object.
+		var refErrors []error
 		for _, ve := range validationErrors {
-			if ve.conditionType != string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated) {
-				hasRefError = true
-				break
+			if ve.conditionType == string(breakglassv1alpha1.BreakglassEscalationConditionConfigValidated) {
+				continue // Structural error: the object will not fix itself, do not retry.
 			}
+			if ve.error != nil {
+				refErrors = append(refErrors, ve.error)
+				continue
+			}
+			refErrors = append(refErrors, errors.New(ve.message))
 		}
-		if hasRefError {
-			return reconcile.Result{RequeueAfter: 3 * time.Second}, nil
+		if len(refErrors) > 0 {
+			return reconcile.Result{}, fmt.Errorf("escalation %s reference validation failed: %w",
+				escalation.Name, errors.Join(refErrors...))
 		}
 		return reconcile.Result{}, nil
 	}
@@ -349,12 +396,33 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
 
+	dependencyPredicate := dependencyChangePredicate()
+
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&breakglassv1alpha1.BreakglassEscalation{}).
+		For(&breakglassv1alpha1.BreakglassEscalation{}, builder.WithPredicates(specChangePredicate)).
+		Watches(
+			&breakglassv1alpha1.ClusterConfig{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForClusterConfig),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.IdentityProvider{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForIdentityProvider),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.DenyPolicy{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForDenyPolicy),
+			builder.WithPredicates(dependencyPredicate),
+		).
+		Watches(
+			&breakglassv1alpha1.MailProvider{},
+			handler.EnqueueRequestsFromMapFunc(r.escalationsForMailProvider),
+			builder.WithPredicates(dependencyPredicate),
+		).
 		WithOptions(controller.Options{
 			MaxConcurrentReconciles: 1, // Process one escalation at a time
 		}).
-		WithEventFilter(specChangePredicate).
 		Complete(r)
 }
 
@@ -384,6 +452,227 @@ func shouldReconcileEscalationUpdate(oldObj, newObj client.Object) bool {
 	}
 }
 
+func dependencyChangePredicate() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			if e.ObjectOld == nil || e.ObjectNew == nil {
+				return true
+			}
+			if e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration() {
+				return true
+			}
+			oldDeleting := e.ObjectOld.GetDeletionTimestamp()
+			newDeleting := e.ObjectNew.GetDeletionTimestamp()
+			switch {
+			case oldDeleting == nil && newDeleting == nil:
+				return false
+			case oldDeleting == nil || newDeleting == nil:
+				return true
+			default:
+				return !oldDeleting.Equal(newDeleting)
+			}
+		},
+		CreateFunc: func(e event.CreateEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+	}
+}
+
+func (r *EscalationReconciler) escalationsForClusterConfig(ctx context.Context, obj client.Object) []reconcile.Request {
+	clusterName := strings.TrimSpace(obj.GetName())
+	if clusterName == "" {
+		return nil
+	}
+
+	var listOpts []client.ListOption
+	if namespace := obj.GetNamespace(); namespace != "" {
+		listOpts = append(listOpts, client.InNamespace(namespace))
+	}
+
+	exactRequests := r.escalationRequestsMatching(
+		ctx,
+		appendListOptions(listOpts, client.MatchingFields{indexer.BreakglassEscalationClusterConfigRefsField: clusterName}),
+		"ClusterConfig",
+		clusterName,
+		func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+			return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
+		},
+	)
+	patternRequests := r.escalationRequestsMatching(
+		ctx,
+		appendListOptions(listOpts, client.MatchingFields{
+			indexer.BreakglassEscalationClusterConfigRefsPatternField: indexer.BreakglassEscalationGlobPatternIndexValue,
+		}),
+		"ClusterConfig",
+		clusterName,
+		func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+			return clusterRefListMatchesName(esc.Spec.ClusterConfigRefs, clusterName)
+		},
+	)
+
+	return deduplicateRequests(append(exactRequests, patternRequests...))
+}
+
+func (r *EscalationReconciler) escalationsForIdentityProvider(ctx context.Context, obj client.Object) []reconcile.Request {
+	idpName := strings.TrimSpace(obj.GetName())
+	if idpName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationAllowedIdentityProvidersField: idpName},
+	}, "IdentityProvider", idpName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return containsTrimmedString(esc.Spec.AllowedIdentityProviders, idpName) ||
+			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForRequests, idpName) ||
+			containsTrimmedString(esc.Spec.AllowedIdentityProvidersForApprovers, idpName)
+	})
+}
+
+func (r *EscalationReconciler) escalationsForDenyPolicy(ctx context.Context, obj client.Object) []reconcile.Request {
+	policyName := strings.TrimSpace(obj.GetName())
+	if policyName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationDenyPolicyRefsField: policyName},
+	}, "DenyPolicy", policyName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return containsTrimmedString(esc.Spec.DenyPolicyRefs, policyName)
+	})
+}
+
+func (r *EscalationReconciler) escalationsForMailProvider(ctx context.Context, obj client.Object) []reconcile.Request {
+	providerName := strings.TrimSpace(obj.GetName())
+	if providerName == "" {
+		return nil
+	}
+
+	return r.escalationRequestsMatching(ctx, []client.ListOption{
+		client.MatchingFields{indexer.BreakglassEscalationMailProviderField: providerName},
+	}, "MailProvider", providerName, func(esc *breakglassv1alpha1.BreakglassEscalation) bool {
+		return strings.TrimSpace(esc.Spec.MailProvider) == providerName
+	})
+}
+
+func (r *EscalationReconciler) escalationRequestsMatching(
+	ctx context.Context,
+	listOpts []client.ListOption,
+	dependencyKind string,
+	dependencyName string,
+	matches func(*breakglassv1alpha1.BreakglassEscalation) bool,
+) []reconcile.Request {
+	var list breakglassv1alpha1.BreakglassEscalationList
+	if err := r.client.List(ctx, &list, listOpts...); err != nil {
+		if isFieldIndexUnavailable(err) {
+			fallbackOpts := withoutMatchingFields(listOpts)
+			if len(fallbackOpts) < len(listOpts) {
+				return r.escalationRequestsMatching(ctx, fallbackOpts, dependencyKind, dependencyName, matches)
+			}
+		}
+		if r.logger != nil {
+			r.logger.Warnw("Failed to list BreakglassEscalations for dependency change",
+				"dependencyKind", dependencyKind,
+				"dependencyName", dependencyName,
+				"error", err)
+		}
+		return nil
+	}
+
+	requests := make([]reconcile.Request, 0, len(list.Items))
+	for i := range list.Items {
+		esc := &list.Items[i]
+		if !matches(esc) {
+			continue
+		}
+		requests = append(requests, reconcile.Request{
+			NamespacedName: client.ObjectKeyFromObject(esc),
+		})
+	}
+
+	return requests
+}
+
+func appendListOptions(base []client.ListOption, extra ...client.ListOption) []client.ListOption {
+	out := make([]client.ListOption, 0, len(base)+len(extra))
+	out = append(out, base...)
+	out = append(out, extra...)
+	return out
+}
+
+func withoutMatchingFields(opts []client.ListOption) []client.ListOption {
+	filtered := make([]client.ListOption, 0, len(opts))
+	for _, opt := range opts {
+		if _, ok := opt.(client.MatchingFields); ok {
+			continue
+		}
+		filtered = append(filtered, opt)
+	}
+	return filtered
+}
+
+func isFieldIndexUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "field index") ||
+		strings.Contains(msg, "no indexer") ||
+		strings.Contains(msg, "no index with name") ||
+		strings.Contains(msg, "field label not supported") ||
+		strings.Contains(msg, "Index with name")
+}
+
+func deduplicateRequests(requests []reconcile.Request) []reconcile.Request {
+	if len(requests) < 2 {
+		return requests
+	}
+	seen := make(map[client.ObjectKey]struct{}, len(requests))
+	out := make([]reconcile.Request, 0, len(requests))
+	for _, req := range requests {
+		if _, ok := seen[req.NamespacedName]; ok {
+			continue
+		}
+		seen[req.NamespacedName] = struct{}{}
+		out = append(out, req)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Namespace == out[j].Namespace {
+			return out[i].Name < out[j].Name
+		}
+		return out[i].Namespace < out[j].Namespace
+	})
+	return out
+}
+
+func containsTrimmedString(values []string, needle string) bool {
+	for _, value := range values {
+		if strings.TrimSpace(value) == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func clusterRefListMatchesName(refs []string, clusterName string) bool {
+	for _, ref := range refs {
+		if clusterRefMatchesName(ref, clusterName) {
+			return true
+		}
+	}
+	return false
+}
+
+func clusterRefMatchesName(ref string, clusterName string) bool {
+	pattern := strings.TrimSpace(ref)
+	if pattern == "" {
+		return false
+	}
+	if pattern == clusterName {
+		return true
+	}
+	matched, err := filepath.Match(pattern, clusterName)
+	return err == nil && matched
+}
+
 // validateEscalationConfig validates the escalation's configuration structure.
 // Uses the shared validation function from api/v1alpha1/validation.go to ensure
 // consistent validation between webhooks and reconcilers.
@@ -406,9 +695,27 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	}
 
 	var missing []string
+	var clusterConfigs *breakglassv1alpha1.ClusterConfigList
 	for _, clusterName := range esc.Spec.ClusterConfigRefs {
 		name := strings.TrimSpace(clusterName)
 		if name == "" || name == "*" {
+			continue
+		}
+
+		if strings.ContainsAny(name, "*?[") {
+			if err := validateClusterRefPattern(name); err != nil {
+				return fmt.Errorf("invalid ClusterConfigRefs glob pattern %q: %w", name, err)
+			}
+			if clusterConfigs == nil {
+				clusterConfigs = &breakglassv1alpha1.ClusterConfigList{}
+				if err := r.client.List(ctx, clusterConfigs, client.InNamespace(esc.Namespace)); err != nil {
+					return fmt.Errorf("failed to list ClusterConfigs in namespace %q for ClusterConfigRefs patterns: %w", esc.Namespace, err)
+				}
+			}
+			if clusterConfigRefHasMatch(clusterConfigs.Items, name) {
+				continue
+			}
+			missing = append(missing, fmt.Sprintf("%s/%s", esc.Namespace, name))
 			continue
 		}
 
@@ -428,6 +735,21 @@ func (r *EscalationReconciler) validateClusterRef(ctx context.Context, esc *brea
 	}
 
 	return nil
+}
+
+func validateClusterRefPattern(pattern string) error {
+	_, err := filepath.Match(pattern, "")
+	return err
+}
+
+func clusterConfigRefHasMatch(clusters []breakglassv1alpha1.ClusterConfig, pattern string) bool {
+	for i := range clusters {
+		if clusterRefMatchesName(pattern, clusters[i].Name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // validateIDPRefs validates that all referenced IDPs exist

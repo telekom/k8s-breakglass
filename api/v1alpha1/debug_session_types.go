@@ -18,19 +18,24 @@ package v1alpha1
 
 import (
 	"context"
+	"reflect"
+	"time"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
 // DebugSessionState represents the current state of a debug session.
-// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Expired;Terminated;Failed
+// +kubebuilder:validation:Enum=Pending;PendingApproval;Active;Rejected;Expired;Terminated;Failed
 type DebugSessionState string
 
 const (
@@ -40,6 +45,8 @@ const (
 	DebugSessionStatePendingApproval DebugSessionState = "PendingApproval"
 	// DebugSessionStateActive indicates the session is active and debug pods are running.
 	DebugSessionStateActive DebugSessionState = "Active"
+	// DebugSessionStateRejected indicates the approval request was rejected.
+	DebugSessionStateRejected DebugSessionState = "Rejected"
 	// DebugSessionStateExpired indicates the session has expired.
 	DebugSessionStateExpired DebugSessionState = "Expired"
 	// DebugSessionStateTerminated indicates the session was manually terminated.
@@ -92,6 +99,14 @@ type DebugSessionSpec struct {
 	// +optional
 	RequestedByEmail string `json:"requestedByEmail,omitempty"`
 
+	// identityProviderName identifies the provider that authenticated the requester.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+
+	// identityProviderIssuer identifies the issuer that authenticated the requester.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
+
 	// requestedByDisplayName is the human-readable name of the requester (from OIDC "name" claim).
 	// +optional
 	RequestedByDisplayName string `json:"requestedByDisplayName,omitempty"`
@@ -105,7 +120,7 @@ type DebugSessionSpec struct {
 	// requestedDuration is the desired session duration (e.g., "2h").
 	// Must not exceed the template's maxDuration constraint.
 	// +optional
-	// +kubebuilder:validation:Pattern="^([0-9]+(ns|us|ms|s|m|h|d))+$"
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	RequestedDuration string `json:"requestedDuration,omitempty"`
 
 	// reason explains why the debug session is needed.
@@ -254,6 +269,19 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`
 
+	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
+	// +optional
+	ResolvedBindingSpec *apiextensionsv1.JSON `json:"resolvedBindingSpec,omitempty"`
+
+	// resolvedBindingSnapshotCaptured distinguishes an approved no-binding
+	// decision from a session created before snapshot persistence was available.
+	// +optional
+	ResolvedBindingSnapshotCaptured bool `json:"resolvedBindingSnapshotCaptured,omitempty"`
+
+	// resolvedPodTemplate is the immutable pod-template snapshot approved for activation.
+	// +optional
+	ResolvedPodTemplate *apiextensionsv1.JSON `json:"resolvedPodTemplate,omitempty"`
+
 	// auxiliaryResourceStatuses tracks the state of deployed auxiliary resources.
 	// +optional
 	AuxiliaryResourceStatuses []AuxiliaryResourceStatus `json:"auxiliaryResourceStatuses,omitempty"`
@@ -267,6 +295,16 @@ type DebugSessionStatus struct {
 
 // PodTemplateResourceStatus tracks the state of resources deployed from multi-doc pod templates.
 type PodTemplateResourceStatus struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
+	// uid is the immutable Kubernetes UID observed when the resource was created.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// kind is the Kubernetes kind of the resource.
 	// +optional
 	Kind string `json:"kind,omitempty"`
@@ -342,6 +380,9 @@ type DebugSessionApproval struct {
 	// approvedBy is the email/identifier of the approver.
 	// +optional
 	ApprovedBy string `json:"approvedBy,omitempty"`
+	// approvedByIdentityProvider identifies the provider that authenticated the approver.
+	// +optional
+	ApprovedByIdentityProvider string `json:"approvedByIdentityProvider,omitempty"`
 
 	// approvedAt is when the session was approved.
 	// +optional
@@ -350,6 +391,9 @@ type DebugSessionApproval struct {
 	// rejectedBy is the email/identifier of the rejector.
 	// +optional
 	RejectedBy string `json:"rejectedBy,omitempty"`
+	// rejectedByIdentityProvider identifies the provider that authenticated the rejector.
+	// +optional
+	RejectedByIdentityProvider string `json:"rejectedByIdentityProvider,omitempty"`
 
 	// rejectedAt is when the session was rejected.
 	// +optional
@@ -370,6 +414,12 @@ type DebugSessionParticipant struct {
 	// Used for sending email notifications.
 	// +optional
 	Email string `json:"email,omitempty"`
+	// identityProviderName identifies the provider that authenticated the participant.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+	// identityProviderIssuer identifies the issuer that authenticated the participant.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
 
 	// displayName is the human-readable name of the participant (from OIDC "name" claim).
 	// +optional
@@ -405,6 +455,11 @@ type TerminalSharingStatus struct {
 
 // DeployedResourceRef references a deployed resource on the target cluster.
 type DeployedResourceRef struct {
+	// createOperationID identifies the exact target create attempt represented by this intent.
+	// Recovery must match this immutable operation marker before reusing a same-name object.
+	// +optional
+	CreateOperationID string `json:"createOperationID,omitempty"`
+
 	// apiVersion is the API version of the resource.
 	// +required
 	APIVersion string `json:"apiVersion"`
@@ -441,6 +496,10 @@ type AllowedPodRef struct {
 	// name is the pod's name.
 	// +required
 	Name string `json:"name"`
+
+	// uid is the immutable identity of the authorized pod.
+	// +optional
+	UID string `json:"uid,omitempty"`
 
 	// nodeName is the node the pod is running on.
 	// +optional
@@ -488,6 +547,143 @@ type KubectlDebugStatus struct {
 	// copiedPods lists debug copies of pods.
 	// +optional
 	CopiedPods []CopiedPodRef `json:"copiedPods,omitempty"`
+
+	// operations is the durable operation outbox for target-cluster mutations.
+	// An operation is persisted in Prepared state before the target API is
+	// changed and is reconciled to a terminal outcome after a restart or an
+	// ambiguous response. Completed operations are idempotent evidence and are
+	// not re-applied.
+	// +optional
+	Operations []KubectlDebugOperation `json:"operations,omitempty"`
+}
+
+// KubectlDebugOperationState describes the state of a target-cluster debug
+// operation recorded in the session status outbox.
+// +kubebuilder:validation:Enum=Prepared;Completed;Failed;Unknown
+type KubectlDebugOperationState string
+
+const (
+	// KubectlDebugOperationPrepared means intent was durably recorded before a
+	// target-cluster mutation was attempted.
+	KubectlDebugOperationPrepared KubectlDebugOperationState = "Prepared"
+	// KubectlDebugOperationCompleted means the target mutation and its outcome
+	// are durably recorded.
+	KubectlDebugOperationCompleted KubectlDebugOperationState = "Completed"
+	// KubectlDebugOperationFailed means the target mutation was confirmed not
+	// to have been applied.
+	KubectlDebugOperationFailed KubectlDebugOperationState = "Failed"
+	// KubectlDebugOperationUnknown means the target outcome cannot be resolved
+	// safely and requires operator investigation; no compensating mutation is
+	// attempted.
+	KubectlDebugOperationUnknown KubectlDebugOperationState = "Unknown"
+)
+
+// KubectlDebugOperation is durable intent and outcome evidence for a
+// target-cluster kubectl-debug operation. The target Pod UID and complete
+// ephemeral-container request are part of the identity used during recovery;
+// a same-named but different Pod/container is never treated as a match.
+type KubectlDebugOperation struct {
+	// id is a unique operation identifier.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	ID string `json:"id"`
+
+	// kind identifies the operation implementation.
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	Kind string `json:"kind"`
+
+	// state is the durable outbox state.
+	// +required
+	State KubectlDebugOperationState `json:"state"`
+
+	// targetPod identifies the target Pod and immutable UID.
+	// +required
+	TargetPod KubectlDebugOperationTargetPod `json:"targetPod"`
+
+	// ephemeralContainer contains the exact request fields used to identify
+	// the target mutation.
+	// +required
+	EphemeralContainer KubectlDebugEphemeralContainerIntent `json:"ephemeralContainer"`
+
+	// requestedBy identifies the authenticated operation actor.
+	// +required
+	RequestedBy string `json:"requestedBy"`
+
+	// requestedByEmail is the canonical email identity when one was provided.
+	// +optional
+	RequestedByEmail string `json:"requestedByEmail,omitempty"`
+
+	// identityProviderName identifies the provider that authenticated the actor.
+	// +optional
+	IdentityProviderName string `json:"identityProviderName,omitempty"`
+
+	// identityProviderIssuer identifies the issuer that authenticated the actor.
+	// +optional
+	IdentityProviderIssuer string `json:"identityProviderIssuer,omitempty"`
+
+	// preparedAt records when intent was persisted.
+	// +required
+	PreparedAt metav1.Time `json:"preparedAt"`
+
+	// completedAt records when the target outcome was persisted.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+
+	// message describes a failed or unknown outcome.
+	// +optional
+	Message string `json:"message,omitempty"`
+}
+
+// KubectlDebugEphemeralContainerIntent is the compact, stable representation
+// of an ephemeral-container request kept in the operation outbox. The security
+// context is represented by a canonical digest to avoid embedding the complete
+// Kubernetes API type in the CRD schema while still requiring an exact match
+// during recovery.
+type KubectlDebugEphemeralContainerIntent struct {
+	// name is the ephemeral container name.
+	// +required
+	Name string `json:"name"`
+
+	// image is the requested image.
+	// +required
+	Image string `json:"image"`
+
+	// command is the requested command.
+	// +optional
+	Command []string `json:"command,omitempty"`
+
+	// containerDigest identifies the exact canonical ephemeral-container request.
+	// +required
+	ContainerDigest string `json:"containerDigest"`
+
+	// securityContextDigest identifies the complete requested security context.
+	// +required
+	SecurityContextDigest string `json:"securityContextDigest"`
+
+	// tty and stdin are the manager-owned terminal settings.
+	// +required
+	TTY bool `json:"tty"`
+
+	// stdin is the manager-owned standard-input setting.
+	// +required
+	Stdin bool `json:"stdin"`
+}
+
+// KubectlDebugOperationTargetPod identifies a target Pod for durable
+// operation recovery.
+type KubectlDebugOperationTargetPod struct {
+	// namespace is the Pod namespace.
+	// +required
+	Namespace string `json:"namespace"`
+
+	// name is the Pod name.
+	// +required
+	Name string `json:"name"`
+
+	// uid is the immutable Pod UID observed before the mutation.
+	// +required
+	UID types.UID `json:"uid"`
 }
 
 // EphemeralContainerRef tracks an injected ephemeral container.
@@ -499,6 +695,10 @@ type EphemeralContainerRef struct {
 	// namespace is the pod's namespace.
 	// +required
 	Namespace string `json:"namespace"`
+
+	// podUID is the immutable identity of the pod receiving the container.
+	// +optional
+	PodUID string `json:"podUID,omitempty"`
 
 	// containerName is the name of the ephemeral container.
 	// +required
@@ -519,6 +719,11 @@ type EphemeralContainerRef struct {
 
 // CopiedPodRef tracks a debug copy of a pod.
 type CopiedPodRef struct {
+	// uid is the immutable UID of the copied pod observed after creation.
+	// Cleanup must match this UID before deleting a name-reused replacement.
+	// +optional
+	UID string `json:"uid,omitempty"`
+
 	// originalPod is the name of the original pod.
 	// +required
 	OriginalPod string `json:"originalPod"`
@@ -534,6 +739,10 @@ type CopiedPodRef struct {
 	// copyNamespace is the copied pod's namespace.
 	// +required
 	CopyNamespace string `json:"copyNamespace"`
+
+	// copyUID is the immutable identity of the copied pod.
+	// +optional
+	CopyUID string `json:"copyUID,omitempty"`
 
 	// createdAt is when the copy was created.
 	// +required
@@ -570,7 +779,7 @@ type DebugSession struct {
 	Status DebugSessionStatus `json:"status,omitempty"`
 }
 
-//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
+//+kubebuilder:webhook:path=/validate-breakglass-t-caas-telekom-com-v1alpha1-debugsession,mutating=false,failurePolicy=fail,sideEffects=None,groups=breakglass.t-caas.telekom.com,resources=debugsessions;debugsessions/status,verbs=create;update,versions=v1alpha1,name=debugsession.validation.breakglass.t-caas.telekom.com,admissionReviewVersions={v1,v1beta1}
 
 // SetCondition updates or adds a condition in the DebugSession status
 func (ds *DebugSession) SetCondition(condition metav1.Condition) {
@@ -586,6 +795,11 @@ func (ds *DebugSession) GetCondition(condType string) *metav1.Condition {
 func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(obj)
+	if obj.Status.State == DebugSessionStateActive &&
+		(obj.Status.ExpiresAt == nil || obj.Status.ExpiresAt.IsZero() || !time.Now().Before(obj.Status.ExpiresAt.Time)) {
+		result.Errors = append(result.Errors, field.Invalid(field.NewPath("status").Child("expiresAt"),
+			obj.Status.ExpiresAt, "an active debug session must have a future expiry"))
+	}
 	if result.IsValid() {
 		return nil, nil
 	}
@@ -593,16 +807,369 @@ func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
-func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
-	// Use shared validation function for consistent validation between webhooks and reconcilers
-	result := ValidateDebugSession(newObj)
-	if result.IsValid() {
-		return nil, nil
+func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) field.ErrorList {
+	var errs field.ErrorList
+	statusPath := field.NewPath("status")
+
+	checkTime := func(oldT, newT *metav1.Time, path *field.Path) {
+		if oldT != nil && !oldT.IsZero() {
+			if newT == nil || newT.IsZero() {
+				errs = append(errs, field.Invalid(path, nil, "timestamp must not be cleared once set"))
+			} else if newT.Time.Before(oldT.Time) {
+				errs = append(errs, field.Invalid(path, newT.Time, "timestamp must not move backwards"))
+			}
+		}
 	}
-	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, result.Errors)
+
+	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
+
+	oldExpiry := oldObj.Status.ExpiresAt
+	newExpiry := newObj.Status.ExpiresAt
+	if oldObj.Status.State == DebugSessionStateActive && (oldExpiry == nil || oldExpiry.IsZero()) {
+		if !isTerminalDebugSessionState(newObj.Status.State) {
+			errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+				"an active debug session with a missing expiry must become terminal"))
+		}
+		if newExpiry != nil && !newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"a missing active expiry cannot be added later"))
+		}
+	}
+	if oldExpiry != nil && !oldExpiry.IsZero() {
+		if newExpiry == nil || newExpiry.IsZero() {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), nil, "timestamp must not be cleared once set"))
+		} else if newExpiry.Time.Before(oldExpiry.Time) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time, "timestamp must not move backwards"))
+		} else if newExpiry.Time.After(oldExpiry.Time) &&
+			(oldObj.Status.State != DebugSessionStateActive || newObj.Status.State != DebugSessionStateActive ||
+				!time.Now().Before(oldExpiry.Time) || newObj.Status.RenewalCount != oldObj.Status.RenewalCount+1) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry.Time,
+				"an expiry may only be extended by one renewal while the session is active and unexpired"))
+		}
+	}
+	if newObj.Status.RenewalCount < oldObj.Status.RenewalCount {
+		errs = append(errs, field.Invalid(statusPath.Child("renewalCount"), newObj.Status.RenewalCount,
+			"renewalCount must not decrease"))
+	}
+	if isTerminalDebugSessionState(oldObj.Status.State) && newObj.Status.State != oldObj.Status.State {
+		errs = append(errs, field.Invalid(statusPath.Child("state"), newObj.Status.State,
+			"a terminal debug session state cannot change"))
+	}
+	if newObj.Status.State == DebugSessionStateActive &&
+		(newExpiry == nil || newExpiry.IsZero() || !time.Now().Before(newExpiry.Time)) {
+		if !AllowsExpiredActiveEphemeralOperationFailure(oldObj.Status, newObj.Status, time.Now()) {
+			errs = append(errs, field.Invalid(statusPath.Child("expiresAt"), newExpiry,
+				"an active debug session must have a future expiry"))
+		}
+	}
+
+	if oldObj.Status.Approval != nil {
+		if newObj.Status.Approval == nil {
+			if (oldObj.Status.Approval.ApprovedAt != nil && !oldObj.Status.Approval.ApprovedAt.IsZero()) ||
+				(oldObj.Status.Approval.RejectedAt != nil && !oldObj.Status.Approval.RejectedAt.IsZero()) {
+				errs = append(errs, field.Invalid(statusPath.Child("approval"), nil, "approval must not be cleared once set"))
+			}
+		} else {
+			checkTime(oldObj.Status.Approval.ApprovedAt, newObj.Status.Approval.ApprovedAt, statusPath.Child("approval").Child("approvedAt"))
+			checkTime(oldObj.Status.Approval.RejectedAt, newObj.Status.Approval.RejectedAt, statusPath.Child("approval").Child("rejectedAt"))
+		}
+	}
+
+	return errs
 }
 
-// ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
+// AllowsExpiredActiveEphemeralOperationFailure permits the controller to
+// record a failed prepared operation after an Active session's expiry has
+// elapsed. It is deliberately limited to operation evidence: the session
+// remains Active for the normal expiry reconciler to perform its lifecycle
+// effects, and every other status field must remain unchanged.
+func AllowsExpiredActiveEphemeralOperationFailure(oldStatus, newStatus DebugSessionStatus, now time.Time) bool {
+	if oldStatus.State != DebugSessionStateActive || newStatus.State != DebugSessionStateActive ||
+		oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero() ||
+		newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero() ||
+		!oldStatus.ExpiresAt.Time.Equal(newStatus.ExpiresAt.Time) || now.Before(oldStatus.ExpiresAt.Time) ||
+		oldStatus.KubectlDebugStatus == nil || newStatus.KubectlDebugStatus == nil {
+		return false
+	}
+	oldOther := oldStatus
+	newOther := newStatus
+	oldKubectl := *oldStatus.KubectlDebugStatus
+	newKubectl := *newStatus.KubectlDebugStatus
+	oldKubectl.Operations = nil
+	newKubectl.Operations = nil
+	oldOther.KubectlDebugStatus = &oldKubectl
+	newOther.KubectlDebugStatus = &newKubectl
+	if !apiequality.Semantic.DeepEqual(oldOther, newOther) {
+		return false
+	}
+	if len(validateKubectlDebugOperations(oldStatus.KubectlDebugStatus.Operations, newStatus.KubectlDebugStatus.Operations)) != 0 {
+		return false
+	}
+
+	oldByID := make(map[string]KubectlDebugOperation, len(oldStatus.KubectlDebugStatus.Operations))
+	for _, operation := range oldStatus.KubectlDebugStatus.Operations {
+		oldByID[operation.ID] = operation
+	}
+	changed := false
+	for _, operation := range newStatus.KubectlDebugStatus.Operations {
+		oldOperation, exists := oldByID[operation.ID]
+		if !exists {
+			return false
+		}
+		delete(oldByID, operation.ID)
+		if oldOperation.State == KubectlDebugOperationPrepared {
+			if !kubectlDebugOperationIntentEqual(oldOperation, operation) {
+				return false
+			}
+			if operation.State == KubectlDebugOperationFailed {
+				if operation.CompletedAt == nil || operation.CompletedAt.IsZero() {
+					return false
+				}
+				changed = true
+			} else if operation.State == KubectlDebugOperationPrepared {
+				if !apiequality.Semantic.DeepEqual(oldOperation, operation) {
+					return false
+				}
+			} else {
+				return false
+			}
+			continue
+		}
+		if !apiequality.Semantic.DeepEqual(oldOperation, operation) {
+			return false
+		}
+	}
+	for _, operation := range oldByID {
+		if operation.State == KubectlDebugOperationPrepared {
+			return false
+		}
+	}
+	return changed
+}
+
+// MaxKubectlDebugOperationHistory is the maximum retained terminal operation history.
+const MaxKubectlDebugOperationHistory = 32
+
+func isTerminalKubectlDebugOperationState(state KubectlDebugOperationState) bool {
+	return state == KubectlDebugOperationCompleted || state == KubectlDebugOperationFailed || state == KubectlDebugOperationUnknown
+}
+
+func kubectlDebugOperationIntentEqual(oldOperation, newOperation KubectlDebugOperation) bool {
+	oldOperation.State = ""
+	oldOperation.CompletedAt = nil
+	oldOperation.Message = ""
+	newOperation.State = ""
+	newOperation.CompletedAt = nil
+	newOperation.Message = ""
+	return apiequality.Semantic.DeepEqual(oldOperation, newOperation)
+}
+
+func validatePreparedKubectlDebugOperation(operation KubectlDebugOperation, path *field.Path) field.ErrorList {
+	errs := field.ErrorList{}
+	if operation.Kind != "ephemeral-container" {
+		errs = append(errs, field.Invalid(path.Child("kind"), operation.Kind, "unsupported prepared operation kind"))
+	}
+	if operation.TargetPod.Namespace == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("namespace"), "target Pod namespace is required"))
+	} else if validationErrors := validation.IsDNS1123Label(operation.TargetPod.Namespace); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(path.Child("targetPod").Child("namespace"), operation.TargetPod.Namespace, "invalid target Pod namespace"))
+	}
+	if operation.TargetPod.Name == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("name"), "target Pod name is required"))
+	} else if validationErrors := validation.IsDNS1123Subdomain(operation.TargetPod.Name); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(path.Child("targetPod").Child("name"), operation.TargetPod.Name, "invalid target Pod name"))
+	}
+	if operation.TargetPod.UID == "" {
+		errs = append(errs, field.Required(path.Child("targetPod").Child("uid"), "target Pod UID is required"))
+	}
+	intentPath := path.Child("ephemeralContainer")
+	if operation.EphemeralContainer.Name == "" {
+		errs = append(errs, field.Required(intentPath.Child("name"), "ephemeral container name is required"))
+	} else if validationErrors := validation.IsDNS1123Label(operation.EphemeralContainer.Name); len(validationErrors) > 0 {
+		errs = append(errs, field.Invalid(intentPath.Child("name"), operation.EphemeralContainer.Name, "invalid ephemeral container name"))
+	}
+	if operation.EphemeralContainer.Image == "" {
+		errs = append(errs, field.Required(intentPath.Child("image"), "ephemeral container image is required"))
+	}
+	if operation.EphemeralContainer.ContainerDigest == "" {
+		errs = append(errs, field.Required(intentPath.Child("containerDigest"), "container digest is required"))
+	}
+	if operation.EphemeralContainer.SecurityContextDigest == "" {
+		errs = append(errs, field.Required(intentPath.Child("securityContextDigest"), "security context digest is required"))
+	}
+	if operation.RequestedBy == "" {
+		errs = append(errs, field.Required(path.Child("requestedBy"), "requesting actor is required"))
+	}
+	if operation.PreparedAt.IsZero() {
+		errs = append(errs, field.Required(path.Child("preparedAt"), "prepared timestamp is required"))
+	}
+	if operation.CompletedAt != nil {
+		errs = append(errs, field.Invalid(path.Child("completedAt"), operation.CompletedAt, "Prepared operations must not have terminal metadata"))
+	}
+	if operation.Message != "" {
+		errs = append(errs, field.Invalid(path.Child("message"), operation.Message, "Prepared operations must not have terminal metadata"))
+	}
+	return errs
+}
+
+func validateKubectlDebugOperations(oldOperations, newOperations []KubectlDebugOperation) field.ErrorList {
+	operationsPath := field.NewPath("status").Child("kubectlDebugStatus").Child("operations")
+	errs := field.ErrorList{}
+	oldByID := make(map[string]KubectlDebugOperation, len(oldOperations))
+	oldTerminalIDs := make([]string, 0, len(oldOperations))
+	for _, operation := range oldOperations {
+		oldByID[operation.ID] = operation
+		if isTerminalKubectlDebugOperationState(operation.State) {
+			oldTerminalIDs = append(oldTerminalIDs, operation.ID)
+		}
+	}
+	newByID := make(map[string]KubectlDebugOperation, len(newOperations))
+	newFinalized := 0
+	for index, operation := range newOperations {
+		path := operationsPath.Index(index)
+		if operation.ID == "" {
+			errs = append(errs, field.Invalid(path.Child("id"), operation.ID, "operation ID must not be empty"))
+			continue
+		}
+		if _, exists := newByID[operation.ID]; exists {
+			errs = append(errs, field.Invalid(path.Child("id"), operation.ID, "operation IDs must be unique"))
+			continue
+		}
+		newByID[operation.ID] = operation
+		oldOperation, exists := oldByID[operation.ID]
+		if !exists {
+			if operation.State != KubectlDebugOperationPrepared {
+				errs = append(errs, field.Invalid(path.Child("state"), operation.State, "new operations must start in Prepared state"))
+			} else {
+				errs = append(errs, validatePreparedKubectlDebugOperation(operation, path)...)
+			}
+			continue
+		}
+		if oldOperation.State == KubectlDebugOperationPrepared {
+			if !kubectlDebugOperationIntentEqual(oldOperation, operation) {
+				errs = append(errs, field.Invalid(path, operation, "prepared operation intent is immutable"))
+			}
+			switch {
+			case operation.State == KubectlDebugOperationPrepared:
+			case isTerminalKubectlDebugOperationState(operation.State) && operation.CompletedAt != nil && !operation.CompletedAt.IsZero():
+				newFinalized++
+			default:
+				errs = append(errs, field.Invalid(path.Child("state"), operation.State, "prepared operations may only remain Prepared or transition to a terminal state with completedAt"))
+			}
+			continue
+		}
+		if !isTerminalKubectlDebugOperationState(oldOperation.State) || !reflect.DeepEqual(oldOperation, operation) {
+			errs = append(errs, field.Invalid(path, operation, "retained terminal operation evidence is immutable"))
+		}
+	}
+	for _, operation := range oldOperations {
+		if operation.State == KubectlDebugOperationPrepared {
+			if _, exists := newByID[operation.ID]; !exists {
+				errs = append(errs, field.Invalid(operationsPath, newOperations, "prepared operation must not be removed"))
+			}
+		}
+	}
+	removedTerminalIDs := make([]string, 0)
+	for _, id := range oldTerminalIDs {
+		if _, exists := newByID[id]; !exists {
+			removedTerminalIDs = append(removedTerminalIDs, id)
+		}
+	}
+	if reflect.DeepEqual(oldOperations, newOperations) {
+		return errs
+	}
+	excess := len(oldTerminalIDs) + newFinalized - MaxKubectlDebugOperationHistory
+	if excess < 0 {
+		excess = 0
+	}
+	if len(removedTerminalIDs) != excess {
+		errs = append(errs, field.Invalid(operationsPath, newOperations, "terminal operation history may only compact the oldest excess records"))
+	} else {
+		for index, id := range removedTerminalIDs {
+			if index >= len(oldTerminalIDs) || oldTerminalIDs[index] != id {
+				errs = append(errs, field.Invalid(operationsPath, newOperations, "terminal operation history must retain newer records when compacting"))
+				break
+			}
+		}
+		retainedTerminalIndex := 0
+		seenFinalized := false
+		for _, operation := range newOperations {
+			if !isTerminalKubectlDebugOperationState(operation.State) {
+				continue
+			}
+			oldOperation, wasOld := oldByID[operation.ID]
+			if wasOld && isTerminalKubectlDebugOperationState(oldOperation.State) {
+				if seenFinalized || retainedTerminalIndex >= len(oldTerminalIDs)-len(removedTerminalIDs) ||
+					oldTerminalIDs[len(removedTerminalIDs)+retainedTerminalIndex] != operation.ID {
+					errs = append(errs, field.Invalid(operationsPath, newOperations, "retained terminal operation order must not change"))
+					break
+				}
+				retainedTerminalIndex++
+				continue
+			}
+			if wasOld && oldOperation.State == KubectlDebugOperationPrepared {
+				seenFinalized = true
+			}
+		}
+	}
+	return errs
+}
+
+func isTerminalDebugSessionState(state DebugSessionState) bool {
+	return state == DebugSessionStateRejected || state == DebugSessionStateExpired || state == DebugSessionStateTerminated || state == DebugSessionStateFailed
+}
+
+func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *DebugSession) (admission.Warnings, error) {
+	var allErrs field.ErrorList
+
+	if !reflect.DeepEqual(newObj.Spec, oldObj.Spec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
+	}
+
+	result := ValidateDebugSession(newObj)
+	if !result.IsValid() {
+		allErrs = append(allErrs, result.Errors...)
+	}
+
+	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
+	if oldObj.Status.KubectlDebugStatus != nil || newObj.Status.KubectlDebugStatus != nil {
+		var oldOperations, newOperations []KubectlDebugOperation
+		if oldObj.Status.KubectlDebugStatus != nil {
+			oldOperations = oldObj.Status.KubectlDebugStatus.Operations
+		}
+		if newObj.Status.KubectlDebugStatus != nil {
+			newOperations = newObj.Status.KubectlDebugStatus.Operations
+		}
+		allErrs = append(allErrs, validateKubectlDebugOperations(oldOperations, newOperations)...)
+	}
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
+			"resolvedTemplate is immutable once persisted"))
+	}
+	if (oldObj.Status.ResolvedBindingSpec != nil || oldObj.Status.ResolvedBindingSnapshotCaptured) && !reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
+			"resolvedBindingSpec is immutable once persisted"))
+	}
+	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedPodTemplate != nil) &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
+			"resolvedPodTemplate is immutable once the resolved template is persisted"))
+	}
+	if oldObj.Status.ResolvedBindingSnapshotCaptured && !newObj.Status.ResolvedBindingSnapshotCaptured {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSnapshotCaptured"),
+			newObj.Status.ResolvedBindingSnapshotCaptured, "resolved binding snapshot capture marker cannot be cleared"))
+	}
+	if oldObj.Status.ResolvedBindingSnapshotCaptured &&
+		!reflect.DeepEqual(oldObj.Status.ResolvedBinding, newObj.Status.ResolvedBinding) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBinding"), newObj.Status.ResolvedBinding,
+			"resolvedBinding is immutable once its snapshot is captured"))
+	}
+
+	if len(allErrs) == 0 {
+		return nil, nil
+	}
+	return nil, apierrors.NewInvalid(schema.GroupKind{Group: "breakglass.t-caas.telekom.com", Kind: "DebugSession"}, newObj.Name, allErrs)
+}
 func (ds *DebugSession) ValidateDelete(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	return nil, nil
 }

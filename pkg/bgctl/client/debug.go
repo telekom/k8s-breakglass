@@ -68,10 +68,6 @@ type CreateDebugSessionRequest struct {
 	ExtraDeployValues        map[string]interface{} `json:"extraDeployValues,omitempty"` // User-provided variable values for extraDeployVariables
 }
 
-type JoinDebugSessionRequest struct {
-	Role string `json:"role,omitempty"`
-}
-
 type RenewDebugSessionRequest struct {
 	ExtendBy string `json:"extendBy"`
 }
@@ -103,6 +99,7 @@ var canonicalDebugSessionStates = map[string]string{
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePending)):         string(breakglassv1alpha1.DebugSessionStatePending),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStatePendingApproval)): string(breakglassv1alpha1.DebugSessionStatePendingApproval),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateActive)):          string(breakglassv1alpha1.DebugSessionStateActive),
+	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateRejected)):        string(breakglassv1alpha1.DebugSessionStateRejected),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateExpired)):         string(breakglassv1alpha1.DebugSessionStateExpired),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateTerminated)):      string(breakglassv1alpha1.DebugSessionStateTerminated),
 	strings.ToLower(string(breakglassv1alpha1.DebugSessionStateFailed)):          string(breakglassv1alpha1.DebugSessionStateFailed),
@@ -111,7 +108,7 @@ var canonicalDebugSessionStates = map[string]string{
 func validateDebugSessionState(state string) (string, error) {
 	canonical, ok := canonicalDebugSessionStates[strings.ToLower(state)]
 	if !ok {
-		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Expired, Terminated, Failed", state)
+		return "", fmt.Errorf("unknown debug session state %q: supported values are Pending, PendingApproval, Active, Rejected, Expired, Terminated, Failed", state)
 	}
 	return canonical, nil
 }
@@ -170,8 +167,10 @@ func (s *DebugSessionService) Create(ctx context.Context, req CreateDebugSession
 }
 
 func (s *DebugSessionService) Join(ctx context.Context, name, role, namespace string) (*breakglassv1alpha1.DebugSession, error) {
-	payload := JoinDebugSessionRequest{Role: role}
-	return s.action(ctx, name, "join", namespace, payload)
+	if role != "" && role != "viewer" {
+		return nil, fmt.Errorf("debug session join only supports viewer role")
+	}
+	return s.action(ctx, name, "join", namespace, nil)
 }
 
 func (s *DebugSessionService) Leave(ctx context.Context, name, namespace string) (*breakglassv1alpha1.DebugSession, error) {

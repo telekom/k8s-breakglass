@@ -2,7 +2,11 @@ package cluster
 
 import (
 	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,8 +18,10 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap/zaptest"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -156,6 +162,113 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	assert.Same(t, cfg, cfg2)
 }
 
+func TestGetRESTConfigForPrivilegedOperationRejectsStaleClusterConfigCache(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	qps := int32(25)
+	spec := breakglassv1alpha1.ClusterConfigSpec{
+		KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+		QPS:                 &qps,
+	}
+	cached := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid", ResourceVersion: "1"},
+		Spec:       spec,
+	}
+	live := cached.DeepCopy()
+	live.ResourceVersion = "2"
+	live.Labels = map[string]string{"source": "uncached"}
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default"},
+		Data:       map[string][]byte{"value": mustBuildKubeconfigYAML("https://10.0.0.10:6443")},
+	}
+	cachedClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cached, secret).Build()
+	liveReader := fake.NewClientBuilder().WithScheme(scheme).WithObjects(live, secret.DeepCopy()).Build()
+	provider := NewClientProvider(cachedClient, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
+
+	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.Error(t, err)
+	assert.Nil(t, snapshot)
+	assert.Contains(t, err.Error(), "cached ClusterConfig default/privileged is stale")
+}
+
+func TestValidatePrivilegedOperationClusterConfigRejectsCredentialSecretChange(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"}},
+	}
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "kube-secret", Namespace: "default", ResourceVersion: "1"}, Data: map[string][]byte{"value": mustBuildKubeconfigYAML("https://10.0.0.10:6443")}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cc.DeepCopy(), secret.DeepCopy()).Build()
+	provider := NewClientProvider(client, zaptest.NewLogger(t).Sugar()).WithLiveReader(client)
+	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.NoError(t, err)
+	changed := &corev1.Secret{}
+	require.NoError(t, client.Get(context.Background(), ctrlclient.ObjectKeyFromObject(secret), changed))
+	changed.Data["value"] = []byte("changed")
+	require.NoError(t, client.Update(context.Background(), changed))
+	err = provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "privileged input secret/default/kube-secret changed")
+}
+
+func TestValidatePrivilegedOperationClusterConfigRejectsLiveChanges(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+
+	qps := int32(25)
+	snapshot := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "privileged", Namespace: "default", UID: "cluster-uid"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kube-secret", Namespace: "default"},
+			QPS:                 &qps,
+		},
+	}
+	now := metav1.Now()
+	tests := []struct {
+		name string
+		live *breakglassv1alpha1.ClusterConfig
+		want string
+	}{
+		{name: "deleted", want: "not found"},
+		{name: "deleting", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			object.Finalizers = []string{"test.example/finalizer"}
+			object.DeletionTimestamp = &now
+			return object
+		}(), want: "being deleted"},
+		{name: "replaced", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			object.UID = "replacement-uid"
+			return object
+		}(), want: "was replaced"},
+		{name: "spec changed", live: func() *breakglassv1alpha1.ClusterConfig {
+			object := snapshot.DeepCopy()
+			changedQPS := int32(50)
+			object.Spec.QPS = &changedQPS
+			return object
+		}(), want: "spec changed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(scheme)
+			if tt.live != nil {
+				builder = builder.WithObjects(tt.live)
+			}
+			liveReader := builder.Build()
+			provider := NewClientProvider(liveReader, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
+
+			err := provider.ValidatePrivilegedOperationClusterConfig(context.Background(), snapshot)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
 func TestGetRESTConfig_MissingSecretKey(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = clientgoscheme.AddToScheme(scheme)
@@ -279,6 +392,245 @@ func TestInvalidateSecret_EvictsTrackedEntries(t *testing.T) {
 func TestIsSecretTracked_FalseForUnknownSecret(t *testing.T) {
 	provider := NewClientProvider(fake.NewClientBuilder().Build(), zaptest.NewLogger(t).Sugar())
 	assert.False(t, provider.IsSecretTracked("default", "missing"))
+}
+
+func TestTrackOIDCSecrets_TracksImplicitKeycloakSecret(t *testing.T) {
+	for _, mode := range []string{"inherited", "refresh fallback", "refresh warn", "refresh empty", "refresh none", "explicit override"} {
+		t.Run(mode, func(t *testing.T) {
+			var issuer string
+			grants := make(chan string, 10)
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+					_, _ = fmt.Fprintf(w, `{"token_endpoint":%q}`, issuer+"/token")
+					return
+				}
+				if err := r.ParseForm(); err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				if r.Form.Get("grant_type") == "refresh_token" && mode != "refresh empty" && mode != "refresh none" {
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+					return
+				}
+				if r.Form.Get("grant_type") != "refresh_token" {
+					grants <- r.Form.Get("client_secret")
+				}
+				_, _ = w.Write([]byte(`{"access_token":"access","expires_in":3600,"token_type":"Bearer"}`))
+			}))
+			defer server.Close()
+			issuer = server.URL
+			scheme := runtime.NewScheme()
+			require.NoError(t, clientgoscheme.AddToScheme(scheme))
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "shared-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC:     breakglassv1alpha1.OIDCConfig{Authority: issuer, ClientID: "client"},
+				Keycloak: &breakglassv1alpha1.KeycloakGroupSync{ClientID: "service", ClientSecretRef: breakglassv1alpha1.SecretKeyReference{Name: "keycloak-secret", Namespace: "identity", Key: "value"}},
+			}}
+			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret", Namespace: "identity"}, Data: map[string][]byte{"value": []byte("inherited-secret")}}
+			explicit := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "explicit-secret", Namespace: "workloads"}, Data: map[string][]byte{"value": []byte("explicit-secret")}}
+			refresh := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "refresh", Namespace: "workloads"}, Data: map[string][]byte{"token": []byte("expired-refresh")}}
+			ref := &breakglassv1alpha1.OIDCFromIdentityProviderConfig{Name: idp.Name, Server: issuer, InsecureSkipTLSVerify: true}
+			if strings.HasPrefix(mode, "refresh ") {
+				ref.RefreshTokenSecretRef = &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"}
+				if mode == "refresh fallback" {
+					ref.FallbackPolicy = breakglassv1alpha1.FallbackPolicyAuto
+				}
+				if mode == "refresh warn" {
+					ref.FallbackPolicy = breakglassv1alpha1.FallbackPolicyWarn
+				}
+				if mode == "refresh none" {
+					ref.FallbackPolicy = breakglassv1alpha1.FallbackPolicyNone
+				}
+			}
+			if mode == "explicit override" {
+				ref.ClientSecretRef = &breakglassv1alpha1.SecretKeyReference{Name: explicit.Name, Namespace: explicit.Namespace, Key: "value"}
+			}
+			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"}, Spec: breakglassv1alpha1.ClusterConfigSpec{AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC, OIDCFromIdentityProvider: ref}}
+			provider := NewClientProvider(fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp, secret, explicit, refresh, cc).Build(), zaptest.NewLogger(t).Sugar())
+			_, err := provider.GetRESTConfig(context.Background(), "workloads/cluster")
+			require.NoError(t, err)
+			expected := "inherited-secret"
+			if mode == "explicit override" {
+				expected = "explicit-secret"
+			}
+			expectFallback := mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn" || mode == "explicit override"
+			select {
+			case actual := <-grants:
+				if !expectFallback {
+					t.Fatalf("unexpected fallback client credential grant: %q", actual)
+				}
+				require.Equal(t, expected, actual)
+			default:
+				if expectFallback {
+					t.Fatal("real credential resolution did not obtain a token")
+				}
+			}
+			require.Equal(t, mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn", provider.IsOIDCSecretTracked("identity", "keycloak-secret"))
+			require.NotNil(t, provider.rest["workloads/cluster"])
+			require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			provider.InvalidateOIDCSecrets("identity", "keycloak-secret")
+			if mode == "inherited" || mode == "refresh fallback" || mode == "refresh warn" {
+				require.Nil(t, provider.rest["workloads/cluster"])
+				require.Nil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			} else {
+				require.NotNil(t, provider.rest["workloads/cluster"])
+				require.NotNil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			}
+			if strings.HasPrefix(mode, "refresh ") {
+				provider.InvalidateOIDCSecrets("workloads", "refresh")
+				require.Nil(t, provider.rest["workloads/cluster"])
+				require.Nil(t, provider.oidcProvider.tokens["workloads/cluster"])
+			}
+		})
+	}
+}
+
+func TestTrackOIDCSecrets_RefreshAutoToNoneClearsFallback(t *testing.T) {
+	var issuer string
+	refreshSucceeds := false
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+			_, _ = fmt.Fprintf(w, `{"token_endpoint":%q}`, issuer+"/token")
+			return
+		}
+		if r.FormValue("grant_type") == "refresh_token" && !refreshSucceeds {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"access_token":"access","expires_in":3600,"token_type":"Bearer"}`))
+	}))
+	defer server.Close()
+	issuer = server.URL
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "shared-idp"}, Spec: breakglassv1alpha1.IdentityProviderSpec{
+		OIDC:     breakglassv1alpha1.OIDCConfig{Authority: issuer, ClientID: "client"},
+		Keycloak: &breakglassv1alpha1.KeycloakGroupSync{ClientID: "service", ClientSecretRef: breakglassv1alpha1.SecretKeyReference{Name: "keycloak-secret", Namespace: "identity", Key: "value"}},
+	}}
+	cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"}, Spec: breakglassv1alpha1.ClusterConfigSpec{
+		AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+		OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{Name: idp.Name, Server: issuer, InsecureSkipTLSVerify: true, FallbackPolicy: breakglassv1alpha1.FallbackPolicyAuto,
+			RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"}},
+	}}
+	objects := []runtime.Object{idp, cc, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret", Namespace: "identity"}, Data: map[string][]byte{"value": []byte("sa")}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "refresh", Namespace: "workloads"}, Data: map[string][]byte{"token": []byte("expired")}}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build()
+	provider := NewClientProvider(client, zaptest.NewLogger(t).Sugar())
+	_, err := provider.GetRESTConfig(context.Background(), "workloads/cluster")
+	require.NoError(t, err)
+	require.True(t, provider.IsOIDCSecretTracked("identity", "keycloak-secret"))
+	cc.Spec.OIDCFromIdentityProvider.FallbackPolicy = breakglassv1alpha1.FallbackPolicyNone
+	require.NoError(t, client.Update(context.Background(), cc))
+	provider.Invalidate("workloads", "cluster")
+	refreshSucceeds = true
+	_, err = provider.GetRESTConfig(context.Background(), "workloads/cluster")
+	require.NoError(t, err)
+	require.False(t, provider.IsOIDCSecretTracked("identity", "keycloak-secret"))
+	provider.oidcProvider.fallbackMu.RLock()
+	_, fallbackPresent := provider.oidcProvider.fallbackCreds["workloads/cluster"]
+	provider.oidcProvider.fallbackMu.RUnlock()
+	require.False(t, fallbackPresent)
+	require.NotNil(t, provider.rest["workloads/cluster"])
+	provider.InvalidateOIDCSecrets("identity", "keycloak-secret")
+	require.NotNil(t, provider.rest["workloads/cluster"])
+	provider.InvalidateOIDCSecrets("workloads", "refresh")
+	require.Nil(t, provider.rest["workloads/cluster"])
+}
+
+func TestOIDCGetRESTConfig_DirectTransitionClearsInheritedFallback(t *testing.T) {
+	clientCredentialSecrets := make(chan string, 4)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "openid-configuration") {
+			issuer := "https://" + r.Host
+			_, _ = fmt.Fprintf(w, `{"issuer":%q,"token_endpoint":%q}`, issuer, issuer+"/token")
+			return
+		}
+		if r.URL.Path != "/token" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = r.ParseForm()
+		switch r.FormValue("grant_type") {
+		case "refresh_token":
+			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
+		case "client_credentials":
+			clientCredentialSecrets <- r.FormValue("client_secret")
+			_, _ = fmt.Fprint(w, `{"access_token":"fallback-token","expires_in":3600,"token_type":"Bearer"}`)
+		default:
+			http.Error(w, `{"error":"unsupported_grant_type"}`, http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+	issuer := server.URL
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "shared-idp"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{Authority: issuer, ClientID: "refresh-client"},
+			Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+				ClientID: "service-account",
+				ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+					Name: "keycloak-secret", Namespace: "identity", Key: "value",
+				},
+			},
+		},
+	}
+	cc := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "workloads"},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+				Name: "shared-idp", Server: issuer, InsecureSkipTLSVerify: true,
+				RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"},
+				FallbackPolicy:        breakglassv1alpha1.FallbackPolicyAuto,
+			},
+		},
+	}
+	objects := []runtime.Object{
+		idp,
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "keycloak-secret", Namespace: "identity"}, Data: map[string][]byte{"value": []byte("old-sa-secret")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "refresh", Namespace: "workloads"}, Data: map[string][]byte{"token": []byte("expired-refresh")}},
+	}
+	provider := NewOIDCTokenProvider(fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objects...).Build(), zaptest.NewLogger(t).Sugar())
+
+	_, err := provider.GetRESTConfig(context.Background(), cc)
+	require.NoError(t, err)
+	select {
+	case secret := <-clientCredentialSecrets:
+		require.Equal(t, "old-sa-secret", secret)
+	default:
+		t.Fatal("inherited configuration did not use its fallback credential")
+	}
+
+	key := tokenCacheKey(cc.Namespace, cc.Name)
+	provider.mu.Lock()
+	provider.tokens[key].expiresAt = time.Time{}
+	provider.mu.Unlock()
+	cc.Spec.OIDCFromIdentityProvider = nil
+	cc.Spec.OIDCAuth = &breakglassv1alpha1.OIDCAuthConfig{
+		IssuerURL: issuer, ClientID: "direct-client", Server: issuer,
+		InsecureSkipTLSVerify: true,
+		RefreshTokenSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "refresh", Namespace: "workloads", Key: "token"},
+		FallbackPolicy:        breakglassv1alpha1.FallbackPolicyAuto,
+	}
+
+	_, err = provider.GetRESTConfig(context.Background(), cc)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrRefreshTokenExpired)
+	select {
+	case secret := <-clientCredentialSecrets:
+		t.Fatalf("direct OIDC configuration reused a fallback credential: %q", secret)
+	default:
+	}
 }
 
 func TestGetAcrossAllNamespaces_DoesNotMatchSimilarNames(t *testing.T) {

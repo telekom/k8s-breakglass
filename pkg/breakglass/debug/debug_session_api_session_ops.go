@@ -18,6 +18,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
@@ -25,24 +27,12 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	var req JoinDebugSessionRequest
-	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
-		// Allow an empty body — default to viewer role.
-		// Reject malformed JSON with 400 to surface client bugs.
-		if !errors.Is(err, jsonutil.ErrEmptyBody) {
-			apiresponses.RespondBadRequest(ctx, "invalid request body: "+err.Error())
-			return
-		}
-		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
+		return
 	}
-	if req.Role == "" {
-		req.Role = string(breakglassv1alpha1.ParticipantRoleViewer)
-	}
-
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	identity, _ := debugSessionRequestIdentity(ctx)
+	if rejectUnexpectedDebugActionBody(ctx) {
 		return
 	}
 
@@ -70,13 +60,6 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	// Check if user already joined
-	username, ok := currentUser.(string)
-	if !ok {
-		apiresponses.RespondInternalErrorSimple(ctx, "invalid user context type")
-		return
-	}
-
 	// Get email from context (set by auth middleware from "email" claim)
 	userEmail := ""
 	if email, exists := ctx.Get("email"); exists && email != nil {
@@ -86,7 +69,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	}
 
 	for _, p := range session.Status.Participants {
-		if p.User == username {
+		if debugSessionIdentityMatchesProvider(identity, p.IdentityProviderName, p.IdentityProviderIssuer, p.User, p.Email) {
 			apiresponses.RespondConflict(ctx, "user already joined this session")
 			return
 		}
@@ -97,7 +80,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	if !isInvitedDebugSessionParticipant(session, username, userEmail) {
+	if !debugSessionProviderMatches(identity, session) || !isInvitedDebugSessionParticipant(session, username, userEmail) {
 		apiresponses.RespondForbidden(ctx, "user is not invited to join this debug session")
 		return
 	}
@@ -113,16 +96,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Determine role
 	role := breakglassv1alpha1.ParticipantRoleViewer
-	if req.Role == string(breakglassv1alpha1.ParticipantRoleParticipant) {
-		apiresponses.RespondForbidden(ctx, "participant role requires owner assignment")
-		return
-	}
-	if req.Role != string(breakglassv1alpha1.ParticipantRoleViewer) {
-		apiresponses.RespondBadRequest(ctx, "invalid participant role")
-		return
-	}
 
 	// Get display name from context (set by auth middleware from "name" claim)
 	displayName := ""
@@ -134,17 +108,20 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 
 	// Add participant
 	now := metav1.Now()
-	session.Status.Participants = append(session.Status.Participants, breakglassv1alpha1.DebugSessionParticipant{
-		User:        username,
-		Email:       userEmail,
-		DisplayName: displayName,
-		Role:        role,
-		JoinedAt:    now,
-	})
+	participant := breakglassv1alpha1.DebugSessionParticipant{
+		User:                   username,
+		Email:                  userEmail,
+		IdentityProviderName:   ctx.GetString("identity_provider_name"),
+		IdentityProviderIssuer: ctx.GetString("issuer"),
+		DisplayName:            displayName,
+		Role:                   role,
+		JoinedAt:               now,
+	}
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to add participant", "session", name, "user", username, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to join session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = append(status.Participants, participant)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "add participant", "failed to join session", name, err)
 		return
 	}
 
@@ -266,13 +243,37 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	session.Status.ExpiresAt = &newExpiry
-	session.Status.RenewalCount++
-
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to renew session", "session", name, "error", err)
+	newRenewalCount := session.Status.RenewalCount + 1
+	// Re-read immediately before the status patch. The status mutation path and
+	// admission webhook both repeat the strict time check at the API boundary.
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+		reqLog.Errorw("Failed to re-read debug session before renewal", "session", name, "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
 		return
+	}
+	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
+		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+		live.Status.ExpiresAt == nil || !time.Now().Before(live.Status.ExpiresAt.Time) {
+		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
+		return
+	}
+	session = live
+	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
+
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ExpiresAt = &newExpiry
+		status.RenewalCount = newRenewalCount
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
+		return
+	}
+
+	// Session status is the durable renewal commit. A target Job update is
+	// best-effort here and is retried by the active reconciler from that commit;
+	// a target failure must not turn an accepted renewal into a client retry.
+	if err := c.extendTrackedJobDeadlines(apiCtx, session, newExpiry); err != nil {
+		reqLog.Warnw("Renewal committed; will retry extending debug workload deadline", "name", name, "error", err)
 	}
 
 	reqLog.Infow("Debug session renewed",
@@ -288,12 +289,44 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	})
 }
 
+// extendTrackedJobDeadlines keeps Kubernetes Job termination aligned with a
+// renewed session. Job activeDeadlineSeconds is relative to the Job start, so
+// this derives an absolute deadline from the resulting session expiry instead
+// of adding to the existing field. That makes a retry after a status conflict
+// idempotent. A UID fence prevents a same-name replacement from being changed.
+func (c *DebugSessionAPIController) extendTrackedJobDeadlines(ctx context.Context, session *breakglassv1alpha1.DebugSession, newExpiry metav1.Time) error {
+	if !hasTrackedDebugJob(session) {
+		return nil
+	}
+	provider := c.clusterClients
+	if provider == nil {
+		if c.ccProvider == nil {
+			return fmt.Errorf("cluster client provider is not configured")
+		}
+		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
+	}
+	targetClient, configured, err := provider.GetClientForPrivilegedOperation(ctx, session.Spec.Cluster)
+	if err != nil {
+		return fmt.Errorf("get target client for debug session %q: %w", session.Name, err)
+	}
+	defer releasePrivilegedOperationSnapshot(provider, configured)
+	if targetClient == nil {
+		return fmt.Errorf("target client for debug session %q is unavailable", session.Name)
+	}
+	return syncTrackedDebugJobDeadlines(ctx, targetClient, session, newExpiry, func(fenceCtx context.Context, requested metav1.Time) (metav1.Time, error) {
+		if err := provider.ValidatePrivilegedOperationClusterConfig(fenceCtx, configured); err != nil {
+			return requested, fmt.Errorf("privileged target configuration changed: %w", err)
+		}
+		return liveDebugSessionDeadline(fenceCtx, c.reader(), session, requested)
+	})
+}
+
 func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	if debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return true
 	}
 	for _, participant := range session.Status.Participants {
-		if participant.LeftAt != nil || !debugSessionIdentityMatches(identity, participant.User, participant.Email) {
+		if participant.LeftAt != nil || !debugSessionIdentityMatchesProvider(identity, participant.IdentityProviderName, participant.IdentityProviderIssuer, participant.User, participant.Email) {
 			continue
 		}
 		if participant.Role == breakglassv1alpha1.ParticipantRoleOwner ||
@@ -306,6 +339,14 @@ func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity deb
 
 func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
 	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
+}
+
+func rejectUnexpectedDebugActionBody(ctx *gin.Context) bool {
+	if err := jsonutil.RequireEmptyBody(ctx.Request.Body); err != nil {
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return true
+	}
+	return false
 }
 
 func isTerminalSharingEnabledForJoin(session *breakglassv1alpha1.DebugSession) bool {
@@ -338,18 +379,12 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
-	currentUserStr, ok := currentUser.(string)
-	if !ok || strings.TrimSpace(currentUserStr) == "" {
-		apiresponses.RespondUnauthorized(ctx)
-		return
-	}
-	currentUserEmail := ctx.GetString("email")
+
+	identity, _ := debugSessionRequestIdentity(ctx)
 
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
@@ -367,43 +402,43 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
-	if !debugSessionRequesterMatches(session, currentUserStr, currentUserEmail) {
+	if !debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
 
 	// Check session can be terminated
-	if session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateRejected ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStateFailed {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
-	if session.Status.State != breakglassv1alpha1.DebugSessionStatePending &&
-		session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval &&
-		session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot terminate session in state '%s'", session.Status.State))
 		return
 	}
-	if session.Status.State == breakglassv1alpha1.DebugSessionStateActive && isDebugSessionExpired(session, time.Now()) {
+	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
 		return
 	}
+	if rejectUnexpectedDebugActionBody(ctx) {
+		return
+	}
 
-	// Mark as terminated
-	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Terminated by %s", currentUser)
-
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to terminate session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to terminate session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		status.Message = fmt.Sprintf("Terminated by %s", username)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "terminate session", "failed to terminate session", name, err)
 		return
 	}
 
 	// Emit audit event for session termination
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), "Debug session terminated by user")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, username, "Debug session terminated by user")
 
-	reqLog.Infow("Debug session terminated", "session", name, "user", currentUser)
+	reqLog.Infow("Debug session terminated", "session", name, "user", username)
 	metrics.DebugSessionsTerminated.WithLabelValues(session.Spec.Cluster, "user_terminated").Inc()
 
 	// Return updated session - client expects the session object, not just a message
@@ -416,12 +451,12 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	currentUser := identity.username
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
@@ -451,35 +486,28 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-	if debugSessionProviderProvenanceMissing(session, ctx) {
-		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
+	// Check if user is authorized to approve (in allowed approver groups)
+	if !c.isIdentityAuthorizedToApprove(apiCtx, session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 		return
 	}
 
-	// Check if user is authorized to approve (in allowed approver groups)
-	userGroups, _ := ctx.Get("groups")
-	currentUserEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		currentUserEmail, _ = email.(string)
-	}
-	if debugSessionRequesterMatches(session, currentUser.(string), currentUserEmail) {
-		apiresponses.RespondForbidden(ctx, "self-approval is not allowed for this debug session")
-		return
-	}
-	authorized := (ctx.GetString("identity_provider_name") == "" || debugSessionProviderMatchesRequest(session, ctx)) &&
-		c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups)
-	if !authorized {
-		var err error
-		authorized, err = c.isProviderAwareBreakglassApprover(apiCtx, ctx, session, currentUser.(string), currentUserEmail)
-		if err != nil {
-			reqLog.Warnw("Failed to resolve provider-aware Breakglass approver authorization",
-				"session", name, "error", err)
-			apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve approver authorization")
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser, reason, timeoutNow); err != nil {
+			if apierrors.IsConflict(err) {
+				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+				return
+			}
+			reqLog.Errorw("Failed to mark timed-out debug session approval", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
 			return
 		}
-	}
-	if !authorized {
-		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
+		apiresponses.RespondConflict(ctx, reason)
 		return
 	}
 
@@ -494,16 +522,20 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	// Mark as approved
 	now := metav1.Now()
-	if session.Status.Approval == nil {
-		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
+	approval := &breakglassv1alpha1.DebugSessionApproval{}
+	if session.Status.Approval != nil {
+		existingApproval := *session.Status.Approval
+		approval = &existingApproval
 	}
-	session.Status.Approval.ApprovedBy = currentUser.(string)
-	session.Status.Approval.ApprovedAt = &now
-	session.Status.Approval.Reason = req.Reason
+	approval.ApprovedBy = currentUser
+	approval.ApprovedByIdentityProvider = ctx.GetString("identity_provider_name")
+	approval.ApprovedAt = &now
+	approval.Reason = req.Reason
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to approve session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to approve session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Approval = approval
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "approve session", "failed to approve session", name, err)
 		return
 	}
 
@@ -511,7 +543,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	c.sendDebugSessionApprovalEmail(apiCtx, session)
 
 	// Emit audit event for session approval
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser.(string), "Debug session approved")
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionStarted, session, currentUser, "Debug session approved")
 
 	reqLog.Infow("Debug session approved", "session", name, "approver", currentUser)
 	metrics.DebugSessionApproved.WithLabelValues(session.Spec.Cluster, "user").Inc()
@@ -526,12 +558,12 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
+	identity, ok := debugSessionRequestIdentity(ctx)
+	if !ok {
 		apiresponses.RespondUnauthorized(ctx)
 		return
 	}
+	currentUser := identity.username
 
 	var req ApprovalRequest
 	if err := decodeDebugJSONStrict(ctx.Request.Body, &req); err != nil {
@@ -561,20 +593,28 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
-	if debugSessionProviderProvenanceMissing(session, ctx) {
-		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
+	// Check if user is authorized to reject (in allowed approver groups)
+	if !c.isIdentityAuthorizedToApprove(apiCtx, session, identity) {
+		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
+		return
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
 		return
 	}
 
-	// Check if user is authorized to reject (in allowed approver groups)
-	userGroups, _ := ctx.Get("groups")
-	currentUserEmail := ""
-	if email, exists := ctx.Get("email"); exists && email != nil {
-		currentUserEmail, _ = email.(string)
-	}
-	if (ctx.GetString("identity_provider_name") != "" && !debugSessionProviderMatchesRequest(session, ctx)) ||
-		!c.isUserIdentityAuthorizedToApprove(apiCtx, session, currentUser.(string), currentUserEmail, userGroups) {
-		apiresponses.RespondForbidden(ctx, "user is not authorized to reject this session")
+	timeoutNow := time.Now()
+	if timedOut, reason := debugSessionApprovalTimedOut(session, timeoutNow); timedOut {
+		if err := c.failTimedOutDebugSessionApproval(apiCtx, session, currentUser, reason, timeoutNow); err != nil {
+			if apierrors.IsConflict(err) {
+				apiresponses.RespondConflict(ctx, "debug session approval has already been decided")
+				return
+			}
+			reqLog.Errorw("Failed to mark timed-out debug session rejection", "session", name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to update timed-out debug session")
+			return
+		}
+		apiresponses.RespondConflict(ctx, reason)
 		return
 	}
 
@@ -591,20 +631,22 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 
 	// Mark as rejected
 	now := metav1.Now()
-	if session.Status.Approval == nil {
-		session.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{}
+	approval := &breakglassv1alpha1.DebugSessionApproval{}
+	if session.Status.Approval != nil {
+		existingApproval := *session.Status.Approval
+		approval = &existingApproval
 	}
-	session.Status.Approval.RejectedBy = currentUser.(string)
-	session.Status.Approval.RejectedAt = &now
-	session.Status.Approval.Reason = sanitizedReason
+	approval.RejectedBy = currentUser
+	approval.RejectedByIdentityProvider = ctx.GetString("identity_provider_name")
+	approval.RejectedAt = &now
+	approval.Reason = sanitizedReason
 
-	// Move to terminated state
-	session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-	session.Status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
-
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to reject session", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to reject session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Approval = approval
+		status.State = breakglassv1alpha1.DebugSessionStateRejected
+		status.Message = fmt.Sprintf("Rejected by %s: %s", currentUser, sanitizedReason)
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "reject session", "failed to reject session", name, err)
 		return
 	}
 
@@ -612,7 +654,7 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	c.sendDebugSessionRejectionEmail(apiCtx, session)
 
 	// Emit audit event for session rejection
-	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionTerminated, session, currentUser.(string), fmt.Sprintf("Debug session rejected: %s", req.Reason))
+	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionRejected, session, currentUser, fmt.Sprintf("Debug session rejected: %s", req.Reason))
 
 	reqLog.Infow("Debug session rejected", "session", name, "rejector", currentUser, "reason", req.Reason)
 	metrics.DebugSessionRejected.WithLabelValues(session.Spec.Cluster, "user_rejected").Inc()
@@ -621,16 +663,85 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, session)
 }
 
+func debugSessionApprovalTimedOut(session *breakglassv1alpha1.DebugSession, now time.Time) (bool, string) {
+	if session.CreationTimestamp.IsZero() {
+		return false, ""
+	}
+	if debugSessionApprovalDecisionRecorded(session) {
+		return false, ""
+	}
+
+	timeout := breakglass.DebugSessionApprovalTimeout
+	if !session.CreationTimestamp.Add(timeout).Before(now) {
+		return false, ""
+	}
+
+	return true, fmt.Sprintf("Approval timed out after %s", timeout)
+}
+
+func debugSessionApprovalDecisionRecorded(session *breakglassv1alpha1.DebugSession) bool {
+	return session.Status.Approval != nil &&
+		(session.Status.Approval.ApprovedAt != nil || session.Status.Approval.RejectedAt != nil)
+}
+
+func debugSessionApprovalDecisionConflict(session *breakglassv1alpha1.DebugSession) error {
+	return apierrors.NewConflict(schema.GroupResource{
+		Group:    breakglassv1alpha1.GroupVersion.Group,
+		Resource: "debugsessions",
+	}, session.Name, errors.New("debug session approval has already been decided"))
+}
+
+func (c *DebugSessionAPIController) failTimedOutDebugSessionApproval(ctx context.Context, session *breakglassv1alpha1.DebugSession, actor, reason string, now time.Time) error {
+	latest := &breakglassv1alpha1.DebugSession{}
+	if err := c.reader().Get(ctx, ctrlclient.ObjectKeyFromObject(session), latest); err != nil {
+		return fmt.Errorf("load latest debug session before approval timeout: %w", err)
+	}
+
+	if debugSessionApprovalTimeoutAlreadyRecorded(latest) {
+		session.Status = latest.Status
+		return nil
+	}
+	if debugSessionApprovalDecisionRecorded(latest) {
+		return debugSessionApprovalDecisionConflict(latest)
+	}
+	if timedOut, latestReason := debugSessionApprovalTimedOut(latest, now); !timedOut {
+		return debugSessionApprovalDecisionConflict(latest)
+	} else if reason == "" {
+		reason = latestReason
+	}
+
+	latest.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+	latest.Status.Message = reason
+
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, latest); err != nil {
+		if apierrors.IsConflict(err) {
+			return err
+		}
+		return fmt.Errorf("mark debug session approval timed out: %w", err)
+	}
+
+	session.Status = latest.Status
+	c.sendDebugSessionFailedEmail(ctx, latest, reason)
+	if c.shouldEmitAudit(latest) {
+		c.emitDebugSessionAuditEvent(ctx, audit.EventDebugSessionApprovalTimeout, latest, actor, reason)
+	}
+	metrics.DebugSessionsFailed.WithLabelValues(latest.Spec.Cluster, latest.Spec.TemplateRef).Inc()
+	return nil
+}
+
+func debugSessionApprovalTimeoutAlreadyRecorded(session *breakglassv1alpha1.DebugSession) bool {
+	return session.Status.State == breakglassv1alpha1.DebugSessionStateFailed &&
+		strings.Contains(strings.ToLower(session.Status.Message), "approval timed out")
+}
+
 // handleLeaveDebugSession allows a participant to leave a session
 func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	reqLog := system.GetReqLogger(ctx, c.log)
 	name := ctx.Param("name")
 	namespaceHint := ctx.Query("namespace")
 
-	// Get current user
-	currentUser, exists := ctx.Get("username")
-	if !exists || currentUser == nil {
-		apiresponses.RespondUnauthorized(ctx)
+	username, ok := requireDebugSessionUsername(ctx)
+	if !ok {
 		return
 	}
 
@@ -648,11 +759,16 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		return
 	}
 
+	if rejectUnexpectedDebugActionBody(ctx) {
+		return
+	}
+
+	identity, _ := debugSessionRequestIdentity(ctx)
 	// Find the participant
-	username := currentUser.(string)
 	participantIndex := -1
-	for i := range session.Status.Participants {
-		if session.Status.Participants[i].User == username {
+	participants := append([]breakglassv1alpha1.DebugSessionParticipant(nil), session.Status.Participants...)
+	for i := range participants {
+		if participants[i].LeftAt == nil && debugSessionIdentityMatchesProvider(identity, participants[i].IdentityProviderName, participants[i].IdentityProviderIssuer, participants[i].User, participants[i].Email) {
 			participantIndex = i
 			break
 		}
@@ -662,7 +778,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 		apiresponses.RespondNotFoundSimple(ctx, "user is not a participant in this session")
 		return
 	}
-	if session.Status.Participants[participantIndex].Role == breakglassv1alpha1.ParticipantRoleOwner {
+	if participants[participantIndex].Role == breakglassv1alpha1.ParticipantRoleOwner {
 		apiresponses.RespondForbidden(ctx, "session owner cannot leave; use terminate instead")
 		return
 	}
@@ -677,18 +793,19 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 
 	now := metav1.Now()
-	session.Status.Participants[participantIndex].LeftAt = &now
+	participants[participantIndex].LeftAt = &now
 
-	if err := breakglass.ApplyDebugSessionStatus(apiCtx, c.client, session); err != nil {
-		reqLog.Errorw("Failed to leave session", "session", name, "user", username, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to leave session")
+	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.Participants = participants
+	}); err != nil {
+		respondDebugSessionStatusPatchError(ctx, reqLog, "leave session", "failed to leave session", name, err)
 		return
 	}
 
 	reqLog.Infow("User left debug session", "session", name, "user", username)
 	// Update active participant count (exclude those who left)
 	activeCount := 0
-	for _, p := range session.Status.Participants {
+	for _, p := range participants {
 		if p.LeftAt == nil {
 			activeCount++
 		}
