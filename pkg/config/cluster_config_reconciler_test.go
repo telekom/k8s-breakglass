@@ -231,12 +231,6 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 			}
 			return nil
 		}).
-		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
-			if s, ok := obj.(*breakglassv1alpha1.DebugSession); ok && s.Spec.ClusterConfigRef != "" {
-				return []string{s.Spec.ClusterConfigRef}
-			}
-			return nil
-		}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Update: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
 				updateCalls++

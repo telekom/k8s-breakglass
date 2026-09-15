@@ -167,12 +167,6 @@ func TestClusterConfigReconciler_StatusUpdateFailureBlocksDeletion(t *testing.T)
 			}
 			return nil
 		}).
-		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
-			if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok && session.Spec.ClusterConfigRef != "" {
-				return []string{session.Spec.ClusterConfigRef}
-			}
-			return nil
-		}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
 				if subResourceName == "status" && obj.GetName() == "session-1" {
