@@ -189,7 +189,7 @@ func TestClusterConfigReconciler_StatusUpdateFailureBlocksDeletion(t *testing.T)
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "session-1")
-	assert.Equal(t, 10*time.Second, result.RequeueAfter)
+	assert.Equal(t, reconcile.Result{}, result)
 
 	var updatedConfig breakglassv1alpha1.ClusterConfig
 	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedConfig))
