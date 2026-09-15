@@ -92,44 +92,6 @@ func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 				Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"security@example.com"}}, TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{Enabled: true}}},
 			}
 
-			func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
-				tests := []struct {
-					name       string
-					provider   string
-					issuer     string
-					identity   debugSessionReadIdentity
-					wantStatus int
-				}{
-					{"partial provider matches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
-					{"partial provider mismatches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
-					{"issuer matches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusOK},
-					{"issuer mismatches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
-					{"providerless migrated requester", "", "", debugSessionReadIdentity{username: "owner"}, http.StatusOK},
-					{"providerless wrong requester", "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
-				}
-				for _, tt := range tests {
-					t.Run(tt.name, func(t *testing.T) {
-						session := &breakglassv1alpha1.DebugSession{
-							ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
-							Spec: breakglassv1alpha1.DebugSessionSpec{
-								RequestedBy: "owner", IdentityProviderName: tt.provider, IdentityProviderIssuer: tt.issuer,
-							},
-							Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
-						}
-						cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
-						ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
-						rec := httptest.NewRecorder()
-						ctx, _ := gin.CreateTestContext(rec)
-						ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
-						ctx.Params = gin.Params{{Key: "name", Value: "session"}}
-						ctx.Set("username", tt.identity.username)
-						ctx.Set("identity_provider_name", tt.identity.provider)
-						ctx.Set("issuer", tt.identity.issuer)
-						ctrl.handleTerminateDebugSession(ctx)
-						require.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
-					})
-				}
-			}
 			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
 			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
 			rec := httptest.NewRecorder()
@@ -161,6 +123,45 @@ func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 				ctrl.handleInjectEphemeralContainer(ctx)
 			}
 			require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   string
+		issuer     string
+		identity   debugSessionReadIdentity
+		wantStatus int
+	}{
+		{"partial provider matches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
+		{"partial provider mismatches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
+		{"issuer matches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusOK},
+		{"issuer mismatches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
+		{"providerless migrated requester", "", "", debugSessionReadIdentity{username: "owner"}, http.StatusOK},
+		{"providerless wrong requester", "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					RequestedBy: "owner", IdentityProviderName: tt.provider, IdentityProviderIssuer: tt.issuer,
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+			}
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
+			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
+			rec := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(rec)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+			ctx.Params = gin.Params{{Key: "name", Value: "session"}}
+			ctx.Set("username", tt.identity.username)
+			ctx.Set("identity_provider_name", tt.identity.provider)
+			ctx.Set("issuer", tt.identity.issuer)
+			ctrl.handleTerminateDebugSession(ctx)
+			require.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
 		})
 	}
 }
