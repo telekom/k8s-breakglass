@@ -155,9 +155,21 @@ func TestClusterConfigReconciler_StatusUpdateFailureBlocksDeletion(t *testing.T)
 			}
 			return nil
 		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if session, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && session.Spec.ClusterConfigRef != "" {
+				return []string{session.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
 		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
 			if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok && session.Spec.Cluster != "" {
 				return []string{session.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok && session.Spec.ClusterConfigRef != "" {
+				return []string{session.Spec.ClusterConfigRef}
 			}
 			return nil
 		}).
