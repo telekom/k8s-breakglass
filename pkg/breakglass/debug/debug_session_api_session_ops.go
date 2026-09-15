@@ -402,7 +402,11 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 
 	// Check if user is allowed to terminate (owner or admin)
 	// For now, only the owner can terminate
-	if !debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	pending := session.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
+		session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval
+	pendingRetirement := pending && debugSessionPendingRetirementAuthorized(session, identity)
+	if !pendingRetirement &&
+		!debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
 		return
 	}
@@ -415,18 +419,11 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is already in terminal state '%s'", session.Status.State))
 		return
 	}
-	if session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval &&
-		!(identity.legacyAllowed && strings.TrimSpace(session.Spec.IdentityProviderName) == "" &&
-			strings.TrimSpace(session.Spec.IdentityProviderIssuer) == "") {
+	if !pendingRetirement && session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot terminate session in state '%s'", session.Status.State))
 		return
 	}
-	if session.Status.State != breakglassv1alpha1.DebugSessionStateActive &&
-		session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
-		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("cannot terminate session in state '%s'", session.Status.State))
-		return
-	}
-	if isDebugSessionExpired(session, time.Now()) {
+	if !pendingRetirement && isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot terminate expired session")
 		return
 	}

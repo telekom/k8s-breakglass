@@ -1760,6 +1760,18 @@ func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSessio
 		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 }
 
+func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session == nil || !debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		return false
+	}
+	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider != "" && identity.provider != provider {
+		return false
+	}
+	return issuer == "" || strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+}
+
 func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
 	if provider == "" && issuer == "" && !identity.legacyAllowed {
 		return false
