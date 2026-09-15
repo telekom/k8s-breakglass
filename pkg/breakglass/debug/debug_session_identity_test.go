@@ -54,6 +54,34 @@ func TestDebugSessionProviderProvenanceMissing(t *testing.T) {
 	))
 }
 
+func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example/",
+	}}
+	require.True(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://a.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-b", issuer: "https://a.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(session, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://b.example",
+	}))
+
+	legacy := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderIssuer: "https://single.example",
+	}}
+	require.True(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
+		issuer: "https://single.example", legacyAllowed: true,
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
+		issuer: "https://single.example",
+	}))
+	require.False(t, debugSessionApprovalIdentityMatches(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://a.example", legacyAllowed: true,
+	}))
+}
+
 func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 	for _, action := range []string{"get", "terminate", "renew", "join", "inject"} {
 		t.Run(action, func(t *testing.T) {
