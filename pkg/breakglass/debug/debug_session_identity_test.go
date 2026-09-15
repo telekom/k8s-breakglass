@@ -130,17 +130,21 @@ func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
 func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 	tests := []struct {
 		name       string
+		state      breakglassv1alpha1.DebugSessionState
 		provider   string
 		issuer     string
 		identity   debugSessionReadIdentity
 		wantStatus int
 	}{
-		{"partial provider matches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
-		{"partial provider mismatches", "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
-		{"issuer matches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusOK},
-		{"issuer mismatches", "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
-		{"providerless migrated requester", "", "", debugSessionReadIdentity{username: "owner"}, http.StatusOK},
-		{"providerless wrong requester", "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
+		{"pending partial provider matches", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
+		{"pending approval partial provider matches", breakglassv1alpha1.DebugSessionStatePendingApproval, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusOK},
+		{"partial provider mismatches", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
+		{"issuer matches", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusOK},
+		{"issuer mismatches", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
+		{"providerless migrated requester", breakglassv1alpha1.DebugSessionStatePending, "", "", debugSessionReadIdentity{username: "owner"}, http.StatusOK},
+		{"providerless wrong requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
+		{"single jwks issuer-only requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "https://single", debugSessionReadIdentity{username: "owner", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
+		{"active provider mismatch remains denied", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "https://issuer", debugSessionReadIdentity{username: "owner", provider: "idp-b", issuer: "https://issuer"}, http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -149,7 +153,7 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 				Spec: breakglassv1alpha1.DebugSessionSpec{
 					RequestedBy: "owner", IdentityProviderName: tt.provider, IdentityProviderIssuer: tt.issuer,
 				},
-				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+				Status: breakglassv1alpha1.DebugSessionStatus{State: tt.state},
 			}
 			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
 			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
@@ -160,6 +164,7 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 			ctx.Set("username", tt.identity.username)
 			ctx.Set("identity_provider_name", tt.identity.provider)
 			ctx.Set("issuer", tt.identity.issuer)
+			ctx.Set("legacy_identity_allowed", tt.identity.legacyAllowed)
 			ctrl.handleTerminateDebugSession(ctx)
 			require.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
 		})
