@@ -486,6 +486,10 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
 		return
 	}
+	if debugSessionProviderProvenanceMissing(session, identity) {
+		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
+		return
+	}
 	// Check if user is authorized to approve (in allowed approver groups)
 	if !c.isIdentityAuthorizedToApprove(apiCtx, session, identity) {
 		apiresponses.RespondForbidden(ctx, "user is not authorized to approve this session")
@@ -591,6 +595,10 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 	// Check session is pending approval
 	if session.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval {
 		apiresponses.RespondBadRequest(ctx, fmt.Sprintf("session is not pending approval (state: %s)", session.Status.State))
+		return
+	}
+	if debugSessionProviderProvenanceMissing(session, identity) {
+		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
 		return
 	}
 	// Check if user is authorized to reject (in allowed approver groups)
