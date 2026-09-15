@@ -16,6 +16,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -167,6 +168,13 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 			ctx.Set("legacy_identity_allowed", tt.identity.legacyAllowed)
 			ctrl.handleTerminateDebugSession(ctx)
 			require.Equal(t, tt.wantStatus, rec.Code, rec.Body.String())
+			var persisted breakglassv1alpha1.DebugSession
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKey{Name: "session", Namespace: "default"}, &persisted))
+			if tt.wantStatus == http.StatusOK {
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, persisted.Status.State)
+			} else {
+				require.Equal(t, tt.state, persisted.Status.State)
+			}
 		})
 	}
 }
