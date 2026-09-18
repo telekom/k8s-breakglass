@@ -142,6 +142,106 @@ func TestQuotaReservationSurvivesInitialStatusFailure(t *testing.T) {
 	assert.Equal(t, quotas.Ready, s.Annotations[quotas.AdmissionAnnotation])
 }
 
+func TestInitializeSessionStatusConcurrentWrites(t *testing.T) {
+	for _, scenario := range []string{"metadata", "recovery", "approved", "rejected", "replacement", "not-ready", "forbidden", "conflicts"} {
+		t.Run(scenario, func(t *testing.T) {
+			session := &breakglassv1alpha1.BreakglassSession{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "session", Namespace: "ns", UID: "original", Generation: 2,
+					Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Ready},
+				},
+			}
+			initial := breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStatePending,
+				TimeoutAt: metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(time.Hour)),
+			}
+			earlierTimeout := metav1.NewTime(initial.TimeoutAt.Add(-time.Minute))
+			writes := 0
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).
+				WithObjects(session).WithInterceptorFuncs(interceptor.Funcs{
+				SubResourceUpdate: func(ctx context.Context, underlying client.Client, subresource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					writes++
+					if scenario == "forbidden" {
+						return apierrors.NewForbidden(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), obj.GetName(), fmt.Errorf("denied"))
+					}
+					if scenario == "conflicts" {
+						return apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), obj.GetName(), fmt.Errorf("concurrent write"))
+					}
+					if writes == 1 {
+						var concurrent breakglassv1alpha1.BreakglassSession
+						require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(session), &concurrent))
+						switch scenario {
+						case "metadata":
+							concurrent.Labels = map[string]string{"concurrent": "preserved"}
+							require.NoError(t, underlying.Update(ctx, &concurrent))
+						case "replacement":
+							concurrent.UID = "replacement"
+							require.NoError(t, underlying.Update(ctx, &concurrent))
+						case "not-ready":
+							concurrent.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
+							require.NoError(t, underlying.Update(ctx, &concurrent))
+						default:
+							concurrent.Status.State = breakglassv1alpha1.SessionStatePending
+							if scenario == "approved" {
+								concurrent.Status.State = breakglassv1alpha1.SessionStateApproved
+							} else if scenario == "rejected" {
+								concurrent.Status.State = breakglassv1alpha1.SessionStateRejected
+							}
+							concurrent.Status.TimeoutAt = earlierTimeout
+							require.NoError(t, underlying.Status().Update(ctx, &concurrent))
+						}
+					}
+					return underlying.SubResource(subresource).Update(ctx, obj, opts...)
+				},
+			}).Build()
+			manager := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+			err := manager.initializeSessionStatus(t.Context(), session, initial)
+			var stored breakglassv1alpha1.BreakglassSession
+			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), &stored))
+			switch scenario {
+			case "metadata":
+				require.NoError(t, err)
+				assert.Equal(t, 2, writes)
+				assert.Equal(t, "preserved", stored.Labels["concurrent"])
+				assert.True(t, initial.TimeoutAt.Equal(&stored.Status.TimeoutAt))
+				assert.Equal(t, stored.Generation, stored.Status.ObservedGeneration)
+			case "recovery":
+				require.NoError(t, err)
+				assert.Equal(t, 1, writes)
+				assert.True(t, earlierTimeout.Equal(&stored.Status.TimeoutAt))
+			case "approved", "rejected":
+				require.ErrorContains(t, err, "refusing to initialize session")
+				assert.True(t, earlierTimeout.Equal(&stored.Status.TimeoutAt))
+				if scenario == "approved" {
+					assert.Equal(t, breakglassv1alpha1.SessionStateApproved, stored.Status.State)
+				} else {
+					assert.Equal(t, breakglassv1alpha1.SessionStateRejected, stored.Status.State)
+				}
+			case "replacement":
+				require.ErrorContains(t, err, "session UID changed")
+				assert.Equal(t, types.UID("replacement"), stored.UID)
+				assert.Empty(t, stored.Status.State)
+			case "not-ready":
+				require.ErrorContains(t, err, "session admission is not ready")
+				assert.Empty(t, stored.Status.State)
+			case "forbidden":
+				require.True(t, apierrors.IsForbidden(err), "%v", err)
+				assert.Equal(t, 1, writes)
+				assert.Empty(t, stored.Status.State)
+			case "conflicts":
+				require.True(t, apierrors.IsConflict(err), "%v", err)
+				assert.Greater(t, writes, 1)
+				assert.Empty(t, stored.Status.State)
+			}
+			if err == nil {
+				assert.Equal(t, breakglassv1alpha1.SessionStatePending, stored.Status.State)
+				assert.Equal(t, stored.ResourceVersion, session.ResourceVersion)
+				assert.Equal(t, stored.Status, session.Status)
+			}
+		})
+	}
+}
+
 func TestQuotaAdmissionCompletionRetriesSameUIDConflict(t *testing.T) {
 	esc := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "esc"}}
 	session := &breakglassv1alpha1.BreakglassSession{

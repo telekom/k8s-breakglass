@@ -133,6 +133,53 @@ This includes:
 - Kafka for audit testing
 - NodePort services for local access
 
+## Dependency updates
+
+[Dependabot configuration](../.github/dependabot.yml) checks supported
+dependencies daily. A root Docker directory is not recursive: add each new
+Docker build context or Kubernetes manifest directory to its `directories` list.
+
+| Dependency surface | Update owner |
+| --- | --- |
+| Root `go.mod` / `go.sum`, including indirect modules | Dependabot `gomod` |
+| Frontend `package.json` / `package-lock.json`, production and development dependencies | Dependabot `npm` |
+| Pinned actions in `.github/workflows/` | Dependabot `github-actions` |
+| Root Dockerfile, seven utility build contexts, and `e2e/images/tmux-debug` | Dependabot `docker` |
+| Image references in `config/dev/resources`, its `crs` directory, `config/samples`, and `e2e/fixtures/templates` | Dependabot `docker`, where the Kubernetes image parser recognizes the reference |
+| Chart dependencies and supported image references in both `charts/*` charts | Dependabot `helm` |
+
+`Dockerfile.validator` is a compatibility symlink; Dependabot updates its
+canonical `utils/cluster-validator/Dockerfile` instead. Generated CRD schemas
+are not dependency manifests. Our own `ghcr.io/telekom/k8s-breakglass*` image
+references, including zero-digest catalogue placeholders, are excluded from
+external updates: the signed release pipeline supplies verified immutable
+digests. Dependabot security alerts and security updates are repository settings,
+separate from this version-update configuration.
+
+### Pins outside Dependabot support
+
+Dependabot cannot update arbitrary shell variables, `RUN apk add` / `apt-get`
+package versions, tool checksums, or custom dependency inventories. Do not treat
+a green Dependabot run as proof that these are current:
+
+| Pins | Required maintenance |
+| --- | --- |
+| Root `versions.env` | Review controller-tools, kustomize, golangci-lint, setup-envtest, envtest Kubernetes, and govulncheck versions. The weekly `Check Tool Updates` workflow reports only the first three; it is not an exhaustive updater. |
+| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Refresh replaced APK revisions and Alpine runtime assertions together. Check both Alpine architectures; repositories can remove old package revisions without changing the pinned base digest. Review pinned Debian builder packages too. |
+| `pwru` and `kubestr` build inputs | Update tool version, module sum or commit, dependency overrides, and corresponding inventories together; verify upstream immutable inputs before rebuilding. |
+| kind, Kubernetes node images, Keycloak and other images embedded in shell scripts or workflow `run` blocks | Update all copies and associated checksums explicitly. The Actions updater manages `uses:` references, not arbitrary shell downloads. |
+| Image metadata, OCI base labels, third-party inventories, and generated SBOMs | Synchronize these with every Dockerfile base or package update. Dependabot does not maintain these mirrors automatically. |
+
+Keep immutable digests and exact package constraints. For image update PRs, run
+the image's helper tests, multi-architecture build, real-tool integration, and
+vulnerability checks before merging; regenerate release SBOM/provenance from
+the resulting images. For controller/tool updates, run `make lint` and
+`make test`, plus `make generate manifests` when code-generation inputs change.
+
+GitHub's [options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
+and [supported ecosystems](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories)
+define the native coverage boundaries.
+
 ## Testing
 
 ### Unit Tests
