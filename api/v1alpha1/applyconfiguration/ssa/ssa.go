@@ -347,6 +347,9 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ResolvedTemplateLabels != nil {
 		result.WithResolvedTemplateLabels(status.ResolvedTemplateLabels)
 	}
+	if status.ResolvedTemplateIdentityCaptured {
+		result.WithResolvedTemplateIdentityCaptured(true)
+	}
 	for i := range status.ResolvedTemplateVariablePolicy {
 		result.WithResolvedTemplateVariablePolicy(ExtraDeployVariableFrom(&status.ResolvedTemplateVariablePolicy[i]))
 	}

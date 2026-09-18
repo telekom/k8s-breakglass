@@ -34,6 +34,7 @@ func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T)
 			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"yes\"\n"
 			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
 			ds.Status.ResolvedBindingSnapshotCaptured = true
 			if constrained {
 				ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"extraDeployVariables":[{"name":"hidden","disabled":true}]}`)}
@@ -70,6 +71,25 @@ func TestLegacyPendingUsesPersistedPolicyAfterLiveTemplateRotation(t *testing.T)
 			require.Equal(t, "yes", deployment.Spec.Template.Spec.NodeSelector["approved"])
 		})
 	}
+}
+
+func TestLegacyInlineTemplateSnapshotWithoutIdentityFailsClosed(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.ResolvedTemplateVariablePolicy = []breakglassv1alpha1.ExtraDeployVariable{}
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+
+	_, err := c.handlePending(t.Context(), ds)
+	require.NoError(t, err)
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), persisted))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, persisted.Status.State)
+	require.Contains(t, persisted.Status.Message, "identity metadata")
+	deployments := &appsv1.DeploymentList{}
+	require.NoError(t, target.List(t.Context(), deployments))
+	require.Empty(t, deployments.Items)
 }
 
 func TestBindingDefaultAdmissionDoesNotMaterializeHiddenTemplateDefaults(t *testing.T) {
@@ -309,6 +329,7 @@ func TestActivationUsesApprovedPodReferenceBeforeLiveTemplate(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	require.NoError(t, c.client.Status().Update(t.Context(), ds))
 	template.Spec.PodTemplateRef = &breakglassv1alpha1.DebugPodTemplateReference{Name: "unapproved-live-reference"}
@@ -443,6 +464,7 @@ func TestApprovedSnapshotActivationAfterTemplateDeletion(t *testing.T) {
 			require.NoError(t, c.client.Update(t.Context(), ds))
 			ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
 			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
 			ds.Status.ResolvedBindingSnapshotCaptured = true
 			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: true}
 			if scenario != "unapproved" {

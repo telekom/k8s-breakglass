@@ -57,11 +57,11 @@ func decodeApprovedPodTemplateSnapshot(raw []byte) (*breakglassv1alpha1.DebugPod
 }
 
 func approvedTemplateLabelsFromStatus(status breakglassv1alpha1.DebugSessionStatus) (map[string]string, error) {
-	if len(status.ResolvedTemplateLabels) > 0 {
+	if status.ResolvedTemplateIdentityCaptured {
 		return cloneStringMap(status.ResolvedTemplateLabels), nil
 	}
 	if status.ResolvedPodTemplate == nil {
-		return nil, nil
+		return nil, fmt.Errorf("legacy snapshot lacks durable template identity metadata")
 	}
 	_, _, templateLabels, err := decodeApprovedPodTemplateSnapshot(status.ResolvedPodTemplate.Raw)
 	if err != nil {
@@ -88,7 +88,8 @@ func hasPartialResolvedBindingSnapshot(status breakglassv1alpha1.DebugSessionSta
 		status.ResolvedBinding != nil ||
 		status.ResolvedBindingSpec != nil ||
 		status.ResolvedPodTemplate != nil ||
-		status.ResolvedTemplateLabels != nil
+		status.ResolvedTemplateLabels != nil ||
+		status.ResolvedTemplateIdentityCaptured
 }
 
 func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {

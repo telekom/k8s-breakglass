@@ -399,6 +399,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
 	ds.Status.ResolvedTemplateLabels = cloneStringMap(template.Labels)
+	ds.Status.ResolvedTemplateIdentityCaptured = true
 	ds.Status.ResolvedTemplateVariablePolicy = template.Spec.DeepCopy().ExtraDeployVariables
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {

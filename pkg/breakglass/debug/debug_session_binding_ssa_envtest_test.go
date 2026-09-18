@@ -99,7 +99,12 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 			if hasVariables {
 				template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "hidden", InputType: breakglassv1alpha1.InputTypeText, Disabled: true}}
 			}
-			persisted.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending, ResolvedTemplate: template.Spec.DeepCopy(), ResolvedBindingSnapshotCaptured: true}
+			persisted.Status = breakglassv1alpha1.DebugSessionStatus{
+				State:                            breakglassv1alpha1.DebugSessionStatePending,
+				ResolvedTemplate:                 template.Spec.DeepCopy(),
+				ResolvedTemplateIdentityCaptured: true,
+				ResolvedBindingSnapshotCaptured:  true,
+			}
 			require.NoError(t, ssa.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
 			require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(persisted), persisted))
 			require.Equal(t, template.Spec.PodOverridesTemplate, persisted.Status.ResolvedTemplate.PodOverridesTemplate)
