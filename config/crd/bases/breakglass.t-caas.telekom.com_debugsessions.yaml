@@ -6241,6 +6241,13 @@ spec:
                     - Job
                     type: string
                 type: object
+              resolvedTemplateLabels:
+                additionalProperties:
+                  type: string
+                description: |-
+                  resolvedTemplateLabels stores the catalogue identity labels from the
+                  approved template independently of its pod-template representation.
+                type: object
               resolvedTemplateVariablePolicy:
                 description: |-
                   resolvedTemplateVariablePolicy stores the original template variable
