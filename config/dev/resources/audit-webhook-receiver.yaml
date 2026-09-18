@@ -243,7 +243,7 @@ spec:
     spec:
       containers:
         - name: receiver
-          image: python:3.11-slim
+          image: python:3.14-slim
           imagePullPolicy: IfNotPresent
           command: ["python3", "/app/server.py"]
           ports:
