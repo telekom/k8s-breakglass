@@ -19,6 +19,7 @@ package config
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1312,6 +1313,38 @@ func TestClusterConfigReconciler_RetentionResolutionFailurePreservesPending(t *t
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), live))
 	require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, live.Status.State)
 	require.Nil(t, live.Status.RetainedUntil)
+}
+
+func TestClusterConfigTerminationStampsZeroRetention(t *testing.T) {
+	for _, captured := range []bool{false, true} {
+		t.Run(fmt.Sprint(captured), func(t *testing.T) {
+			scheme := newTestClusterConfigReconcilerScheme()
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: "retention"},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+					RetainFor: "2h",
+				}},
+			}
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "pending-zero-retention", Namespace: "default", UID: "uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster", TemplateRef: template.Name},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStatePendingApproval, RetainedUntil: &metav1.Time{},
+				},
+			}
+			if captured {
+				session.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			}
+			hub := newTestClusterConfigFakeClient(scheme, session, template)
+			r := &ClusterConfigReconciler{Client: hub, Scheme: scheme, Log: zap.NewNop().Sugar()}
+			before := time.Now()
+			require.NoError(t, r.terminateDebugSessionsForCluster(context.Background(), "cluster", r.Log))
+			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, session.Status.State)
+			require.NotNil(t, session.Status.RetainedUntil)
+			require.WithinDuration(t, before.Add(2*time.Hour), session.Status.RetainedUntil.Time, 2*time.Second)
+		})
+	}
 }
 
 func TestClusterConfigReconciler_AutoDiscoveredRetentionResolvedBeforeTermination(t *testing.T) {

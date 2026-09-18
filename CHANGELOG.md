@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve auxiliary cleanup evidence on UID/source mismatches, stamp explicit
+  retention when a stored deadline is zero, and deny active-session API actions
+  with a missing hard expiry (#1339).
+
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.
 - Refresh the workload-debug CA certificate package pin and network-debug

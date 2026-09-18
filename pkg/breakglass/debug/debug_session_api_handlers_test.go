@@ -644,6 +644,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State:        breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:    &metav1.Time{Time: time.Now().Add(time.Hour)},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{},
 		},
 	}
@@ -922,7 +923,8 @@ func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
 			TemplateRef: "test-template",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
 			},
@@ -1244,7 +1246,8 @@ func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 			TemplateRef: "test-template",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 		},
 	}
 

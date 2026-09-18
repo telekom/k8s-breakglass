@@ -341,6 +341,9 @@ func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Ti
 	if session == nil {
 		return false
 	}
+	if session.Status.State == breakglassv1alpha1.DebugSessionStateActive && session.Status.ExpiresAt == nil {
+		return true
+	}
 	if session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now) {
 		return true
 	}

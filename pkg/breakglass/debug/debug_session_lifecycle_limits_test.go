@@ -49,6 +49,70 @@ func TestStampDebugSessionRetentionPreservesConfiguredDuration(t *testing.T) {
 	}
 }
 
+func TestActiveSessionActionsRejectMissingExpiry(t *testing.T) {
+	for _, action := range []string{"join", "leave", "terminate"} {
+		t.Run(action, func(t *testing.T) {
+			session := newActiveKubectlDebugSession("missing-expiry", "owner", time.Now().Add(time.Hour))
+			session.Status.ExpiresAt = nil
+			if action == "leave" {
+				session.Spec.RequestedBy = "other-owner"
+				session.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "owner", Role: breakglassv1alpha1.ParticipantRoleParticipant}}
+			}
+			before := session.DeepCopy()
+			_, controller := setupTestRouter(t, session)
+			router := setupAuthenticatedDebugSessionRouter(t, controller, "owner", "", nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/debugSessions/missing-expiry/"+action, nil))
+			require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+			require.Contains(t, response.Body.String(), "expired")
+			require.NoError(t, controller.client.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), session))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, session.Status.State)
+			require.Equal(t, before.Status.Participants, session.Status.Participants)
+		})
+	}
+}
+
+func TestAuxiliaryCleanupRetainsMismatchedIdentity(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		for _, mismatch := range []string{"none", "uid", "source", "missing uid"} {
+			for _, deleted := range []bool{false, true} {
+				t.Run(fmt.Sprintf("child=%t/%s/deleted=%t", child, mismatch, deleted), func(t *testing.T) {
+					ref := breakglassv1alpha1.DeployedResourceRef{Source: "auxiliary:retained", APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "config", UID: "original"}
+					status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "retained", APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID, Created: true, Deleted: deleted}
+					if child {
+						status.ResourceName = "parent"
+						status.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID, Deleted: deleted}}
+					}
+					switch mismatch {
+					case "uid":
+						ref.UID = "different"
+					case "source":
+						ref.Source = "auxiliary:other"
+					case "missing uid":
+						ref.UID = ""
+					}
+					session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+						ResolvedTemplate:  &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "retained", DeleteAfter: false}}},
+						DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{status},
+					}}
+					object := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "original"}}
+					target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(object).Build()
+					controller := &DebugSessionController{log: zap.NewNop().Sugar()}
+					err := controller.cleanupDeployedResources(context.Background(), session, target, false, false)
+					if mismatch == "none" {
+						require.NoError(t, err)
+						require.Empty(t, session.Status.DeployedResources)
+					} else {
+						require.ErrorContains(t, err, "retaining inventory")
+						require.Equal(t, []breakglassv1alpha1.DeployedResourceRef{ref}, session.Status.DeployedResources)
+					}
+					require.NoError(t, target.Get(context.Background(), ctrlclient.ObjectKeyFromObject(object), object), "retention ambiguity must not delete a live resource")
+				})
+			}
+		}
+	}
+}
+
 func TestActivityCannotReviveSessionAfterLiveReadCrossesIdleDeadline(t *testing.T) {
 	for _, delay := range []bool{false, true} {
 		t.Run(map[bool]string{false: "successful activity", true: "idle expires during read"}[delay], func(t *testing.T) {

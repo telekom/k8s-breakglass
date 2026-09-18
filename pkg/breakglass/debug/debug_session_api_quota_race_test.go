@@ -241,7 +241,7 @@ func TestAdmitCreatedDebugSessionFailsClosedWhenObjectChanges(t *testing.T) {
 }
 
 func TestAPIQuotaRejectionStampsEffectiveRetention(t *testing.T) {
-	for _, bindingRetention := range []string{"", "4h", "snapshot"} {
+	for _, bindingRetention := range []string{"", "4h", "snapshot", "zero"} {
 		t.Run(bindingRetention, func(t *testing.T) {
 			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"production"}}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxConcurrentSessions: 1, RetainFor: "2h"}}}
 			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}}}}
@@ -262,6 +262,14 @@ func TestAPIQuotaRejectionStampsEffectiveRetention(t *testing.T) {
 					}
 				}
 				return cl.Create(ctx, obj, opts...)
+			}, Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := cl.Get(ctx, key, obj, opts...); err != nil {
+					return err
+				}
+				if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok && bindingRetention == "zero" && session.UID == "rejected-uid" && session.Status.State != breakglassv1alpha1.DebugSessionStateFailed {
+					session.Status.RetainedUntil = &metav1.Time{}
+				}
+				return nil
 			}}).Build()
 			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).WithQuotaNamespace("controller").WithDisableEmail(true)
 			router := gin.New()

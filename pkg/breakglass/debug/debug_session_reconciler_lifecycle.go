@@ -11,6 +11,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -823,11 +824,12 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				remainingDeployedResources = append(remainingDeployedResources, ref)
 				continue
 			}
-			if auxiliaryResourceDeleted(ds, ref) || !auxiliaryResourceRequiresCleanup(ds, ref) {
-				if !auxiliaryResourceStatusKnown(ds, ref) {
-					remainingDeployedResources = append(remainingDeployedResources, ref)
-					cleanupErrors = append(cleanupErrors, fmt.Errorf("missing auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
-				}
+			if !auxiliaryResourceStatusKnown(ds, ref) {
+				remainingDeployedResources = append(remainingDeployedResources, ref)
+				cleanupErrors = append(cleanupErrors, fmt.Errorf("missing matching auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
+				continue
+			}
+			if auxiliaryResourceDeleted(ds, ref) || utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
 				continue
 			}
 		}
@@ -953,13 +955,19 @@ func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.O
 }
 
 func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	if ref.UID == "" {
+		return false
+	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+		if ref.Source != "auxiliary:"+status.Name {
+			continue
+		}
+		if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
 			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
 			return status.Deleted
 		}
 		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+			if additional.UID == ref.UID && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
 				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
 				return additional.Deleted
 			}
@@ -968,33 +976,20 @@ func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglas
 	return false
 }
 
-func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
-			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
-			return shouldDeleteAuxiliaryResource(ds, status.Name)
-		}
-		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
-				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
-				return shouldDeleteAuxiliaryResource(ds, status.Name)
-			}
-		}
-	}
-	// Without the durable status metadata, deleteAfter cannot be determined.
-	// Retain the inventory and surface the ambiguity rather than guessing that
-	// the resource was controller-owned.
-	return false
-}
-
 func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	if ref.UID == "" {
+		return false
+	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+		if ref.Source != "auxiliary:"+status.Name {
+			continue
+		}
+		if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
 			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
 			return true
 		}
 		for _, additional := range status.AdditionalResources {
-			if additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
+			if additional.UID == ref.UID && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
 				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
 				return true
 			}

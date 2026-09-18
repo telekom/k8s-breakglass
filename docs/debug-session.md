@@ -2096,6 +2096,11 @@ operations whose durable outcome is `Unknown`.
 Quota-ledger bootstrap includes pending sessions even before their admission
 annotation changes to `ready`; a ledger rebuild must not free their reserved
 capacity for a competing request.
+Auxiliary cleanup retires retained or deleted inventory only when its recorded
+UID and source match the durable auxiliary status. Mismatches remain evidence
+requiring reconciliation. A zero retention timestamp is unset and does not
+override explicit `retainFor`; active sessions with no hard expiry cannot be
+joined, left, or terminated through the normal API actions.
 
 Terminal retention cleanup and cluster deletion share the same residual-resource
 predicates. Confirmed deleted pod-template history does not hold a session after

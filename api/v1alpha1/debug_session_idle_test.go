@@ -37,3 +37,22 @@ func TestDebugSessionIdleDeadlineAndMonotonicActivity(t *testing.T) {
 	_, enabled = DebugSessionIdleDeadline(ds)
 	require.False(t, enabled)
 }
+
+func TestStampDebugSessionRetentionTreatsZeroAsUnset(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	for _, initial := range []*metav1.Time{nil, {}, {Time: now.Add(time.Minute)}} {
+		status := DebugSessionStatus{
+			State: DebugSessionStateTerminated, RetainedUntil: initial,
+			ResolvedTemplate: &DebugSessionTemplateSpec{Constraints: &DebugSessionConstraints{RetainFor: "2h"}},
+		}
+		want := now.Add(2 * time.Hour)
+		if initial != nil && !initial.IsZero() {
+			want = initial.Time
+		}
+		StampDebugSessionRetention(&status, now)
+		require.NotNil(t, status.RetainedUntil)
+		require.Equal(t, want, status.RetainedUntil.Time)
+		StampDebugSessionRetention(&status, now.Add(time.Hour))
+		require.Equal(t, want, status.RetainedUntil.Time)
+	}
+}
