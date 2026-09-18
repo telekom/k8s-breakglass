@@ -817,7 +817,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var userGroups []string
 	if groups, exists := ctx.Get("groups"); exists && groups != nil {
 		if g, ok := groups.([]string); ok {
-			userGroups = g
+			for _, group := range g {
+				if group != "breakglass:platform:debugsession" {
+					userGroups = append(userGroups, group)
+				}
+			}
 		}
 	}
 
@@ -839,6 +843,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
+		return
+	}
+	providerAwareRequest := ctx.GetString("identity_provider_name") != "" || ctx.GetString("issuer") != ""
+	if providerAwareRequest && len(sessionGroups) == 0 {
+		apiresponses.RespondForbidden(ctx, "an approved Breakglass debug session is required")
 		return
 	}
 	userGroups = append(userGroups, sessionGroups...)

@@ -61,8 +61,10 @@ type authorizeState struct {
 	sar authorizationv1.SubjectAccessReview
 
 	// Cluster context
-	clusterCfg *breakglassv1alpha1.ClusterConfig
-	issuer     string
+	clusterCfg  *breakglassv1alpha1.ClusterConfig
+	issuer      string
+	idpName     string
+	idpLookupOK bool
 
 	// Session context
 	groups        []string
@@ -302,6 +304,10 @@ func (wc *WebhookController) logSARAction(s *authorizeState) {
 func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeState) bool {
 	s.phases.StartPhase() // Start sessions phase
 	var err error
+	s.idpName, s.idpLookupOK = "", true
+	if s.issuer != "" {
+		s.idpName, s.idpLookupOK = wc.resolveIdentityProviderName(s.ctx, s.issuer, s.reqLog)
+	}
 	s.groups, s.sessions, s.idpMismatches, s.tenant, err = wc.getUserGroupsAndSessionsWithIDPInfo(
 		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, s.clusterCfg)
 	if err != nil {
@@ -309,12 +315,18 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		c.Status(http.StatusInternalServerError)
 		return false
 	}
+	s.sessions, s.idpMismatches = filterSessionsForAuthorizationWithProvider(
+		append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...),
+		s.issuer, s.idpName, s.idpLookupOK, time.Now(),
+	)
 	if len(s.sessions) > 0 || len(s.idpMismatches) > 0 {
 		candidates := append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...)
 		if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessionsWithCached(
 			s.ctx, s.clusterName, s.sar.Spec.User, candidates,
 		); refreshErr == nil && ok {
-			s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+			s.sessions, s.idpMismatches = filterSessionsForAuthorizationWithProvider(
+				refreshed, s.issuer, s.idpName, s.idpLookupOK, time.Now(),
+			)
 			s.groups = grantedGroupsFromSessions(s.sessions)
 		}
 	}
@@ -803,14 +815,9 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 
 	// Filter escalations based on requestor's IDP (multi-IDP awareness)
 	// If an escalation has AllowedIdentityProvidersForRequests, the requestor's IDP must be in that list
-	matchedIDPName := ""
-	lookupOK := true
-	for _, esc := range s.escals {
-		if len(esc.Spec.AllowedIdentityProvidersForRequests) > 0 ||
-			len(esc.Spec.AllowedIdentityProviders) > 0 {
-			matchedIDPName, lookupOK = wc.resolveIdentityProviderName(s.ctx, s.issuer, s.reqLog)
-			break
-		}
+	matchedIDPName, lookupOK := s.idpName, s.idpLookupOK
+	if matchedIDPName == "" && lookupOK && s.issuer == "" {
+		lookupOK = true
 	}
 	var idpFilteredEscals []breakglassv1alpha1.BreakglassEscalation
 	for _, esc := range s.escals {

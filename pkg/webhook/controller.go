@@ -233,15 +233,23 @@ func (wc *WebhookController) isRequestFromAllowedIDPResolved(
 
 func (wc *WebhookController) resolveIdentityProviderName(ctx context.Context, issuer string, reqLog *zap.SugaredLogger) (string, bool) {
 	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList); err != nil {
+	normalizedIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	err := wc.escalManager.List(ctx, idpList, client.MatchingFields{
+		"spec.effectiveIssuer": normalizedIssuer,
+	})
+	if err != nil && breakglass.IsFieldIndexError(err) {
+		// Older test clients and upgraded caches may not have the new effective
+		// issuer index yet. Preserve fail-closed behavior while allowing the
+		// cache to finish registering it.
+		reqLog.With("error", err.Error()).Warn("Effective issuer index unavailable; using compatibility lookup")
+		err = wc.escalManager.List(ctx, idpList)
+	}
+	if err != nil {
 		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
-		// Fail closed: if we can't load IDPs, deny the request for security
-		// This prevents potential authorization bypass during transient API errors
 		return "", false
 	}
 
-	// Map issuer to IDP name
-	normalizedIssuer := strings.TrimRight(issuer, "/")
+	// Map normalized effective issuer to IDP name.
 	matchedIDPName := ""
 	for _, idp := range idpList.Items {
 		effectiveIssuer := idp.Spec.Issuer
@@ -1329,6 +1337,15 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 	issuer string,
 	now time.Time,
 ) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
+	return filterSessionsForAuthorizationWithProvider(sessions, issuer, "", true, now)
+}
+
+func filterSessionsForAuthorizationWithProvider(
+	sessions []breakglassv1alpha1.BreakglassSession,
+	issuer, provider string,
+	providerLookupOK bool,
+	now time.Time,
+) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
 	issuer = canonicalIssuer(issuer)
 	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
@@ -1336,7 +1353,10 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 		if !breakglass.IsSessionAuthorizationEligible(session, now) {
 			continue
 		}
-		if issuer != "" && !session.Spec.AllowIDPMismatch && canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer {
+		if issuer != "" && !session.Spec.AllowIDPMismatch &&
+			(!providerLookupOK ||
+				(provider != "" && session.Spec.IdentityProviderName != provider) ||
+				canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer) {
 			idpMismatches = append(idpMismatches, session)
 			continue
 		}

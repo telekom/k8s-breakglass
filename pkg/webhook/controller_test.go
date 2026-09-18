@@ -98,6 +98,33 @@ func TestFilterSessionsForAuthorizationCanonicalizesIssuer(t *testing.T) {
 	assert.Empty(t, mismatches)
 }
 
+func TestFilterSessionsForAuthorizationRequiresProviderAndIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://idp-a.example/",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://idp-a.example/", "idp-b", true, time.Now(),
+	)
+	assert.Empty(t, out)
+	assert.Len(t, mismatches, 1)
+
+	out, mismatches = filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://idp-a.example/", "idp-a", true, time.Now(),
+	)
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
+}
+
 type countingListClient struct {
 	client.Client
 	listCalls int
