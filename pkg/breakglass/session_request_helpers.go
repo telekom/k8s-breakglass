@@ -208,6 +208,23 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	return escalations, true
 }
 
+func filterEscalationsByIdentityProvider(
+	escalations []breakglassv1alpha1.BreakglassEscalation,
+	provider string,
+) []breakglassv1alpha1.BreakglassEscalation {
+	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
+	for _, escalation := range escalations {
+		allowed := escalation.Spec.AllowedIdentityProviders
+		if len(allowed) == 0 {
+			allowed = escalation.Spec.AllowedIdentityProvidersForRequests
+		}
+		if len(allowed) == 0 || slices.Contains(allowed, provider) {
+			filtered = append(filtered, escalation)
+		}
+	}
+	return filtered
+}
+
 func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {
 	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
 		return true

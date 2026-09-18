@@ -314,6 +314,11 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	if !ok {
 		return
 	}
+	escalations = filterEscalationsByIdentityProvider(escalations, c.GetString("identity_provider_name"))
+	if len(escalations) == 0 {
+		apiresponses.RespondForbidden(c, "identity provider is not allowed for the requested escalation")
+		return
+	}
 
 	// Phase 6: Collect approvers and find matched escalation in a single pass
 	resolution := wc.collectApproversFromEscalations(ctx, escalations, request.GroupName, reqLog)

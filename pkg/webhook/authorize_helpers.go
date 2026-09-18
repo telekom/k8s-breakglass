@@ -803,9 +803,18 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 
 	// Filter escalations based on requestor's IDP (multi-IDP awareness)
 	// If an escalation has AllowedIdentityProvidersForRequests, the requestor's IDP must be in that list
+	matchedIDPName := ""
+	lookupOK := true
+	for _, esc := range s.escals {
+		if len(esc.Spec.AllowedIdentityProvidersForRequests) > 0 ||
+			len(esc.Spec.AllowedIdentityProviders) > 0 {
+			matchedIDPName, lookupOK = wc.resolveIdentityProviderName(s.ctx, s.issuer, s.reqLog)
+			break
+		}
+	}
 	var idpFilteredEscals []breakglassv1alpha1.BreakglassEscalation
 	for _, esc := range s.escals {
-		if wc.isRequestFromAllowedIDP(s.ctx, s.issuer, &esc, s.reqLog) {
+		if wc.isRequestFromAllowedIDPResolved(s.issuer, matchedIDPName, lookupOK, &esc, s.reqLog) {
 			idpFilteredEscals = append(idpFilteredEscals, esc)
 		}
 	}

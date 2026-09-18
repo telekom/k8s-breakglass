@@ -184,6 +184,20 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 // from any IDP (backward compatible).
 // This function maps IDP issuer URLs to IDP names for matching.
 func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *breakglassv1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
+	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 &&
+		len(esc.Spec.AllowedIdentityProviders) == 0 {
+		return true
+	}
+	matchedIDPName, lookupOK := wc.resolveIdentityProviderName(ctx, issuer, reqLog)
+	return wc.isRequestFromAllowedIDPResolved(issuer, matchedIDPName, lookupOK, esc, reqLog)
+}
+
+func (wc *WebhookController) isRequestFromAllowedIDPResolved(
+	issuer, matchedIDPName string,
+	lookupOK bool,
+	esc *breakglassv1alpha1.BreakglassEscalation,
+	reqLog *zap.SugaredLogger,
+) bool {
 	allowedProviders := esc.Spec.AllowedIdentityProvidersForRequests
 	if len(allowedProviders) == 0 {
 		allowedProviders = esc.Spec.AllowedIdentityProviders
@@ -200,32 +214,7 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 		return false
 	}
 
-	// Find matching IdentityProvider by its effective issuer. Legacy providers
-	// may store the issuer only in the OIDC authority field.
-	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList); err != nil {
-		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
-		// Fail closed: if we can't load IDPs, deny the request for security
-		// This prevents potential authorization bypass during transient API errors
-		return false
-	}
-
-	// Map issuer to IDP name
-	var matchedIDPName string
-	normalizedIssuer := strings.TrimRight(issuer, "/")
-	for _, idp := range idpList.Items {
-		effectiveIssuer := idp.Spec.Issuer
-		if effectiveIssuer == "" {
-			effectiveIssuer = idp.Spec.OIDC.Authority
-		}
-		if strings.TrimRight(effectiveIssuer, "/") == normalizedIssuer && !idp.Spec.Disabled {
-			matchedIDPName = idp.Name
-			break
-		}
-	}
-
-	// If issuer doesn't match any enabled IDP, deny
-	if matchedIDPName == "" {
+	if !lookupOK || matchedIDPName == "" {
 		reqLog.Debugw("Request from unknown or disabled IDP issuer", "issuer", issuer, "escalation", esc.Name)
 		return false
 	}
@@ -240,6 +229,29 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 
 	reqLog.Debugw("Request denied: IDP not in allowed request providers", "idp", matchedIDPName, "allowedIDPs", allowedProviders, "escalation", esc.Name)
 	return false
+}
+
+func (wc *WebhookController) resolveIdentityProviderName(ctx context.Context, issuer string, reqLog *zap.SugaredLogger) (string, bool) {
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	if err := wc.escalManager.List(ctx, idpList); err != nil {
+		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
+		// Fail closed: if we can't load IDPs, deny the request for security
+		// This prevents potential authorization bypass during transient API errors
+		return "", false
+	}
+
+	// Map issuer to IDP name
+	normalizedIssuer := strings.TrimRight(issuer, "/")
+	for _, idp := range idpList.Items {
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if strings.TrimRight(effectiveIssuer, "/") == normalizedIssuer && !idp.Spec.Disabled {
+			return idp.Name, true
+		}
+	}
+	return "", true
 }
 
 type SubjectAccessReviewResponseStatus struct {

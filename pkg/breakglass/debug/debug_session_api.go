@@ -1788,10 +1788,22 @@ func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSe
 	}
 	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
 	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
-	if provider != "" && identity.provider != provider {
-		return false
+	if provider == "" && issuer == "" {
+		return identity.legacyAllowed
 	}
-	return issuer == "" || strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	if !identity.legacyAllowed {
+		return provider != "" && issuer != "" &&
+			strings.TrimSpace(identity.provider) == provider &&
+			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	}
+	if provider == "" {
+		return strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	}
+	if issuer == "" {
+		return strings.TrimSpace(identity.provider) == provider
+	}
+	return strings.TrimSpace(identity.provider) == provider &&
+		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 }
 
 func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {

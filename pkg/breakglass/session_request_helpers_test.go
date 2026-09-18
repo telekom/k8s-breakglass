@@ -108,6 +108,22 @@ func TestCollectApproversFromEscalations_NoMatch(t *testing.T) {
 	assert.Nil(t, result.matchedEscalation)
 }
 
+func TestFilterEscalationsByIdentityProvider(t *testing.T) {
+	escalations := []breakglassv1alpha1.BreakglassEscalation{
+		{ObjectMeta: metav1.ObjectMeta{Name: "restricted-other"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProviders: []string{"idp-a"},
+		}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "restricted-requester"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			AllowedIdentityProvidersForRequests: []string{"idp-b"},
+		}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "unrestricted"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{}},
+	}
+
+	filtered := filterEscalationsByIdentityProvider(escalations, "idp-b")
+	require.Len(t, filtered, 2)
+	assert.Equal(t, []string{"restricted-requester", "unrestricted"}, []string{filtered[0].Name, filtered[1].Name})
+}
+
 func TestCollectApproversFromEscalations_DeduplicatesApprovers(t *testing.T) {
 	wc := newTestSessionController(t)
 	log := zaptest.NewLogger(t).Sugar()
