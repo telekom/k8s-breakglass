@@ -60,6 +60,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example/",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -73,6 +74,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "breakglass:platform:diagnostics",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -86,6 +88,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -99,6 +102,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "expired",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -112,6 +116,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "pending",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -125,6 +130,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-b",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "wrong-cluster",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -138,6 +144,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "other@example.test",
 				GrantedGroup:           "wrong-user",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -151,6 +158,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "wrong-issuer",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-b.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -164,8 +172,22 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:legacy",
+				IdentityProviderName:   "idp-b",
 				IdentityProviderIssuer: "https://idp-b.example",
 				AllowIDPMismatch:       true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-provider"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "missing-provider",
+				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
@@ -175,7 +197,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 	).Build()
 
 	controller := &DebugSessionAPIController{}
-	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test", "", "https://idp-a.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test", "idp-a", "https://idp-a.example")
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{

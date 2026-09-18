@@ -19,9 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Scope native DebugSession Breakglass grants and approval/rejection decisions to
-  the persisted provider name and issuer; document administrator cleanup for
-  legacy pending sessions and restore CLI completion behavior. (#1346)
+- DebugSession approval and rejection now fail closed on provider/issuer mismatch with `403 Forbidden`; legacy pending sessions without persisted provider provenance return `409 Conflict` and can be retired via pending termination before re-request.
 
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.

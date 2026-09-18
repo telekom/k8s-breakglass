@@ -826,7 +826,15 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("identity_provider_name"), ctx.GetString("issuer"))
+	sessionGroups, err := c.activeBreakglassGroups(
+		apiCtx,
+		authorizationReader,
+		req.Cluster,
+		currentUserStr,
+		userEmail,
+		ctx.GetString("identity_provider_name"),
+		ctx.GetString("issuer"),
+	)
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -1418,6 +1426,15 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		seen[key] = struct{}{}
 		sessions.Items = append(sessions.Items, session)
 	}
+	matchesIdentityProvider := func(session breakglassv1alpha1.BreakglassSession) bool {
+		if session.Spec.AllowIDPMismatch {
+			return true
+		}
+		if provider != "" && session.Spec.IdentityProviderName != provider {
+			return false
+		}
+		return issuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
+	}
 	seenSessions := make(map[string]struct{})
 	if len(identities) == 0 {
 		var all breakglassv1alpha1.BreakglassSessionList
@@ -1467,9 +1484,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 			candidate := sessions.Items[i]
 			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
 				(candidate.Spec.User != username && candidate.Spec.User != email) ||
-				(provider != "" && candidate.Spec.IdentityProviderName != provider) ||
-				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
-					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				!matchesIdentityProvider(candidate) {
 				continue
 			}
 			fresh := &breakglassv1alpha1.BreakglassSession{}
@@ -1492,9 +1507,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		for _, session := range items {
 			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
 				(session.Spec.User != username && session.Spec.User != email) ||
-				(provider != "" && session.Spec.IdentityProviderName != provider) ||
-				(issuer != "" && !session.Spec.AllowIDPMismatch &&
-					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				!matchesIdentityProvider(session) {
 				continue
 			}
 			if _, ok := seen[session.Spec.GrantedGroup]; ok {

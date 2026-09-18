@@ -186,3 +186,89 @@ func TestLegacyDebugOwnerReadRequiresResolvedSingleProvider(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, allowed)
 }
+
+func TestDebugSessionApprovalHandlersEnforceProviderFence(t *testing.T) {
+	tests := []struct {
+		name               string
+		handler            func(*DebugSessionAPIController, *gin.Context)
+		sessionProvider    string
+		sessionIssuer      string
+		identityProvider   string
+		identityIssuer     string
+		legacyAllowed      bool
+		expectedStatusCode int
+	}{
+		{
+			name:               "approve denies provider mismatch",
+			handler:            (*DebugSessionAPIController).handleApproveDebugSession,
+			sessionProvider:    "idp-a",
+			sessionIssuer:      "https://issuer.example",
+			identityProvider:   "idp-b",
+			identityIssuer:     "https://issuer.example",
+			expectedStatusCode: http.StatusForbidden,
+		},
+		{
+			name:               "reject denies provider mismatch",
+			handler:            (*DebugSessionAPIController).handleRejectDebugSession,
+			sessionProvider:    "idp-a",
+			sessionIssuer:      "https://issuer.example",
+			identityProvider:   "idp-b",
+			identityIssuer:     "https://issuer.example",
+			expectedStatusCode: http.StatusForbidden,
+		},
+		{
+			name:               "approve conflicts legacy providerless without legacy allowance",
+			handler:            (*DebugSessionAPIController).handleApproveDebugSession,
+			sessionProvider:    "",
+			sessionIssuer:      "https://issuer.example",
+			identityProvider:   "idp-a",
+			identityIssuer:     "https://issuer.example",
+			legacyAllowed:      false,
+			expectedStatusCode: http.StatusConflict,
+		},
+		{
+			name:               "reject conflicts legacy providerless without legacy allowance",
+			handler:            (*DebugSessionAPIController).handleRejectDebugSession,
+			sessionProvider:    "",
+			sessionIssuer:      "https://issuer.example",
+			identityProvider:   "idp-a",
+			identityIssuer:     "https://issuer.example",
+			legacyAllowed:      false,
+			expectedStatusCode: http.StatusConflict,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionSpec{
+					RequestedBy:            "requester@example.com",
+					RequestedByEmail:       "requester@example.com",
+					IdentityProviderName:   tt.sessionProvider,
+					IdentityProviderIssuer: tt.sessionIssuer,
+				},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStatePendingApproval,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+					},
+				},
+			}
+
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(session).WithObjects(session).Build()
+			ctrl := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil)
+			rec := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(rec)
+			ctx.Request = httptest.NewRequest(http.MethodPost, "/?namespace=default", strings.NewReader(`{"reason":"approved"}`))
+			ctx.Params = gin.Params{{Key: "name", Value: "session"}}
+			ctx.Set("username", "approver@example.com")
+			ctx.Set("identity_provider_name", tt.identityProvider)
+			ctx.Set("issuer", tt.identityIssuer)
+			ctx.Set("legacy_identity_allowed", tt.legacyAllowed)
+
+			tt.handler(ctrl, ctx)
+			require.Equal(t, tt.expectedStatusCode, rec.Code, rec.Body.String())
+		})
+	}
+}

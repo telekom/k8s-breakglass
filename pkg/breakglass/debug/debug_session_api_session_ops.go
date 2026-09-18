@@ -491,7 +491,11 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 		return
 	}
 	if !debugSessionApprovalIdentityMatches(session, identity) {
-		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; ask a cluster administrator to remove it through the supported DebugSession cleanup workflow, then create a new session")
+		if debugSessionProviderProvenanceMissing(session, identity) {
+			apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
+			return
+		}
+		apiresponses.RespondForbidden(ctx, "session provider does not match authenticated identity")
 		return
 	}
 	// Check if user is authorized to approve (in allowed approver groups)
@@ -602,7 +606,11 @@ func (c *DebugSessionAPIController) handleRejectDebugSession(ctx *gin.Context) {
 		return
 	}
 	if !debugSessionApprovalIdentityMatches(session, identity) {
-		apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; ask a cluster administrator to remove it through the supported DebugSession cleanup workflow, then create a new session")
+		if debugSessionProviderProvenanceMissing(session, identity) {
+			apiresponses.RespondConflict(ctx, "this pending debug session predates provider provenance; the requester must terminate it and create a new session")
+			return
+		}
+		apiresponses.RespondForbidden(ctx, "session provider does not match authenticated identity")
 		return
 	}
 	// Check if user is authorized to reject (in allowed approver groups)
