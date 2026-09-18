@@ -459,8 +459,10 @@ func ValidateExtraDeployValuesWithBinding(values map[string]apiextensionsv1.JSON
 			if !provided {
 				continue
 			}
+			normalizedValue := coerceJSONValue(value, variable.InputType)
+			normalizedDefault := coerceJSONValue(*variable.Default, variable.InputType)
 			var actual, defaultValue any
-			if json.Unmarshal(value.Raw, &actual) == nil && json.Unmarshal(variable.Default.Raw, &defaultValue) == nil && reflect.DeepEqual(actual, defaultValue) {
+			if json.Unmarshal(normalizedValue.Raw, &actual) == nil && json.Unmarshal(normalizedDefault.Raw, &defaultValue) == nil && reflect.DeepEqual(actual, defaultValue) {
 				delete(requestValues, variable.Name)
 			}
 		}

@@ -90,6 +90,40 @@ func TestValidateExtraDeployValueNamesRejectsUnknownAndDisabledWhenBound(t *test
 	}
 }
 
+func TestValidateExtraDeployValuesWithBindingNormalizesDefaults(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		inputType ExtraDeployInputType
+		value     string
+		def       string
+	}{
+		{name: "number", inputType: InputTypeNumber, value: "5", def: `"5"`},
+		{name: "boolean", inputType: InputTypeBoolean, value: "true", def: `"true"`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			variables := []ExtraDeployVariable{{
+				Name:          "value",
+				InputType:     tt.inputType,
+				AllowedGroups: []string{"admins"},
+				Default:       &apiextensionsv1.JSON{Raw: []byte(tt.def)},
+			}}
+			constraints := []ExtraDeployVariableConstraint{{
+				Name:    "value",
+				Default: &apiextensionsv1.JSON{Raw: []byte(tt.def)},
+			}}
+
+			errs := ValidateExtraDeployValuesWithBinding(
+				map[string]apiextensionsv1.JSON{"value": {Raw: []byte(tt.value)}},
+				variables,
+				constraints,
+				nil,
+				field.NewPath("values"),
+			)
+			require.Empty(t, errs)
+		})
+	}
+}
+
 func TestBindingPatternErrorBelongsToNarrowPattern(t *testing.T) {
 	vars, err := EffectiveExtraDeployVariables([]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Validation: &VariableValidation{Pattern: "^safe-", PatternError: "template error"}}}, []ExtraDeployVariableConstraint{{Name: "value", Validation: &VariableValidation{Pattern: "-prod$", PatternError: "binding error"}}})
 	if err != nil {
