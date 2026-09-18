@@ -78,6 +78,10 @@ func applyApprovedTemplateLabels(template *breakglassv1alpha1.DebugSessionTempla
 	if err != nil {
 		return err
 	}
+	if status.ResolvedTemplateIdentityCaptured {
+		template.Labels = labels
+		return nil
+	}
 	if len(labels) == 0 {
 		return nil
 	}

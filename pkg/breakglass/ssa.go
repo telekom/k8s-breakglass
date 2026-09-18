@@ -142,13 +142,16 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) && !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(oldStatus, newStatus.ResolvedTemplateVariablePolicy) {
 		return fmt.Errorf("approved resolved template variable policy is immutable")
 	}
-	if oldStatus.ResolvedBindingSpec != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
+	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSnapshotCaptured) &&
+		!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
 		return fmt.Errorf("approved resolved binding snapshot is immutable")
 	}
-	if oldStatus.ResolvedBindingSnapshotCaptured && !newStatus.ResolvedBindingSnapshotCaptured {
+	if (oldStatus.ResolvedTemplate != nil &&
+		oldStatus.ResolvedBindingSnapshotCaptured != newStatus.ResolvedBindingSnapshotCaptured) ||
+		(oldStatus.ResolvedBindingSnapshotCaptured && !newStatus.ResolvedBindingSnapshotCaptured) {
 		return fmt.Errorf("approved resolved binding decision cannot be cleared")
 	}
-	if oldStatus.ResolvedBindingSnapshotCaptured &&
+	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSnapshotCaptured) &&
 		(!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) ||
 			!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBinding, newStatus.ResolvedBinding)) {
 		return fmt.Errorf("approved resolved binding decision is immutable")

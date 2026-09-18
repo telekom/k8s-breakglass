@@ -166,6 +166,15 @@ func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T
 	require.Nil(t, labels)
 }
 
+func TestApplyApprovedTemplateLabelsClearsLiveLabelsForCapturedEmptySnapshot(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"catalogue": "changed-after-approval"}},
+	}
+	status := breakglassv1alpha1.DebugSessionStatus{ResolvedTemplateIdentityCaptured: true}
+	require.NoError(t, applyApprovedTemplateLabels(template, status))
+	require.Empty(t, template.Labels)
+}
+
 func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *testing.T) {
 	scheme := testScheme()
 	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
