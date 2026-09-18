@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   counts for sessions rejected before activation.
 
 - Activate fresh zero-variable debug sessions from a persisted Pending decision, preserve approved pod-template references after live edits, reject empty-policy constraint bypasses, and filter disabled supplied values from both renderers. Invalid bindings no longer shadow direct template cluster grants.
+- Preserve approved catalogue identity labels in pod-template snapshots for Pending/PendingApproval recovery, and fail closed on group-restricted variable policies when requester group provenance is untrusted.
 
 - Persist complete debug-session approval snapshots before activation, preserve all template runtime policy through typed SSA, reject semantically empty binding provenance, and omit internal recovery variable policy from session REST responses.
 

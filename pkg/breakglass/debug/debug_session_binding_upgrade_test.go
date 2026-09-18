@@ -87,6 +87,8 @@ func TestBindingDefaultAdmissionDoesNotMaterializeHiddenTemplateDefaults(t *test
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("identity_provider_name", "keycloak")
+				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()
 			})
 			require.NoError(t, c.Register(router.Group("/api/v1/"+c.BasePath())))
@@ -226,6 +228,9 @@ func TestBindingRestrictedDefaultSurvivesAPIAndActivation(t *testing.T) {
 				require.NoError(t, c.client.List(t.Context(), &sessions))
 				require.Len(t, sessions.Items, 1)
 				ds := &sessions.Items[0]
+				ds.Spec.IdentityProviderName = "keycloak"
+				ds.Spec.IdentityProviderIssuer = "https://keycloak.example.com/realms/breakglass"
+				require.NoError(t, c.client.Update(t.Context(), ds))
 				require.JSONEq(t, `"busybox"`, string(ds.Spec.ExtraDeployValues["image"].Raw))
 				_, err := c.handlePending(t.Context(), ds)
 				require.NoError(t, err)
@@ -284,6 +289,8 @@ func TestSessionDetailHidesRecoveryVariablePolicy(t *testing.T) {
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set("legacy_identity_allowed", true)
 		ctx.Set("username", ds.Spec.RequestedBy)
+		ctx.Set("identity_provider_name", ds.Spec.IdentityProviderName)
+		ctx.Set("issuer", ds.Spec.IdentityProviderIssuer)
 		ctx.Next()
 	})
 	require.NoError(t, api.Register(router.Group("/api/debugSessions")))
@@ -373,6 +380,8 @@ func testNoVariableSessionAPIActivation(t *testing.T, selectorOnly bool) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("identity_provider_name", "keycloak")
+				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()
 			})
 			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
@@ -472,6 +481,86 @@ func TestApprovedSnapshotActivationAfterTemplateDeletion(t *testing.T) {
 	}
 }
 
+func TestApprovedSnapshotPreservesCatalogueIdentityLabels(t *testing.T) {
+	ctx := context.Background()
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}
+	require.NoError(t, c.client.Status().Update(ctx, ds))
+	template.Labels = map[string]string{
+		catalogueProfileLabel:  "restricted-profile",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}
+	template.Spec.Approvers = &breakglassv1alpha1.DebugSessionApprovers{Groups: []string{"approvers"}}
+	template.Spec.PodTemplateString = ""
+	template.Spec.PodTemplateRef = &breakglassv1alpha1.DebugPodTemplateReference{Name: "catalogue-pod"}
+	require.NoError(t, c.client.Update(ctx, template))
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "catalogue-pod",
+			Labels: map[string]string{
+				catalogueProfileLabel:  "restricted-profile",
+				catalogueIntentLabel:   "workload-diagnostics",
+				catalogueElevatedLabel: "false",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			TemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  hostNetwork: true\n  securityContext:\n    runAsNonRoot: true\n    seccompProfile:\n      type: RuntimeDefault\n  automountServiceAccountToken: false\n  containers:\n  - name: debug\n    image: busybox\n    securityContext:\n      allowPrivilegeEscalation: false\n      capabilities:\n        drop: [\"ALL\"]\n",
+		},
+	}
+	require.NoError(t, c.client.Create(ctx, podTemplate))
+
+	_, err := c.handlePending(ctx, ds)
+	require.NoError(t, err)
+	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), ds))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, ds.Status.State)
+	now := metav1.Now()
+	ds.Status.Approval.ApprovedAt = &now
+	ds.Status.Approval.ApprovedBy = "approver@example.com"
+	require.NoError(t, c.client.Status().Update(ctx, ds))
+	require.NoError(t, c.client.Delete(ctx, template))
+	require.NoError(t, c.client.Delete(ctx, podTemplate))
+
+	_, err = c.handlePendingApproval(ctx, ds)
+	require.NoError(t, err)
+	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), ds))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	require.Contains(t, ds.Status.Message, "restricted catalogue profiles cannot use host namespaces")
+
+	deployments := &appsv1.DeploymentList{}
+	require.NoError(t, target.List(ctx, deployments))
+	require.Empty(t, deployments.Items)
+}
+
+func TestHandlePendingRejectsUntrustedGroupRestrictedValues(t *testing.T) {
+	ctx := context.Background()
+	c, ds, template, _ := newDeploymentFenceFixture(t)
+	ds.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}
+	ds.Spec.IdentityProviderName = ""
+	ds.Spec.IdentityProviderIssuer = ""
+	ds.Spec.UserGroups = []string{"platform-admins"}
+	ds.Spec.ExtraDeployValues = map[string]apiextensionsv1.JSON{
+		"access": {Raw: []byte(`"restricted"`)},
+	}
+	require.NoError(t, c.client.Update(ctx, ds))
+	require.NoError(t, c.client.Status().Update(ctx, ds))
+	template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{
+		Name:      "access",
+		InputType: breakglassv1alpha1.InputTypeSelect,
+		Options: []breakglassv1alpha1.SelectOption{
+			{Value: "standard"},
+			{Value: "restricted", AllowedGroups: []string{"platform-admins"}},
+		},
+	}}
+	require.NoError(t, c.client.Update(ctx, template))
+
+	_, err := c.handlePending(ctx, ds)
+	require.NoError(t, err)
+	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), ds))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	require.Contains(t, ds.Status.Message, "trusted requester group provenance")
+}
+
 func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
 	for _, selected := range []string{"z-visible", "a-hidden"} {
 		t.Run(selected, func(t *testing.T) {
@@ -492,6 +581,8 @@ func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("identity_provider_name", "keycloak")
+				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()
 			})
 			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))

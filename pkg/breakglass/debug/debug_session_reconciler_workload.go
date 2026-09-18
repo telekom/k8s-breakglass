@@ -25,8 +25,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	var podTemplate *breakglassv1alpha1.DebugPodTemplate
 	if ds.Status.ResolvedPodTemplate != nil {
 		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
-		if err := json.Unmarshal(ds.Status.ResolvedPodTemplate.Raw, &podTemplate.Spec); err != nil {
+		spec, labels, templateLabels, err := decodeApprovedPodTemplateSnapshot(ds.Status.ResolvedPodTemplate.Raw)
+		if err != nil {
 			return fmt.Errorf("decode approved pod-template snapshot: %w", err)
+		}
+		podTemplate.Spec = *spec
+		podTemplate.Labels = labels
+		if len(template.Labels) == 0 && len(templateLabels) > 0 {
+			template.Labels = templateLabels
 		}
 	} else if template.Spec.PodTemplateRef != nil {
 		var err error

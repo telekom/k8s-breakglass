@@ -68,8 +68,14 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 	now := metav1.NewTime(time.Now().Add(time.Hour))
 	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "debug-fenced", Namespace: "default", UID: "session-uid", Labels: map[string]string{}},
-		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "default/spoke", TemplateRef: "template", RequestedBy: "tester"},
-		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &now},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:                "default/spoke",
+			TemplateRef:            "template",
+			RequestedBy:            "tester",
+			IdentityProviderName:   "keycloak",
+			IdentityProviderIssuer: "https://keycloak.example.com/realms/breakglass",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &now},
 	}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "template"},
