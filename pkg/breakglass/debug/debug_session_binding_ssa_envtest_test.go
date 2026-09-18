@@ -17,6 +17,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -153,27 +155,47 @@ func TestPendingApprovalSnapshotsOnRealAPIServer(t *testing.T) {
 	for _, scenario := range []string{"regex", "empty"} {
 		t.Run(scenario, func(t *testing.T) {
 			c, _, template, target := newDeploymentFenceFixture(t)
-			if scenario == "regex" {
-				for _, obj := range []client.Object{&breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default"}}, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "spoke-kubeconfig", Namespace: "default"}}} {
-					require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(obj), obj))
-					obj.SetResourceVersion("")
-					obj.SetUID("")
-					require.NoError(t, hub.Create(t.Context(), obj))
+			clusterName := "spoke-" + scenario
+			secretName := "spoke-kubeconfig-" + scenario
+			kubeconfig, err := clientcmd.Write(clientcmdapi.Config{
+				APIVersion: "v1",
+				Kind:       "Config",
+				Clusters: map[string]*clientcmdapi.Cluster{
+					"spoke": {Server: "https://spoke.invalid"},
+				},
+				AuthInfos:      map[string]*clientcmdapi.AuthInfo{"admin": {Token: "token"}},
+				Contexts:       map[string]*clientcmdapi.Context{"ctx": {Cluster: "spoke", AuthInfo: "admin"}},
+				CurrentContext: "ctx",
+			})
+			require.NoError(t, err)
+			for _, item := range []struct {
+				name string
+				obj  client.Object
+			}{
+				{name: "spoke", obj: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: clusterName, Namespace: "default"}}},
+				{name: "spoke-kubeconfig", obj: &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: "default"}, Data: map[string][]byte{"value": kubeconfig}}},
+			} {
+				if cc, ok := item.obj.(*breakglassv1alpha1.ClusterConfig); ok {
+					cc.Spec.KubeconfigSecretRef = &breakglassv1alpha1.SecretKeyReference{Name: secretName, Namespace: "default"}
 				}
-				cc := &breakglassv1alpha1.ClusterConfig{}
-				require.NoError(t, hub.Get(t.Context(), client.ObjectKey{Name: "spoke", Namespace: "default"}, cc))
+				require.NoError(t, hub.Create(t.Context(), item.obj))
+			}
+			cc := &breakglassv1alpha1.ClusterConfig{}
+			require.NoError(t, hub.Get(t.Context(), client.ObjectKey{Name: clusterName, Namespace: "default"}, cc))
+			{
 				cc.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Verified", LastTransitionTime: metav1.Now()}}
 				require.NoError(t, hub.Status().Update(t.Context(), cc))
 			}
+			fieldSelectorReader := envtestFieldSelectorReader{Reader: hub}
 			c.client = hub
-			c.apiReader = hub
-			c.reader = hub
+			c.apiReader = fieldSelectorReader
+			c.reader = fieldSelectorReader
 			c.ccProvider = cluster.NewClientProvider(hub, zap.NewNop().Sugar())
 			template.Name = "snapshot-" + scenario
 			template.ResourceVersion = ""
 			template.UID = ""
 			template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Users: []string{"tester"}}
-			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: template.Name, Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"spoke"}}}
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: template.Name, Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{clusterName}}}
 			values := ""
 			if scenario == "regex" {
 				template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "value", InputType: breakglassv1alpha1.InputTypeText, Validation: &breakglassv1alpha1.VariableValidation{Pattern: "^safe-"}}}
@@ -191,7 +213,7 @@ func TestPendingApprovalSnapshotsOnRealAPIServer(t *testing.T) {
 				ctx.Next()
 			})
 			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
-			request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"`+template.Name+`","cluster":"spoke","bindingRef":"default/`+binding.Name+`"`+values+`}`))
+			request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"`+template.Name+`","cluster":"`+clusterName+`","bindingRef":"default/`+binding.Name+`"`+values+`}`))
 			request.Header.Set("Content-Type", "application/json")
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)

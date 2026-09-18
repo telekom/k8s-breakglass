@@ -980,7 +980,7 @@ func hasTrustedGroupProvenance(ds *breakglassv1alpha1.DebugSession) bool {
 	return ds.Status.AuthenticatedUserGroupsCaptured
 }
 
-const groupProvenanceGracePeriod = 10 * time.Second
+const groupProvenanceGracePeriod = breakglass.APIContextTimeout
 
 func (c *DebugSessionController) deferOnMissingGroupProvenance(ds *breakglassv1alpha1.DebugSession) (ctrl.Result, bool) {
 	if ds.CreationTimestamp.IsZero() || time.Since(ds.CreationTimestamp.Time) >= groupProvenanceGracePeriod {
@@ -1305,6 +1305,10 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 			clusterConfig = &clusterConfigList.Items[i]
 		}
 	}
+	readyClusterConfig := clusterConfig
+	if !isDebugClusterConfigReady(readyClusterConfig) {
+		readyClusterConfig = nil
+	}
 
 	sort.Slice(bindingList.Items, func(i, j int) bool {
 		a, b := bindingList.Items[i], bindingList.Items[j]
@@ -1327,7 +1331,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		}
 
 		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+		if !c.bindingMatchesCluster(binding, clusterName, readyClusterConfig) {
 			continue
 		}
 
@@ -1344,7 +1348,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if invalidPolicy != nil {
 		// Match API discovery: an invalid binding must not shadow a direct
 		// template grant. Valid bindings still take precedence above.
-		if directTemplateAllowsCluster(template, clusterName, clusterConfig) {
+		if directTemplateAllowsCluster(template, clusterName, readyClusterConfig) {
 			return nil, nil
 		}
 		return nil, invalidPolicy

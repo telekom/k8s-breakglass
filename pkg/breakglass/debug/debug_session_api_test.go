@@ -49,6 +49,41 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestPersistAuthenticatedGroupProvenanceRetriesStatusConflict(t *testing.T) {
+	scheme := testScheme()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "cluster", TemplateRef: "template", RequestedBy: "user",
+		},
+	}
+	attempts := 0
+	hub := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResourceName == "status" && attempts == 0 {
+					attempts++
+					return apierrors.NewConflict(schema.GroupResource{
+						Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+					}, obj.GetName(), errors.New("controller won the first status race"))
+				}
+				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
+
+	updated, err := controller.persistAuthenticatedGroupProvenance(t.Context(), session, hub, []string{"trusted"})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, 1, attempts)
+	assert.True(t, updated.Status.AuthenticatedUserGroupsCaptured)
+	assert.Equal(t, []string{"trusted"}, updated.Status.AuthenticatedUserGroups)
+}
+
 func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing.T) {
 	now := time.Now()
 	future := metav1.NewTime(now.Add(time.Hour))
