@@ -713,13 +713,37 @@ func TestEffectiveIssuerIndexWithEnvtestCache(t *testing.T) {
 	require.NoError(t, RegisterCommonFieldIndexes(context.Background(), mgr.GetFieldIndexer(), zap.NewNop().Sugar()))
 
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
+	started := make(chan struct{})
+	var startErr error
 	go func() {
-		_ = mgr.Start(ctx)
+		startErr = mgr.Start(ctx)
+		close(started)
 	}()
-	require.Eventually(t, func() bool {
-		return mgr.GetCache().WaitForCacheSync(ctx)
-	}, 10*time.Second, 100*time.Millisecond)
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Error("manager did not stop after test context cancellation")
+		}
+	})
+
+	syncCtx, cancelSync := context.WithTimeout(ctx, 10*time.Second)
+	cacheSynced := make(chan bool, 1)
+	go func() {
+		cacheSynced <- mgr.GetCache().WaitForCacheSync(syncCtx)
+	}()
+	select {
+	case <-started:
+		if startErr != nil {
+			t.Fatalf("manager failed to start: %v", startErr)
+		}
+	case synced := <-cacheSynced:
+		require.True(t, synced, "manager cache did not sync")
+	case <-syncCtx.Done():
+		t.Fatal("timed out waiting for manager startup and cache sync")
+	}
+	cancelSync()
 
 	objects := []*breakglassv1alpha1.IdentityProvider{
 		{
