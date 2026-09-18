@@ -340,6 +340,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return c.failSession(ctx, ds, "invalid extra deploy variable policy or values")
 	}
 	if hasGroupRestrictedExtraDeployVariables(effectiveTemplate.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		if result, deferred := c.deferOnMissingGroupProvenance(ds); deferred {
+			return result, nil
+		}
 		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
@@ -404,18 +407,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
 		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
-			template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
-			if err != nil {
-				return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
-			}
-			if ds.Spec.BindingRef != nil {
-				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
-					return c.deferOnUnresolvedBinding(ctx, ds, err)
-				}
-			} else if _, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster); err != nil {
-				return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
-			}
-			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
+			return c.failSession(ctx, ds, "approved activation snapshots are missing; recreate this session")
 		}
 		if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 			return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
@@ -794,6 +786,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		template.Spec.ExtraDeployVariables = effectiveVariables
 	}
 	if hasGroupRestrictedExtraDeployVariables(template.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		if result, deferred := c.deferOnMissingGroupProvenance(ds); deferred {
+			return result, nil
+		}
 		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
@@ -953,10 +948,16 @@ func effectiveTemplateForBinding(
 
 func hasGroupRestrictedExtraDeployVariables(variables []breakglassv1alpha1.ExtraDeployVariable) bool {
 	for _, variable := range variables {
+		if variable.Disabled {
+			continue
+		}
 		if len(variable.AllowedGroups) != 0 {
 			return true
 		}
 		for _, option := range variable.Options {
+			if option.Disabled {
+				continue
+			}
 			if len(option.AllowedGroups) != 0 {
 				return true
 			}
@@ -967,6 +968,18 @@ func hasGroupRestrictedExtraDeployVariables(variables []breakglassv1alpha1.Extra
 
 func hasTrustedGroupProvenance(ds *breakglassv1alpha1.DebugSession) bool {
 	return ds.Status.AuthenticatedUserGroupsCaptured
+}
+
+const groupProvenanceGracePeriod = 10 * time.Second
+
+func (c *DebugSessionController) deferOnMissingGroupProvenance(ds *breakglassv1alpha1.DebugSession) (ctrl.Result, bool) {
+	if ds.CreationTimestamp.IsZero() || time.Since(ds.CreationTimestamp.Time) >= groupProvenanceGracePeriod {
+		return ctrl.Result{}, false
+	}
+	c.log.Debugw("Deferring group-restricted session until authenticated group provenance is persisted",
+		"debugSession", ds.Name,
+		"namespace", ds.Namespace)
+	return ctrl.Result{RequeueAfter: time.Second}, true
 }
 
 // failSession marks a session as failed and logs the failure

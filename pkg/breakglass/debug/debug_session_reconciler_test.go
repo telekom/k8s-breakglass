@@ -5822,7 +5822,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
-		assert.Contains(t, updated.Status.Message, "template not found")
+		assert.Contains(t, updated.Status.Message, "approved activation snapshots are missing")
 	})
 
 	t.Run("failed_state_is_terminal_no_requeue", func(t *testing.T) {

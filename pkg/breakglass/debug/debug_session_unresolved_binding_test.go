@@ -224,16 +224,9 @@ func TestHandlePendingApproval_UnresolvableBindingRefDoesNotActivate(t *testing.
 	}
 
 	_, err := c.handlePendingApproval(context.Background(), ds)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "resolve bindingRef")
-	assert.ErrorIs(t, err, transient)
-
-	// State is left as PendingApproval — retryable, non-terminal, no access granted.
-	assert.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, ds.Status.State,
-		"an unresolvable binding must leave the session retryable, not activate or fail it")
-	// The approval itself is preserved, so no re-approval is needed once the ref resolves.
-	require.NotNil(t, ds.Status.Approval)
-	assert.NotNil(t, ds.Status.Approval.ApprovedAt)
+	require.NoError(t, err)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	assert.Contains(t, ds.Status.Message, "approved activation snapshots are missing")
 }
 
 // TestHandlePending_NoBindingRefStillAutoDiscovers is the backwards-compatibility
