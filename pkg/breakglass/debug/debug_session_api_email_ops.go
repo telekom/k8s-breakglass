@@ -374,7 +374,7 @@ func (c *DebugSessionAPIController) emitDebugSessionAuditEvent(ctx context.Conte
 }
 
 func (c *DebugSessionAPIController) shouldEmitAudit(ctx context.Context, session *breakglassv1alpha1.DebugSession) bool {
-	return shouldEmitDebugSessionAudit(ctx, c.reader(), c.log, session)
+	return breakglass.ShouldEmitDebugSessionAudit(ctx, c.reader(), c.log, session)
 }
 
 // handleInjectEphemeralContainer injects a debug container into an existing pod

@@ -1007,7 +1007,7 @@ func isSafeDebugSessionFailureRecipient(recipient string) bool {
 // shouldEmitAudit checks if audit events should be emitted for this session
 // based on the template's audit configuration.
 func (c *DebugSessionController) shouldEmitAudit(ctx context.Context, ds *breakglassv1alpha1.DebugSession) bool {
-	return shouldEmitDebugSessionAudit(ctx, c.approvalReader(), c.log, ds)
+	return breakglass.ShouldEmitDebugSessionAudit(ctx, c.approvalReader(), c.log, ds)
 }
 
 // sendToWebhookDestinations sends audit events to configured webhook destinations

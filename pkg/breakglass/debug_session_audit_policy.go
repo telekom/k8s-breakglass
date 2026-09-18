@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
-package debug
+package breakglass
 
 import (
 	"context"
@@ -11,9 +11,9 @@ import (
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// shouldEmitDebugSessionAudit preserves captured policy and suppresses events when
+// ShouldEmitDebugSessionAudit preserves captured policy and suppresses events when
 // an uncaptured policy is unavailable, so lookup failures cannot bypass opt-out.
-func shouldEmitDebugSessionAudit(ctx context.Context, reader ctrlclient.Reader, log *zap.SugaredLogger, session *breakglassv1alpha1.DebugSession) bool {
+func ShouldEmitDebugSessionAudit(ctx context.Context, reader ctrlclient.Reader, log *zap.SugaredLogger, session *breakglassv1alpha1.DebugSession) bool {
 	policy := session.Status.ResolvedTemplate
 	if policy == nil {
 		if session.Spec.TemplateRef == "" {

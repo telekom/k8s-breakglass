@@ -8,8 +8,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -612,6 +615,69 @@ func TestCleanupRoutine_StartsImmediatelyWithoutSignal(t *testing.T) {
 		// Expected: didn't block
 	case <-time.After(100 * time.Millisecond):
 		t.Error("CleanupRoutine should not block when LeaderElected is nil")
+	}
+}
+
+func TestCleanupRoutineDebugSessionAuditPolicy(t *testing.T) {
+	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStateActive, breakglassv1alpha1.DebugSessionStatePendingApproval} {
+		for _, mode := range []string{"enabled", "disabled", "captured enabled", "captured disabled", "unavailable", "legacy"} {
+			t.Run(string(state)+"/"+mode, func(t *testing.T) {
+				ctx := context.Background()
+				past := metav1.NewTime(time.Now().Add(-DebugSessionApprovalTimeout - time.Hour))
+				session := &breakglassv1alpha1.DebugSession{
+					ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default", CreationTimestamp: past},
+					Spec:       breakglassv1alpha1.DebugSessionSpec{TemplateRef: "policy", Cluster: "cluster"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: state, ExpiresAt: &past, Approval: &breakglassv1alpha1.DebugSessionApproval{},
+					},
+				}
+				template := &breakglassv1alpha1.DebugSessionTemplate{
+					ObjectMeta: metav1.ObjectMeta{Name: "policy"},
+					Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+						Audit: &breakglassv1alpha1.DebugSessionAuditConfig{Enabled: mode != "disabled" && mode != "captured enabled"},
+					},
+				}
+				if mode == "captured enabled" || mode == "captured disabled" {
+					session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Audit: &breakglassv1alpha1.DebugSessionAuditConfig{Enabled: mode == "captured enabled"},
+					}
+				}
+				if mode == "legacy" {
+					session.Spec.TemplateRef = ""
+				}
+				hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session, template).WithStatusSubresource(session).Build()
+				reader := interceptor.NewClient(hub, interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate); ok && mode == "unavailable" {
+						return context.DeadlineExceeded
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				}})
+				core, logs := observer.New(zap.InfoLevel)
+				logger := zap.New(core)
+				service := audit.NewService(hub, nil, logger, "default")
+				require.NoError(t, service.Reload(ctx, &breakglassv1alpha1.AuditConfig{Spec: breakglassv1alpha1.AuditConfigSpec{
+					Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
+				}}))
+				t.Cleanup(func() { require.NoError(t, service.Close()) })
+				routine := CleanupRoutine{Log: logger.Sugar(), Manager: NewSessionManagerWithClientAndReader(hub, reader), AuditService: service, DisableEmail: true}
+				routine.cleanupExpiredDebugSessions(ctx)
+				routine.cleanupExpiredDebugSessions(ctx)
+				require.NoError(t, service.Close())
+				require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), session))
+				event := audit.EventDebugSessionExpired
+				wantState := breakglassv1alpha1.DebugSessionStateExpired
+				if state == breakglassv1alpha1.DebugSessionStatePendingApproval {
+					event = audit.EventDebugSessionApprovalTimeout
+					wantState = breakglassv1alpha1.DebugSessionStateFailed
+				}
+				require.Equal(t, wantState, session.Status.State)
+				count := 0
+				if mode == "enabled" || mode == "captured enabled" || mode == "legacy" {
+					count = 1
+				}
+				require.Equal(t, count, logs.FilterField(zap.String("event_type", string(event))).Len())
+			})
+		}
 	}
 }
 
