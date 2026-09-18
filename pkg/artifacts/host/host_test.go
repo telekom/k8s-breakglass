@@ -32,6 +32,31 @@ func TestBuildDisabledDoesNotReadOrRequireHostDependencies(t *testing.T) {
 	require.Nil(t, components)
 }
 
+func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
+	tests := []struct {
+		name, raw string
+		want      string
+		wantErr   bool
+	}{
+		{name: "accepts origin", raw: "https://breakglass.example", want: "https://breakglass.example"},
+		{name: "accepts root slash", raw: "https://breakglass.example/", want: "https://breakglass.example"},
+		{name: "rejects userinfo", raw: "https://user@breakglass.example", wantErr: true},
+		{name: "rejects path prefix", raw: "https://breakglass.example/prefix", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := controllerOrigin(tt.raw)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestLoadKeyringReadsOnlyConfiguredNamespaceAndEnforcesKeyFloor(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))

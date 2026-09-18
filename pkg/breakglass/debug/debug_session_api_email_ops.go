@@ -451,10 +451,13 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
-	if session.Status.ConnectionLease != nil {
-		handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
 	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -569,10 +572,13 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
-	if session.Status.ConnectionLease != nil {
-		handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
 	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -672,10 +678,13 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
-	if session.Status.ConnectionLease != nil {
-		handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
 	}
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)

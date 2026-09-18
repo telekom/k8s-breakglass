@@ -73,7 +73,7 @@ artifacts:
 ```
 
 Replace the image placeholder with an actually published immutable digest.
-`stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; query
+`stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,
 provider, signing key, target identity or these limits.

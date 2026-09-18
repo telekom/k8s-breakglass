@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforce HTTPS origin-only artifact `controllerURL` (reject userinfo and non-root paths) and fail closed when kubectl-debug mutation lease validation is unavailable.
 - Register connection leases in the production client scheme; validate complete
   collector Job execution, live artifact-list bindings, collection body limits,
   and distinguish invalid uploads from provider failures.

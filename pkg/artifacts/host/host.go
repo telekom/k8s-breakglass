@@ -265,8 +265,9 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 
 func controllerOrigin(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", errors.New("artifact controller URL must be an HTTPS origin or path without query or fragment")
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || (parsed.RawPath != "" && parsed.RawPath != "/") {
+		return "", errors.New("artifact controller URL must be an HTTPS origin without userinfo, path, query, or fragment")
 	}
 	return parsed.Scheme + "://" + parsed.Host, nil
 }
