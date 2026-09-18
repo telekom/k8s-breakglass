@@ -162,6 +162,13 @@ external updates: the signed release pipeline supplies verified immutable
 digests. Dependabot security alerts and security updates are repository settings,
 separate from this version-update configuration.
 
+The legacy `github.com/google/cel-go` module is restricted to versions below
+`v0.32.0`: newer releases declare `cel.dev/cel-go` and cannot be substituted
+under the old module path still imported by Kubernetes. Compatible legacy-path
+updates remain enabled. Remove this restriction when the consuming dependencies
+migrate to the canonical module path; do not force the migration with a `replace`
+directive that mixes incompatible Go type identities.
+
 ### Pins outside Dependabot support
 
 Keep the utility runtime families separate: workload-debug, storage-debug and
