@@ -62,7 +62,10 @@ func bearerToken(header string) string {
 }
 
 func writeUploadError(context *gin.Context, err error) {
+	var tooLarge *http.MaxBytesError
 	switch {
+	case errors.As(err, &tooLarge):
+		context.Status(http.StatusRequestEntityTooLarge)
 	case errors.Is(err, backend.ErrForbidden):
 		// Do not disclose whether the session or artifact exists.
 		context.Status(http.StatusNotFound)

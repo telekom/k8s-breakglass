@@ -77,6 +77,9 @@ Replace the image placeholder with an actually published immutable digest.
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,
 provider, signing key, target identity or these limits.
+The configured controller origin is normalized before creating upload URLs.
+Requests exceeding the HTTP upload body limit return HTTP 413, not a retryable
+storage-provider error.
 
 `tokenSecretName` and `s3.credentialsSecretName` refer to existing Secrets in the
 configured Breakglass namespace. The signing Secret contains 1–32 data keys;

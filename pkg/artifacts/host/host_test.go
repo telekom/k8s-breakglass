@@ -40,8 +40,15 @@ func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
 	}{
 		{name: "accepts origin", raw: "https://breakglass.example", want: "https://breakglass.example"},
 		{name: "accepts root slash", raw: "https://breakglass.example/", want: "https://breakglass.example"},
+		{name: "normalizes whitespace", raw: " https://breakglass.example/ ", want: "https://breakglass.example"},
 		{name: "rejects userinfo", raw: "https://user@breakglass.example", wantErr: true},
+		{name: "rejects password", raw: "https://user:secret@breakglass.example", wantErr: true},
 		{name: "rejects path prefix", raw: "https://breakglass.example/prefix", wantErr: true},
+		{name: "rejects encoded slash", raw: "https://breakglass.example/%2F", wantErr: true},
+		{name: "rejects query", raw: "https://breakglass.example?x=y", wantErr: true},
+		{name: "rejects empty query", raw: "https://breakglass.example?", wantErr: true},
+		{name: "rejects fragment", raw: "https://breakglass.example#fragment", wantErr: true},
+		{name: "rejects empty fragment", raw: "https://breakglass.example#", wantErr: true},
 	}
 
 	for _, tt := range tests {

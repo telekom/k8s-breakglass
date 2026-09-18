@@ -132,7 +132,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 		return nil, err
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
-	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: strings.TrimSuffix(artifactConfig.ControllerURL, "/"), Log: deps.Log}
+	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: issuer, Log: deps.Log}
 	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
 	if err != nil {
 		_ = closeStore()
@@ -265,7 +265,7 @@ func (fence *connectionLeaseFence) AuthorizeArtifact(ctx context.Context, bindin
 
 func controllerOrigin(raw string) (string, error) {
 	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(raw, "#") ||
 		parsed.User != nil || (parsed.Path != "" && parsed.Path != "/") || (parsed.RawPath != "" && parsed.RawPath != "/") {
 		return "", errors.New("artifact controller URL must be an HTTPS origin without userinfo, path, query, or fragment")
 	}

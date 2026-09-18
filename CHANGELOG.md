@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Accept the Kubernetes-added `enableServiceLinks: true` default when verifying
+  live workload Pod identity, while preserving explicit opt-outs (#1340).
+- Return HTTP 413 for uploads rejected by the HTTP body limit instead of
+  reporting a retryable provider outage (#1340).
+
 - Enforce HTTPS origin-only artifact `controllerURL` (reject userinfo and non-root paths) and fail closed when kubectl-debug mutation lease validation is unavailable.
 - Register connection leases in the production client scheme; validate complete
   collector Job execution, live artifact-list bindings, collection body limits,

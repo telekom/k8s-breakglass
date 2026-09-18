@@ -23,6 +23,9 @@ Session reads, artifact API routes and archive identity checks use the namespace
 returned by session creation, which belongs to the ClusterConfig. The controller
 fixture and artifact reservations remain in the controller namespace; the two
 namespaces must not be assumed to match.
+Workload Pod identity checks tolerate Kubernetes' canonical
+`enableServiceLinks: true` admission default only when the workload left it
+unset; an explicit `false` remains authoritative.
 
 The setup creates a fresh private test CA and signing Secret, builds the actual
 collector/uploader from source, appends the CA to a test-only trust layer, and
