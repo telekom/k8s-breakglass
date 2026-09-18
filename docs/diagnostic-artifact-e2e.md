@@ -19,6 +19,11 @@ The single-cluster CI job explicitly runs `e2e/fixtures/artifacts/setup.sh`,
 then `go test -tags=e2e ./e2e/api -run '^TestDebugSessionArtifactCollectorE2E$'`.
 Missing fixture configuration fails this named lane. Other E2E suites keep their
 existing HTTP listener; a test-only TLS sidecar forwards to that listener.
+Once the environment and port-forwards are established, both artifact backends
+run even if an earlier test suite fails. Each matrix depends on its own successful
+fixture setup; failures still fail the job and cancellation stops further work.
+The shared E2E termination client retries only explicit optimistic `409 CONFLICT`
+responses, at most three times, without retrying authorization failures.
 Both fixture setup and S3 backend selection wait for `/api/config` through the
 runner's API port-forward after replacing the controller Pod. Deployment
 readiness alone does not mean the keepalive port-forward has reconnected.
