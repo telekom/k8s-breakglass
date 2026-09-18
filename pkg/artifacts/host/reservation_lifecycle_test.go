@@ -484,6 +484,40 @@ func TestRecordingReservationRejectsCollapsedSubsecondLifetime(t *testing.T) {
 	require.Empty(t, list.Items)
 }
 
+func TestExistingDownloadStopsWhenSessionStateChangesBeforeDeadline(t *testing.T) {
+	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateExpired} {
+		t.Run(string(state), func(t *testing.T) {
+			_, repo, store, keys, now, hub := lifecycleFixture(t)
+			ctx := context.Background()
+			expiry := metav1.NewTime(now.Add(time.Hour))
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiry}}
+			require.NoError(t, hub.Create(ctx, session))
+			service, err := backend.New(backend.Config{Repository: repo, Store: store, Tokens: keys, StagingDir: t.TempDir(), Now: func() time.Time { return *now }, Authorizer: NewLiveSessionAuthorizer(hub, allowLifecycle{}, func() time.Time { return *now })})
+			require.NoError(t, err)
+			record, err := service.Reserve(ctx, lifecycleRecord(*now))
+			require.NoError(t, err)
+			route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
+			signed, err := backend.ReservationToken(keys, record, route, *now, 15*time.Minute)
+			require.NoError(t, err)
+			_, err = service.Upload(ctx, signed, route, bytes.NewReader(validLocalArchive(t, record.Expected)))
+			require.NoError(t, err)
+			binding := backend.SessionBinding{Namespace: "hub", Name: "session", UID: "session-uid", TargetClusterUID: "cluster-uid", TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: 1, ConnectionLeaseUID: "lease-uid"}
+			reader, _, err := service.Download(ctx, "hub", "session", record.ArtifactID, binding)
+			require.NoError(t, err)
+			defer func() { _ = reader.Close() }()
+			n, err := reader.Read(make([]byte, 1))
+			require.NoError(t, err)
+			require.Equal(t, 1, n)
+			session.Status.State = state
+			require.NoError(t, hub.Update(ctx, session))
+			require.True(t, now.Before(session.Status.ExpiresAt.Time))
+			n, err = reader.Read(make([]byte, 32))
+			require.ErrorIs(t, err, backend.ErrForbidden)
+			require.Zero(t, n, "an already-open download must not release bytes after terminal state")
+		})
+	}
+}
+
 func TestCollectorLeaseRecreationDeniesOldUploadTokenAndDownload(t *testing.T) {
 	_, repo, store, keys, now, hub := lifecycleFixture(t)
 	require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
