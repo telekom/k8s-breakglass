@@ -1223,9 +1223,10 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateLabels"), newObj.Status.ResolvedTemplateLabels,
 			"resolvedTemplate labels are immutable once persisted"))
 	}
-	if oldObj.Status.ResolvedTemplateIdentityCaptured && !newObj.Status.ResolvedTemplateIdentityCaptured {
+	if oldObj.Status.ResolvedTemplate != nil &&
+		oldObj.Status.ResolvedTemplateIdentityCaptured != newObj.Status.ResolvedTemplateIdentityCaptured {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateIdentityCaptured"),
-			newObj.Status.ResolvedTemplateIdentityCaptured, "resolved template identity capture cannot be cleared"))
+			newObj.Status.ResolvedTemplateIdentityCaptured, "resolved template identity capture is immutable once the resolved template is persisted"))
 	}
 	if oldObj.Status.AuthenticatedUserGroupsCaptured &&
 		!reflect.DeepEqual(oldObj.Status.AuthenticatedUserGroups, newObj.Status.AuthenticatedUserGroups) {

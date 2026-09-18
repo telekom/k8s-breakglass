@@ -24,5 +24,8 @@ func directTemplateAllowsCluster(template *breakglassv1alpha1.DebugSessionTempla
 		return false
 	}
 	selector, err := metav1.LabelSelectorAsSelector(template.Spec.Allowed.ClusterSelector)
-	return err == nil && selector.Matches(labels.Set(cluster.Labels))
+	return err == nil &&
+		(len(template.Spec.Allowed.ClusterSelector.MatchLabels) > 0 ||
+			len(template.Spec.Allowed.ClusterSelector.MatchExpressions) > 0) &&
+		selector.Matches(labels.Set(cluster.Labels))
 }

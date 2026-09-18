@@ -3442,6 +3442,18 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 	})
 }
 
+func TestDirectTemplateAllowsClusterRejectsEmptySelector(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				ClusterSelector: &metav1.LabelSelector{},
+			},
+		},
+	}
+	cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}
+	assert.False(t, directTemplateAllowsCluster(template, cluster.Name, cluster))
+}
+
 func TestDebugSessionController_BindingMatchesTemplate_EdgeCases(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctrl := &DebugSessionController{log: logger}
