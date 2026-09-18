@@ -32,10 +32,33 @@ func DebugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSessi
 	return false
 }
 
-// DebugSessionHasActionableDeployedResources excludes only confirmed policy-retained identities.
+// DebugSessionAuxiliaryResourceDeleted recognizes only exact confirmed deletions.
+func DebugSessionAuxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
+	if !completeDebugResourceIdentity(ref.UID, ref.APIVersion, ref.Kind, ref.Name) {
+		return false
+	}
+	for _, status := range ds.Status.AuxiliaryResourceStatuses {
+		if ref.Source != "auxiliary:"+status.Name {
+			continue
+		}
+		if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
+			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
+			return status.Deleted
+		}
+		for _, child := range status.AdditionalResources {
+			if child.UID == ref.UID && child.Kind == ref.Kind && child.APIVersion == ref.APIVersion &&
+				child.ResourceName == ref.Name && child.Namespace == ref.Namespace {
+				return child.Deleted
+			}
+		}
+	}
+	return false
+}
+
+// DebugSessionHasActionableDeployedResources excludes confirmed retained or deleted identities.
 func DebugSessionHasActionableDeployedResources(ds *breakglassv1alpha1.DebugSession) bool {
 	for _, ref := range ds.Status.DeployedResources {
-		if !DebugSessionResourceIntentionallyRetained(ds, ref) {
+		if !DebugSessionResourceIntentionallyRetained(ds, ref) && !DebugSessionAuxiliaryResourceDeleted(ds, ref) {
 			return true
 		}
 	}

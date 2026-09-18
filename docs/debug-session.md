@@ -2196,6 +2196,14 @@ UID and source match the durable auxiliary status. Mismatches remain evidence
 requiring reconciliation. A zero retention timestamp is unset and does not
 override explicit `retainFor`; active sessions with no hard expiry cannot be
 joined, left, or terminated through the normal API actions.
+Periodic cleanup also expires those malformed active sessions and stamps their
+retention deadline. Terminal status retries preserve an existing non-zero
+deadline rather than restarting the retention window. Confirmed auxiliary
+deletions retire stale inventory only when its full identity matches.
+Quota bootstrap loads template, binding and cluster policies once per pass;
+pending requests still consume capacity. Pod-copy operations recheck the live
+session after target creation and roll back the copy if authorization expired
+or changed before its references could be recorded.
 
 Terminal retention cleanup and cluster deletion share the same residual-resource
 predicates. Confirmed deleted pod-template history does not hold a session after

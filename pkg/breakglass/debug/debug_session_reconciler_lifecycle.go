@@ -1160,7 +1160,7 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("missing matching auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
 				continue
 			}
-			if auxiliaryResourceDeleted(ds, ref) || utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
+			if utils.DebugSessionAuxiliaryResourceDeleted(ds, ref) || utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
 				continue
 			}
 		}
