@@ -1479,16 +1479,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if statusReader == nil {
 		statusReader = c.client
 	}
-	liveSession := &breakglassv1alpha1.DebugSession{}
-	if err := statusReader.Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), liveSession); err != nil {
-		reqLog.Errorw("Failed to read created debug session for group provenance", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
-		return
-	}
-	if err := breakglass.PatchDebugSessionStatusWithReader(apiCtx, c.client, statusReader, liveSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.AuthenticatedUserGroups = trustedGroups
-		status.AuthenticatedUserGroupsCaptured = true
-	}); err != nil {
+	liveSession, provenanceErr := c.persistAuthenticatedGroupProvenance(apiCtx, session, statusReader, trustedGroups)
+	if provenanceErr != nil {
+		err := provenanceErr
 		if c.apiReader == nil && apierrors.IsNotFound(err) {
 			liveSession.Status.AuthenticatedUserGroups = trustedGroups
 			liveSession.Status.AuthenticatedUserGroupsCaptured = true
@@ -1698,6 +1691,45 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		groups = collectGroups(freshCandidates)
 	}
 	return groups, nil
+}
+
+func (c *DebugSessionAPIController) persistAuthenticatedGroupProvenance(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	reader ctrlclient.Reader,
+	groups []string,
+) (*breakglassv1alpha1.DebugSession, error) {
+	var liveSession *breakglassv1alpha1.DebugSession
+	for attempt := 0; attempt < debugSessionAdmissionAttempts; attempt++ {
+		liveSession = &breakglassv1alpha1.DebugSession{}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(session), liveSession); err != nil {
+			return liveSession, fmt.Errorf("read created debug session for group provenance: %w", err)
+		}
+		err := breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, reader, liveSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.AuthenticatedUserGroups = append([]string(nil), groups...)
+			status.AuthenticatedUserGroupsCaptured = true
+		})
+		if err == nil {
+			return liveSession, nil
+		}
+		if !apierrors.IsConflict(err) || attempt == debugSessionAdmissionAttempts-1 {
+			return liveSession, err
+		}
+		delay := debugSessionAdmissionRetryDelay << attempt
+		if delay > 250*time.Millisecond {
+			delay = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return liveSession, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return liveSession, fmt.Errorf("authenticated group provenance persistence retry exhausted")
 }
 
 // admitCreatedDebugSession retries only the bounded resource-version race

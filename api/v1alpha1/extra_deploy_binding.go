@@ -218,11 +218,17 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		if err := validateFiniteNumericBounds(merged); err != nil {
 			return nil, err
 		}
+		if err := validateStorageBounds(merged); err != nil {
+			return nil, err
+		}
 		return merged, nil
 	}
 	if narrow == nil {
 		merged := cloneVariableValidation(base)
 		if err := validateFiniteNumericBounds(merged); err != nil {
+			return nil, err
+		}
+		if err := validateStorageBounds(merged); err != nil {
 			return nil, err
 		}
 		return merged, nil
@@ -322,6 +328,31 @@ func validateFiniteNumericBounds(validation *VariableValidation) error {
 		if _, err := parseFiniteFloat(value); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func validateStorageBounds(validation *VariableValidation) error {
+	if validation == nil {
+		return nil
+	}
+	var minValue, maxValue *resource.Quantity
+	if validation.MinStorage != "" {
+		parsed, err := resource.ParseQuantity(validation.MinStorage)
+		if err != nil {
+			return fmt.Errorf("minStorage: %w", err)
+		}
+		minValue = &parsed
+	}
+	if validation.MaxStorage != "" {
+		parsed, err := resource.ParseQuantity(validation.MaxStorage)
+		if err != nil {
+			return fmt.Errorf("maxStorage: %w", err)
+		}
+		maxValue = &parsed
+	}
+	if minValue != nil && maxValue != nil && minValue.Cmp(*maxValue) > 0 {
+		return fmt.Errorf("validation bounds are contradictory")
 	}
 	return nil
 }

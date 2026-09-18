@@ -115,6 +115,20 @@ func TestEffectiveExtraDeployVariablesRejectsNonFiniteNumericBounds(t *testing.T
 	}
 }
 
+func TestEffectiveExtraDeployVariablesRejectsBindingOnlyStorageBounds(t *testing.T) {
+	template := []ExtraDeployVariable{{Name: "size", InputType: InputTypeNumber}}
+	for _, validation := range []*VariableValidation{
+		{MinStorage: "not-a-quantity"},
+		{MaxStorage: "not-a-quantity"},
+		{MinStorage: "2Gi", MaxStorage: "1Gi"},
+	} {
+		_, err := EffectiveExtraDeployVariables(template, []ExtraDeployVariableConstraint{
+			{Name: "size", Validation: validation},
+		})
+		require.Error(t, err)
+	}
+}
+
 func TestValidateExtraDeployValueNamesRejectsUnknownAndDisabledWhenBound(t *testing.T) {
 	disabled := true
 	vars := []ExtraDeployVariable{{Name: "mode"}, {Name: "secret", Disabled: disabled}}

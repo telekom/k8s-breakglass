@@ -3415,6 +3415,31 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		require.ErrorContains(t, err, "cluster config required")
 		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
+
+	t.Run("does not match selector against an unready ClusterConfig", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "selector-only-binding", Namespace: "test-ns"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef:     &breakglassv1alpha1.TemplateReference{Name: "test-template"},
+				ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "test"}},
+			},
+		}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "unready-cluster", Labels: map[string]string{"env": "test"}},
+			Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{
+				Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse,
+			}}},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, clusterConfig).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "unready-cluster")
+		require.NoError(t, err)
+		assert.Nil(t, result)
+	})
 }
 
 func TestDebugSessionController_BindingMatchesTemplate_EdgeCases(t *testing.T) {
