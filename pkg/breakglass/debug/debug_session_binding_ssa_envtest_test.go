@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -22,6 +23,7 @@ import (
 	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	appsv1 "k8s.io/api/apps/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -43,6 +45,45 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 	for name, hasVariables := range map[string]bool{"variables": true, "empty-policy": false} {
 		t.Run(name, func(t *testing.T) {
 			c, ds, template, target := newDeploymentFenceFixture(t)
+			templateName := "template-" + name
+			clusterName := "spoke-" + name
+			secretName := "spoke-kubeconfig-" + name
+			ds.Spec.TemplateRef = templateName
+			ds.Spec.Cluster = "default/" + clusterName
+			template.Name = templateName
+			for _, item := range []struct {
+				name      string
+				namespace string
+				obj       client.Object
+			}{
+				{name: "spoke", namespace: "default", obj: &breakglassv1alpha1.ClusterConfig{}},
+				{name: "spoke-kubeconfig", namespace: "default", obj: &corev1.Secret{}},
+				{name: "template", obj: &breakglassv1alpha1.DebugSessionTemplate{}},
+			} {
+				obj := item.obj
+				if _, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate); ok {
+					obj = template
+				} else {
+					require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Name: item.name, Namespace: item.namespace}, obj))
+				}
+				if templateObj, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate); ok {
+					templateObj.Name = templateName
+				}
+				if clusterObj, ok := obj.(*breakglassv1alpha1.ClusterConfig); ok {
+					clusterObj.Name = clusterName
+					clusterObj.Spec.KubeconfigSecretRef.Name = secretName
+				}
+				if secretObj, ok := obj.(*corev1.Secret); ok {
+					secretObj.Name = secretName
+				}
+				obj.SetResourceVersion("")
+				obj.SetUID("")
+				require.NoError(t, apiClient.Create(t.Context(), obj))
+			}
+			c.client = apiClient
+			c.reader = envtestFieldSelectorReader{Reader: apiClient}
+			c.apiReader = envtestFieldSelectorReader{Reader: apiClient}
+			c.ccProvider = cluster.NewClientProvider(apiClient, zap.NewNop().Sugar())
 			persisted := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: ds.Name + "-" + name, Namespace: ds.Namespace}, Spec: ds.Spec}
 			require.NoError(t, apiClient.Create(t.Context(), persisted))
 			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"yes\"\n"
@@ -68,7 +109,7 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 			persisted.Status.Message = "activation next"
 			require.NoError(t, breakglass.ApplyDebugSessionStatus(t.Context(), apiClient, persisted))
 			// Resume the controller with exactly the status returned by the API server.
-			ds.Status = persisted.Status
+			ds = persisted.DeepCopy()
 			require.NoError(t, c.client.Status().Update(t.Context(), ds))
 			template.Spec.PodTemplateString = strings.ReplaceAll(template.Spec.PodTemplateString, "busybox", "unsafe")
 			template.Spec.PodOverridesTemplate = "nodeSelector:\n  approved: \"no\"\n"
@@ -82,6 +123,18 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
 			require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
 		})
+	}
+}
+
+type envtestFieldSelectorReader struct {
+	client.Reader
+}
+
+func (r envtestFieldSelectorReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if err := r.Reader.List(ctx, list, opts...); err != nil && apierrors.IsBadRequest(err) {
+		return r.Reader.List(ctx, list)
+	} else {
+		return err
 	}
 }
 

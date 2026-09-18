@@ -19,6 +19,7 @@ package v1alpha1
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"reflect"
 	"regexp"
 	"strconv"
@@ -213,10 +214,18 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 
 func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidation, error) {
 	if base == nil {
-		return cloneVariableValidation(narrow), nil
+		merged := cloneVariableValidation(narrow)
+		if err := validateFiniteNumericBounds(merged); err != nil {
+			return nil, err
+		}
+		return merged, nil
 	}
 	if narrow == nil {
-		return cloneVariableValidation(base), nil
+		merged := cloneVariableValidation(base)
+		if err := validateFiniteNumericBounds(merged); err != nil {
+			return nil, err
+		}
+		return merged, nil
 	}
 	merged := cloneVariableValidation(base)
 	if narrow.Pattern != "" {
@@ -274,11 +283,11 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		return nil, fmt.Errorf("validation bounds are contradictory")
 	}
 	if merged.Min != "" && merged.Max != "" {
-		minValue, err := strconv.ParseFloat(merged.Min, 64)
+		minValue, err := parseFiniteFloat(merged.Min)
 		if err != nil {
 			return nil, fmt.Errorf("min: %w", err)
 		}
-		maxValue, err := strconv.ParseFloat(merged.Max, 64)
+		maxValue, err := parseFiniteFloat(merged.Max)
 		if err != nil {
 			return nil, fmt.Errorf("max: %w", err)
 		}
@@ -300,6 +309,32 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		}
 	}
 	return merged, nil
+}
+
+func validateFiniteNumericBounds(validation *VariableValidation) error {
+	if validation == nil {
+		return nil
+	}
+	for name, value := range map[string]string{"min": validation.Min, "max": validation.Max} {
+		if value == "" {
+			continue
+		}
+		if _, err := parseFiniteFloat(value); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func parseFiniteFloat(value string) (float64, error) {
+	parsed, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, err
+	}
+	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
+		return 0, fmt.Errorf("must be finite")
+	}
+	return parsed, nil
 }
 
 func cloneVariableValidation(validation *VariableValidation) *VariableValidation {
@@ -329,16 +364,16 @@ func tighterMin(base, narrow string) (string, error) {
 		return base, nil
 	}
 	if base == "" {
-		if _, err := strconv.ParseFloat(narrow, 64); err != nil {
+		if _, err := parseFiniteFloat(narrow); err != nil {
 			return "", err
 		}
 		return narrow, nil
 	}
-	b, err := strconv.ParseFloat(base, 64)
+	b, err := parseFiniteFloat(base)
 	if err != nil {
 		return "", err
 	}
-	n, err := strconv.ParseFloat(narrow, 64)
+	n, err := parseFiniteFloat(narrow)
 	if err != nil {
 		return "", err
 	}
@@ -356,16 +391,16 @@ func tighterMax(base, narrow string) (string, error) {
 		return base, nil
 	}
 	if base == "" {
-		if _, err := strconv.ParseFloat(narrow, 64); err != nil {
+		if _, err := parseFiniteFloat(narrow); err != nil {
 			return "", err
 		}
 		return narrow, nil
 	}
-	b, err := strconv.ParseFloat(base, 64)
+	b, err := parseFiniteFloat(base)
 	if err != nil {
 		return "", err
 	}
-	n, err := strconv.ParseFloat(narrow, 64)
+	n, err := parseFiniteFloat(narrow)
 	if err != nil {
 		return "", err
 	}

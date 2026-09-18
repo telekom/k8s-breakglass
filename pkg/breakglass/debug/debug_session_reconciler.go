@@ -328,6 +328,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 
 // handlePending processes a newly created debug session
 func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	if ds.Status.ResolvedTemplate == nil && hasPartialResolvedBindingSnapshot(ds.Status) {
+		return c.failSession(ctx, ds, "approved activation snapshots are incomplete; recreate this session")
+	}
 	if ds.Status.ResolvedTemplate != nil {
 		return c.resumePersistedPending(ctx, ds)
 	}
@@ -395,6 +398,7 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return c.failSession(ctx, ds, err.Error())
 	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	ds.Status.ResolvedTemplateLabels = cloneStringMap(template.Labels)
 	ds.Status.ResolvedTemplateVariablePolicy = template.Spec.DeepCopy().ExtraDeployVariables
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
@@ -457,8 +461,12 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 			return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
 		}
+		templateLabels, err := approvedTemplateLabelsFromStatus(ds.Status)
+		if err != nil {
+			return c.failSession(ctx, ds, "legacy approved pod-template snapshot lacks identity metadata; recreate this session")
+		}
 		template := &breakglassv1alpha1.DebugSessionTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: approvedTemplateLabelsFromStatus(ds.Status)},
+			ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: templateLabels},
 			Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
 		}
 		var binding *breakglassv1alpha1.DebugSessionClusterBinding
@@ -876,7 +884,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
-		applyApprovedTemplateLabels(approvedTemplate, ds.Status)
+		if err := applyApprovedTemplateLabels(approvedTemplate, ds.Status); err != nil {
+			return c.failSession(ctx, ds, "legacy approved pod-template snapshot lacks identity metadata; recreate this session")
+		}
 		template = approvedTemplate
 	}
 	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {

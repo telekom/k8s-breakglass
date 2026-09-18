@@ -283,6 +283,11 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedTemplate *DebugSessionTemplateSpec `json:"resolvedTemplate,omitempty"`
 
+	// resolvedTemplateLabels stores the catalogue identity labels from the
+	// approved template independently of its pod-template representation.
+	// +optional
+	ResolvedTemplateLabels map[string]string `json:"resolvedTemplateLabels,omitempty"`
+
 	// resolvedTemplateVariablePolicy stores the original template variable
 	// definitions used to reconstruct binding regex intersections after the
 	// effective policy is serialized.
@@ -1208,6 +1213,19 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
 			"resolvedTemplate is immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateLabels, newObj.Status.ResolvedTemplateLabels) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateLabels"), newObj.Status.ResolvedTemplateLabels,
+			"resolvedTemplate labels are immutable once persisted"))
+	}
+	if oldObj.Status.AuthenticatedUserGroupsCaptured &&
+		!reflect.DeepEqual(oldObj.Status.AuthenticatedUserGroups, newObj.Status.AuthenticatedUserGroups) {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroups"), newObj.Status.AuthenticatedUserGroups,
+			"authenticated user group provenance is immutable once captured"))
+	}
+	if oldObj.Status.AuthenticatedUserGroupsCaptured && !newObj.Status.AuthenticatedUserGroupsCaptured {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroupsCaptured"),
+			newObj.Status.AuthenticatedUserGroupsCaptured, "authenticated user group provenance capture cannot be cleared"))
 	}
 	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateVariablePolicy, newObj.Status.ResolvedTemplateVariablePolicy) && !CanInitializeLegacyVariablePolicy(oldObj.Status, newObj.Status.ResolvedTemplateVariablePolicy) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateVariablePolicy"), newObj.Status.ResolvedTemplateVariablePolicy,

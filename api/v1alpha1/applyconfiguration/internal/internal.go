@@ -2082,6 +2082,11 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: retainedUntil
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: resolvedTemplateLabels
+      type:
+        map:
+          elementType:
+            scalar: string
     - name: resolvedTemplateVariablePolicy
       type:
         list:
