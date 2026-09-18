@@ -142,7 +142,8 @@ func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T
 		`{"spec":{"templateString":"apiVersion: v1"},"labels":{"pod":"debug"}}`,
 	} {
 		t.Run(raw, func(t *testing.T) {
-			_, _, _, err := decodeApprovedPodTemplateSnapshot([]byte(raw))
+			status := breakglassv1alpha1.DebugSessionStatus{ResolvedPodTemplate: &apiextensionsv1.JSON{Raw: []byte(raw)}}
+			_, err := approvedTemplateLabelsFromStatus(status)
 			require.ErrorContains(t, err, "lacks durable template identity metadata")
 		})
 	}
@@ -153,6 +154,11 @@ func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T
 	require.NotNil(t, spec)
 	require.Equal(t, map[string]string{"pod": "debug"}, podLabels)
 	require.Equal(t, map[string]string{"catalogue": "restricted"}, templateLabels)
+	_, err = approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
+		ResolvedPodTemplate:              &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"templateString":"apiVersion: v1"}}`)},
+		ResolvedTemplateIdentityCaptured: true,
+	})
+	require.NoError(t, err)
 	labels, err := approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
 		ResolvedTemplateIdentityCaptured: true,
 	})

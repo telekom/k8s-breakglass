@@ -51,9 +51,6 @@ func decodeApprovedPodTemplateSnapshot(raw []byte) (*breakglassv1alpha1.DebugPod
 		return nil, nil, nil, err
 	}
 	if snapshot.Spec != nil {
-		if len(snapshot.TemplateLabels) == 0 {
-			return nil, nil, nil, fmt.Errorf("legacy pod-template snapshot lacks durable template identity metadata")
-		}
 		return snapshot.Spec, cloneStringMap(snapshot.Labels), cloneStringMap(snapshot.TemplateLabels), nil
 	}
 	return nil, nil, nil, fmt.Errorf("legacy pod-template snapshot lacks durable identity metadata")
@@ -69,6 +66,9 @@ func approvedTemplateLabelsFromStatus(status breakglassv1alpha1.DebugSessionStat
 	_, _, templateLabels, err := decodeApprovedPodTemplateSnapshot(status.ResolvedPodTemplate.Raw)
 	if err != nil {
 		return nil, err
+	}
+	if len(templateLabels) == 0 {
+		return nil, fmt.Errorf("legacy pod-template snapshot lacks durable template identity metadata")
 	}
 	return templateLabels, nil
 }
