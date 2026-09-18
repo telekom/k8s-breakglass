@@ -4,6 +4,10 @@ updates:
     directory: "/"
     allow:
       - dependency-type: "all"
+    ignore:
+      # v0.32+ declares cel.dev/cel-go, not the legacy path used by Kubernetes.
+      - dependency-name: "github.com/google/cel-go"
+        versions: [">= 0.32.0"]
     schedule:
       interval: "daily"
     groups:
