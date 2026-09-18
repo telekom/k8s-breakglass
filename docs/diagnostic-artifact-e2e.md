@@ -77,6 +77,9 @@ Kind nodes at `/var/lib/systemd/coredump/core.artifact-kind-fixture`. Tests insp
 the admitted Pod's exact node, immutable image, read-only hostPath and mount,
 host namespace/runtime fields, and the downloaded archive's synthetic payload.
 Both recipes validate their manifest contract, stdout/stderr, and payload hashes.
+Generated Jobs pass recipe inputs through `DIAGNOSTIC_NODE`,
+`DIAGNOSTIC_MAX_AGE_MINUTES`, and `DIAGNOSTIC_DETAIL_LEVEL`, matching the shipping
+collector rather than relying on its standalone defaults.
 No production source directory or credential is used.
 
 The requester identity and groups used for API collection are impersonated for

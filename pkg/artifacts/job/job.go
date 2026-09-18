@@ -79,11 +79,14 @@ func Build(config Config) (*batchv1.Job, error) {
 		{Name: "BREAKGLASS_ARTIFACT_REDACTION_VERSION", Value: fmt.Sprintf("%d", config.RedactionVersion)},
 		{Name: "BREAKGLASS_ARTIFACT_MAX_BYTES", Value: fmt.Sprintf("%d", config.MaxBytes)},
 	}
+	if config.Node != "" {
+		env = append(env, corev1.EnvVar{Name: "DIAGNOSTIC_NODE", Value: config.Node})
+	}
 	if config.DetailLevel != "" {
-		env = append(env, corev1.EnvVar{Name: "BREAKGLASS_ARTIFACT_DETAIL_LEVEL", Value: config.DetailLevel})
+		env = append(env, corev1.EnvVar{Name: "DIAGNOSTIC_DETAIL_LEVEL", Value: config.DetailLevel})
 	}
 	if config.MaxAgeMinutes > 0 {
-		env = append(env, corev1.EnvVar{Name: "BREAKGLASS_ARTIFACT_MAX_AGE_MINUTES", Value: fmt.Sprintf("%d", config.MaxAgeMinutes)})
+		env = append(env, corev1.EnvVar{Name: "DIAGNOSTIC_MAX_AGE_MINUTES", Value: fmt.Sprintf("%d", config.MaxAgeMinutes)})
 	}
 	uploaderEnv := append(append([]corev1.EnvVar(nil), env...), corev1.EnvVar{Name: uploadURLKey, Value: config.UploadURL})
 	if config.UploadTokenSecretName != "" {

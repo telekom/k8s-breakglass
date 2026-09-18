@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -75,6 +76,31 @@ func TestBuildCrashdumpJobPinsNodeAndReadOnlyHostPath(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("crashdump Job has no host coredump volume")
+	}
+}
+
+func TestBuildRecipeInputsMatchCollectorEnvironment(t *testing.T) {
+	for _, recipe := range []string{archive.SystemSummaryRecipe, archive.CrashdumpCollectionRecipe} {
+		t.Run(recipe, func(t *testing.T) {
+			config := testConfig(recipe)
+			config.MaxBytes = archive.MaxSystemSummaryArchiveBytes
+			expected := map[string]string{"DIAGNOSTIC_DETAIL_LEVEL": "extended"}
+			if recipe == archive.CrashdumpCollectionRecipe {
+				config.Node, config.MaxAgeMinutes = "worker-one", 60
+				expected = map[string]string{"DIAGNOSTIC_NODE": config.Node, "DIAGNOSTIC_MAX_AGE_MINUTES": "60"}
+			} else {
+				config.DetailLevel = "extended"
+			}
+			job, err := Build(config)
+			require.NoError(t, err)
+			env := map[string]string{}
+			for _, variable := range job.Spec.Template.Spec.InitContainers[0].Env {
+				env[variable.Name] = variable.Value
+			}
+			for name, value := range expected {
+				require.Equal(t, value, env[name], "collector input %s", name)
+			}
+		})
 	}
 }
 

@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Pass collector node, detail level, and age limits using the image's
+  `DIAGNOSTIC_*` environment contract so crashdump collection can start and
+  requested recipe inputs are preserved (#1340).
+
 - Remove the artifact controller's unnecessary hub Job watch, which blocked
   cache synchronization under least-privilege RBAC; collector Jobs are checked
   through their spoke clients (#1340).

@@ -507,10 +507,13 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 		forged.SetUID("")
 		forged.SetManagedFields(nil)
 		forged.SetOwnerReferences(nil)
-		require.True(t, apierrors.IsForbidden(low.Create(s.Ctx, forged)), "requester create %T must be forbidden", obj)
+		createErr := low.Create(s.Ctx, forged)
+		require.True(t, apierrors.IsForbidden(createErr), "requester create %T must be forbidden, got %v", obj, createErr)
 		patch := client.RawPatch("application/merge-patch+json", []byte(`{"metadata":{"annotations":{"forged":"true"}}}`))
-		require.True(t, apierrors.IsForbidden(low.Patch(s.Ctx, obj, patch)), "requester patch %T must be forbidden", obj)
-		require.True(t, apierrors.IsForbidden(low.Delete(s.Ctx, obj)), "requester delete %T must be forbidden", obj)
+		patchErr := low.Patch(s.Ctx, obj, patch)
+		require.True(t, apierrors.IsForbidden(patchErr), "requester patch %T must be forbidden, got %v", obj, patchErr)
+		deleteErr := low.Delete(s.Ctx, obj)
+		require.True(t, apierrors.IsForbidden(deleteErr), "requester delete %T must be forbidden, got %v", obj, deleteErr)
 	}
 	// This upstream fixture has no Kyverno installation: verify authorization,
 	// without pretending that a fake CRD proves downstream policy execution.
