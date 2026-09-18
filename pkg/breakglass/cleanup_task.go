@@ -596,10 +596,8 @@ func buildDebugSessionNotificationRecipients(ds breakglassv1alpha1.DebugSession)
 
 // debugSessionCleanupOutstanding preserves evidence for completed and ambiguous spoke creates.
 func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
-	for _, ref := range ds.Status.DeployedResources {
-		if !debugSessionResourceIntentionallyRetained(ds, ref) {
-			return true
-		}
+	if utils.DebugSessionHasActionableDeployedResources(ds) {
+		return true
 	}
 	for _, resource := range ds.Status.PodTemplateResourceStatuses {
 		if utils.DebugSessionPodTemplateStatusHasCleanupResidual(resource) {
@@ -632,10 +630,4 @@ func debugSessionCleanupOutstanding(ds *breakglassv1alpha1.DebugSession) bool {
 		}
 	}
 	return false
-}
-
-// Exempt only the exact observed auxiliary identity selected for retention.
-// Unknown create outcomes and name-reused resources still require cleanup review.
-func debugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	return utils.DebugSessionResourceIntentionallyRetained(ds, ref)
 }

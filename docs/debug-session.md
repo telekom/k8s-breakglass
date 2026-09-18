@@ -2105,6 +2105,9 @@ Periodic cleanup also expires those malformed active sessions and stamps their
 retention deadline. Terminal status retries preserve an existing non-zero
 deadline rather than restarting the retention window. Confirmed auxiliary
 deletions retire stale inventory only when its full identity matches.
+The periodic retention pass uses the same identity rule. Binding-limit
+preflight excludes active sessions without a hard deadline even when idle
+expiry is disabled; pending requests continue to count.
 Quota bootstrap loads template, binding and cluster policies once per pass;
 pending requests still consume capacity. Pod-copy operations recheck the live
 session after target creation and roll back the copy if authorization expired

@@ -891,7 +891,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
 			(session.Status.ExpiresAt != nil && !now.Before(session.Status.ExpiresAt.Time)) ||
-			(session.Status.State == breakglassv1alpha1.DebugSessionStateActive && breakglass.DebugSessionIdleExpired(session, now)) {
+			(session.Status.State == breakglassv1alpha1.DebugSessionStateActive && (session.Status.ExpiresAt == nil || breakglass.DebugSessionIdleExpired(session, now))) {
 			continue
 		}
 

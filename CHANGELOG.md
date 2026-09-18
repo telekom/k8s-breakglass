@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Align periodic retention with confirmed auxiliary deletions and exclude
+  malformed active sessions from binding-limit preflight (#1339).
+
 - Preserve live terminal retention deadlines across status retries, expire
   active sessions with missing hard deadlines, fence pod copies after creation,
   and retire only identity-matched deleted auxiliary inventory (#1339).

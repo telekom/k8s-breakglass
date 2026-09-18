@@ -285,27 +285,29 @@ func TestRenewRejectsMissingExpiryDuringFinalRead(t *testing.T) {
 }
 
 func TestBindingLimitsCountPendingWithoutIdleBaseline(t *testing.T) {
-	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval, breakglassv1alpha1.DebugSessionStateActive} {
-		t.Run(string(state), func(t *testing.T) {
-			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice", BindingRef: &breakglassv1alpha1.BindingReference{Name: "binding", Namespace: "default"}}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
-			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
-			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
-			for _, perUser := range []bool{false, true} {
-				binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}}
-				limit := int32(1)
-				if perUser {
-					binding.Spec.MaxActiveSessionsPerUser = &limit
-				} else {
-					binding.Spec.MaxActiveSessionsTotal = &limit
+	for _, idle := range []string{"", "1m"} {
+		for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval, breakglassv1alpha1.DebugSessionStateActive} {
+			t.Run(string(state)+"/idle="+idle, func(t *testing.T) {
+				session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice", BindingRef: &breakglassv1alpha1.BindingReference{Name: "binding", Namespace: "default"}}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: idle}}}}
+				hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
+				controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
+				for _, perUser := range []bool{false, true} {
+					binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}}
+					limit := int32(1)
+					if perUser {
+						binding.Spec.MaxActiveSessionsPerUser = &limit
+					} else {
+						binding.Spec.MaxActiveSessionsTotal = &limit
+					}
+					err := controller.checkBindingSessionLimits(context.Background(), binding, debugSessionReadIdentity{username: "alice", legacyAllowed: true})
+					if state == breakglassv1alpha1.DebugSessionStateActive {
+						require.NoError(t, err)
+					} else {
+						require.Error(t, err)
+					}
 				}
-				err := controller.checkBindingSessionLimits(context.Background(), binding, debugSessionReadIdentity{username: "alice", legacyAllowed: true})
-				if state == breakglassv1alpha1.DebugSessionStateActive {
-					require.NoError(t, err)
-				} else {
-					require.Error(t, err)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
