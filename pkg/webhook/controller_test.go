@@ -159,6 +159,25 @@ func TestFilterSessionsForAuthorizationRejectsProvenanceWhenIssuerMissing(t *tes
 	assert.Len(t, mismatches, 1)
 }
 
+func TestFilterSessionsForDiscoveryKeepsProviderBoundGrantsWithoutIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorization(
+		[]breakglassv1alpha1.BreakglassSession{session}, "", time.Now(),
+	)
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
+}
+
 type countingListClient struct {
 	client.Client
 	listCalls int

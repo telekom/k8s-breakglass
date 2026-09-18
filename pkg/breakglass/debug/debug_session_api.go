@@ -845,7 +845,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
 		return
 	}
-	providerAwareRequest := ctx.GetString("identity_provider_name") != "" || ctx.GetString("issuer") != ""
+	providerAwareRequest := isProviderAwareDebugSessionRequest(
+		ctx.GetString("identity_provider_name"),
+		ctx.GetString("issuer"),
+		ctx.GetBool("legacy_identity_allowed"),
+	)
 	if providerAwareRequest && len(sessionGroups) == 0 {
 		apiresponses.RespondForbidden(ctx, "an approved Breakglass debug session is required")
 		return
@@ -1408,6 +1412,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+func isProviderAwareDebugSessionRequest(provider, issuer string, legacyAllowed bool) bool {
+	return (provider != "" || issuer != "") && !legacyAllowed
 }
 
 func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string, legacyAllowed bool) ([]string, error) {

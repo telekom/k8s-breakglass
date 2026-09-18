@@ -1340,6 +1340,15 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 	issuer string,
 	now time.Time,
 ) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
+	if issuer == "" {
+		out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+		for _, session := range sessions {
+			if breakglass.IsSessionAuthorizationEligible(session, now) {
+				out = append(out, session)
+			}
+		}
+		return out, nil
+	}
 	return filterSessionsForAuthorizationWithProvider(sessions, issuer, "", true, now)
 }
 

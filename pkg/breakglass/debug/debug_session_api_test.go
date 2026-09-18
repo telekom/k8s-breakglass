@@ -286,6 +286,12 @@ func TestActiveBreakglassGroupsAllowsTrustedLegacyProvenance(t *testing.T) {
 	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 }
 
+func TestProviderAwareDebugSessionRequestPreservesSingleJWKSCompatibility(t *testing.T) {
+	assert.False(t, isProviderAwareDebugSessionRequest("", "https://single-jwks.example", true))
+	assert.False(t, isProviderAwareDebugSessionRequest("single-idp", "https://single-jwks.example", true))
+	assert.True(t, isProviderAwareDebugSessionRequest("multi-idp", "https://multi.example", false))
+}
+
 func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	session := &breakglassv1alpha1.BreakglassSession{
