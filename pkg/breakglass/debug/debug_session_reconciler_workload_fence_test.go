@@ -163,6 +163,34 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
 }
 
+func TestActivateSessionRejectsUnreadyExplicitClusterBinding(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKey{Name: "spoke", Namespace: "default"}, clusterConfig))
+	clusterConfig.Status.Conditions = []metav1.Condition{{
+		Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+		Status: metav1.ConditionFalse,
+	}}
+	require.NoError(t, c.client.Update(context.Background(), clusterConfig))
+	ds.Spec.Cluster = "spoke"
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit-binding", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{"spoke"},
+		},
+	}
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	ds.Status.ResolvedBindingSpec = &extensionsv1.JSON{Raw: []byte(`{}`)}
+	_, err := c.activateSession(context.Background(), ds, template, binding)
+	require.NoError(t, err)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	deployments := &appsv1.DeploymentList{}
+	require.NoError(t, target.List(context.Background(), deployments))
+	require.Empty(t, deployments.Items)
+}
+
 func TestBindingVariablePolicySurvivesApprovalActivationAndTemplateRotation(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	template.Spec.PodTemplateString = "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: debug\n    image: {{ .vars.target | yamlQuote }}\n"

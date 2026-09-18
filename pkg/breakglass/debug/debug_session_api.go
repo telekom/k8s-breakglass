@@ -1010,6 +1010,9 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				if template.Spec.Allowed.ClusterSelector != nil && len(template.Spec.Allowed.Clusters) == 0 {
 					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster selector: %v. No bindings grant access to this cluster.",
 						req.Cluster, req.TemplateRef, template.Spec.Allowed.ClusterSelector)
+				} else if template.Spec.Allowed.ClusterSelector != nil {
+					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v; Template cluster selector: %v. No bindings grant access to this cluster.",
+						req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters, template.Spec.Allowed.ClusterSelector)
 				} else {
 					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
 						req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
@@ -1263,6 +1266,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				}
 			}
 		}
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
 	}
 
 	// Validate extraDeployValues against the effective variable definitions.

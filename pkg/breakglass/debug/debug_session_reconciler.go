@@ -761,6 +761,19 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if binding != nil && ds.Status.ResolvedBindingSpec == nil {
 		return c.failSession(ctx, ds, "approved binding snapshot is missing")
 	}
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list cluster configs before activation: %w", err)
+	}
+	clusterLookup := ds.Spec.Cluster
+	if slash := strings.LastIndexByte(clusterLookup, '/'); slash >= 0 {
+		clusterLookup = clusterLookup[slash+1:]
+	}
+	if clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterLookup); ambiguity != debugClusterConfigAmbiguityNone {
+		return c.failSession(ctx, ds, "cluster configuration is ambiguous; activation denied")
+	} else if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
+		return c.failSession(ctx, ds, "cluster configuration is not Ready; activation denied")
+	}
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
@@ -1323,6 +1336,9 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 
 		// Check if binding references this template
 		if !c.bindingMatchesTemplate(binding, template) {
+			continue
+		}
+		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
 			continue
 		}
 

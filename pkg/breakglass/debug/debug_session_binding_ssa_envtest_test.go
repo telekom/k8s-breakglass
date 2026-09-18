@@ -82,6 +82,13 @@ func TestApprovedBindingSnapshotServerSideApplyThenActivation(t *testing.T) {
 				obj.SetUID("")
 				require.NoError(t, apiClient.Create(t.Context(), obj))
 			}
+			clusterConfig := &breakglassv1alpha1.ClusterConfig{}
+			require.NoError(t, apiClient.Get(t.Context(), client.ObjectKey{Name: clusterName, Namespace: "default"}, clusterConfig))
+			clusterConfig.Status.Conditions = []metav1.Condition{{
+				Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue,
+				Reason: "Verified", LastTransitionTime: metav1.Now(),
+			}}
+			require.NoError(t, apiClient.Status().Update(t.Context(), clusterConfig))
 			c.client = apiClient
 			c.reader = envtestFieldSelectorReader{Reader: apiClient}
 			c.apiReader = envtestFieldSelectorReader{Reader: apiClient}
