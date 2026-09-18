@@ -139,6 +139,12 @@ This includes:
 dependencies daily. A root Docker directory is not recursive: add each new
 Docker build context or Kubernetes manifest directory to its `directories` list.
 
+Docker major and minor/patch version changes keep separate groups. The final
+`docker-digests` group has no `update-types` filter: digest-only changes do not
+increase a SemVer component and otherwise fall through to individual PRs.
+This groups shared builder/base digest refreshes across the configured image
+directories without introducing another published base image.
+
 | Dependency surface | Update owner |
 | --- | --- |
 | Root `go.mod` / `go.sum`, including indirect modules | Dependabot `gomod` |
@@ -157,6 +163,14 @@ digests. Dependabot security alerts and security updates are repository settings
 separate from this version-update configuration.
 
 ### Pins outside Dependabot support
+
+Keep the utility runtime families separate: workload-debug, storage-debug and
+node-maintenance use Alpine; dump-reader and diagnostic-artifact-collector use
+BusyBox; cluster-validator uses distroless; network-debug uses netshoot. A
+universal toolbox base would add unnecessary tools to restricted images.
+Five utility builds already share the upstream Go builder without putting the
+compiler into their runtimes. A new published shared base would still require
+child digest updates, rebuilds, integration checks and signed attestations.
 
 Dependabot cannot update arbitrary shell variables, `RUN apk add` / `apt-get`
 package versions, tool checksums, or custom dependency inventories. Do not treat
