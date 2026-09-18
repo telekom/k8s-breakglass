@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -154,18 +155,10 @@ spec:
 		admitted, e := requester.CollectDebugSessionArtifact(ctx, sessionNamespace, session.Name, request)
 		require.NoError(t, e)
 		var object breakglassv1alpha1.DebugSessionArtifact
-		require.Eventually(t, func() bool {
-			list := &breakglassv1alpha1.DebugSessionArtifactList{}
-			if s.Client.List(ctx, list, client.InNamespace(ns)) != nil {
-				return false
-			}
-			for _, item := range list.Items {
-				if item.Spec.ArtifactID == admitted.ArtifactID {
-					object = item
-					return string(item.Status.State) == "Available" && len(item.Status.Resources) == 2
-				}
-			}
-			return false
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			require.NoError(c, s.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: admitted.ArtifactID}, &object))
+			assert.Equal(c, "Available", string(object.Status.State), "artifact %s UID=%s revision=%d", object.Name, object.UID, object.Status.LifecycleRevision)
+			assert.Len(c, object.Status.Resources, 2, "artifact %s tracked resources", object.Name)
 		}, helpers.WaitForStateTimeout, time.Second)
 		require.NotEmpty(t, object.UID)
 		require.Equal(t, sessionNamespace, object.Spec.SessionRef.Namespace)

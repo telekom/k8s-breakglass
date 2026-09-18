@@ -42,6 +42,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Remove the artifact controller's unnecessary hub Job watch, which blocked
+  cache synchronization under least-privilege RBAC; collector Jobs are checked
+  through their spoke clients (#1340).
+
 - Reject URL userinfo and non-origin components in configured S3 endpoints.
 
 - Accept the Kubernetes-added `enableServiceLinks: true` default when verifying

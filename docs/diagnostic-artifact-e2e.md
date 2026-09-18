@@ -10,6 +10,10 @@ the release image has been published.
 The test also checks outsider and replay denial, authorization after session
 termination, and provider/object cleanup. Unit and envtest suites remain the
 source of coverage for injected publication and CAS race failures.
+The real API-server reservation test also starts the artifact controller under
+RBAC that denies hub Job access. Collector Jobs are created and polled through
+spoke clients without hub owner references; a hub Job watch must not block
+artifact cache synchronization or require broader controller permissions.
 
 The single-cluster CI job explicitly runs `e2e/fixtures/artifacts/setup.sh`,
 then `go test -tags=e2e ./e2e/api -run '^TestDebugSessionArtifactCollectorE2E$'`.

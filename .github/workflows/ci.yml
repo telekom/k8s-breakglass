@@ -1330,6 +1330,8 @@ jobs:
           for pod in $(timeout 10 kubectl get pods -n "$NS" -l app=breakglass -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
             timeout 15 kubectl logs -n "$NS" "$pod" --all-containers > "$DIAG_DIR/logs/pod-${pod}.log" 2>&1 || true
             timeout 15 kubectl logs -n "$NS" "$pod" --all-containers --previous > "$DIAG_DIR/logs/pod-${pod}-previous.log" 2>&1 || true
+            timeout 15 kubectl logs -n "$NS" "$pod" -c breakglass --previous --tail=2000 2>&1 \
+              | ci_write_bounded_redacted_file "$DIAG_DIR/logs/pod-${pod}-breakglass-previous.log" || true
           done
           
           # Keycloak pods

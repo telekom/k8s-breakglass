@@ -67,7 +67,9 @@ func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
 	if reconciler.Client == nil || reconciler.LiveReader == nil || reconciler.Service == nil || reconciler.TokenIssuer == nil || reconciler.ClusterProvider == nil {
 		return errors.New("artifact reconciler client, live reader, backend service, token issuer, and cluster provider are required")
 	}
-	return ctrl.NewControllerManagedBy(manager).For(&breakglassv1alpha1.DebugSessionArtifact{}).Owns(&batchv1.Job{}).Complete(reconciler)
+	// Collector Jobs live on spokes without hub owner references; their state
+	// is checked by the bounded reconcile polling below, not a hub Job watch.
+	return ctrl.NewControllerManagedBy(manager).For(&breakglassv1alpha1.DebugSessionArtifact{}).Complete(reconciler)
 }
 
 func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
