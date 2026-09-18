@@ -24,6 +24,11 @@ The breakglass controller implements a **state-first validation architecture** w
 
 Admission webhooks enforce valid state transitions and reject invalid updates (for example, preventing terminal states from reverting to active states).
 
+Session creation and crash recovery share conflict-safe initial status publication.
+If recovery has already initialized a pending session, the API keeps its persisted
+approval timeout rather than resetting it. Initialization retries metadata conflicts,
+but never overwrites a later lifecycle state or a replacement session UID.
+
 Approval and rejection REST requests may omit the optional JSON body. When a body is supplied, it must be a single valid JSON object using supported fields such as `reason`; malformed JSON, trailing JSON values, and unknown fields are rejected before any session state transition is applied. Approver authorization is checked before body validation and state-specific errors, so unrelated callers cannot infer session details from approval or rejection error responses.
 
 ### Session States

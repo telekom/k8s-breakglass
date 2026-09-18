@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -18,8 +19,11 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/quotas"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func newTestSessionController(t *testing.T) *BreakglassSessionController {
@@ -176,6 +180,58 @@ func TestSessionCreateParams_Fields(t *testing.T) {
 	assert.Equal(t, "alice@example.com", params.userIdentifier)
 	assert.Equal(t, []string{"team-a"}, params.userGroups)
 	assert.Equal(t, "alice", params.username)
+}
+
+func TestCreateAndPersistSessionRacesAdmissionRecovery(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "ns", UID: "escalation"},
+		Spec:       breakglassv1alpha1.BreakglassEscalationSpec{ApprovalTimeout: "30m"},
+	}
+	timeout := metav1.NewTime(time.Now().UTC().Truncate(time.Second).Add(20 * time.Minute))
+	injected := false
+	cli := fake.NewClientBuilder().WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithObjects(esc).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, underlying client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if _, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok {
+				obj.SetUID("session")
+			}
+			return underlying.Create(ctx, obj, opts...)
+		},
+		SubResourceUpdate: func(ctx context.Context, underlying client.Client, subresource string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if !injected {
+				injected = true
+				var recovered breakglassv1alpha1.BreakglassSession
+				require.NoError(t, underlying.Get(ctx, client.ObjectKeyFromObject(obj), &recovered))
+				recovered.Status.State = breakglassv1alpha1.SessionStatePending
+				recovered.Status.TimeoutAt = timeout
+				require.NoError(t, underlying.Status().Update(ctx, &recovered))
+			}
+			return underlying.SubResource(subresource).Update(ctx, obj, opts...)
+		},
+	}).Build()
+	manager := NewSessionManagerWithClientAndReader(cli, cli, WithQuotaNamespace("controller"))
+	controller := &BreakglassSessionController{sessionManager: manager}
+	response := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(response)
+	session, ok := controller.createAndPersistSession(c, t.Context(), sessionCreateParams{
+		matchedEsc: esc,
+		spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "user", Cluster: "cluster", GrantedGroup: "admin",
+		},
+		request:        BreakglassSessionRequest{Clustername: "cluster", GroupName: "admin"},
+		userIdentifier: "user",
+		username:       "user",
+	}, zap.NewNop().Sugar())
+	require.True(t, ok, "creation failed: %s", response.Body.String())
+	require.True(t, injected)
+	require.NotNil(t, session)
+	var stored breakglassv1alpha1.BreakglassSession
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, quotas.Ready, stored.Annotations[quotas.AdmissionAnnotation])
+	assert.Equal(t, breakglassv1alpha1.SessionStatePending, stored.Status.State)
+	assert.True(t, timeout.Equal(&stored.Status.TimeoutAt))
+	assert.Equal(t, stored.Status, session.Status)
 }
 
 // ----- authenticatedIdentity tests -----
