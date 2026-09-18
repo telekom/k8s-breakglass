@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
+# shellcheck source=e2e/lib/common.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/../../lib/common.sh"
 # This script modifies only the disposable single-cluster E2E fixture.
 : "${GITHUB_ENV:?run in the single-cluster CI job}"
 : "${KUBECONFIG:?source the single-cluster e2e environment first}"
@@ -143,5 +145,6 @@ for attempt in $(seq 1 30); do
  sleep 2
 done
 kubectl -n "$ns" exec deployment/breakglass-manager -c artifact-tls -- /fixture s3-provision
+wait_for_http "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" 60 "artifact fixture API port-forward"
 printf 'E2E_ARTIFACT_BACKEND=local\n' >> "$GITHUB_ENV"
 printf 'E2E_ARTIFACT_IMAGE_DIGEST=%s\n' "$image" >> "$GITHUB_ENV"

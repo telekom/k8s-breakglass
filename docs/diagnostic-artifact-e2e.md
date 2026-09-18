@@ -15,6 +15,10 @@ The single-cluster CI job explicitly runs `e2e/fixtures/artifacts/setup.sh`,
 then `go test -tags=e2e ./e2e/api -run '^TestDebugSessionArtifactCollectorE2E$'`.
 Missing fixture configuration fails this named lane. Other E2E suites keep their
 existing HTTP listener; a test-only TLS sidecar forwards to that listener.
+Both fixture setup and S3 backend selection wait for `/api/config` through the
+runner's API port-forward after replacing the controller Pod. Deployment
+readiness alone does not mean the keepalive port-forward has reconnected.
+An unavailable endpoint fails setup before any session-creation POST is sent.
 
 The setup creates a fresh private test CA and signing Secret, builds the actual
 collector/uploader from source, appends the CA to a test-only trust layer, and

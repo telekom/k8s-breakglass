@@ -2,6 +2,8 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 set -euo pipefail
+# shellcheck source=e2e/lib/common.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/../../lib/common.sh"
 : "${GITHUB_ENV:?CI fixture only}"
 ns=breakglass-system
 work=$(mktemp -d)
@@ -30,4 +32,5 @@ PY
 kubectl replace -f "$work/config.json"
 kubectl -n "$ns" rollout restart deployment/breakglass-manager
 kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
+wait_for_http "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" 60 "artifact S3 API port-forward"
 printf 'E2E_ARTIFACT_BACKEND=s3\n' >> "$GITHUB_ENV"
