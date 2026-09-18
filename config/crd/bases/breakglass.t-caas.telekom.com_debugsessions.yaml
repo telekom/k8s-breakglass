@@ -6241,6 +6241,11 @@ spec:
                     - Job
                     type: string
                 type: object
+              resolvedTemplateIdentityCaptured:
+                description: |-
+                  resolvedTemplateIdentityCaptured distinguishes a current snapshot with
+                  intentionally empty labels from a legacy snapshot without identity data.
+                type: boolean
               resolvedTemplateLabels:
                 additionalProperties:
                   type: string

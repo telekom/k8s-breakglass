@@ -270,6 +270,11 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedTemplateLabels map[string]string `json:"resolvedTemplateLabels,omitempty"`
 
+	// resolvedTemplateIdentityCaptured distinguishes a current snapshot with
+	// intentionally empty labels from a legacy snapshot without identity data.
+	// +optional
+	ResolvedTemplateIdentityCaptured bool `json:"resolvedTemplateIdentityCaptured,omitempty"`
+
 	// resolvedTemplateVariablePolicy stores the original template variable
 	// definitions used to reconstruct binding regex intersections after the
 	// effective policy is serialized.
@@ -1170,6 +1175,10 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateLabels, newObj.Status.ResolvedTemplateLabels) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateLabels"), newObj.Status.ResolvedTemplateLabels,
 			"resolvedTemplate labels are immutable once persisted"))
+	}
+	if oldObj.Status.ResolvedTemplateIdentityCaptured && !newObj.Status.ResolvedTemplateIdentityCaptured {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateIdentityCaptured"),
+			newObj.Status.ResolvedTemplateIdentityCaptured, "resolved template identity capture cannot be cleared"))
 	}
 	if oldObj.Status.AuthenticatedUserGroupsCaptured &&
 		!reflect.DeepEqual(oldObj.Status.AuthenticatedUserGroups, newObj.Status.AuthenticatedUserGroups) {

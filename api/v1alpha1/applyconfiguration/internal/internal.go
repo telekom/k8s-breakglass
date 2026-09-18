@@ -1772,6 +1772,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
+    - name: resolvedTemplateIdentityCaptured
+      type:
+        scalar: boolean
     - name: resolvedTemplateLabels
       type:
         map:

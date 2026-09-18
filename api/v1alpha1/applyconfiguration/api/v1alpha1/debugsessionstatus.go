@@ -56,6 +56,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedTemplateLabels stores the catalogue identity labels from the
 	// approved template independently of its pod-template representation.
 	ResolvedTemplateLabels map[string]string `json:"resolvedTemplateLabels,omitempty"`
+	// resolvedTemplateIdentityCaptured distinguishes a current snapshot with
+	// intentionally empty labels from a legacy snapshot without identity data.
+	ResolvedTemplateIdentityCaptured *bool `json:"resolvedTemplateIdentityCaptured,omitempty"`
 	// resolvedTemplateVariablePolicy stores the original template variable
 	// definitions used to reconstruct binding regex intersections after the
 	// effective policy is serialized.
@@ -240,6 +243,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateLabels(entrie
 	for k, v := range entries {
 		b.ResolvedTemplateLabels[k] = v
 	}
+	return b
+}
+
+// WithResolvedTemplateIdentityCaptured sets the ResolvedTemplateIdentityCaptured field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedTemplateIdentityCaptured field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateIdentityCaptured(value bool) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedTemplateIdentityCaptured = &value
 	return b
 }
 
