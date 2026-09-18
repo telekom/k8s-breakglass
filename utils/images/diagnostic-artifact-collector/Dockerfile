@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27@sha256:4013ae0f9e7994f8535c58c811f8f863fbed38b72e0d51e6592156f758d66146 AS uploader-builder
+FROM golang:1.27@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea AS uploader-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src
@@ -11,7 +11,7 @@ RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} g
 COPY copier/ /src/copier/
 RUN GO111MODULE=off CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags='-s -w' -o /out/diagnostic-artifact-safe-copy ./copier
 
-FROM busybox:1.37@sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0
+FROM busybox:1.38@sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
@@ -25,8 +25,8 @@ LABEL org.opencontainers.image.title="Diagnostic artifact collector" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only" \
       org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
       org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/diagnostic-artifact-collector" \
-      org.opencontainers.image.base.name="busybox:1.37" \
-      org.opencontainers.image.base.digest="sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
+      org.opencontainers.image.base.name="busybox:1.38" \
+      org.opencontainers.image.base.digest="sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616"
 
 RUN install -d -o 65532 -g 65532 /output /host-coredumps /etc/ssl/certs && \
     install -d -o 0 -g 0 -m 0555 \
