@@ -10,9 +10,74 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+type approvedPodTemplateSnapshot struct {
+	Spec           *breakglassv1alpha1.DebugPodTemplateSpec `json:"spec,omitempty"`
+	Labels         map[string]string                        `json:"labels,omitempty"`
+	TemplateLabels map[string]string                        `json:"templateLabels,omitempty"`
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(values))
+	for key, value := range values {
+		cloned[key] = value
+	}
+	return cloned
+}
+
+func marshalApprovedPodTemplateSnapshot(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (*apiextensionsv1.JSON, error) {
+	snapshot := approvedPodTemplateSnapshot{
+		Spec:           podTemplate.Spec.DeepCopy(),
+		Labels:         cloneStringMap(podTemplate.Labels),
+		TemplateLabels: cloneStringMap(template.Labels),
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, fmt.Errorf("encode approved pod-template snapshot: %w", err)
+	}
+	return &apiextensionsv1.JSON{Raw: raw}, nil
+}
+
+func decodeApprovedPodTemplateSnapshot(raw []byte) (*breakglassv1alpha1.DebugPodTemplateSpec, map[string]string, map[string]string, error) {
+	var snapshot approvedPodTemplateSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return nil, nil, nil, err
+	}
+	if snapshot.Spec != nil {
+		return snapshot.Spec, cloneStringMap(snapshot.Labels), cloneStringMap(snapshot.TemplateLabels), nil
+	}
+	var legacySpec breakglassv1alpha1.DebugPodTemplateSpec
+	if err := json.Unmarshal(raw, &legacySpec); err != nil {
+		return nil, nil, nil, err
+	}
+	return &legacySpec, nil, nil, nil
+}
+
+func approvedTemplateLabelsFromStatus(status breakglassv1alpha1.DebugSessionStatus) map[string]string {
+	if status.ResolvedPodTemplate == nil {
+		return nil
+	}
+	_, _, templateLabels, err := decodeApprovedPodTemplateSnapshot(status.ResolvedPodTemplate.Raw)
+	if err != nil {
+		return nil
+	}
+	return templateLabels
+}
+
+func applyApprovedTemplateLabels(template *breakglassv1alpha1.DebugSessionTemplate, status breakglassv1alpha1.DebugSessionStatus) {
+	labels := approvedTemplateLabelsFromStatus(status)
+	if len(labels) == 0 {
+		return
+	}
+	template.Labels = labels
+}
 
 func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
@@ -27,7 +92,10 @@ func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds 
 			return ctrl.Result{}, err
 		}
 	}
-	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef}, Spec: *ds.Status.ResolvedTemplate.DeepCopy()}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: approvedTemplateLabelsFromStatus(ds.Status)},
+		Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
+	}
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if ds.Status.ResolvedBindingSpec != nil {
 		binding = &breakglassv1alpha1.DebugSessionClusterBinding{}

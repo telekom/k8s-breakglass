@@ -372,6 +372,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		log.Warnw("Rejecting session because binding variable constraints or values are invalid", "error", err)
 		return c.failSession(ctx, ds, "invalid extra deploy variable policy or values")
 	}
+	if hasGroupRestrictedExtraDeployVariables(effectiveTemplate.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
+	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
@@ -402,8 +405,8 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		if podErr != nil {
 			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
 		}
-		if raw, marshalErr := json.Marshal(podTemplate.Spec); marshalErr == nil {
-			ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: raw}
+		if snapshot, snapshotErr := marshalApprovedPodTemplateSnapshot(template, podTemplate); snapshotErr == nil {
+			ds.Status.ResolvedPodTemplate = snapshot
 		}
 	}
 
@@ -458,7 +461,10 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 		if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
 			return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
 		}
-		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef}, Spec: *ds.Status.ResolvedTemplate.DeepCopy()}
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: approvedTemplateLabelsFromStatus(ds.Status)},
+			Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
+		}
 		var binding *breakglassv1alpha1.DebugSessionClusterBinding
 		if ds.Status.ResolvedBindingSpec != nil {
 			binding = &breakglassv1alpha1.DebugSessionClusterBinding{}
@@ -874,6 +880,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
+		applyApprovedTemplateLabels(approvedTemplate, ds.Status)
 		template = approvedTemplate
 	}
 	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
@@ -901,6 +908,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return c.failSession(ctx, ds, "invalid approved binding variable snapshot")
 		}
 		template.Spec.ExtraDeployVariables = effectiveVariables
+	}
+	if hasGroupRestrictedExtraDeployVariables(template.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
 	// Establish the bounded lease durably before deploying any target resources.
@@ -1095,6 +1105,25 @@ func effectiveTemplateForBinding(
 	result := template.DeepCopy()
 	result.Spec.ExtraDeployVariables = effectiveVariables
 	return result, nil
+}
+
+func hasGroupRestrictedExtraDeployVariables(variables []breakglassv1alpha1.ExtraDeployVariable) bool {
+	for _, variable := range variables {
+		if len(variable.AllowedGroups) != 0 {
+			return true
+		}
+		for _, option := range variable.Options {
+			if len(option.AllowedGroups) != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasTrustedGroupProvenance(ds *breakglassv1alpha1.DebugSession) bool {
+	return strings.TrimSpace(ds.Spec.IdentityProviderName) != "" &&
+		strings.TrimSpace(ds.Spec.IdentityProviderIssuer) != ""
 }
 
 // failSession marks a session as failed and logs the failure
