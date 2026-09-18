@@ -158,7 +158,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 				if _, exists := reserved[string(item.UID)]; exists {
 					continue
 				}
-				if debugSessionTerminal(item) || item.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+				if debugSessionTerminal(item) {
 					continue
 				}
 				entry, _, _, err := c.debugQuotaPolicy(ctx, item)

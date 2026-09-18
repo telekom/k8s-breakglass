@@ -152,14 +152,15 @@ func TestDebugQuotaScopesAcrossNamespacesAndBindings(t *testing.T) {
 				return &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, RequestedBy: user, RequestedByEmail: "shared@example.com", BindingRef: &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}}}
 			}
 			a := candidate("first", "sessions-one", "username-one")
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding, other, a).Build()
+			c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(a), a))
+			require.NoError(t, c.admitDebugSession(t.Context(), a))
 			b := candidate("second", "sessions-two", "username-two")
 			if scope == "template" {
 				b.Spec.BindingRef.Name = other.Name
 			}
-			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding, other, a, b).Build()
-			c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
-			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(a), a))
-			require.NoError(t, c.admitDebugSession(t.Context(), a))
+			require.NoError(t, cli.Create(t.Context(), b))
 			restarted := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
 			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(b), b))
 			require.ErrorIs(t, restarted.admitDebugSession(t.Context(), b), quotas.ErrFull)
@@ -182,6 +183,46 @@ func TestDebugQuotaBootstrapsLegacyResolvedBinding(t *testing.T) {
 	c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
 	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
 	require.ErrorIs(t, c.admitDebugSession(t.Context(), candidate), quotas.ErrFull)
+}
+
+func TestDebugQuotaCountsPendingSessionsDuringLedgerBootstrap(t *testing.T) {
+	one := int32(1)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxConcurrentSessions: one}},
+	}
+	pending := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "pending",
+			Namespace:   "default",
+			UID:         "pending-uid",
+			Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+		},
+		Spec:   breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+	}
+	candidate := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "candidate",
+			Namespace:   "default",
+			UID:         "candidate-uid",
+			Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(template, pending, candidate).
+		Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+	require.ErrorIs(t, controller.admitDebugSession(t.Context(), candidate), quotas.ErrFull)
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, candidate.Status.State)
+	assert.Equal(t, "Session quota reached", candidate.Status.Message)
 }
 
 func TestDebugQuotaStatusCannotReviveTerminalSession(t *testing.T) {

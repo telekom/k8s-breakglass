@@ -362,7 +362,8 @@ func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSessi
 			return true
 		}
 		for _, operation := range status.Operations {
-			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared ||
+				operation.State == breakglassv1alpha1.KubectlDebugOperationUnknown {
 				return true
 			}
 		}
