@@ -10,7 +10,7 @@
 # repository module and controller CI use the Go 1.26.6 toolchain from go.mod.
 # Keep this split explicit: the image build is an independently verified
 # release artifact and does not change the module's supported compiler.
-FROM golang:1.27@sha256:c5b07c17f54c5f22230c4b4da6e90249165cf55368e01a52808cb92064e18836 AS builder
+FROM golang:1.27@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG VERSION=dev
