@@ -1027,7 +1027,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		// Only wrap if explicit command is set, otherwise we risk masking entrypoint
 		if len(container.Command) > 0 {
 			// Construct child command
-			childCmd := make([]string, 0, len(container.Command)+len(container.Args))
+			childCmd := make([]string, 0)
 			childCmd = append(childCmd, container.Command...)
 			childCmd = append(childCmd, container.Args...)
 
@@ -1172,7 +1172,7 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
-	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
+	containers := make([]corev1.Container, 0)
 	containers = append(containers, spec.InitContainers...)
 	containers = append(containers, spec.Containers...)
 	for _, container := range containers {
