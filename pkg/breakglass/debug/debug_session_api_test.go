@@ -8652,6 +8652,10 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			objects := []client.Object{tt.binding}
 			for i := range tt.existingSessions {
+				if tt.existingSessions[i].Status.State == breakglassv1alpha1.DebugSessionStateActive && tt.existingSessions[i].Status.ExpiresAt == nil {
+					expires := metav1.NewTime(time.Now().Add(time.Hour))
+					tt.existingSessions[i].Status.ExpiresAt = &expires
+				}
 				objects = append(objects, &tt.existingSessions[i])
 			}
 

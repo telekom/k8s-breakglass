@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -1782,6 +1783,40 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
 			}
 		})
+	}
+}
+
+func TestPeriodicRetentionRetiresExactDeletedAuxiliaryInventory(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		for _, mismatch := range []bool{false, true} {
+			t.Run(fmt.Sprintf("child=%t/mismatch=%t", child, mismatch), func(t *testing.T) {
+				past := metav1.NewTime(time.Now().Add(-time.Hour))
+				ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Name: "deleted", Namespace: "default", UID: "uid", Source: "auxiliary:removed"}
+				status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "removed", APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, UID: ref.UID, Deleted: true}
+				if child {
+					status.ResourceName = "parent"
+					status.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, UID: ref.UID, Deleted: true}}
+				}
+				if mismatch {
+					ref.UID = "unconfirmed"
+				}
+				session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "default"}, Status: breakglassv1alpha1.DebugSessionStatus{
+					State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &past,
+					DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{status},
+				}}
+				scheme := runtime.NewScheme()
+				require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+				hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+				routine := CleanupRoutine{Log: zaptest.NewLogger(t).Sugar(), Manager: &SessionManager{Client: hub}}
+				routine.cleanupExpiredDebugSessions(t.Context())
+				err := hub.Get(t.Context(), client.ObjectKeyFromObject(session), &breakglassv1alpha1.DebugSession{})
+				if mismatch {
+					require.NoError(t, err)
+				} else {
+					require.True(t, apierrors.IsNotFound(err))
+				}
+			})
+		}
 	}
 }
 
