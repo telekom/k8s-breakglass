@@ -16,13 +16,13 @@ import (
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
 	return &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-		}, &breakglassv1alpha1.DebugSessionTemplate{
-			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-			},
-		}
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+	}, &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+		},
+	}
 }
 
 func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {

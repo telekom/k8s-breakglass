@@ -747,6 +747,65 @@ func TestValidateSessionIdentityProviderAuthorization_WithMatchingEscalation(t *
 	assert.NotNil(t, errs, "should reject non-matching IDP")
 }
 
+func TestValidateSessionIdentityProviderAuthorization_AllowsAnyMatchingEscalation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = AddToScheme(scheme)
+	oldClient := webhookClient
+	oldCache := webhookCache
+	defer func() {
+		webhookClient = oldClient
+		webhookCache = oldCache
+	}()
+
+	tests := []struct {
+		name       string
+		allowed    []string
+		sessionIDP string
+		wantError  bool
+	}{
+		{name: "sibling allows provider", allowed: []string{"other-idp"}, sessionIDP: "requester-idp"},
+		{name: "all siblings deny provider", allowed: []string{"other-idp"}, sessionIDP: "denied-idp", wantError: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			escalations := []*BreakglassEscalation{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-deny", Namespace: "default"},
+					Spec: BreakglassEscalationSpec{
+						EscalatedGroup:           "cluster-admin",
+						Allowed:                  BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
+						AllowedIdentityProviders: tc.allowed,
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "esc-allow", Namespace: "default"},
+					Spec: BreakglassEscalationSpec{
+						EscalatedGroup:           "cluster-admin",
+						Allowed:                  BreakglassEscalationAllowed{Clusters: []string{"test-cluster"}},
+						AllowedIdentityProviders: []string{"requester-idp"},
+					},
+				},
+			}
+			objects := make([]client.Object, len(escalations))
+			for i := range escalations {
+				objects[i] = escalations[i]
+			}
+			webhookClient = fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).Build()
+
+			errs := validateSessionIdentityProviderAuthorization(
+				context.Background(), "test-cluster", "cluster-admin", tc.sessionIDP,
+				field.NewPath("spec").Child("identityProviderName"),
+			)
+			if tc.wantError {
+				assert.NotNil(t, errs)
+			} else {
+				assert.Nil(t, errs)
+			}
+		})
+	}
+}
+
 func TestClusterMatchesValidationPattern(t *testing.T) {
 	cases := []struct {
 		name    string

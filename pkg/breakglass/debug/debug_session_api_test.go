@@ -6392,7 +6392,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updatedSession.Status.State)
 	})
 
-	t.Run("terminate non-active session is rejected", func(t *testing.T) {
+	t.Run("terminate pending session is allowed for the owner", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",

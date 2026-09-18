@@ -1548,9 +1548,12 @@ impersonation allowlist; a live RBAC patch or wildcard user rule is not a
 supported substitute.
 
 Expiry is checked at every mutating operation, including approval, join, renew,
-leave, termination, and pod authorization. A missing or elapsed expiry is not
-an invitation to repair status manually. Use the supported lifecycle to drop
-or terminate the session and create a new request when access is needed.
+leave, ordinary active-session termination, and pod authorization. The narrow
+owner-scoped retirement path for pending sessions is also allowed when expiry is
+missing or elapsed so abandoned requests can be cleaned up; it does not grant
+access or permit other pending mutations. A missing or elapsed expiry is not an
+invitation to repair status manually. Use the supported lifecycle to drop or
+terminate the session and create a new request when access is needed.
 
 ## Participant Roles
 

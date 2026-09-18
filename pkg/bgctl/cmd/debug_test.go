@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -38,10 +39,21 @@ func TestDebugCommandStructure(t *testing.T) {
 	for i, c := range subCmds {
 		subCmdNames[i] = c.Name()
 	}
+
 	assert.Contains(t, subCmdNames, "session")
 	assert.Contains(t, subCmdNames, "template")
 	assert.Contains(t, subCmdNames, "pod-template")
 	assert.Contains(t, subCmdNames, "kubectl")
+}
+
+func TestDebugTemplatePositionalCompletionsDisableFileCompletion(t *testing.T) {
+	for _, cmd := range []*cobra.Command{
+		newDebugTemplateClustersCommand(),
+		newDebugTemplateBindingsCommand(),
+	} {
+		_, directive := cmd.ValidArgsFunction(cmd, nil, "")
+		assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive, cmd.Use)
+	}
 }
 
 func TestDebugSessionListCommand_Help(t *testing.T) {

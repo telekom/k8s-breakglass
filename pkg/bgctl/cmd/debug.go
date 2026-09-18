@@ -641,6 +641,9 @@ This shows cluster-specific details including:
 - Impersonation configuration
 - Approval requirements`,
 		Args: cobra.ExactArgs(1),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {
@@ -691,6 +694,9 @@ options, and approval requirements.
 
 Use this to determine which --binding value to pass to 'debug session create'.`,
 		Args: cobra.ExactArgs(2),
+		ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			rt, err := getRuntime(cmd)
 			if err != nil {

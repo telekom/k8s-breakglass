@@ -1764,13 +1764,31 @@ func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSessio
 	}
 	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
 	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider == "" && issuer == "" {
+		return identity.legacyAllowed
+	}
 	if provider == "" || issuer == "" {
-		return provider == "" && issuer == "" && identity.legacyAllowed &&
-			strings.TrimSpace(identity.provider) == "" &&
-			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == ""
+		return provider == "" && identity.legacyAllowed &&
+			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 	}
 	return strings.TrimSpace(identity.provider) == provider &&
 		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+}
+
+func debugSessionApprovalMigrationRequired(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session == nil {
+		return false
+	}
+	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider == "" && issuer == "" {
+		return !identity.legacyAllowed
+	}
+	if provider == "" && identity.legacyAllowed &&
+		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer {
+		return false
+	}
+	return provider == "" || issuer == ""
 }
 
 func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {

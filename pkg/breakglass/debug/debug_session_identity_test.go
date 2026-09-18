@@ -73,9 +73,31 @@ func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
 	require.True(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
 		legacyAllowed: true,
 	}))
-	require.False(t, debugSessionApprovalIdentityMatches(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{
+	require.True(t, debugSessionApprovalIdentityMatches(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{
 		provider: "idp-a", issuer: "https://a.example", legacyAllowed: true,
 	}))
+	issuerOnlyLegacy := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderIssuer: "https://single.example/",
+	}}
+	require.True(t, debugSessionApprovalIdentityMatches(issuerOnlyLegacy, debugSessionReadIdentity{
+		issuer: "https://single.example", legacyAllowed: true,
+	}))
+}
+
+func TestDebugSessionApprovalMigrationRequired(t *testing.T) {
+	complete := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example",
+	}}
+	require.False(t, debugSessionApprovalMigrationRequired(complete, debugSessionReadIdentity{
+		provider: "idp-b", issuer: "https://b.example",
+	}))
+	require.True(t, debugSessionApprovalMigrationRequired(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{}))
+	require.False(t, debugSessionApprovalMigrationRequired(
+		&breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+			IdentityProviderIssuer: "https://single.example",
+		}},
+		debugSessionReadIdentity{issuer: "https://single.example", legacyAllowed: true},
+	))
 }
 
 func TestDebugSessionHandlersRejectCollidingProvider(t *testing.T) {
