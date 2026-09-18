@@ -61,6 +61,29 @@ func TestPatchDebugSessionStatusWithOptimisticLockKeepsTerminalState(t *testing.
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
 }
 
+func TestStatusHelpersFreezeTemplateIdentityMarker(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "identity-marker", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.ResolvedTemplateIdentityCaptured = true
+
+	err := ApplyDebugSessionStatus(context.Background(), fakeClient, desired)
+	require.ErrorContains(t, err, "identity marker")
+
+	err = PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ResolvedTemplateIdentityCaptured = true
+	})
+	require.ErrorContains(t, err, "identity marker")
+}
+
 func TestPatchDebugSessionStatusWithOptimisticLockCannotRenewAtExpiry(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/Masterminds/sprig/v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/yaml"
 )
@@ -890,6 +891,15 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 		if err := validateGoTemplateSyntax(template.Spec.PodOverridesTemplate); err != nil {
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("podOverridesTemplate"), "",
 				fmt.Sprintf("invalid Go template syntax: %v", err)))
+		}
+	}
+	if template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil {
+		_, err := metav1.LabelSelectorAsSelector(template.Spec.Allowed.ClusterSelector)
+		if err != nil {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("allowed", "clusterSelector"), template.Spec.Allowed.ClusterSelector, err.Error()))
+		} else if len(template.Spec.Allowed.ClusterSelector.MatchLabels) == 0 &&
+			len(template.Spec.Allowed.ClusterSelector.MatchExpressions) == 0 {
+			result.Errors = append(result.Errors, field.Invalid(specPath.Child("allowed", "clusterSelector"), template.Spec.Allowed.ClusterSelector, "empty selector is not allowed"))
 		}
 	}
 
