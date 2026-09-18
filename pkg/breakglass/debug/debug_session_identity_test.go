@@ -29,32 +29,6 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.True(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
 }
 
-func TestDebugSessionProviderProvenanceMissing(t *testing.T) {
-	session := &breakglassv1alpha1.DebugSession{
-		Spec: breakglassv1alpha1.DebugSessionSpec{
-			IdentityProviderName:   "idp-a",
-			IdentityProviderIssuer: "https://a.example",
-		},
-	}
-	providerAware := debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}
-
-	require.False(t, debugSessionProviderProvenanceMissing(session, providerAware))
-	require.True(t, debugSessionProviderProvenanceMissing(
-		&breakglassv1alpha1.DebugSession{},
-		providerAware,
-	))
-	require.True(t, debugSessionProviderProvenanceMissing(
-		&breakglassv1alpha1.DebugSession{
-			Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderName: "idp-a"},
-		},
-		providerAware,
-	))
-	require.False(t, debugSessionProviderProvenanceMissing(
-		&breakglassv1alpha1.DebugSession{},
-		debugSessionReadIdentity{},
-	))
-}
-
 func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
 		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example/",

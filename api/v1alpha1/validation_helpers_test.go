@@ -756,6 +756,7 @@ func TestValidateSessionIdentityProviderAuthorization_AllowsAnyMatchingEscalatio
 		webhookClient = oldClient
 		webhookCache = oldCache
 	}()
+	webhookCache = nil
 
 	tests := []struct {
 		name       string

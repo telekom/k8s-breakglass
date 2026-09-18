@@ -1527,9 +1527,12 @@ Mismatched provider-aware identities are rejected with `403 Forbidden`.
 Sessions created before this provenance was persisted cannot be safely assigned to
 a provider during an upgrade. They are deliberately not approvable or rejectable
 through provider-aware authentication, and the API returns `409 Conflict`. The requester can use
-`POST /api/v1/debugSessions/{name}/terminate` while the session is still pending,
-then submit a new request. This preserves the provider boundary without guessing
-from the requester, approver, or current token.
+the supported administrator cleanup path while the session is still pending, then
+submit a new request. This preserves the provider boundary without guessing from
+the requester, approver, or current token. A trusted
+`legacy_identity_allowed` compatibility request may approve or reject a blank or
+issuer-only legacy record for its single trusted provider; provider-aware
+multi-provider authentication still requires the persisted provider and issuer.
 
 ### Native Breakglass prerequisite and expiry
 

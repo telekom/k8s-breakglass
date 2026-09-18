@@ -147,9 +147,12 @@ cluster) created by that invocation.
   with status edits or clock changes.
 - A legacy DebugSession without persisted provider provenance is intentionally
   not approvable or rejectable through provider-aware authentication. The API
-  returns HTTP 409 so the pending session can be terminated and requested
-  again under the current provider; never infer its provider from the requester,
-  approver, or current token.
+  returns HTTP 409 so it can be cleaned up through the supported administrator
+  path and requested again under the current provider; never infer its provider
+  from the requester, approver, or current token. The trusted
+  `legacy_identity_allowed` compatibility path may approve or reject blank or
+  issuer-only legacy provenance for a single trusted provider; it must not be
+  used to infer a provider for provider-aware authentication.
 
 ## Build Tags
 

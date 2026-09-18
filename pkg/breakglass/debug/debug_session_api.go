@@ -1749,15 +1749,6 @@ func debugSessionProviderMatches(identity debugSessionReadIdentity, session *bre
 		(session.Spec.IdentityProviderIssuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/"))
 }
 
-func debugSessionProviderProvenanceMissing(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
-	if identity.provider == "" && identity.issuer == "" {
-		return false
-	}
-	return session == nil ||
-		strings.TrimSpace(session.Spec.IdentityProviderName) == "" ||
-		strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/") == ""
-}
-
 func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
 	if session == nil {
 		return false

@@ -18,7 +18,6 @@ package breakglass
 
 import (
 	"context"
-	"strings"
 	"sync"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -140,20 +139,6 @@ func (t *testEscalationLookup) GetResolver() GroupMemberResolver {
 
 func (t *testEscalationLookup) SetResolver(resolver GroupMemberResolver) {
 	t.resolver = resolver
-}
-
-func (t *testEscalationLookup) GetIdentityProviderNameByIssuer(ctx context.Context, issuer string) (string, error) {
-	var list breakglassv1alpha1.IdentityProviderList
-	if err := t.Client.List(ctx, &list); err != nil {
-		return "", err
-	}
-	issuer = strings.TrimRight(issuer, "/")
-	for _, idp := range list.Items {
-		if !idp.Spec.Disabled && strings.TrimRight(idp.Spec.Issuer, "/") == issuer {
-			return idp.Name, nil
-		}
-	}
-	return "", nil
 }
 
 type uidlessEscalationLookup struct {

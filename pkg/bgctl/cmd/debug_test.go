@@ -48,8 +48,20 @@ func TestDebugCommandStructure(t *testing.T) {
 
 func TestDebugTemplatePositionalCompletionsDisableFileCompletion(t *testing.T) {
 	for _, cmd := range []*cobra.Command{
+		newDebugSessionGetCommand(),
+		newDebugSessionJoinCommand(),
+		newDebugSessionLeaveCommand(),
+		newDebugSessionRenewCommand(),
+		newDebugSessionTerminateCommand(),
+		newDebugSessionApproveCommand(),
+		newDebugSessionRejectCommand(),
+		newDebugTemplateGetCommand(),
 		newDebugTemplateClustersCommand(),
 		newDebugTemplateBindingsCommand(),
+		newDebugPodTemplateGetCommand(),
+		newDebugKubectlInjectCommand(),
+		newDebugKubectlCopyPodCommand(),
+		newDebugKubectlNodeDebugCommand(),
 	} {
 		_, directive := cmd.ValidArgsFunction(cmd, nil, "")
 		assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive, cmd.Use)
