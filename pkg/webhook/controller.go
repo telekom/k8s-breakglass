@@ -242,16 +242,22 @@ func (wc *WebhookController) resolveIdentityProviderName(ctx context.Context, is
 
 	// Map issuer to IDP name
 	normalizedIssuer := strings.TrimRight(issuer, "/")
+	matchedIDPName := ""
 	for _, idp := range idpList.Items {
 		effectiveIssuer := idp.Spec.Issuer
 		if effectiveIssuer == "" {
 			effectiveIssuer = idp.Spec.OIDC.Authority
 		}
 		if strings.TrimRight(effectiveIssuer, "/") == normalizedIssuer && !idp.Spec.Disabled {
-			return idp.Name, true
+			if matchedIDPName != "" {
+				reqLog.Debugw("Request issuer matches multiple enabled IdentityProviders; denying request",
+					"issuer", issuer, "first", matchedIDPName, "second", idp.Name)
+				return "", false
+			}
+			matchedIDPName = idp.Name
 		}
 	}
-	return "", true
+	return matchedIDPName, true
 }
 
 type SubjectAccessReviewResponseStatus struct {

@@ -590,9 +590,10 @@ func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Contex
 
 func (c *DebugSessionAPIController) isUserIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username, email string, userGroupsInterface interface{}) bool {
 	return c.newDebugSessionApprovalAuthorizer().isIdentityAuthorizedToApprove(ctx, session, debugSessionReadIdentity{
-		username: username,
-		email:    email,
-		groups:   debugSessionGroupsFromContext(userGroupsInterface),
+		username:      username,
+		email:         email,
+		groups:        debugSessionGroupsFromContext(userGroupsInterface),
+		legacyAllowed: true,
 	})
 }
 
@@ -602,8 +603,7 @@ func (c *DebugSessionAPIController) isIdentityAuthorizedToApprove(ctx context.Co
 
 func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
 	c := a.controller
-	if (session.Spec.IdentityProviderName != "" || session.Spec.IdentityProviderIssuer != "") &&
-		!debugSessionApprovalIdentityMatches(session, identity) {
+	if !debugSessionApprovalIdentityMatches(session, identity) {
 		return false
 	}
 	// Block self-approval: the user who requested the session cannot approve it

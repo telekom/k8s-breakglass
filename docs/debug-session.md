@@ -1627,9 +1627,15 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
-When creating a session, active Breakglass grants are added only when the
-authenticated username or email claim exactly matches `BreakglassSession.spec.user`
-and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
+When creating a session, only an approved, unexpired Breakglass grant for
+`breakglass:platform:debugsession` is considered. The authenticated username or
+email claim must exactly match `BreakglassSession.spec.user`. Complete provider
+records require both provider name and issuer to match; issuer-only legacy
+records require the trusted single-provider identity and matching issuer.
+Blank legacy records are accepted only through that trusted compatibility path,
+and provider-only records are not accepted. When `allowIDPMismatch` is enabled,
+the provider/issuer fence is intentionally bypassed for that legacy-compatible
+grant. The API does not
 infer an email address from a username's local part, because the same local part
 can belong to different domains. The authorization webhook has a separate,
 issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path

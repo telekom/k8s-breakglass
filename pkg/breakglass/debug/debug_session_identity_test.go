@@ -56,6 +56,32 @@ func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
 	require.True(t, debugSessionApprovalIdentityMatches(issuerOnlyLegacy, debugSessionReadIdentity{
 		issuer: "https://single.example", legacyAllowed: true,
 	}))
+
+	tests := []struct {
+		name      string
+		provider  string
+		issuer    string
+		identity  debugSessionReadIdentity
+		wantMatch bool
+	}{
+		{"blank trusted matching provider", "", "", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example", legacyAllowed: true}, true},
+		{"blank untrusted provider aware", "", "", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, false},
+		{"issuer-only trusted matching issuer", "", "https://a.example", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example", legacyAllowed: true}, true},
+		{"issuer-only trusted mismatching issuer", "", "https://a.example", debugSessionReadIdentity{provider: "idp-a", issuer: "https://b.example", legacyAllowed: true}, false},
+		{"issuer-only untrusted matching issuer", "", "https://a.example", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, false},
+		{"provider-only trusted matching provider", "idp-a", "", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example", legacyAllowed: true}, false},
+		{"complete trusted exact match", "idp-a", "https://a.example", debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example", legacyAllowed: true}, true},
+		{"complete provider mismatch", "idp-a", "https://a.example", debugSessionReadIdentity{provider: "idp-b", issuer: "https://a.example"}, false},
+		{"complete issuer mismatch", "idp-a", "https://a.example", debugSessionReadIdentity{provider: "idp-a", issuer: "https://b.example"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+				IdentityProviderName: tt.provider, IdentityProviderIssuer: tt.issuer,
+			}}
+			require.Equal(t, tt.wantMatch, debugSessionApprovalIdentityMatches(session, tt.identity))
+		})
+	}
 }
 
 func TestDebugSessionApprovalMigrationRequired(t *testing.T) {
@@ -137,7 +163,7 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 		{"providerless wrong requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
 		{"single jwks issuer-only requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "https://single", debugSessionReadIdentity{username: "owner", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
 		{"single jwks providerless requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "owner", provider: "single", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
-		{"single jwks provider-only requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "single", "", debugSessionReadIdentity{username: "owner", provider: "single", legacyAllowed: true}, http.StatusOK},
+		{"single jwks provider-only requester is not retireable", breakglassv1alpha1.DebugSessionStatePendingApproval, "single", "", debugSessionReadIdentity{username: "owner", provider: "single", legacyAllowed: true}, http.StatusBadRequest},
 		{"active provider mismatch remains denied", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "https://issuer", debugSessionReadIdentity{username: "owner", provider: "idp-b", issuer: "https://issuer"}, http.StatusForbidden},
 	}
 	for _, tt := range tests {

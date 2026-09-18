@@ -202,8 +202,6 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"breakglass:platform:debugsession",
-		"breakglass:platform:diagnostics",
-		"breakglass:platform:legacy",
 	}, groups)
 }
 
@@ -239,7 +237,7 @@ func TestActiveBreakglassGroupsRequiresProviderNameAndIssuer(t *testing.T) {
 		&breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "matching-provider"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
-				Cluster: "tenant-a", User: "alice", GrantedGroup: "allowed",
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession",
 				IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://idp.example/",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -262,7 +260,7 @@ func TestActiveBreakglassGroupsRequiresProviderNameAndIssuer(t *testing.T) {
 	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "idp-a", "https://idp.example")
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"allowed"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 }
 
 func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
@@ -272,7 +270,7 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -295,7 +293,7 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "", "", "https://idp-a.example")
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
@@ -305,12 +303,12 @@ func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *tes
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	usernameSession := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "username-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:username", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	emailSession := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(usernameSession, emailSession).
@@ -325,7 +323,7 @@ func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *tes
 	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "", "https://idp.example")
 
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"breakglass:username", "breakglass:email"}, groups)
+	assert.ElementsMatch(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 2)
 	assert.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
 	for _, call := range cached.calls {
@@ -339,7 +337,7 @@ func TestActiveBreakglassGroupsFallsBackToOneFullListWhenIdentityIndexMissing(t 
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
@@ -349,7 +347,7 @@ func TestActiveBreakglassGroupsFallsBackToOneFullListWhenIdentityIndexMissing(t 
 	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "", "https://idp.example")
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:email"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, missingIndex.calls, 1, "one failed indexed query must trigger one full-list fallback")
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.user"))
@@ -361,7 +359,7 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -388,7 +386,7 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 	groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "", "https://idp-a.example")
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
@@ -401,7 +399,7 @@ func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{

@@ -1208,6 +1208,21 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:   "ambiguous effective issuer is denied",
+			issuer: "https://duplicate.example.com",
+			esc: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProvidersForRequests: []string{"idp-a"},
+				},
+			},
+			idps: []breakglassv1alpha1.IdentityProvider{
+				{ObjectMeta: metav1.ObjectMeta{Name: "idp-a"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://duplicate.example.com"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "idp-b"}, Spec: breakglassv1alpha1.IdentityProviderSpec{OIDC: breakglassv1alpha1.OIDCConfig{Authority: "https://duplicate.example.com/"}}},
+			},
+			expected: false,
+		},
+		{
 			name:   "issuer matches IDP but IDP not in allowed list",
 			issuer: "https://keycloak.example.com/realms/test",
 			esc: &breakglassv1alpha1.BreakglassEscalation{

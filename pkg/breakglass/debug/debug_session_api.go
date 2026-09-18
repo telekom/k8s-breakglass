@@ -1419,6 +1419,9 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		identities = append(identities, identity)
 	}
 	appendSession := func(session breakglassv1alpha1.BreakglassSession, seen map[string]struct{}) {
+		if session.Spec.GrantedGroup != "breakglass:platform:debugsession" {
+			return
+		}
 		key := session.Namespace + "\x00" + session.Name
 		if _, exists := seen[key]; exists {
 			return
@@ -1430,10 +1433,20 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		if session.Spec.AllowIDPMismatch {
 			return true
 		}
-		if provider != "" && session.Spec.IdentityProviderName != provider {
+		sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
+		sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+		requestProvider := strings.TrimSpace(provider)
+		requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+		switch {
+		case sessionProvider == "" && sessionIssuer == "":
+			return requestProvider == "" && requestIssuer == ""
+		case sessionProvider == "":
+			return requestProvider == "" && requestIssuer == sessionIssuer
+		case sessionIssuer == "":
 			return false
+		default:
+			return requestProvider == sessionProvider && requestIssuer == sessionIssuer
 		}
-		return issuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
 	}
 	seenSessions := make(map[string]struct{})
 	if len(identities) == 0 {
@@ -1775,9 +1788,11 @@ func debugSessionApprovalMigrationRequired(session *breakglassv1alpha1.DebugSess
 	if provider == "" && issuer == "" {
 		return !identity.legacyAllowed
 	}
-	if provider == "" && identity.legacyAllowed &&
-		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer {
-		return false
+	if provider == "" {
+		if identity.legacyAllowed && strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer {
+			return false
+		}
+		return !identity.legacyAllowed
 	}
 	return provider == "" || issuer == ""
 }
@@ -1800,7 +1815,7 @@ func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSe
 		return strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 	}
 	if issuer == "" {
-		return strings.TrimSpace(identity.provider) == provider
+		return false
 	}
 	return strings.TrimSpace(identity.provider) == provider &&
 		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
