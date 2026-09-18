@@ -658,11 +658,18 @@ func TestCleanupRoutineDebugSessionAuditPolicy(t *testing.T) {
 				require.NoError(t, service.Reload(ctx, &breakglassv1alpha1.AuditConfig{Spec: breakglassv1alpha1.AuditConfigSpec{
 					Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog}},
 				}}))
-				t.Cleanup(func() { require.NoError(t, service.Close()) })
+				closed := false
+				t.Cleanup(func() {
+					if !closed {
+						require.NoError(t, service.Close())
+					}
+				})
 				routine := CleanupRoutine{Log: logger.Sugar(), Manager: NewSessionManagerWithClientAndReader(hub, reader), AuditService: service, DisableEmail: true}
 				routine.cleanupExpiredDebugSessions(ctx)
 				routine.cleanupExpiredDebugSessions(ctx)
-				require.NoError(t, service.Close())
+				closeErr := service.Close()
+				closed = true
+				require.NoError(t, closeErr)
 				require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), session))
 				event := audit.EventDebugSessionExpired
 				wantState := breakglassv1alpha1.DebugSessionStateExpired
