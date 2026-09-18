@@ -834,6 +834,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		userEmail,
 		ctx.GetString("identity_provider_name"),
 		ctx.GetString("issuer"),
+		ctx.GetBool("legacy_identity_allowed"),
 	)
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
@@ -1400,7 +1401,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string) ([]string, error) {
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string, legacyAllowed bool) ([]string, error) {
 	indexedReader := reader
 	if c.client != nil {
 		indexedReader = c.client
@@ -1439,9 +1440,9 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
 		switch {
 		case sessionProvider == "" && sessionIssuer == "":
-			return requestProvider == "" && requestIssuer == ""
+			return legacyAllowed
 		case sessionProvider == "":
-			return requestProvider == "" && requestIssuer == sessionIssuer
+			return legacyAllowed && requestIssuer == sessionIssuer
 		case sessionIssuer == "":
 			return false
 		default:
@@ -1518,7 +1519,8 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		groups := make([]string, 0, len(items))
 		seen := make(map[string]struct{}, len(items))
 		for _, session := range items {
-			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
+			if session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
+				!breakglass.IsSessionAuthorizationEligible(session, now) ||
 				(session.Spec.User != username && session.Spec.User != email) ||
 				!matchesIdentityProvider(session) {
 				continue
@@ -1537,13 +1539,13 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		if err := reader.List(ctx, &fresh); err != nil {
 			return nil, err
 		}
-		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
+		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
 		for _, session := range fresh.Items {
 			if session.Spec.Cluster == cluster {
-				filtered = append(filtered, session)
+				freshCandidates = append(freshCandidates, session)
 			}
 		}
-		groups = collectGroups(filtered)
+		groups = collectGroups(freshCandidates)
 	}
 	return groups, nil
 }

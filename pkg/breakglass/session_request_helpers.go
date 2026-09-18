@@ -214,9 +214,9 @@ func filterEscalationsByIdentityProvider(
 ) []breakglassv1alpha1.BreakglassEscalation {
 	filtered := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
 	for _, escalation := range escalations {
-		allowed := escalation.Spec.AllowedIdentityProviders
+		allowed := escalation.Spec.AllowedIdentityProvidersForRequests
 		if len(allowed) == 0 {
-			allowed = escalation.Spec.AllowedIdentityProvidersForRequests
+			allowed = escalation.Spec.AllowedIdentityProviders
 		}
 		if len(allowed) == 0 || slices.Contains(allowed, provider) {
 			filtered = append(filtered, escalation)
