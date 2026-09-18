@@ -94,7 +94,7 @@ func TestEffectiveTemplateForBindingUsesNarrowedRenderingSurface(t *testing.T) {
 func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
 	scheme := testScheme()
 	variable := breakglassv1alpha1.ExtraDeployVariable{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}, {Value: "power"}}}
-	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", Labels: map[string]string{"catalogue.identity": "inline"}}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{variable},
 	}}
 	disabled := true
@@ -115,6 +115,30 @@ func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
 	require.Len(t, stored.Status.ResolvedTemplate.ExtraDeployVariables, 1)
 	assert.True(t, stored.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
 	assert.Len(t, stored.Status.ResolvedTemplateVariablePolicy, 1)
+	assert.Equal(t, map[string]string{"catalogue.identity": "inline"}, stored.Status.ResolvedTemplateLabels)
+}
+
+func TestHandlePendingRejectsPartialApprovalSnapshot(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("partial-snapshot", "template", "cluster", "user")
+	session.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{}}`)}
+	hub := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+	assert.Contains(t, stored.Status.Message, "snapshots are incomplete")
+}
+
+func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T) {
+	_, _, _, err := decodeApprovedPodTemplateSnapshot([]byte(`{"template":{"containers":[]}}`))
+	require.ErrorContains(t, err, "lacks durable identity metadata")
 }
 
 func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *testing.T) {

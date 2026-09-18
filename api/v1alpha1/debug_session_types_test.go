@@ -1500,6 +1500,29 @@ func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing
 	}
 }
 
+func TestDebugSessionValidateUpdateProtectsCapturedGroupProvenance(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			AuthenticatedUserGroups:         []string{"trusted"},
+			AuthenticatedUserGroupsCaptured: true,
+		},
+	}
+	for name, mutate := range map[string]func(*DebugSessionStatus){
+		"groups":         func(status *DebugSessionStatus) { status.AuthenticatedUserGroups = []string{"attacker"} },
+		"capture marker": func(status *DebugSessionStatus) { status.AuthenticatedUserGroupsCaptured = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			updated := oldSession.DeepCopy()
+			mutate(&updated.Status)
+			if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+				t.Fatalf("expected captured group provenance mutation to be rejected")
+			}
+		})
+	}
+}
+
 func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
 	base := &DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},

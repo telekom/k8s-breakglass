@@ -53,6 +53,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedTemplate caches the resolved DebugSessionTemplate spec.
 	// Used to ensure consistent behavior even if template changes.
 	ResolvedTemplate *DebugSessionTemplateSpecApplyConfiguration `json:"resolvedTemplate,omitempty"`
+	// resolvedTemplateLabels stores the catalogue identity labels from the
+	// approved template independently of its pod-template representation.
+	ResolvedTemplateLabels map[string]string `json:"resolvedTemplateLabels,omitempty"`
 	// resolvedTemplateVariablePolicy stores the original template variable
 	// definitions used to reconstruct binding regex intersections after the
 	// effective policy is serialized.
@@ -223,6 +226,20 @@ func (b *DebugSessionStatusApplyConfiguration) WithMessage(value string) *DebugS
 // If called multiple times, the ResolvedTemplate field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplate(value *DebugSessionTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedTemplate = value
+	return b
+}
+
+// WithResolvedTemplateLabels puts the entries into the ResolvedTemplateLabels field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the ResolvedTemplateLabels field,
+// overwriting an existing map entries in ResolvedTemplateLabels field with the same key.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateLabels(entries map[string]string) *DebugSessionStatusApplyConfiguration {
+	if b.ResolvedTemplateLabels == nil && len(entries) > 0 {
+		b.ResolvedTemplateLabels = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.ResolvedTemplateLabels[k] = v
+	}
 	return b
 }
 

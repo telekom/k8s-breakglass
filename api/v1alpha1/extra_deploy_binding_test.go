@@ -97,6 +97,24 @@ func TestEffectiveExtraDeployVariablesRejectsEmptyNumericIntersection(t *testing
 	}
 }
 
+func TestEffectiveExtraDeployVariablesRejectsNonFiniteNumericBounds(t *testing.T) {
+	for _, bound := range []struct {
+		name       string
+		validation *VariableValidation
+	}{
+		{name: "min NaN", validation: &VariableValidation{Min: "NaN"}},
+		{name: "max NaN", validation: &VariableValidation{Max: "NaN"}},
+		{name: "min infinity", validation: &VariableValidation{Min: "+Inf"}},
+		{name: "max infinity", validation: &VariableValidation{Max: "-Inf"}},
+	} {
+		t.Run(bound.name, func(t *testing.T) {
+			template := []ExtraDeployVariable{{Name: "count", InputType: InputTypeNumber}}
+			_, err := EffectiveExtraDeployVariables(template, []ExtraDeployVariableConstraint{{Name: "count", Validation: bound.validation}})
+			require.Error(t, err)
+		})
+	}
+}
+
 func TestValidateExtraDeployValueNamesRejectsUnknownAndDisabledWhenBound(t *testing.T) {
 	disabled := true
 	vars := []ExtraDeployVariable{{Name: "mode"}, {Name: "secret", Disabled: disabled}}

@@ -53,30 +53,42 @@ func decodeApprovedPodTemplateSnapshot(raw []byte) (*breakglassv1alpha1.DebugPod
 	if snapshot.Spec != nil {
 		return snapshot.Spec, cloneStringMap(snapshot.Labels), cloneStringMap(snapshot.TemplateLabels), nil
 	}
-	var legacySpec breakglassv1alpha1.DebugPodTemplateSpec
-	if err := json.Unmarshal(raw, &legacySpec); err != nil {
-		return nil, nil, nil, err
-	}
-	return &legacySpec, nil, nil, nil
+	return nil, nil, nil, fmt.Errorf("legacy pod-template snapshot lacks durable identity metadata")
 }
 
-func approvedTemplateLabelsFromStatus(status breakglassv1alpha1.DebugSessionStatus) map[string]string {
+func approvedTemplateLabelsFromStatus(status breakglassv1alpha1.DebugSessionStatus) (map[string]string, error) {
+	if len(status.ResolvedTemplateLabels) > 0 {
+		return cloneStringMap(status.ResolvedTemplateLabels), nil
+	}
 	if status.ResolvedPodTemplate == nil {
-		return nil
+		return nil, nil
 	}
 	_, _, templateLabels, err := decodeApprovedPodTemplateSnapshot(status.ResolvedPodTemplate.Raw)
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	return templateLabels
+	return templateLabels, nil
 }
 
-func applyApprovedTemplateLabels(template *breakglassv1alpha1.DebugSessionTemplate, status breakglassv1alpha1.DebugSessionStatus) {
-	labels := approvedTemplateLabelsFromStatus(status)
+func applyApprovedTemplateLabels(template *breakglassv1alpha1.DebugSessionTemplate, status breakglassv1alpha1.DebugSessionStatus) error {
+	labels, err := approvedTemplateLabelsFromStatus(status)
+	if err != nil {
+		return err
+	}
 	if len(labels) == 0 {
-		return
+		return nil
 	}
 	template.Labels = labels
+	return nil
+}
+
+func hasPartialResolvedBindingSnapshot(status breakglassv1alpha1.DebugSessionStatus) bool {
+	return status.ResolvedBindingSnapshotCaptured ||
+		status.ResolvedTemplateVariablePolicy != nil ||
+		status.ResolvedBinding != nil ||
+		status.ResolvedBindingSpec != nil ||
+		status.ResolvedPodTemplate != nil ||
+		status.ResolvedTemplateLabels != nil
 }
 
 func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
@@ -92,8 +104,12 @@ func (c *DebugSessionController) resumePersistedPending(ctx context.Context, ds 
 			return ctrl.Result{}, err
 		}
 	}
+	templateLabels, err := approvedTemplateLabelsFromStatus(ds.Status)
+	if err != nil {
+		return c.failSession(ctx, ds, "legacy approved pod-template snapshot lacks identity metadata; recreate this session")
+	}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: approvedTemplateLabelsFromStatus(ds.Status)},
+		ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: templateLabels},
 		Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
 	}
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
