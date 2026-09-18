@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Wire opt-in diagnostic collection admission through bounded durable reservations,
+  restart-safe upload nonce binding, fixed spoke Jobs and guarded artifact access.
+- Add a shared durable terminal-recording reservation, finalization, recovery and
+  retained replay contract with independent cleanup and immutable target metadata.
+
 - Added API helper coverage for authenticated diagnostic artifact collection,
   inventory, and download requests.
 
@@ -36,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Reject URL userinfo and non-origin components in configured S3 endpoints.
 
 - Accept the Kubernetes-added `enableServiceLinks: true` default when verifying
   live workload Pod identity, while preserving explicit opt-outs (#1340).
@@ -1999,8 +2006,3 @@ non-buggy case:
 [0.0.3]: https://github.com/telekom/k8s-breakglass/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/telekom/k8s-breakglass/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/telekom/k8s-breakglass/releases/tag/v0.0.1
-
-- Wire opt-in diagnostic collection admission through bounded durable reservations,
-  restart-safe upload nonce binding, fixed spoke Jobs and guarded artifact access.
-- Add a shared durable terminal-recording reservation, finalization, recovery and
-  retained replay contract with independent cleanup and immutable target metadata.

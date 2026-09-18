@@ -28,6 +28,13 @@ func TestConfigValidateRequiresExplicitVersionedHTTPSConfiguration(t *testing.T)
 	for name, mutate := range map[string]func(*Config){
 		"http endpoint":             func(config *Config) { config.Endpoint = "http://storage.example" },
 		"path endpoint":             func(config *Config) { config.Endpoint = "https://storage.example/path" },
+		"userinfo endpoint":         func(config *Config) { config.Endpoint = "https://user@storage.example" },
+		"password endpoint":         func(config *Config) { config.Endpoint = "https://user:secret@storage.example" },
+		"encoded path endpoint":     func(config *Config) { config.Endpoint = "https://storage.example/%2f" },
+		"query endpoint":            func(config *Config) { config.Endpoint = "https://storage.example?key=value" },
+		"empty query endpoint":      func(config *Config) { config.Endpoint = "https://storage.example?" },
+		"fragment endpoint":         func(config *Config) { config.Endpoint = "https://storage.example#fragment" },
+		"empty fragment endpoint":   func(config *Config) { config.Endpoint = "https://storage.example#" },
 		"missing bucket versioning": func(config *Config) { config.RequireVersioned = false },
 		"invalid bucket":            func(config *Config) { config.Bucket = "../bucket" },
 	} {
@@ -36,6 +43,7 @@ func TestConfigValidateRequiresExplicitVersionedHTTPSConfiguration(t *testing.T)
 			mutate(&config)
 			_, err := config.validate()
 			require.Error(t, err)
+			require.NotContains(t, err.Error(), "secret")
 		})
 	}
 }

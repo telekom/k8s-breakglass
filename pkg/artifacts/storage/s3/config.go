@@ -36,8 +36,8 @@ func (config Config) validate() (Config, error) {
 	}
 	if config.Endpoint != "" {
 		parsed, err := url.Parse(config.Endpoint)
-		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") {
-			return config, errors.New("s3 endpoint must be an HTTPS origin without path, query, or fragment")
+		if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(config.Endpoint, "#") || (parsed.EscapedPath() != "" && parsed.EscapedPath() != "/") {
+			return config, errors.New("s3 endpoint must be an HTTPS origin without userinfo, path, query, or fragment")
 		}
 		config.Endpoint = strings.TrimSuffix(config.Endpoint, "/")
 	}

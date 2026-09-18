@@ -93,7 +93,9 @@ Choose exactly one backend subsection. S3 requires `region`, a valid general
 purpose `bucket`, a 16–128 character non-whitespace `instanceID`, versioning and
 matching instance sentinel. Optional `prefix` is at most 256 characters and
 cannot contain NUL or line breaks. An explicit `endpoint` must be an HTTPS
-origin. `usePathStyle` selects path-style addressing for compatible providers.
+origin without userinfo, non-root paths, query or fragment components.
+Credentials belong only in the configured Secret. `usePathStyle` selects
+path-style addressing for compatible providers.
 Startup verifies the bucket/versioning/sentinel contract before exposing routes.
 
 For `backend: local`, replace `s3` with `local`:
