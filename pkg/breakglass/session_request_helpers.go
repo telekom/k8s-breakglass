@@ -790,7 +790,7 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		reqLog.Debugw("Using approval timeout from escalation spec", "approvalTimeout", approvalTimeout)
 	}
 
-	bs.Status = breakglassv1alpha1.BreakglassSessionStatus{
+	initialStatus := breakglassv1alpha1.BreakglassSessionStatus{
 		TimeoutAt: metav1.NewTime(time.Now().UTC().Add(approvalTimeout)), // Approval timeout
 		State:     breakglassv1alpha1.SessionStatePending,
 		Conditions: []metav1.Condition{{
@@ -802,7 +802,7 @@ func (wc *BreakglassSessionController) createAndPersistSession(
 		}},
 	}
 
-	if err := wc.sessionManager.UpdateBreakglassSessionStatus(ctx, bs); err != nil {
+	if err := wc.sessionManager.initializeSessionStatus(ctx, &bs, initialStatus); err != nil {
 		reqLog.Errorw("error while updating breakglass session", "error", err)
 		apiresponses.RespondInternalError(c, "update session status", err, reqLog)
 		return nil, false

@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry session initialization conflicts between API creation and quota recovery
+  without resetting approval deadlines or overwriting later lifecycle states.
+- Refresh the workload-debug CA certificate package pin and network-debug
+  Alpine runtime assertion to restore utility-image builds on both architectures.
+
 - Release-value generation and catalogue validation now consume all seven
   canonical utility-image references, including `dump-reader` and
   `cluster-validator`, while checked-in values remain zero-digest placeholders.
