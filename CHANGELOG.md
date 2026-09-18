@@ -21,6 +21,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve live terminal retention deadlines across status retries, expire
+  active sessions with missing hard deadlines, fence pod copies after creation,
+  and retire only identity-matched deleted auxiliary inventory (#1339).
+- Bound quota-bootstrap policy reads with a per-pass snapshot while continuing
+  to reserve capacity for every pending session (#1339).
+
 - Preserve auxiliary cleanup evidence on UID/source mismatches, stamp explicit
   retention when a stored deadline is zero, and deny active-session API actions
   with a missing hard expiry (#1339).

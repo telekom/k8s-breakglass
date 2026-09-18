@@ -1408,6 +1408,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		h.recoverAmbiguousCreatedPod(ctx, targetClient, copyPod, err)
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
+	postCreateCtx, cancelPostCreate := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
+	defer cancelPostCreate()
+	if _, err := h.liveSessionForMutation(postCreateCtx, ds, user); err != nil {
+		h.deleteOrphanedPod(postCreateCtx, targetClient, copyPod, err)
+		return nil, fmt.Errorf("pod copy was created after the session fence changed: %w", err)
+	}
 
 	// Calculate expiry (supports day units like "1d")
 	ttl := pc.TTL
@@ -1439,7 +1445,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		Ready:     false, // Will be updated by reconciler
 	}
 
-	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	if err := h.patchDebugSessionStatusWithRetry(postCreateCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.CopiedPods {

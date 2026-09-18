@@ -829,7 +829,7 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				cleanupErrors = append(cleanupErrors, fmt.Errorf("missing matching auxiliary cleanup status for %s %s/%s; retaining inventory", ref.Kind, ref.Namespace, ref.Name))
 				continue
 			}
-			if auxiliaryResourceDeleted(ds, ref) || utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
+			if utils.DebugSessionAuxiliaryResourceDeleted(ds, ref) || utils.DebugSessionResourceIntentionallyRetained(ds, ref) {
 				continue
 			}
 		}
@@ -952,28 +952,6 @@ func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.O
 		return "", fmt.Errorf("resource %s/%s has no UID after mutation", obj.GetNamespace(), obj.GetName())
 	}
 	return string(obj.GetUID()), nil
-}
-
-func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	if ref.UID == "" {
-		return false
-	}
-	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if ref.Source != "auxiliary:"+status.Name {
-			continue
-		}
-		if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
-			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
-			return status.Deleted
-		}
-		for _, additional := range status.AdditionalResources {
-			if additional.UID == ref.UID && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
-				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
-				return additional.Deleted
-			}
-		}
-	}
-	return false
 }
 
 func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {

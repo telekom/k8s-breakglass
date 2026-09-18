@@ -398,6 +398,43 @@ func TestPatchDebugSessionStatusWithOptimisticLockLeavesInputUnchangedOnConflict
 	assert.Equal(t, "live", fetched.Status.Message)
 }
 
+func TestTerminalStatusRetriesPreserveLiveRetention(t *testing.T) {
+	for _, mode := range []string{"apply", "patch"} {
+		for _, unset := range []string{"nil", "zero"} {
+			t.Run(mode+"/"+unset, func(t *testing.T) {
+				scheme := runtime.NewScheme()
+				require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+				deadline := metav1.NewTime(time.Now().Add(time.Hour).Truncate(time.Second))
+				session := &breakglassv1alpha1.DebugSession{
+					ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "default", UID: "retained-uid"},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State: breakglassv1alpha1.DebugSessionStateTerminated, RetainedUntil: &deadline,
+						ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}},
+					},
+				}
+				hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+				for range 2 {
+					require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+					mutate := func(status *breakglassv1alpha1.DebugSessionStatus) {
+						status.RetainedUntil = nil
+						if unset == "zero" {
+							status.RetainedUntil = &metav1.Time{}
+						}
+					}
+					if mode == "apply" {
+						mutate(&session.Status)
+						require.NoError(t, ApplyDebugSessionStatus(t.Context(), hub, session))
+					} else {
+						require.NoError(t, PatchDebugSessionStatusWithOptimisticLock(t.Context(), hub, session, mutate))
+					}
+					require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+					require.Equal(t, &deadline, session.Status.RetainedUntil)
+				}
+			})
+		}
+	}
+}
+
 func TestDebugSessionLifecycleStatusGuardsPreserveLiveObject(t *testing.T) {
 	for _, name := range []string{"activity count", "activity timestamp", "retention timestamp", "nonterminal retention", "idle expired"} {
 		t.Run(name, func(t *testing.T) {
@@ -408,6 +445,7 @@ func TestDebugSessionLifecycleStatusGuardsPreserveLiveObject(t *testing.T) {
 				session.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 				session.Status.RetainedUntil = &future
 			}
+
 			if name == "idle expired" {
 				session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}
 			}

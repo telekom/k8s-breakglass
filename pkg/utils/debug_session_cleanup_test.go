@@ -44,6 +44,43 @@ func TestDebugSessionResourceIntentionallyRetainedRequiresExactIdentity(t *testi
 	require.False(t, DebugSessionResourceIntentionallyRetained(ds, ref))
 }
 
+func TestDeletedAuxiliaryInventoryRequiresExactIdentity(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		for _, mismatch := range []string{"", "uid", "source", "version", "kind", "name", "namespace", "incomplete", "not deleted"} {
+			t.Run(fmt.Sprintf("child=%t/%s", child, mismatch), func(t *testing.T) {
+				ref := breakglassv1alpha1.DeployedResourceRef{UID: "uid", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "object", Source: "auxiliary:removed"}
+				status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "removed", UID: ref.UID, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, Deleted: mismatch != "not deleted"}
+				if child {
+					status.ResourceName = "parent"
+					status.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{UID: ref.UID, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name, Namespace: ref.Namespace, Deleted: status.Deleted}}
+				}
+				switch mismatch {
+				case "uid":
+					ref.UID = "replacement"
+				case "source":
+					ref.Source = "auxiliary:other"
+				case "version":
+					ref.APIVersion = "v2"
+				case "kind":
+					ref.Kind = "Secret"
+				case "name":
+					ref.Name = "other"
+				case "namespace":
+					ref.Namespace = "other"
+				case "incomplete":
+					ref.UID = ""
+				}
+				session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+					DeployedResources:         []breakglassv1alpha1.DeployedResourceRef{ref},
+					AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{status},
+				}}
+				require.Equal(t, mismatch == "", DebugSessionAuxiliaryResourceDeleted(session, ref))
+				require.Equal(t, mismatch != "", DebugSessionHasActionableDeployedResources(session))
+			})
+		}
+	}
+}
+
 func TestRetainedAuxiliaryRequiresCompleteIdentity(t *testing.T) {
 	for _, child := range []bool{false, true} {
 		for _, missing := range []string{"", "uid", "version", "kind", "name"} {
@@ -59,6 +96,7 @@ func TestRetainedAuxiliaryRequiresCompleteIdentity(t *testing.T) {
 				case "name":
 					ref.Name = ""
 				}
+
 				ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep"}}}}}
 				status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep", Created: true, UID: ref.UID, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name}
 				if child {

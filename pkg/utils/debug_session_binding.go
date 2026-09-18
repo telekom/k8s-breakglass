@@ -22,27 +22,32 @@ func FindDebugSessionBinding(ctx context.Context, reader ctrlclient.Reader, temp
 		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
 	}
 
-	// Get cluster config for label-based matching
-	var clusterConfig *breakglassv1alpha1.ClusterConfig
 	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
 	if err := reader.List(ctx, clusterConfigList); err != nil {
 		return nil, fmt.Errorf("list cluster configs for binding resolution: %w", err)
 	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
+	return SelectDebugSessionBinding(template, clusterName, bindingList.Items, clusterConfigList.Items)
+}
+
+// SelectDebugSessionBinding resolves a binding from an already loaded policy snapshot.
+func SelectDebugSessionBinding(template *breakglassv1alpha1.DebugSessionTemplate, clusterName string, bindings []breakglassv1alpha1.DebugSessionClusterBinding, clusters []breakglassv1alpha1.ClusterConfig) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
+	for i := range clusters {
+		if clusters[i].Name == clusterName {
 			if clusterConfig != nil {
 				return nil, fmt.Errorf("ambiguous cluster config for binding resolution")
 			}
-			clusterConfig = &clusterConfigList.Items[i]
+			clusterConfig = &clusters[i]
 		}
 	}
 
-	sort.Slice(bindingList.Items, func(i, j int) bool {
-		a, b := bindingList.Items[i], bindingList.Items[j]
+	bindings = slices.Clone(bindings)
+	sort.Slice(bindings, func(i, j int) bool {
+		a, b := bindings[i], bindings[j]
 		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
 	})
-	for i := range bindingList.Items {
-		binding := &bindingList.Items[i]
+	for i := range bindings {
+		binding := &bindings[i]
 		if !IsDebugSessionBindingActive(binding) {
 			continue
 		}

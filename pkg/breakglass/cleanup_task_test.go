@@ -1625,7 +1625,7 @@ func TestDebugSessionRetentionUsesExplicitDeadlineOrLegacyConfiguredFallback(t *
 }
 
 func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T) {
-	for _, name := range []string{"idle", "deployed", "unknown auxiliary", "pod template", "deleted pod template", "blank pod template", "retained created only", "retained name only", "retained empty child", "retained uid only", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
+	for _, name := range []string{"idle", "missing hard expiry", "zero hard expiry", "deployed", "unknown auxiliary", "pod template", "deleted pod template", "blank pod template", "retained created only", "retained name only", "retained empty child", "retained uid only", "cleaned auxiliary", "intentionally retained auxiliary", "retained parent unknown child", "completed operation", "failed operation", "prepared operation", "unknown operation", "copied pod"} {
 		t.Run(name, func(t *testing.T) {
 			past := metav1.NewTime(time.Now().Add(-time.Hour))
 			future := metav1.NewTime(time.Now().Add(time.Hour))
@@ -1637,6 +1637,13 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 			case "copied pod":
 				ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{{CopyName: "pending-cleanup"}}}
 
+			case "missing hard expiry", "zero hard expiry":
+				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+				ds.Status.RetainedUntil = nil
+				if name == "zero hard expiry" {
+					ds.Status.ExpiresAt = &metav1.Time{}
+				}
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h"}}
 			case "idle":
 				ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
 				ds.Status.RetainedUntil = nil
@@ -1691,9 +1698,13 @@ func TestDebugSessionCleanupPreservesPendingResourcesAndExpiresIdle(t *testing.T
 				return
 			}
 			require.NoError(t, err)
-			if name == "idle" {
+			if name == "idle" || name == "missing hard expiry" || name == "zero hard expiry" {
 				require.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
-				require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+				if name == "idle" {
+					require.Equal(t, "Session expired due to inactivity", stored.Status.Message)
+				} else {
+					require.Equal(t, "Session expired (cleanup routine)", stored.Status.Message)
+				}
 				require.NotNil(t, stored.Status.RetainedUntil)
 				require.True(t, stored.Status.RetainedUntil.After(time.Now().Add(time.Hour)))
 			}
