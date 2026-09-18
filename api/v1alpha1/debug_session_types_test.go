@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -1535,6 +1536,33 @@ func TestDebugSessionValidateUpdateFreezesTemplateIdentityMarker(t *testing.T) {
 	updated.Status.ResolvedTemplateIdentityCaptured = true
 	if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
 		t.Fatal("expected template identity marker mutation to be rejected")
+	}
+}
+
+func TestDebugSessionValidateUpdateFreezesBindingSnapshotAfterTemplatePersistence(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{ResolvedTemplate: &DebugSessionTemplateSpec{}},
+	}
+	for name, mutate := range map[string]func(*DebugSessionStatus){
+		"capture marker": func(status *DebugSessionStatus) {
+			status.ResolvedBindingSnapshotCaptured = true
+		},
+		"binding reference": func(status *DebugSessionStatus) {
+			status.ResolvedBinding = &ResolvedBindingRef{Name: "binding", Namespace: "breakglass"}
+		},
+		"binding spec": func(status *DebugSessionStatus) {
+			status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"clusters":["cluster"]}`)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			updated := oldSession.DeepCopy()
+			mutate(&updated.Status)
+			if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+				t.Fatalf("expected binding snapshot mutation to be rejected")
+			}
+		})
 	}
 }
 
