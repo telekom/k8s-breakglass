@@ -53,7 +53,7 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 			ExpiresAt:   &expiresAt,
 			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Name: "pod", Namespace: "workloads", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
-				User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleOwner,
+				User: "user", IdentityProviderName: "e2e-idp", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleOwner,
 			}},
 		},
 	}
@@ -85,6 +85,21 @@ func TestDebugSessionAccessFallsBackToLiveDiscoveryAndKeepsPodUIDFence(t *testin
 	allowedSession, _ := wc.findDebugSessionAccessForIssuerInNamespace(context.Background(), "user", "spoke", "https://issuer.example", "requested-cluster", ra, wc.log)
 	allowed := allowedSession != nil
 	require.True(t, allowed, "live active session must be found when cache discovery is empty")
+	rejectedSession, _ := wc.findDebugSessionAccessForProviderInNamespace(
+		context.Background(), "user", "spoke", "https://issuer.example", "other-idp", true,
+		"requested-cluster", ra, wc.log,
+	)
+	require.Nil(t, rejectedSession, "a same-issuer session from another provider must be rejected")
+	unknownProviderSession, _ := wc.findDebugSessionAccessForProviderInNamespace(
+		context.Background(), "user", "spoke", "https://issuer.example", "", false,
+		"requested-cluster", ra, wc.log,
+	)
+	require.Nil(t, unknownProviderSession, "an unresolved provider must fail closed")
+	matchedSession, _ := wc.findDebugSessionAccessForProviderInNamespace(
+		context.Background(), "user", "spoke", "https://issuer.example", "e2e-idp", true,
+		"requested-cluster", ra, wc.log,
+	)
+	require.NotNil(t, matchedSession, "matching provider and issuer must authorize the participant")
 	require.Equal(t, "requested-cluster", liveReader.listOptions.Namespace)
 	require.Equal(t, liveDebugSessionDiscoveryPageSize, liveReader.listOptions.Limit)
 	require.Equal(t, debugSessionClusterLabelKey+"=spoke", liveReader.listOptions.LabelSelector.String())
@@ -162,7 +177,7 @@ func TestEarlyDebugSessionAuthorizationUsesPersistedOwnerIssuer(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			state := &authorizeState{
-				ctx: context.Background(), clusterName: "spoke", issuer: tc.issuer,
+				ctx: context.Background(), clusterName: "spoke", issuer: tc.issuer, idpName: "e2e-idp", idpLookupOK: true,
 				reqLog: wc.log, phases: NewSARPhaseTracker("spoke", wc.log),
 				sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
 					User: "user", ResourceAttributes: ra,

@@ -2176,7 +2176,7 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
 					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
-					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderName: "issuer-a-idp", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 			}
 			if tt.liveIssuer != "" {
 				ds.Status.Participants[0].IdentityProviderIssuer = tt.liveIssuer
@@ -2192,7 +2192,7 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(tt.podUID)}}, nil
 			}}
 			ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
-			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: issuer, allowed: true, allowSource: "debug-session",
+			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: issuer, idpName: "issuer-a-idp", idpLookupOK: true, allowed: true, allowSource: "debug-session",
 				debugSessionNamespace: ds.Namespace, debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
 				sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
 			w := httptest.NewRecorder()
@@ -2213,7 +2213,7 @@ func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
 			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
-			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderName: "test-idp", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
 	for k, fn := range debugSessionIndexFnsWebhook {
@@ -2223,7 +2223,7 @@ func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
 	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 	}}
-	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", idpName: "test-idp", idpLookupOK: true, reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	assert.True(t, wc.checkEarlyDebugSession(c, s))
 	assert.True(t, s.allowed)

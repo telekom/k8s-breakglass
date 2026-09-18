@@ -357,6 +357,19 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 }
 
 func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx context.Context, username, clusterName, issuer, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	return wc.findDebugSessionAccessForIdentity(ctx, username, clusterName, issuer, "", true, false, sessionNamespace, ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForProviderInNamespace(ctx context.Context, username, clusterName, issuer, provider string, providerLookupOK bool, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	// A manually constructed/legacy authorization state can have no resolved
+	// provider while still carrying a usable issuer. Preserve the historical
+	// issuer-only fence in that case; a failed lookup remains provider-fenced
+	// and therefore fails closed.
+	providerFence := provider != "" || !providerLookupOK
+	return wc.findDebugSessionAccessForIdentity(ctx, username, clusterName, issuer, provider, providerLookupOK, providerFence, sessionNamespace, ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Context, username, clusterName, issuer, provider string, providerLookupOK, providerFence bool, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
 		return nil, ""
@@ -472,7 +485,10 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 			if p.User != username {
 				continue
 			}
-			if !debugParticipantIssuerMatches(ctx, wc.escalManager.Client, p, issuer) {
+			if providerFence && !debugParticipantProviderMatches(p, issuer, provider, providerLookupOK) {
+				continue
+			}
+			if !providerFence && !debugParticipantIssuerMatches(ctx, wc.escalManager.Client, p, issuer) {
 				continue
 			}
 			if p.LeftAt != nil {
@@ -547,6 +563,15 @@ func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.C
 // allow. It reads the exact candidate through the uncached reader and repeats
 // every identity/state/pod/participant/lease check at one decision instant.
 func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, issuer, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	return wc.liveDebugSessionAccessIdentity(ctx, username, issuer, "", true, false, clusterName, ra, namespace, name, uid)
+}
+
+func (wc *WebhookController) liveDebugSessionAccessForProvider(ctx context.Context, username, issuer, provider string, providerLookupOK bool, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	providerFence := provider != "" || !providerLookupOK
+	return wc.liveDebugSessionAccessIdentity(ctx, username, issuer, provider, providerLookupOK, providerFence, clusterName, ra, namespace, name, uid)
+}
+
+func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context, username, issuer, provider string, providerLookupOK, providerFence bool, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
 	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
 		return false, ""
 	}
@@ -589,7 +614,8 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 	reader := wc.sesManager.Reader()
 	for _, participant := range ds.Status.Participants {
 		if participant.User == username && participant.LeftAt == nil &&
-			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
+			((providerFence && debugParticipantProviderMatches(participant, issuer, provider, providerLookupOK)) ||
+				(!providerFence && debugParticipantIssuerMatches(ctx, reader, participant, issuer))) &&
 			canDebugSessionParticipantAccessPodOperations(participant.Role) {
 			if !time.Now().Before(ds.Status.ExpiresAt.Time) {
 				return false, ""
@@ -1674,4 +1700,18 @@ func debugParticipantIssuerMatches(ctx context.Context, reader client.Reader, pa
 		return issuer != "" && strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
 	}
 	return config.IsOnlyEnabledIdentityProvider(ctx, reader, participant.IdentityProviderName, issuer)
+}
+
+func debugParticipantProviderMatches(
+	participant breakglassv1alpha1.DebugSessionParticipant,
+	issuer, provider string,
+	providerLookupOK bool,
+) bool {
+	if issuer == "" {
+		return participant.IdentityProviderName == "" && participant.IdentityProviderIssuer == ""
+	}
+	return providerLookupOK &&
+		provider != "" &&
+		participant.IdentityProviderName == provider &&
+		strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
 }

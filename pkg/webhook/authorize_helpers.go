@@ -377,8 +377,9 @@ func (wc *WebhookController) findDebugSessionAccessForAuthorizeState(s *authoriz
 	if s.clusterCfg != nil {
 		namespace = s.clusterCfg.Namespace
 	}
-	s.debugSessionCandidate, s.debugSessionReason = wc.findDebugSessionAccessForIssuerInNamespace(
-		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, namespace, ra, s.reqLog)
+	s.debugSessionCandidate, s.debugSessionReason = wc.findDebugSessionAccessForProviderInNamespace(
+		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, s.idpName, s.idpLookupOK,
+		namespace, ra, s.reqLog)
 	return s.debugSessionCandidate, s.debugSessionReason
 }
 
@@ -964,7 +965,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra = s.sar.Spec.ResourceAttributes
 		}
-		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra,
+		if ok, reason := wc.liveDebugSessionAccessForProvider(s.ctx, username, s.issuer, s.idpName, s.idpLookupOK, s.clusterName, ra,
 			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
 			s.allowed = false
 			s.allowSource = ""
