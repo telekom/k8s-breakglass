@@ -172,9 +172,7 @@ const effectiveExtraDeployVariables = computed(() => {
 function reconcileExtraDeployValues() {
   const effectiveVariables = effectiveExtraDeployVariables.value;
   const variables = new Map(
-    effectiveVariables
-      .filter((variable) => !variable.disabled)
-      .map((variable) => [variable.name, variable]),
+    effectiveVariables.filter((variable) => !variable.disabled).map((variable) => [variable.name, variable]),
   );
   const values = Object.fromEntries(
     Object.entries(form.extraDeployValues).flatMap(([name, value]) => {
