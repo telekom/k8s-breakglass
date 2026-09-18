@@ -1448,9 +1448,6 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		sessions.Items = append(sessions.Items, session)
 	}
 	matchesIdentityProvider := func(session breakglassv1alpha1.BreakglassSession) bool {
-		if session.Spec.AllowIDPMismatch {
-			return true
-		}
 		sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
 		sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
 		requestProvider := strings.TrimSpace(provider)

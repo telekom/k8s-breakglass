@@ -254,6 +254,17 @@ func TestActiveBreakglassGroupsRequiresProviderNameAndIssuer(t *testing.T) {
 				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
 			},
 		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "mismatch-debug-grant"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession",
+				IdentityProviderName: "idp-b", IdentityProviderIssuer: "https://other.example",
+				AllowIDPMismatch: true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
+			},
+		},
 	).Build()
 
 	controller := &DebugSessionAPIController{}

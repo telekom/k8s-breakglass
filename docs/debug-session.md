@@ -1633,9 +1633,9 @@ email claim must exactly match `BreakglassSession.spec.user`. Complete provider
 records require both provider name and issuer to match; issuer-only legacy
 records require the trusted single-provider identity and matching issuer.
 Blank legacy records are accepted only through that trusted compatibility path,
-and provider-only records are not accepted. When `allowIDPMismatch` is enabled,
-the provider/issuer fence is intentionally bypassed for that legacy-compatible
-grant. The API does not
+and provider-only records are not accepted. `allowIDPMismatch` is a spoke
+authorization compatibility setting; it does not bypass the provider/issuer
+fence for native DebugSession creation. The API does not
 infer an email address from a username's local part, because the same local part
 can belong to different domains. The authorization webhook has a separate,
 issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
