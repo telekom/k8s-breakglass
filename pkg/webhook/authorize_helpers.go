@@ -319,6 +319,7 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...),
 		s.issuer, s.idpName, s.idpLookupOK, time.Now(),
 	)
+	s.groups = grantedGroupsFromSessions(s.sessions)
 	if len(s.sessions) > 0 || len(s.idpMismatches) > 0 {
 		candidates := append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...)
 		if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessionsWithCached(

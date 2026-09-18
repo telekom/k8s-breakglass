@@ -123,6 +123,13 @@ func TestFilterSessionsForAuthorizationRequiresProviderAndIssuer(t *testing.T) {
 	)
 	assert.Len(t, out, 1)
 	assert.Empty(t, mismatches)
+
+	out, mismatches = filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://unknown.example", "", false, time.Now(),
+	)
+	assert.Empty(t, out)
+	assert.Len(t, mismatches, 1)
 }
 
 type countingListClient struct {

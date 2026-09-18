@@ -265,6 +265,9 @@ func (wc *WebhookController) resolveIdentityProviderName(ctx context.Context, is
 			matchedIDPName = idp.Name
 		}
 	}
+	if matchedIDPName == "" {
+		return "", false
+	}
 	return matchedIDPName, true
 }
 
