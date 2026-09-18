@@ -2185,7 +2185,12 @@ The normal expiry reconciler still performs lifecycle effects. Terminal cleanup
 retries prepared-operation recovery after its grace period and transient errors;
 recovery reads the exact Pod UID and container intent without repeating the target
 mutation. Confirmed policy-retained auxiliary resources do not hold the cluster
-finalizer, while unknown creation outcomes still do.
+finalizer, while unknown creation outcomes still do, including kubectl-debug
+operations whose durable outcome is `Unknown`.
+
+Quota-ledger bootstrap includes pending sessions even before their admission
+annotation changes to `ready`; a ledger rebuild must not free their reserved
+capacity for a competing request.
 
 Terminal retention cleanup and cluster deletion share the same residual-resource
 predicates. Confirmed deleted pod-template history does not hold a session after
