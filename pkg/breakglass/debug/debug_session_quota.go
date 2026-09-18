@@ -198,7 +198,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 			if statusErr := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, current, func(status *breakglassv1alpha1.DebugSessionStatus) {
 				status.State = breakglassv1alpha1.DebugSessionStateFailed
 				status.Message = "Session quota reached"
-				if status.ResolvedTemplate == nil && status.RetainedUntil == nil && retainFor != "" {
+				if status.ResolvedTemplate == nil && (status.RetainedUntil == nil || status.RetainedUntil.IsZero()) && retainFor != "" {
 					// Retention is terminal bookkeeping, not an approved activation snapshot.
 					retention := breakglassv1alpha1.DebugSessionStatus{State: status.State, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: retainFor}}}
 					breakglass.StampDebugSessionRetention(&retention, time.Now().UTC())
