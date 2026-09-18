@@ -1701,6 +1701,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approval
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionApproval
+    - name: authenticatedUserGroups
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: authenticatedUserGroupsCaptured
+      type:
+        scalar: boolean
     - name: auxiliaryResourceStatuses
       type:
         list:

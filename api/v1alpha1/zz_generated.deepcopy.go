@@ -2273,6 +2273,11 @@ func (in *DebugSessionStatus) DeepCopyInto(out *DebugSessionStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.AuthenticatedUserGroups != nil {
+		in, out := &in.AuthenticatedUserGroups, &out.AuthenticatedUserGroups
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.ResolvedBinding != nil {
 		in, out := &in.ResolvedBinding, &out.ResolvedBinding
 		*out = new(ResolvedBindingRef)

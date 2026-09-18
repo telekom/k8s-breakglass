@@ -1118,6 +1118,18 @@ spec:
                     description: required indicates if approval is needed.
                     type: boolean
                 type: object
+              authenticatedUserGroups:
+                description: |-
+                  authenticatedUserGroups stores groups established by the authenticated
+                  API request for controller-side authorization.
+                items:
+                  type: string
+                type: array
+              authenticatedUserGroupsCaptured:
+                description: |-
+                  authenticatedUserGroupsCaptured distinguishes an authenticated request
+                  with no groups from a session without trusted group provenance.
+                type: boolean
               auxiliaryResourceStatuses:
                 description: auxiliaryResourceStatuses tracks the state of deployed
                   auxiliary resources.

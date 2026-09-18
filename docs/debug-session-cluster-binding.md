@@ -11,6 +11,14 @@
 
 ## Overview
 
+### Approval and group provenance
+
+The API persists authenticated requester groups in the DebugSession status
+before reconciliation evaluates group-restricted extra-deploy variables.
+Direct CR creation cannot supply this provenance, so the controller fails closed
+for restricted variables. Approved snapshots also retain catalogue template and
+pod identity labels for recovery after live resource changes.
+
 While `DebugSessionTemplate` defines what a debug session does, `DebugSessionClusterBinding` controls who can use it and where:
 
 ```

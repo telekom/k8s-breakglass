@@ -1415,6 +1415,38 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
 		return
 	}
+	trustedGroups := append([]string{}, userGroups...)
+	statusReader := c.apiReader
+	if statusReader == nil {
+		statusReader = c.client
+	}
+	liveSession := &breakglassv1alpha1.DebugSession{}
+	if err := statusReader.Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), liveSession); err != nil {
+		reqLog.Errorw("Failed to read created debug session for group provenance", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
+		return
+	}
+	if err := breakglass.PatchDebugSessionStatusWithReader(apiCtx, c.client, statusReader, liveSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.AuthenticatedUserGroups = trustedGroups
+		status.AuthenticatedUserGroupsCaptured = true
+	}); err != nil {
+		if c.apiReader == nil && apierrors.IsNotFound(err) {
+			liveSession.Status.AuthenticatedUserGroups = trustedGroups
+			liveSession.Status.AuthenticatedUserGroupsCaptured = true
+			if updateErr := c.client.Update(apiCtx, liveSession); updateErr == nil {
+				session.Status = liveSession.Status
+				session.ResourceVersion = liveSession.ResourceVersion
+			} else {
+				reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", updateErr)
+				apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
+				return
+			}
+		} else {
+			reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
+			return
+		}
+	}
 
 	if err := c.admitCreatedDebugSession(apiCtx, session); err != nil {
 		reqLog.Errorw("Failed to admit debug session quota",
@@ -1954,5 +1986,7 @@ func stringInSlice(value string, values []string) bool {
 func publicDebugSession(session *breakglassv1alpha1.DebugSession) breakglassv1alpha1.DebugSession {
 	public := session.DeepCopy()
 	public.Status.ResolvedTemplateVariablePolicy = nil
+	public.Status.AuthenticatedUserGroups = nil
+	public.Status.AuthenticatedUserGroupsCaptured = false
 	return *public
 }

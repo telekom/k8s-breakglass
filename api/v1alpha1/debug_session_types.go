@@ -271,6 +271,16 @@ type DebugSessionStatus struct {
 	// +optional
 	ResolvedTemplateVariablePolicy []ExtraDeployVariable `json:"resolvedTemplateVariablePolicy,omitempty"`
 
+	// authenticatedUserGroups stores groups established by the authenticated
+	// API request for controller-side authorization.
+	// +optional
+	AuthenticatedUserGroups []string `json:"authenticatedUserGroups,omitempty"`
+
+	// authenticatedUserGroupsCaptured distinguishes an authenticated request
+	// with no groups from a session without trusted group provenance.
+	// +optional
+	AuthenticatedUserGroupsCaptured bool `json:"authenticatedUserGroupsCaptured,omitempty"`
+
 	// resolvedBinding caches information about the binding used (if any).
 	// +optional
 	ResolvedBinding *ResolvedBindingRef `json:"resolvedBinding,omitempty"`

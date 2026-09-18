@@ -296,6 +296,12 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	for i := range status.ResolvedTemplateVariablePolicy {
 		result.WithResolvedTemplateVariablePolicy(ExtraDeployVariableFrom(&status.ResolvedTemplateVariablePolicy[i]))
 	}
+	if status.AuthenticatedUserGroups != nil {
+		result.WithAuthenticatedUserGroups(status.AuthenticatedUserGroups...)
+	}
+	if status.AuthenticatedUserGroupsCaptured {
+		result.WithAuthenticatedUserGroupsCaptured(true)
+	}
 
 	// Set resolved binding
 	if status.ResolvedBinding != nil {

@@ -4105,6 +4105,9 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "breakglass", response.Namespace)
 		assert.Equal(t, "production", response.Spec.Cluster)
 		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
+		stored := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&response.DebugSession), stored))
+		assert.True(t, stored.Status.AuthenticatedUserGroupsCaptured)
 	})
 
 	t.Run("create session rejects empty username", func(t *testing.T) {

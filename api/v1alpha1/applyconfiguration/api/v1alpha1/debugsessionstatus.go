@@ -57,6 +57,12 @@ type DebugSessionStatusApplyConfiguration struct {
 	// definitions used to reconstruct binding regex intersections after the
 	// effective policy is serialized.
 	ResolvedTemplateVariablePolicy []ExtraDeployVariableApplyConfiguration `json:"resolvedTemplateVariablePolicy,omitempty"`
+	// authenticatedUserGroups stores groups established by the authenticated
+	// API request for controller-side authorization.
+	AuthenticatedUserGroups []string `json:"authenticatedUserGroups,omitempty"`
+	// authenticatedUserGroupsCaptured distinguishes an authenticated request
+	// with no groups from a session without trusted group provenance.
+	AuthenticatedUserGroupsCaptured *bool `json:"authenticatedUserGroupsCaptured,omitempty"`
 	// resolvedBinding caches information about the binding used (if any).
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
@@ -230,6 +236,24 @@ func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateVariablePolic
 		}
 		b.ResolvedTemplateVariablePolicy = append(b.ResolvedTemplateVariablePolicy, *values[i])
 	}
+	return b
+}
+
+// WithAuthenticatedUserGroups adds the given value to the AuthenticatedUserGroups field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AuthenticatedUserGroups field.
+func (b *DebugSessionStatusApplyConfiguration) WithAuthenticatedUserGroups(values ...string) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		b.AuthenticatedUserGroups = append(b.AuthenticatedUserGroups, values[i])
+	}
+	return b
+}
+
+// WithAuthenticatedUserGroupsCaptured sets the AuthenticatedUserGroupsCaptured field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AuthenticatedUserGroupsCaptured field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithAuthenticatedUserGroupsCaptured(value bool) *DebugSessionStatusApplyConfiguration {
+	b.AuthenticatedUserGroupsCaptured = &value
 	return b
 }
 
