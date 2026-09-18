@@ -82,8 +82,10 @@ spec:
 	t.Cleanup(func() { _ = s.Client.Delete(ctx, template) })
 	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "30m", Reason: "artifact real collector proof"})
 	require.NoError(t, err)
+	sessionNamespace := session.Namespace
+	require.NotEmpty(t, sessionNamespace)
 	t.Cleanup(func() { _ = requester.TerminateDebugSession(ctx, t, session.Name) })
-	active := helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, ns, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
+	active := helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, sessionNamespace, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
 	require.NotNil(t, active.Status.ConnectionLease)
 	require.NotEmpty(t, active.Status.ConnectionLease.UID)
 	require.Eventually(t, func() bool {
@@ -97,7 +99,7 @@ spec:
 	var target corev1.Pod
 	require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, &target))
 	request := helpers.DebugSessionArtifactRequest{Recipe: recipe, PodNamespace: pod.Namespace, PodName: pod.Name}
-	expected := artifactarchive.Expected{Recipe: recipe, RecipeVersion: 1, Inputs: artifactarchive.Inputs{MaxArchiveBytes: 16777216}, SessionNamespace: ns, SessionName: session.Name, SessionUID: string(active.UID), RedactionProfile: "credential-text.v1", RedactionVersion: 1}
+	expected := artifactarchive.Expected{Recipe: recipe, RecipeVersion: 1, Inputs: artifactarchive.Inputs{MaxArchiveBytes: 16777216}, SessionNamespace: sessionNamespace, SessionName: session.Name, SessionUID: string(active.UID), RedactionProfile: "credential-text.v1", RedactionVersion: 1}
 	if recipe == artifactarchive.SystemSummaryRecipe {
 		request.DetailLevel = "basic"
 		expected.Inputs.DetailLevel = &request.DetailLevel
@@ -107,7 +109,7 @@ spec:
 		expected.Inputs.Node = &target.Spec.NodeName
 		expected.Inputs.MaxAgeMinutes = &request.MaxAgeMinutes
 	}
-	endpoint := "/api/debugSessionArtifacts/" + ns + "/" + session.Name
+	endpoint := "/api/debugSessionArtifacts/" + sessionNamespace + "/" + session.Name
 	status := func(api *helpers.APIClient, method, path string, body []byte, token string) int {
 		req, e := http.NewRequestWithContext(ctx, method, api.BaseURL+path, bytes.NewReader(body))
 		require.NoError(t, e)
@@ -149,7 +151,7 @@ spec:
 	}
 	baseline := files()
 	collect := func() (*breakglassv1alpha1.DebugSessionArtifact, []byte, string) {
-		admitted, e := requester.CollectDebugSessionArtifact(ctx, ns, session.Name, request)
+		admitted, e := requester.CollectDebugSessionArtifact(ctx, sessionNamespace, session.Name, request)
 		require.NoError(t, e)
 		var object breakglassv1alpha1.DebugSessionArtifact
 		require.Eventually(t, func() bool {
@@ -166,6 +168,9 @@ spec:
 			return false
 		}, helpers.WaitForStateTimeout, time.Second)
 		require.NotEmpty(t, object.UID)
+		require.Equal(t, sessionNamespace, object.Spec.SessionRef.Namespace)
+		require.Equal(t, session.Name, object.Spec.SessionRef.Name)
+		require.Equal(t, string(active.UID), object.Spec.SessionRef.UID)
 		require.Len(t, object.Status.Resources, 2)
 		var token string
 		for _, ref := range object.Status.Resources {
@@ -242,7 +247,7 @@ spec:
 			}
 		}
 		require.NotEmpty(t, token)
-		data, e := requester.DownloadDebugSessionArtifact(ctx, ns, session.Name, admitted.ArtifactID)
+		data, e := requester.DownloadDebugSessionArtifact(ctx, sessionNamespace, session.Name, admitted.ArtifactID)
 		require.NoError(t, e)
 		require.Equal(t, object.Status.SHA256, fmt.Sprintf("%x", sha256.Sum256(data)))
 		expected.ArtifactID = admitted.ArtifactID
@@ -278,7 +283,7 @@ spec:
 	first, data, token := collect()
 	assertArtifactRequesterCannotForge(t, s, first)
 	if cleanup == "terminate" {
-		assertArtifactArchiveRejections(t, s, requester, session.Name, request, data, status)
+		assertArtifactArchiveRejections(t, s, requester, sessionNamespace, session.Name, request, data, status)
 	}
 	afterFirst := files()
 	require.Len(t, afterFirst, len(baseline)+1)
@@ -289,11 +294,11 @@ spec:
 	ready, e := exec.CommandContext(ctx, "kubectl", "-n", ns, "rollout", "status", "deployment/breakglass-manager", "--timeout=180s").CombinedOutput()
 	require.NoError(t, e, string(ready))
 	require.Eventually(t, func() bool {
-		got, e := requester.DownloadDebugSessionArtifact(ctx, ns, session.Name, control.Spec.ArtifactID)
+		got, e := requester.DownloadDebugSessionArtifact(ctx, sessionNamespace, session.Name, control.Spec.ArtifactID)
 		return e == nil && bytes.Equal(got, controlData)
 	}, helpers.WaitForStateTimeout, time.Second)
 	require.Len(t, files(), len(baseline)+2)
-	metadata, err := requester.ListDebugSessionArtifacts(ctx, ns, session.Name)
+	metadata, err := requester.ListDebugSessionArtifacts(ctx, sessionNamespace, session.Name)
 	require.NoError(t, err)
 	require.Len(t, metadata, 2)
 	publicJSON, e := json.Marshal(metadata)
@@ -310,15 +315,15 @@ spec:
 		other, e := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "30m", Reason: "cross-session artifact denial"})
 		require.NoError(t, e)
 		t.Cleanup(func() { _ = requester.TerminateDebugSession(ctx, t, other.Name) })
-		helpers.WaitForDebugSessionState(t, ctx, s.Client, other.Name, ns, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
-		require.Equal(t, http.StatusNotFound, status(requester, http.MethodGet, "/api/debugSessionArtifacts/"+ns+"/"+other.Name+"/"+first.Spec.ArtifactID, nil, ""))
+		helpers.WaitForDebugSessionState(t, ctx, s.Client, other.Name, other.Namespace, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
+		require.Equal(t, http.StatusNotFound, status(requester, http.MethodGet, "/api/debugSessionArtifacts/"+other.Namespace+"/"+other.Name+"/"+first.Spec.ArtifactID, nil, ""))
 		require.NoError(t, requester.TerminateDebugSession(ctx, t, other.Name))
 	}
 
 	require.ElementsMatch(t, []string{first.Spec.ArtifactID, control.Spec.ArtifactID}, []string{metadata[0].ArtifactID, metadata[1].ArtifactID})
 	require.Equal(t, http.StatusNotFound, status(outsider, http.MethodGet, endpoint, nil, ""))
 	require.Equal(t, http.StatusNotFound, status(outsider, http.MethodGet, endpoint+"/"+first.Spec.ArtifactID, nil, ""))
-	require.Equal(t, http.StatusConflict, status(requester, http.MethodPut, "/api/debugSessionArtifactUploads/"+ns+"/"+session.Name+"/"+first.Spec.ArtifactID, data, token))
+	require.Equal(t, http.StatusConflict, status(requester, http.MethodPut, "/api/debugSessionArtifactUploads/"+sessionNamespace+"/"+session.Name+"/"+first.Spec.ArtifactID, data, token))
 	for _, invalid := range []helpers.DebugSessionArtifactRequest{{Recipe: "unknown", PodNamespace: pod.Namespace, PodName: pod.Name}, {Recipe: request.Recipe, PodNamespace: pod.Namespace, PodName: "not-approved"}} {
 		body, marshalErr := json.Marshal(invalid)
 		require.NoError(t, marshalErr)
@@ -441,7 +446,7 @@ spec:
 	remaining := files()
 	require.Len(t, remaining, len(baseline)+1)
 	require.NotEqual(t, afterFirst, remaining)
-	_, err = requester.DownloadDebugSessionArtifact(ctx, ns, session.Name, control.Spec.ArtifactID)
+	_, err = requester.DownloadDebugSessionArtifact(ctx, sessionNamespace, session.Name, control.Spec.ArtifactID)
 	require.NoError(t, err, "control object must remain readable")
 	switch cleanup {
 	case "terminate":
@@ -525,7 +530,7 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 
 // Hold only the disposable uploader's HTTPS edge while exercising the actual
 // Breakglass upload handler with each freshly issued single-artifact token.
-func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *helpers.APIClient, session string, request helpers.DebugSessionArtifactRequest, source []byte, status func(*helpers.APIClient, string, string, []byte, string) int) {
+func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *helpers.APIClient, sessionNamespace, session string, request helpers.DebugSessionArtifactRequest, source []byte, status func(*helpers.APIClient, string, string, []byte, string) int) {
 	t.Helper()
 	fixture := func(args ...string) {
 		base := []string{"-n", s.Namespace, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--"}
@@ -535,7 +540,7 @@ func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *he
 	fixture("touch", "/artifacts/pause-uploads")
 	t.Cleanup(func() { fixture("rm", "-f", "/artifacts/pause-uploads") })
 	for _, mutation := range []string{"valid-rebinding", "missing-output", "extra-output", "wrong-declaration", "cross-recipe", "wrong-identity"} {
-		admitted, err := api.CollectDebugSessionArtifact(s.Ctx, s.Namespace, session, request)
+		admitted, err := api.CollectDebugSessionArtifact(s.Ctx, sessionNamespace, session, request)
 		require.NoError(t, err)
 		var object breakglassv1alpha1.DebugSessionArtifact
 		var uploadToken string
@@ -567,7 +572,7 @@ func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *he
 			return false
 		}, helpers.WaitForStateTimeout, time.Second)
 		corrupt := mutateArtifactArchive(t, source, admitted.ArtifactID, mutation)
-		route := "/api/debugSessionArtifactUploads/" + s.Namespace + "/" + session + "/" + admitted.ArtifactID
+		route := "/api/debugSessionArtifactUploads/" + sessionNamespace + "/" + session + "/" + admitted.ArtifactID
 		if mutation == "valid-rebinding" {
 			require.Equal(t, http.StatusCreated, status(api, http.MethodPut, route, corrupt, uploadToken), "rebinding control must be a valid archive")
 			require.NoError(t, s.Client.Delete(s.Ctx, &object))

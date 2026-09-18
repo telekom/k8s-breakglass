@@ -19,6 +19,10 @@ Both fixture setup and S3 backend selection wait for `/api/config` through the
 runner's API port-forward after replacing the controller Pod. Deployment
 readiness alone does not mean the keepalive port-forward has reconnected.
 An unavailable endpoint fails setup before any session-creation POST is sent.
+Session reads, artifact API routes and archive identity checks use the namespace
+returned by session creation, which belongs to the ClusterConfig. The controller
+fixture and artifact reservations remain in the controller namespace; the two
+namespaces must not be assumed to match.
 
 The setup creates a fresh private test CA and signing Secret, builds the actual
 collector/uploader from source, appends the CA to a test-only trust layer, and
