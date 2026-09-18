@@ -3462,9 +3462,61 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		ctrl := &DebugSessionController{log: logger, client: fakeClient}
 
 		result, err := ctrl.findBindingForSession(ctx, template, "unready-cluster")
-		require.NoError(t, err)
+		require.ErrorIs(t, err, errBindingClusterNotReady)
 		assert.Nil(t, result)
 	})
+}
+
+func TestHandlePendingDefersUnreadyBindingUntilReady(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:              breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: debug\n    image: busybox\n",
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{"spoke"},
+			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{
+			Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse,
+		}}},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "template", Cluster: "spoke", RequestedBy: "requester@example.com",
+		},
+	}
+	hub := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(template, binding, clusterConfig, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub}
+
+	result, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	require.Equal(t, DefaultDebugSessionRequeue, result.RequeueAfter)
+	require.Nil(t, session.Status.ResolvedTemplate)
+
+	clusterConfig.Status.Conditions[0].Status = metav1.ConditionTrue
+	require.NoError(t, hub.Update(context.Background(), clusterConfig))
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+	result, err = controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	require.Equal(t, DefaultDebugSessionRequeue, result.RequeueAfter)
+	require.NotNil(t, session.Status.ResolvedTemplate)
+	require.NotNil(t, session.Status.ResolvedBinding)
+	require.Equal(t, "binding", session.Status.ResolvedBinding.Name)
+	require.True(t, session.Status.Approval.Required)
 }
 
 func TestDirectTemplateAllowsClusterRejectsEmptySelector(t *testing.T) {

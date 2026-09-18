@@ -362,6 +362,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if binding == nil {
 		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
 		if err != nil {
+			if errors.Is(err, errBindingClusterNotReady) {
+				return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+			}
 			return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
 		}
 		if binding != nil {
@@ -451,6 +454,8 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Auto-approved, transition to active
 	return c.activateSession(ctx, ds, template, binding)
 }
+
+var errBindingClusterNotReady = errors.New("matching binding cluster is not Ready")
 
 // handlePendingApproval checks for approval status
 func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
@@ -1493,17 +1498,16 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		if !c.bindingMatchesTemplate(binding, template) {
 			continue
 		}
-		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
-			continue
-		}
-
 		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
 			return nil, fmt.Errorf("cluster config required to resolve binding selector")
 		}
 
 		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, readyClusterConfig) {
+		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
 			continue
+		}
+		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
+			return nil, errBindingClusterNotReady
 		}
 
 		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
