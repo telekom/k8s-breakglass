@@ -47,6 +47,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve prepared operation outcomes after inactivity or hard expiry without granting access, and release cluster cleanup for confirmed retained auxiliary resources.
 
 - Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
+- Keep pending debug sessions in quota-ledger rebuild accounting and block ClusterConfig cleanup while kubectl-debug operation outcome remains `Unknown`.
 
 - Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
 
