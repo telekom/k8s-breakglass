@@ -170,8 +170,9 @@ const effectiveExtraDeployVariables = computed(() => {
 });
 
 function reconcileExtraDeployValues() {
+  const effectiveVariables = effectiveExtraDeployVariables.value;
   const variables = new Map(
-    effectiveExtraDeployVariables.value
+    effectiveVariables
       .filter((variable) => !variable.disabled)
       .map((variable) => [variable.name, variable]),
   );
@@ -197,6 +198,9 @@ function reconcileExtraDeployValues() {
 
   if (JSON.stringify(values) !== JSON.stringify(form.extraDeployValues)) {
     form.extraDeployValues = values;
+  }
+  if (variables.size === 0) {
+    extraDeployValid.value = true;
   }
 }
 
