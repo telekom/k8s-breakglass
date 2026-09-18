@@ -826,7 +826,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("issuer"))
+	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("identity_provider_name"), ctx.GetString("issuer"))
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -1392,7 +1392,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string) ([]string, error) {
 	indexedReader := reader
 	if c.client != nil {
 		indexedReader = c.client
@@ -1467,6 +1467,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 			candidate := sessions.Items[i]
 			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
 				(candidate.Spec.User != username && candidate.Spec.User != email) ||
+				(provider != "" && candidate.Spec.IdentityProviderName != provider) ||
 				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
 					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
 				continue
@@ -1491,6 +1492,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		for _, session := range items {
 			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
 				(session.Spec.User != username && session.Spec.User != email) ||
+				(provider != "" && session.Spec.IdentityProviderName != provider) ||
 				(issuer != "" && !session.Spec.AllowIDPMismatch &&
 					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
 				continue
@@ -1749,14 +1751,12 @@ func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSessio
 	}
 	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
 	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
-	if provider == "" && issuer == "" {
-		return identity.legacyAllowed && identity.provider == "" && identity.issuer == ""
-	}
 	if provider == "" || issuer == "" {
-		return provider == "" && identity.legacyAllowed &&
-			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+		return provider == "" && issuer == "" && identity.legacyAllowed &&
+			strings.TrimSpace(identity.provider) == "" &&
+			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == ""
 	}
-	return identity.provider == provider &&
+	return strings.TrimSpace(identity.provider) == provider &&
 		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 }
 

@@ -69,14 +69,9 @@ func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
 		provider: "idp-a", issuer: "https://b.example",
 	}))
 
-	legacy := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
-		IdentityProviderIssuer: "https://single.example",
-	}}
+	legacy := &breakglassv1alpha1.DebugSession{}
 	require.True(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
-		issuer: "https://single.example", legacyAllowed: true,
-	}))
-	require.False(t, debugSessionApprovalIdentityMatches(legacy, debugSessionReadIdentity{
-		issuer: "https://single.example",
+		legacyAllowed: true,
 	}))
 	require.False(t, debugSessionApprovalIdentityMatches(&breakglassv1alpha1.DebugSession{}, debugSessionReadIdentity{
 		provider: "idp-a", issuer: "https://a.example", legacyAllowed: true,

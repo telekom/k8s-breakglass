@@ -602,6 +602,10 @@ func (c *DebugSessionAPIController) isIdentityAuthorizedToApprove(ctx context.Co
 
 func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
 	c := a.controller
+	if (session.Spec.IdentityProviderName != "" || session.Spec.IdentityProviderIssuer != "") &&
+		!debugSessionApprovalIdentityMatches(session, identity) {
+		return false
+	}
 	// Block self-approval: the user who requested the session cannot approve it
 	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		c.log.Infow("Blocking self-approval attempt",

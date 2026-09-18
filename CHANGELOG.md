@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Scope native DebugSession Breakglass grants and approval/rejection decisions to
+  the persisted provider name and issuer; document administrator cleanup for
+  legacy pending sessions and restore CLI completion behavior. (#1346)
+
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.
 - Refresh the workload-debug CA certificate package pin and network-debug

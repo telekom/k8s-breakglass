@@ -927,6 +927,31 @@ func TestIsIdentityAuthorizedToApprove_EmailListedApprover(t *testing.T) {
 	assert.True(t, result, "email-listed approver should be authorized when username differs")
 }
 
+func TestIsIdentityAuthorizedToApproveRequiresProviderMatch(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "provider-fenced-session"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "test", RequestedBy: "requester",
+			IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Approvers: &breakglassv1alpha1.DebugSessionApprovers{Groups: []string{"admins"}},
+			},
+		},
+	}
+
+	require.False(t, ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+		username: "approver", provider: "idp-b", issuer: "https://a.example", groups: []string{"admins"},
+	}))
+	require.True(t, ctrl.isIdentityAuthorizedToApprove(context.Background(), session, debugSessionReadIdentity{
+		username: "approver", provider: "idp-a", issuer: "https://a.example", groups: []string{"admins"},
+	}))
+}
+
 func TestIsIdentityAuthorizedToApprove_BlocksSelfApprovalByEmail(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).Build()

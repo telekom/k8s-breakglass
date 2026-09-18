@@ -1525,10 +1525,10 @@ name and issuer on the session. Approval and rejection require both values to
 match the authenticated request; a provider name alone is not sufficient.
 Sessions created before this provenance was persisted cannot be safely assigned to
 a provider during an upgrade. They are deliberately not approvable or rejectable
-through provider-aware authentication. The requester can use
-`POST /api/v1/debugSessions/{name}/terminate` while the session is still pending,
-then submit a new request. This preserves the provider boundary without guessing
-from the requester, approver, or current token.
+through provider-aware authentication. Ask a cluster administrator to remove the
+pending legacy `DebugSession` through the supported cleanup workflow, then submit
+a new request. This preserves the provider boundary without guessing from the
+requester, approver, or current token.
 
 ### Native Breakglass prerequisite and expiry
 
