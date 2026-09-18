@@ -20,7 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -28,8 +31,10 @@ import (
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -684,6 +689,82 @@ func TestRegisterCommonFieldIndexes_LoggerOutput(t *testing.T) {
 
 	// Verify all indexes were registered
 	assert.NotEmpty(t, indexer.indexedFields)
+}
+
+func TestEffectiveIssuerIndexWithEnvtestCache(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS not set")
+	}
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	testEnv := &envtest.Environment{
+		CRDDirectoryPaths:     []string{filepath.Join("..", "..", "config", "crd", "bases")},
+		ErrorIfCRDPathMissing: true,
+	}
+	cfg, err := testEnv.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, testEnv.Stop())
+	})
+
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme})
+	require.NoError(t, err)
+	require.NoError(t, RegisterCommonFieldIndexes(context.Background(), mgr.GetFieldIndexer(), zap.NewNop().Sugar()))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		_ = mgr.Start(ctx)
+	}()
+	require.Eventually(t, func() bool {
+		return mgr.GetCache().WaitForCacheSync(ctx)
+	}, 10*time.Second, 100*time.Millisecond)
+
+	objects := []*breakglassv1alpha1.IdentityProvider{
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "issuer-idp"},
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
+					Authority:        "https://authority.example",
+					ClientID:         "client",
+					ExpectedAudience: "audience",
+				},
+				Issuer: "https://issuer.example/",
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{Name: "authority-idp"},
+			Spec: breakglassv1alpha1.IdentityProviderSpec{
+				OIDC: breakglassv1alpha1.OIDCConfig{
+					Authority:        "https://authority-only.example/",
+					ClientID:         "client",
+					ExpectedAudience: "audience",
+				},
+			},
+		},
+	}
+	for _, object := range objects {
+		require.NoError(t, mgr.GetClient().Create(ctx, object))
+	}
+
+	for _, test := range []struct {
+		name, issuer, provider string
+	}{
+		{name: "explicit issuer", issuer: "https://issuer.example", provider: "issuer-idp"},
+		{name: "authority fallback", issuer: "https://authority-only.example", provider: "authority-idp"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var list breakglassv1alpha1.IdentityProviderList
+			require.Eventually(t, func() bool {
+				list = breakglassv1alpha1.IdentityProviderList{}
+				err := mgr.GetClient().List(ctx, &list, client.MatchingFields{
+					"spec.effectiveIssuer": test.issuer,
+				})
+				return err == nil && len(list.Items) == 1 && list.Items[0].Name == test.provider
+			}, 10*time.Second, 100*time.Millisecond)
+		})
+	}
 }
 
 func TestAssertIndexesRegistered_Success(t *testing.T) {

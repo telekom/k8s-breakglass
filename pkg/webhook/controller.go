@@ -1356,12 +1356,21 @@ func filterSessionsForAuthorizationWithProvider(
 		if !breakglass.IsSessionAuthorizationEligible(session, now) {
 			continue
 		}
-		if issuer != "" && !session.Spec.AllowIDPMismatch &&
-			(!providerLookupOK ||
-				(provider != "" && session.Spec.IdentityProviderName != provider) ||
-				canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer) {
-			idpMismatches = append(idpMismatches, session)
-			continue
+		if !session.Spec.AllowIDPMismatch {
+			sessionIssuer := canonicalIssuer(session.Spec.IdentityProviderIssuer)
+			provenanceMismatch := false
+			if issuer == "" {
+				provenanceMismatch = sessionIssuer != "" || session.Spec.IdentityProviderName != ""
+			} else {
+				provenanceMismatch = sessionIssuer == "" ||
+					sessionIssuer != issuer ||
+					(providerLookupOK && provider != "" && session.Spec.IdentityProviderName != provider) ||
+					!providerLookupOK
+			}
+			if provenanceMismatch {
+				idpMismatches = append(idpMismatches, session)
+				continue
+			}
 		}
 		out = append(out, session)
 	}
