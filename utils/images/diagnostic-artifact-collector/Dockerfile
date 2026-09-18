@@ -25,8 +25,8 @@ LABEL org.opencontainers.image.title="Diagnostic artifact collector" \
       org.opencontainers.image.licenses="Apache-2.0 AND GPL-2.0-only" \
       org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
       org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/tree/main/utils/images/diagnostic-artifact-collector" \
-      org.opencontainers.image.base.name="busybox:1.37" \
-      org.opencontainers.image.base.digest="sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
+      org.opencontainers.image.base.name="busybox:1.38" \
+      org.opencontainers.image.base.digest="sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616"
 
 RUN install -d -o 65532 -g 65532 /output /host-coredumps /etc/ssl/certs && \
     install -d -o 0 -g 0 -m 0555 \

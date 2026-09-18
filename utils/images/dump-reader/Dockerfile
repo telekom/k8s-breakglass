@@ -15,8 +15,8 @@ LABEL org.opencontainers.image.title="Dump reader utilities" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.base.name="busybox:1.37" \
-      org.opencontainers.image.base.digest="sha256:9db7b59979c38555a39def84a31fb98b5296952f9e3afd4f6f11f05b07adfab0"
+      org.opencontainers.image.base.name="busybox:1.38" \
+      org.opencontainers.image.base.digest="sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616"
 
 # No dump-generation or debugger package is installed. BusyBox supplies the
 # small POSIX utility set used by the helper; the pinned base is the only
