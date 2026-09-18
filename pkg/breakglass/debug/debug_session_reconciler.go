@@ -367,7 +367,11 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
-	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues, ds.Spec.UserGroups)
+	groups := ds.Spec.UserGroups
+	if ds.Status.AuthenticatedUserGroupsCaptured {
+		groups = ds.Status.AuthenticatedUserGroups
+	}
+	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues, groups)
 	if err != nil {
 		log.Warnw("Rejecting session because binding variable constraints or values are invalid", "error", err)
 		return c.failSession(ctx, ds, "invalid extra deploy variable policy or values")
@@ -1122,8 +1126,7 @@ func hasGroupRestrictedExtraDeployVariables(variables []breakglassv1alpha1.Extra
 }
 
 func hasTrustedGroupProvenance(ds *breakglassv1alpha1.DebugSession) bool {
-	return strings.TrimSpace(ds.Spec.IdentityProviderName) != "" &&
-		strings.TrimSpace(ds.Spec.IdentityProviderIssuer) != ""
+	return ds.Status.AuthenticatedUserGroupsCaptured
 }
 
 // failSession marks a session as failed and logs the failure

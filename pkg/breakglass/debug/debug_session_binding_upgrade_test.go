@@ -195,6 +195,9 @@ func TestBindingRestrictedDefaultSurvivesAPIAndActivation(t *testing.T) {
 				router.Use(func(ctx *gin.Context) {
 					ctx.Set("legacy_identity_allowed", true)
 					ctx.Set("username", "alice@example.com")
+					if provided != "unsafe" {
+						ctx.Set("groups", []string{"admins"})
+					}
 					ctx.Next()
 				})
 				require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))
@@ -228,9 +231,6 @@ func TestBindingRestrictedDefaultSurvivesAPIAndActivation(t *testing.T) {
 				require.NoError(t, c.client.List(t.Context(), &sessions))
 				require.Len(t, sessions.Items, 1)
 				ds := &sessions.Items[0]
-				ds.Spec.IdentityProviderName = "keycloak"
-				ds.Spec.IdentityProviderIssuer = "https://keycloak.example.com/realms/breakglass"
-				require.NoError(t, c.client.Update(t.Context(), ds))
 				require.JSONEq(t, `"busybox"`, string(ds.Spec.ExtraDeployValues["image"].Raw))
 				_, err := c.handlePending(t.Context(), ds)
 				require.NoError(t, err)
