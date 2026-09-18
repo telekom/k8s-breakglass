@@ -129,6 +129,9 @@ func applyExtraDeployVariableConstraint(variable *ExtraDeployVariable, constrain
 		}
 		allowed := make(map[string]SelectOption, len(constraintOptions))
 		for _, option := range constraintOptions {
+			if len(option.AllowedGroups) > 0 {
+				return fmt.Errorf("binding option %q cannot define allowedGroups", option.Value)
+			}
 			if _, duplicate := allowed[option.Value]; duplicate {
 				return fmt.Errorf("duplicate option %q", option.Value)
 			}

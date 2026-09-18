@@ -129,6 +129,22 @@ func TestEffectiveExtraDeployVariablesRejectsBindingOnlyStorageBounds(t *testing
 	}
 }
 
+func TestEffectiveExtraDeployVariablesRejectsBindingOptionGroupRestrictions(t *testing.T) {
+	template := []ExtraDeployVariable{{
+		Name:      "mode",
+		InputType: InputTypeSelect,
+		Options:   []SelectOption{{Value: "safe"}},
+	}}
+	_, err := EffectiveExtraDeployVariables(template, []ExtraDeployVariableConstraint{{
+		Name: "mode",
+		Options: []SelectOption{{
+			Value:         "safe",
+			AllowedGroups: []string{"trusted"},
+		}},
+	}})
+	require.ErrorContains(t, err, "cannot define allowedGroups")
+}
+
 func TestValidateExtraDeployValueNamesRejectsUnknownAndDisabledWhenBound(t *testing.T) {
 	disabled := true
 	vars := []ExtraDeployVariable{{Name: "mode"}, {Name: "secret", Disabled: disabled}}
