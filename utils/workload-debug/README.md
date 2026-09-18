@@ -51,6 +51,11 @@ or `/tmp`. If all are read-only, mount an ephemeral `/tmp` volume. Temporary
 data is removed on success, failure, and interruption. `IMAGE-METADATA.yaml`
 is the source of truth for OCI, provenance, signing, and SBOM metadata.
 
+Alpine repositories replace older package revisions. Refresh unavailable pins
+in `Dockerfile`, `deps.lock`, and `IMAGE-METADATA.yaml` together, then rebuild
+both supported architectures; do not remove version constraints to bypass a
+package-resolution failure.
+
 Run `make test` for fast validation and `make integration-test` for the real
 container proof. The integration proof builds the image, runs every helper
 under the restricted policy, checks DNS/TLS/HTTP against disposable fixtures,

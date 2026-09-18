@@ -44,7 +44,7 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 ARG PWRU_VERSION=v1.0.12
-ARG NETSHOOT_ALPINE_VERSION=3.24.1
+ARG NETSHOOT_ALPINE_VERSION=3.24.2
 
 # The pinned netshoot image owns the runtime package set. Refresh it from the
 # matching Alpine 3.24 repositories to consume security fixes, then prove the

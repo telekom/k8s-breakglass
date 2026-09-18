@@ -37,7 +37,7 @@ validate_rendered() {
 
 # Checked-in defaults must remain canonical, digest-shaped, and deliberately
 # non-runnable. Release packaging replaces the zero digests with verified refs.
-if rg -n 'ghcr\.io/telekom/k8s-breakglass/(workload-debug|network-debug|storage-debug|dump-reader|node-maintenance|cluster-validator):' "${chart_dir}/values.yaml"; then
+if rg -n 'ghcr\.io/telekom/k8s-breakglass/(workload-debug|network-debug|storage-debug|dump-reader|node-maintenance|cluster-validator|diagnostic-artifact-collector):' "${chart_dir}/values.yaml"; then
   fail "catalogue defaults contain a legacy mutable image path"
 fi
 if rg -n '^  [A-Za-z]+: \{repository: ghcr\.io/telekom/k8s-breakglass/utils/[^,]+, tag:' "${chart_dir}/values.yaml"; then
@@ -48,12 +48,13 @@ ruby -ryaml -e '
   images = values.fetch("images")
   canonical = "ghcr.io/telekom/k8s-breakglass/utils/"
   public = images.values.map { |image| image.fetch("repository") if image.fetch("repository").start_with?(canonical) }.compact
-  expected = %w[diagnostic-artifact-collector network-debug node-maintenance storage-debug workload-debug].map { |name| "#{canonical}#{name}" }.sort
+  expected = %w[cluster-validator diagnostic-artifact-collector dump-reader network-debug node-maintenance storage-debug workload-debug].map { |name| "#{canonical}#{name}" }.sort
   abort("catalogue public image set mismatch: #{public.uniq.sort.inspect}") unless public.uniq.sort == expected
   zero = "sha256:" + "0" * 64
-  %w[dumpAccess clusterValidation].each do |key|
+  images.each do |key, image|
     image = images.fetch(key)
-    abort("#{key} must remain a non-public placeholder") if image.fetch("repository").start_with?(canonical) || image.fetch("digest") != zero
+    abort("#{key} must use the canonical utility repository") unless image.fetch("repository").start_with?(canonical)
+    abort("#{key} must remain a zero-digest placeholder") unless image.fetch("digest") == zero
   end
 ' "${chart_dir}/values.yaml"
 

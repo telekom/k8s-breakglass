@@ -44,7 +44,9 @@ done < <(UTILITY_RELEASE_TAG="${release_tag}" ruby -ryaml -e '
     "network" => "ghcr.io/telekom/k8s-breakglass/utils/network-debug",
     "storage" => "ghcr.io/telekom/k8s-breakglass/utils/storage-debug",
     "networkRepair" => "ghcr.io/telekom/k8s-breakglass/utils/node-maintenance",
-    "diagnosticArtifactCollector" => "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector"
+    "diagnosticArtifactCollector" => "ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector",
+    "dumpAccess" => "ghcr.io/telekom/k8s-breakglass/utils/dump-reader",
+    "clusterValidation" => "ghcr.io/telekom/k8s-breakglass/utils/cluster-validator"
   }
   expected.each do |key, expected_repository|
     image = images.fetch(key)
@@ -56,12 +58,18 @@ done < <(UTILITY_RELEASE_TAG="${release_tag}" ruby -ryaml -e '
     abort("#{key} cannot specify both tag and digest") unless tag.empty? || digest.empty?
     abort("#{key} digest is not immutable") unless digest.empty? || digest.match?(/\Asha256:[0-9a-f]{64}\z/)
     abort("#{key} tag contains unsafe characters") unless tag.empty? || tag.match?(/\A[0-9A-Za-z._-]+\z/)
-    name = key == "networkRepair" ? "node" : key == "diagnosticArtifactCollector" ? "diagnostic-artifact-collector" : key
+    name = case key
+      when "networkRepair" then "node"
+      when "diagnosticArtifactCollector" then "diagnostic-artifact-collector"
+      when "dumpAccess" then "dump-reader"
+      when "clusterValidation" then "cluster-validator"
+      else key
+    end
     puts [name, repository, tag, digest].join("|")
   end
 ' "${values_file}")
 
-[ "${#records[@]}" -eq 5 ] || { echo "expected five public utility image records" >&2; exit 1; }
+[ "${#records[@]}" -eq 7 ] || { echo "expected seven public utility image records" >&2; exit 1; }
 mkdir -p "${output_dir}"
 tmp_dir="$(mktemp -d "${output_dir}.tmp.XXXXXX")"
 trap 'rm -rf "${tmp_dir}"' EXIT

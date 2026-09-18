@@ -2,6 +2,8 @@ version: 2
 updates:
   - package-ecosystem: "gomod"
     directory: "/"
+    allow:
+      - dependency-type: "all"
     schedule:
       interval: "daily"
     groups:
@@ -87,7 +89,29 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
-    directory: /
+    # Dockerfile discovery is not recursive. Include each independent build
+    # context and the directories containing Kubernetes image references.
+    directories:
+      - /
+      - /utils/cluster-validator
+      - /utils/images/diagnostic-artifact-collector
+      - /utils/images/dump-reader
+      - /utils/images/storage-debug
+      - /utils/network-debug
+      - /utils/node-maintenance
+      - /utils/workload-debug
+      - /e2e/images/tmux-debug
+      - /e2e/fixtures/templates
+      - /config/dev/resources
+      - /config/dev/resources/crs
+      - /config/samples
+    exclude-paths:
+      # Compatibility symlink; update its canonical build context above.
+      - Dockerfile.validator
+    ignore:
+      # Our own source-built images and zero-digest release placeholders are
+      # resolved by the signed release pipeline, not external version updates.
+      - dependency-name: "ghcr.io/telekom/k8s-breakglass*"
     schedule:
       interval: "daily"
     groups:
@@ -107,7 +131,10 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: helm
-    directory: /charts/escalation-config
+    directories:
+      - /charts/*
+    ignore:
+      - dependency-name: "ghcr.io/telekom/k8s-breakglass*"
     schedule:
       interval: "daily"
     groups:
@@ -126,21 +153,6 @@ updates:
       prefix: "deps(helm)"
     open-pull-requests-limit: 5
 
-# Note: The following tool versions are NOT tracked by Dependabot and require manual updates:
-#
-# Makefile:
-#   - CONTROLLER_TOOLS_VERSION (controller-gen): https://github.com/kubernetes-sigs/controller-tools/releases
-#   - KUSTOMIZE_VERSION: https://github.com/kubernetes-sigs/kustomize/releases
-#   - GOLANGCI_LINT_VERSION: https://github.com/golangci/golangci-lint/releases
-#   - ENVTEST_VERSION: https://github.com/kubernetes-sigs/controller-runtime/releases
-#   - GOVULNCHECK_VERSION: https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck
-#
-# .github/workflows/e2e.yml:
-#   - KIND_VERSION: https://github.com/kubernetes-sigs/kind/releases
-#   - KIND_NODE_IMAGE: https://github.com/kubernetes-sigs/kind/releases (see node image tags)
-#
-# e2e/kind-setup-single.sh:
-#   - KIND_NODE_IMAGE: kindest/node version
-#   - KEYCLOAK_IMAGE: https://quay.io/repository/keycloak/keycloak
-#
-# Consider using Renovate (https://docs.renovatebot.com/) for regex-based version tracking.
+# Dependabot does not update RUN apk/apt pins, arbitrary shell/versions.env
+# assignments, tool checksums, or image metadata/OCI labels alongside FROM.
+# See docs/building.md#dependency-updates for the coverage and maintenance map.

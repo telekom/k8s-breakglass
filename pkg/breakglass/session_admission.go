@@ -254,6 +254,42 @@ func (c *SessionManager) completeSessionAdmission(ctx context.Context, session *
 	})
 }
 
+// initializeSessionStatus is shared by the API and admission recovery. Only the
+// first writer initializes status; a competing writer must not reset its timeout
+// or overwrite a subsequent lifecycle transition.
+func (c *SessionManager) initializeSessionStatus(ctx context.Context, session *breakglassv1alpha1.BreakglassSession, initial breakglassv1alpha1.BreakglassSessionStatus) error {
+	if !c.quotaEnabled {
+		session.Status = initial
+		return c.UpdateBreakglassSessionStatus(ctx, *session)
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := &breakglassv1alpha1.BreakglassSession{}
+		if err := c.Reader().Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
+			return err
+		}
+		if current.UID != session.UID {
+			return fmt.Errorf("session UID changed while initializing status")
+		}
+		if current.Annotations[quotas.AdmissionAnnotation] != quotas.Ready {
+			return fmt.Errorf("session admission is not ready")
+		}
+		if current.Status.State == breakglassv1alpha1.SessionStatePending {
+			*session = *current
+			return nil
+		}
+		if current.Status.State != "" {
+			return fmt.Errorf("refusing to initialize session in state %q", current.Status.State)
+		}
+		current.Status = initial
+		current.Status.ObservedGeneration = current.Generation
+		if err := c.Client.Status().Update(ctx, current); err != nil {
+			return err
+		}
+		*session = *current
+		return nil
+	})
+}
+
 // recoverSessionAdmissions finishes durable provisional admissions after an API
 // process crashes, including a failed initial status write. It grants no access.
 func (c *SessionManager) recoverSessionAdmissions(ctx context.Context) error {
@@ -277,9 +313,11 @@ func (c *SessionManager) recoverSessionAdmissions(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("resolve recovery escalation: %w", err)
 		}
-		session.Status.State = breakglassv1alpha1.SessionStatePending
-		session.Status.TimeoutAt = metav1.NewTime(time.Now().UTC().Add(ParseApprovalTimeout(escalation.Spec, c.getLogger())))
-		if err := c.UpdateBreakglassSessionStatus(ctx, *session); err != nil {
+		initial := breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStatePending,
+			TimeoutAt: metav1.NewTime(time.Now().UTC().Add(ParseApprovalTimeout(escalation.Spec, c.getLogger()))),
+		}
+		if err := c.initializeSessionStatus(ctx, session, initial); err != nil {
 			c.getLogger().Warnw("Session admission status recovery deferred", "session", session.Name, "error", err)
 		}
 	}

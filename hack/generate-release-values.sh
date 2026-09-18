@@ -18,13 +18,7 @@ refs=("${refs_dir}"/*.ref)
 tmp_file="$(mktemp)"
 trap 'rm -f "${tmp_file}"' EXIT
 printf '%s\n' \
-  'images:' \
-  '  dumpAccess:' \
-  '    repository: "example.invalid/breakglass/dump-reader-not-published"' \
-  '    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"' \
-  '  clusterValidation:' \
-  '    repository: "example.invalid/breakglass/cluster-validator-internal"' \
-  '    digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"' >"${tmp_file}"
+  'images:' >"${tmp_file}"
 seen_names=""
 for ref in "${refs[@]}"; do
   IFS='|' read -r name repository digest signature sbom provenance remainder <"${ref}"
@@ -36,7 +30,7 @@ for ref in "${refs[@]}"; do
   esac
   seen_names="${seen_names}|${name}"
   case "${name}|${repository}" in
-    workload\|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|network\|ghcr.io/telekom/k8s-breakglass/utils/network-debug|storage\|ghcr.io/telekom/k8s-breakglass/utils/storage-debug|node\|ghcr.io/telekom/k8s-breakglass/utils/node-maintenance|diagnostic-artifact-collector\|ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector) ;;
+    workload\|ghcr.io/telekom/k8s-breakglass/utils/workload-debug|network\|ghcr.io/telekom/k8s-breakglass/utils/network-debug|storage\|ghcr.io/telekom/k8s-breakglass/utils/storage-debug|node\|ghcr.io/telekom/k8s-breakglass/utils/node-maintenance|diagnostic-artifact-collector\|ghcr.io/telekom/k8s-breakglass/utils/diagnostic-artifact-collector|dump-reader\|ghcr.io/telekom/k8s-breakglass/utils/dump-reader|cluster-validator\|ghcr.io/telekom/k8s-breakglass/utils/cluster-validator) ;;
     *) echo "Unexpected utility repository mapping: ${name} -> ${repository}" >&2; exit 1 ;;
   esac
   [[ "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || {
@@ -58,6 +52,8 @@ for ref in "${refs[@]}"; do
       printf '  networkRepair:\n    repository: "%s"\n    digest: "%s"\n' "${repository}" "${digest}" >>"${tmp_file}"
       ;;
     diagnostic-artifact-collector) key=diagnosticArtifactCollector ;;
+    dump-reader) key=dumpAccess ;;
+    cluster-validator) key=clusterValidation ;;
     *) echo "Unexpected utility release record: ${name}" >&2; exit 1 ;;
   esac
   printf '  %s:\n    repository: "%s"\n    digest: "%s"\n' "${key}" "${repository}" "${digest}" >>"${tmp_file}"
