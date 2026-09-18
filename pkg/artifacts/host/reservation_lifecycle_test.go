@@ -484,6 +484,31 @@ func TestRecordingReservationRejectsCollapsedSubsecondLifetime(t *testing.T) {
 	require.Empty(t, list.Items)
 }
 
+func TestCollectorReservationRechecksIdleExpiryWithoutResourceVersionChange(t *testing.T) {
+	_, repo, store, keys, now, hub := lifecycleFixture(t)
+	ctx := context.Background()
+	start, expiry := metav1.NewTime(*now), metav1.NewTime(now.Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &start, ExpiresAt: &expiry, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}}}
+	require.NoError(t, hub.Create(ctx, session))
+	authorizer := NewLiveSessionAuthorizer(hub, allowLifecycle{}, func() time.Time { return *now })
+	service, err := backend.New(backend.Config{Repository: repo, Store: store, Tokens: keys, StagingDir: t.TempDir(), Now: func() time.Time { return *now }, Authorizer: authorizer})
+	require.NoError(t, err)
+	record := lifecycleRecord(*now)
+	binding := backend.SessionBinding{Namespace: "hub", Name: "session", UID: "session-uid"}
+	*now = start.Add(time.Minute - time.Nanosecond)
+	require.NoError(t, authorizer.AuthorizeArtifact(ctx, binding))
+	*now = start.Add(time.Minute)
+	_, err = service.Reserve(ctx, record)
+	require.ErrorIs(t, err, backend.ErrForbidden)
+	var current breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), &current))
+	require.Equal(t, session.ResourceVersion, current.ResourceVersion)
+	require.True(t, now.Before(current.Status.ExpiresAt.Time))
+	var reservations breakglassv1alpha1.DebugSessionArtifactList
+	require.NoError(t, hub.List(ctx, &reservations))
+	require.Empty(t, reservations.Items, "idle expiry must deny reservation even without a persisted session change")
+}
+
 func TestExistingDownloadStopsWhenSessionStateChangesBeforeDeadline(t *testing.T) {
 	for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateExpired} {
 		t.Run(string(state), func(t *testing.T) {
