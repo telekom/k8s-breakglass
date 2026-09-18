@@ -137,8 +137,27 @@ func TestHandlePendingRejectsPartialApprovalSnapshot(t *testing.T) {
 }
 
 func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T) {
-	_, _, _, err := decodeApprovedPodTemplateSnapshot([]byte(`{"template":{"containers":[]}}`))
-	require.ErrorContains(t, err, "lacks durable identity metadata")
+	for _, raw := range []string{
+		`{"spec":{"templateString":"apiVersion: v1"}}`,
+		`{"spec":{"templateString":"apiVersion: v1"},"labels":{"pod":"debug"}}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			_, _, _, err := decodeApprovedPodTemplateSnapshot([]byte(raw))
+			require.ErrorContains(t, err, "lacks durable template identity metadata")
+		})
+	}
+	spec, podLabels, templateLabels, err := decodeApprovedPodTemplateSnapshot(
+		[]byte(`{"spec":{"templateString":"apiVersion: v1"},"labels":{"pod":"debug"},"templateLabels":{"catalogue":"restricted"}}`),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, spec)
+	require.Equal(t, map[string]string{"pod": "debug"}, podLabels)
+	require.Equal(t, map[string]string{"catalogue": "restricted"}, templateLabels)
+	labels, err := approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplateIdentityCaptured: true,
+	})
+	require.NoError(t, err)
+	require.Nil(t, labels)
 }
 
 func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *testing.T) {
