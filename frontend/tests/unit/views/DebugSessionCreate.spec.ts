@@ -1506,7 +1506,9 @@ describe("DebugSessionCreate", () => {
         ],
       });
 
-      const wrapper = await createWrapper();
+      const templates = defaultTemplates();
+      Object.assign(templates[0], { extraDeployVariables: [{ name: "debug", inputType: "text" }] });
+      const wrapper = await createWrapper(templates);
       const vm = wrapper.vm as unknown as {
         goToStep2: () => void;
         handleSubmit: () => Promise<void>;
