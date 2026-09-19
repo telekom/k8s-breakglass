@@ -10,6 +10,8 @@ the release image has been published.
 The test also checks outsider and replay denial, authorization after session
 termination, and provider/object cleanup. Unit and envtest suites remain the
 source of coverage for injected publication and CAS race failures.
+Revocation before the first authorized download bytes returns an error status
+without attachment or length headers; later revocation stops the existing stream.
 The real API-server reservation test also starts the artifact controller under
 RBAC that denies hub Job access. Collector Jobs are created and polled through
 spoke clients without hub owner references; a hub Job watch must not block

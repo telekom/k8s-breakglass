@@ -96,6 +96,13 @@ func (controller *ReadController) handleDownload(context *gin.Context) {
 		}
 		return nil
 	}}); err != nil {
+		_ = context.Error(err)
+		if !context.Writer.Written() {
+			for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+				context.Writer.Header().Del(header)
+			}
+			writeReadError(context, err)
+		}
 		return
 	}
 }

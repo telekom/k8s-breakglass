@@ -27,6 +27,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	rootapi "github.com/telekom/k8s-breakglass/pkg/api"
+	artifactapi "github.com/telekom/k8s-breakglass/pkg/artifacts/api"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	"github.com/telekom/k8s-breakglass/pkg/config"
@@ -541,6 +542,47 @@ func TestExistingDownloadStopsWhenSessionStateChangesBeforeDeadline(t *testing.T
 			n, err = reader.Read(make([]byte, 32))
 			require.ErrorIs(t, err, backend.ErrForbidden)
 			require.Zero(t, n, "an already-open download must not release bytes after terminal state")
+		})
+	}
+}
+
+func TestDownloadHTTPMapsInitialStreamRevocationBeforeSuccessHeaders(t *testing.T) {
+	service, _, _, keys, now, _ := lifecycleFixture(t)
+	ctx := context.Background()
+	record, err := service.Reserve(ctx, lifecycleRecord(*now))
+	require.NoError(t, err)
+	uploadRoute := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
+	signed, err := backend.ReservationToken(keys, record, uploadRoute, *now, 15*time.Minute)
+	require.NoError(t, err)
+	body := validLocalArchive(t, record.Expected)
+	_, err = service.Upload(ctx, signed, uploadRoute, bytes.NewReader(body))
+	require.NoError(t, err)
+	binding := backend.SessionBinding{Namespace: "hub", Name: "session", UID: "session-uid", TargetClusterUID: "cluster-uid", TargetIdentityDigest: record.TargetIdentityDigest, OperationEpoch: 1, ConnectionLeaseUID: "lease-uid"}
+	for name, revokeAt := range map[string]int{"authorized": 0, "before first provider read": 2, "after first provider read": 3} {
+		t.Run(name, func(t *testing.T) {
+			resolutions := 0
+			controller, err := artifactapi.NewReadController(service, func(*gin.Context, string, string, string) (backend.SessionBinding, error) {
+				resolutions++
+				if revokeAt != 0 && resolutions >= revokeAt {
+					return backend.SessionBinding{}, backend.ErrForbidden
+				}
+				return binding, nil
+			})
+			require.NoError(t, err)
+			router := gin.New()
+			require.NoError(t, controller.Register(router.Group("/api/"+controller.BasePath())))
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/debugSessionArtifacts/hub/session/"+record.ArtifactID, nil))
+			if revokeAt == 0 {
+				require.Equal(t, http.StatusOK, response.Code)
+				require.Equal(t, body, response.Body.Bytes())
+				return
+			}
+			require.Equal(t, http.StatusNotFound, response.Code)
+			require.Empty(t, response.Body.Bytes())
+			for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+				require.Empty(t, response.Header().Get(header), header)
+			}
 		})
 	}
 }
