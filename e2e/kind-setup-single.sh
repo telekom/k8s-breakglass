@@ -37,7 +37,7 @@ WEBHOOK_HOST_PLACEHOLDER=${WEBHOOK_HOST_PLACEHOLDER:-breakglass.system.svc.clust
 
 # --- Ports / forwards ---
 NODEPORT=${NODEPORT:-31081}                 # NodePort used to expose the breakglass service for local tests
-WEBHOOK_SERVICE_PORT=${WEBHOOK_SERVICE_PORT:-8081} # in-cluster port webhook/controller listens on
+WEBHOOK_SERVICE_PORT=${WEBHOOK_SERVICE_PORT:-8080} # API listener serving the SAR authorization webhook
 # Forward Keycloak HTTPS (container uses 8443) by default so local https access matches container port
 KEYCLOAK_SVC_PORT=${KEYCLOAK_SVC_PORT:-8443}     # keycloak service internal port (prefer HTTPS)
 KEYCLOAK_FORWARD_PORT=${KEYCLOAK_FORWARD_PORT:-8443} # local port forwarded to Keycloak svc:8443

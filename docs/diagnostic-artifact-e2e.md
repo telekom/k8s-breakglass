@@ -93,6 +93,9 @@ NetworkPolicies carrying artifact labels in the execution namespace. Kyverno
 PolicyException authorization is checked through SubjectAccessReview; this
 upstream fixture does not install Kyverno and does not claim provider execution
 or the downstream three-Function integration required by the SI acceptance gate.
+The Kind API server calls the SAR webhook on the controller's API port 8080,
+not its metrics port 8081. A metrics-port 404 becomes an authorization error
+(HTTP 500), which must not be mistaken for the required forbidden response.
 
 ## Disposable S3 dependency
 
@@ -106,6 +109,10 @@ HTTPS service uses the fixture CA. Random fixture credentials are confined to
 its Secret, MinIO, the controller startup, and administrator inventory helper;
 they never enter collector/uploader environment or public artifact metadata.
 The versioned bucket and backend sentinel are provisioned by the test helper.
+The fixture S3 service publishes not-yet-ready Pod addresses because its MinIO
+and TLS proxy are sidecars of the controller. Otherwise the controller's S3
+startup verification waits for service endpoints that require that same startup
+to finish. This does not change readiness gating for the controller API service.
 
 Compilation and lint are local checks only. Actual container, storage, admitted
 Pod and lifecycle behavior requires the named Kind CI matrix to pass.

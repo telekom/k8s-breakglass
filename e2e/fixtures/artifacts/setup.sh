@@ -130,6 +130,8 @@ kind: Service
 metadata:
   name: artifact-s3
 spec:
+  # Startup verifies this sidecar before the controller Pod can become ready.
+  publishNotReadyAddresses: true
   selector:
     app: breakglass
   ports:
