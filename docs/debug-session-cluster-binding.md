@@ -1263,9 +1263,11 @@ kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass | 
 
 ### API admission policy changes
 
-API-created sessions record the admitted template and binding UIDs and resource
-versions in an immutable annotation before creation. The first reconciliation
-requires the same objects and versions before persisting approval snapshots.
+API-created sessions record a digest of the admitted template and binding UIDs,
+specs, labels, and annotations in an immutable annotation before creation. The
+first reconciliation requires the same objects and policy content before
+persisting approval snapshots. Status updates and server bookkeeping do not
+invalidate an otherwise unchanged request.
 A concurrent edit or same-name replacement fails the session with a
 recreate-required message; submit a new request against the current policy.
 This fence also distinguishes an admitted no-binding result from a binding

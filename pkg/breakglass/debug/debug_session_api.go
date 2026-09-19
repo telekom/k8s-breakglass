@@ -1420,7 +1420,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if session.Annotations == nil {
 		session.Annotations = map[string]string{}
 	}
-	session.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation] = admissionPolicyVersion(template, resolvedBinding)
+	policyVersion, err := admissionPolicyVersion(template, resolvedBinding)
+	if err != nil {
+		reqLog.Errorw("Failed to encode admission policy", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
+		return
+	}
+	session.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation] = policyVersion
 	if c.quotaEnabled {
 		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
 	}
