@@ -61,8 +61,10 @@ type authorizeState struct {
 	sar authorizationv1.SubjectAccessReview
 
 	// Cluster context
-	clusterCfg *breakglassv1alpha1.ClusterConfig
-	issuer     string
+	clusterCfg  *breakglassv1alpha1.ClusterConfig
+	issuer      string
+	idpName     string
+	idpLookupOK bool
 
 	// Session context
 	groups        []string
@@ -302,6 +304,10 @@ func (wc *WebhookController) logSARAction(s *authorizeState) {
 func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeState) bool {
 	s.phases.StartPhase() // Start sessions phase
 	var err error
+	s.idpName, s.idpLookupOK = "", true
+	if s.issuer != "" {
+		s.idpName, s.idpLookupOK = wc.resolveIdentityProviderName(s.ctx, s.issuer, s.reqLog)
+	}
 	s.groups, s.sessions, s.idpMismatches, s.tenant, err = wc.getUserGroupsAndSessionsWithIDPInfo(
 		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, s.clusterCfg)
 	if err != nil {
@@ -309,12 +315,19 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 		c.Status(http.StatusInternalServerError)
 		return false
 	}
+	s.sessions, s.idpMismatches = filterSessionsForAuthorizationWithProvider(
+		append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...),
+		s.issuer, s.idpName, s.idpLookupOK, time.Now(),
+	)
+	s.groups = grantedGroupsFromSessions(s.sessions)
 	if len(s.sessions) > 0 || len(s.idpMismatches) > 0 {
 		candidates := append(append([]breakglassv1alpha1.BreakglassSession{}, s.sessions...), s.idpMismatches...)
 		if refreshed, ok, refreshErr := wc.sesManager.RefreshClusterUserBreakglassSessionsWithCached(
 			s.ctx, s.clusterName, s.sar.Spec.User, candidates,
 		); refreshErr == nil && ok {
-			s.sessions, s.idpMismatches = filterSessionsForAuthorization(refreshed, s.issuer, time.Now())
+			s.sessions, s.idpMismatches = filterSessionsForAuthorizationWithProvider(
+				refreshed, s.issuer, s.idpName, s.idpLookupOK, time.Now(),
+			)
 			s.groups = grantedGroupsFromSessions(s.sessions)
 		}
 	}
@@ -364,8 +377,9 @@ func (wc *WebhookController) findDebugSessionAccessForAuthorizeState(s *authoriz
 	if s.clusterCfg != nil {
 		namespace = s.clusterCfg.Namespace
 	}
-	s.debugSessionCandidate, s.debugSessionReason = wc.findDebugSessionAccessForIssuerInNamespace(
-		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, namespace, ra, s.reqLog)
+	s.debugSessionCandidate, s.debugSessionReason = wc.findDebugSessionAccessForProviderInNamespace(
+		s.ctx, s.sar.Spec.User, s.clusterName, s.issuer, s.idpName, s.idpLookupOK,
+		namespace, ra, s.reqLog)
 	return s.debugSessionCandidate, s.debugSessionReason
 }
 
@@ -803,9 +817,13 @@ func (wc *WebhookController) resolveSessionAuthorization(c *gin.Context, s *auth
 
 	// Filter escalations based on requestor's IDP (multi-IDP awareness)
 	// If an escalation has AllowedIdentityProvidersForRequests, the requestor's IDP must be in that list
+	matchedIDPName, lookupOK := s.idpName, s.idpLookupOK
+	if matchedIDPName == "" && lookupOK && s.issuer == "" {
+		lookupOK = true
+	}
 	var idpFilteredEscals []breakglassv1alpha1.BreakglassEscalation
 	for _, esc := range s.escals {
-		if wc.isRequestFromAllowedIDP(s.ctx, s.issuer, &esc, s.reqLog) {
+		if wc.isRequestFromAllowedIDPResolved(s.issuer, matchedIDPName, lookupOK, &esc, s.reqLog) {
 			idpFilteredEscals = append(idpFilteredEscals, esc)
 		}
 	}
@@ -947,7 +965,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		if s.sar.Spec.ResourceAttributes != nil {
 			ra = s.sar.Spec.ResourceAttributes
 		}
-		if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra,
+		if ok, reason := wc.liveDebugSessionAccessForProvider(s.ctx, username, s.issuer, s.idpName, s.idpLookupOK, s.clusterName, ra,
 			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
 			s.allowed = false
 			s.allowSource = ""

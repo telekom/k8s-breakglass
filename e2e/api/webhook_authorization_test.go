@@ -485,6 +485,34 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	// Use username (not email) because debug sessions store RequestedBy as the preferred_username claim
 	testUser := helpers.TestUsers.WebhookTestRequester
 
+	// Native DebugSession creation requires an approved provider-bound
+	// breakglass:platform:debugsession grant. Create it through the normal API
+	// flow instead of depending on an ambient or legacy-compatible grant.
+	grantEscalation := helpers.NewEscalationBuilder(
+		helpers.GenerateUniqueName("e2e-webhook-debug-grant"),
+		namespace,
+	).WithEscalatedGroup("breakglass:platform:debugsession").
+		WithMaxValidFor("15m").
+		WithAllowedClusters(clusterName).
+		WithAllowedGroups(testUser.Groups...).
+		WithApproverUsers(helpers.TestUsers.WebhookTestApprover.Email).
+		Build()
+	cleanup.Add(grantEscalation)
+	require.NoError(t, cli.Create(ctx, grantEscalation))
+	grantAPI := tc.ClientForUser(testUser)
+	grant, err := grantAPI.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
+		Cluster: clusterName,
+		User:    testUser.Email,
+		Group:   "breakglass:platform:debugsession",
+		Reason:  "E2E test - native DebugSession grant",
+	}, helpers.WaitForStateTimeout)
+	require.NoError(t, err, "Failed to create native DebugSession grant")
+	cleanup.Add(grant)
+	approverClient := tc.ClientForUser(helpers.TestUsers.WebhookTestApprover)
+	require.NoError(t, approverClient.ApproveSessionViaAPI(ctx, t, grant.Name, namespace),
+		"Failed to approve native DebugSession grant")
+	helpers.WaitForSessionState(t, ctx, cli, grant.Name, namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+
 	// Create prerequisite templates (cluster-scoped resources, direct creation is fine)
 	podTemplateName := helpers.GenerateUniqueName("e2e-webhook-pod")
 	sessionTemplateName := helpers.GenerateUniqueName("e2e-webhook-session")

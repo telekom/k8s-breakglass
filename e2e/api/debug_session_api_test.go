@@ -192,6 +192,38 @@ type DebugSessionAPIClient struct {
 	AuthToken  string
 }
 
+func setupNativeDebugSessionGrant(t *testing.T, setup *helpers.TestSetup) {
+	setupNativeDebugSessionGrantForUser(t, setup, helpers.TestUsers.DebugSessionRequester, helpers.TestUsers.Approver)
+}
+
+func setupNativeDebugSessionGrantForUser(t *testing.T, setup *helpers.TestSetup, requester, approver helpers.TestUser) {
+	t.Helper()
+	escalation := helpers.NewEscalationBuilder(
+		helpers.GenerateUniqueName("e2e-debug-session-grant"),
+		setup.Namespace,
+	).WithEscalatedGroup("breakglass:platform:debugsession").
+		WithMaxValidFor("30m").
+		WithAllowedClusters(setup.Cluster).
+		WithAllowedGroups(requester.Groups...).
+		WithApproverUsers(approver.Email).
+		Build()
+	require.NoError(t, setup.CreateResource(escalation))
+	helpers.WaitForEscalationReady(t, setup.Ctx, setup.Client, escalation.Name, escalation.Namespace, helpers.WaitForStateTimeout)
+
+	session, err := setup.TC.ClientForUser(requester).CreateSessionAndWaitForPending(
+		setup.Ctx, t, helpers.SessionRequest{
+			Cluster: setup.Cluster,
+			User:    requester.Email,
+			Group:   "breakglass:platform:debugsession",
+			Reason:  "E2E native DebugSession authorization grant",
+		}, helpers.WaitForStateTimeout)
+	require.NoError(t, err)
+	setup.Cleanup.Add(session)
+	require.NoError(t, setup.TC.ClientForUser(approver).ApproveSessionViaAPI(setup.Ctx, t, session.Name, session.Namespace))
+	helpers.WaitForSessionState(t, setup.Ctx, setup.Client, session.Name, session.Namespace,
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+}
+
 // NewDebugSessionAPIClient creates a new debug session API client
 func NewDebugSessionAPIClient(token string) *DebugSessionAPIClient {
 	return &DebugSessionAPIClient{
@@ -798,7 +830,8 @@ func TestDebugSessionAPITemplates(t *testing.T) {
 
 // TestDebugSessionAPICreateAndGet tests creating and retrieving debug sessions via API
 func TestDebugSessionAPICreateAndGet(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -936,7 +969,8 @@ func TestDebugSessionAPICreateAndGet(t *testing.T) {
 
 // TestDebugSessionAPIJoinLeave tests the join and leave endpoints
 func TestDebugSessionAPIJoinLeave(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1072,7 +1106,8 @@ func TestDebugSessionAPIJoinLeave(t *testing.T) {
 
 // TestDebugSessionAPITerminate tests the session termination endpoint
 func TestDebugSessionAPITerminate(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -1495,7 +1530,8 @@ func TestDebugSessionAPITemplateClusters(t *testing.T) {
 
 // TestDebugSessionAPITemplateAvailability tests template visibility based on cluster availability
 func TestDebugSessionAPITemplateAvailability(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1691,7 +1727,8 @@ func TestDebugSessionAPITemplateAvailability(t *testing.T) {
 
 // TestDebugSessionAPIClusterSelectorMatching tests cluster selection via label selectors
 func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1847,7 +1884,8 @@ func TestDebugSessionAPIClusterSelectorMatching(t *testing.T) {
 
 // TestDebugSessionEdgeCasesAndErrors tests various error conditions and edge cases
 func TestDebugSessionEdgeCasesAndErrors(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -1967,7 +2005,8 @@ func TestDebugSessionEdgeCasesAndErrors(t *testing.T) {
 
 // TestDebugSessionAPIApproveReject tests the approval and rejection workflow
 func TestDebugSessionAPIApproveReject(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2134,7 +2173,8 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 
 // TestDebugSessionAPIRenew tests session renewal functionality
 func TestDebugSessionAPIRenew(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2628,7 +2668,8 @@ func (c *DebugSessionAPIClient) ListDebugSessionsWithFilters(ctx context.Context
 
 // TestDebugSessionAPIKubectlDebugMode tests the kubectl-debug mode endpoints
 func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2848,7 +2889,8 @@ func TestDebugSessionAPIKubectlDebugMode(t *testing.T) {
 
 // TestDebugSessionAPIKubectlDebugModeNotSupported tests kubectl-debug endpoints on non-kubectl-debug sessions
 func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -2984,7 +3026,8 @@ func TestDebugSessionAPIKubectlDebugModeNotSupported(t *testing.T) {
 
 // TestDebugSessionAPIJoinLeavePermutations tests various join/leave scenarios
 func TestDebugSessionAPIJoinLeavePermutations(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -3169,7 +3212,8 @@ func registerDebugSessionSubtestCleanup(t *testing.T, cli ctrlclient.Client, ses
 
 // TestDebugSessionAPIRenewalPermutations tests various renewal scenarios
 func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -3441,7 +3485,8 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 
 // TestDebugSessionAPIListFilteringAdvanced tests advanced list filtering options
 func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -3643,7 +3688,8 @@ func TestDebugSessionAPIListFilteringAdvanced(t *testing.T) {
 
 // TestDebugSessionAPICreateOptionalParams tests session creation with optional parameters
 func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -3865,7 +3911,8 @@ func TestDebugSessionAPICreateOptionalParams(t *testing.T) {
 
 // TestDebugSessionAPICrossUserAuthorization tests authorization across different users
 func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -4104,7 +4151,8 @@ func TestDebugSessionAPICrossUserAuthorization(t *testing.T) {
 // TestDebugSessionClusterBindingAuthorization tests that bindings correctly authorize cluster access
 // when the template itself has no Allowed.Clusters field.
 func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

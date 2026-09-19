@@ -98,6 +98,86 @@ func TestFilterSessionsForAuthorizationCanonicalizesIssuer(t *testing.T) {
 	assert.Empty(t, mismatches)
 }
 
+func TestFilterSessionsForAuthorizationRequiresProviderAndIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://idp-a.example/",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://idp-a.example/", "idp-b", true, time.Now(),
+	)
+	assert.Empty(t, out)
+	assert.Len(t, mismatches, 1)
+
+	out, mismatches = filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://idp-a.example/", "idp-a", true, time.Now(),
+	)
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
+
+	out, mismatches = filterSessionsForAuthorizationWithProvider(
+		[]breakglassv1alpha1.BreakglassSession{session},
+		"https://unknown.example", "", false, time.Now(),
+	)
+	assert.Empty(t, out)
+	assert.Len(t, mismatches, 1)
+}
+
+func TestFilterSessionsForAuthorizationRejectsProvenanceWhenIssuerMissing(t *testing.T) {
+	sessions := []breakglassv1alpha1.BreakglassSession{
+		{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				IdentityProviderName:   "idp-a",
+				IdentityProviderIssuer: "https://idp-a.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			},
+		},
+		{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			},
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorizationWithProvider(sessions, "", "", true, time.Now())
+	assert.Len(t, out, 1)
+	assert.Empty(t, out[0].Spec.IdentityProviderName)
+	assert.Len(t, mismatches, 1)
+}
+
+func TestFilterSessionsForDiscoveryKeepsProviderBoundGrantsWithoutIssuer(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			IdentityProviderName:   "idp-a",
+			IdentityProviderIssuer: "https://idp-a.example",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State:     breakglassv1alpha1.SessionStateApproved,
+			ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+
+	out, mismatches := filterSessionsForAuthorization(
+		[]breakglassv1alpha1.BreakglassSession{session}, "", time.Now(),
+	)
+	assert.Len(t, out, 1)
+	assert.Empty(t, mismatches)
+}
+
 type countingListClient struct {
 	client.Client
 	listCalls int
@@ -1170,6 +1250,59 @@ func TestIsRequestFromAllowedIDP(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:   "legacy allowed IDP restricts requests",
+			issuer: "https://keycloak.example.com/realms/test",
+			esc: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProviders: []string{"keycloak-idp"},
+				},
+			},
+			idps: []breakglassv1alpha1.IdentityProvider{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
+						Issuer: "https://keycloak.example.com/realms/test",
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:   "legacy IDP authority fallback and trailing slash normalization",
+			issuer: "https://keycloak.example.com/realms/test",
+			esc: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProviders: []string{"keycloak-idp"},
+				},
+			},
+			idps: []breakglassv1alpha1.IdentityProvider{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "keycloak-idp"},
+					Spec: breakglassv1alpha1.IdentityProviderSpec{
+						OIDC: breakglassv1alpha1.OIDCConfig{Authority: "https://keycloak.example.com/realms/test/"},
+					},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:   "ambiguous effective issuer is denied",
+			issuer: "https://duplicate.example.com",
+			esc: &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-esc"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					AllowedIdentityProvidersForRequests: []string{"idp-a"},
+				},
+			},
+			idps: []breakglassv1alpha1.IdentityProvider{
+				{ObjectMeta: metav1.ObjectMeta{Name: "idp-a"}, Spec: breakglassv1alpha1.IdentityProviderSpec{Issuer: "https://duplicate.example.com"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "idp-b"}, Spec: breakglassv1alpha1.IdentityProviderSpec{OIDC: breakglassv1alpha1.OIDCConfig{Authority: "https://duplicate.example.com/"}}},
+			},
+			expected: false,
+		},
+		{
 			name:   "issuer matches IDP but IDP not in allowed list",
 			issuer: "https://keycloak.example.com/realms/test",
 			esc: &breakglassv1alpha1.BreakglassEscalation{
@@ -2043,7 +2176,7 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
 					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
-					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderName: "issuer-a-idp", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 			}
 			if tt.liveIssuer != "" {
 				ds.Status.Participants[0].IdentityProviderIssuer = tt.liveIssuer
@@ -2059,7 +2192,7 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: types.UID(tt.podUID)}}, nil
 			}}
 			ra := &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
-			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: issuer, allowed: true, allowSource: "debug-session",
+			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: issuer, idpName: "issuer-a-idp", idpLookupOK: true, allowed: true, allowSource: "debug-session",
 				debugSessionNamespace: ds.Namespace, debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
 				sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}}}
 			w := httptest.NewRecorder()
@@ -2080,7 +2213,7 @@ func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
 			AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
-			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+			Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderName: "test-idp", IdentityProviderIssuer: "https://test-idp.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
 	}
 	builder := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds)
 	for k, fn := range debugSessionIndexFnsWebhook {
@@ -2090,7 +2223,7 @@ func TestEarlyDebugSessionUsesCommonFinalFence(t *testing.T) {
 	wc := &WebhookController{log: zap.NewNop().Sugar(), escalManager: &escalation.EscalationManager{Client: cli}, sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 	}}
-	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+	s := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://test-idp.example", idpName: "test-idp", idpLookupOK: true, reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	assert.True(t, wc.checkEarlyDebugSession(c, s))
 	assert.True(t, s.allowed)

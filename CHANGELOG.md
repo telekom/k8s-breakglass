@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DebugSession approval and rejection now fail closed on provider/issuer mismatch with `403 Forbidden`; legacy pending sessions without persisted provider provenance return `409 Conflict` and require supported administrator cleanup before re-request.
+- Restore no-file shell completion for debug resource names and `bgctl version --output` values.
+- Persist ClusterConfig deletion-finalizer state across ordinary updates so cleanup is not lost before deletion.
+
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.
 - Refresh the workload-debug CA certificate package pin and network-debug

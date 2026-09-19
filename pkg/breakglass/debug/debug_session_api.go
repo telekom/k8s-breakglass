@@ -817,7 +817,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	var userGroups []string
 	if groups, exists := ctx.Get("groups"); exists && groups != nil {
 		if g, ok := groups.([]string); ok {
-			userGroups = g
+			for _, group := range g {
+				if group != "breakglass:platform:debugsession" {
+					userGroups = append(userGroups, group)
+				}
+			}
 		}
 	}
 
@@ -826,10 +830,28 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(apiCtx, authorizationReader, req.Cluster, currentUserStr, userEmail, ctx.GetString("issuer"))
+	sessionGroups, err := c.activeBreakglassGroups(
+		apiCtx,
+		authorizationReader,
+		req.Cluster,
+		currentUserStr,
+		userEmail,
+		ctx.GetString("identity_provider_name"),
+		ctx.GetString("issuer"),
+		ctx.GetBool("legacy_identity_allowed"),
+	)
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
+		return
+	}
+	providerAwareRequest := isProviderAwareDebugSessionRequest(
+		ctx.GetString("identity_provider_name"),
+		ctx.GetString("issuer"),
+		ctx.GetBool("legacy_identity_allowed"),
+	)
+	if providerAwareRequest && len(sessionGroups) == 0 {
+		apiresponses.RespondForbidden(ctx, "an approved Breakglass debug session is required")
 		return
 	}
 	userGroups = append(userGroups, sessionGroups...)
@@ -1392,7 +1414,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	ctx.JSON(http.StatusCreated, response)
 }
 
-func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, issuer string) ([]string, error) {
+func isProviderAwareDebugSessionRequest(provider, issuer string, legacyAllowed bool) bool {
+	return !legacyAllowed
+}
+
+func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string, legacyAllowed bool) ([]string, error) {
 	indexedReader := reader
 	if c.client != nil {
 		indexedReader = c.client
@@ -1411,12 +1437,31 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		identities = append(identities, identity)
 	}
 	appendSession := func(session breakglassv1alpha1.BreakglassSession, seen map[string]struct{}) {
+		if session.Spec.GrantedGroup != "breakglass:platform:debugsession" {
+			return
+		}
 		key := session.Namespace + "\x00" + session.Name
 		if _, exists := seen[key]; exists {
 			return
 		}
 		seen[key] = struct{}{}
 		sessions.Items = append(sessions.Items, session)
+	}
+	matchesIdentityProvider := func(session breakglassv1alpha1.BreakglassSession) bool {
+		sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
+		sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+		requestProvider := strings.TrimSpace(provider)
+		requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+		switch {
+		case sessionProvider == "" && sessionIssuer == "":
+			return legacyAllowed
+		case sessionProvider == "":
+			return legacyAllowed && requestIssuer == sessionIssuer
+		case sessionIssuer == "":
+			return false
+		default:
+			return requestProvider == sessionProvider && requestIssuer == sessionIssuer
+		}
 	}
 	seenSessions := make(map[string]struct{})
 	if len(identities) == 0 {
@@ -1467,8 +1512,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 			candidate := sessions.Items[i]
 			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
 				(candidate.Spec.User != username && candidate.Spec.User != email) ||
-				(issuer != "" && !candidate.Spec.AllowIDPMismatch &&
-					strings.TrimRight(candidate.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				!matchesIdentityProvider(candidate) {
 				continue
 			}
 			fresh := &breakglassv1alpha1.BreakglassSession{}
@@ -1489,10 +1533,10 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		groups := make([]string, 0, len(items))
 		seen := make(map[string]struct{}, len(items))
 		for _, session := range items {
-			if !breakglass.IsSessionAuthorizationEligible(session, now) ||
+			if session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
+				!breakglass.IsSessionAuthorizationEligible(session, now) ||
 				(session.Spec.User != username && session.Spec.User != email) ||
-				(issuer != "" && !session.Spec.AllowIDPMismatch &&
-					strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") != strings.TrimRight(issuer, "/")) {
+				!matchesIdentityProvider(session) {
 				continue
 			}
 			if _, ok := seen[session.Spec.GrantedGroup]; ok {
@@ -1509,13 +1553,13 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		if err := reader.List(ctx, &fresh); err != nil {
 			return nil, err
 		}
-		filtered := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
+		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(fresh.Items))
 		for _, session := range fresh.Items {
 			if session.Spec.Cluster == cluster {
-				filtered = append(filtered, session)
+				freshCandidates = append(freshCandidates, session)
 			}
 		}
-		groups = collectGroups(filtered)
+		groups = collectGroups(freshCandidates)
 	}
 	return groups, nil
 }
@@ -1732,6 +1776,65 @@ func debugSessionProviderMatches(identity debugSessionReadIdentity, session *bre
 	}
 	return (session.Spec.IdentityProviderName == "" || session.Spec.IdentityProviderName == identity.provider) &&
 		(session.Spec.IdentityProviderIssuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/"))
+}
+
+func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session == nil {
+		return false
+	}
+	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider == "" && issuer == "" {
+		return identity.legacyAllowed
+	}
+	if provider == "" || issuer == "" {
+		return provider == "" && identity.legacyAllowed &&
+			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	}
+	return strings.TrimSpace(identity.provider) == provider &&
+		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+}
+
+func debugSessionApprovalMigrationRequired(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session == nil {
+		return false
+	}
+	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider == "" && issuer == "" {
+		return !identity.legacyAllowed
+	}
+	if provider == "" {
+		if identity.legacyAllowed && strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer {
+			return false
+		}
+		return !identity.legacyAllowed
+	}
+	return provider == "" || issuer == ""
+}
+
+func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
+	if session == nil || !debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+		return false
+	}
+	provider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	issuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	if provider == "" && issuer == "" {
+		return identity.legacyAllowed
+	}
+	if !identity.legacyAllowed {
+		return provider != "" && issuer != "" &&
+			strings.TrimSpace(identity.provider) == provider &&
+			strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	}
+	if provider == "" {
+		return strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
+	}
+	if issuer == "" {
+		return false
+	}
+	return strings.TrimSpace(identity.provider) == provider &&
+		strings.TrimRight(strings.TrimSpace(identity.issuer), "/") == issuer
 }
 
 func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {

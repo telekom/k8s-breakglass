@@ -17,7 +17,7 @@ import (
 
 // ExpectedIndexCount is the number of field indexes that should be registered.
 // Update this constant when adding or removing indexes.
-const ExpectedIndexCount = 25
+const ExpectedIndexCount = 26
 
 const (
 	BreakglassEscalationClusterConfigRefsField        = "spec.clusterConfigRefs"
@@ -385,6 +385,26 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 				return []string{idp.Spec.Issuer}
 			}
 			return nil
+		})
+	}); err != nil {
+		return err
+	}
+
+	if err := register("IdentityProvider", "spec.effectiveIssuer", func() error {
+		return idx.IndexField(ctx, &breakglassv1alpha1.IdentityProvider{}, "spec.effectiveIssuer", func(rawObj client.Object) []string {
+			idp, ok := rawObj.(*breakglassv1alpha1.IdentityProvider)
+			if !ok || idp == nil {
+				return nil
+			}
+			issuer := idp.Spec.Issuer
+			if issuer == "" {
+				issuer = idp.Spec.OIDC.Authority
+			}
+			issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
+			if issuer == "" {
+				return nil
+			}
+			return []string{issuer}
 		})
 	}); err != nil {
 		return err
