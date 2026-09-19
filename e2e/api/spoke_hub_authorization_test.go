@@ -945,10 +945,11 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 		WithMaxValidFor("15m").
 		WithAllowedClusters(spokeCluster).
 		WithAllowedGroups("debug-session-test-group").
-		WithApproverUsers(helpers.TestUsers.Approver.Email).
+		WithApproverUsers(helpers.MultiClusterTestUsers.Approver.Email).
 		Build()
 	s.cleanup.Add(grantEscalation)
 	s.Require().NoError(s.hubClient.Create(ctx, grantEscalation), "debug-session grant escalation must be created")
+	helpers.WaitForEscalationReady(t, ctx, s.hubClient, grantEscalation.Name, grantEscalation.Namespace, helpers.WaitForStateTimeout)
 	grantAPI := s.createAPIClientForUser(user)
 	grant, err := grantAPI.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
 		Cluster: spokeCluster,
