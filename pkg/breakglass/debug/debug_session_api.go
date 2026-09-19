@@ -1415,7 +1415,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 func isProviderAwareDebugSessionRequest(provider, issuer string, legacyAllowed bool) bool {
-	return (provider != "" || issuer != "") && !legacyAllowed
+	return !legacyAllowed
 }
 
 func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string, legacyAllowed bool) ([]string, error) {

@@ -301,6 +301,8 @@ func TestProviderAwareDebugSessionRequestPreservesSingleJWKSCompatibility(t *tes
 	assert.False(t, isProviderAwareDebugSessionRequest("", "https://single-jwks.example", true))
 	assert.False(t, isProviderAwareDebugSessionRequest("single-idp", "https://single-jwks.example", true))
 	assert.True(t, isProviderAwareDebugSessionRequest("multi-idp", "https://multi.example", false))
+	assert.True(t, isProviderAwareDebugSessionRequest("", "", false))
+	assert.True(t, isProviderAwareDebugSessionRequest("", "https://multi.example", false))
 }
 
 func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
