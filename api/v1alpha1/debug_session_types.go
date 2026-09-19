@@ -1152,6 +1152,10 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("spec"), newObj.Spec, "spec is immutable"))
 	}
 
+	if oldObj.Annotations[DebugSessionAdmissionPolicyAnnotation] != newObj.Annotations[DebugSessionAdmissionPolicyAnnotation] {
+		allErrs = append(allErrs, field.Forbidden(field.NewPath("metadata").Child("annotations").Key(DebugSessionAdmissionPolicyAnnotation), "admission policy version is immutable"))
+	}
+
 	result := ValidateDebugSession(newObj)
 	if !result.IsValid() {
 		allErrs = append(allErrs, result.Errors...)

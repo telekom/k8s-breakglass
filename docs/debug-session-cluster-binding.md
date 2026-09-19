@@ -1260,3 +1260,15 @@ kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass | 
 - [Debug Sessions](debug-session.md) - Overview of debug sessions
 - [API Reference](api-reference.md#get-template-clusters) - Template clusters endpoint
 - [Sample Bindings](../config/samples/debug_session_cluster_binding.yaml) - Example configurations
+
+### API admission policy changes
+
+API-created sessions record the admitted template and binding UIDs and resource
+versions in an immutable annotation before creation. The first reconciliation
+requires the same objects and versions before persisting approval snapshots.
+A concurrent edit or same-name replacement fails the session with a
+recreate-required message; submit a new request against the current policy.
+This fence also distinguishes an admitted no-binding result from a binding
+added before reconciliation. Once snapshots are persisted, activation continues
+to use those snapshots. Existing sessions without this annotation retain the
+legacy recovery rules described above.

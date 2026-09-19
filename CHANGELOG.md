@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Fence API-created debug sessions to the admitted template and binding UIDs and resource versions; reject policy edits or same-name replacements before the first approval snapshot.
+
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.
 - Refresh the workload-debug CA certificate package pin and network-debug

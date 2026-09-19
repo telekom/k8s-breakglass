@@ -1956,3 +1956,23 @@ func TestValidateDebugSessionSpec_DayDuration(t *testing.T) {
 		t.Errorf("expected 0 errors for valid day duration, got %d: %v", len(errs), errs)
 	}
 }
+
+func TestDebugSessionValidateUpdateProtectsAdmissionPolicyVersion(t *testing.T) {
+	for _, oldVersion := range []string{"", "approved-version"} {
+		for _, newVersion := range []string{"", "approved-version", "replacement-version"} {
+			oldSession := &DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass", Annotations: map[string]string{DebugSessionAdmissionPolicyAnnotation: oldVersion}},
+				Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+			}
+			updated := oldSession.DeepCopy()
+			updated.Annotations[DebugSessionAdmissionPolicyAnnotation] = newVersion
+			_, err := updated.ValidateUpdate(context.Background(), oldSession, updated)
+			if oldVersion == newVersion && err != nil {
+				t.Fatalf("unchanged admission policy rejected: %v", err)
+			}
+			if oldVersion != newVersion && err == nil {
+				t.Fatalf("admission policy mutation from %q to %q accepted", oldVersion, newVersion)
+			}
+		}
+	}
+}

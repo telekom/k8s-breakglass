@@ -336,6 +336,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+	if admitted := ds.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation]; admitted != "" && admitted != admissionPolicyVersion(template, binding) {
+		return c.failSession(ctx, ds, "template or binding changed after API admission; recreate this session")
+	}
 	groups := ds.Spec.UserGroups
 	if ds.Status.AuthenticatedUserGroupsCaptured {
 		groups = ds.Status.AuthenticatedUserGroups
