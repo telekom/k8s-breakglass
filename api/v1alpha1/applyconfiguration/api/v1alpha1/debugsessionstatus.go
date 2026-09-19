@@ -53,6 +53,22 @@ type DebugSessionStatusApplyConfiguration struct {
 	// resolvedTemplate caches the resolved DebugSessionTemplate spec.
 	// Used to ensure consistent behavior even if template changes.
 	ResolvedTemplate *DebugSessionTemplateSpecApplyConfiguration `json:"resolvedTemplate,omitempty"`
+	// resolvedTemplateLabels stores the catalogue identity labels from the
+	// approved template independently of its pod-template representation.
+	ResolvedTemplateLabels map[string]string `json:"resolvedTemplateLabels,omitempty"`
+	// resolvedTemplateIdentityCaptured distinguishes a current snapshot with
+	// intentionally empty labels from a legacy snapshot without identity data.
+	ResolvedTemplateIdentityCaptured *bool `json:"resolvedTemplateIdentityCaptured,omitempty"`
+	// resolvedTemplateVariablePolicy stores the original template variable
+	// definitions used to reconstruct binding regex intersections after the
+	// effective policy is serialized.
+	ResolvedTemplateVariablePolicy []ExtraDeployVariableApplyConfiguration `json:"resolvedTemplateVariablePolicy,omitempty"`
+	// authenticatedUserGroups stores groups established by the authenticated
+	// API request for controller-side authorization.
+	AuthenticatedUserGroups []string `json:"authenticatedUserGroups,omitempty"`
+	// authenticatedUserGroupsCaptured distinguishes an authenticated request
+	// with no groups from a session without trusted group provenance.
+	AuthenticatedUserGroupsCaptured *bool `json:"authenticatedUserGroupsCaptured,omitempty"`
 	// resolvedBinding caches information about the binding used (if any).
 	ResolvedBinding *ResolvedBindingRefApplyConfiguration `json:"resolvedBinding,omitempty"`
 	// resolvedBindingSpec is the immutable binding snapshot approved for activation.
@@ -213,6 +229,59 @@ func (b *DebugSessionStatusApplyConfiguration) WithMessage(value string) *DebugS
 // If called multiple times, the ResolvedTemplate field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplate(value *DebugSessionTemplateSpecApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ResolvedTemplate = value
+	return b
+}
+
+// WithResolvedTemplateLabels puts the entries into the ResolvedTemplateLabels field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the ResolvedTemplateLabels field,
+// overwriting an existing map entries in ResolvedTemplateLabels field with the same key.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateLabels(entries map[string]string) *DebugSessionStatusApplyConfiguration {
+	if b.ResolvedTemplateLabels == nil && len(entries) > 0 {
+		b.ResolvedTemplateLabels = make(map[string]string, len(entries))
+	}
+	for k, v := range entries {
+		b.ResolvedTemplateLabels[k] = v
+	}
+	return b
+}
+
+// WithResolvedTemplateIdentityCaptured sets the ResolvedTemplateIdentityCaptured field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ResolvedTemplateIdentityCaptured field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateIdentityCaptured(value bool) *DebugSessionStatusApplyConfiguration {
+	b.ResolvedTemplateIdentityCaptured = &value
+	return b
+}
+
+// WithResolvedTemplateVariablePolicy adds the given value to the ResolvedTemplateVariablePolicy field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the ResolvedTemplateVariablePolicy field.
+func (b *DebugSessionStatusApplyConfiguration) WithResolvedTemplateVariablePolicy(values ...*ExtraDeployVariableApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithResolvedTemplateVariablePolicy")
+		}
+		b.ResolvedTemplateVariablePolicy = append(b.ResolvedTemplateVariablePolicy, *values[i])
+	}
+	return b
+}
+
+// WithAuthenticatedUserGroups adds the given value to the AuthenticatedUserGroups field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the AuthenticatedUserGroups field.
+func (b *DebugSessionStatusApplyConfiguration) WithAuthenticatedUserGroups(values ...string) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		b.AuthenticatedUserGroups = append(b.AuthenticatedUserGroups, values[i])
+	}
+	return b
+}
+
+// WithAuthenticatedUserGroupsCaptured sets the AuthenticatedUserGroupsCaptured field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AuthenticatedUserGroupsCaptured field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithAuthenticatedUserGroupsCaptured(value bool) *DebugSessionStatusApplyConfiguration {
+	b.AuthenticatedUserGroupsCaptured = &value
 	return b
 }
 

@@ -15,6 +15,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
+	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -67,8 +68,14 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 	now := metav1.NewTime(time.Now().Add(time.Hour))
 	ds := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "debug-fenced", Namespace: "default", UID: "session-uid", Labels: map[string]string{}},
-		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "default/spoke", TemplateRef: "template", RequestedBy: "tester"},
-		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &now},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:                "default/spoke",
+			TemplateRef:            "template",
+			RequestedBy:            "tester",
+			IdentityProviderName:   "keycloak",
+			IdentityProviderIssuer: "https://keycloak.example.com/realms/breakglass",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &now},
 	}
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "template"},
@@ -154,6 +161,85 @@ func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 
 	deployment := &appsv1.Deployment{}
 	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+}
+
+func TestActivateSessionRejectsUnreadyExplicitClusterBinding(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKey{Name: "spoke", Namespace: "default"}, clusterConfig))
+	clusterConfig.Status.Conditions = []metav1.Condition{{
+		Type:   string(breakglassv1alpha1.ClusterConfigConditionReady),
+		Status: metav1.ConditionFalse,
+	}}
+	require.NoError(t, c.client.Update(context.Background(), clusterConfig))
+	ds.Spec.Cluster = "spoke"
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "explicit-binding", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{"spoke"},
+		},
+	}
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	ds.Status.ResolvedBindingSpec = &extensionsv1.JSON{Raw: []byte(`{}`)}
+	_, err := c.activateSession(context.Background(), ds, template, binding)
+	require.NoError(t, err)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+	deployments := &appsv1.DeploymentList{}
+	require.NoError(t, target.List(context.Background(), deployments))
+	require.Empty(t, deployments.Items)
+}
+
+func TestBindingVariablePolicySurvivesApprovalActivationAndTemplateRotation(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	template.Spec.PodTemplateString = "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: debug\n    image: {{ .vars.target | yamlQuote }}\n"
+	template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{
+		Name: "target", InputType: breakglassv1alpha1.InputTypeText,
+		Validation: &breakglassv1alpha1.VariableValidation{Pattern: `^safe-`},
+	}}
+	require.NoError(t, c.client.Update(context.Background(), template))
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{ds.Spec.Cluster},
+			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver"}},
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{
+				Name: "target", Validation: &breakglassv1alpha1.VariableValidation{Pattern: `-prod$`},
+			}},
+		},
+	}
+	require.NoError(t, c.client.Create(context.Background(), binding))
+	ds.Spec.ExtraDeployValues = map[string]extensionsv1.JSON{"target": {Raw: []byte(`"safe-prod"`)}}
+	require.NoError(t, c.client.Update(context.Background(), ds))
+
+	_, err := c.handlePending(context.Background(), ds)
+	require.NoError(t, err)
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, persisted.Status.State)
+	require.NotNil(t, persisted.Status.ResolvedBindingSpec)
+
+	// Rotate both live policies after approval snapshots were persisted. Activation
+	// must use the immutable original policy plus binding snapshot.
+	liveTemplate := &breakglassv1alpha1.DebugSessionTemplate{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(template), liveTemplate))
+	liveTemplate.Spec.ExtraDeployVariables[0].Validation.Pattern = `^unsafe-`
+	require.NoError(t, c.client.Update(context.Background(), liveTemplate))
+	liveBinding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(binding), liveBinding))
+	liveBinding.Spec.ExtraDeployVariables[0].Validation.Pattern = `-changed$`
+	require.NoError(t, c.client.Update(context.Background(), liveBinding))
+
+	approvedAt := metav1.Now()
+	persisted.Status.Approval.ApprovedAt = &approvedAt
+	persisted.Status.Approval.ApprovedBy = "approver"
+	_, err = c.handlePendingApproval(context.Background(), persisted)
+	require.NoError(t, err)
+	deployment := &appsv1.Deployment{}
+	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: ds.Name}, deployment))
+	require.Equal(t, "safe-prod", deployment.Spec.Template.Spec.Containers[0].Image)
 }
 
 func TestDeployDebugResourcesRejectsClusterConfigRotationBeforeWrite(t *testing.T) {

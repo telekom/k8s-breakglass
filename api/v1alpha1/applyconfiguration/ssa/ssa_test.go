@@ -653,6 +653,22 @@ func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing
 	assert.False(t, statusSubsetMatch(currentStatus, desiredStatus))
 }
 
+func TestDebugSessionStatusFromPreservesResolvedTemplateVariablePolicy(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplateVariablePolicy: []breakglassv1alpha1.ExtraDeployVariable{{
+			Name: "target", Disabled: true, InputType: breakglassv1alpha1.InputTypeText,
+			Validation: &breakglassv1alpha1.VariableValidation{Pattern: `^safe-`},
+		}},
+	}
+	data, err := json.Marshal(DebugSessionStatusFrom(status))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), `"resolvedTemplateVariablePolicy"`)
+	assert.Contains(t, string(data), `"pattern":"^safe-"`)
+	var decoded breakglassv1alpha1.DebugSessionStatus
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	require.True(t, decoded.ResolvedTemplateVariablePolicy[0].Disabled)
+}
+
 func TestDebugSessionTemplateStatusFromPreservesExplicitEmptyBoundClusters(t *testing.T) {
 	status := &breakglassv1alpha1.DebugSessionTemplateStatus{
 		BindingCount:        0,

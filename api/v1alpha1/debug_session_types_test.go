@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -1500,6 +1501,71 @@ func TestDebugSessionValidateUpdateKeepsTerminalStateAndElapsedExpiry(t *testing
 	}
 }
 
+func TestDebugSessionValidateUpdateProtectsCapturedGroupProvenance(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			AuthenticatedUserGroups:         []string{"trusted"},
+			AuthenticatedUserGroupsCaptured: true,
+		},
+	}
+	for name, mutate := range map[string]func(*DebugSessionStatus){
+		"groups":         func(status *DebugSessionStatus) { status.AuthenticatedUserGroups = []string{"attacker"} },
+		"capture marker": func(status *DebugSessionStatus) { status.AuthenticatedUserGroupsCaptured = false },
+	} {
+		t.Run(name, func(t *testing.T) {
+			updated := oldSession.DeepCopy()
+			mutate(&updated.Status)
+			if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+				t.Fatalf("expected captured group provenance mutation to be rejected")
+			}
+		})
+	}
+}
+
+func TestDebugSessionValidateUpdateFreezesTemplateIdentityMarker(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			ResolvedTemplate: &DebugSessionTemplateSpec{},
+		},
+	}
+	updated := oldSession.DeepCopy()
+	updated.Status.ResolvedTemplateIdentityCaptured = true
+	if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+		t.Fatal("expected template identity marker mutation to be rejected")
+	}
+}
+
+func TestDebugSessionValidateUpdateFreezesBindingSnapshotAfterTemplatePersistence(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status:     DebugSessionStatus{ResolvedTemplate: &DebugSessionTemplateSpec{}},
+	}
+	for name, mutate := range map[string]func(*DebugSessionStatus){
+		"capture marker": func(status *DebugSessionStatus) {
+			status.ResolvedBindingSnapshotCaptured = true
+		},
+		"binding reference": func(status *DebugSessionStatus) {
+			status.ResolvedBinding = &ResolvedBindingRef{Name: "binding", Namespace: "breakglass"}
+		},
+		"binding spec": func(status *DebugSessionStatus) {
+			status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"clusters":["cluster"]}`)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			updated := oldSession.DeepCopy()
+			mutate(&updated.Status)
+			if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+				t.Fatalf("expected binding snapshot mutation to be rejected")
+			}
+		})
+	}
+}
+
 func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
 	base := &DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},
@@ -1888,5 +1954,25 @@ func TestValidateDebugSessionSpec_DayDuration(t *testing.T) {
 	errs := validateDebugSessionSpec(session)
 	if len(errs) != 0 {
 		t.Errorf("expected 0 errors for valid day duration, got %d: %v", len(errs), errs)
+	}
+}
+
+func TestDebugSessionValidateUpdateProtectsAdmissionPolicyVersion(t *testing.T) {
+	for _, oldVersion := range []string{"", "approved-version"} {
+		for _, newVersion := range []string{"", "approved-version", "replacement-version"} {
+			oldSession := &DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass", Annotations: map[string]string{DebugSessionAdmissionPolicyAnnotation: oldVersion}},
+				Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+			}
+			updated := oldSession.DeepCopy()
+			updated.Annotations[DebugSessionAdmissionPolicyAnnotation] = newVersion
+			_, err := updated.ValidateUpdate(context.Background(), oldSession, updated)
+			if oldVersion == newVersion && err != nil {
+				t.Fatalf("unchanged admission policy rejected: %v", err)
+			}
+			if oldVersion != newVersion && err == nil {
+				t.Fatalf("admission policy mutation from %q to %q accepted", oldVersion, newVersion)
+			}
+		}
 	}
 }

@@ -1942,6 +1942,20 @@ func TestValidateDebugSessionTemplate(t *testing.T) {
 		assert.True(t, result.IsValid(), "expected valid, got errors: %s", result.ErrorMessage())
 	})
 
+	t.Run("empty cluster selector is rejected", func(t *testing.T) {
+		template := &DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "empty-selector"},
+			Spec: DebugSessionTemplateSpec{
+				Mode:           DebugSessionModeWorkload,
+				PodTemplateRef: &DebugPodTemplateReference{Name: "pod-template"},
+				Allowed:        &DebugSessionAllowed{ClusterSelector: &metav1.LabelSelector{}},
+			},
+		}
+		result := ValidateDebugSessionTemplate(template)
+		assert.False(t, result.IsValid())
+		assert.Contains(t, result.ErrorMessage(), "empty selector is not allowed")
+	})
+
 	t.Run("deprecated notify-only expiration remains valid", func(t *testing.T) {
 		template := &DebugSessionTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "notify-only"},

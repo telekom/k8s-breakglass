@@ -5215,7 +5215,7 @@ func TestBuildPodSpec_PodTemplateWithStructuredTemplate(t *testing.T) {
 
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-			// No PodTemplateString on DST
+			TerminalSharing: &breakglassv1alpha1.TerminalSharingConfig{Enabled: true, Provider: "tmux"},
 		},
 	}
 
@@ -5227,8 +5227,10 @@ func TestBuildPodSpec_PodTemplateWithStructuredTemplate(t *testing.T) {
 				Spec: breakglassv1alpha1.DebugPodSpecInner{
 					Containers: []corev1.Container{
 						{
-							Name:  "from-structured",
-							Image: "nginx:latest",
+							Name:    "from-structured",
+							Image:   "nginx:latest",
+							Command: []string{"sh", "-c"},
+							Args:    []string{"echo ready"},
 						},
 					},
 				},
@@ -5236,10 +5238,14 @@ func TestBuildPodSpec_PodTemplateWithStructuredTemplate(t *testing.T) {
 		},
 	}
 
+	original := podTemplate.DeepCopy()
 	result, err := controller.buildPodSpec(ds, template, podTemplate)
 	require.NoError(t, err)
 	assert.Equal(t, "from-structured", result.PodSpec.Containers[0].Name,
 		"when DST has no podTemplateString, podTemplate.Template should be used")
+	assert.Equal(t, []string{"tmux", "new-session", "-A", "-s", ds.Name}, result.PodSpec.Containers[0].Command)
+	assert.Equal(t, []string{"sh", "-c", "echo ready"}, result.PodSpec.Containers[0].Args)
+	assert.Equal(t, original, podTemplate, "terminal wrapping must preserve the reusable template")
 }
 
 func TestBuildPodSpec_ErrorFromRenderPodTemplateString(t *testing.T) {

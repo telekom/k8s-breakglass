@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -59,6 +60,60 @@ func TestPatchDebugSessionStatusWithOptimisticLockKeepsTerminalState(t *testing.
 	var stored breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &stored))
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateExpired, stored.Status.State)
+}
+
+func TestStatusHelpersFreezeTemplateIdentityMarker(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "identity-marker", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.ResolvedTemplateIdentityCaptured = true
+
+	err := ApplyDebugSessionStatus(context.Background(), fakeClient, desired)
+	require.ErrorContains(t, err, "identity marker")
+
+	err = PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ResolvedTemplateIdentityCaptured = true
+	})
+	require.ErrorContains(t, err, "identity marker")
+}
+
+func TestStatusHelpersFreezeBindingSnapshotAfterTemplatePersistence(t *testing.T) {
+	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSessionStatus){
+		"capture marker": func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.ResolvedBindingSnapshotCaptured = true
+		},
+		"binding reference": func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: "binding"}
+		},
+		"binding spec": func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte(`{"clusters":["cluster"]}`)}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			current := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding-mutation", Namespace: "default"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{},
+				},
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			desired := current.DeepCopy()
+			mutate(&desired.Status)
+			require.Error(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired))
+			require.Error(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), mutate))
+		})
+	}
 }
 
 func TestPatchDebugSessionStatusWithOptimisticLockCannotRenewAtExpiry(t *testing.T) {

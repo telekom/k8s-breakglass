@@ -1291,6 +1291,34 @@ and `bindingOptions` entries are returned only for direct template or binding
 paths the requester can use at session creation time. Restricted scheduling
 options are omitted.
 
+`clusters[].extraDeployVariables` and each `clusters[].bindingOptions[].extraDeployVariables`
+contain the effective variable definitions for that selection. Each definition
+has a `name`, `inputType`, optional `options` (`value`, `displayName`, `disabled`, and `allowedGroups`), `validation`, `required`, and `default`, using the template
+variable schema. Bindings can narrow option sets and validation bounds, add
+validation patterns, require or disable variables, and set valid defaults;
+they cannot widen the template policy. Definitions unavailable to the requester,
+including disabled variables, are filtered out. An explicit empty array `[]`
+means this selection exposes no variables; clients must not fall back to the
+template variable list. A selected binding option's list takes precedence over
+the cluster's primary list.
+
+Send chosen values in `POST /api/debugSessions` as `extraDeployValues`, an object
+mapping variable names to JSON values. Select a specific binding using the
+request string `bindingRef: "namespace/name"` (the discovery response reference
+is an object). For example:
+
+```json
+{"templateRef":"network-debug","cluster":"production-eu","bindingRef":"breakglass/sre-access","extraDeployValues":{"mode":"safe"}}
+```
+
+Omitted explicit binding defaults are applied and validated consistently by the
+API and controller. Disabled values are rejected as inputs and excluded from
+rendering, including stored direct-CR values. A value equal to the effective
+binding default has the same group-validation treatment as omission; other
+values require the variable's and option's group permissions. The approved
+policy and binding are captured for activation and retries. Internal original
+variable-policy recovery data is not included in session REST responses.
+
 **Response (200 OK):**
 
 ```json
@@ -1567,3 +1595,9 @@ into arbitrary caller-selected node access.
 - [BreakglassSession](./breakglass-session.md) - Session management
 - [Debug Session](./debug-session.md) - Debug session feature guide
 - [Webhook Setup](./webhook-setup.md) - Authorization webhook configuration
+
+### Debug-session binding selection and cluster selectors
+
+The create-session UI submits the selected visible binding reference even when only one binding is offered. Hidden bindings remain excluded from discovery results but can still be selected explicitly through the API with `bindingRef: "namespace/name"`.
+
+A template's `allowed.clusters` patterns and `allowed.clusterSelector` are alternative direct grants: either may match a cluster. Discovery, admission, and controller activation use the same matching rule; selectors are evaluated against the uniquely resolved, ready ClusterConfig's labels. Existing requester restrictions still apply. A binding selected with `templateSelector` retains compatible template matches when another matching template has incompatible variable constraints. An explicit incompatible `templateRef`, or a selector with only incompatible matches, remains an error.

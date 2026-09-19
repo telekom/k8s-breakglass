@@ -44,6 +44,36 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestBindingOptionEmitsEmptyVariablesWhenAllDisabled(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "mode", InputType: breakglassv1alpha1.InputTypeText}},
+	}}
+	disabled := true
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "ns"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", Disabled: &disabled}},
+	}}
+	controller := &DebugSessionAPIController{log: zaptest.NewLogger(t).Sugar()}
+	detail := controller.buildClusterDetailWithBindings(template, []*breakglassv1alpha1.DebugSessionClusterBinding{binding}, &breakglassv1alpha1.ClusterConfig{}, debugTemplateRequester{})
+	require.Len(t, detail.BindingOptions, 1)
+	assert.NotNil(t, detail.BindingOptions[0].ExtraDeployVariables)
+	assert.Empty(t, detail.BindingOptions[0].ExtraDeployVariables)
+	payload, err := json.Marshal(detail.BindingOptions[0])
+	require.NoError(t, err)
+	assert.Contains(t, string(payload), `"extraDeployVariables":[]`)
+	payload, err = json.Marshal(detail)
+	require.NoError(t, err)
+	var encoded map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(payload, &encoded))
+	assert.Equal(t, "[]", string(encoded["extraDeployVariables"]), "primary binding result must serialize an explicit empty array")
+
+	noBinding := controller.buildClusterDetailWithBindings(template, nil, &breakglassv1alpha1.ClusterConfig{}, debugTemplateRequester{})
+	payload, err = json.Marshal(noBinding)
+	require.NoError(t, err)
+	encoded = nil
+	require.NoError(t, json.Unmarshal(payload, &encoded))
+	assert.Equal(t, "null", string(encoded["extraDeployVariables"]), "no-binding fallback must retain the absent-variable result")
+}
+
 type stagedDebugSessionReader struct {
 	mu     sync.Mutex
 	first  client.Reader
