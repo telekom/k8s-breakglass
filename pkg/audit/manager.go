@@ -825,6 +825,26 @@ func (m *Manager) DebugSessionCreated(ctx context.Context, sessionName, user, cl
 	})
 }
 
+// DebugSessionStarted emits an audit event after a debug session is activated.
+func (m *Manager) DebugSessionStarted(ctx context.Context, sessionName, namespace, user, cluster, templateName string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionStarted,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: user},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+			Cluster:   cluster,
+		},
+		Details: map[string]interface{}{
+			"cluster":      cluster,
+			"templateName": templateName,
+		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
 // DebugSessionTerminated emits an audit event for debug session termination.
 func (m *Manager) DebugSessionTerminated(ctx context.Context, sessionName, user, reason string) {
 	m.Emit(ctx, &Event{
@@ -905,6 +925,63 @@ func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, 
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
 		},
+	})
+}
+
+// DebugSessionValidationFailed emits an audit event when structural validation
+// prevents a debug session from being reconciled.
+func (m *Manager) DebugSessionValidationFailed(ctx context.Context, sessionName, namespace, cluster, reason string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionValidationFailed,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster": cluster,
+			"reason":  reason,
+		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionCleanupFailed emits a bounded, identity-only cleanup failure.
+func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, namespace, cluster string, residual []string) {
+	identities := append([]string(nil), residual...)
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupFailed,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster":   cluster,
+			"residuals": identities,
+		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
+// DebugSessionCleanupRecovered emits an audit event after all tracked
+// resources have been observed gone and a prior cleanup failure is cleared.
+func (m *Manager) DebugSessionCleanupRecovered(ctx context.Context, sessionName, namespace, cluster string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupRecovered,
+		Severity: SeverityInfo,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details:        map[string]interface{}{"cluster": cluster},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
 	})
 }
 
