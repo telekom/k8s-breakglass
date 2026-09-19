@@ -82,6 +82,8 @@ Permission checks run while both local objects are available, not while cleanup
 can remove files between inventory and `stat`. Expiry cases request five-minute
 sessions and wait for their real deadline; they never move an Active session's
 expiry backward through a forbidden status patch.
+The requester obtains a fresh OIDC token after cleanup so the final 404 checks
+prove artifact denial for an authenticated identity, not an expired login token.
 
 Before deleting a verified provider version, cleanup persists ownership evidence
 in the existing `CleanupPublicationObserved` status condition. A restarted worker

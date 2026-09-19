@@ -486,6 +486,8 @@ spec:
 			return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		}, helpers.WaitForStateTimeout, time.Second)
 	}
+	// Keep authentication valid when checking authorization after the real expiry wait.
+	requester.AuthToken = tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.SecurityRequester)
 	require.Equal(t, http.StatusNotFound, status(requester, http.MethodGet, endpoint+"/"+control.Spec.ArtifactID, nil, ""))
 	require.Equal(t, http.StatusNotFound, status(requester, http.MethodGet, endpoint, nil, ""))
 	if e := s.Client.Delete(ctx, control); !apierrors.IsNotFound(e) {
