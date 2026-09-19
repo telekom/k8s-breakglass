@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -919,7 +920,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		} else if podTemplate.Spec.Template != nil {
 			// Use structured pod template (no multi-doc support for structured templates)
 			renderResult = &PodTemplateRenderResult{
-				PodSpec: c.convertDebugPodSpec(podTemplate.Spec.Template.Spec),
+				PodSpec: c.convertDebugPodSpec(podTemplate.Spec.Template.DeepCopy().Spec),
 			}
 		} else {
 			return nil, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
@@ -1027,9 +1028,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		// Only wrap if explicit command is set, otherwise we risk masking entrypoint
 		if len(container.Command) > 0 {
 			// Construct child command
-			childCmd := make([]string, 0)
-			childCmd = append(childCmd, container.Command...)
-			childCmd = append(childCmd, container.Args...)
+			childCmd := slices.Concat(container.Command, container.Args)
 
 			if provider == "tmux" {
 				// tmux new-session -A -s <name> <cmd...>
@@ -1172,9 +1171,7 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
-	containers := make([]corev1.Container, 0)
-	containers = append(containers, spec.InitContainers...)
-	containers = append(containers, spec.Containers...)
+	containers := slices.Concat(spec.InitContainers, spec.Containers)
 	for _, container := range containers {
 		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
 			return err

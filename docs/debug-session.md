@@ -750,7 +750,7 @@ The controller refreshes `status.allowedPods` dynamically as debug pods start, s
 4. Selected option's `schedulingConstraints` (additive)
 5. User's `nodeSelector` (if allowed by template)
 
-Selected options and cluster bindings may add stricter constraints but cannot replace mandatory ones. If a binding or option sets a different value for an existing mandatory `nodeSelector` key, the request is rejected instead of silently weakening the base constraint. `deniedNodeLabels` are additive: a wildcard `*` value denies every value for that key and dominates narrower exact-value entries, while conflicting exact values for the same key are rejected. Required node affinity is combined with Kubernetes-correct AND semantics across selector terms.
+Selected options and cluster bindings may add stricter constraints but cannot replace mandatory ones. If a binding or option sets a different value for an existing mandatory `nodeSelector` key, the request is rejected instead of silently weakening the base constraint. `deniedNodeLabels` are additive: a wildcard `*` value denies every value for that key and dominates narrower exact-value entries, while conflicting exact values for the same key are rejected. Required node affinity is combined with Kubernetes-correct AND semantics across selector terms. The bounded selector product is allocated once; terminal-sharing command arguments and restricted-profile container validation likewise combine their input slices without repeated growth.
 
 ## Namespace Constraints
 

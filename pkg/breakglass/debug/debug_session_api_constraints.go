@@ -927,7 +927,7 @@ func andNodeSelectors(left, right *corev1.NodeSelector) (*corev1.NodeSelector, e
 	}
 
 	out := &corev1.NodeSelector{
-		NodeSelectorTerms: make([]corev1.NodeSelectorTerm, 0),
+		NodeSelectorTerms: make([]corev1.NodeSelectorTerm, 0, len(left.NodeSelectorTerms)*len(right.NodeSelectorTerms)),
 	}
 	for _, leftTerm := range left.NodeSelectorTerms {
 		for _, rightTerm := range right.NodeSelectorTerms {
