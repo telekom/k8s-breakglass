@@ -13,11 +13,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
 
+- Add DebugSession inactivity expiry and explicit terminal evidence retention, preserving the existing unset retention policy and enforcing idle expiry at final authorization and mutation checks.
+
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Align periodic retention with confirmed auxiliary deletions and exclude
+  malformed active sessions from binding-limit preflight (#1339).
+
+- Preserve live terminal retention deadlines across status retries, expire
+  active sessions with missing hard deadlines, fence pod copies after creation,
+  and retire only identity-matched deleted auxiliary inventory (#1339).
+- Bound quota-bootstrap policy reads with a per-pass snapshot while continuing
+  to reserve capacity for every pending session (#1339).
+
+- Preserve auxiliary cleanup evidence on UID/source mismatches, stamp explicit
+  retention when a stored deadline is zero, and deny active-session API actions
+  with a missing hard expiry (#1339).
 
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.
@@ -27,6 +42,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Release-value generation and catalogue validation now consume all seven
   canonical utility-image references, including `dump-reader` and
   `cluster-validator`, while checked-in values remain zero-digest placeholders.
+
+- Preserve effective retention for early debug quota rejection and require complete auxiliary identities before exempting retained resources from cleanup or failed-session bookkeeping.
 
 - Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
 
@@ -38,6 +55,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reconciliation, cleanup, CLI filters, and the frontend.
 - Make terminal cleanup accounting idempotent and avoid decrementing active
   counts for sessions rejected before activation.
+- Preserve explicit retention on early debug-session rejection and use consistent cleanup evidence for deleted pod-template history and unresolved auxiliary identities.
+
+- Preserve prepared operation outcomes after inactivity or hard expiry without granting access, and release cluster cleanup for confirmed retained auxiliary resources.
+
+- Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
+- Keep pending debug sessions in quota-ledger rebuild accounting and block ClusterConfig cleanup while kubectl-debug operation outcome remains `Unknown`.
+
+- Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
+
+- Preserve debug-session cleanup evidence past retention, enforce inactivity in fallback cleanup, and retain explicit evidence deadlines when a cluster is deleted.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
 
 - If a debug session expires after an ephemeral-container intent is persisted
   but before the target write, record the operation as Failed without touching

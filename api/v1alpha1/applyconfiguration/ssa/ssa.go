@@ -189,7 +189,7 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 		result.WithReasonEnded(status.ReasonEnded)
 	}
 
-	// NOTE: LastActivity and ActivityCount are intentionally NOT included here.
+	// NOTE: BreakglassSession LastActivity and ActivityCount are intentionally NOT included here.
 	// These fields are managed exclusively by the activity tracker
 	// (see pkg/webhook/activity_tracker.go) via status merge-patch and must
 	// not be set by the main controller to avoid conflicting updates.
@@ -198,12 +198,22 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 }
 
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
+// Unlike BreakglassSession activity, DebugSession activity is included: callers
+// must use the shared live-read status writers to preserve monotonic updates.
 func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
 
 	result := ac.DebugSessionStatus()
+
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	result.WithActivityCount(status.ActivityCount)
+	if status.RetainedUntil != nil {
+		result.WithRetainedUntil(*status.RetainedUntil)
+	}
 
 	// Set observedGeneration for kstatus compliance
 	if status.ObservedGeneration > 0 {
@@ -1254,6 +1264,13 @@ func DebugSessionConstraintsFrom(c *breakglassv1alpha1.DebugSessionConstraints) 
 		return nil
 	}
 	result := ac.DebugSessionConstraints()
+	if c.IdleTimeout != "" {
+		result.WithIdleTimeout(c.IdleTimeout)
+	}
+	if c.RetainFor != "" {
+		result.WithRetainFor(c.RetainFor)
+	}
+
 	if c.MaxDuration != "" {
 		result.WithMaxDuration(c.MaxDuration)
 	}

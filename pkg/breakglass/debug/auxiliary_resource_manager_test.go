@@ -651,7 +651,10 @@ func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "kept-config", Namespace: "debug-ns"},
 	}
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm).Build()
+	child := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: "kept-child", Namespace: "debug-ns", UID: "child-uid"},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(cm, child).Build()
 	mgr := newTestAuxiliaryResourceManager()
 	session := &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "cleanup-session", Namespace: "breakglass"},
@@ -670,6 +673,9 @@ func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
 					ResourceName: "kept-config",
 					Namespace:    "debug-ns",
 					Created:      true,
+					AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{
+						Kind: "ConfigMap", APIVersion: "v1", ResourceName: "kept-child", Namespace: "debug-ns", UID: "child-uid",
+					}},
 				},
 			},
 		},
@@ -677,8 +683,10 @@ func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
 
 	require.NoError(t, mgr.CleanupAuxiliaryResources(context.Background(), session, fakeClient))
 	require.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	require.False(t, session.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].Deleted)
 	var fetched corev1.ConfigMap
 	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKey{Namespace: "debug-ns", Name: "kept-config"}, &fetched))
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(child), &corev1.ConfigMap{}))
 }
 
 func TestAddAuxiliaryResourceToDeployedResources(t *testing.T) {

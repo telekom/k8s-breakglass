@@ -576,6 +576,8 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 	}
 	return h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
+		// Expired access permits only final operation evidence, never new authorization refs.
+		recordRefs := status.State != breakglassv1alpha1.DebugSessionStateActive || !isDebugSessionExpired(&breakglassv1alpha1.DebugSession{Status: *status}, time.Now().UTC())
 		defer func() {
 			kubectlStatus.Operations = terminalKubectlDebugOperations(kubectlStatus.Operations)
 		}()
@@ -586,11 +588,10 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 			}
 			if operation.State != breakglassv1alpha1.KubectlDebugOperationPrepared {
 				if operation.State == breakglassv1alpha1.KubectlDebugOperationCompleted && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
-					if ref != nil {
+					if ref != nil && recordRefs {
 						addEphemeralContainerRefIfMissing(status, *ref)
 					}
-					if ref != nil && status.State == breakglassv1alpha1.DebugSessionStateActive {
-						addEphemeralContainerRefIfMissing(status, *ref)
+					if ref != nil && recordRefs && status.State == breakglassv1alpha1.DebugSessionStateActive {
 						addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, UID: ref.PodUID, Ready: true})
 					}
 				}
@@ -608,7 +609,7 @@ func (h *KubectlDebugHandler) completeEphemeralContainerOperation(
 				kubectlStatus.Operations = append(kubectlStatus.Operations[:index:index], kubectlStatus.Operations[index+1:]...)
 				kubectlStatus.Operations = append(kubectlStatus.Operations, finalized)
 			}
-			if ref != nil && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
+			if ref != nil && recordRefs && state == breakglassv1alpha1.KubectlDebugOperationCompleted {
 				addEphemeralContainerRefIfMissing(status, *ref)
 				if status.State == breakglassv1alpha1.DebugSessionStateActive {
 					addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: ref.Namespace, Name: ref.PodName, UID: ref.PodUID, Ready: true})
@@ -858,7 +859,7 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 		return nil, kubectlDebugPolicyErrorf("debug session changed during mutation authorization")
 	}
 	if !live.DeletionTimestamp.IsZero() || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) {
+		live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
 		return nil, kubectlDebugPolicyErrorf("debug session is no longer active")
 	}
 	identity := h.operationIdentity(user)
@@ -1407,6 +1408,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		h.recoverAmbiguousCreatedPod(ctx, targetClient, copyPod, err)
 		return nil, fmt.Errorf("failed to create pod copy: %w", err)
 	}
+	postCreateCtx, cancelPostCreate := context.WithTimeout(context.WithoutCancel(ctx), orphanCleanupTimeout)
+	defer cancelPostCreate()
+	if _, err := h.liveSessionForMutation(postCreateCtx, ds, user); err != nil {
+		h.deleteOrphanedPod(postCreateCtx, targetClient, copyPod, err)
+		return nil, fmt.Errorf("pod copy was created after the session fence changed: %w", err)
+	}
 
 	// Calculate expiry (supports day units like "1d")
 	ttl := pc.TTL
@@ -1438,7 +1445,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		Ready:     false, // Will be updated by reconciler
 	}
 
-	if err := h.patchDebugSessionStatusWithRetry(ctx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	if err := h.patchDebugSessionStatusWithRetry(postCreateCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.CopiedPods {

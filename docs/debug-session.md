@@ -2072,3 +2072,58 @@ Active accounting uses the CRD selectable `spec.templateRef` field to bound each
 Active-session accounting uses authoritative, paginated template-scoped reads. Lifecycle transitions update counts immediately; periodic repairs are coalesced per template for 30 seconds within each controller and skip unchanged template status writes. Failed accounting retries remain immediate. Optional pod-template usage metadata failures are logged and retried on the next periodic repair without blocking session cleanup.
 
 Accounting scans and gauge publication are serialized per template within each controller, so an older scan cannot overwrite a newer lifecycle count. Completed operations release their locks; bounded periodic bookkeeping evicts only the oldest template instead of resetting other repair intervals.
+
+### Inactivity and terminal evidence retention
+
+Templates may set `constraints.idleTimeout` to expire an Active session after no successful server-observed debug operation. The initial baseline is the activation `startsAt`; successful API operations advance `lastActivity` and `activityCount`. This records completed server operations, not every byte of a long-running terminal stream. Idle expiry cannot extend the hard session expiry. API actions, kubectl mutations, and the final authorization webhook response reject an elapsed idle deadline, including when it passes during target lookup. Each final access decision uses one freshly sampled timestamp for both hard and idle expiry checks. Controller expiry classification also uses the freshly read status and one post-read timestamp. Missing baseline or invalid configured idle duration fails closed for Active sessions. Pending and PendingApproval requests still count toward binding limits before their activation baseline exists. Job deadline synchronization and allowed-pod refresh recheck live expiry after target reads.
+
+`constraints.retainFor` sets a durable `retainedUntil` when the session becomes terminal. This retains session evidence; it does not delay revocation or resource cleanup. With no explicit retention setting, the existing cleanup policy remains unchanged: `DEBUG_SESSION_RETENTION_PERIOD`, default seven days, using the legacy expiry/creation baseline. A binding may shorten the template's idle timeout or lengthen its minimum evidence-retention period. If cluster deletion terminates a request before its template snapshot exists, the controller resolves template and captured, referenced, or deterministically auto-selected binding retention before persisting the terminal state; failed resolution is retried. Quota admission failure also stamps the effective template/binding retention before any activation snapshot exists; this terminal bookkeeping does not approve the session. Auxiliary resources configured with `deleteAfter: false` do not block retention or failed-session bookkeeping only when their recorded identity includes UID, API version, kind, and resource name (namespace is optional for cluster-scoped resources), while unresolved create outcomes and mismatched identities remain protected. Existing sessions without idle configuration retain their prior behavior.
+
+The periodic cleanup fallback also enforces inactivity expiry. Terminal retention never deletes a session while its status still tracks resources awaiting cleanup or an uncertain create result. Resources explicitly configured to remain after the session are excluded once their creation is confirmed. Cluster deletion stamps the same explicit retention deadline. A completed operation records activity using bounded bookkeeping even if its HTTP request was canceled; a fresh session check still prevents extending an expired session.
+
+Completed and failed kubectl-debug operation history does not delay deletion after the configured retention deadline. Copied pods awaiting cleanup and unresolved operation outcomes remain protected until cleanup or investigation resolves them.
+
+After hard or idle expiry, an already prepared ephemeral-container operation may
+persist its terminal outcome as evidence. This narrow status-only update cannot
+change the session state, expiry, activity, participants, or access references.
+The normal expiry reconciler still performs lifecycle effects. Terminal cleanup
+retries prepared-operation recovery after its grace period and transient errors;
+recovery reads the exact Pod UID and container intent without repeating the target
+mutation. Confirmed policy-retained auxiliary resources do not hold the cluster
+finalizer, while unknown creation outcomes still do, including kubectl-debug
+operations whose durable outcome is `Unknown`.
+
+Quota-ledger bootstrap includes pending sessions even before their admission
+annotation changes to `ready`; a ledger rebuild must not free their reserved
+capacity for a competing request.
+Auxiliary cleanup retires retained or deleted inventory only when its recorded
+UID and source match the durable auxiliary status. Mismatches remain evidence
+requiring reconciliation. A zero retention timestamp is unset and does not
+override explicit `retainFor`; active sessions with no hard expiry cannot be
+joined, left, or terminated through the normal API actions.
+Periodic cleanup also expires those malformed active sessions and stamps their
+retention deadline. Terminal status retries preserve an existing non-zero
+deadline rather than restarting the retention window. Confirmed auxiliary
+deletions retire stale inventory only when its full identity matches.
+The periodic retention pass uses the same identity rule. Binding-limit
+preflight excludes active sessions without a hard deadline even when idle
+expiry is disabled; pending requests continue to count.
+Quota bootstrap loads template, binding and cluster policies once per pass;
+pending requests still consume capacity. Pod-copy operations recheck the live
+session after target creation and roll back the copy if authorization expired
+or changed before its references could be recorded.
+
+Terminal retention cleanup and cluster deletion share the same residual-resource
+predicates. Confirmed deleted pod-template history does not hold a session after
+retention; non-deleted partial records and auxiliary children without UIDs remain
+protected. A pending request rejected for unavailable terminal recording first
+resolves effective retention constraints; an existing snapshot or retention
+deadline remains authoritative. Unresolved binding reads still defer failure
+rather than inventing a retention policy or granting access.
+
+Rejected requests are terminal evidence: explicit `retainFor` is stamped on the
+rejection API transition and is not extended by cleanup retries. Periodic cleanup
+honors that deadline and preserves unresolved resource evidence even after it
+elapses. Rejected requests never count as active sessions.
+
+Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.

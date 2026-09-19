@@ -6118,8 +6118,9 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 				RequestedBy: "alice@example.com",
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
-				State:    breakglassv1alpha1.DebugSessionStateActive,
-				StartsAt: &now,
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 			},
 		}
 
@@ -6169,8 +6170,9 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 				RequestedBy: "alice@example.com",
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
-				State:    breakglassv1alpha1.DebugSessionStateActive,
-				StartsAt: &now,
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 			},
 		}
 
@@ -6842,7 +6844,8 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 				RequestedBy: "alice@example.com",
 			},
 			Status: breakglassv1alpha1.DebugSessionStatus{
-				State: breakglassv1alpha1.DebugSessionStateActive,
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 				Participants: []breakglassv1alpha1.DebugSessionParticipant{
 					{User: "bob@example.com", Role: breakglassv1alpha1.ParticipantRoleViewer, JoinedAt: now},
 				},
@@ -8553,6 +8556,10 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			objects := []client.Object{tt.binding}
 			for i := range tt.existingSessions {
+				if tt.existingSessions[i].Status.State == breakglassv1alpha1.DebugSessionStateActive && tt.existingSessions[i].Status.ExpiresAt == nil {
+					expires := metav1.NewTime(time.Now().Add(time.Hour))
+					tt.existingSessions[i].Status.ExpiresAt = &expires
+				}
 				objects = append(objects, &tt.existingSessions[i])
 			}
 
