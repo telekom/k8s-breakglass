@@ -67,6 +67,9 @@ const (
 
 // DebugSessionTemplateSpec defines the desired state of DebugSessionTemplate.
 type DebugSessionTemplateSpec struct {
+	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
+	// +optional
+	ArtifactCollection *DebugSessionArtifactCollection `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
 	// +optional
 	DisplayName string `json:"displayName,omitempty"`
@@ -792,6 +795,18 @@ type AutoApproveConfig struct {
 
 // DebugSessionConstraints defines limits on debug sessions.
 type DebugSessionConstraints struct {
+	// idleTimeout expires an active session after this duration without a
+	// successful server-observed debug operation. Empty preserves legacy behavior.
+	// +optional
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
+	IdleTimeout string `json:"idleTimeout,omitempty"`
+
+	// retainFor keeps the session object and its terminal evidence after cleanup.
+	// Empty preserves the cleanup service's configured retention policy.
+	// +optional
+	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
+	RetainFor string `json:"retainFor,omitempty"`
+
 	// maxDuration is the maximum allowed session duration.
 	// +optional
 	// +kubebuilder:default="4h"
@@ -1322,6 +1337,12 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 		if template.Spec.Constraints.DefaultDuration != "" {
 			allErrs = append(allErrs, validateDurationFormat(template.Spec.Constraints.DefaultDuration, specPath.Child("constraints").Child("defaultDuration"))...)
 		}
+		if template.Spec.Constraints.IdleTimeout != "" {
+			allErrs = append(allErrs, validatePositiveDurationFormat(template.Spec.Constraints.IdleTimeout, specPath.Child("constraints").Child("idleTimeout"))...)
+		}
+		if template.Spec.Constraints.RetainFor != "" {
+			allErrs = append(allErrs, validatePositiveDurationFormat(template.Spec.Constraints.RetainFor, specPath.Child("constraints").Child("retainFor"))...)
+		}
 	}
 
 	// Validate schedulingOptions if specified
@@ -1372,4 +1393,13 @@ type DebugSessionTemplateList struct {
 
 func init() {
 	SchemeBuilder.Register(&DebugSessionTemplate{}, &DebugSessionTemplateList{})
+}
+
+// DebugSessionArtifactCollection enables only controller-owned fixed recipes.
+type DebugSessionArtifactCollection struct {
+	// allowedRecipes is the administrator-selected collection allowlist.
+	// +kubebuilder:validation:MaxItems=2
+	// +kubebuilder:validation:items:Enum=system-summary.v1;crashdump-collection.v1
+	// +required
+	AllowedRecipes []string `json:"allowedRecipes"`
 }

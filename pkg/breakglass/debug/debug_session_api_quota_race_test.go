@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -235,6 +236,72 @@ func TestAdmitCreatedDebugSessionFailsClosedWhenObjectChanges(t *testing.T) {
 			err := controller.admitCreatedDebugSession(t.Context(), session)
 			require.Error(t, err)
 			assert.False(t, errors.Is(err, errDebugSessionCandidateChanged), "object validation must stop retry")
+		})
+	}
+}
+
+func TestAPIQuotaRejectionStampsEffectiveRetention(t *testing.T) {
+	for _, bindingRetention := range []string{"", "4h", "snapshot"} {
+		t.Run(bindingRetention, func(t *testing.T) {
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"production"}}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxConcurrentSessions: 1, RetainFor: "2h"}}}
+			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue}}}}
+			objects := []client.Object{template, cluster}
+			if bindingRetention == "4h" {
+				objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass", UID: "binding-uid"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"production"}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: bindingRetention}}})
+			}
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(objects...).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok {
+					session.UID = "rejected-uid"
+					// Consume quota after API preflight but before durable reservation.
+					other := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "winner", Namespace: "breakglass", UID: "winner-uid"}, Spec: session.Spec, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
+					require.NoError(t, cl.Create(ctx, other))
+					if bindingRetention == "snapshot" {
+						require.NoError(t, cl.Create(ctx, obj, opts...))
+						session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "6h"}}
+						return cl.Status().Update(ctx, session)
+					}
+				}
+				return cl.Create(ctx, obj, opts...)
+			}}).Build()
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).WithQuotaNamespace("controller").WithDisableEmail(true)
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true)
+				c.Set("username", "alice@example.com")
+				c.Next()
+			})
+			require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
+			before := time.Now()
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(`{"templateRef":"template","cluster":"production"}`)))
+			require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+			sessions := &breakglassv1alpha1.DebugSessionList{}
+			require.NoError(t, cli.List(t.Context(), sessions))
+			found := false
+			for _, session := range sessions.Items {
+				if session.UID != "rejected-uid" {
+					continue
+				}
+				found = true
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, session.Status.State)
+				if bindingRetention != "snapshot" {
+					require.Nil(t, session.Status.ResolvedTemplate, "quota rejection must not manufacture approval")
+				}
+				require.NotNil(t, session.Status.RetainedUntil)
+				duration := 2 * time.Hour
+				if bindingRetention == "4h" {
+					duration = 4 * time.Hour
+				}
+				if bindingRetention == "snapshot" {
+					duration = 6 * time.Hour
+				}
+				require.WithinDuration(t, before.Add(duration), session.Status.RetainedUntil.Time, 5*time.Second)
+				deadline := session.Status.RetainedUntil.DeepCopy()
+				require.Error(t, controller.admitCreatedDebugSession(t.Context(), &session))
+				require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(&session), &session))
+				require.Equal(t, deadline, session.Status.RetainedUntil, "retry preserves terminal retention")
+			}
+			require.True(t, found)
 		})
 	}
 }

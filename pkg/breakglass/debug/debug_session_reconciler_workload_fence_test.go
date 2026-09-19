@@ -78,6 +78,12 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 		WithScheme(s).
 		WithObjects(cc, secret, ds, template).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).
+		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if obj.GetUID() == "" {
+				obj.SetUID("created-hub-resource-uid")
+			}
+			return cl.Create(ctx, obj, opts...)
+		}}).
 		Build()
 	target := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).
@@ -135,13 +141,14 @@ func TestDeployDebugResourcesRejectsSessionInvalidationBeforeEachWrite(t *testin
 
 func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
 	ds.Spec.IdentityProviderName = "e2e-idp"
 	ds.Spec.IdentityProviderIssuer = "https://issuer.example/realms/e2e"
 	_, err := c.activateSession(context.Background(), ds, template, nil)
 	require.NoError(t, err)
-	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)
 	require.NotNil(t, ds.Status.ExpiresAt)
 	require.Len(t, ds.Status.Participants, 1)
 	require.Equal(t, ds.Spec.IdentityProviderName, ds.Status.Participants[0].IdentityProviderName)
@@ -257,4 +264,20 @@ func TestDeployDebugResourcesFencesEveryAuxiliaryDocument(t *testing.T) {
 	second := &corev1.ConfigMap{}
 	secondErr := target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: "second"}, second)
 	require.True(t, apierrors.IsNotFound(secondErr), "the second document must be fenced, got: %v", secondErr)
+}
+
+func TestDeployDebugResourcesRejectsIdleExpiryBeforeWrite(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	c.beforeDebugTargetWrite = func(_ string) {
+		live := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
+		activity := metav1.NewTime(time.Now().Add(-2 * time.Minute))
+		live.Status.LastActivity = &activity
+		live.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}
+		require.NoError(t, c.client.Status().Update(context.Background(), live))
+	}
+	require.Error(t, c.deployDebugResources(context.Background(), ds, template))
+	var deployments appsv1.DeploymentList
+	require.NoError(t, target.List(context.Background(), &deployments))
+	require.Empty(t, deployments.Items)
 }

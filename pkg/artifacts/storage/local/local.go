@@ -468,6 +468,43 @@ func (store *Store) Inventory(ctx context.Context, object artifactstorage.Object
 	return []artifactstorage.Version{versionFromMetadata(metadata)}, nil
 }
 
+// InventoryKey recovers the stored identity from the fixed local header for
+// restart cleanup. Callers must still compare the recovered identity before
+// using the normal exact-object delete path.
+func (store *Store) InventoryKey(ctx context.Context, key string) ([]artifactstorage.Version, error) {
+	if store == nil || store.artifactRoot == nil || store.stagingRoot == nil || key == "" || (!validDigest(key) && !validArtifactIDKey(key)) {
+		return nil, errors.New("local artifact key is invalid")
+	}
+	if err := store.verifyRuntimeFence(); err != nil {
+		return nil, err
+	}
+	store.mutationMu.RLock()
+	defer store.mutationMu.RUnlock()
+	if err := store.ambiguityError(); err != nil {
+		return nil, err
+	}
+	file, stat, err := openRegular(store.artifactRoot, objectName(key), objectMode, store.config)
+	if errors.Is(err, unix.ENOENT) {
+		return []artifactstorage.Version{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("open exact local artifact for inventory: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+	if stat.Nlink != 1 || stat.Size < headerSize {
+		return nil, artifactstorage.ErrConflict
+	}
+	headerBytes := make([]byte, headerSize)
+	if err := readFullContext(ctx, file, headerBytes); err != nil {
+		return nil, err
+	}
+	metadata, err := unmarshalHeader(headerBytes)
+	if err != nil || metadata.BackendInstanceID != store.instanceID || metadata.Key != key || metadata.Size < 1 || stat.Size != headerSize+metadata.Size {
+		return nil, artifactstorage.ErrConflict
+	}
+	return []artifactstorage.Version{versionFromMetadata(metadata)}, nil
+}
+
 func (store *Store) DeleteVersion(ctx context.Context, object artifactstorage.Object, version artifactstorage.Version) (result error) {
 	if err := store.ready(object); err != nil {
 		return err
@@ -1141,6 +1178,18 @@ func validDigest(value string) bool {
 	}
 	decoded, err := hex.DecodeString(value)
 	return err == nil && len(decoded) == sha256.Size
+}
+
+func validArtifactIDKey(value string) bool {
+	if len(value) != len("dsa-")+24 || !strings.HasPrefix(value, "dsa-") {
+		return false
+	}
+	for _, character := range value[len("dsa-"):] {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 func objectName(key string) string { return "object-" + key }

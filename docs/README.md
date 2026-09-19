@@ -14,6 +14,8 @@ Complete documentation for the breakglass privilege escalation system.
 
 ## Deployment & Operations
 
+- **[Diagnostic artifact backend](./diagnostic-artifacts.md)** - Opt-in storage, authenticated collection and retained evidence lifecycle
+
 - **[Deployment Targets](./deployment-targets.md)** - Kustomize targets (base, debug, dev) and manifest generation
 - **[Production Deployment Checklist](./production-deployment-checklist.md)** - Pre-production readiness verification
 - **[Upgrade Guide](./upgrade-guide.md)** - Version upgrades, migration, and rollback procedures
@@ -82,7 +84,7 @@ Every utility is published as an immutable,
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
-- **[Terminal recording](./terminal-recording.md)** - Reserved fail-closed terminal-byte transport and retention validation
+- **[Terminal recording](./terminal-recording.md)** - Controller-owned terminal-byte transport, durable retention, and replay validation
 - **[DebugSession cleanup recovery](./debug-session-cleanup.md)** - UID-fenced cleanup and legacy recovery behavior
 - **[OCI runbook bundles](./runbook-bundle-contract.md)** - Additive, digest-pinned documentation image volumes for debug templates
 - **[Debug Session Cluster Bindings](./debug-session-cluster-binding.md)** - Delegate template access to teams and clusters

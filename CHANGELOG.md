@@ -9,15 +9,118 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Wire opt-in diagnostic collection admission through bounded durable reservations,
+  restart-safe upload nonce binding, fixed spoke Jobs and guarded artifact access.
+- Add a shared durable terminal-recording reservation, finalization, recovery and
+  retained replay contract with independent cleanup and immutable target metadata.
+
+- Added API helper coverage for authenticated diagnostic artifact collection,
+  inventory, and download requests.
+
+- Add explicit diagnostic-artifact host construction for S3 or single-replica
+  local storage, exact namespace-scoped credential reads, token key rotation,
+  live-session authorization, and API/controller registration seams.
+
+- Add the provider-independent diagnostic artifact backend primitives, typed
+  immutable `DebugSessionArtifact` contract, bounded archive upload service,
+  versioned S3 adapter, and fixed least-privilege collector Job renderer.
+
+- Add durable controller-owned DebugSession connection leases with target and
+  session fencing, opaque epochs, absolute expiry, live-reader checks, and
+  UID-preconditioned terminal revocation.
+- Track artifact collector resources by exact spoke UID and resource version,
+  with target-cluster writes fenced by the live session and expiry deadline.
 - Publish the generic `dump-reader` and provider-neutral `cluster-validator`
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
+
+- Add DebugSession inactivity expiry and explicit terminal evidence retention, preserving the existing unset retention policy and enforcing idle expiry at final authorization and mutation checks.
 
 - The debug-session-catalogue Helm chart provides administrator-authored,
   restricted DebugSession profiles for workload, network, storage, dump-access,
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Pass collector node, detail level, and age limits using the image's
+  `DIAGNOSTIC_*` environment contract so crashdump collection can start and
+  requested recipe inputs are preserved (#1340).
+
+- Remove the artifact controller's unnecessary hub Job watch, which blocked
+  cache synchronization under least-privilege RBAC; collector Jobs are checked
+  through their spoke clients (#1340).
+
+- Reject URL userinfo and non-origin components in configured S3 endpoints.
+
+- Accept the Kubernetes-added `enableServiceLinks: true` default when verifying
+  live workload Pod identity, while preserving explicit opt-outs (#1340).
+- Return HTTP 413 for uploads rejected by the HTTP body limit instead of
+  reporting a retryable provider outage (#1340).
+
+- Enforce HTTPS origin-only artifact `controllerURL` (reject userinfo and non-root paths) and fail closed when kubectl-debug mutation lease validation is unavailable.
+- Register connection leases in the production client scheme; validate complete
+  collector Job execution, live artifact-list bindings, collection body limits,
+  and distinguish invalid uploads from provider failures.
+- Preserve effective retention for early debug quota rejection and require complete auxiliary identities before exempting retained resources from cleanup or failed-session bookkeeping.
+
+- Preserve per-template accounting repair intervals and metric publication order; align the built-in rejected mock session and CLI rejection test with `Rejected`.
+- Fence terminal recording with exclusive durable stream claims, preserve successor ownership on close, and reject missing session expiry before target access.
+
+- Remove completed diagnostic collector artifacts when their session ends, while preserving independent terminal-recording retention.
+
+- Clean up rejected artifact reservations and revoked collectors, preserve replacement artifact identities during upload cleanup, and document in-flight terminal output revocation limits.
+
+- Authenticate artifact collection and reads with the DebugSession middleware, reject controller-less artifact startup and invalid bucket names, and exclude bindings at their exact expiry.
+
+- Reject overflowing artifact frame lengths, lease epochs and schema versions; update AWS SDK dependencies for GO-2026-5764.
+
+- Assign the terminal recording metadata policy before durable reservation so recorded streams satisfy real API admission.
+
+- Recheck live session authorization after connection Lease reads and clamp renewals to the committed deadline.
+
+- Reject overflowing terminal frame allocations and enforce non-sniffable binary terminal responses while preserving exact output bytes.
+
+- Preserve artifact publication evidence during cleanup races, bound collector reservation concurrency, and recheck requester identity and idle expiry around streamed reads.
+
+- Reserve terminal evidence in the shared artifact backend before execution, preserve incomplete streams after revocation, and replay retained evidence without exposing provider storage details.
+
+- Recheck terminal stream and replay authorization at byte boundaries, stop
+  unrecorded input at the recording limit, and require a real full-duplex
+  transport with bounded concurrent streams.
+
+- Add the bounded, hash-chained terminal-byte recorder primitive while keeping
+  terminal recording fail closed until the controller proxy and durable store
+  are configured.
+
+- Route enabled terminal sessions through the controller-owned bounded
+  exec/attach recorder, pin finalized artifacts to their live Pod UID and
+  lease binding, and deny direct target exec/attach authorization.
+
+- Preserve partial terminal evidence across stream failures, keep artifact
+  publication when status updates conflict, and retry retention cleanup after
+  backend or already-deleted-object races.
+- Derive provider-compatible diagnostic artifact keys from immutable resource UIDs, preserving isolation and recovery of existing uploads.
+
+- Recheck artifact upload token, session binding, plan/runtime/recipe claims, and
+  expiry immediately before provider publication and before making an artifact
+  available; stream downloads through the same live authorization fence.
+
+- Retain ambiguous cleanup evidence when status lost the object digest, require
+  repeated empty inventory observations, reject stale artifact UID/resource
+  versions, and render collector Jobs with ordered execution, a bounded digest
+  annotation, and the required output filesystem group.
+- Preserve explicit retention on early debug-session rejection and use consistent cleanup evidence for deleted pod-template history and unresolved auxiliary identities.
+
+- Preserve prepared operation outcomes after inactivity or hard expiry without granting access, and release cluster cleanup for confirmed retained auxiliary resources.
+
+- Preserve pending binding quotas and explicit retention during cluster deletion, reject renewal without a live deadline, and fence idle expiry after workload reads.
+
+- Allow debug-session retention cleanup after completed operation history while preserving unresolved outcomes and pending copied-pod cleanup.
+
+- Preserve debug-session cleanup evidence past retention, enforce inactivity in fallback cleanup, and retain explicit evidence deadlines when a cluster is deleted.
+
+- Retry final quota-admission completion after same-UID resource-version
+  conflicts, while refusing terminal or replacement sessions.
 
 - Retry session initialization conflicts between API creation and quota recovery
   without resetting approval deadlines or overwriting later lifecycle states.

@@ -732,6 +732,79 @@ type DebugSessionRequest struct {
 	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
 }
 
+// DebugSessionArtifactRequest is the administrator-selected collection input.
+// The server resolves the session lease and target Pod; callers cannot supply
+// provider or uploader details.
+type DebugSessionArtifactRequest struct {
+	Recipe        string `json:"recipe"`
+	PodNamespace  string `json:"podNamespace"`
+	PodName       string `json:"podName"`
+	DetailLevel   string `json:"detailLevel,omitempty"`
+	MaxAgeMinutes int64  `json:"maxAgeMinutes,omitempty"`
+}
+
+// DebugSessionArtifact is the public artifact metadata returned by the API.
+type DebugSessionArtifact struct {
+	ArtifactID    string    `json:"artifactID"`
+	Recipe        string    `json:"recipe"`
+	RecipeVersion int       `json:"recipeVersion"`
+	State         string    `json:"state"`
+	Size          int64     `json:"size,omitempty"`
+	SHA256        string    `json:"sha256,omitempty"`
+	ExpiresAt     time.Time `json:"expiresAt"`
+}
+
+// CollectDebugSessionArtifact reserves one artifact through the registered API.
+func (c *APIClient) CollectDebugSessionArtifact(ctx context.Context, namespace, session string, req DebugSessionArtifactRequest) (*DebugSessionArtifact, error) {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/debugSessionArtifacts/"+namespace+"/"+session, req)
+	if err != nil {
+		return nil, fmt.Errorf("collect debug session artifact: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusCreated {
+		return nil, fmt.Errorf("collect debug session artifact: status=%d", resp.StatusCode)
+	}
+	var result DebugSessionArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode collected artifact: %w", err)
+	}
+	return &result, nil
+}
+
+// ListDebugSessionArtifacts reads the authenticated artifact inventory.
+func (c *APIClient) ListDebugSessionArtifacts(ctx context.Context, namespace, session string) ([]DebugSessionArtifact, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/debugSessionArtifacts/"+namespace+"/"+session, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list debug session artifacts: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("list debug session artifacts: status=%d", resp.StatusCode)
+	}
+	var result []DebugSessionArtifact
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode artifact list: %w", err)
+	}
+	return result, nil
+}
+
+// DownloadDebugSessionArtifact downloads the authenticated archive bytes.
+func (c *APIClient) DownloadDebugSessionArtifact(ctx context.Context, namespace, session, artifactID string) ([]byte, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/debugSessionArtifacts/"+namespace+"/"+session+"/"+artifactID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("download debug session artifact: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("download debug session artifact: status=%d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read downloaded artifact: %w", err)
+	}
+	return data, nil
+}
+
 // CreateDebugSession creates a debug session via the REST API.
 // This is the preferred way to create debug sessions in E2E tests as it goes through
 // the real session controller which sets proper status, sends notifications, etc.
@@ -939,7 +1012,8 @@ func (c *APIClient) RenewDebugSession(ctx context.Context, t *testing.T, session
 	return nil
 }
 
-// TerminateDebugSession terminates a debug session via the REST API
+// TerminateDebugSession retries bounded optimistic conflicts; each POST
+// reauthorizes the live session on the server.
 func (c *APIClient) TerminateDebugSession(ctx context.Context, t *testing.T, sessionName string) error {
 	cid := uuid.New().String()
 	path := fmt.Sprintf("%s/%s/terminate", debugSessionsBasePath, sessionName)
@@ -948,23 +1022,35 @@ func (c *APIClient) TerminateDebugSession(ctx context.Context, t *testing.T, ses
 		t.Logf("TerminateDebugSession: sending request with correlationID=%s, session=%s", cid, sessionName)
 	}
 
-	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, nil, cid)
-	if err != nil {
-		return fmt.Errorf("failed to terminate debug session (cid=%s): %w", cid, err)
+	for attempt := 0; ; attempt++ {
+		resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, nil, cid)
+		if err != nil {
+			return fmt.Errorf("failed to terminate debug session (cid=%s): %w", cid, err)
+		}
+		body, readErr := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if readErr != nil {
+			return fmt.Errorf("read terminate debug session response (cid=%s): %w", cid, readErr)
+		}
+		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+			if t != nil {
+				t.Logf("TerminateDebugSession: terminated session=%s, correlationID=%s", sessionName, cid)
+			}
+			return nil
+		}
+		var response struct {
+			Code string `json:"code"`
+		}
+		if resp.StatusCode != http.StatusConflict || attempt >= 3 || json.Unmarshal(body, &response) != nil || response.Code != "CONFLICT" {
+			return fmt.Errorf("failed to terminate debug session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+		}
+		if t != nil {
+			t.Logf("TerminateDebugSession: optimistic conflict, retry %d/3, correlationID=%s", attempt+1, cid)
+		}
+		if !sleepOrCancel(ctx, time.Duration(attempt+1)*100*time.Millisecond) {
+			return fmt.Errorf("retry terminate debug session (cid=%s): %w", cid, ctx.Err())
+		}
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
-		return fmt.Errorf("failed to terminate debug session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
-	}
-
-	if t != nil {
-		t.Logf("TerminateDebugSession: terminated session=%s, correlationID=%s", sessionName, cid)
-	}
-
-	return nil
 }
 
 // GetDebugSession retrieves a debug session via the REST API

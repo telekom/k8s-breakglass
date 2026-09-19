@@ -254,19 +254,23 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	}
 	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
 		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || !time.Now().Before(live.Status.ExpiresAt.Time) {
+		live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
 		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
 		return
 	}
 	session = live
 	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
-
 	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ExpiresAt = &newExpiry
 		status.RenewalCount = newRenewalCount
 	}); err != nil {
 		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
 		return
+	}
+	if c.connectionLeases != nil {
+		if err := c.connectionLeases.RenewSession(apiCtx, session, newExpiry.Time); err != nil {
+			reqLog.Warnw("Renewal committed; connection lease convergence will retry", "session", name, "error", err)
+		}
 	}
 
 	// Session status is the durable renewal commit. A target Job update is
@@ -338,7 +342,16 @@ func canRenewDebugSession(session *breakglassv1alpha1.DebugSession, identity deb
 }
 
 func isDebugSessionExpired(session *breakglassv1alpha1.DebugSession, now time.Time) bool {
-	return session != nil && session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now)
+	if session == nil {
+		return false
+	}
+	if session.Status.ExpiresAt != nil && !session.Status.ExpiresAt.Time.After(now) {
+		return true
+	}
+	if idle, ok := debugSessionIdleDeadline(session); ok && !idle.After(now) {
+		return true
+	}
+	return false
 }
 
 func rejectUnexpectedDebugActionBody(ctx *gin.Context) bool {

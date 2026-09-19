@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -34,7 +35,10 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -570,7 +574,39 @@ func TestHandleInjectEphemeralContainer_RejectsUnsafeSecurityContextBeforeIntent
 	session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
 		EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
 	}
-	_, controller := setupTestRouter(t, session)
+	now := time.Now().UTC()
+	duration := int32(3600)
+	holder := string(session.UID)
+	session.Status.ConnectionLease = &breakglassv1alpha1.DebugSessionConnectionLease{
+		Namespace:     session.Namespace,
+		Name:          "session-lease",
+		UID:           "session-lease-uid",
+		HolderUID:     session.UID,
+		TargetUID:     "target-uid",
+		ProfileDigest: "sha256:" + strings.Repeat("a", 64),
+		Epoch:         1,
+		ExpiresAt:     metav1.NewTime(now.Add(time.Hour)),
+	}
+	lease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      session.Status.ConnectionLease.Name,
+			Namespace: session.Status.ConnectionLease.Namespace,
+			UID:       session.Status.ConnectionLease.UID,
+			Annotations: map[string]string{
+				connectionLeaseEpochAnnotation:      "1",
+				connectionLeaseTargetUIDAnnotation:  "target-uid",
+				connectionLeaseProfileAnnotation:    session.Status.ConnectionLease.ProfileDigest,
+				connectionLeaseSessionAnnotation:    holder,
+				connectionLeaseGenerationAnnotation: "0",
+			},
+		},
+		Spec: coordinationv1.LeaseSpec{
+			HolderIdentity:       &holder,
+			LeaseDurationSeconds: &duration,
+			RenewTime:            &metav1.MicroTime{Time: now},
+		},
+	}
+	_, controller := setupTestRouter(t, session, lease)
 	updates := 0
 	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
@@ -991,6 +1027,147 @@ func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
 
 			assert.Equal(t, http.StatusForbidden, rr.Code)
 			assert.Contains(t, rr.Body.String(), "not allowed to modify debug resources")
+		})
+	}
+}
+
+func TestKubectlDebugMutationHandlersRejectMissingOrRevokedLease(t *testing.T) {
+	for _, operation := range []struct {
+		path string
+		body any
+	}{
+		{"injectEphemeralContainer", InjectEphemeralContainerRequest{Namespace: "default", PodName: "target", ContainerName: "debugger", Image: "busybox"}},
+		{"createPodCopy", CreatePodCopyRequest{Namespace: "default", PodName: "target"}},
+		{"createNodeDebugPod", CreateNodeDebugPodRequest{NodeName: "worker"}},
+	} {
+		for _, revoked := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/revoked=%t", operation.path, revoked), func(t *testing.T) {
+				session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+				session.UID = "session-uid"
+				session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+					PodCopy:             &breakglassv1alpha1.PodCopyConfig{Enabled: true},
+					NodeDebug:           &breakglassv1alpha1.NodeDebugConfig{Enabled: true},
+				}
+				_, controller := setupTestRouter(t, session)
+				core, logs := observer.New(zap.WarnLevel)
+				controller.log = zap.New(core).Sugar()
+				if revoked {
+					controller.connectionLeases = NewConnectionLeaseService(&leaseUIDClient{Client: controller.client})
+					lease, err := controller.connectionLeases.AcquireForSession(context.Background(), session, "cluster-uid")
+					require.NoError(t, err)
+					require.NoError(t, controller.client.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+					session.Status.ConnectionLease = &lease
+					require.NoError(t, controller.client.Status().Update(context.Background(), session))
+					require.NoError(t, controller.connectionLeases.RevokeSession(context.Background(), session))
+				}
+				mutations := 0
+				targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{
+					ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+					Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+				}).WithInterceptorFuncs(interceptor.Funcs{
+					Create: func(context.Context, client.WithWatch, client.Object, ...client.CreateOption) error {
+						mutations++
+						return errors.New("unexpected target creation")
+					},
+					SubResourceUpdate: func(context.Context, client.Client, string, client.Object, ...client.SubResourceUpdateOption) error {
+						mutations++
+						return errors.New("unexpected target update")
+					},
+				}).Build()
+				controller.WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+				router := setupAuthenticatedDebugSessionRouter(t, controller, "test-user", "", nil)
+				body, err := json.Marshal(operation.body)
+				require.NoError(t, err)
+				req := httptest.NewRequest(http.MethodPost, "/api/debugSessions/active-session/"+operation.path, bytes.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+				require.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+				require.Len(t, logs.All(), 1)
+				require.Contains(t, fmt.Sprint(logs.All()[0].ContextMap()["error"]), "connection lease")
+				require.Zero(t, mutations)
+				require.NoError(t, controller.client.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+				require.Nil(t, session.Status.KubectlDebugStatus)
+			})
+		}
+	}
+}
+
+func TestKubectlDebugMutationHandlers_RequireLeaseService(t *testing.T) {
+	expiresAt := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "active-session",
+			Namespace: "default",
+			Labels: map[string]string{
+				DebugSessionLabelKey: "active-session",
+			},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster:     "test-cluster",
+			RequestedBy: "test-user",
+			TemplateRef: "test-template",
+		},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+			},
+		},
+	}
+
+	_, ctrl := setupTestRouter(t, session)
+	ctrl.connectionLeases = nil
+	router := setupAuthenticatedDebugSessionRouter(t, ctrl, "test-user", "", nil)
+
+	tests := []struct {
+		name string
+		path string
+		body interface{}
+	}{
+		{
+			name: "inject ephemeral container",
+			path: "/api/debugSessions/active-session/injectEphemeralContainer",
+			body: InjectEphemeralContainerRequest{
+				Namespace:     "default",
+				PodName:       "test-pod",
+				ContainerName: "debug",
+				Image:         "busybox",
+			},
+		},
+		{
+			name: "create pod copy",
+			path: "/api/debugSessions/active-session/createPodCopy",
+			body: CreatePodCopyRequest{
+				Namespace: "default",
+				PodName:   "test-pod",
+			},
+		},
+		{
+			name: "create node debug pod",
+			path: "/api/debugSessions/active-session/createNodeDebugPod",
+			body: CreateNodeDebugPodRequest{
+				NodeName: "worker-1",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body, err := json.Marshal(tt.body)
+			require.NoError(t, err)
+
+			req, err := http.NewRequest(http.MethodPost, tt.path, bytes.NewBuffer(body))
+			require.NoError(t, err)
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			router.ServeHTTP(rr, req)
+			assert.Equal(t, http.StatusInternalServerError, rr.Code)
+			assertErrorResponse(t, rr, "INTERNAL_ERROR")
+			assert.Contains(t, rr.Body.String(), "failed to validate debug session")
 		})
 	}
 }

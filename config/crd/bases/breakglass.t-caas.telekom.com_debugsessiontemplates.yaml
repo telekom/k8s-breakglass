@@ -1186,6 +1186,23 @@ spec:
                       type: string
                     type: array
                 type: object
+              artifactCollection:
+                description: artifactCollection explicitly enables fixed diagnostic
+                  recipes for active participants.
+                properties:
+                  allowedRecipes:
+                    description: allowedRecipes is the administrator-selected collection
+                      allowlist.
+                    items:
+                      enum:
+                      - system-summary.v1
+                      - crashdump-collection.v1
+                      type: string
+                    maxItems: 2
+                    type: array
+                required:
+                - allowedRecipes
+                type: object
               audit:
                 description: audit configures audit logging for debug sessions.
                 properties:
@@ -1329,6 +1346,12 @@ spec:
                       not specified.
                     pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
+                  idleTimeout:
+                    description: |-
+                      idleTimeout expires an active session after this duration without a
+                      successful server-observed debug operation. Empty preserves legacy behavior.
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
+                    type: string
                   maxConcurrentSessions:
                     default: 2
                     description: maxConcurrentSessions limits concurrent debug sessions
@@ -1352,6 +1375,12 @@ spec:
                       Removal target: v1beta1.'
                     format: int32
                     type: integer
+                  retainFor:
+                    description: |-
+                      retainFor keeps the session object and its terminal evidence after cleanup.
+                      Empty preserves the cleanup service's configured retention policy.
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
+                    type: string
                 type: object
               deprecated:
                 default: false
