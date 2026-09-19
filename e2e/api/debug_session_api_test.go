@@ -193,6 +193,10 @@ type DebugSessionAPIClient struct {
 }
 
 func setupNativeDebugSessionGrant(t *testing.T, setup *helpers.TestSetup) {
+	setupNativeDebugSessionGrantForUser(t, setup, helpers.TestUsers.DebugSessionRequester, helpers.TestUsers.Approver)
+}
+
+func setupNativeDebugSessionGrantForUser(t *testing.T, setup *helpers.TestSetup, requester, approver helpers.TestUser) {
 	t.Helper()
 	escalation := helpers.NewEscalationBuilder(
 		helpers.GenerateUniqueName("e2e-debug-session-grant"),
@@ -200,22 +204,22 @@ func setupNativeDebugSessionGrant(t *testing.T, setup *helpers.TestSetup) {
 	).WithEscalatedGroup("breakglass:platform:debugsession").
 		WithMaxValidFor("30m").
 		WithAllowedClusters(setup.Cluster).
-		WithAllowedGroups(helpers.TestUsers.DebugSessionRequester.Groups...).
-		WithApproverUsers(helpers.TestUsers.Approver.Email).
+		WithAllowedGroups(requester.Groups...).
+		WithApproverUsers(approver.Email).
 		Build()
 	require.NoError(t, setup.CreateResource(escalation))
 	helpers.WaitForEscalationReady(t, setup.Ctx, setup.Client, escalation.Name, escalation.Namespace, helpers.WaitForStateTimeout)
 
-	session, err := setup.TC.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateSessionAndWaitForPending(
+	session, err := setup.TC.ClientForUser(requester).CreateSessionAndWaitForPending(
 		setup.Ctx, t, helpers.SessionRequest{
 			Cluster: setup.Cluster,
-			User:    helpers.TestUsers.DebugSessionRequester.Email,
+			User:    requester.Email,
 			Group:   "breakglass:platform:debugsession",
 			Reason:  "E2E native DebugSession authorization grant",
 		}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	setup.Cleanup.Add(session)
-	require.NoError(t, setup.ApproverClient().ApproveSessionViaAPI(setup.Ctx, t, session.Name, session.Namespace))
+	require.NoError(t, setup.TC.ClientForUser(approver).ApproveSessionViaAPI(setup.Ctx, t, session.Name, session.Namespace))
 	helpers.WaitForSessionState(t, setup.Ctx, setup.Client, session.Name, session.Namespace,
 		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
 }
