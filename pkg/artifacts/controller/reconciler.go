@@ -261,7 +261,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	if targetNamespace == "" {
 		targetNamespace = object.Spec.SessionRef.Namespace
 	}
-	secretName := object.Spec.ArtifactID + "-upload"
+	secretName := collectorResourceName(object, "Secret", "-upload")
 	if err := reconciler.persistTargetIdentity(ctx, &object, session.Spec.Cluster, targetNamespace); err != nil {
 		return err
 	}
@@ -302,7 +302,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 	if err := validateTokenSecret(secret, object, targetNamespace, secretRef.OperationID); err != nil {
 		return err
 	}
-	jobName := object.Spec.ArtifactID + "-collect"
+	jobName := collectorResourceName(object, "Job", "-collect")
 	jobRef, err := reconciler.persistResourceIntent(ctx, &object, "Job", targetNamespace, jobName)
 	if err != nil {
 		return err
@@ -349,6 +349,18 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 		return err
 	}
 	return nil
+}
+
+func collectorResourceName(object breakglassv1alpha1.DebugSessionArtifact, kind, suffix string) string {
+	legacy := object.Spec.ArtifactID + suffix
+	for _, ref := range object.Status.Resources {
+		if ref.Kind == kind && ref.Name == legacy {
+			return legacy
+		}
+	}
+	// Immutable Secrets remain cached while old Pods use them, even after
+	// deletion. A reusable reservation slot must not reuse that Secret name.
+	return "dsa-" + string(object.UID) + suffix
 }
 
 func validateTokenSecret(secret corev1.Secret, object breakglassv1alpha1.DebugSessionArtifact, expectedNamespace, operationID string) error {

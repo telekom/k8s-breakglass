@@ -117,6 +117,18 @@ func TestValidateCollectorJobRequiresMatchingArtifactOwnership(t *testing.T) {
 	}
 }
 
+func TestCollectorResourceNamesFenceReservationIncarnations(t *testing.T) {
+	first := artifactForValidation()
+	second := *first.DeepCopy()
+	second.UID = "next-reservation-uid"
+	for kind, suffix := range map[string]string{"Secret": "-upload", "Job": "-collect"} {
+		require.NotEqual(t, collectorResourceName(first, kind, suffix), collectorResourceName(second, kind, suffix))
+		first.Status.Resources = append(first.Status.Resources, breakglassv1alpha1.ArtifactResourceReference{Kind: kind, Name: first.Spec.ArtifactID + suffix})
+		require.Equal(t, first.Spec.ArtifactID+suffix, collectorResourceName(first, kind, suffix), "persisted legacy intents remain reconcilable")
+		require.Equal(t, "dsa-"+string(second.UID)+suffix, collectorResourceName(second, kind, suffix))
+	}
+}
+
 func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
@@ -142,11 +154,12 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
 	require.NoError(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
 	var spokeJob batchv1.Job
-	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: artifact.Spec.ArtifactID + "-collect"}, &spokeJob))
+	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-collect"}, &spokeJob))
 	var spokeSecret corev1.Secret
-	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: artifact.Spec.ArtifactID + "-upload"}, &spokeSecret))
+	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-upload"}, &spokeSecret))
+	require.Contains(t, spokeJob.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: "BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: spokeSecret.Name}, Key: "token", Optional: boolPtr(false)}}})
 	var hubJob batchv1.Job
-	require.Error(t, hub.Get(context.Background(), types.NamespacedName{Namespace: artifact.Namespace, Name: artifact.Spec.ArtifactID + "-collect"}, &hubJob))
+	require.Error(t, hub.Get(context.Background(), types.NamespacedName{Namespace: artifact.Namespace, Name: spokeJob.Name}, &hubJob))
 	var updated breakglassv1alpha1.DebugSessionArtifact
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(&artifact), &updated))
 	require.Equal(t, string(spokeSecret.UID), updated.Status.Resources[0].UID)
@@ -196,7 +209,7 @@ func TestCreateOutcomePersistsUIDBeforePostWriteRevocation(t *testing.T) {
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(&artifact), updated))
 	require.NotEmpty(t, updated.Status.Resources[0].UID)
 	require.NoError(t, reconciler.cleanupSpokeResources(context.Background(), updated))
-	require.Error(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: artifact.Spec.ArtifactID + "-upload"}, &corev1.Secret{}))
+	require.Error(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-upload"}, &corev1.Secret{}))
 }
 
 func TestCleanupRetainsUIDLessIntentAndBlocksFinalization(t *testing.T) {

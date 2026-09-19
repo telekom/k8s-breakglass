@@ -135,11 +135,12 @@ func (store *Store) PutIfAbsent(ctx context.Context, object artifactstorage.Obje
 	}
 	digesting := &boundedDigestReader{reader: io.LimitReader(source, object.Size+1), expected: object.Size, expectedSHA256: object.SHA256}
 	output, err := store.client.PutObject(ctx, &awss3.PutObjectInput{
-		Bucket:      aws.String(store.config.Bucket),
-		Key:         aws.String(key),
-		Body:        digesting,
-		ContentType: aws.String("application/gzip"),
-		IfNoneMatch: aws.String("*"),
+		Bucket:        aws.String(store.config.Bucket),
+		Key:           aws.String(key),
+		Body:          digesting,
+		ContentLength: aws.Int64(object.Size),
+		ContentType:   aws.String("application/gzip"),
+		IfNoneMatch:   aws.String("*"),
 		Metadata: map[string]string{
 			runtimeBindingHeader: object.RuntimeBindingDigest,
 			sha256Header:         object.SHA256,

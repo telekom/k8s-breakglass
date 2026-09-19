@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -104,6 +105,43 @@ func TestPublicationDoesNotRetryAfterAmbiguousProviderResponse(t *testing.T) {
 	_, err = store.PutIfAbsent(context.Background(), artifactstorage.Object{Key: "key", RuntimeBindingDigest: "binding", Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:])}, strings.NewReader(content))
 	require.Error(t, err)
 	require.Equal(t, 1, transport.calls)
+}
+
+func TestPublicationSendsKnownLengthForSignedStreamingBody(t *testing.T) {
+	requests := make(chan *http.Request, 1)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength <= 0 {
+			w.WriteHeader(http.StatusLengthRequired)
+			_, _ = io.WriteString(w, "<Error><Code>MissingContentLength</Code></Error>")
+			return
+		}
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("read signed S3 publication: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		requests <- r
+		w.Header().Set("X-Amz-Version-Id", "published-version")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	credentials := aws.CredentialsProviderFunc(func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{AccessKeyID: "fixture-access-key", SecretAccessKey: "fixture-only-signing-key"}, nil
+	})
+	client := awss3.NewFromConfig(aws.Config{Region: "eu-central-1", Credentials: credentials, HTTPClient: server.Client()}, func(options *awss3.Options) {
+		options.BaseEndpoint = aws.String(server.URL)
+		options.UsePathStyle = true
+	})
+	store, err := NewWithClient(client, Config{Region: "eu-central-1", Bucket: "artifacts", InstanceID: "instance-0123456789", RequireVersioned: true})
+	require.NoError(t, err)
+	content := "artifact"
+	digest := sha256.Sum256([]byte(content))
+	metadata, err := store.PutIfAbsent(context.Background(), artifactstorage.Object{Key: "key", RuntimeBindingDigest: "binding", Size: int64(len(content)), SHA256: hex.EncodeToString(digest[:])}, strings.NewReader(content))
+	require.NoError(t, err)
+	require.Equal(t, "published-version", metadata.VersionID)
+	request := <-requests
+	require.True(t, strings.HasPrefix(request.Header.Get("Authorization"), "AWS4-HMAC-SHA256 "))
+	require.Equal(t, "*", request.Header.Get("If-None-Match"))
 }
 
 func TestBucketProviderGrammar(t *testing.T) {

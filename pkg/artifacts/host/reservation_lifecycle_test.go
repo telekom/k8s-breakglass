@@ -355,9 +355,9 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
 	require.NoError(t, err)
 	secret := &corev1.Secret{}
-	require.NoError(t, spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: record.ArtifactID + "-upload"}, secret))
+	require.NoError(t, spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: "dsa-" + record.ArtifactUID + "-upload"}, secret))
 	job := &batchv1.Job{}
-	require.NoError(t, spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: record.ArtifactID + "-collect"}, job))
+	require.NoError(t, spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: "dsa-" + record.ArtifactUID + "-collect"}, job))
 	require.Equal(t, "registry.example/collector@sha256:"+strings.Repeat("c", 64), job.Spec.Template.Spec.InitContainers[0].Image)
 	route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
 	body := validLocalArchive(t, record.Expected)
@@ -392,6 +392,8 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.Equal(t, http.StatusCreated, second.Code, second.Body.String())
 	var next backend.PublicRecord
 	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &next))
+	nextRecord, err := repo.Get(ctx, "hub", "session", next.ArtifactID)
+	require.NoError(t, err)
 	require.NoError(t, spoke.Delete(ctx, pod))
 	replacement := pod.DeepCopy()
 	replacement.ResourceVersion = ""
@@ -402,7 +404,7 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.NoError(t, err)
 	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: nextKey})
 	require.Error(t, err)
-	require.True(t, apierrors.IsNotFound(spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: next.ArtifactID + "-upload"}, &corev1.Secret{})))
+	require.True(t, apierrors.IsNotFound(spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: "dsa-" + nextRecord.ArtifactUID + "-upload"}, &corev1.Secret{})))
 }
 
 func TestConcurrentCollectorReservationsHaveTwoDurableSlots(t *testing.T) {

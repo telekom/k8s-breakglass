@@ -141,3 +141,15 @@ original fixture evidence, triggers reconciliation, and must remove only the
 owned artifact while keeping its control artifact readable. The missing-config
 case repairs the original reference without creating a substitute ClusterConfig
 or changing its UID. These controls exist only in the disposable E2E fixture.
+
+Collector Job and immutable upload Secret names include the reservation's CR UID,
+not its reusable artifact slot. A real kubelet can retain an immutable Secret's
+old value while an earlier Pod references that name, even after the Secret is
+deleted and recreated. Persisted legacy resource intents remain reconcilable.
+Each case waits for its session's artifact cleanup before the next provider
+inventory baseline is captured, including when an earlier assertion fails.
+
+S3 publication supplies the verified staged size as `Content-Length`; the
+digest-checking reader does not expose its length to the AWS SDK. Signed writes
+without that length are rejected by the real versioned MinIO fixture with 411,
+not treated as a successful or automatically retried upload.

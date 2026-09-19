@@ -85,7 +85,20 @@ spec:
 	require.NoError(t, err)
 	sessionNamespace := session.Namespace
 	require.NotEmpty(t, sessionNamespace)
-	t.Cleanup(func() { _ = requester.TerminateDebugSession(ctx, t, session.Name) })
+	t.Cleanup(func() {
+		if err := requester.TerminateDebugSession(ctx, t, session.Name); err != nil {
+			t.Logf("session cleanup termination: %v", err)
+		}
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			var artifacts breakglassv1alpha1.DebugSessionArtifactList
+			require.NoError(c, s.Client.List(ctx, &artifacts, client.InNamespace(ns)))
+			for _, artifact := range artifacts.Items {
+				if artifact.Spec.SessionRef.Namespace == sessionNamespace && artifact.Spec.SessionRef.Name == session.Name {
+					c.Errorf("session artifact %s is still cleaning up in state %s", artifact.Name, artifact.Status.State)
+				}
+			}
+		}, helpers.WaitForStateTimeout, time.Second, "finish cleanup before the next case captures its provider inventory")
+	})
 	active := helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, sessionNamespace, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
 	require.NotNil(t, active.Status.ConnectionLease)
 	require.NotEmpty(t, active.Status.ConnectionLease.UID)
@@ -155,6 +168,18 @@ spec:
 		admitted, e := requester.CollectDebugSessionArtifact(ctx, sessionNamespace, session.Name, request)
 		require.NoError(t, e)
 		var object breakglassv1alpha1.DebugSessionArtifact
+		t.Cleanup(func() {
+			if !t.Failed() {
+				return
+			}
+			t.Logf("collector artifact %s UID=%s state=%s revision=%d resources=%+v", object.Name, object.UID, object.Status.State, object.Status.LifecycleRevision, object.Status.Resources)
+			for _, ref := range object.Status.Resources {
+				if ref.Kind == "Job" {
+					output, err := exec.CommandContext(ctx, "kubectl", "-n", ref.Namespace, "logs", "job/"+ref.Name, "--all-containers=true", "--tail=40").CombinedOutput()
+					t.Logf("collector Job %s logs (error=%v):\n%s", ref.Name, err, output)
+				}
+			}
+		})
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
 			require.NoError(c, s.Client.Get(ctx, client.ObjectKey{Namespace: ns, Name: admitted.ArtifactID}, &object))
 			assert.Equal(c, "Available", string(object.Status.State), "artifact %s UID=%s revision=%d", object.Name, object.UID, object.Status.LifecycleRevision)
