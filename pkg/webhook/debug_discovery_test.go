@@ -21,6 +21,17 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
+func TestDebugParticipantProviderMatchesRejectsBlankProvenanceAfterLookupFailure(t *testing.T) {
+	participant := breakglassv1alpha1.DebugSessionParticipant{}
+
+	require.True(t, debugParticipantProviderMatches(participant, "", "", true),
+		"blank provenance remains valid only for successful empty-provider compatibility")
+	require.False(t, debugParticipantProviderMatches(participant, "", "", false),
+		"failed provider lookup must not authorize blank participant provenance")
+	require.False(t, debugParticipantProviderMatches(participant, "", "provider", true),
+		"blank issuer compatibility must not accept a resolved provider")
+}
+
 type recordingDebugSessionReader struct {
 	client.Reader
 	listOptions client.ListOptions

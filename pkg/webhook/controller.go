@@ -1708,7 +1708,8 @@ func debugParticipantProviderMatches(
 	providerLookupOK bool,
 ) bool {
 	if issuer == "" {
-		return participant.IdentityProviderName == "" && participant.IdentityProviderIssuer == ""
+		return providerLookupOK && provider == "" &&
+			participant.IdentityProviderName == "" && participant.IdentityProviderIssuer == ""
 	}
 	return providerLookupOK &&
 		provider != "" &&
