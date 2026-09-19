@@ -15,6 +15,16 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
+// admissionPolicyVersion includes UIDs so replacing an object under the same
+// name cannot reuse the authorization established by the create request.
+func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) string {
+	version := fmt.Sprintf("template:%s:%s:%s;binding:none", template.Name, template.UID, template.ResourceVersion)
+	if binding != nil {
+		version = fmt.Sprintf("template:%s:%s:%s;binding:%s:%s:%s:%s", template.Name, template.UID, template.ResourceVersion, binding.Namespace, binding.Name, binding.UID, binding.ResourceVersion)
+	}
+	return version
+}
+
 type approvedPodTemplateSnapshot struct {
 	Spec           *breakglassv1alpha1.DebugPodTemplateSpec `json:"spec,omitempty"`
 	Labels         map[string]string                        `json:"labels,omitempty"`

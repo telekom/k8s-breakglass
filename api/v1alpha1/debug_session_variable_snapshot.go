@@ -10,6 +10,9 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
+// DebugSessionAdmissionPolicyAnnotation fences API admission against later policy edits.
+const DebugSessionAdmissionPolicyAnnotation = "breakglass.t-caas.telekom.com/admission-policy-version"
+
 // CanInitializeLegacyVariablePolicy permits only an exact copy of the already
 // persisted template policy when no binding variable intersection was applied.
 func CanInitializeLegacyVariablePolicy(old DebugSessionStatus, policy []ExtraDeployVariable) bool {

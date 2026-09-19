@@ -1463,10 +1463,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The reconciler continues to use SSA for status updates and lifecycle management,
 	// which is the correct boundary: Create() for API-driven creation, SSA for
 	// controller-driven reconciliation.
+	// Bind the request to the exact policy objects validated above, before the
+	// create event can reach the reconciler. A later edit requires a new request.
+	if session.Annotations == nil {
+		session.Annotations = map[string]string{}
+	}
+	session.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation] = admissionPolicyVersion(template, resolvedBinding)
 	if c.quotaEnabled {
-		if session.Annotations == nil {
-			session.Annotations = map[string]string{}
-		}
 		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
 	}
 	if err := c.client.Create(apiCtx, session); err != nil {
