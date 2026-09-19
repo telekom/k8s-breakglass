@@ -934,6 +934,35 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 	user := helpers.TestUsers.DebugSessionRequester
 	allowRenewal := false
 
+	// Native DebugSession creation is itself gated by an approved
+	// breakglass:platform:debugsession grant. Provision that grant through the
+	// normal request/approval API flow so this focused fixture exercises the
+	// provider-bound authorization contract rather than relying on ambient state.
+	grantEscalation := helpers.NewEscalationBuilder(
+		helpers.GenerateUniqueName("hard-expiry-debug-grant"),
+		s.namespace,
+	).WithEscalatedGroup("breakglass:platform:debugsession").
+		WithMaxValidFor("15m").
+		WithAllowedClusters(spokeCluster).
+		WithAllowedGroups("debug-session-test-group").
+		WithApproverUsers(helpers.TestUsers.Approver.Email).
+		Build()
+	s.cleanup.Add(grantEscalation)
+	s.Require().NoError(s.hubClient.Create(ctx, grantEscalation), "debug-session grant escalation must be created")
+	grantAPI := s.createAPIClientForUser(user)
+	grant, err := grantAPI.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
+		Cluster: spokeCluster,
+		User:    user.Email,
+		Group:   "breakglass:platform:debugsession",
+		Reason:  "Focused hard-expiry proof - native DebugSession grant",
+	}, helpers.WaitForStateTimeout)
+	s.Require().NoError(err, "debug-session grant must be requested")
+	s.cleanup.Add(grant)
+	s.Require().NoError(s.approverAPI.ApproveSessionViaAPI(ctx, t, grant.Name, grant.Namespace),
+		"debug-session grant must be approved")
+	helpers.WaitForSessionState(t, ctx, s.hubClient, grant.Name, grant.Namespace,
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+
 	// The old endpoint accepted AdmissionReview traffic independently of the
 	// authenticated DebugSession API. Its retirement is proved behaviorally by
 	// posting a real AdmissionReview-shaped request and requiring an HTTP 404.
