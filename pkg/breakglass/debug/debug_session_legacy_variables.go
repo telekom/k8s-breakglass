@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 
@@ -15,14 +16,33 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
-// admissionPolicyVersion includes UIDs so replacing an object under the same
-// name cannot reuse the authorization established by the create request.
-func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) string {
-	version := fmt.Sprintf("template:%s:%s:%s;binding:none", template.Name, template.UID, template.ResourceVersion)
-	if binding != nil {
-		version = fmt.Sprintf("template:%s:%s:%s;binding:%s:%s:%s:%s", template.Name, template.UID, template.ResourceVersion, binding.Namespace, binding.Name, binding.UID, binding.ResourceVersion)
+// admissionPolicyVersion fingerprints identity and policy content, excluding
+// status and server bookkeeping so controller status updates do not invalidate
+// an otherwise unchanged request. UIDs still detect same-name replacement.
+func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (string, error) {
+	policyMetadata := func(meta metav1.ObjectMeta) metav1.ObjectMeta {
+		return metav1.ObjectMeta{Name: meta.Name, Namespace: meta.Namespace, UID: meta.UID, Labels: meta.Labels, Annotations: meta.Annotations}
 	}
-	return version
+	templatePolicy := *template
+	templatePolicy.TypeMeta = metav1.TypeMeta{}
+	templatePolicy.ObjectMeta = policyMetadata(template.ObjectMeta)
+	templatePolicy.Status = breakglassv1alpha1.DebugSessionTemplateStatus{}
+	var bindingPolicy *breakglassv1alpha1.DebugSessionClusterBinding
+	if binding != nil {
+		bindingCopy := *binding
+		bindingCopy.TypeMeta = metav1.TypeMeta{}
+		bindingCopy.ObjectMeta = policyMetadata(binding.ObjectMeta)
+		bindingCopy.Status = breakglassv1alpha1.DebugSessionClusterBindingStatus{}
+		bindingPolicy = &bindingCopy
+	}
+	raw, err := json.Marshal(struct {
+		Template *breakglassv1alpha1.DebugSessionTemplate
+		Binding  *breakglassv1alpha1.DebugSessionClusterBinding
+	}{&templatePolicy, bindingPolicy})
+	if err != nil {
+		return "", fmt.Errorf("encode admission policy: %w", err)
+	}
+	return fmt.Sprintf("sha256:%x", sha256.Sum256(raw)), nil
 }
 
 type approvedPodTemplateSnapshot struct {

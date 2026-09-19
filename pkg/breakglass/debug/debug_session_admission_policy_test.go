@@ -20,7 +20,7 @@ import (
 )
 
 func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
-	for _, change := range []string{"unchanged", "template edited", "binding edited", "template replaced", "binding replaced", "no binding unchanged", "binding added"} {
+	for _, change := range []string{"unchanged", "template edited", "binding edited", "template replaced", "binding replaced", "no binding unchanged", "binding added", "template status", "no binding template status", "binding status", "template spec", "binding spec", "template annotation", "binding annotation"} {
 		t.Run(change, func(t *testing.T) {
 			template := &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "original-template"},
@@ -39,8 +39,8 @@ func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
 				},
 			}
 			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "default"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue}}}}
-			builder := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, cluster).WithStatusSubresource(&breakglassv1alpha1.DebugSession{})
-			noBinding := change == "no binding unchanged" || change == "binding added"
+			builder := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, cluster).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, template, binding)
+			noBinding := strings.HasPrefix(change, "no binding") || change == "binding added"
 			if !noBinding {
 				builder = builder.WithObjects(binding)
 			}
@@ -79,7 +79,29 @@ func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
 			} else {
 				require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(object), object))
 			}
-			if strings.HasSuffix(change, "edited") {
+			if strings.HasSuffix(change, "status") {
+				previousVersion := object.GetResourceVersion()
+				condition := metav1.Condition{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Reconciled"}
+				switch typed := object.(type) {
+				case *breakglassv1alpha1.DebugSessionTemplate:
+					typed.Status.Conditions = []metav1.Condition{condition}
+				case *breakglassv1alpha1.DebugSessionClusterBinding:
+					typed.Status.Conditions = []metav1.Condition{condition}
+				}
+				require.NoError(t, hub.Status().Update(t.Context(), object))
+				require.NotEqual(t, previousVersion, object.GetResourceVersion(), "status updates change resource versions without changing policy")
+			} else if strings.HasSuffix(change, "spec") {
+				switch typed := object.(type) {
+				case *breakglassv1alpha1.DebugSessionTemplate:
+					typed.Spec.Allowed.Clusters = append(typed.Spec.Allowed.Clusters, "another-cluster")
+				case *breakglassv1alpha1.DebugSessionClusterBinding:
+					typed.Spec.Clusters = append(typed.Spec.Clusters, "another-cluster")
+				}
+				require.NoError(t, hub.Update(t.Context(), object))
+			} else if strings.HasSuffix(change, "annotation") {
+				object.SetAnnotations(map[string]string{"changed": "after-admission"})
+				require.NoError(t, hub.Update(t.Context(), object))
+			} else if strings.HasSuffix(change, "edited") {
 				object.SetLabels(map[string]string{"changed": "after-admission"})
 				require.NoError(t, hub.Update(t.Context(), object))
 			} else if strings.HasSuffix(change, "replaced") {
@@ -92,7 +114,7 @@ func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
 			_, err := controller.handlePending(t.Context(), session)
 			require.NoError(t, err)
 			require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(session), session))
-			if change == "unchanged" || change == "no binding unchanged" {
+			if change == "unchanged" || change == "no binding unchanged" || strings.HasSuffix(change, "status") {
 				require.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, session.Status.State)
 				require.NotNil(t, session.Status.ResolvedTemplate)
 			} else {
