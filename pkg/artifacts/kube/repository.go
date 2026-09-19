@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"math"
 
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -27,6 +28,8 @@ type Repository struct {
 	client            ctrlclient.Client
 	artifactNamespace string
 }
+
+const cleanupObservedCondition = "CleanupPublicationObserved"
 
 func NewRepository(client ctrlclient.Client) (*Repository, error) {
 	return NewRepositoryInNamespace(client, "")
@@ -154,6 +157,7 @@ func Record(object *breakglassv1alpha1.DebugSessionArtifact) backend.Record {
 		Size:                 object.Status.Size,
 		SHA256:               object.Status.SHA256,
 		CleanupAmbiguous:     object.Status.CleanupAmbiguous,
+		CleanupObserved:      apimeta.IsStatusConditionTrue(object.Status.Conditions, cleanupObservedCondition),
 		ResourceVersion:      object.ResourceVersion,
 	}
 }
@@ -167,6 +171,13 @@ func statusFromRecord(record backend.Record, existing breakglassv1alpha1.DebugSe
 	existing.Size = record.Size
 	existing.SHA256 = record.SHA256
 	existing.CleanupAmbiguous = record.CleanupAmbiguous
+	if record.CleanupObserved {
+		apimeta.SetStatusCondition(&existing.Conditions, metav1.Condition{
+			Type: cleanupObservedCondition, Status: metav1.ConditionTrue,
+			Reason: "OwnedVersionObserved", Message: "An exact provider version matched the artifact binding before deletion.",
+			ObservedGeneration: objectGeneration,
+		})
+	}
 	if record.Recording != nil {
 		existing.Recording = apiRecording(record.Recording)
 	}

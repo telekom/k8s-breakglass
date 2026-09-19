@@ -39,6 +39,37 @@ func TestStatusFromRecordPreservesDurableEvidence(t *testing.T) {
 	require.Equal(t, existing.Conditions, updated.Conditions)
 }
 
+func TestCleanupOwnershipEvidenceSurvivesRepositoryRecreation(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	object := &breakglassv1alpha1.DebugSessionArtifact{
+		ObjectMeta: metav1.ObjectMeta{Name: "dsa-0123456789abcdef01234567", Namespace: "ns", UID: "artifact-uid"},
+		Spec: breakglassv1alpha1.DebugSessionArtifactSpec{
+			ArtifactID: "dsa-0123456789abcdef01234567",
+			SessionRef: breakglassv1alpha1.ArtifactSessionReference{Namespace: "ns", Name: "session", UID: "session-uid"},
+		},
+		Status: breakglassv1alpha1.DebugSessionArtifactStatus{State: breakglassv1alpha1.ArtifactStateDeleting, LifecycleRevision: 1},
+	}
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(object).WithObjects(object).Build()
+	repository, err := NewRepository(kubeClient)
+	require.NoError(t, err)
+	record, err := repository.Get(ctx, "ns", "session", object.Name)
+	require.NoError(t, err)
+	require.False(t, record.CleanupObserved)
+	record.CleanupObserved = true
+	record.Generation++
+	require.NoError(t, repository.Update(ctx, record, 1))
+
+	restarted, err := NewRepository(kubeClient)
+	require.NoError(t, err)
+	recovered, err := restarted.Get(ctx, "ns", "session", object.Name)
+	require.NoError(t, err)
+	require.True(t, recovered.CleanupObserved)
+	require.Equal(t, backend.StateDeleting, recovered.State)
+	require.EqualValues(t, 2, recovered.Generation)
+}
+
 func TestUpdateRejectsUIDReplacementBeforeStatusWrite(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

@@ -81,7 +81,11 @@ spec:
 `}}
 	require.NoError(t, s.Client.Create(ctx, template))
 	t.Cleanup(func() { _ = s.Client.Delete(ctx, template) })
-	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "30m", Reason: "artifact real collector proof"})
+	duration := "30m"
+	if cleanup == "expire" {
+		duration = "5m"
+	}
+	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: duration, Reason: "artifact real collector proof"})
 	require.NoError(t, err)
 	sessionNamespace := session.Namespace
 	require.NotEmpty(t, sessionNamespace)
@@ -147,16 +151,14 @@ spec:
 		if backend == "s3" {
 			args = []string{"-n", ns, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--", "/fixture", "s3-inventory"}
 		}
-		output, e := exec.CommandContext(ctx, "kubectl", args...).Output()
-		require.NoError(t, e)
+		command := exec.CommandContext(ctx, "kubectl", args...)
+		var stderr bytes.Buffer
+		command.Stderr = &stderr
+		output, e := command.Output()
+		require.NoError(t, e, stderr.String())
 		result := []string{}
 		for _, name := range strings.Fields(string(output)) {
 			if !strings.HasSuffix(name, "/.breakglass-artifact-instance-v1") {
-				if backend == "local" {
-					mode, e := exec.CommandContext(ctx, "kubectl", "-n", ns, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--", "stat", "-c", "%a %u %g", name).Output()
-					require.NoError(t, e)
-					require.Equal(t, "600 65532 65532", strings.TrimSpace(string(mode)))
-				}
 				result = append(result, name)
 			}
 		}
@@ -315,7 +317,15 @@ spec:
 		got, e := requester.DownloadDebugSessionArtifact(ctx, sessionNamespace, session.Name, control.Spec.ArtifactID)
 		return e == nil && bytes.Equal(got, controlData)
 	}, helpers.WaitForStateTimeout, time.Second)
-	require.Len(t, files(), len(baseline)+2)
+	availableFiles := files()
+	require.Len(t, availableFiles, len(baseline)+2)
+	if backend == "local" {
+		for _, name := range availableFiles {
+			mode, e := exec.CommandContext(ctx, "kubectl", "-n", ns, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--", "stat", "-c", "%a %u %g", name).CombinedOutput()
+			require.NoError(t, e, string(mode))
+			require.Equal(t, "600 65532 65532", strings.TrimSpace(string(mode)))
+		}
+	}
 	metadata, err := requester.ListDebugSessionArtifacts(ctx, sessionNamespace, session.Name)
 	require.NoError(t, err)
 	require.Len(t, metadata, 2)
@@ -438,15 +448,6 @@ spec:
 	}, helpers.WaitForStateTimeout, time.Second, "failed cleanup must retain finalizer and resource inventory")
 	restore()
 	restored = true
-	// A metadata update triggers an immediate retry after repairing the fixture.
-	var retry breakglassv1alpha1.DebugSessionArtifact
-	require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(first), &retry))
-	beforeRetry := retry.DeepCopy()
-	if retry.Annotations == nil {
-		retry.Annotations = map[string]string{}
-	}
-	retry.Annotations["artifact-fixture-repaired"] = time.Now().Format(time.RFC3339Nano)
-	require.NoError(t, s.Client.Patch(ctx, &retry, client.MergeFrom(beforeRetry)))
 	require.Eventually(t, func() bool {
 		return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKeyFromObject(first), &breakglassv1alpha1.DebugSessionArtifact{}))
 	}, helpers.WaitForStateTimeout, time.Second)
@@ -470,10 +471,8 @@ spec:
 	case "terminate":
 		require.NoError(t, requester.TerminateDebugSession(ctx, t, session.Name))
 	case "expire":
-		require.NoError(t, s.Client.Get(ctx, client.ObjectKeyFromObject(active), active))
-		before := active.DeepCopy()
-		active.Status.ExpiresAt = &metav1.Time{Time: time.Now().Add(-time.Minute)}
-		require.NoError(t, s.Client.Status().Patch(ctx, active, client.MergeFrom(before)))
+		require.NotNil(t, active.Status.ExpiresAt)
+		helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, sessionNamespace, breakglassv1alpha1.DebugSessionStateExpired, time.Until(active.Status.ExpiresAt.Time)+helpers.WaitForStateTimeout)
 	case "delete":
 		require.NoError(t, s.Client.Delete(ctx, active))
 	}

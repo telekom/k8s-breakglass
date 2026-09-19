@@ -113,6 +113,7 @@ type Record struct {
 	SHA256               string
 	Metadata             storage.Metadata
 	CleanupAmbiguous     bool
+	CleanupObserved      bool
 	ResourceVersion      string
 }
 
@@ -591,7 +592,6 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 			return service.persist(ctx, &record, record.Generation-1)
 		}
 	}
-	publicationObserved := false
 	emptyObservations := 0
 	for attempt := 0; attempt < 6 && emptyObservations < 2; attempt++ {
 		versions, err := service.store.Inventory(ctx, object)
@@ -615,7 +615,14 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 				return ErrConflict
 			}
 			found = true
-			publicationObserved = true
+			if !record.CleanupObserved {
+				// Persist ownership before deletion so a lost completion write is recoverable.
+				record.CleanupObserved = true
+				record.Generation++
+				if err := service.persist(ctx, &record, record.Generation-1); err != nil {
+					return err
+				}
+			}
 			if err := service.store.DeleteVersion(ctx, object, version); err != nil {
 				return err
 			}
@@ -626,7 +633,7 @@ func (service *Service) Cleanup(ctx context.Context, record Record, terminal Sta
 		}
 		emptyObservations++
 	}
-	if emptyObservations < 2 || !publicationObserved {
+	if emptyObservations < 2 || !record.CleanupObserved {
 		record.State = StateUnknown
 		record.CleanupAmbiguous = true
 		record.Generation++

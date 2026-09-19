@@ -78,6 +78,16 @@ reading the retained control artifact, then verifies provider and tracked Job/
 Secret cleanup. Local object files must remain mode 0600 and UID/GID 65532; S3
 inventory includes all versions and delete markers so hidden versions cannot
 masquerade as successful cleanup.
+Permission checks run while both local objects are available, not while cleanup
+can remove files between inventory and `stat`. Expiry cases request five-minute
+sessions and wait for their real deadline; they never move an Active session's
+expiry backward through a forbidden status patch.
+
+Before deleting a verified provider version, cleanup persists ownership evidence
+in the existing `CleanupPublicationObserved` status condition. A restarted worker
+can then finish after a lost completion-status write and two empty inventories.
+Without that evidence, an unobserved publication remains ambiguous and retains
+its finalizer; inventory errors and foreign versions still prevent finalization.
 
 The crashdump source is harmless synthetic text seeded only inside the disposable
 Kind nodes at `/var/lib/systemd/coredump/core.artifact-kind-fixture`. Tests inspect

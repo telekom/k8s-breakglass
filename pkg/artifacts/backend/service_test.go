@@ -22,8 +22,9 @@ import (
 )
 
 type memoryRepository struct {
-	record  Record
-	updates int
+	record      Record
+	updates     int
+	updateError func(Record) error
 }
 
 func (repository *memoryRepository) Get(_ context.Context, namespace, session, artifact string) (Record, error) {
@@ -36,6 +37,11 @@ func (repository *memoryRepository) Get(_ context.Context, namespace, session, a
 func (repository *memoryRepository) Update(_ context.Context, record Record, expected int64) error {
 	if repository.record.Generation != expected {
 		return ErrConflict
+	}
+	if repository.updateError != nil {
+		if err := repository.updateError(record); err != nil {
+			return err
+		}
 	}
 	repository.record = record
 	repository.updates++
@@ -50,6 +56,7 @@ type fakeStore struct {
 	backendID         string
 	versions          []storage.Version
 	inventoryCalls    int
+	deleteCalls       int
 	inventorySequence [][]storage.Version
 	opened            bool
 }
@@ -92,6 +99,7 @@ func (store *fakeStore) InventoryKey(context.Context, string) ([]storage.Version
 	return append([]storage.Version(nil), store.versions...), nil
 }
 func (store *fakeStore) DeleteVersion(context.Context, storage.Object, storage.Version) error {
+	store.deleteCalls++
 	return nil
 }
 
@@ -247,6 +255,55 @@ func TestDownloadDiscardsBytesWhenIdentityChangesDuringProviderRead(t *testing.T
 			require.Equal(t, make([]byte, 6), buffer)
 		})
 	}
+}
+
+func TestCleanupRecoversAfterProviderDeletionAndLostStatusUpdate(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "uid", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
+	version := storage.Version{VersionID: "one", RuntimeBindingDigest: "binding", Size: 4, SHA256: repository.record.SHA256}
+	store := &fakeStore{backendID: "backend", inventorySequence: [][]storage.Version{{version}, {}, {}}}
+	repository.updateError = func(record Record) error {
+		if record.State == StateDeleted {
+			return ErrConflict
+		}
+		return nil
+	}
+	service := newServiceForTest(t, repository, store, allowAuthorizer{})
+	require.ErrorIs(t, service.Cleanup(context.Background(), repository.record, StateDeleted), ErrConflict)
+	require.Equal(t, StateDeleting, repository.record.State)
+	require.Equal(t, 3, store.inventoryCalls)
+
+	repository.updateError = nil
+	restarted := newServiceForTest(t, repository, store, allowAuthorizer{})
+	require.NoError(t, restarted.Cleanup(context.Background(), repository.record, StateDeleted))
+	require.Equal(t, StateDeleted, repository.record.State)
+	require.False(t, repository.record.CleanupAmbiguous)
+}
+
+func TestCleanupRequiresDurableOwnershipBeforeDeletion(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "uid", RuntimeBindingDigest: "binding", State: StateAvailable, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64)}}
+	version := storage.Version{VersionID: "one", RuntimeBindingDigest: "binding", Size: 4, SHA256: repository.record.SHA256}
+	store := &fakeStore{backendID: "backend", versions: []storage.Version{version}}
+	repository.updateError = func(record Record) error {
+		if record.CleanupObserved {
+			return ErrConflict
+		}
+		return nil
+	}
+	service := newServiceForTest(t, repository, store, allowAuthorizer{})
+	require.ErrorIs(t, service.Cleanup(context.Background(), repository.record, StateDeleted), ErrConflict)
+	require.Zero(t, store.deleteCalls)
+	require.False(t, repository.record.CleanupObserved)
+}
+
+func TestCleanupOwnershipEvidenceDoesNotAuthorizeForeignVersions(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "dsa-0123456789abcdef01234567", ArtifactUID: "uid", RuntimeBindingDigest: "binding", State: StateDeleting, Generation: 1, Size: 4, SHA256: strings.Repeat("a", 64), CleanupObserved: true}}
+	version := storage.Version{VersionID: "foreign", RuntimeBindingDigest: "different-binding", Size: 4, SHA256: repository.record.SHA256}
+	store := &fakeStore{backendID: "backend", versions: []storage.Version{version}}
+	service := newServiceForTest(t, repository, store, allowAuthorizer{})
+	require.ErrorIs(t, service.Cleanup(context.Background(), repository.record, StateDeleted), ErrConflict)
+	require.Zero(t, store.deleteCalls)
+	require.Equal(t, StateUnknown, repository.record.State)
+	require.True(t, repository.record.CleanupAmbiguous)
 }
 
 func TestCleanupRetainsUnobservedPublicationIntent(t *testing.T) {

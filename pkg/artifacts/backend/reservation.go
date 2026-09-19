@@ -67,6 +67,7 @@ func (service *Service) reserve(ctx context.Context, record Record, authorize fu
 	record.Size = 0
 	record.SHA256 = ""
 	record.Metadata = storage.Metadata{}
+	record.CleanupObserved = false
 	// Finite deterministic names make the session bound hold across replicas.
 	// A slot is reusable only after the controller deletes its cleaned CRD.
 	limit := maximumSessionReservations
