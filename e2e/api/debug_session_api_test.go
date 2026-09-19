@@ -206,7 +206,7 @@ func setupNativeDebugSessionGrant(t *testing.T, setup *helpers.TestSetup) {
 	require.NoError(t, setup.CreateResource(escalation))
 	helpers.WaitForEscalationReady(t, setup.Ctx, setup.Client, escalation.Name, escalation.Namespace, helpers.WaitForStateTimeout)
 
-	session, err := setup.RequesterClient().CreateSessionAndWaitForPending(
+	session, err := setup.TC.ClientForUser(helpers.TestUsers.DebugSessionRequester).CreateSessionAndWaitForPending(
 		setup.Ctx, t, helpers.SessionRequest{
 			Cluster: setup.Cluster,
 			User:    helpers.TestUsers.DebugSessionRequester.Email,
