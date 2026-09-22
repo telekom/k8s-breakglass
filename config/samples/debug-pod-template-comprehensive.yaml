@@ -88,7 +88,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: debug
-        image: ubuntu:25.10
+        image: ubuntu:26.04
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -486,7 +486,7 @@ spec:
       containers:
       - name: jvm-debug
         # Eclipse Temurin with debugging tools
-        image: eclipse-temurin:24-jdk-alpine
+        image: eclipse-temurin:25-jdk-alpine
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -663,7 +663,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: mongosh
-        image: mongo:7
+        image: mongo:8
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -716,7 +716,7 @@ spec:
         effect: NoSchedule
       containers:
       - name: perf
-        image: ubuntu:25.10
+        image: ubuntu:26.04
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "apt-get update && apt-get install -y linux-tools-generic strace ltrace sysstat procps && trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -1015,7 +1015,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: rabbitmq
-        image: rabbitmq:3.13-management-alpine
+        image: rabbitmq:4.3-management-alpine
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
