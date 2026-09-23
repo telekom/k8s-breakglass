@@ -149,10 +149,13 @@ func TestDeployDebugResourcesRejectsSessionInvalidationBeforeEachWrite(t *testin
 func TestActivateSessionEstablishesLeaseBeforeDeployment(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
 	ds.Spec.IdentityProviderName = "e2e-idp"
 	ds.Spec.IdentityProviderIssuer = "https://issuer.example/realms/e2e"
+	require.NoError(t, c.client.Status().Update(context.Background(), ds))
 	_, err := c.activateSession(context.Background(), ds, template, nil)
 	require.NoError(t, err)
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)

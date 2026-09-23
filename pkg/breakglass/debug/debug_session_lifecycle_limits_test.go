@@ -422,6 +422,7 @@ func TestPendingRecordingFailurePreservesEffectiveRetention(t *testing.T) {
 			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending}}
 			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "4h"}}}
 			objects := []ctrlclient.Object{template, session}
+			objects = append(objects, &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue}}}})
 			want := 2 * time.Hour
 			if scenario == "binding" {
 				session.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}
@@ -429,7 +430,10 @@ func TestPendingRecordingFailurePreservesEffectiveRetention(t *testing.T) {
 				want = 4 * time.Hour
 			}
 			if scenario == "existing snapshot" {
-				session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "6h"}}
+				session.Status.ResolvedTemplate = template.Spec.DeepCopy()
+				session.Status.ResolvedTemplate.Constraints = &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "6h"}
+				session.Status.ResolvedTemplateIdentityCaptured = true
+				session.Status.ResolvedBindingSnapshotCaptured = true
 				want = 6 * time.Hour
 			}
 			originalDeadline := metav1.NewTime(time.Now().Add(8 * time.Hour).Truncate(time.Second))
