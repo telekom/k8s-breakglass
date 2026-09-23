@@ -333,6 +333,7 @@ func testIdentityMiddleware() gin.HandlerFunc {
 			c.Set("username", requesterName)
 		}
 		c.Set("groups", []string{"system:authenticated"})
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 }
