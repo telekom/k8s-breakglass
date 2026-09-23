@@ -215,6 +215,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 	// Native DebugSession creation requires an approved provider-bound grant in
 	// the multi-provider E2E environment.
 	hubClient := helpers.GetClientForCluster(t, mcConfig.HubKubeconfig)
+	cleanup := helpers.NewCleanup(t, hubClient)
 	nativeGrant := helpers.NewEscalationBuilder(
 		helpers.GenerateUniqueName("e2e-cli-debug-session-grant"),
 		helpers.GetTestNamespace(),
@@ -225,7 +226,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 		WithApproverUsers(helpers.TestUsers.Approver.Email).
 		Build()
 	require.NoError(t, hubClient.Create(ctx, nativeGrant))
-	t.Cleanup(func() { _ = hubClient.Delete(context.Background(), nativeGrant) })
+	cleanup.Add(nativeGrant)
 	helpers.WaitForEscalationReady(t, ctx, hubClient, nativeGrant.Name, nativeGrant.Namespace, helpers.WaitForStateTimeout)
 
 	grantRequester := helpers.NewAPIClientWithAuth(token)
@@ -236,6 +237,7 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 		Reason:  "CLI multi-cluster native DebugSession grant",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
+	cleanup.Add(grantSession)
 	grantApproverToken := oidcProvider.GetToken(t, ctx, helpers.TestUsers.Approver.Username, helpers.TestUsers.Approver.Password)
 	require.NoError(t, helpers.NewAPIClientWithAuth(grantApproverToken).ApproveSessionViaAPI(ctx, t, grantSession.Name, grantSession.Namespace))
 	helpers.WaitForSessionState(t, ctx, hubClient, grantSession.Name, grantSession.Namespace,
