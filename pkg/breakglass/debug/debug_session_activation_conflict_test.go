@@ -84,7 +84,6 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 			require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: "breakglass-debug", Name: "security-precondition"}, &prerequisite))
 			require.NoError(t, target.List(ctx, &workloads))
 			require.Len(t, workloads.Items, 1)
-
 		})
 	}
 }
