@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,14 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
+
+func TestParseDecimalRatRejectsOversizedMantissaBeforeJoiningDigits(t *testing.T) {
+	text := strings.Repeat("1", 6000) + "." + strings.Repeat("2", 6000)
+
+	_, err := parseDecimalRat(text)
+
+	require.ErrorContains(t, err, "number is too large")
+}
 
 func TestValidateExtraDeployValues(t *testing.T) {
 	intPtr := func(i int) *int { return &i }
@@ -936,6 +945,40 @@ func TestValidateNumberValue_StringCoercion(t *testing.T) {
 	}
 }
 
+func TestValidateNumberValuePreservesLargeIntegerRange(t *testing.T) {
+	errs := validateNumberValue(
+		apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+		&VariableValidation{Max: "9007199254740992"},
+		field.NewPath("value"),
+	)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "at most 9007199254740992")
+}
+
+func TestValidateExtraDeployValuesRejectsNullForEveryInputType(t *testing.T) {
+	for _, raw := range []string{"null", "  null \n"} {
+		for _, inputType := range []ExtraDeployInputType{InputTypeBoolean, InputTypeText, InputTypeNumber, InputTypeStorageSize, InputTypeSelect, InputTypeMultiSelect} {
+			t.Run(raw+"/"+string(inputType), func(t *testing.T) {
+				errs := ValidateExtraDeployValues(
+					map[string]apiextensionsv1.JSON{"value": {Raw: []byte(raw)}},
+					[]ExtraDeployVariable{{Name: "value", InputType: inputType}},
+					field.NewPath("values"),
+				)
+				require.Len(t, errs, 1)
+				assert.Contains(t, errs[0].Detail, "must not be null")
+			})
+		}
+	}
+}
+
+func TestValidateNumberValueRejectsUnboundedExponent(t *testing.T) {
+	errs := validateNumberValue(
+		apiextensionsv1.JSON{Raw: []byte(`1e100000000`)}, nil, field.NewPath("value"),
+	)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "finite number")
+}
+
 func TestCoerceExtraDeployValues(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -983,6 +1026,16 @@ func TestCoerceExtraDeployValues(t *testing.T) {
 			},
 			expected: map[string]apiextensionsv1.JSON{
 				"ratio": {Raw: []byte(`3.14`)},
+			},
+		},
+		{
+			name: "number: large exponent string coerced",
+			values: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`"1e309"`)},
+			},
+			variables: []ExtraDeployVariable{{Name: "count", InputType: InputTypeNumber}},
+			expected: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`1e309`)},
 			},
 		},
 		{
@@ -1102,4 +1155,19 @@ func TestValidateNumberValueFiniteRegardlessOfBounds(t *testing.T) {
 	assert.NotContains(t, errs[0].Error(), "admins")
 	assert.NotContains(t, errs[0].Error(), "secret")
 	assert.Empty(t, validateMultiSelectValue(apiextensionsv1.JSON{Raw: []byte(`["safe"]`)}, options, nil, []string{"users"}, true, field.NewPath("value")))
+}
+
+func TestValidateNumberValueRejectsNonJSONDecimalSpellings(t *testing.T) {
+	for _, raw := range []string{`"1."`, `"+1"`, `"01"`} {
+		value := coerceJSONValue(apiextensionsv1.JSON{Raw: []byte(raw)}, InputTypeNumber)
+		errs := validateNumberValue(value, nil, field.NewPath("value"))
+		require.Len(t, errs, 1, raw)
+		assert.Contains(t, errs[0].Detail, "finite", raw)
+	}
+}
+
+func TestValidateNumberValueRejectsTrailingJSONValues(t *testing.T) {
+	errs := validateNumberValue(apiextensionsv1.JSON{Raw: []byte(`1 2`)}, nil, field.NewPath("value"))
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "must be a number")
 }

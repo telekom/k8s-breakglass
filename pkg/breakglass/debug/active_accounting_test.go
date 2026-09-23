@@ -90,6 +90,9 @@ func TestActiveReconciliationRepairsFailedAccountingWithoutChangingSession(t *te
 	c.WithAPIReader(hub)
 	// Activation normally receives the durable profile captured by handlePending.
 	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	require.NoError(t, hub.Status().Update(ctx, ds))
 	_, err := c.activateSession(ctx, ds, template, nil)
 	require.ErrorContains(t, err, "injected accounting outage")

@@ -11,6 +11,14 @@
 
 ## Overview
 
+### Approval and group provenance
+
+The API persists authenticated requester groups in the DebugSession status
+before reconciliation evaluates group-restricted extra-deploy variables.
+Direct CR creation cannot supply this provenance, so the controller fails closed
+for restricted variables. Approved snapshots also retain catalogue template and
+pod identity labels for recovery after live resource changes.
+
 While `DebugSessionTemplate` defines what a debug session does, `DebugSessionClusterBinding` controls who can use it and where:
 
 ```
@@ -877,6 +885,15 @@ When a binding is found (explicit or auto-discovered), its configuration is merg
 | **approvers** | Full replacement: binding takes precedence |
 | **requiredAuxiliaryResourceCategories** | Additive: both template and binding categories required |
 
+#### Extra deploy variable narrowing
+
+Bindings may set `spec.extraDeployVariables` to constrain the form for a
+specific cluster. Each entry must refer to an existing template variable.
+`options` is an allow-list subset, validation bounds and regexes are
+intersected with the template policy, and `required`, `disabled`, and
+`default` are checked against the resulting policy. Attempts to add an
+unknown variable/option or relax a template bound fail admission/resolution.
+
 #### Constraints Merge (Field-Level)
 
 ```yaml
@@ -1252,3 +1269,17 @@ kubectl logs -n breakglass-system deployment/breakglass-manager -c breakglass | 
 - [Debug Sessions](debug-session.md) - Overview of debug sessions
 - [API Reference](api-reference.md#get-template-clusters) - Template clusters endpoint
 - [Sample Bindings](../config/samples/debug_session_cluster_binding.yaml) - Example configurations
+
+### API admission policy changes
+
+API-created sessions record a digest of the admitted template and binding UIDs,
+specs, labels, and annotations in an immutable annotation before creation. The
+first reconciliation requires the same objects and policy content before
+persisting approval snapshots. Status updates and server bookkeeping do not
+invalidate an otherwise unchanged request.
+A concurrent edit or same-name replacement fails the session with a
+recreate-required message; submit a new request against the current policy.
+This fence also distinguishes an admitted no-binding result from a binding
+added before reconciliation. Once snapshots are persisted, activation continues
+to use those snapshots. Existing sessions without this annotation retain the
+legacy recovery rules described above.

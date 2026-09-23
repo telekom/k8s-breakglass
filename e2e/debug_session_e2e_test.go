@@ -337,16 +337,12 @@ func TestDebugSession_E2E_SessionStateTransitions(t *testing.T) {
 		_ = cli.Delete(ctx, session)
 	}()
 
-	// Wait for session to become active (auto-approved) - use helper
-	session = helpers.WaitForDebugSessionStateAny(t, ctx, cli, session.Name, session.Namespace, defaultTimeout)
-
-	// For E2E with auto-approval, we expect Active state
-	// If it needs approval, that's also valid
+	// Wait through the intermediate Pending state until auto-approval reaches
+	// the state this test is intended to verify.
+	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 	t.Logf("Session state: %s, message: %s", session.Status.State, session.Status.Message)
-	assert.True(t,
-		session.Status.State == breakglassv1alpha1.DebugSessionStateActive ||
-			session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval,
-		"Unexpected state: %s", session.Status.State)
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, session.Status.State)
 }
 
 func TestDebugSession_E2E_SessionTermination(t *testing.T) {

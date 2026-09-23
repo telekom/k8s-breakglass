@@ -17,11 +17,15 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
+	"io"
+	"math/big"
+	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -55,12 +59,42 @@ func CoerceExtraDeployValues(
 			result[name] = jsonVal
 			continue
 		}
-
 		coerced := coerceJSONValue(jsonVal, varDef.InputType)
 		result[name] = coerced
 	}
 
 	return result
+}
+
+// ValidateExtraDeployValueNames rejects values that are outside a binding's
+// effective request surface. Unknown values remain supported for templates
+// without binding constraints for backwards compatibility; callers should set
+// rejectUnknown only when a binding explicitly narrows variables.
+func ValidateExtraDeployValueNames(
+	values map[string]apiextensionsv1.JSON,
+	variables []ExtraDeployVariable,
+	rejectUnknown bool,
+	fldPath *field.Path,
+) field.ErrorList {
+	if !rejectUnknown {
+		return nil
+	}
+	defined := make(map[string]ExtraDeployVariable, len(variables))
+	for _, variable := range variables {
+		defined[variable.Name] = variable
+	}
+	var errs field.ErrorList
+	for name := range values {
+		variable, ok := defined[name]
+		if !ok {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is not allowed by the binding", name)))
+		} else if variable.Disabled {
+			errs = append(errs, field.Forbidden(fldPath.Key(name),
+				fmt.Sprintf("variable %q is disabled", name)))
+		}
+	}
+	return errs
 }
 
 // coerceJSONValue converts a JSON value to the correct type for the given inputType.
@@ -79,8 +113,8 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 		// Try parsing as a string-encoded number
 		var strVal string
 		if json.Unmarshal(value.Raw, &strVal) == nil {
-			if num, err := strconv.ParseFloat(strVal, 64); err == nil {
-				if raw, err := json.Marshal(num); err == nil {
+			if _, err := parseDecimalRat(strVal); err == nil {
+				if raw, err := json.Marshal(json.Number(strVal)); err == nil {
 					return apiextensionsv1.JSON{Raw: raw}
 				}
 			}
@@ -104,6 +138,28 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 	}
 
 	return value
+}
+
+func equalJSONValues(left, right apiextensionsv1.JSON) bool {
+	decode := func(raw []byte) (any, error) {
+		return decodeJSONValue(raw)
+	}
+	actual, err := decode(left.Raw)
+	if err != nil {
+		return false
+	}
+	expected, err := decode(right.Raw)
+	if err != nil {
+		return false
+	}
+	if actualNumber, ok := actual.(json.Number); ok {
+		if expectedNumber, ok := expected.(json.Number); ok {
+			actualRat, actualErr := parseDecimalRat(actualNumber.String())
+			expectedRat, expectedErr := parseDecimalRat(expectedNumber.String())
+			return actualErr == nil && expectedErr == nil && actualRat.Cmp(expectedRat) == 0
+		}
+	}
+	return reflect.DeepEqual(actual, expected)
 }
 
 // ValidateExtraDeployValues validates user-provided values against variable definitions.
@@ -228,6 +284,9 @@ func validateVariableValue(
 	fldPath *field.Path,
 ) field.ErrorList {
 	allErrs := field.ErrorList{}
+	if string(bytes.TrimSpace(value.Raw)) == "null" {
+		return append(allErrs, field.TypeInvalid(fldPath, "null", "must not be null"))
+	}
 
 	inputType := varDef.InputType
 	if inputType == "" {
@@ -297,7 +356,19 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 			fmt.Sprintf("length must be at most %d", *validation.MaxLength)))
 	}
 
-	// Validate pattern
+	// Internal additional patterns are template-derived intersections and do
+	// not own the user-facing error message. The binding/template pattern may
+	// use PatternError for the boundary the user configured.
+	for _, pattern := range validation.AdditionalPatterns {
+		matched, err := regexp.MatchString(pattern, strVal)
+		if err != nil {
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("invalid pattern %q: %v", pattern, err)))
+		} else if !matched {
+			allErrs = append(allErrs, field.Invalid(fldPath, strVal,
+				fmt.Sprintf("must match pattern %q", pattern)))
+		}
+	}
 	if validation.Pattern != "" {
 		matched, err := regexp.MatchString(validation.Pattern, strVal)
 		if err != nil {
@@ -320,28 +391,12 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 // because HTML form inputs and YAML defaults often produce strings.
 func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidation, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-
-	var numVal float64
-	if err := json.Unmarshal(value.Raw, &numVal); err != nil {
-		// Try parsing as a string-encoded number (e.g., "5" instead of 5).
-		// This handles YAML defaults like `default: "5"` and HTML form inputs.
-		var strVal string
-		if strErr := json.Unmarshal(value.Raw, &strVal); strErr == nil {
-			if parsed, parseErr := strconv.ParseFloat(strVal, 64); parseErr == nil {
-				numVal = parsed
-			} else {
-				allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
-					"must be a number"))
-				return allErrs
-			}
-		} else {
-			allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
-				"must be a number"))
-			return allErrs
-		}
+	numberText, err := jsonNumberText(value.Raw)
+	if err != nil {
+		return append(allErrs, field.TypeInvalid(fldPath, string(value.Raw), "must be a number"))
 	}
-
-	if math.IsNaN(numVal) || math.IsInf(numVal, 0) {
+	numVal, err := parseDecimalRat(numberText)
+	if err != nil {
 		return append(allErrs, field.Invalid(fldPath, string(value.Raw), "must be a finite number"))
 	}
 	if validation == nil {
@@ -350,23 +405,109 @@ func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidat
 
 	// Validate min
 	if validation.Min != "" {
-		minVal, err := strconv.ParseFloat(validation.Min, 64)
-		if err == nil && numVal < minVal {
-			allErrs = append(allErrs, field.Invalid(fldPath, numVal,
+		if minVal, err := parseDecimalRat(validation.Min); err == nil && numVal.Cmp(minVal) < 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, numberText,
 				fmt.Sprintf("must be at least %s", validation.Min)))
 		}
 	}
 
 	// Validate max
 	if validation.Max != "" {
-		maxVal, err := strconv.ParseFloat(validation.Max, 64)
-		if err == nil && numVal > maxVal {
-			allErrs = append(allErrs, field.Invalid(fldPath, numVal,
+		if maxVal, err := parseDecimalRat(validation.Max); err == nil && numVal.Cmp(maxVal) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, numberText,
 				fmt.Sprintf("must be at most %s", validation.Max)))
 		}
 	}
 
 	return allErrs
+}
+
+func jsonNumberText(raw []byte) (string, error) {
+	value, err := decodeJSONValue(raw)
+	if err != nil {
+		return "", err
+	}
+	switch value := value.(type) {
+	case json.Number:
+		return value.String(), nil
+	case string:
+		return value, nil
+	default:
+		return "", fmt.Errorf("not a number")
+	}
+}
+
+func decodeJSONValue(raw []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("JSON contains a trailing value")
+		}
+		return nil, err
+	}
+	return value, nil
+}
+
+var decimalJSONNumberPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+
+func parseDecimalRat(text string) (*big.Rat, error) {
+	const maxExpandedDigits = 10000
+	text = strings.TrimSpace(text)
+	if text == "" || !decimalJSONNumberPattern.MatchString(text) {
+		return nil, fmt.Errorf("empty number")
+	}
+	sign := 1
+	if text[0] == '-' {
+		sign = -1
+		text = text[1:]
+	}
+	parts := strings.SplitN(strings.ToLower(text), "e", 2)
+	mantissa := parts[0]
+	exponent := 0
+	if len(parts) == 2 {
+		var err error
+		exponent, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	decimal := strings.SplitN(mantissa, ".", 2)
+	digits := decimal[0]
+	if len(decimal) == 2 {
+		if len(decimal[0]) > maxExpandedDigits || len(decimal[1]) > maxExpandedDigits-len(decimal[0]) {
+			return nil, fmt.Errorf("number is too large")
+		}
+		digits += decimal[1]
+	}
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return nil, fmt.Errorf("invalid number")
+	}
+	scale := exponent
+	if len(decimal) == 2 {
+		scale -= len(decimal[1])
+	}
+	if len(digits) > maxExpandedDigits || scale > maxExpandedDigits-len(digits) || scale < -(maxExpandedDigits-len(digits)) {
+		return nil, fmt.Errorf("number is too large")
+	}
+	numerator := new(big.Int)
+	if _, ok := numerator.SetString(digits, 10); !ok {
+		return nil, fmt.Errorf("invalid number")
+	}
+	if sign < 0 {
+		numerator.Neg(numerator)
+	}
+	if scale >= 0 {
+		numerator.Mul(numerator, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
+		return new(big.Rat).SetInt(numerator), nil
+	}
+	denominator := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-scale)), nil)
+	return new(big.Rat).SetFrac(numerator, denominator), nil
 }
 
 // validateStorageSizeValue validates a storage size input value.

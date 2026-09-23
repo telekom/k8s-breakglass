@@ -1,9 +1,11 @@
 package debug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -25,8 +27,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	var podTemplate *breakglassv1alpha1.DebugPodTemplate
 	if ds.Status.ResolvedPodTemplate != nil {
 		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
-		if err := json.Unmarshal(ds.Status.ResolvedPodTemplate.Raw, &podTemplate.Spec); err != nil {
+		spec, labels, templateLabels, err := decodeApprovedPodTemplateSnapshot(ds.Status.ResolvedPodTemplate.Raw)
+		if err != nil {
 			return fmt.Errorf("decode approved pod-template snapshot: %w", err)
+		}
+		podTemplate.Spec = *spec
+		podTemplate.Labels = labels
+		if len(template.Labels) == 0 && len(templateLabels) > 0 {
+			template.Labels = templateLabels
 		}
 	} else if template.Spec.PodTemplateRef != nil {
 		var err error
@@ -915,7 +923,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		} else if podTemplate.Spec.Template != nil {
 			// Use structured pod template (no multi-doc support for structured templates)
 			renderResult = &PodTemplateRenderResult{
-				PodSpec: c.convertDebugPodSpec(podTemplate.Spec.Template.Spec),
+				PodSpec: c.convertDebugPodSpec(podTemplate.Spec.Template.DeepCopy().Spec),
 			}
 		} else {
 			return nil, fmt.Errorf("DebugPodTemplate %s has neither template nor templateString", podTemplate.Name)
@@ -1023,9 +1031,7 @@ func (c *DebugSessionController) buildPodSpec(ds *breakglassv1alpha1.DebugSessio
 		// Only wrap if explicit command is set, otherwise we risk masking entrypoint
 		if len(container.Command) > 0 {
 			// Construct child command
-			childCmd := make([]string, 0, len(container.Command)+len(container.Args))
-			childCmd = append(childCmd, container.Command...)
-			childCmd = append(childCmd, container.Args...)
+			childCmd := slices.Concat(container.Command, container.Args)
 
 			if provider == "tmux" {
 				// tmux new-session -A -s <name> <cmd...>
@@ -1168,9 +1174,7 @@ func validateRestrictedCataloguePodSpec(spec *corev1.PodSpec, intent string) err
 			return fmt.Errorf("restricted catalogue profile volume %q uses a disallowed source", volume.Name)
 		}
 	}
-	containers := make([]corev1.Container, 0, len(spec.InitContainers)+len(spec.Containers))
-	containers = append(containers, spec.InitContainers...)
-	containers = append(containers, spec.Containers...)
+	containers := slices.Concat(spec.InitContainers, spec.Containers)
 	for _, container := range containers {
 		if err := validateRestrictedContainerSurface(container.Name, container.SecurityContext, container.Ports, container.LivenessProbe, container.ReadinessProbe, container.StartupProbe, container.Lifecycle); err != nil {
 			return err
@@ -1469,11 +1473,13 @@ func (c *DebugSessionController) buildVarsFromSession(
 	templateSpec *breakglassv1alpha1.DebugSessionTemplateSpec,
 ) map[string]string {
 	vars := make(map[string]string)
+	disabled := make(map[string]bool)
 
 	// Apply defaults from template variable definitions
 	if templateSpec != nil {
 		for _, varDef := range templateSpec.ExtraDeployVariables {
-			if varDef.Default != nil && len(varDef.Default.Raw) > 0 {
+			disabled[varDef.Name] = varDef.Disabled
+			if !varDef.Disabled && varDef.Default != nil && len(varDef.Default.Raw) > 0 {
 				vars[varDef.Name] = extractJSONValueForPod(varDef.Default.Raw)
 			}
 		}
@@ -1481,6 +1487,9 @@ func (c *DebugSessionController) buildVarsFromSession(
 
 	// Override with user-provided values
 	for name, jsonVal := range ds.Spec.ExtraDeployValues {
+		if disabled[name] {
+			continue
+		}
 		vars[name] = extractJSONValueForPod(jsonVal.Raw)
 	}
 
@@ -1504,12 +1513,13 @@ func extractJSONValueForPod(raw []byte) string {
 		return fmt.Sprintf("%t", boolVal)
 	}
 
-	var numVal float64
-	if err := json.Unmarshal(raw, &numVal); err == nil {
-		if numVal == float64(int64(numVal)) {
-			return fmt.Sprintf("%d", int64(numVal))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err == nil {
+		if number, ok := decoded.(json.Number); ok {
+			return number.String()
 		}
-		return fmt.Sprintf("%g", numVal)
 	}
 
 	var arrVal []string

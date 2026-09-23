@@ -24,6 +24,8 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +47,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -326,6 +329,12 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 
 // handlePending processes a newly created debug session
 func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
+	if ds.Status.ResolvedTemplate == nil && hasPartialResolvedBindingSnapshot(ds.Status) {
+		return c.failSession(ctx, ds, "approved activation snapshots are incomplete; recreate this session")
+	}
+	if ds.Status.ResolvedTemplate != nil {
+		return c.resumePersistedPending(ctx, ds)
+	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 
 	// Resolve the template
@@ -354,6 +363,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if binding == nil {
 		binding, err = c.findBindingForSession(ctx, template, ds.Spec.Cluster)
 		if err != nil {
+			if errors.Is(err, errBindingClusterNotReady) {
+				return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+			}
 			return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
 		}
 		if binding != nil {
@@ -362,9 +374,40 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+	var podTemplate *breakglassv1alpha1.DebugPodTemplate
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("get referenced pod template: %w", err)
+		}
+	}
+	if admitted := ds.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation]; admitted != "" {
+		current, err := admissionPolicyVersion(template, binding, podTemplate)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if admitted != current {
+			return c.failSession(ctx, ds, "template or binding changed after API admission; recreate this session")
+		}
+	}
+	groups := ds.Spec.UserGroups
+	if ds.Status.AuthenticatedUserGroupsCaptured {
+		groups = ds.Status.AuthenticatedUserGroups
+	}
+	effectiveTemplate, err := effectiveTemplateForBinding(template, binding, ds.Spec.ExtraDeployValues, groups)
+	if err != nil {
+		log.Warnw("Rejecting session because binding variable constraints or values are invalid", "error", err)
+		return c.failSession(ctx, ds, "invalid extra deploy variable policy or values")
+	}
+	if hasGroupRestrictedExtraDeployVariables(effectiveTemplate.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		if result, deferred := c.deferOnMissingGroupProvenance(ds); deferred {
+			return result, nil
+		}
+		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
+	}
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
-	resolvedTemplate := template.Spec.DeepCopy()
+	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
@@ -375,6 +418,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return c.failSession(ctx, ds, err.Error())
 	}
 	ds.Status.ResolvedTemplate = resolvedTemplate
+	ds.Status.ResolvedTemplateLabels = cloneStringMap(template.Labels)
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedTemplateVariablePolicy = template.Spec.DeepCopy().ExtraDeployVariables
 	ds.Status.ResolvedBindingSnapshotCaptured = true
 	if binding != nil {
 		ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{
@@ -387,12 +433,8 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		}
 	}
 	if template.Spec.PodTemplateRef != nil {
-		podTemplate, podErr := c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
-		if podErr != nil {
-			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
-		}
-		if raw, marshalErr := json.Marshal(podTemplate.Spec); marshalErr == nil {
-			ds.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: raw}
+		if snapshot, snapshotErr := marshalApprovedPodTemplateSnapshot(template, podTemplate); snapshotErr == nil {
+			ds.Status.ResolvedPodTemplate = snapshot
 		}
 	}
 
@@ -400,6 +442,10 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	requiresApproval := c.requiresApproval(template, binding, ds)
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{
 		Required: requiresApproval,
+	}
+
+	if err := canonicalizeDebugSessionApprovalSnapshot(&ds.Status); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	if requiresApproval {
@@ -412,27 +458,35 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
 	}
 
+	// Persist the complete approval decision before starting any activation work.
+	// Fresh API-created sessions have an empty status state until this write.
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	// Auto-approved, transition to active
 	return c.activateSession(ctx, ds, template, binding)
 }
+
+var errBindingClusterNotReady = errors.New("matching binding cluster is not Ready")
 
 // handlePendingApproval checks for approval status
 func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
-		template, err := c.getTemplate(ctx, ds.Spec.TemplateRef)
-		if err != nil {
-			return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
-		}
 		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
-			if ds.Spec.BindingRef != nil {
-				if _, err := c.getBinding(ctx, ds.Spec.BindingRef.Name, ds.Spec.BindingRef.Namespace); err != nil {
-					return c.deferOnUnresolvedBinding(ctx, ds, err)
-				}
-			} else if _, err := c.findBindingForSession(ctx, template, ds.Spec.Cluster); err != nil {
-				return ctrl.Result{}, fmt.Errorf("resolve workload binding: %w", err)
-			}
-			return ctrl.Result{}, fmt.Errorf("approved activation snapshots are missing")
+			return c.failSession(ctx, ds, "approved activation snapshots are missing; recreate this session")
+		}
+		if !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
+			return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
+		}
+		templateLabels, err := approvedTemplateLabelsFromStatus(ds.Status)
+		if err != nil {
+			return c.failSession(ctx, ds, "legacy approved pod-template snapshot lacks identity metadata; recreate this session")
+		}
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef, Labels: templateLabels},
+			Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
 		}
 		var binding *breakglassv1alpha1.DebugSessionClusterBinding
 		if ds.Status.ResolvedBindingSpec != nil {
@@ -830,17 +884,48 @@ func releaseSessionMetricSeries(sessionName string) {
 // activateSession deploys debug resources and marks session as active
 func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
-
-	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
-		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
+	if ds.Status.ResolvedTemplate != nil && !breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status) {
+		return c.failSession(ctx, ds, "approved binding provenance is incomplete; recreate this session")
 	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplateVariablePolicy == nil {
+		policy := ds.Status.ResolvedTemplate.DeepCopy().ExtraDeployVariables
+		if !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(ds.Status, policy) {
+			return c.failSession(ctx, ds, "legacy binding variable provenance is unavailable; recreate this session")
+		}
+		if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) { status.ResolvedTemplateVariablePolicy = policy }); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
+
 	if binding != nil && ds.Status.ResolvedBindingSpec == nil {
 		return c.failSession(ctx, ds, "approved binding snapshot is missing")
+	}
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
+		return ctrl.Result{}, fmt.Errorf("list cluster configs before activation: %w", err)
+	}
+	clusterLookup := ds.Spec.Cluster
+	if slash := strings.LastIndexByte(clusterLookup, '/'); slash >= 0 {
+		clusterLookup = clusterLookup[slash+1:]
+	}
+	clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterLookup)
+	if ambiguity != debugClusterConfigAmbiguityNone {
+		return c.failSession(ctx, ds, "cluster configuration is ambiguous; activation denied")
+	} else if clusterConfig == nil {
+		return c.failSession(ctx, ds, "cluster configuration is missing; activation denied")
+	} else if !isDebugClusterConfigReady(clusterConfig) {
+		return c.failSession(ctx, ds, "cluster configuration is not Ready; activation denied")
 	}
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
 		approvedTemplate.Spec = *ds.Status.ResolvedTemplate.DeepCopy()
+		if err := applyApprovedTemplateLabels(approvedTemplate, ds.Status); err != nil {
+			return c.failSession(ctx, ds, "legacy approved pod-template snapshot lacks identity metadata; recreate this session")
+		}
 		template = approvedTemplate
+	}
+	if template.Spec.PodTemplateRef != nil && ds.Status.ResolvedPodTemplate == nil {
+		return c.failSession(ctx, ds, "approved pod-template snapshot is missing")
 	}
 	if ds.Status.ResolvedBindingSpec != nil {
 		approvedBinding := binding
@@ -857,6 +942,28 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return ctrl.Result{}, fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
 		binding = approvedBinding
+	}
+	// Recheck selectors from the approved snapshots. Live objects above are
+	// lookup inputs and may have changed since approval.
+	if binding != nil && !c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) &&
+		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) &&
+		(clusterConfig.Spec.Tenant == "" || !c.bindingMatchesCluster(binding, clusterConfig.Spec.Tenant, clusterConfig)) {
+		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
+	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig) {
+		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
+	}
+	if binding != nil {
+		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(ds.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
+		if err != nil {
+			return c.failSession(ctx, ds, "invalid approved binding variable snapshot")
+		}
+		template.Spec.ExtraDeployVariables = effectiveVariables
+	}
+	if hasGroupRestrictedExtraDeployVariables(template.Spec.ExtraDeployVariables) && !hasTrustedGroupProvenance(ds) {
+		if result, deferred := c.deferOnMissingGroupProvenance(ds); deferred {
+			return result, nil
+		}
+		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
 	// Establish the bounded lease durably before deploying any target resources.
@@ -1018,6 +1125,75 @@ func (c *DebugSessionController) validateActivationBeforePublish(ctx context.Con
 		return fmt.Errorf("debug session approval is no longer valid")
 	}
 	return nil
+}
+
+// effectiveTemplateForBinding applies binding variable constraints at the
+// controller boundary as well as at API admission. Sessions can be approved
+// or reconciled after either object changes, so rendering must fail closed and
+// use the same narrowed definition that was used for request validation.
+func effectiveTemplateForBinding(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	binding *breakglassv1alpha1.DebugSessionClusterBinding,
+	values map[string]apiextensionsv1.JSON,
+	groups []string,
+) (*breakglassv1alpha1.DebugSessionTemplate, error) {
+	var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+	if binding != nil {
+		constraints = binding.Spec.ExtraDeployVariables
+	}
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, constraints)
+	if err != nil {
+		return nil, err
+	}
+	values = breakglassv1alpha1.CoerceExtraDeployValues(values, effectiveVariables)
+	nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(values, effectiveVariables, len(constraints) > 0, field.NewPath("extraDeployValues"))
+	if len(nameErrs) > 0 {
+		return nil, fmt.Errorf("extra deploy values are not allowed by binding: %s", nameErrs[0].Error())
+	}
+	if len(values) > 0 || len(effectiveVariables) > 0 {
+		if errs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(values, effectiveVariables, constraints, groups, field.NewPath("extraDeployValues")); len(errs) > 0 {
+			return nil, fmt.Errorf("extra deploy values are invalid: %s", errs[0].Error())
+		}
+	}
+	result := template.DeepCopy()
+	result.Spec.ExtraDeployVariables = effectiveVariables
+	return result, nil
+}
+
+func hasGroupRestrictedExtraDeployVariables(variables []breakglassv1alpha1.ExtraDeployVariable) bool {
+	for _, variable := range variables {
+		if variable.Disabled {
+			continue
+		}
+		if len(variable.AllowedGroups) != 0 {
+			return true
+		}
+		for _, option := range variable.Options {
+			if option.Disabled {
+				continue
+			}
+			if len(option.AllowedGroups) != 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasTrustedGroupProvenance(ds *breakglassv1alpha1.DebugSession) bool {
+	return ds.Status.AuthenticatedUserGroupsCaptured
+}
+
+const groupProvenanceGracePeriod = breakglass.APIContextTimeout
+
+func (c *DebugSessionController) deferOnMissingGroupProvenance(ds *breakglassv1alpha1.DebugSession) (ctrl.Result, bool) {
+	if ds.CreationTimestamp.IsZero() || time.Since(ds.CreationTimestamp.Time) >= groupProvenanceGracePeriod {
+		return ctrl.Result{}, false
+	}
+	c.log.Debugw("Deferring group-restricted session until authenticated group provenance is persisted",
+		"debugSession", ds.Name,
+		"namespace", ds.Namespace)
+	return ctrl.Result{RequeueAfter: time.Second}, true
 }
 
 // failSession marks a session as failed and logs the failure
@@ -1308,7 +1484,76 @@ func (c *DebugSessionController) deferOnUnresolvedBinding(
 // This enables binding configuration to be applied even when BindingRef is not explicitly set.
 // Returns nil if no matching binding is found.
 func (c *DebugSessionController) findBindingForSession(ctx context.Context, template *breakglassv1alpha1.DebugSessionTemplate, clusterName string) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
-	return utils.FindDebugSessionBinding(ctx, c.approvalReader(), template, clusterName)
+	bindingList := &breakglassv1alpha1.DebugSessionClusterBindingList{}
+	if err := c.approvalReader().List(ctx, bindingList); err != nil {
+		return nil, fmt.Errorf("failed to list cluster bindings: %w", err)
+	}
+
+	// Get cluster config for label-based matching
+	var clusterConfig *breakglassv1alpha1.ClusterConfig
+	clusterConfigList := &breakglassv1alpha1.ClusterConfigList{}
+	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
+		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
+	}
+	for i := range clusterConfigList.Items {
+		if clusterConfigList.Items[i].Name == clusterName {
+			if clusterConfig != nil {
+				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
+			}
+			clusterConfig = &clusterConfigList.Items[i]
+		}
+	}
+	readyClusterConfig := clusterConfig
+	if !isDebugClusterConfigReady(readyClusterConfig) {
+		readyClusterConfig = nil
+	}
+
+	sort.Slice(bindingList.Items, func(i, j int) bool {
+		a, b := bindingList.Items[i], bindingList.Items[j]
+		return a.Namespace+"/"+a.Name < b.Namespace+"/"+b.Name
+	})
+	var invalidPolicy error
+	for i := range bindingList.Items {
+		binding := &bindingList.Items[i]
+		if !breakglass.IsBindingActive(binding) {
+			continue
+		}
+
+		// Check if binding references this template
+		if !c.bindingMatchesTemplate(binding, template) {
+			continue
+		}
+		if binding.Spec.ClusterSelector != nil && clusterConfig == nil && !slices.Contains(binding.Spec.Clusters, clusterName) {
+			return nil, fmt.Errorf("cluster config required to resolve binding selector")
+		}
+
+		// Check if binding matches this cluster
+		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+			continue
+		}
+		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
+			return nil, errBindingClusterNotReady
+		}
+
+		if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+			invalidPolicy = fmt.Errorf("matching binding has invalid variable policy: %w", err)
+			c.log.Warnw("Skipping invalid binding variable policy", "binding", binding.Name, "error", err)
+			continue
+		}
+
+		// Found a matching binding
+		return binding, nil
+	}
+
+	if invalidPolicy != nil {
+		// Match API discovery: an invalid binding must not shadow a direct
+		// template grant. Valid bindings still take precedence above.
+		if directTemplateAllowsCluster(template, clusterName, readyClusterConfig) {
+			return nil, nil
+		}
+		return nil, invalidPolicy
+	}
+	return nil, nil // No matching binding found (not an error)
 }
 
 func (c *DebugSessionController) approvalReader() ctrlclient.Reader {

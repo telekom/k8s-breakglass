@@ -774,7 +774,7 @@ func (c *DebugSessionAPIController) handleGetDebugSession(ctx *gin.Context) {
 
 	canApprove := c.canActOnDebugSessionApproval(apiCtx, session, identity, nil)
 	ctx.JSON(http.StatusOK, DebugSessionDetailResponse{
-		DebugSession: *session,
+		DebugSession: publicDebugSession(session),
 		CanApprove:   canApprove,
 		CanReject:    canApprove,
 	})
@@ -1053,16 +1053,24 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	}
 	if !allowedResult.Allowed {
 		var errDetails string
-		if template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0 {
+		if template.Spec.Allowed != nil && (len(template.Spec.Allowed.Clusters) > 0 || template.Spec.Allowed.ClusterSelector != nil) {
 			if templateRequesterAllowed {
-				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
-					req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+				if template.Spec.Allowed.ClusterSelector != nil && len(template.Spec.Allowed.Clusters) == 0 {
+					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster selector: %v. No bindings grant access to this cluster.",
+						req.Cluster, req.TemplateRef, template.Spec.Allowed.ClusterSelector)
+				} else if template.Spec.Allowed.ClusterSelector != nil {
+					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v; Template cluster selector: %v. No bindings grant access to this cluster.",
+						req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters, template.Spec.Allowed.ClusterSelector)
+				} else {
+					errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. Template cluster patterns: %v. No bindings grant access to this cluster.",
+						req.Cluster, req.TemplateRef, template.Spec.Allowed.Clusters)
+				}
 			} else {
 				errDetails = fmt.Sprintf("cluster '%s' is not allowed by template '%s'. No bindings grant access to this cluster.",
 					req.Cluster, req.TemplateRef)
 			}
 		} else {
-			errDetails = fmt.Sprintf("cluster '%s' is not allowed. Template '%s' has no allowed cluster patterns and no bindings grant access to this cluster.",
+			errDetails = fmt.Sprintf("cluster '%s' is not allowed. Template '%s' has no allowed cluster patterns or selectors and no bindings grant access to this cluster.",
 				req.Cluster, req.TemplateRef)
 		}
 		reqLog.Warnw("Cluster not allowed by template or binding",
@@ -1071,6 +1079,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			"templateAllowedClusters", func() []string {
 				if template.Spec.Allowed != nil {
 					return template.Spec.Allowed.Clusters
+				}
+				return nil
+			}(),
+			"templateClusterSelector", func() *metav1.LabelSelector {
+				if template.Spec.Allowed != nil {
+					return template.Spec.Allowed.ClusterSelector
 				}
 				return nil
 			}(),
@@ -1236,20 +1250,84 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	// Coerce extraDeployValues types based on template variable definitions.
+	// Resolve binding-level variable constraints before coercion and validation.
+	// The effective definitions are the intersection of template and binding
+	// policy; a binding can never add variables or widen a template rule.
+	effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(
+		template.Spec.ExtraDeployVariables,
+		func() []breakglassv1alpha1.ExtraDeployVariableConstraint {
+			if resolvedBinding == nil {
+				return nil
+			}
+			return resolvedBinding.Spec.ExtraDeployVariables
+		}(),
+	)
+	if err != nil {
+		reqLog.Warnw("Binding extra deploy variable constraints are invalid", "error", err)
+		apiresponses.RespondBadRequest(ctx, err.Error())
+		return
+	}
+	if resolvedBinding != nil {
+		nameErrs := breakglassv1alpha1.ValidateExtraDeployValueNames(
+			req.ExtraDeployValues,
+			effectiveVariables,
+			len(resolvedBinding.Spec.ExtraDeployVariables) > 0,
+			field.NewPath("extraDeployValues"),
+		)
+		if len(nameErrs) > 0 {
+			messages := make([]string, 0, len(nameErrs))
+			for _, validationErr := range nameErrs {
+				messages = append(messages, validationErr.Error())
+			}
+			apiresponses.RespondBadRequestWithDetails(ctx, "extraDeployValues validation failed", strings.Join(messages, "; "))
+			return
+		}
+	}
+
+	// Coerce extraDeployValues types based on the effective variable definitions.
 	// HTML form inputs and YAML defaults can produce string-encoded numbers/booleans
 	// (e.g., "5" instead of 5). Normalize them before validation and storage so
 	// templates render correct YAML (e.g., `storage: 5Gi` not `storage: "5"Gi`).
 	if len(req.ExtraDeployValues) > 0 {
-		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, template.Spec.ExtraDeployVariables)
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
+	}
+	// Binding defaults are persisted in the session input so rendering remains
+	// self-contained even if the binding changes after session creation. Keep
+	// the historical no-binding behavior, where template defaults are applied
+	// by the renderer rather than copied into the session spec.
+	if resolvedBinding != nil && len(resolvedBinding.Spec.ExtraDeployVariables) > 0 {
+		if req.ExtraDeployValues == nil {
+			req.ExtraDeployValues = make(map[string]apiextensionsv1.JSON)
+		}
+		for _, constraint := range resolvedBinding.Spec.ExtraDeployVariables {
+			if constraint.Default == nil {
+				continue
+			}
+			for _, variable := range effectiveVariables {
+				if variable.Name != constraint.Name {
+					continue
+				}
+				if !variable.Disabled && variable.Default != nil {
+					if _, provided := req.ExtraDeployValues[variable.Name]; !provided {
+						req.ExtraDeployValues[variable.Name] = *variable.Default.DeepCopy()
+					}
+				}
+			}
+		}
+		req.ExtraDeployValues = breakglassv1alpha1.CoerceExtraDeployValues(req.ExtraDeployValues, effectiveVariables)
 	}
 
-	// Validate extraDeployValues against template's extraDeployVariables
+	// Validate extraDeployValues against the effective variable definitions.
 	// This includes checking allowedGroups on variables and options
-	if len(req.ExtraDeployValues) > 0 || len(template.Spec.ExtraDeployVariables) > 0 {
-		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithGroups(
+	if len(req.ExtraDeployValues) > 0 || len(effectiveVariables) > 0 {
+		var constraints []breakglassv1alpha1.ExtraDeployVariableConstraint
+		if resolvedBinding != nil {
+			constraints = resolvedBinding.Spec.ExtraDeployVariables
+		}
+		valErrs := breakglassv1alpha1.ValidateExtraDeployValuesWithBinding(
 			req.ExtraDeployValues,
-			template.Spec.ExtraDeployVariables,
+			effectiveVariables,
+			constraints,
 			userGroups,
 			field.NewPath("extraDeployValues"),
 		)
@@ -1385,10 +1463,28 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	// The reconciler continues to use SSA for status updates and lifecycle management,
 	// which is the correct boundary: Create() for API-driven creation, SSA for
 	// controller-driven reconciliation.
-	if c.quotaEnabled {
-		if session.Annotations == nil {
-			session.Annotations = map[string]string{}
+	// Bind the request to the exact policy objects validated above, before the
+	// create event can reach the reconciler. A later edit requires a new request.
+	if session.Annotations == nil {
+		session.Annotations = map[string]string{}
+	}
+	var podTemplate *breakglassv1alpha1.DebugPodTemplate
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
+		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: template.Spec.PodTemplateRef.Name}, podTemplate); err != nil {
+			reqLog.Errorw("Failed to get referenced pod template", "podTemplate", template.Spec.PodTemplateRef.Name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to validate pod template")
+			return
 		}
+	}
+	policyVersion, err := admissionPolicyVersion(template, resolvedBinding, podTemplate)
+	if err != nil {
+		reqLog.Errorw("Failed to encode admission policy", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
+		return
+	}
+	session.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation] = policyVersion
+	if c.quotaEnabled {
 		session.Annotations[quotas.AdmissionAnnotation] = quotas.Pending
 	}
 	if err := c.client.Create(apiCtx, session); err != nil {
@@ -1400,6 +1496,50 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")
 		return
 	}
+	trustedGroups := append([]string{}, userGroups...)
+	statusReader := c.apiReader
+	if statusReader == nil {
+		statusReader = c.client
+	}
+	cleanupCreatedSession := func() {
+		if cleanupErr := c.client.Delete(apiCtx, session); cleanupErr != nil && !apierrors.IsNotFound(cleanupErr) {
+			reqLog.Errorw("Failed to clean up debug session after provenance persistence failure", "error", cleanupErr)
+			live := &breakglassv1alpha1.DebugSession{}
+			if getErr := c.client.Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); getErr == nil {
+				live.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+				live.Status.Message = "authenticated session provenance could not be persisted"
+				if statusErr := c.client.Status().Update(apiCtx, live); statusErr != nil {
+					reqLog.Errorw("Failed to terminalize debug session after provenance persistence failure", "error", statusErr)
+				}
+			}
+		}
+	}
+	liveSession, provenanceErr := c.persistAuthenticatedGroupProvenance(apiCtx, session, statusReader, trustedGroups)
+	if provenanceErr != nil {
+		err := provenanceErr
+		if c.apiReader == nil && apierrors.IsNotFound(err) {
+			liveSession.Status.AuthenticatedUserGroups = trustedGroups
+			liveSession.Status.AuthenticatedUserGroupsCaptured = true
+			if updateErr := c.client.Status().Update(apiCtx, liveSession); updateErr != nil {
+				// The no-apiReader path is used by fake clients without a
+				// configured status subresource. Production clients use the
+				// status patch above.
+				if fallbackErr := c.client.Update(apiCtx, liveSession); fallbackErr != nil {
+					reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", fallbackErr)
+					cleanupCreatedSession()
+					apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
+					return
+				}
+			}
+		} else {
+			reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", err)
+			cleanupCreatedSession()
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
+			return
+		}
+	}
+	session.Status = liveSession.Status
+	session.ResourceVersion = liveSession.ResourceVersion
 
 	if err := c.admitCreatedDebugSession(apiCtx, session); err != nil {
 		reqLog.Errorw("Failed to admit debug session quota",
@@ -1432,7 +1572,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	metrics.DebugSessionsCreated.WithLabelValues(req.Cluster, req.TemplateRef).Inc()
 
-	response := DebugSessionDetailResponse{DebugSession: *session}
+	response := DebugSessionDetailResponse{DebugSession: publicDebugSession(session)}
 	if len(warnings) > 0 {
 		response.Warnings = warnings
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
@@ -1588,6 +1728,45 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		groups = collectGroups(freshCandidates)
 	}
 	return groups, nil
+}
+
+func (c *DebugSessionAPIController) persistAuthenticatedGroupProvenance(
+	ctx context.Context,
+	session *breakglassv1alpha1.DebugSession,
+	reader ctrlclient.Reader,
+	groups []string,
+) (*breakglassv1alpha1.DebugSession, error) {
+	var liveSession *breakglassv1alpha1.DebugSession
+	for attempt := 0; attempt < debugSessionAdmissionAttempts; attempt++ {
+		liveSession = &breakglassv1alpha1.DebugSession{}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(session), liveSession); err != nil {
+			return liveSession, fmt.Errorf("read created debug session for group provenance: %w", err)
+		}
+		err := breakglass.PatchDebugSessionStatusWithReader(ctx, c.client, reader, liveSession, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.AuthenticatedUserGroups = append([]string(nil), groups...)
+			status.AuthenticatedUserGroupsCaptured = true
+		})
+		if err == nil {
+			return liveSession, nil
+		}
+		if !apierrors.IsConflict(err) || attempt == debugSessionAdmissionAttempts-1 {
+			return liveSession, err
+		}
+		delay := debugSessionAdmissionRetryDelay << attempt
+		if delay > 250*time.Millisecond {
+			delay = 250 * time.Millisecond
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return liveSession, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return liveSession, fmt.Errorf("authenticated group provenance persistence retry exhausted")
 }
 
 // admitCreatedDebugSession retries only the bounded resource-version race
@@ -2096,4 +2275,13 @@ func (c *DebugSessionAPIController) AuthorizeArtifactCollection(ctx *gin.Context
 		return nil, errors.New("artifact collection is forbidden")
 	}
 	return session, nil
+}
+
+// publicDebugSession omits controller-only recovery policy from API responses.
+func publicDebugSession(session *breakglassv1alpha1.DebugSession) breakglassv1alpha1.DebugSession {
+	public := session.DeepCopy()
+	public.Status.ResolvedTemplateVariablePolicy = nil
+	public.Status.AuthenticatedUserGroups = nil
+	public.Status.AuthenticatedUserGroupsCaptured = false
+	return *public
 }

@@ -1,6 +1,7 @@
 package debug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -32,13 +33,75 @@ type DebugSessionTemplateResponse struct {
 	RequiresApproval      bool                                        `json:"requiresApproval"`
 	SchedulingOptions     *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
 	NamespaceConstraints  *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
-	ExtraDeployVariables  []breakglassv1alpha1.ExtraDeployVariable    `json:"extraDeployVariables,omitempty"`
+	ExtraDeployVariables  []ExtraDeployVariableResponse               `json:"extraDeployVariables,omitempty"`
 	Priority              int32                                       `json:"priority,omitempty"`
 	Hidden                bool                                        `json:"hidden,omitempty"`
 	Deprecated            bool                                        `json:"deprecated,omitempty"`
 	DeprecationMessage    string                                      `json:"deprecationMessage,omitempty"`
 	HasAvailableClusters  bool                                        `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
 	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
+}
+
+// ExtraDeployVariableResponse includes the effective binding patterns that are
+// kept runtime-only on the API type. They are needed by clients for immediate
+// validation of values before submission.
+type ExtraDeployVariableResponse breakglassv1alpha1.ExtraDeployVariable
+
+func (v ExtraDeployVariableResponse) MarshalJSON() ([]byte, error) {
+	type plain ExtraDeployVariableResponse
+	var out map[string]json.RawMessage
+	data, err := json.Marshal(plain(v))
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	// Numeric defaults must cross the browser boundary as strings. JSON.parse
+	// rounds large literals to IEEE-754 before Vue can preserve them.
+	if v.InputType == breakglassv1alpha1.InputTypeNumber && v.Default != nil {
+		decoder := json.NewDecoder(bytes.NewReader(v.Default.Raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err == nil {
+			if number, ok := value.(json.Number); ok {
+				raw, err := json.Marshal(number.String())
+				if err != nil {
+					return nil, err
+				}
+				out["default"] = raw
+			}
+		}
+	}
+	if v.Validation != nil && len(v.Validation.AdditionalPatterns) > 0 {
+		validation := map[string]json.RawMessage{}
+		if raw, ok := out["validation"]; ok {
+			if err := json.Unmarshal(raw, &validation); err != nil {
+				return nil, err
+			}
+		}
+		patterns, err := json.Marshal(v.Validation.AdditionalPatterns)
+		if err != nil {
+			return nil, err
+		}
+		validation["additionalPatterns"] = patterns
+		out["validation"], err = json.Marshal(validation)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return json.Marshal(out)
+}
+
+func extraDeployVariableResponses(vars []breakglassv1alpha1.ExtraDeployVariable) []ExtraDeployVariableResponse {
+	if vars == nil {
+		return nil
+	}
+	out := make([]ExtraDeployVariableResponse, len(vars))
+	for i := range vars {
+		out[i] = ExtraDeployVariableResponse(vars[i])
+	}
+	return out
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -116,6 +179,7 @@ type AvailableClusterDetail struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
@@ -134,6 +198,7 @@ type BindingOption struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -227,7 +292,7 @@ func (c *DebugSessionAPIController) canReadTemplateWithBindings(
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	requester debugTemplateRequester,
 ) bool {
-	hasDirectClusters := template.Spec.Allowed != nil && len(template.Spec.Allowed.Clusters) > 0
+	hasDirectClusters := template.Spec.Allowed != nil && (len(template.Spec.Allowed.Clusters) > 0 || template.Spec.Allowed.ClusterSelector != nil)
 	if hasDirectClusters && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
 		return true
 	}
@@ -284,7 +349,7 @@ func userHasAnyExactGroup(userGroups, allowedGroups []string) bool {
 
 func filterExtraDeployVariablesForRequester(vars []breakglassv1alpha1.ExtraDeployVariable, requester debugTemplateRequester) []breakglassv1alpha1.ExtraDeployVariable {
 	if len(vars) == 0 {
-		return nil
+		return []breakglassv1alpha1.ExtraDeployVariable{}
 	}
 
 	filtered := make([]breakglassv1alpha1.ExtraDeployVariable, 0, len(vars))
@@ -342,7 +407,7 @@ func defaultMatchesVisibleOptions(defaultValue *apiextensionsv1.JSON, visible ma
 func (c *DebugSessionAPIController) buildTemplateResponse(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	requester debugTemplateRequester,
-	allClusterNames []string,
+	clusterMap map[string]*breakglassv1alpha1.ClusterConfig,
 	availableClusterCount int,
 ) DebugSessionTemplateResponse {
 	resp := DebugSessionTemplateResponse{
@@ -354,7 +419,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 		TargetNamespace:       template.Spec.TargetNamespace,
 		Constraints:           template.Spec.Constraints,
 		RequiresApproval:      template.Spec.Approvers != nil && (len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0),
-		ExtraDeployVariables:  filterExtraDeployVariablesForRequester(template.Spec.ExtraDeployVariables, requester),
+		ExtraDeployVariables:  extraDeployVariableResponses(filterExtraDeployVariablesForRequester(template.Spec.ExtraDeployVariables, requester)),
 		Priority:              template.Spec.Priority,
 		Hidden:                template.Spec.Hidden,
 		Deprecated:            template.Spec.Deprecated,
@@ -367,8 +432,13 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 		resp.PodTemplateRef = template.Spec.PodTemplateRef.Name
 	}
 	if template.Spec.Allowed != nil && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
-		if allClusterNames != nil {
-			resp.AllowedClusters = resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
+		if clusterMap != nil {
+			for name, configured := range clusterMap {
+				if directTemplateAllowsCluster(template, name, configured) {
+					resp.AllowedClusters = append(resp.AllowedClusters, name)
+				}
+			}
+			sort.Strings(resp.AllowedClusters)
 		} else {
 			resp.AllowedClusters = template.Spec.Allowed.Clusters
 		}
@@ -457,7 +527,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			continue
 		}
 
-		templates = append(templates, c.buildTemplateResponse(&t, requester, allClusterNames, availableClusterCount))
+		templates = append(templates, c.buildTemplateResponse(&t, requester, clusterMap, availableClusterCount))
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
@@ -521,7 +591,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	visibleBindings := visibleDebugSessionBindings(applicableBindings)
 	availableClusterCount := c.countAvailableClustersForTemplate(template, visibleBindings, clusterMap, allClusterNames, requester)
 
-	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, allClusterNames, availableClusterCount))
+	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, clusterMap, availableClusterCount))
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template
@@ -635,14 +705,12 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 		}
 	}
 
-	// Also check template's direct allowed.clusters patterns
+	// Also check direct template cluster patterns and selectors.
 	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
 		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
-		template.Spec.Allowed != nil &&
-		len(template.Spec.Allowed.Clusters) > 0 {
-		resolvedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
-		for _, clusterName := range resolvedClusters {
-			if clusterMap[clusterName] != nil {
+		template.Spec.Allowed != nil {
+		for _, clusterName := range allClusterNames {
+			if directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) {
 				seenClusters[clusterName] = true
 			}
 		}
@@ -666,6 +734,10 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 		}
 		// Check templateRef
 		if binding.Spec.TemplateRef != nil && binding.Spec.TemplateRef.Name == template.Name {
+			if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+				c.log.Warnw("findBindingsForTemplate: skipping binding with invalid variable constraints", "binding", bindingID, "error", err)
+				continue
+			}
 			c.log.Debugw("findBindingsForTemplate: matched by templateRef",
 				"template", template.Name,
 				"binding", bindingID,
@@ -692,6 +764,10 @@ func (c *DebugSessionAPIController) findBindingsForTemplate(template *breakglass
 					"matches", matches,
 				)
 				if matches {
+					if _, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables); err != nil {
+						c.log.Warnw("findBindingsForTemplate: skipping binding with invalid variable constraints", "binding", bindingID, "error", err)
+						continue
+					}
 					result = append(result, *binding)
 				}
 			}
@@ -754,18 +830,16 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 		result = append(result, detail)
 	}
 
-	// Then, resolve clusters from template's allowed.clusters (fallback, no binding)
+	// Then resolve direct template cluster patterns and selectors (no binding).
 	if requester.canRequest(effectiveDebugSessionAllowed(template, nil)) &&
 		debugSchedulingOptionsAvailableForRequester(template, nil, requester) &&
-		template.Spec.Allowed != nil &&
-		len(template.Spec.Allowed.Clusters) > 0 {
+		template.Spec.Allowed != nil {
 		allClusterNames := make([]string, 0, len(clusterMap))
 		for name := range clusterMap {
 			allClusterNames = append(allClusterNames, name)
 		}
-		allowedClusters := resolveClusterPatterns(template.Spec.Allowed.Clusters, allClusterNames)
-		for _, clusterName := range allowedClusters {
-			if seenClusters[clusterName] {
+		for _, clusterName := range allClusterNames {
+			if !directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) || seenClusters[clusterName] {
 				continue
 			}
 			seenClusters[clusterName] = true
@@ -848,6 +922,10 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
 		}
+		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables)
+		if err == nil {
+			option.ExtraDeployVariables = extraDeployVariableResponses(filterExtraDeployVariablesForRequester(effectiveVariables, requester))
+		}
 		detail.BindingOptions = append(detail.BindingOptions, option)
 	}
 
@@ -870,6 +948,9 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
 		detail.Notification = c.resolveNotification(template, primaryBinding)
+		if effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, primaryBinding.Spec.ExtraDeployVariables); err == nil {
+			detail.ExtraDeployVariables = extraDeployVariableResponses(filterExtraDeployVariablesForRequester(effectiveVariables, requester))
+		}
 	}
 
 	return detail
@@ -894,6 +975,24 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
 		addCluster(clusterName)
+		// Requests may use a ClusterConfig tenant alias. Resolve a unique alias
+		// to the canonical name so admission and activation use the same grant.
+		if _, exists := clusterMap[clusterName]; !exists {
+			var alias *breakglassv1alpha1.ClusterConfig
+			for _, cluster := range clusterMap {
+				if cluster.Spec.Tenant != clusterName {
+					continue
+				}
+				if alias != nil {
+					alias = nil // ambiguous tenant aliases do not grant access
+					break
+				}
+				alias = cluster
+			}
+			if alias != nil {
+				addCluster(alias.Name)
+			}
+		}
 	}
 
 	c.log.Debugw("resolveClustersFromBinding: explicit clusters",

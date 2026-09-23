@@ -45,8 +45,112 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
+	variable := ExtraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
+		Name:    "target",
+		Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+		Validation: &breakglassv1alpha1.VariableValidation{
+			Pattern:            "-prod$",
+			AdditionalPatterns: []string{"^safe-"},
+		},
+	})
+
+	data, err := json.Marshal(variable)
+	require.NoError(t, err)
+	var response struct {
+		Default    json.RawMessage `json:"default"`
+		Validation struct {
+			Pattern            string   `json:"pattern"`
+			AdditionalPatterns []string `json:"additionalPatterns"`
+		} `json:"validation"`
+	}
+	require.NoError(t, json.Unmarshal(data, &response))
+	assert.Equal(t, "-prod$", response.Validation.Pattern)
+	assert.Equal(t, []string{"^safe-"}, response.Validation.AdditionalPatterns)
+	assert.Equal(t, `9007199254740993`, string(response.Default))
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
+}
+
+func TestCreateDebugSessionCoercesBindingDefaults(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-default-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"production"}},
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{
+				Name: "replicas", InputType: breakglassv1alpha1.InputTypeNumber,
+			}},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding-defaults", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{"production"},
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{
+				Name: "replicas", Default: &apiextensionsv1.JSON{Raw: []byte(`"5"`)},
+			}},
+		},
+	}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production"}}
+	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, clusterConfig).Build()
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), client, nil, nil)
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set("legacy_identity_allowed", true)
+		ctx.Set("username", "tester")
+		ctx.Next()
+	})
+	require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
+
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions",
+		strings.NewReader(`{"templateRef":"binding-default-template","cluster":"production","bindingRef":"default/binding-defaults"}`))
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+
+	var detail DebugSessionDetailResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &detail))
+	require.Equal(t, `5`, string(detail.DebugSession.Spec.ExtraDeployValues["replicas"].Raw))
+}
+
+func TestPersistAuthenticatedGroupProvenanceRetriesStatusConflict(t *testing.T) {
+	scheme := testScheme()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			Cluster: "cluster", TemplateRef: "template", RequestedBy: "user",
+		},
+	}
+	attempts := 0
+	hub := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResourceName == "status" && attempts == 0 {
+					attempts++
+					return apierrors.NewConflict(schema.GroupResource{
+						Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+					}, obj.GetName(), errors.New("controller won the first status race"))
+				}
+				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	require.NoError(t, hub.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
+
+	updated, err := controller.persistAuthenticatedGroupProvenance(t.Context(), session, hub, []string{"trusted"})
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, 1, attempts)
+	assert.True(t, updated.Status.AuthenticatedUserGroupsCaptured)
+	assert.Equal(t, []string{"trusted"}, updated.Status.AuthenticatedUserGroups)
 }
 
 func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing.T) {
@@ -4202,6 +4306,9 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "breakglass", response.Namespace)
 		assert.Equal(t, "production", response.Spec.Cluster)
 		assert.Equal(t, "alice@example.com", response.Spec.RequestedBy)
+		stored := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&response.DebugSession), stored))
+		assert.True(t, stored.Status.AuthenticatedUserGroupsCaptured)
 	})
 
 	t.Run("create session rejects empty username", func(t *testing.T) {
@@ -4976,9 +5083,11 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 	})
 
 	t.Run("create session with disallowed cluster", func(t *testing.T) {
+		restrictedTemplate := templateWithClusterRestriction.DeepCopy()
+		restrictedTemplate.Spec.Allowed.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"environment": "production"}}
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&templateWithClusterRestriction).
+			WithObjects(restrictedTemplate).
 			Build()
 
 		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
@@ -5000,6 +5109,8 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 403, w.Code)
+		assert.Contains(t, w.Body.String(), "Template cluster patterns")
+		assert.Contains(t, w.Body.String(), "Template cluster selector")
 	})
 
 	t.Run("create session rejects requester denied by template allowlist", func(t *testing.T) {

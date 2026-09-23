@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -27,12 +28,14 @@ import (
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -44,6 +47,27 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
+
+func TestCanonicalizeDebugSessionApprovalSnapshotPreservesJSONDefaultPrecision(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{
+				Name:    "large-number",
+				Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+			}},
+		},
+		ResolvedTemplateVariablePolicy: []breakglassv1alpha1.ExtraDeployVariable{{
+			Name:    "large-number",
+			Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+		}},
+	}
+
+	require.NoError(t, canonicalizeDebugSessionApprovalSnapshot(status))
+	require.NotNil(t, status.ResolvedTemplate.ExtraDeployVariables[0].Default)
+	require.NotNil(t, status.ResolvedTemplateVariablePolicy[0].Default)
+	assert.Equal(t, `9007199254740993`, string(status.ResolvedTemplate.ExtraDeployVariables[0].Default.Raw))
+	assert.Equal(t, `9007199254740993`, string(status.ResolvedTemplateVariablePolicy[0].Default.Raw))
+}
 
 // Helper to create a fake client with status subresource support
 // Keeping for potential future use in tests
@@ -59,6 +83,150 @@ var _ = func(scheme *runtime.Scheme, objects ...client.Object) client.Client {
 		}
 	}
 	return builder.Build()
+}
+
+func TestEffectiveTemplateForBindingUsesNarrowedRenderingSurface(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
+				{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}, {Value: "power"}}, Default: &apiextensionsv1.JSON{Raw: []byte(`"power"`)}},
+			},
+		},
+	}
+	disabled := true
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}, Disabled: &disabled}},
+		},
+	}
+
+	effective, err := effectiveTemplateForBinding(template, binding, nil, nil)
+	require.NoError(t, err)
+	assert.NotSame(t, template, effective)
+	assert.True(t, effective.Spec.ExtraDeployVariables[0].Disabled)
+	assert.Nil(t, effective.Spec.ExtraDeployVariables[0].Default)
+	assert.Equal(t, template.Spec.ExtraDeployVariables[0].Default.Raw, template.Spec.ExtraDeployVariables[0].Default.Raw)
+
+	values := map[string]apiextensionsv1.JSON{"other": {Raw: []byte(`"x"`)}}
+	_, err = effectiveTemplateForBinding(template, binding, values, nil)
+	require.Error(t, err)
+}
+
+func TestHandlePendingPersistsEffectiveBindingVariables(t *testing.T) {
+	scheme := testScheme()
+	variable := breakglassv1alpha1.ExtraDeployVariable{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}, {Value: "power"}}}
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", Labels: map[string]string{"catalogue.identity": "inline"}}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{variable},
+	}}
+	disabled := true
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"},
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}, Disabled: &disabled}},
+	}}
+	session := newTestDebugSession("session", "template", "cluster", "user")
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	require.NotNil(t, stored.Status.ResolvedTemplate)
+	require.Len(t, stored.Status.ResolvedTemplate.ExtraDeployVariables, 1)
+	assert.True(t, stored.Status.ResolvedTemplate.ExtraDeployVariables[0].Disabled)
+	assert.Len(t, stored.Status.ResolvedTemplateVariablePolicy, 1)
+	assert.Equal(t, map[string]string{"catalogue.identity": "inline"}, stored.Status.ResolvedTemplateLabels)
+}
+
+func TestHandlePendingRejectsPartialApprovalSnapshot(t *testing.T) {
+	scheme := testScheme()
+	session := newTestDebugSession("partial-snapshot", "template", "cluster", "user")
+	session.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{}}`)}
+	hub := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, stored.Status.State)
+	assert.Contains(t, stored.Status.Message, "snapshots are incomplete")
+}
+
+func TestDecodeApprovedPodTemplateSnapshotRejectsLegacyIdentityLoss(t *testing.T) {
+	for _, raw := range []string{
+		`{"spec":{"templateString":"apiVersion: v1"}}`,
+		`{"spec":{"templateString":"apiVersion: v1"},"labels":{"pod":"debug"}}`,
+	} {
+		t.Run(raw, func(t *testing.T) {
+			status := breakglassv1alpha1.DebugSessionStatus{ResolvedPodTemplate: &apiextensionsv1.JSON{Raw: []byte(raw)}}
+			_, err := approvedTemplateLabelsFromStatus(status)
+			require.ErrorContains(t, err, "lacks durable template identity metadata")
+		})
+	}
+	spec, podLabels, templateLabels, err := decodeApprovedPodTemplateSnapshot(
+		[]byte(`{"spec":{"templateString":"apiVersion: v1"},"labels":{"pod":"debug"},"templateLabels":{"catalogue":"restricted"}}`),
+	)
+	require.NoError(t, err)
+	require.NotNil(t, spec)
+	require.Equal(t, map[string]string{"pod": "debug"}, podLabels)
+	require.Equal(t, map[string]string{"catalogue": "restricted"}, templateLabels)
+	_, err = approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
+		ResolvedPodTemplate:              &apiextensionsv1.JSON{Raw: []byte(`{"spec":{"templateString":"apiVersion: v1"}}`)},
+		ResolvedTemplateIdentityCaptured: true,
+	})
+	require.NoError(t, err)
+	labels, err := approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplateIdentityCaptured: true,
+	})
+	require.NoError(t, err)
+	require.Nil(t, labels)
+}
+
+func TestApplyApprovedTemplateLabelsClearsLiveLabelsForCapturedEmptySnapshot(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"catalogue": "changed-after-approval"}},
+	}
+	status := breakglassv1alpha1.DebugSessionStatus{ResolvedTemplateIdentityCaptured: true}
+	require.NoError(t, applyApprovedTemplateLabels(template, status))
+	require.Empty(t, template.Labels)
+}
+
+func TestHandlePendingPersistsBindingRegexIntersectionAcrossJSONRoundTrip(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		Mode:                 breakglassv1alpha1.DebugSessionModeKubectlDebug,
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "target", InputType: breakglassv1alpha1.InputTypeText, Validation: &breakglassv1alpha1.VariableValidation{Pattern: `^safe-`}}},
+	}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"}, Clusters: []string{"cluster"},
+		ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "target", Validation: &breakglassv1alpha1.VariableValidation{Pattern: `-prod$`}}},
+	}}
+	session := newTestDebugSession("session", "template", "cluster", "user")
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}, &breakglassv1alpha1.DebugSessionTemplate{}).Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+
+	_, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	var stored breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
+	raw, err := json.Marshal(&stored)
+	require.NoError(t, err)
+	var persisted breakglassv1alpha1.DebugSession
+	require.NoError(t, json.Unmarshal(raw, &persisted))
+	require.Len(t, persisted.Status.ResolvedTemplateVariablePolicy, 1)
+
+	effective, err := breakglassv1alpha1.EffectiveExtraDeployVariables(persisted.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
+	require.NoError(t, err)
+	valid := map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"safe-prod"`)}}
+	assert.Empty(t, breakglassv1alpha1.ValidateExtraDeployValues(valid, effective, field.NewPath("spec", "extraDeployValues")))
+	assert.NotEmpty(t, breakglassv1alpha1.ValidateExtraDeployValues(map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"safe-only"`)}}, effective, field.NewPath("spec", "extraDeployValues")))
+	assert.NotEmpty(t, breakglassv1alpha1.ValidateExtraDeployValues(map[string]apiextensionsv1.JSON{"target": {Raw: []byte(`"prod-only"`)}}, effective, field.NewPath("spec", "extraDeployValues")))
 }
 
 // Helper to create a basic DebugPodTemplate
@@ -3302,6 +3470,109 @@ func TestDebugSessionController_FindBindingForSession_EdgeCases(t *testing.T) {
 		require.ErrorContains(t, err, "cluster config required")
 		assert.Nil(t, result) // Can't match via selector without ClusterConfig
 	})
+
+	t.Run("does not match selector against an unready ClusterConfig", func(t *testing.T) {
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: "test-template"},
+		}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{Name: "selector-only-binding", Namespace: "test-ns"},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef:     &breakglassv1alpha1.TemplateReference{Name: "test-template"},
+				ClusterSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "test"}},
+			},
+		}
+		clusterConfig := &breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "unready-cluster", Labels: map[string]string{"env": "test"}},
+			Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{
+				Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse,
+			}}},
+		}
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(template, binding, clusterConfig).Build()
+		ctrl := &DebugSessionController{log: logger, client: fakeClient}
+
+		result, err := ctrl.findBindingForSession(ctx, template, "unready-cluster")
+		require.ErrorIs(t, err, errBindingClusterNotReady)
+		assert.Nil(t, result)
+	})
+}
+
+func TestHandlePendingDefersUnreadyBindingUntilReady(t *testing.T) {
+	scheme := testScheme()
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode:              breakglassv1alpha1.DebugSessionModeWorkload,
+			PodTemplateString: "apiVersion: v1\nkind: Pod\nspec:\n  containers:\n  - name: debug\n    image: busybox\n",
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{"spoke"},
+			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+		},
+	}
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "spoke", Namespace: "default"},
+		Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{
+			Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse,
+		}}},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{
+			TemplateRef: "template", Cluster: "spoke", RequestedBy: "requester@example.com",
+		},
+	}
+	hub := fake.NewClientBuilder().WithScheme(scheme).
+		WithObjects(template, binding, clusterConfig, session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		Build()
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub}
+
+	result, err := controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	require.Equal(t, DefaultDebugSessionRequeue, result.RequeueAfter)
+	require.Nil(t, session.Status.ResolvedTemplate)
+
+	clusterConfig.Status.Conditions[0].Status = metav1.ConditionTrue
+	require.NoError(t, hub.Update(context.Background(), clusterConfig))
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+	result, err = controller.handlePending(context.Background(), session)
+	require.NoError(t, err)
+	require.Equal(t, DefaultDebugSessionRequeue, result.RequeueAfter)
+	require.NotNil(t, session.Status.ResolvedTemplate)
+	require.NotNil(t, session.Status.ResolvedBinding)
+	require.Equal(t, "binding", session.Status.ResolvedBinding.Name)
+	require.True(t, session.Status.Approval.Required)
+}
+
+func TestDirectTemplateAllowsClusterRejectsEmptySelector(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				ClusterSelector: &metav1.LabelSelector{},
+			},
+		},
+	}
+	cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster"}}
+	assert.False(t, directTemplateAllowsCluster(template, cluster.Name, cluster))
+}
+
+func TestBindingActivationRecheckAcceptsCanonicalClusterTenantAlias(t *testing.T) {
+	controller := &DebugSessionController{}
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-production"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{Tenant: "production"},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Clusters: []string{"production"}},
+	}
+
+	assert.True(t, controller.bindingMatchesCluster(binding, cluster.Spec.Tenant, cluster))
+	assert.False(t, controller.bindingMatchesCluster(binding, cluster.Name, cluster))
 }
 
 func TestDebugSessionController_BindingMatchesTemplate_EdgeCases(t *testing.T) {
@@ -5783,7 +6054,7 @@ func TestDebugSessionController_Reconcile_FailSessionCleanup(t *testing.T) {
 		err = fakeClient.Get(context.Background(), types.NamespacedName{Name: session.Name, Namespace: session.Namespace}, &updated)
 		require.NoError(t, err)
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, updated.Status.State)
-		assert.Contains(t, updated.Status.Message, "template not found")
+		assert.Contains(t, updated.Status.Message, "approved activation snapshots are missing")
 	})
 
 	t.Run("failed_state_is_terminal_no_requeue", func(t *testing.T) {

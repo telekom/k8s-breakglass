@@ -454,6 +454,17 @@ describe("VariableForm", () => {
       expect(exposed.isValid).toBe(false);
     });
 
+    it.each([
+      ["9007199254740993", "9007199254740992", "9007199254740994", true],
+      ["9007199254740992", "9007199254740993", undefined, false],
+      ["-1.5e2", "-149", "-100", false],
+      ["1.00e1", "10", "10", true],
+    ])("validates exact decimal string bounds (%s)", (value, min, max, valid) => {
+      const wrapper = mountForm([numberVar({ validation: { min, max } })], { myNum: value });
+      const exposed = wrapper.vm as unknown as { isValid: boolean };
+      expect(exposed.isValid).toBe(valid);
+    });
+
     it("validates multiSelect minItems", () => {
       const vars = [multiSelectVar({ required: true, validation: { minItems: 2 } })];
       const wrapper = mountForm(vars, { myMulti: ["x"] }); // only 1 selected, need 2

@@ -101,3 +101,26 @@ func TestResolveClustersFromBindingEmptySelectorKeepsExplicitOnly(t *testing.T) 
 	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
 	require.Equal(t, []string{"explicit"}, controller.resolveClustersFromBinding(binding, clusterMap))
 }
+
+func TestResolveClustersFromBindingExpandsUniqueTenantAlias(t *testing.T) {
+	cluster := readyDebugClusterConfig("team-a", "canonical", nil)
+	cluster.Spec.Tenant = "tenant-a"
+	clusterMap, _ := readyDebugClusterConfigMap([]breakglassv1alpha1.ClusterConfig{cluster})
+	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
+
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		Clusters: []string{"tenant-a"},
+	}}
+
+	require.Equal(t, []string{"canonical"}, controller.resolveClustersFromBinding(binding, clusterMap))
+}
+
+func TestDirectTemplateAllowsClusterReferenceUsesTenantAlias(t *testing.T) {
+	cluster := readyDebugClusterConfig("team-a", "canonical", nil)
+	cluster.Spec.Tenant = "tenant-a"
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+		Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"tenant-a"}},
+	}}
+
+	require.True(t, directTemplateAllowsClusterReference(template, "canonical", &cluster))
+}

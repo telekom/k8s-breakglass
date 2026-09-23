@@ -28,6 +28,7 @@ const showAdvancedInternal = computed({
 // Filter variables based on user groups
 const visibleVariables = computed(() => {
   return props.variables.filter((v) => {
+    if (v.disabled) return false;
     // If no allowedGroups specified, variable is visible to all
     if (!v.allowedGroups || v.allowedGroups.length === 0) {
       return true;
@@ -110,11 +111,8 @@ function coerceValue(value: unknown, inputType: string): unknown {
   if (value === undefined || value === null) return value;
   switch (inputType) {
     case "number": {
-      if (typeof value === "number") return value;
-      if (typeof value === "string" && value !== "") {
-        const num = Number(value);
-        if (Number.isFinite(num)) return num;
-      }
+      // Keep decimal strings intact: converting through JavaScript Number loses
+      // precision for values above 2^53 before the API can validate them.
       return value;
     }
     case "boolean": {
@@ -126,6 +124,35 @@ function coerceValue(value: unknown, inputType: string): unknown {
     default:
       return value;
   }
+}
+
+function compareDecimalValues(left: unknown, right: string): number | undefined {
+  const parse = (value: unknown) => {
+    const match = String(value)
+      .trim()
+      .match(/^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
+    if (!match) return undefined;
+    const fraction = match[3] || "";
+    const digits = `${match[2]}${fraction}`.replace(/^0+(?=\d)/, "");
+    const exponent = Number(match[4] || 0);
+    if (!Number.isSafeInteger(exponent)) return undefined;
+    return { negative: match[1] === "-", digits, scale: exponent - fraction.length };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return undefined;
+  if (a.digits === "0" && b.digits === "0") return 0;
+  if (a.negative !== b.negative) return a.negative ? -1 : 1;
+  const magnitude = (() => {
+    const aOrder = a.digits.length + a.scale;
+    const bOrder = b.digits.length + b.scale;
+    if (aOrder !== bOrder) return aOrder < bOrder ? -1 : 1;
+    const length = Math.max(a.digits.length, b.digits.length);
+    const aDigits = a.digits.padEnd(length, "0");
+    const bDigits = b.digits.padEnd(length, "0");
+    return aDigits === bDigits ? 0 : aDigits < bDigits ? -1 : 1;
+  })();
+  return a.negative ? -magnitude : magnitude;
 }
 
 // Initialize values from defaults, coercing types to match inputType
@@ -206,25 +233,31 @@ const validationErrors = computed((): ValidationError[] => {
       if (validation?.maxLength !== undefined && value.length > validation.maxLength) {
         errors.push({ field: variable.name, message: `Must be at most ${validation.maxLength} characters` });
       }
-      if (validation?.pattern) {
-        const regex = new RegExp(validation.pattern);
+      const patterns = [validation?.pattern, ...(validation?.additionalPatterns || [])].filter(
+        (pattern): pattern is string => Boolean(pattern),
+      );
+      for (const pattern of patterns) {
+        const regex = new RegExp(pattern);
         if (!regex.test(value)) {
-          errors.push({ field: variable.name, message: validation.patternError || "Invalid format" });
+          errors.push({
+            field: variable.name,
+            message: pattern === validation?.pattern ? validation.patternError || "Invalid format" : "Invalid format",
+          });
         }
       }
     }
 
-    if (variable.inputType === "number" && typeof value === "number") {
+    if (variable.inputType === "number") {
       if (validation?.min !== undefined) {
-        const minVal = parseFloat(validation.min);
-        if (!isNaN(minVal) && value < minVal) {
-          errors.push({ field: variable.name, message: `Must be at least ${minVal}` });
+        const comparison = compareDecimalValues(value, validation.min);
+        if (comparison !== undefined && comparison < 0) {
+          errors.push({ field: variable.name, message: `Must be at least ${validation.min}` });
         }
       }
       if (validation?.max !== undefined) {
-        const maxVal = parseFloat(validation.max);
-        if (!isNaN(maxVal) && value > maxVal) {
-          errors.push({ field: variable.name, message: `Must be at most ${maxVal}` });
+        const comparison = compareDecimalValues(value, validation.max);
+        if (comparison !== undefined && comparison > 0) {
+          errors.push({ field: variable.name, message: `Must be at most ${validation.max}` });
         }
       }
     }
@@ -324,8 +357,7 @@ function handleTextInput(variable: ExtraDeployVariable, event: Event) {
 
 function handleNumberInput(variable: ExtraDeployVariable, event: Event) {
   const target = event.target as HTMLInputElement;
-  const num = parseFloat(target.value);
-  updateValue(variable.name, isNaN(num) ? undefined : num);
+  updateValue(variable.name, target.value === "" ? undefined : target.value);
 }
 
 function handleBooleanInput(variable: ExtraDeployVariable, event: Event) {
@@ -446,6 +478,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
             v-for="option in variable.options || []"
             :key="option.value"
             :value="option.value"
+            :disabled="option.disabled"
           >
             {{ option.displayName || option.value }}
           </scale-dropdown-select-item>
@@ -479,6 +512,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               :key="option.value"
               :checked="isMultiSelectChecked(variable, option.value)"
               :label="option.displayName || option.value"
+              :disabled="option.disabled"
               @scale-change="
                 handleMultiSelectToggle(variable, option.value, ($event.target as HTMLInputElement).checked)
               "
@@ -596,6 +630,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
               v-for="option in variable.options || []"
               :key="option.value"
               :value="option.value"
+              :disabled="option.disabled"
             >
               {{ option.displayName || option.value }}
             </scale-dropdown-select-item>
@@ -628,6 +663,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
                 :key="option.value"
                 :checked="isMultiSelectChecked(variable, option.value)"
                 :label="option.displayName || option.value"
+                :disabled="option.disabled"
                 @scale-change="
                   handleMultiSelectToggle(variable, option.value, ($event.target as HTMLInputElement).checked)
                 "
