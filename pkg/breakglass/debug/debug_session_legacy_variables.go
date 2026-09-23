@@ -84,20 +84,6 @@ func marshalApprovedPodTemplateSnapshot(template *breakglassv1alpha1.DebugSessio
 	return &apiextensionsv1.JSON{Raw: raw}, nil
 }
 
-// resolvedPodTemplateSnapshot is retained for compatibility with older snapshot fixtures.
-type resolvedPodTemplateSnapshot struct {
-	Spec   breakglassv1alpha1.DebugPodTemplateSpec `json:"spec"`
-	Labels map[string]string                       `json:"labels,omitempty"`
-}
-
-func decodeResolvedPodTemplateSnapshot(raw []byte) (resolvedPodTemplateSnapshot, error) {
-	var snapshot resolvedPodTemplateSnapshot
-	if err := json.Unmarshal(raw, &snapshot); err != nil {
-		return resolvedPodTemplateSnapshot{}, err
-	}
-	return snapshot, nil
-}
-
 func decodeApprovedPodTemplateSnapshot(raw []byte) (*breakglassv1alpha1.DebugPodTemplateSpec, map[string]string, map[string]string, error) {
 	var snapshot approvedPodTemplateSnapshot
 	if err := json.Unmarshal(raw, &snapshot); err != nil {
