@@ -48,6 +48,27 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
 )
 
+func TestCanonicalizeDebugSessionApprovalSnapshotPreservesJSONDefaultPrecision(t *testing.T) {
+	status := &breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{
+				Name:    "large-number",
+				Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+			}},
+		},
+		ResolvedTemplateVariablePolicy: []breakglassv1alpha1.ExtraDeployVariable{{
+			Name:    "large-number",
+			Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+		}},
+	}
+
+	require.NoError(t, canonicalizeDebugSessionApprovalSnapshot(status))
+	require.NotNil(t, status.ResolvedTemplate.ExtraDeployVariables[0].Default)
+	require.NotNil(t, status.ResolvedTemplateVariablePolicy[0].Default)
+	assert.Equal(t, `9007199254740993`, string(status.ResolvedTemplate.ExtraDeployVariables[0].Default.Raw))
+	assert.Equal(t, `9007199254740993`, string(status.ResolvedTemplateVariablePolicy[0].Default.Raw))
+}
+
 // Helper to create a fake client with status subresource support
 // Keeping for potential future use in tests
 var _ = func(scheme *runtime.Scheme, objects ...client.Object) client.Client {

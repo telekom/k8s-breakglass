@@ -86,6 +86,27 @@ func TestStatusHelpersFreezeTemplateIdentityMarker(t *testing.T) {
 	require.ErrorContains(t, err, "identity marker")
 }
 
+func TestStatusHelpersFreezeVariablePolicyAfterTemplatePersistence(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "variable-policy", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate:               &breakglassv1alpha1.DebugSessionTemplateSpec{},
+			ResolvedTemplateVariablePolicy: []breakglassv1alpha1.ExtraDeployVariable{{Name: "approved"}},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.ResolvedTemplateVariablePolicy[0].Name = "changed"
+
+	require.ErrorContains(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired), "variable policy")
+	require.ErrorContains(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ResolvedTemplateVariablePolicy[0].Name = "changed"
+	}), "variable policy")
+}
+
 func TestStatusHelpersFreezeBindingSnapshotAfterTemplatePersistence(t *testing.T) {
 	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSessionStatus){
 		"capture marker": func(status *breakglassv1alpha1.DebugSessionStatus) {
