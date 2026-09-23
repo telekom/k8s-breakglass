@@ -158,10 +158,10 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplate, newStatus.ResolvedTemplate) {
 		return fmt.Errorf("approved resolved template snapshot is immutable")
 	}
-	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateLabels, newStatus.ResolvedTemplateLabels) {
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateLabels, newStatus.ResolvedTemplateLabels) {
 		return fmt.Errorf("approved resolved template labels are immutable")
 	}
-	if oldStatus.ResolvedTemplate != nil &&
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) &&
 		oldStatus.ResolvedTemplateIdentityCaptured != newStatus.ResolvedTemplateIdentityCaptured {
 		return fmt.Errorf("approved resolved template identity marker is immutable")
 	}

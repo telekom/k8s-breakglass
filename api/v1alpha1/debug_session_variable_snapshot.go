@@ -56,5 +56,6 @@ func HasCompleteResolvedBindingSnapshot(status DebugSessionStatus) bool {
 func HasAnyResolvedSnapshot(status DebugSessionStatus) bool {
 	return status.ResolvedTemplate != nil || status.ResolvedTemplateVariablePolicy != nil ||
 		status.ResolvedTemplateIdentityCaptured || status.ResolvedBindingSnapshotCaptured ||
-		status.ResolvedBinding != nil || status.ResolvedBindingSpec != nil || status.ResolvedPodTemplate != nil
+		status.ResolvedBinding != nil || status.ResolvedBindingSpec != nil || status.ResolvedPodTemplate != nil ||
+		status.ResolvedTemplateLabels != nil
 }

@@ -1223,7 +1223,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
 			"resolvedTemplate is immutable once persisted"))
 	}
-	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateLabels, newObj.Status.ResolvedTemplateLabels) {
+	if HasAnyResolvedSnapshot(oldObj.Status) && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateLabels, newObj.Status.ResolvedTemplateLabels) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateLabels"), newObj.Status.ResolvedTemplateLabels,
 			"resolvedTemplate labels are immutable once persisted"))
 	}
