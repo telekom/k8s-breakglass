@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -361,6 +362,9 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 func (at *ActivityTracker) updateDebugSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
 	reader := at.getReader()
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if entry.uid == "" {
+			return nil
+		}
 		var session breakglassv1alpha1.DebugSession
 		if err := reader.Get(ctx, key, &session); err != nil {
 			if apierrors.IsNotFound(err) {
@@ -368,10 +372,11 @@ func (at *ActivityTracker) updateDebugSessionActivity(ctx context.Context, key t
 			}
 			return err
 		}
-		if entry.uid != "" && session.UID != entry.uid {
+		if session.UID != entry.uid {
 			return nil
 		}
-		if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+		now := time.Now()
+		if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&session, now) {
 			return nil
 		}
 		base := session.DeepCopy()

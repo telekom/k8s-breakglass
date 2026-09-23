@@ -482,8 +482,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		return
 	}
 	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
-		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
-		return
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
 	}
 
 	reqLog.Infow("Ephemeral container injected",
@@ -589,8 +588,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		return
 	}
 	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
-		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
-		return
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
 	}
 
 	reqLog.Infow("Pod copy created",
@@ -698,8 +696,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		return
 	}
 	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
-		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
-		return
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
 	}
 
 	reqLog.Infow("Node debug pod created",
