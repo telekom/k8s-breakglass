@@ -856,6 +856,9 @@ func validateDebugSessionMonotonicStatusFields(oldObj, newObj *DebugSession) fie
 	checkTime(oldObj.Status.StartsAt, newObj.Status.StartsAt, statusPath.Child("startsAt"))
 	checkTime(oldObj.Status.LastActivity, newObj.Status.LastActivity, statusPath.Child("lastActivity"))
 	checkTime(oldObj.Status.RetainedUntil, newObj.Status.RetainedUntil, statusPath.Child("retainedUntil"))
+	if newObj.Status.LastActivity != nil && newObj.Status.LastActivity.Time.After(now.Add(5*time.Minute)) {
+		errs = append(errs, field.Invalid(statusPath.Child("lastActivity"), newObj.Status.LastActivity, "timestamp must not be more than five minutes in the future"))
+	}
 	if newObj.Status.ActivityCount < oldObj.Status.ActivityCount {
 		errs = append(errs, field.Invalid(statusPath.Child("activityCount"), newObj.Status.ActivityCount, "activityCount must not decrease"))
 	}
