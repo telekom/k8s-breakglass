@@ -133,3 +133,31 @@ func TestActivationRetryPreservesOtherAuxiliaryCleanupEvidence(t *testing.T) {
 		require.True(t, apierrors.IsNotFound(target.Get(ctx, client.ObjectKey{Namespace: "breakglass-debug", Name: name}, &corev1.ConfigMap{})))
 	}
 }
+
+func TestAuxiliaryRetryPreservesUnvisitedChildDocuments(t *testing.T) {
+	ctx := context.Background()
+	c, ds, _, _ := newDeploymentFenceFixture(t)
+	ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{
+		Name: "documents", ResourceName: "primary", Kind: "ConfigMap", APIVersion: "v1", Namespace: "breakglass-debug", UID: "primary-uid", CreateOperationID: "primary-op",
+		AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{
+			ResourceName: "child", Kind: "ConfigMap", APIVersion: "v1", Namespace: "breakglass-debug", UID: "child-uid", CreateOperationID: "child-op",
+		}},
+	}}
+	require.NoError(t, c.client.Status().Update(ctx, ds))
+	primary := ds.Status.AuxiliaryResourceStatuses[0]
+	primary.UID = ""
+	primary.AdditionalResources = nil
+	require.NoError(t, c.persistAuxiliaryStatus(ctx, ds, primary))
+	current := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), current))
+	require.Len(t, current.Status.AuxiliaryResourceStatuses, 1)
+	require.Equal(t, "primary-uid", current.Status.AuxiliaryResourceStatuses[0].UID)
+	require.Len(t, current.Status.AuxiliaryResourceStatuses[0].AdditionalResources, 1)
+	require.Equal(t, "child-uid", current.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].UID)
+	// Replaying the child intent also retains its observed UID without duplication.
+	replay := current.Status.AuxiliaryResourceStatuses[0]
+	replay.AdditionalResources[0].UID = ""
+	require.NoError(t, c.persistAuxiliaryStatus(ctx, ds, replay))
+	require.Len(t, ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources, 1)
+	require.Equal(t, "child-uid", ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources[0].UID)
+}

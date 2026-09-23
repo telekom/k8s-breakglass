@@ -473,7 +473,18 @@ func mergeAuxiliaryStatuses(current, updates []breakglassv1alpha1.AuxiliaryResou
 		var baseline []breakglassv1alpha1.AuxiliaryResourceStatus
 		for _, previous := range current {
 			if previous.Name == update.Name {
-				baseline = append(baseline, previous)
+				// Only replayed child documents may replace their old entries.
+				replayed := *previous.DeepCopy()
+				replayed.AdditionalResources = nil
+				for _, child := range previous.AdditionalResources {
+					for _, next := range update.AdditionalResources {
+						if additionalResourceKey(child) == additionalResourceKey(next) || (child.CreateOperationID != "" && child.CreateOperationID == next.CreateOperationID) {
+							replayed.AdditionalResources = append(replayed.AdditionalResources, child)
+							break
+						}
+					}
+				}
+				baseline = append(baseline, replayed)
 				if update.ResourceName == "" {
 					previous.Error = update.Error
 					update = previous
