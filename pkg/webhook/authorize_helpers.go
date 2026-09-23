@@ -1021,16 +1021,22 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			s.reason = wc.finalizeReason(reason, true, s.clusterName)
 		}
 		if s.allowed && s.debugSessionIdleTrackingRequired() {
-			if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
-				s.allowed = false
-				s.allowSource = ""
-				s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
-			} else if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+			// Take the final live authorization fence before recording activity. The
+			// status writer below has its own active/expiry and resource-version
+			// checks, so a request denied by this fence cannot extend idle time.
+			if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
 				s.allowed = false
 				s.allowSource = ""
 				s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
 			} else {
 				s.reason = wc.finalizeReason(reason, true, s.clusterName)
+			}
+			if s.allowed {
+				if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
+					s.allowed = false
+					s.allowSource = ""
+					s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
+				}
 			}
 		}
 	}

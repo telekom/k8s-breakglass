@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
 
+- Add DebugSession idle-timeout activity fencing and explicit terminal retention
+  through `idleTimeout` and `retainFor` constraints.
+
 - Publish the generic `dump-reader` and provider-neutral `cluster-validator`
   images through the signed utility-image release matrix, with their existing
   runtime behavior gates and multi-architecture build contexts.
