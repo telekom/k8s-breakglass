@@ -13,6 +13,14 @@ snapshots to bypass this check. New snapshots record the controller-owned
 `breakglass.t-caas.telekom.com/catalogue-snapshot: v1` label inside
 `status.resolvedTemplate.labels`, alongside the captured identity labels.
 
+## Auxiliary resource lifecycle flags
+
+Explicit `createBefore: false` and `deleteAfter: false` now survive typed template
+and resolved-snapshot serialization. Omitted fields in YAML still default to
+`true`. Previously, serialization could drop explicit false values and the API
+would restore its true defaults. Already persisted snapshots are immutable;
+request a new session if an older snapshot has the wrong phase or cleanup policy.
+
 ## General Upgrade Process
 
 ### Pre-Upgrade Checklist
