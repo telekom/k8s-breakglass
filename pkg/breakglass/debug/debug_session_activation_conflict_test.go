@@ -88,3 +88,48 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 		})
 	}
 }
+
+func TestActivationRetryPreservesOtherAuxiliaryCleanupEvidence(t *testing.T) {
+	ctx := context.Background()
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	c.connectionLeases = nil
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+	template.Spec.RequiredAuxiliaryResourceCategories = []string{"security"}
+	for _, name := range []string{"first", "second"} {
+		template.Spec.AuxiliaryResources = append(template.Spec.AuxiliaryResources, breakglassv1alpha1.AuxiliaryResource{
+			Name: name, Category: "security", CreateBefore: true, DeleteAfter: true,
+			TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n",
+		})
+	}
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	require.NoError(t, c.client.Status().Update(ctx, ds))
+	injected := false
+	c.client = interceptor.NewClient(c.client.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
+		candidate, ok := obj.(*breakglassv1alpha1.DebugSession)
+		if ok && sub == "status" && !injected && len(candidate.Status.DeployedResources) > 0 {
+			injected = true
+			return apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, ds.Name, nil)
+		}
+		return cl.SubResource(sub).Patch(ctx, obj, p, opts...)
+	}})
+	_, err := c.activateSession(ctx, ds, template, nil)
+	require.True(t, apierrors.IsConflict(err), "expected status conflict, got %v", err)
+	current := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), current))
+	require.Len(t, current.Status.AuxiliaryResourceStatuses, 2)
+	for _, status := range current.Status.AuxiliaryResourceStatuses {
+		require.NotEmpty(t, status.UID)
+	}
+	// On retry an earlier prerequisite fails. Both previously created objects
+	// must remain discoverable and safely deletable through the persisted status.
+	// A direct deployment retry uses the same inventory but fails before the
+	// second prerequisite is visited. The approved snapshot itself is unchanged.
+	template.Spec.AuxiliaryResources[0].TemplateString = "invalid: ["
+	err = c.deployDebugResources(ctx, current, template)
+	require.Error(t, err)
+	require.Len(t, current.Status.AuxiliaryResourceStatuses, 2)
+	require.NoError(t, c.auxiliaryMgr.CleanupAuxiliaryResources(ctx, current, target))
+	for _, name := range []string{"first", "second"} {
+		require.True(t, apierrors.IsNotFound(target.Get(ctx, client.ObjectKey{Namespace: "breakglass-debug", Name: name}, &corev1.ConfigMap{})))
+	}
+}

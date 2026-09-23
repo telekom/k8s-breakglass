@@ -260,6 +260,9 @@ ClusterPolicy exceptions use `kyverno.io/v2`, while CEL policy exceptions use
 The native unstructured apply configuration lets the real Kubernetes client
 resolve the target API without a compiled-in Kyverno schema. HTTP-backed tests cover
 creation, no-op reconciliation, and updates of a CEL PolicyException.
+Activation retries use the persisted approved template and preserve every
+tracked auxiliary creation intent and UID until cleanup. Recovery requires a
+non-empty session UID matching the existing resource owner.
 Creating the object proves API persistence, not admission-cache readiness;
 verify workload admission and exception removal against the target Kyverno
 version in the live integration test.

@@ -161,3 +161,32 @@ func TestAuxiliaryCreateDoesNotAdoptConcurrentForeignResource(t *testing.T) {
 	err := recoverTrackedCreateResult(ctx, target, obj, session, apierrors.NewAlreadyExists(schema.GroupResource{Group: gvk.Group, Resource: "externalresources"}, obj.GetName()))
 	require.ErrorContains(t, err, "owned by another session")
 }
+
+func TestAuxiliaryRecoveryRejectsEmptySessionUID(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
+		"metadata": map[string]interface{}{"name": "unowned", "namespace": "target", "uid": "original-uid"},
+		"spec":     map[string]interface{}{"original": true},
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+			t.Fatal("unowned resource must never reach SSA")
+			return nil
+		},
+	}).Build()
+	desired := existing.DeepCopy()
+	desired.SetUID("")
+	desired.SetResourceVersion("")
+	desired.Object["spec"] = map[string]interface{}{"changed": true}
+	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{})
+	require.ErrorContains(t, err, "owned by another session")
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(gvk)
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), live))
+	require.Equal(t, existing.Object["spec"], live.Object["spec"])
+	require.Equal(t, existing.GetUID(), live.GetUID())
+}
