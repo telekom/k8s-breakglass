@@ -31,6 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Preserve approved DebugSession templates and auxiliary cleanup inventory across
   activation retries; reject exception recovery without a session UID.
 
+- Manage session-scoped Kyverno PolicyExceptions through the controller-owned
+  auxiliary-resource lifecycle with explicit pre-apply and cleanup behavior.
+
 - Honor debug-session audit opt-out for expiry and approval-timeout events even
   when the periodic cleanup routine wins the lifecycle status update (#1337).
 

@@ -244,6 +244,23 @@ func TestAuxiliaryRecoveryRejectsRecreatedUID(t *testing.T) {
 	require.ErrorContains(t, err, "UID does not match")
 }
 
+func TestRestrictedCatalogueProfileUsesResolvedSnapshotLabels(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Labels: map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}}}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
+		catalogueProfileLabel:  "workload-diagnostics",
+		catalogueIntentLabel:   "workload-diagnostics",
+		catalogueElevatedLabel: "false",
+	}}}
+	restricted, intent, err := restrictedCatalogueProfile(template, podTemplate)
+	require.NoError(t, err)
+	require.True(t, restricted)
+	require.Equal(t, "workload-diagnostics", intent)
+}
+
 func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()

@@ -409,6 +409,17 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
+	// Catalogue identity lives on template metadata, while the immutable
+	// activation snapshot stores only the spec. Carry the reserved identity
+	// labels into the snapshot so retries retain the restricted profile fence.
+	if resolvedTemplate.Labels == nil {
+		resolvedTemplate.Labels = map[string]string{}
+	}
+	for _, key := range []string{catalogueProfileLabel, catalogueIntentLabel, catalogueElevatedLabel} {
+		if value := template.Labels[key]; value != "" {
+			resolvedTemplate.Labels[key] = value
+		}
+	}
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
 	if err := c.ensureTerminalRecordingConfigured(template); err != nil {

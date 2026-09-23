@@ -1157,6 +1157,9 @@ const (
 
 func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
 	templateProfile := template.Labels[catalogueProfileLabel]
+	if templateProfile == "" {
+		templateProfile = template.Spec.Labels[catalogueProfileLabel]
+	}
 	podProfile := ""
 	if podTemplate != nil {
 		podProfile = podTemplate.Labels[catalogueProfileLabel]
@@ -1168,11 +1171,17 @@ func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplat
 		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
 	}
 	templateIntent := template.Labels[catalogueIntentLabel]
+	if templateIntent == "" {
+		templateIntent = template.Spec.Labels[catalogueIntentLabel]
+	}
 	podIntent := podTemplate.Labels[catalogueIntentLabel]
 	if templateIntent == "" || templateIntent != podIntent {
 		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
 	}
 	templateElevated := template.Labels[catalogueElevatedLabel]
+	if templateElevated == "" {
+		templateElevated = template.Spec.Labels[catalogueElevatedLabel]
+	}
 	podElevated := podTemplate.Labels[catalogueElevatedLabel]
 	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
 		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")
