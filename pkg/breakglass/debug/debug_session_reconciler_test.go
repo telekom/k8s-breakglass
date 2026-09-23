@@ -5452,10 +5452,10 @@ func TestDebugSessionController_HandleCleanupFinishesAgedPreparedOperation(t *te
 	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar()), targetClients: &mockClientProvider{clients: map[string]client.Client{"test-cluster": target}}}
 	result, err := controller.handleCleanup(context.Background(), session.DeepCopy())
 	require.NoError(t, err)
-	assert.Zero(t, result.RequeueAfter)
+	assert.Equal(t, ExpiredSessionRequeue, result.RequeueAfter)
 	var stored breakglassv1alpha1.DebugSession
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
-	assert.False(t, hasPreparedKubectlDebugOperation(&stored))
+	assert.True(t, hasPreparedKubectlDebugOperation(&stored))
 	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationUnknown, stored.Status.KubectlDebugStatus.Operations[0].State)
 }
 

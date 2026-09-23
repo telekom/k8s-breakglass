@@ -663,7 +663,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 
 		if hasPreparedKubectlDebugOperation(ds) {
 			for _, operation := range status.Operations {
-				if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+				if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared || operation.State == breakglassv1alpha1.KubectlDebugOperationUnknown {
 					add("", "KubectlDebugOperation", "", operation.ID, "")
 				}
 			}
