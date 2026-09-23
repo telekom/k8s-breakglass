@@ -17,10 +17,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
-	"reflect"
 	"regexp"
 	"strconv"
 
@@ -546,8 +544,7 @@ func ValidateExtraDeployValuesWithBinding(values map[string]apiextensionsv1.JSON
 			}
 			normalizedValue := coerceJSONValue(value, variable.InputType)
 			normalizedDefault := coerceJSONValue(*variable.Default, variable.InputType)
-			var actual, defaultValue any
-			if json.Unmarshal(normalizedValue.Raw, &actual) == nil && json.Unmarshal(normalizedDefault.Raw, &defaultValue) == nil && reflect.DeepEqual(actual, defaultValue) {
+			if equalJSONValues(normalizedValue, normalizedDefault) {
 				delete(requestValues, variable.Name)
 			}
 		}

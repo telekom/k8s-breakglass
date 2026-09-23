@@ -17,9 +17,11 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math"
+	"reflect"
 	"regexp"
 	"strconv"
 
@@ -109,8 +111,8 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 		// Try parsing as a string-encoded number
 		var strVal string
 		if json.Unmarshal(value.Raw, &strVal) == nil {
-			if num, err := strconv.ParseFloat(strVal, 64); err == nil {
-				if raw, err := json.Marshal(num); err == nil {
+			if _, err := strconv.ParseFloat(strVal, 64); err == nil {
+				if raw, err := json.Marshal(json.Number(strVal)); err == nil {
 					return apiextensionsv1.JSON{Raw: raw}
 				}
 			}
@@ -134,6 +136,24 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 	}
 
 	return value
+}
+
+func equalJSONValues(left, right apiextensionsv1.JSON) bool {
+	decode := func(raw []byte) (any, error) {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err != nil {
+			return nil, err
+		}
+		return value, nil
+	}
+	actual, err := decode(left.Raw)
+	if err != nil {
+		return false
+	}
+	expected, err := decode(right.Raw)
+	return err == nil && reflect.DeepEqual(actual, expected)
 }
 
 // ValidateExtraDeployValues validates user-provided values against variable definitions.

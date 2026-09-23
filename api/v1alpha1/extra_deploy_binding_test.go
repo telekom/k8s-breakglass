@@ -188,6 +188,23 @@ func TestValidateExtraDeployValuesWithBindingNormalizesDefaults(t *testing.T) {
 	}
 }
 
+func TestValidateExtraDeployValuesWithBindingPreservesLargeIntegerDistinction(t *testing.T) {
+	variables := []ExtraDeployVariable{{
+		Name: "value", InputType: InputTypeNumber, AllowedGroups: []string{"admins"},
+		Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+	}}
+	constraints := []ExtraDeployVariableConstraint{{
+		Name: "value", Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+	}}
+
+	errs := ValidateExtraDeployValuesWithBinding(
+		map[string]apiextensionsv1.JSON{"value": {Raw: []byte(`9007199254740992`)}},
+		variables, constraints, nil, field.NewPath("values"),
+	)
+	require.Len(t, errs, 1)
+	require.Contains(t, errs[0].Detail, "restricted")
+}
+
 func TestBindingPatternErrorBelongsToNarrowPattern(t *testing.T) {
 	vars, err := EffectiveExtraDeployVariables([]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Validation: &VariableValidation{Pattern: "^safe-", PatternError: "template error"}}}, []ExtraDeployVariableConstraint{{Name: "value", Validation: &VariableValidation{Pattern: "-prod$", PatternError: "binding error"}}})
 	if err != nil {
