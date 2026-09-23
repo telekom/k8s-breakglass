@@ -794,8 +794,12 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if operationID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != operationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
 	}
-	if !auxiliaryResourceIdentityRecorded(session, auxiliaryName, obj) {
+	recordedUID, recorded := auxiliaryResourceIdentity(session, auxiliaryName, obj)
+	if !recorded {
 		return fmt.Errorf("target resource %s/%s is not the recorded resource for auxiliary %s", obj.GetNamespace(), obj.GetName(), auxiliaryName)
+	}
+	if recordedUID != "" && string(existing.GetUID()) != recordedUID {
+		return fmt.Errorf("target resource %s/%s UID does not match recorded auxiliary resource", obj.GetNamespace(), obj.GetName())
 	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
@@ -803,7 +807,7 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	return utils.ApplyUnstructured(ctx, targetClient, obj)
 }
 
-func auxiliaryResourceIdentityRecorded(session *breakglassv1alpha1.DebugSession, auxiliaryName string, obj *unstructured.Unstructured) bool {
+func auxiliaryResourceIdentity(session *breakglassv1alpha1.DebugSession, auxiliaryName string, obj *unstructured.Unstructured) (string, bool) {
 	operationID := obj.GetAnnotations()[createOperationIDAnnotation]
 	gvk := obj.GroupVersionKind()
 	for _, status := range session.Status.AuxiliaryResourceStatuses {
@@ -811,15 +815,15 @@ func auxiliaryResourceIdentityRecorded(session *breakglassv1alpha1.DebugSession,
 			continue
 		}
 		if status.APIVersion == gvk.GroupVersion().String() && status.Kind == gvk.Kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() && status.CreateOperationID == operationID {
-			return true
+			return status.UID, true
 		}
 		for _, child := range status.AdditionalResources {
 			if child.APIVersion == gvk.GroupVersion().String() && child.Kind == gvk.Kind && child.ResourceName == obj.GetName() && child.Namespace == obj.GetNamespace() && child.CreateOperationID == operationID {
-				return true
+				return child.UID, true
 			}
 		}
 	}
-	return false
+	return "", false
 }
 
 // renderTemplate renders a Go template with the given context.

@@ -223,3 +223,23 @@ func TestAuxiliaryRecoveryRejectsOtherOperation(t *testing.T) {
 	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), live))
 	require.Equal(t, existing.Object["spec"], live.Object["spec"])
 }
+
+func TestAuxiliaryRecoveryRejectsRecreatedUID(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
+		"metadata": map[string]interface{}{"name": "recreated", "namespace": "target", "uid": "replacement-uid", "annotations": map[string]interface{}{
+			sourceSessionUIDAnnotation: "same-session", createOperationIDAnnotation: "approved-operation",
+		}},
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "same-session"}, Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "external", APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, ResourceName: "recreated", Namespace: "target", UID: "original-uid", CreateOperationID: "approved-operation"}}}}
+	desired := existing.DeepCopy()
+	desired.SetUID("")
+	desired.SetResourceVersion("")
+	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, session, "external")
+	require.ErrorContains(t, err, "UID does not match")
+}

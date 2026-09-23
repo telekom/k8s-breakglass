@@ -469,31 +469,44 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 // mergeAuxiliaryStatuses replaces only the resource being replayed. Preserve
 // other resource intents and child-document evidence across partial retries.
 func mergeAuxiliaryStatuses(current, updates []breakglassv1alpha1.AuxiliaryResourceStatus) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), current...)
 	for _, update := range updates {
-		var baseline []breakglassv1alpha1.AuxiliaryResourceStatus
-		for _, previous := range current {
-			if previous.Name == update.Name {
-				// Only replayed child documents may replace their old entries.
-				replayed := *previous.DeepCopy()
-				replayed.AdditionalResources = nil
-				for _, child := range previous.AdditionalResources {
-					for _, next := range update.AdditionalResources {
-						if additionalResourceKey(child) == additionalResourceKey(next) || (child.CreateOperationID != "" && child.CreateOperationID == next.CreateOperationID) {
-							replayed.AdditionalResources = append(replayed.AdditionalResources, child)
-							break
-						}
-					}
-				}
-				baseline = append(baseline, replayed)
-				if update.ResourceName == "" {
-					previous.Error = update.Error
-					update = previous
-				}
+		index := -1
+		for i := range merged {
+			if merged[i].Name == update.Name {
+				index = i
+				break
 			}
 		}
-		current = mergeAuxiliaryResourceStatuses(baseline, []breakglassv1alpha1.AuxiliaryResourceStatus{update}, current)
+		if index < 0 {
+			merged = append(merged, update)
+			continue
+		}
+		previous := merged[index]
+		if update.UID == "" {
+			update.UID = previous.UID
+		}
+		children := append([]breakglassv1alpha1.AdditionalResourceRef(nil), previous.AdditionalResources...)
+		for _, next := range update.AdditionalResources {
+			matched := false
+			for i := range children {
+				if additionalResourceKey(children[i]) == additionalResourceKey(next) || (next.CreateOperationID != "" && children[i].CreateOperationID == next.CreateOperationID) {
+					if next.UID == "" {
+						next.UID = children[i].UID
+					}
+					children[i] = next
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				children = append(children, next)
+			}
+		}
+		update.AdditionalResources = children
+		merged[index] = update
 	}
-	return current
+	return merged
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
@@ -918,8 +931,9 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		}
 	}
 
-	// Add to deployed resources list
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+	// Add to deployed resources list, reconciling an intent left by a prior
+	// attempt instead of appending a duplicate on retry.
+	upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion:        obj.GetAPIVersion(),
 		Kind:              obj.GetKind(),
 		Name:              obj.GetName(),
