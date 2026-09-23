@@ -19,7 +19,7 @@ import (
 // admissionPolicyVersion fingerprints identity and policy content, excluding
 // status and server bookkeeping so controller status updates do not invalidate
 // an otherwise unchanged request. UIDs still detect same-name replacement.
-func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (string, error) {
+func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, podTemplate *breakglassv1alpha1.DebugPodTemplate) (string, error) {
 	policyMetadata := func(meta metav1.ObjectMeta) metav1.ObjectMeta {
 		return metav1.ObjectMeta{Name: meta.Name, Namespace: meta.Namespace, UID: meta.UID, Labels: meta.Labels, Annotations: meta.Annotations}
 	}
@@ -35,10 +35,19 @@ func admissionPolicyVersion(template *breakglassv1alpha1.DebugSessionTemplate, b
 		bindingCopy.Status = breakglassv1alpha1.DebugSessionClusterBindingStatus{}
 		bindingPolicy = &bindingCopy
 	}
+	var podPolicy *breakglassv1alpha1.DebugPodTemplate
+	if podTemplate != nil {
+		podCopy := *podTemplate
+		podCopy.TypeMeta = metav1.TypeMeta{}
+		podCopy.ObjectMeta = policyMetadata(podTemplate.ObjectMeta)
+		podCopy.Status = breakglassv1alpha1.DebugPodTemplateStatus{}
+		podPolicy = &podCopy
+	}
 	raw, err := json.Marshal(struct {
 		Template *breakglassv1alpha1.DebugSessionTemplate
 		Binding  *breakglassv1alpha1.DebugSessionClusterBinding
-	}{&templatePolicy, bindingPolicy})
+		Pod      *breakglassv1alpha1.DebugPodTemplate
+	}{&templatePolicy, bindingPolicy, podPolicy})
 	if err != nil {
 		return "", fmt.Errorf("encode admission policy: %w", err)
 	}

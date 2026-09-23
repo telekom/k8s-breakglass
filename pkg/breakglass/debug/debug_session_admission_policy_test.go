@@ -125,3 +125,17 @@ func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
 		})
 	}
 }
+
+func TestAdmissionPolicyVersionIncludesReferencedPodTemplate(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template"}}
+	pod := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod", UID: "pod"},
+		Spec:       breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: "image: one"},
+	}
+	first, err := admissionPolicyVersion(template, nil, pod)
+	require.NoError(t, err)
+	pod.Spec.TemplateString = "image: two"
+	second, err := admissionPolicyVersion(template, nil, pod)
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+}

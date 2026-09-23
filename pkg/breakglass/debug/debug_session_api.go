@@ -1468,7 +1468,16 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if session.Annotations == nil {
 		session.Annotations = map[string]string{}
 	}
-	policyVersion, err := admissionPolicyVersion(template, resolvedBinding)
+	var podTemplate *breakglassv1alpha1.DebugPodTemplate
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate = &breakglassv1alpha1.DebugPodTemplate{}
+		if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: template.Spec.PodTemplateRef.Name}, podTemplate); err != nil {
+			reqLog.Errorw("Failed to get referenced pod template", "podTemplate", template.Spec.PodTemplateRef.Name, "error", err)
+			apiresponses.RespondInternalErrorSimple(ctx, "failed to validate pod template")
+			return
+		}
+	}
+	policyVersion, err := admissionPolicyVersion(template, resolvedBinding, podTemplate)
 	if err != nil {
 		reqLog.Errorw("Failed to encode admission policy", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to create debug session")

@@ -373,8 +373,15 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 				"namespace", binding.Namespace)
 		}
 	}
+	var podTemplate *breakglassv1alpha1.DebugPodTemplate
+	if template.Spec.PodTemplateRef != nil {
+		podTemplate, err = c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("get referenced pod template: %w", err)
+		}
+	}
 	if admitted := ds.Annotations[breakglassv1alpha1.DebugSessionAdmissionPolicyAnnotation]; admitted != "" {
-		current, err := admissionPolicyVersion(template, binding)
+		current, err := admissionPolicyVersion(template, binding, podTemplate)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
@@ -425,10 +432,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 		}
 	}
 	if template.Spec.PodTemplateRef != nil {
-		podTemplate, podErr := c.getPodTemplate(ctx, template.Spec.PodTemplateRef.Name)
-		if podErr != nil {
-			return c.failSession(ctx, ds, fmt.Sprintf("pod template not found: %v", podErr))
-		}
 		if snapshot, snapshotErr := marshalApprovedPodTemplateSnapshot(template, podTemplate); snapshotErr == nil {
 			ds.Status.ResolvedPodTemplate = snapshot
 		}
@@ -908,6 +911,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		return c.failSession(ctx, ds, "cluster configuration is ambiguous; activation denied")
 	} else if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
 		return c.failSession(ctx, ds, "cluster configuration is not Ready; activation denied")
+	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
+		!directTemplateAllowsCluster(template, clusterLookup, clusterConfig) {
+		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
