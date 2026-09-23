@@ -483,6 +483,11 @@ func mergeAuxiliaryStatuses(current, updates []breakglassv1alpha1.AuxiliaryResou
 			continue
 		}
 		previous := merged[index]
+		if update.ResourceName == "" {
+			previous.Error = update.Error
+			merged[index] = previous
+			continue
+		}
 		if update.UID == "" {
 			update.UID = previous.UID
 		}
