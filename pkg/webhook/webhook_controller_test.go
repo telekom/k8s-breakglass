@@ -884,7 +884,7 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 	entry, recorded := tracker.entries[types.NamespacedName{Namespace: ds.Namespace, Name: ds.Name}]
 	tracker.mu.Unlock()
 	require.True(t, recorded, "an allowed debug-session request records activity")
-	require.Equal(t, types.UID(ds.UID), entry.uid)
+	require.Equal(t, ds.UID, entry.uid)
 	require.Equal(t, int64(1), entry.count)
 
 	current := &breakglassv1alpha1.DebugSession{}
