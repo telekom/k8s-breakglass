@@ -38,7 +38,7 @@ func DebugSessionAuxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, r
 		return false
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if ref.Source != "auxiliary:"+status.Name {
+		if ref.Source != "" && ref.Source != "auxiliary:"+status.Name {
 			continue
 		}
 		if status.UID == ref.UID && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&

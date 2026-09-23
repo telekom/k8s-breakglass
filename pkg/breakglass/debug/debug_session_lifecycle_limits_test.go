@@ -289,6 +289,10 @@ func TestBindingLimitsCountPendingWithoutIdleBaseline(t *testing.T) {
 		for _, state := range []breakglassv1alpha1.DebugSessionState{breakglassv1alpha1.DebugSessionStatePending, breakglassv1alpha1.DebugSessionStatePendingApproval, breakglassv1alpha1.DebugSessionStateActive} {
 			t.Run(string(state)+"/idle="+idle, func(t *testing.T) {
 				session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "pending", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "alice", BindingRef: &breakglassv1alpha1.BindingReference{Name: "binding", Namespace: "default"}}, Status: breakglassv1alpha1.DebugSessionStatus{State: state, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: idle}}}}
+				if state != breakglassv1alpha1.DebugSessionStateActive {
+					expired := metav1.NewTime(time.Now().Add(-time.Minute))
+					session.Status.ExpiresAt = &expired
+				}
 				hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
 				controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil)
 				for _, perUser := range []bool{false, true} {

@@ -292,6 +292,11 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryGuarded(
 		if ds.UID != "" && current.UID != ds.UID {
 			return fmt.Errorf("debug session UID changed while patching status: expected %q, got %q", ds.UID, current.UID)
 		}
+		if guard != nil {
+			if err := guard(); err != nil {
+				return err
+			}
+		}
 
 		base := current.DeepCopy()
 		mutate(&current.Status)
@@ -1454,7 +1459,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		Ready:     false, // Will be updated by reconciler
 	}
 
-	if err := h.patchDebugSessionStatusWithRetry(postCreateCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+	if err := h.patchDebugSessionStatusWithRetryState(postCreateCtx, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
 		kubectlStatus := ensureKubectlDebugStatus(status)
 		alreadyTracked := false
 		for _, existing := range kubectlStatus.CopiedPods {
@@ -1468,7 +1473,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		}
 
 		addAllowedPodIfMissing(status, allowedPod)
-	}); err != nil {
+	}, true, user); err != nil {
 		// The pod exists on the spoke but is absent from the status lists that
 		// cleanup iterates, so it would never be reclaimed. Delete it so
 		// create+track is atomic-or-cleaned-up.

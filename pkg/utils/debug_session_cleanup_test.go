@@ -79,6 +79,16 @@ func TestDeletedAuxiliaryInventoryRequiresExactIdentity(t *testing.T) {
 			})
 		}
 	}
+	legacyRef := breakglassv1alpha1.DeployedResourceRef{UID: "uid", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "object"}
+	legacyStatus := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "removed", UID: legacyRef.UID, APIVersion: legacyRef.APIVersion, Kind: legacyRef.Kind, ResourceName: legacyRef.Name, Namespace: legacyRef.Namespace}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		DeployedResources:         []breakglassv1alpha1.DeployedResourceRef{legacyRef},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{legacyStatus},
+	}}
+	require.False(t, DebugSessionAuxiliaryResourceDeleted(session, legacyRef))
+	legacyStatus.Deleted = true
+	session.Status.AuxiliaryResourceStatuses[0] = legacyStatus
+	require.True(t, DebugSessionAuxiliaryResourceDeleted(session, legacyRef))
 }
 
 func TestRetainedAuxiliaryRequiresCompleteIdentity(t *testing.T) {
