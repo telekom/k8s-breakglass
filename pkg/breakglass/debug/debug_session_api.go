@@ -1922,10 +1922,16 @@ func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSe
 }
 
 func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
+	provider = strings.TrimSpace(provider)
+	issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
+	if provider != "" && issuer == "" {
+		return false
+	}
 	if (provider == "" || issuer == "") && !identity.legacyAllowed {
 		return false
 	}
-	if provider != "" && identity.provider != provider || issuer != "" && strings.TrimRight(identity.issuer, "/") != strings.TrimRight(issuer, "/") {
+	if provider != "" && strings.TrimSpace(identity.provider) != provider ||
+		issuer != "" && strings.TrimRight(strings.TrimSpace(identity.issuer), "/") != issuer {
 		return false
 	}
 	return debugSessionIdentityMatches(identity, values...)

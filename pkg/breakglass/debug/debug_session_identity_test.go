@@ -25,8 +25,10 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.True(t, debugSessionIdentityMatchesProvider(identity, "idp-a", "https://a.example", "same@example.com"))
 	require.False(t, debugSessionIdentityMatchesProvider(identity, "idp-b", "https://b.example", "same@example.com"))
 	require.False(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
+	require.False(t, debugSessionIdentityMatchesProvider(identity, "idp-a", "", "same@example.com"))
 	identity.legacyAllowed = true
 	require.True(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
+	require.False(t, debugSessionIdentityMatchesProvider(identity, "idp-a", "", "same@example.com"))
 	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderName: "idp-a"}}))
 	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderIssuer: "https://a.example"}}))
 }
@@ -174,7 +176,7 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 		{"providerless wrong requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "other"}, http.StatusForbidden},
 		{"single jwks issuer-only requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "https://single", debugSessionReadIdentity{username: "owner", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
 		{"single jwks providerless requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "owner", provider: "single", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
-		{"single jwks provider-only requester is not retireable", breakglassv1alpha1.DebugSessionStatePendingApproval, "single", "", debugSessionReadIdentity{username: "owner", provider: "single", legacyAllowed: true}, http.StatusBadRequest},
+		{"single jwks provider-only requester is denied", breakglassv1alpha1.DebugSessionStatePendingApproval, "single", "", debugSessionReadIdentity{username: "owner", provider: "single", legacyAllowed: true}, http.StatusForbidden},
 		{"active provider mismatch remains denied", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "https://issuer", debugSessionReadIdentity{username: "owner", provider: "idp-b", issuer: "https://issuer"}, http.StatusForbidden},
 		{"active partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusForbidden},
 		{"active partial issuer requires trusted legacy identity", breakglassv1alpha1.DebugSessionStateActive, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusForbidden},
