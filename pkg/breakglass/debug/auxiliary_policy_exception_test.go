@@ -190,3 +190,35 @@ func TestAuxiliaryRecoveryRejectsEmptySessionUID(t *testing.T) {
 	require.Equal(t, existing.Object["spec"], live.Object["spec"])
 	require.Equal(t, existing.GetUID(), live.GetUID())
 }
+
+func TestAuxiliaryRecoveryRejectsOtherOperation(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	existing := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
+		"metadata": map[string]interface{}{"name": "collision", "namespace": "target", "uid": "existing-uid", "annotations": map[string]interface{}{
+			sourceSessionUIDAnnotation: "same-session", createOperationIDAnnotation: "different-operation",
+		}}, "spec": map[string]interface{}{"unchanged": true},
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(context.Context, client.WithWatch, runtime.ApplyConfiguration, ...client.ApplyOption) error {
+			t.Fatal("another operation must never reach SSA")
+			return nil
+		},
+	}).Build()
+	desired := existing.DeepCopy()
+	desired.SetUID("")
+	desired.SetResourceVersion("")
+	annotations := desired.GetAnnotations()
+	annotations[createOperationIDAnnotation] = "approved-operation"
+	desired.SetAnnotations(annotations)
+	desired.Object["spec"] = map[string]interface{}{"changed": true}
+	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "same-session"}})
+	require.ErrorContains(t, err, "different operation identity")
+	live := &unstructured.Unstructured{}
+	live.SetGroupVersionKind(gvk)
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), live))
+	require.Equal(t, existing.Object["spec"], live.Object["spec"])
+}

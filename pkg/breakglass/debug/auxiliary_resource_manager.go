@@ -790,6 +790,10 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if session == nil || session.UID == "" || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
 	}
+	operationID := obj.GetAnnotations()[createOperationIDAnnotation]
+	if operationID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != operationID {
+		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
+	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)
