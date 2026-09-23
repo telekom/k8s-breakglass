@@ -18,8 +18,9 @@ package debug
 
 import (
 	"context"
-	kptr "k8s.io/utils/ptr"
 	"testing"
+
+	kptr "k8s.io/utils/ptr"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

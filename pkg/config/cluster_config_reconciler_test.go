@@ -20,9 +20,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	kptr "k8s.io/utils/ptr"
 	"testing"
 	"time"
+
+	kptr "k8s.io/utils/ptr"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

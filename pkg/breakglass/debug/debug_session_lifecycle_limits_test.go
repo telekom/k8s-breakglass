@@ -6,12 +6,13 @@ package debug
 import (
 	"context"
 	"fmt"
-	kptr "k8s.io/utils/ptr"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	kptr "k8s.io/utils/ptr"
 
 	"github.com/gin-gonic/gin"
 
