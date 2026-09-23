@@ -227,11 +227,31 @@ endpoint required by the selected intent. Select pods using controller-owned
 session labels, not a user-provided selector. Keep host-network and host-PID
 profiles separate from ordinary workload diagnostics.
 
-The upstream repository does not create or own a Kyverno `PolicyException`.
-If a downstream admission policy requires one for a reviewed host-path,
-capability, or image-volume profile, the downstream controller must create a
-short-lived exception for the exact session namespace and labels, scope it to
-the named policy rules, and remove it before the session is considered clean.
+For reviewed profiles requiring a Kyverno `PolicyException`, put the
+administrator-authored exception body in the session template's
+`auxiliaryResources[].templateString`. The Breakglass controller creates it
+on the target cluster during pre-apply and tracks it for cleanup, using the
+same auxiliary resource lifecycle as NetworkPolicies. Require its category
+through `requiredAuxiliaryResourceCategories`, and set `createBefore: true`,
+`deleteAfter: true`, and `failurePolicy: fail` explicitly. An exception creation
+failure then prevents workload creation; cleanup failures remain retryable.
+
+The central installation owns the reusable session and pod templates. Each
+cluster binding selects the reviewed profile and requires its auxiliary
+categories; concrete PolicyExceptions exist only for the session lifetime.
+Scope each exception to administrator-selected policy rules, the exact target
+namespace, and the controller-owned
+`breakglass.telekom.com/debug-session: {{ .session.name }}` pod label.
+Configure the target cluster's Kyverno exception namespace and grant the
+Breakglass spoke identity only the necessary exception resource permissions.
+Use the API group/version matching the installed policy engine: legacy
+ClusterPolicy exceptions use `kyverno.io/v2`, while CEL policy exceptions use
+`policies.kyverno.io/v1` with their corresponding schema. See the
+[Kyverno exception documentation](https://kyverno.io/docs/guides/exceptions/).
+Creating the object proves API persistence, not admission-cache readiness;
+verify workload admission and exception removal against the target Kyverno
+version in the live integration test.
+
 Never accept a raw `PolicyException` body from a requester and never use an
 exception to make an arbitrary image, command, mount, or node legal.
 
