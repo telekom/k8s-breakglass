@@ -10071,7 +10071,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10174,7 +10174,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10291,7 +10291,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10460,7 +10460,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10571,7 +10571,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10678,7 +10678,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
@@ -10780,7 +10780,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 		sesmanager := SessionManager{Client: cli}
 		escmanager := testEscalationLookup{Client: cli}
 
-		logger, _ := zap.NewDevelopment()
+		logger := zap.NewNop()
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")

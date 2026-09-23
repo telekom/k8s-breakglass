@@ -272,6 +272,8 @@ debugSessionBindings:
     constraints:
       maxDuration: "2h"
       defaultDuration: "30m"
+      idleTimeout: "30m"
+      retainFor: "24h"
     
     # Namespace constraints
     namespaceConstraints:
@@ -308,6 +310,8 @@ debugSessionBindings:
 | `schedulingOptions` | User-selectable scheduling options | - |
 | `constraints.maxDuration` | Maximum session duration | - |
 | `constraints.defaultDuration` | Default session duration | - |
+| `constraints.idleTimeout` | Expire idle sessions after this duration | - |
+| `constraints.retainFor` | Retain terminal session evidence for this duration | - |
 | `namespaceConstraints` | Namespace deployment rules | - |
 | `impersonation` | ServiceAccount impersonation config | - |
 | `requiredAuxiliaryResourceCategories` | Required auxiliary resources | - |

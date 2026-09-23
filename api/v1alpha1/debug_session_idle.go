@@ -34,7 +34,7 @@ func DebugSessionIdleDeadline(ds *DebugSession) (time.Time, bool) {
 
 // StampDebugSessionRetention records explicit retention when a session becomes terminal.
 func StampDebugSessionRetention(status *DebugSessionStatus, now time.Time) {
-	if status == nil || !isTerminalDebugSessionState(status.State) || status.RetainedUntil != nil || status.ResolvedTemplate == nil || status.ResolvedTemplate.Constraints == nil || status.ResolvedTemplate.Constraints.RetainFor == "" {
+	if status == nil || !isTerminalDebugSessionState(status.State) || (status.RetainedUntil != nil && !status.RetainedUntil.IsZero()) || status.ResolvedTemplate == nil || status.ResolvedTemplate.Constraints == nil || status.ResolvedTemplate.Constraints.RetainFor == "" {
 		return
 	}
 	duration, err := ParseDuration(status.ResolvedTemplate.Constraints.RetainFor)

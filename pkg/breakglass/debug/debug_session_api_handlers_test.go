@@ -680,6 +680,7 @@ func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State:        breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt:    &metav1.Time{Time: time.Now().Add(time.Hour)},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{},
 		},
 	}
@@ -958,7 +959,8 @@ func TestKubectlDebugMutationHandlers_ViewerParticipantForbidden(t *testing.T) {
 			TemplateRef: "test-template",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
 			},
@@ -1421,7 +1423,8 @@ func TestHandleCreatePodCopy_UserNotParticipant(t *testing.T) {
 			TemplateRef: "test-template",
 		},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			State: breakglassv1alpha1.DebugSessionStateActive,
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &metav1.Time{Time: time.Now().Add(time.Hour)},
 		},
 	}
 
@@ -3012,6 +3015,7 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStatePendingApproval,
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: "2h", IdleTimeout: "1m"},
 				Approvers: &breakglassv1alpha1.DebugSessionApprovers{
 					Users: []string{"approver@example.com"},
 				},
@@ -3046,6 +3050,7 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 
+	before := time.Now().UTC()
 	router.ServeHTTP(rr, req)
 
 	assert.Equal(t, http.StatusOK, rr.Code)
@@ -3056,6 +3061,11 @@ func TestHandleRejectDebugSession_Success(t *testing.T) {
 	var updated breakglassv1alpha1.DebugSession
 	require.NoError(t, fakeClient.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-session"}, &updated))
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateRejected, updated.Status.State)
+	require.NotNil(t, updated.Status.RetainedUntil)
+	assert.WithinDuration(t, before.Add(2*time.Hour), updated.Status.RetainedUntil.Time, 5*time.Second)
+	retained := updated.Status.RetainedUntil.DeepCopy()
+	require.NoError(t, breakglass.PatchDebugSessionStatusWithOptimisticLock(t.Context(), fakeClient, &updated, func(status *breakglassv1alpha1.DebugSessionStatus) { status.Message = "cleanup retry" }))
+	require.Equal(t, retained, updated.Status.RetainedUntil, "terminal retries must not extend retained evidence")
 
 	events := emitter.GetEvents()
 	require.Len(t, events, 1)

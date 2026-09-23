@@ -362,7 +362,8 @@ func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSessi
 			return true
 		}
 		for _, operation := range status.Operations {
-			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared ||
+				operation.State == breakglassv1alpha1.KubectlDebugOperationUnknown {
 				return true
 			}
 		}
@@ -405,7 +406,7 @@ func (r *ClusterConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // Pending sessions may not yet have a resolved template. Preserve explicit
 // retention without manufacturing an approval snapshot during cluster deletion.
 func (r *ClusterConfigReconciler) stampDebugSessionTerminationRetention(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
-	if session.Status.RetainedUntil != nil {
+	if session.Status.RetainedUntil != nil && !session.Status.RetainedUntil.IsZero() {
 		return nil
 	}
 	if session.Status.ResolvedTemplate != nil {

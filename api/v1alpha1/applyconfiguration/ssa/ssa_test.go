@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -604,6 +605,25 @@ func TestApplyDebugSessionStatus(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "failed to get object for status update")
 	})
+}
+
+func TestMergeDebugSessionActivityAndRetentionPreservesLiveValues(t *testing.T) {
+	liveActivity := metav1.NewTime(time.Now().Add(time.Hour))
+	liveRetention := metav1.NewTime(time.Now().Add(2 * time.Hour))
+	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "merge-debug", Namespace: "default", ResourceVersion: "7"}, Status: breakglassv1alpha1.DebugSessionStatus{
+		ActivityCount: 9, LastActivity: &liveActivity, RetainedUntil: &liveRetention,
+	}}
+	c := fake.NewClientBuilder().WithScheme(newTestScheme()).WithObjects(live).Build()
+	stale := live.DeepCopy()
+	stale.ResourceVersion = ""
+	stale.Status.ActivityCount = 2
+	stale.Status.LastActivity = nil
+	stale.Status.RetainedUntil = nil
+	require.NoError(t, mergeDebugSessionActivityAndRetention(context.Background(), c, stale))
+	assert.Equal(t, "7", stale.ResourceVersion)
+	assert.Equal(t, int64(9), stale.Status.ActivityCount)
+	assert.Equal(t, liveActivity.UTC().Truncate(time.Second), stale.Status.LastActivity.UTC().Truncate(time.Second))
+	assert.Equal(t, liveRetention.UTC().Truncate(time.Second), stale.Status.RetainedUntil.UTC().Truncate(time.Second))
 }
 
 func TestDebugSessionStatusFromPreservesExplicitEmptyResourceStatuses(t *testing.T) {

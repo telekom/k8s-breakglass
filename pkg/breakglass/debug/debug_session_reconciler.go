@@ -719,7 +719,7 @@ func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 			return true
 		}
 		for _, operation := range status.Operations {
-			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+			if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared || operation.State == breakglassv1alpha1.KubectlDebugOperationUnknown {
 				return true
 			}
 		}
@@ -732,7 +732,7 @@ func hasPreparedKubectlDebugOperation(ds *breakglassv1alpha1.DebugSession) bool 
 		return false
 	}
 	for _, operation := range ds.Status.KubectlDebugStatus.Operations {
-		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared {
+		if operation.State == breakglassv1alpha1.KubectlDebugOperationPrepared || operation.State == breakglassv1alpha1.KubectlDebugOperationUnknown {
 			return true
 		}
 	}

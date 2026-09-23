@@ -194,6 +194,9 @@ func PatchApplyBreakglassSessionStatus(ctx context.Context, c client.Client, ses
 // PatchApplyDebugSessionStatus is the cache-aware replacement for
 // [ApplyDebugSessionStatus].
 func PatchApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) (PatchApplyResult, error) {
+	if err := mergeDebugSessionActivityAndRetention(ctx, c, session); err != nil {
+		return 0, err
+	}
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
 	if session.ResourceVersion != "" {

@@ -434,6 +434,8 @@ debugSessionBindings: []
   #   constraints:
   #     maxDuration: "2h"
   #     defaultDuration: "30m"
+  #     idleTimeout: "30m"
+  #     retainFor: "24h"
   #     allowRenewal: true
   #     maxRenewals: 2
   #     maxConcurrentSessions: 2

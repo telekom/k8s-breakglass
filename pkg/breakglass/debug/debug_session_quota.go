@@ -14,6 +14,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/quotas"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -35,6 +36,25 @@ func (c *DebugSessionController) WithQuotaNamespace(namespace string) *DebugSess
 	}
 	return c
 }
+
+func listAllDebugQuotaPages(ctx context.Context, reader ctrlclient.Reader, newPage func() ctrlclient.ObjectList, appendPage func(ctrlclient.ObjectList)) error {
+	var continuation string
+	for {
+		page := newPage()
+		var opts []ctrlclient.ListOption
+		if continuation != "" {
+			opts = append(opts, ctrlclient.Continue(continuation))
+		}
+		if err := reader.List(ctx, page, opts...); err != nil {
+			return err
+		}
+		appendPage(page)
+		continuation = page.GetContinue()
+		if continuation == "" {
+			return nil
+		}
+	}
+}
 func (c *DebugSessionAPIController) WithQuotaNamespace(namespace string) *DebugSessionAPIController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
@@ -55,15 +75,6 @@ func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakg
 	if err != nil {
 		return entry, nil, "", fmt.Errorf("read quota template: %w", err)
 	}
-	if template.UID == "" {
-		return entry, nil, "", fmt.Errorf("quota template has no UID")
-	}
-	templateScope := debugQuotaScope("debug-template", string(template.UID))
-	entry.Scopes = []string{templateScope}
-	limits := map[string]int32{}
-	if template.Spec.Constraints != nil && template.Spec.Constraints.MaxConcurrentSessions > 0 {
-		limits[templateScope] = template.Spec.Constraints.MaxConcurrentSessions
-	}
 	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if s.Spec.BindingRef != nil {
 		binding, err = c.getBinding(ctx, s.Spec.BindingRef.Name, s.Spec.BindingRef.Namespace)
@@ -74,6 +85,20 @@ func (c *DebugSessionController) debugQuotaPolicy(ctx context.Context, s *breakg
 	}
 	if err != nil {
 		return entry, nil, "", fmt.Errorf("read quota binding: %w", err)
+	}
+	return debugQuotaPolicyForObjects(s, template, binding)
+}
+
+func debugQuotaPolicyForObjects(s *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) (quotas.Entry, map[string]int32, string, error) {
+	entry := quotas.Entry{Kind: "DebugSession", Namespace: s.Namespace, Name: s.Name, UID: string(s.UID)}
+	if template.UID == "" {
+		return entry, nil, "", fmt.Errorf("quota template has no UID")
+	}
+	templateScope := debugQuotaScope("debug-template", string(template.UID))
+	entry.Scopes = []string{templateScope}
+	limits := map[string]int32{}
+	if template.Spec.Constraints != nil && template.Spec.Constraints.MaxConcurrentSessions > 0 {
+		limits[templateScope] = template.Spec.Constraints.MaxConcurrentSessions
 	}
 	if binding != nil {
 		if binding.UID == "" {
@@ -148,20 +173,78 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 	}
 	err = (quotas.Store{Client: c.client, Reader: reader, Namespace: c.quotaNamespace}).Reserve(ctx, entry, limits,
 		func(ctx context.Context, reserved map[string]quotas.Entry) ([]quotas.Entry, error) {
-			list := &breakglassv1alpha1.DebugSessionList{}
-			if err := reader.List(ctx, list); err != nil {
+			var sessions []breakglassv1alpha1.DebugSession
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionList{} }, func(page ctrlclient.ObjectList) {
+				sessions = append(sessions, page.(*breakglassv1alpha1.DebugSessionList).Items...)
+			}); err != nil {
 				return nil, err
 			}
+			var templateItems []breakglassv1alpha1.DebugSessionTemplate
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionTemplateList{} }, func(page ctrlclient.ObjectList) {
+				templateItems = append(templateItems, page.(*breakglassv1alpha1.DebugSessionTemplateList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
+			}
+			var bindingItems []breakglassv1alpha1.DebugSessionClusterBinding
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionClusterBindingList{} }, func(page ctrlclient.ObjectList) {
+				bindingItems = append(bindingItems, page.(*breakglassv1alpha1.DebugSessionClusterBindingList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
+			}
+			var clusterItems []breakglassv1alpha1.ClusterConfig
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.ClusterConfigList{} }, func(page ctrlclient.ObjectList) {
+				clusterItems = append(clusterItems, page.(*breakglassv1alpha1.ClusterConfigList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
+			}
+			templatesByName := make(map[string]*breakglassv1alpha1.DebugSessionTemplate)
+			for i := range templateItems {
+				template := &templateItems[i]
+				templatesByName[template.Name] = template
+			}
+			bindingsByKey := make(map[ctrlclient.ObjectKey]*breakglassv1alpha1.DebugSessionClusterBinding)
+			for i := range bindingItems {
+				binding := &bindingItems[i]
+				bindingsByKey[ctrlclient.ObjectKeyFromObject(binding)] = binding
+			}
+			discoveredBindings := make(map[[2]string]*breakglassv1alpha1.DebugSessionClusterBinding)
 			var entries []quotas.Entry
-			for i := range list.Items {
-				item := &list.Items[i]
+			for i := range sessions {
+				item := &sessions[i]
 				if _, exists := reserved[string(item.UID)]; exists {
 					continue
 				}
-				if debugSessionTerminal(item) || item.Annotations[quotas.AdmissionAnnotation] == quotas.Pending {
+				if debugSessionTerminal(item) {
 					continue
 				}
-				entry, _, _, err := c.debugQuotaPolicy(ctx, item)
+				template := templatesByName[item.Spec.TemplateRef]
+				if template == nil {
+					return nil, fmt.Errorf("read quota template %q: not found in bootstrap policy", item.Spec.TemplateRef)
+				}
+				ref := item.Spec.BindingRef
+				if ref == nil && item.Status.ResolvedBinding != nil {
+					ref = &breakglassv1alpha1.BindingReference{Name: item.Status.ResolvedBinding.Name, Namespace: item.Status.ResolvedBinding.Namespace}
+				}
+				var binding *breakglassv1alpha1.DebugSessionClusterBinding
+				if ref != nil {
+					binding = bindingsByKey[ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}]
+					if binding == nil {
+						return nil, fmt.Errorf("read quota binding %s/%s: not found in bootstrap policy", ref.Namespace, ref.Name)
+					}
+				} else {
+					key := [2]string{template.Name, item.Spec.Cluster}
+					var found bool
+					binding, found = discoveredBindings[key]
+					if !found {
+						var err error
+						binding, err = utils.SelectDebugSessionBinding(template, item.Spec.Cluster, bindingItems, clusterItems)
+						if err != nil {
+							return nil, fmt.Errorf("read quota binding: %w", err)
+						}
+						discoveredBindings[key] = binding
+					}
+				}
+				entry, _, _, err := debugQuotaPolicyForObjects(item, template, binding)
 				if err != nil {
 					return nil, err
 				}
@@ -198,7 +281,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 			if statusErr := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, current, func(status *breakglassv1alpha1.DebugSessionStatus) {
 				status.State = breakglassv1alpha1.DebugSessionStateFailed
 				status.Message = "Session quota reached"
-				if status.ResolvedTemplate == nil && status.RetainedUntil == nil && retainFor != "" {
+				if status.ResolvedTemplate == nil && (status.RetainedUntil == nil || status.RetainedUntil.IsZero()) && retainFor != "" {
 					// Retention is terminal bookkeeping, not an approved activation snapshot.
 					retention := breakglassv1alpha1.DebugSessionStatus{State: status.State, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{RetainFor: retainFor}}}
 					breakglass.StampDebugSessionRetention(&retention, time.Now().UTC())

@@ -15,7 +15,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -1007,6 +1011,35 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			s.allowedSession = &s.allowedSessions[0]
 		}
 	}
+	if s.allowed && s.allowSource == "debug-session" {
+		ra := s.sar.Spec.ResourceAttributes
+		if ok, reason := wc.liveDebugSessionAccessForProvider(s.ctx, username, s.issuer, s.idpName, s.idpLookupOK, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+			s.allowed = false
+			s.allowSource = ""
+			s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+		} else {
+			s.reason = wc.finalizeReason(reason, true, s.clusterName)
+		}
+		if s.allowed && s.debugSessionIdleTrackingRequired() {
+			// Take the final live authorization fence before recording activity. The
+			// status writer below has its own active/expiry and resource-version
+			// checks, so a request denied by this fence cannot extend idle time.
+			if ok, reason := wc.liveDebugSessionAccessForProvider(s.ctx, username, s.issuer, s.idpName, s.idpLookupOK, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+				s.allowed = false
+				s.allowSource = ""
+				s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+			} else {
+				s.reason = wc.finalizeReason(reason, true, s.clusterName)
+			}
+			if s.allowed {
+				if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
+					s.allowed = false
+					s.allowSource = ""
+					s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
+				}
+			}
+		}
+	}
 
 	response := SubjectAccessReviewResponse{
 		ApiVersion: s.sar.APIVersion,
@@ -1152,4 +1185,43 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		Observe(time.Since(s.startTime).Seconds())
 
 	s.reqLog.Debug("Authorization handler completed successfully")
+}
+
+func (s *authorizeState) debugSessionIdleTrackingRequired() bool {
+	return s.debugSessionCandidate != nil && s.debugSessionCandidate.Status.ResolvedTemplate != nil && s.debugSessionCandidate.Status.ResolvedTemplate.Constraints != nil && s.debugSessionCandidate.Status.ResolvedTemplate.Constraints.IdleTimeout != ""
+}
+
+// recordDebugSessionActivity durably advances the idle clock after the final
+// authorization fence. DebugSession activity cannot use the optional buffered
+// BreakglassSession tracker because expiry is a security deadline.
+func (wc *WebhookController) recordDebugSessionActivity(ctx context.Context, namespace, name string, uid types.UID) error {
+	if wc.sesManager == nil || uid == "" {
+		return fmt.Errorf("debug session activity writer is unavailable")
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var session breakglassv1alpha1.DebugSession
+		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &session); err != nil {
+			return err
+		}
+		if session.UID != uid {
+			return fmt.Errorf("debug session UID changed")
+		}
+		now := time.Now()
+		if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active")
+		}
+		if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Constraints == nil || session.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
+			return nil
+		}
+		if breakglass.DebugSessionIdleExpired(&session, now) {
+			return fmt.Errorf("debug session is no longer active")
+		}
+		base := session.DeepCopy()
+		session.Status.ActivityCount++
+		nowMeta := metav1.NewTime(now)
+		if session.Status.LastActivity == nil || session.Status.LastActivity.Before(&nowMeta) {
+			session.Status.LastActivity = &nowMeta
+		}
+		return wc.sesManager.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	})
 }

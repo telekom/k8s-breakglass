@@ -27,7 +27,50 @@ import (
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestQuotaBootstrapBoundsPolicyReadsForPendingBacklog(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default", UID: "binding-uid"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"production"}, MaxActiveSessionsTotal: int32Ptr(100),
+		},
+	}
+	objects := []client.Object{template, binding}
+	for i := range 25 {
+		name := fmt.Sprintf("pending-%d", i)
+		objects = append(objects, &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}},
+			Spec:       breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, Cluster: "production", RequestedBy: name},
+			Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+		})
+	}
+	lists := map[string]int{}
+	templateReads := 0
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(objects...).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			lists[fmt.Sprintf("%T", list)]++
+			return cl.List(ctx, list, opts...)
+		},
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*breakglassv1alpha1.DebugSessionTemplate); ok {
+				templateReads++
+			}
+			return cl.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+	session := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "pending-0"}, session))
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithQuotaNamespace("controller")
+	require.NoError(t, controller.admitDebugSession(t.Context(), session))
+	require.Equal(t, quotas.Ready, session.Annotations[quotas.AdmissionAnnotation])
+	require.Equal(t, 1, templateReads)
+	require.Equal(t, 1, lists["*v1alpha1.DebugSessionTemplateList"])
+	require.Equal(t, 2, lists["*v1alpha1.DebugSessionClusterBindingList"])
+	require.Equal(t, 2, lists["*v1alpha1.ClusterConfigList"])
+}
 
 func TestEnsureTargetNamespaceHonorsCreationAndFailMode(t *testing.T) {
 	for _, tt := range []struct {
@@ -152,14 +195,15 @@ func TestDebugQuotaScopesAcrossNamespacesAndBindings(t *testing.T) {
 				return &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, RequestedBy: user, RequestedByEmail: "shared@example.com", BindingRef: &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}}}
 			}
 			a := candidate("first", "sessions-one", "username-one")
+			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding, other, a).Build()
+			c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(a), a))
+			require.NoError(t, c.admitDebugSession(t.Context(), a))
 			b := candidate("second", "sessions-two", "username-two")
 			if scope == "template" {
 				b.Spec.BindingRef.Name = other.Name
 			}
-			cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding, other, a, b).Build()
-			c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
-			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(a), a))
-			require.NoError(t, c.admitDebugSession(t.Context(), a))
+			require.NoError(t, cli.Create(t.Context(), b))
 			restarted := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
 			require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(b), b))
 			require.ErrorIs(t, restarted.admitDebugSession(t.Context(), b), quotas.ErrFull)
@@ -182,6 +226,46 @@ func TestDebugQuotaBootstrapsLegacyResolvedBinding(t *testing.T) {
 	c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
 	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
 	require.ErrorIs(t, c.admitDebugSession(t.Context(), candidate), quotas.ErrFull)
+}
+
+func TestDebugQuotaCountsPendingSessionsDuringLedgerBootstrap(t *testing.T) {
+	one := int32(1)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxConcurrentSessions: one}},
+	}
+	pending := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "pending",
+			Namespace:   "default",
+			UID:         "pending-uid",
+			Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+		},
+		Spec:   breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name},
+		Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePending},
+	}
+	candidate := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "candidate",
+			Namespace:   "default",
+			UID:         "candidate-uid",
+			Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending},
+		},
+		Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name},
+	}
+
+	cli := fake.NewClientBuilder().
+		WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
+		WithObjects(template, pending, candidate).
+		Build()
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+	require.ErrorIs(t, controller.admitDebugSession(t.Context(), candidate), quotas.ErrFull)
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(candidate), candidate))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, candidate.Status.State)
+	assert.Equal(t, "Session quota reached", candidate.Status.Message)
 }
 
 func TestDebugQuotaStatusCannotReviveTerminalSession(t *testing.T) {

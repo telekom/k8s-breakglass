@@ -340,6 +340,20 @@ func TestCleanupUnknownDeployedIntentNeverQueriesTarget(t *testing.T) {
 	require.ErrorContains(t, manager.deleteResource(context.Background(), nil, breakglassv1alpha1.AuxiliaryResourceStatus{Created: true, CreateOperationID: "pending"}, session), "unresolved")
 }
 
+func TestCleanupConfirmedDeletedAuxiliaryDoesNotQueryTarget(t *testing.T) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "removed", UID: "removed-uid", Source: "auxiliary:removed"}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "removed", APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID, Deleted: true,
+		}},
+	}}
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	require.False(t, cleanupNeedsTargetCluster(session))
+	require.NoError(t, controller.cleanupDeployedResources(context.Background(), session, nil, false, false))
+	require.Empty(t, session.Status.DeployedResources)
+}
+
 func TestCleanupTransitionUsesSuccessfullyPersistedLiveCondition(t *testing.T) {
 	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "transition", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "previous failure"}}}}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(live).WithStatusSubresource(live).Build()
@@ -440,7 +454,7 @@ func TestCleanupDeployedAuxiliaryRequiresExactUID(t *testing.T) {
 				require.NoError(t, err)
 				require.Empty(t, session.Status.DeployedResources)
 			} else {
-				require.ErrorContains(t, err, "missing auxiliary cleanup status")
+				require.ErrorContains(t, err, "missing matching auxiliary cleanup status")
 				require.Len(t, session.Status.DeployedResources, 1)
 				require.Equal(t, "mismatch", session.Status.DeployedResources[0].UID)
 			}
@@ -460,7 +474,7 @@ func TestCleanupAuxiliaryDeletedShortcutUsesChildUIDAndSource(t *testing.T) {
 		for _, source := range []string{"", "auxiliary:bundle", "auxiliary:other"} {
 			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "bundle", DeleteAfter: true}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "bundle", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "child", UID: "original", Deleted: deleted}}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "child", UID: "mismatch", Source: source}}}}
 			controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
-			require.ErrorContains(t, controller.cleanupDeployedResources(context.Background(), session, nil, false, false), "missing auxiliary cleanup status")
+			require.ErrorContains(t, controller.cleanupDeployedResources(context.Background(), session, nil, false, false), "missing matching auxiliary cleanup status")
 			require.Len(t, session.Status.DeployedResources, 1)
 			session.Status.DeployedResources[0].UID = "original"
 			if source == "auxiliary:other" {

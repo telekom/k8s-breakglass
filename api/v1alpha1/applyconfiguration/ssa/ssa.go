@@ -21,6 +21,7 @@ package ssa
 
 import (
 	"context"
+	"fmt"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
@@ -63,6 +64,9 @@ func ApplyBreakglassSessionStatus(ctx context.Context, c client.Client, session 
 
 // ApplyDebugSessionStatus applies a status update to a DebugSession using native SSA.
 func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
+	if err := mergeDebugSessionActivityAndRetention(ctx, c, session); err != nil {
+		return err
+	}
 	applyConfig := ac.DebugSession(session.Name, session.Namespace).
 		WithStatus(DebugSessionStatusFrom(&session.Status))
 	if session.ResourceVersion != "" {
@@ -70,6 +74,40 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	}
 
 	return applyStatusViaUnstructured(ctx, c, applyConfig)
+}
+
+// mergeDebugSessionActivityAndRetention carries forward live monotonic fields
+// before generic SSA serializes a caller-provided snapshot. These fields are
+// also written by the activity tracker, so a stale status snapshot must not
+// replace newer activity or retention data. An omitted resource version is
+// filled from the same live read to retain an optimistic concurrency fence.
+func mergeDebugSessionActivityAndRetention(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
+	// A caller-supplied resource version is already an optimistic snapshot
+	// fence. Avoid a second read; the API server will reject a concurrent or
+	// replacement-object write using that version.
+	if session.ResourceVersion != "" {
+		return nil
+	}
+	current := &breakglassv1alpha1.DebugSession{}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
+		return fmt.Errorf("failed to get object for status update (live debug session): %w", err)
+	}
+	if session.UID != "" && session.UID != current.UID {
+		return fmt.Errorf("debug session UID changed: expected %q, got %q", session.UID, current.UID)
+	}
+	session.ResourceVersion = current.ResourceVersion
+	if current.Status.ActivityCount > session.Status.ActivityCount {
+		session.Status.ActivityCount = current.Status.ActivityCount
+	}
+	if current.Status.LastActivity != nil && (session.Status.LastActivity == nil || current.Status.LastActivity.After(session.Status.LastActivity.Time)) {
+		lastActivity := *current.Status.LastActivity
+		session.Status.LastActivity = &lastActivity
+	}
+	if current.Status.RetainedUntil != nil && (session.Status.RetainedUntil == nil || current.Status.RetainedUntil.After(session.Status.RetainedUntil.Time)) {
+		retainedUntil := *current.Status.RetainedUntil
+		session.Status.RetainedUntil = &retainedUntil
+	}
+	return nil
 }
 
 // ApplyBreakglassEscalationStatus applies a status update to a BreakglassEscalation using native SSA.

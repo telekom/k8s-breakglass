@@ -142,6 +142,10 @@ func NewActivityTracker(c client.Client, opts ...ActivityTrackerOption) *Activit
 // If the tracker has reached maxEntries, new sessions are silently dropped
 // to prevent unbounded memory growth.
 func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID, ts time.Time) {
+	at.recordActivity(namespace, name, uid, ts)
+}
+
+func (at *ActivityTracker) recordActivity(namespace, name string, uid types.UID, ts time.Time) {
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
 	at.mu.Lock()
@@ -313,6 +317,9 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 		for _, entry := range failed {
 			key := types.NamespacedName{Namespace: entry.namespace, Name: entry.name}
 			if existing, ok := at.entries[key]; ok {
+				if existing.uid != entry.uid {
+					continue
+				}
 				// Merge: keep the latest lastSeen and sum counts
 				if entry.lastSeen.After(existing.lastSeen) {
 					existing.lastSeen = entry.lastSeen

@@ -481,7 +481,9 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
+	}
 
 	reqLog.Infow("Ephemeral container injected",
 		"session", sessionName,
@@ -585,7 +587,9 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
+	}
 
 	reqLog.Infow("Pod copy created",
 		"session", sessionName,
@@ -691,7 +695,9 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		reqLog.Warnw("Debug operation succeeded but activity recording failed", "error", err)
+	}
 
 	reqLog.Infow("Node debug pod created",
 		"session", sessionName,
@@ -902,8 +908,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateRejected || session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
-			(session.Status.ExpiresAt != nil && !now.Before(session.Status.ExpiresAt.Time)) ||
-			(session.Status.State == breakglassv1alpha1.DebugSessionStateActive && breakglass.DebugSessionIdleExpired(session, now)) {
+			(session.Status.State == breakglassv1alpha1.DebugSessionStateActive && (session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(session, now))) {
 			continue
 		}
 

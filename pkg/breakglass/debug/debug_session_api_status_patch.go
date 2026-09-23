@@ -43,9 +43,9 @@ func (c *DebugSessionAPIController) patchDebugSessionStatusWithOptimisticLock(
 	return nil
 }
 
-func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Context, session *breakglassv1alpha1.DebugSession) {
+func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Context, session *breakglassv1alpha1.DebugSession) error {
 	if session == nil || session.UID == "" {
-		return
+		return nil
 	}
 	// A completed target operation still needs bounded bookkeeping after request cancellation.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -74,8 +74,9 @@ func (c *DebugSessionAPIController) recordDebugSessionActivity(ctx context.Conte
 		})
 	})
 	if err != nil {
-		c.log.Warnw("successful debug operation was not recorded as activity", "session", session.Name, "error", err)
+		return fmt.Errorf("record debug session activity: %w", err)
 	}
+	return nil
 }
 
 func respondDebugSessionStatusPatchError(ctx *gin.Context, reqLog *zap.SugaredLogger, action, responseMessage, sessionName string, err error) {
