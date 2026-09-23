@@ -309,7 +309,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		auxStatuses = append(auxStatuses, beforeStatuses...)
+		auxStatuses = mergeAuxiliaryStatuses(auxStatuses, beforeStatuses)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
@@ -363,7 +363,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		auxStatuses = append(auxStatuses, afterStatuses...)
+		auxStatuses = mergeAuxiliaryStatuses(auxStatuses, afterStatuses)
 		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
@@ -468,9 +468,25 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 	if !auxiliaryResourcesConfigured {
 		return nil
 	}
-	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
-	ds.Status.AuxiliaryResourceStatuses = statuses
-	return statuses
+	return append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), ds.Status.AuxiliaryResourceStatuses...)
+}
+
+func mergeAuxiliaryStatuses(existing, updates []breakglassv1alpha1.AuxiliaryResourceStatus) []breakglassv1alpha1.AuxiliaryResourceStatus {
+	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), existing...)
+	for _, update := range updates {
+		found := false
+		for i := range merged {
+			if merged[i].Name == update.Name {
+				merged[i] = update
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, update)
+		}
+	}
+	return merged
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.

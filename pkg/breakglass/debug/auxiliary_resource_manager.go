@@ -787,7 +787,7 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
 		return fmt.Errorf("recover auxiliary resource after create error: %w", err)
 	}
-	if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+	if session == nil || session.UID == "" || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
 	}
 	obj.SetUID(existing.GetUID())
