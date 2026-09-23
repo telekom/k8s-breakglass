@@ -109,7 +109,8 @@ spec:
 	}}, "spec", "exceptions"))
 	obj.SetUID("")
 	obj.SetResourceVersion("")
-	require.NoError(t, applyOrRecoverAuxiliaryResource(ctx, target, obj, session))
+	session.Status.AuxiliaryResourceStatuses = statuses
+	require.NoError(t, applyOrRecoverAuxiliaryResource(ctx, target, obj, session, "reviewed-policy"))
 	updated := &unstructured.Unstructured{}
 	updated.SetGroupVersionKind(gvk)
 	require.NoError(t, target.Get(ctx, key, updated))
@@ -182,7 +183,7 @@ func TestAuxiliaryRecoveryRejectsEmptySessionUID(t *testing.T) {
 	desired.SetUID("")
 	desired.SetResourceVersion("")
 	desired.Object["spec"] = map[string]interface{}{"changed": true}
-	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{})
+	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{}, "external")
 	require.ErrorContains(t, err, "owned by another session")
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(gvk)

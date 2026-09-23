@@ -704,7 +704,7 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 				return status, err
 			}
 		}
-		if err := applyOrRecoverAuxiliaryResource(ctx, targetClient, obj, session); err != nil {
+		if err := applyOrRecoverAuxiliaryResource(ctx, targetClient, obj, session, auxRes.Name); err != nil {
 			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
 			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -776,7 +776,7 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 // atomically. Existing objects must belong to this session before native SSA
 // can reconcile them, which prevents concurrent foreign-object adoption while
 // allowing same-session updates.
-func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Client, obj *unstructured.Unstructured, session *breakglassv1alpha1.DebugSession) error {
+func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Client, obj *unstructured.Unstructured, session *breakglassv1alpha1.DebugSession, auxiliaryName string) error {
 	if err := targetClient.Create(ctx, obj); err == nil {
 		return nil
 	} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
@@ -794,10 +794,32 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if operationID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != operationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
 	}
+	if !auxiliaryResourceIdentityRecorded(session, auxiliaryName, obj) {
+		return fmt.Errorf("target resource %s/%s is not the recorded resource for auxiliary %s", obj.GetNamespace(), obj.GetName(), auxiliaryName)
+	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)
 	return utils.ApplyUnstructured(ctx, targetClient, obj)
+}
+
+func auxiliaryResourceIdentityRecorded(session *breakglassv1alpha1.DebugSession, auxiliaryName string, obj *unstructured.Unstructured) bool {
+	operationID := obj.GetAnnotations()[createOperationIDAnnotation]
+	gvk := obj.GroupVersionKind()
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		if status.Name != auxiliaryName {
+			continue
+		}
+		if status.APIVersion == gvk.GroupVersion().String() && status.Kind == gvk.Kind && status.ResourceName == obj.GetName() && status.Namespace == obj.GetNamespace() && status.CreateOperationID == operationID {
+			return true
+		}
+		for _, child := range status.AdditionalResources {
+			if child.APIVersion == gvk.GroupVersion().String() && child.Kind == gvk.Kind && child.ResourceName == obj.GetName() && child.Namespace == obj.GetNamespace() && child.CreateOperationID == operationID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // renderTemplate renders a Go template with the given context.
