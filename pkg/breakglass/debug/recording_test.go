@@ -156,7 +156,7 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	aborted := make(chan struct{})
 	recorder := NewTerminalRecorder(1024)
 	var stdout bytes.Buffer
-	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(20*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder, func() { close(aborted) })
+	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder, func() { close(aborted) })
 	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
 	}
