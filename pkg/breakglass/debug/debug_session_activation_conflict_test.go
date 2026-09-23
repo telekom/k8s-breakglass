@@ -108,6 +108,8 @@ func TestActivationRetryPreservesOtherAuxiliaryCleanupEvidence(t *testing.T) {
 		})
 	}
 	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
 	require.NoError(t, c.client.Status().Update(ctx, ds))
 	injected := false
 	c.client = interceptor.NewClient(c.client.(client.WithWatch), interceptor.Funcs{SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
@@ -119,7 +121,7 @@ func TestActivationRetryPreservesOtherAuxiliaryCleanupEvidence(t *testing.T) {
 		return cl.SubResource(sub).Patch(ctx, obj, p, opts...)
 	}})
 	_, err := c.activateSession(ctx, ds, template, nil)
-	require.True(t, apierrors.IsConflict(err), "expected status conflict, got %v", err)
+	require.True(t, apierrors.IsConflict(err), "expected status conflict, got %v (state %s: %s)", err, ds.Status.State, ds.Status.Message)
 	current := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, c.client.Get(ctx, client.ObjectKeyFromObject(ds), current))
 	require.Len(t, current.Status.AuxiliaryResourceStatuses, 2)

@@ -408,15 +408,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
-	if resolvedTemplate.Labels == nil {
-		resolvedTemplate.Labels = map[string]string{}
-	}
-	resolvedTemplate.Labels[catalogueSnapshotLabel] = "v1"
-	for _, key := range []string{catalogueProfileLabel, catalogueIntentLabel, catalogueElevatedLabel} {
-		if value := template.Labels[key]; value != "" {
-			resolvedTemplate.Labels[key] = value
-		}
-	}
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
@@ -483,9 +474,6 @@ var errBindingClusterNotReady = errors.New("matching binding cluster is not Read
 func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
-		if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.Labels[catalogueSnapshotLabel] != "v1" {
-			return c.failSession(ctx, ds, "approved activation snapshot lacks immutable catalogue identity; recreate this session")
-		}
 		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
 			return c.failSession(ctx, ds, "approved activation snapshots are missing; recreate this session")
 		}

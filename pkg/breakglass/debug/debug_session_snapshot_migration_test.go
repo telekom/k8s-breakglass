@@ -38,10 +38,14 @@ func TestPendingCapturesCatalogueIdentityBeforeApproval(t *testing.T) {
 			var persisted breakglassv1alpha1.DebugSession
 			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(session), &persisted))
 			require.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, persisted.Status.State)
-			require.Equal(t, "v1", persisted.Status.ResolvedTemplate.Labels[catalogueSnapshotLabel])
-			// Reconstruct exactly the metadata-free object used on approved retries.
+			require.True(t, persisted.Status.ResolvedTemplateIdentityCaptured)
+			require.Equal(t, template.Labels, persisted.Status.ResolvedTemplateLabels)
+			// Restore the immutable metadata used on approved retries, even when
+			// the live template has changed since the request.
 			synthetic := &breakglassv1alpha1.DebugSessionTemplate{Spec: *persisted.Status.ResolvedTemplate.DeepCopy()}
-			podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: template.Labels}}
+			podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: cloneStringMap(template.Labels)}}
+			template.Labels = map[string]string{catalogueElevatedLabel: "true"}
+			require.NoError(t, applyApprovedTemplateLabels(synthetic, persisted.Status))
 			restricted, _, err := restrictedCatalogueProfile(synthetic, podTemplate)
 			require.NoError(t, err)
 			require.Equal(t, catalogue, restricted)
@@ -50,7 +54,7 @@ func TestPendingCapturesCatalogueIdentityBeforeApproval(t *testing.T) {
 }
 
 func TestLegacyApprovedSnapshotFailsBeforeActivation(t *testing.T) {
-	for _, marker := range []string{"", "unknown-version"} {
+	for _, marker := range []string{"", "v1", "unknown-version"} {
 		t.Run(marker, func(t *testing.T) {
 			ctx := context.Background()
 			session := newTestDebugSession("legacy", "now-unrestricted", "target", "requester@example.com")

@@ -247,34 +247,37 @@ func TestAuxiliaryRecoveryRejectsRecreatedUID(t *testing.T) {
 }
 
 func TestRestrictedCatalogueProfileUsesResolvedSnapshotLabels(t *testing.T) {
-	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Labels: map[string]string{
-		catalogueProfileLabel:  "workload-diagnostics",
-		catalogueIntentLabel:   "workload-diagnostics",
-		catalogueElevatedLabel: "false",
-	}}}
-	podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{
-		catalogueProfileLabel:  "workload-diagnostics",
-		catalogueIntentLabel:   "workload-diagnostics",
-		catalogueElevatedLabel: "false",
-	}}}
+	labels := map[string]string{
+		catalogueProfileLabel: "workload-diagnostics", catalogueIntentLabel: "workload-diagnostics", catalogueElevatedLabel: "false",
+	}
+	status := breakglassv1alpha1.DebugSessionStatus{ResolvedTemplateLabels: labels, ResolvedTemplateIdentityCaptured: true}
+	template := &breakglassv1alpha1.DebugSessionTemplate{}
+	require.NoError(t, applyApprovedTemplateLabels(template, status))
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: labels}}
 	restricted, intent, err := restrictedCatalogueProfile(template, podTemplate)
 	require.NoError(t, err)
 	require.True(t, restricted)
 	require.Equal(t, "workload-diagnostics", intent)
 }
 
-func TestLegacyActivationSnapshotLacksCatalogueMarker(t *testing.T) {
-	template := &breakglassv1alpha1.DebugSessionTemplateSpec{Labels: map[string]string{catalogueProfileLabel: "workload-diagnostics"}}
-	require.NotEqual(t, "v1", template.Labels[catalogueSnapshotLabel])
+func TestLegacyActivationSnapshotLacksCatalogueIdentity(t *testing.T) {
+	status := breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+		Labels: map[string]string{catalogueProfileLabel: "workload-diagnostics"},
+	}}
+	_, err := approvedTemplateLabelsFromStatus(status)
+	require.ErrorContains(t, err, "lacks durable template identity")
 }
 
 func TestResolvedPodTemplateSnapshotPreservesLabels(t *testing.T) {
 	labels := map[string]string{catalogueProfileLabel: "workload-diagnostics", catalogueIntentLabel: "workload-diagnostics", catalogueElevatedLabel: "false"}
-	raw, err := json.Marshal(resolvedPodTemplateSnapshot{Spec: breakglassv1alpha1.DebugPodTemplateSpec{}, Labels: labels})
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Labels: labels}}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: labels}}
+	raw, err := marshalApprovedPodTemplateSnapshot(template, podTemplate)
 	require.NoError(t, err)
-	snapshot, err := decodeResolvedPodTemplateSnapshot(raw)
+	_, podLabels, templateLabels, err := decodeApprovedPodTemplateSnapshot(raw.Raw)
 	require.NoError(t, err)
-	require.Equal(t, labels, snapshot.Labels)
+	require.Equal(t, labels, podLabels)
+	require.Equal(t, labels, templateLabels)
 }
 
 func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
