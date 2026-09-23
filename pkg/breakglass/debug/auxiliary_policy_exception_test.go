@@ -261,6 +261,11 @@ func TestRestrictedCatalogueProfileUsesResolvedSnapshotLabels(t *testing.T) {
 	require.Equal(t, "workload-diagnostics", intent)
 }
 
+func TestLegacyActivationSnapshotLacksCatalogueMarker(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{Labels: map[string]string{catalogueProfileLabel: "workload-diagnostics"}}
+	require.NotEqual(t, "v1", template.Labels[catalogueSnapshotLabel])
+}
+
 func TestResolvedPodTemplateSnapshotPreservesLabels(t *testing.T) {
 	labels := map[string]string{catalogueProfileLabel: "workload-diagnostics", catalogueIntentLabel: "workload-diagnostics", catalogueElevatedLabel: "false"}
 	raw, err := json.Marshal(resolvedPodTemplateSnapshot{Spec: breakglassv1alpha1.DebugPodTemplateSpec{}, Labels: labels})

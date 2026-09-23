@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -218,10 +217,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota", CreateOperationID: operationID,
 			})
-			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota intent: %w", err)
 			}
 			if err := fence(); err != nil {
@@ -235,8 +234,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return fmt.Errorf("failed to read resource quota after apply: %w", err)
 			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
-			ds.Status.DeployedResources[resourceIndex].UID = rqUID
-			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = rqUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota outcome: %w", err)
 			}
 		}
@@ -257,10 +256,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
+			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb", CreateOperationID: operationID,
 			})
-			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB intent: %w", err)
 			}
 			if err := fence(); err != nil {
@@ -274,8 +273,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return fmt.Errorf("failed to read pod disruption budget after apply: %w", err)
 			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
-			ds.Status.DeployedResources[resourceIndex].UID = pdbUID
-			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = pdbUID
+			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB outcome: %w", err)
 			}
 		}
@@ -301,7 +300,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
-	startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
+	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
 	if auxiliaryResourcesConfigured {
 		if err := fence(); err != nil {
 			return err
@@ -309,7 +308,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryStatuses(ds.Status.AuxiliaryResourceStatuses, beforeStatuses)
+		auxStatuses = append(auxStatuses, beforeStatuses...)
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
 		}
@@ -325,10 +325,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if err != nil {
 		return fmt.Errorf("failed to stamp workload create operation: %w", err)
 	}
-	resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod", CreateOperationID: operationID,
 	})
-	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload intent: %w", err)
 	}
 	if err := fence(); err != nil {
@@ -345,8 +345,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
-	ds.Status.DeployedResources[resourceIndex].UID = workloadUID
-	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+	ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = workloadUID
+	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload outcome: %w", err)
 	}
 
@@ -362,7 +362,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryStatuses(ds.Status.AuxiliaryResourceStatuses, afterStatuses)
+		auxStatuses = append(auxStatuses, afterStatuses...)
+		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
 		}
@@ -372,40 +373,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 }
 
 func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
-	ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryStatuses(ds.Status.AuxiliaryResourceStatuses, []breakglassv1alpha1.AuxiliaryResourceStatus{status})
-	return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
-}
-
-func upsertDeployedResourceIntent(ds *breakglassv1alpha1.DebugSession, desired breakglassv1alpha1.DeployedResourceRef) int {
-	for i := range ds.Status.DeployedResources {
-		current := &ds.Status.DeployedResources[i]
-		if current.APIVersion == desired.APIVersion && current.Kind == desired.Kind &&
-			current.Name == desired.Name && current.Namespace == desired.Namespace && current.Source == desired.Source {
-			current.CreateOperationID = desired.CreateOperationID
-			return i
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
+			ds.Status.AuxiliaryResourceStatuses[i] = status
+			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 		}
 	}
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, desired)
-	return len(ds.Status.DeployedResources) - 1
-}
-
-type debugSessionStatusConflict struct{ err error }
-
-func (e *debugSessionStatusConflict) Error() string { return e.err.Error() }
-
-func (e *debugSessionStatusConflict) Unwrap() error { return e.err }
-
-func isDebugSessionStatusConflict(err error) bool {
-	var statusConflict *debugSessionStatusConflict
-	return errors.As(err, &statusConflict)
-}
-
-func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
-	err := breakglass.ApplyDebugSessionStatus(ctx, c, ds)
-	if apierrors.IsConflict(err) {
-		return &debugSessionStatusConflict{err: err}
-	}
-	return err
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
+	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
 }
 
 // createOrRecoverTargetObject never adopts a resource owned by another session.
@@ -460,58 +435,9 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 	if !auxiliaryResourcesConfigured {
 		return nil
 	}
-	if ds.Status.AuxiliaryResourceStatuses == nil {
-		ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{}
-	}
-	return ds.Status.AuxiliaryResourceStatuses
-}
-
-// mergeAuxiliaryStatuses replaces only the resource being replayed. Preserve
-// other resource intents and child-document evidence across partial retries.
-func mergeAuxiliaryStatuses(current, updates []breakglassv1alpha1.AuxiliaryResourceStatus) []breakglassv1alpha1.AuxiliaryResourceStatus {
-	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), current...)
-	for _, update := range updates {
-		index := -1
-		for i := range merged {
-			if merged[i].Name == update.Name {
-				index = i
-				break
-			}
-		}
-		if index < 0 {
-			merged = append(merged, update)
-			continue
-		}
-		previous := merged[index]
-		if update.ResourceName == "" {
-			previous.Error = update.Error
-			merged[index] = previous
-			continue
-		}
-		if update.UID == "" {
-			update.UID = previous.UID
-		}
-		children := append([]breakglassv1alpha1.AdditionalResourceRef(nil), previous.AdditionalResources...)
-		for _, next := range update.AdditionalResources {
-			matched := false
-			for i := range children {
-				if additionalResourceKey(children[i]) == additionalResourceKey(next) || (next.CreateOperationID != "" && children[i].CreateOperationID == next.CreateOperationID) {
-					if next.UID == "" {
-						next.UID = children[i].UID
-					}
-					children[i] = next
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				children = append(children, next)
-			}
-		}
-		update.AdditionalResources = children
-		merged[index] = update
-	}
-	return merged
+	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	ds.Status.AuxiliaryResourceStatuses = statuses
+	return statuses
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
@@ -904,9 +830,9 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Created:           true,
 		CreateOperationID: operationID,
 	}
-	statusIndex := upsertPodTemplateResourceIntent(ds, status)
+	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
 	if c.client != nil {
-		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
 		}
 	}
@@ -923,7 +849,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		return fmt.Errorf("apply pod template resource failed: %w", err)
 	}
 	// Record the target UID as the durable outcome.
-	statusRef := &ds.Status.PodTemplateResourceStatuses[statusIndex]
+	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
 	statusRef.UID = string(obj.GetUID())
 	if statusRef.UID == "" {
 		return fmt.Errorf("created pod template resource %s/%s has no UID", obj.GetNamespace(), obj.GetName())
@@ -931,14 +857,13 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	now := time.Now().UTC().Format(time.RFC3339)
 	statusRef.CreatedAt = &now
 	if c.client != nil {
-		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource outcome: %w", err)
 		}
 	}
 
-	// Add to deployed resources list, reconciling an intent left by a prior
-	// attempt instead of appending a duplicate on retry.
-	upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
+	// Add to deployed resources list
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion:        obj.GetAPIVersion(),
 		Kind:              obj.GetKind(),
 		Name:              obj.GetName(),
@@ -954,21 +879,6 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		"namespace", obj.GetNamespace())
 
 	return nil
-}
-
-func upsertPodTemplateResourceIntent(ds *breakglassv1alpha1.DebugSession, desired breakglassv1alpha1.PodTemplateResourceStatus) int {
-	for i := range ds.Status.PodTemplateResourceStatuses {
-		current := &ds.Status.PodTemplateResourceStatuses[i]
-		if current.APIVersion == desired.APIVersion && current.Kind == desired.Kind && current.Namespace == desired.Namespace && current.ResourceName == desired.ResourceName && current.Source == desired.Source && current.CreateOperationID == desired.CreateOperationID {
-			if desired.UID == "" {
-				desired.UID = current.UID
-			}
-			*current = desired
-			return i
-		}
-	}
-	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, desired)
-	return len(ds.Status.PodTemplateResourceStatuses) - 1
 }
 
 // buildPodSpec creates the pod spec from templates and overrides.
@@ -1157,9 +1067,6 @@ const (
 
 func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
 	templateProfile := template.Labels[catalogueProfileLabel]
-	if templateProfile == "" {
-		templateProfile = template.Spec.Labels[catalogueProfileLabel]
-	}
 	podProfile := ""
 	if podTemplate != nil {
 		podProfile = podTemplate.Labels[catalogueProfileLabel]
@@ -1171,17 +1078,11 @@ func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplat
 		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
 	}
 	templateIntent := template.Labels[catalogueIntentLabel]
-	if templateIntent == "" {
-		templateIntent = template.Spec.Labels[catalogueIntentLabel]
-	}
 	podIntent := podTemplate.Labels[catalogueIntentLabel]
 	if templateIntent == "" || templateIntent != podIntent {
 		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
 	}
 	templateElevated := template.Labels[catalogueElevatedLabel]
-	if templateElevated == "" {
-		templateElevated = template.Spec.Labels[catalogueElevatedLabel]
-	}
 	podElevated := podTemplate.Labels[catalogueElevatedLabel]
 	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
 		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")

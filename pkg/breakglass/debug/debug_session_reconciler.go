@@ -409,17 +409,6 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	// Cache the resolved template in status after applying binding-level duration overrides.
 	resolvedTemplate := effectiveTemplate.Spec.DeepCopy()
 	resolvedTemplate.Constraints = effectiveDebugSessionConstraints(template, binding)
-	// Catalogue identity lives on template metadata, while the immutable
-	// activation snapshot stores only the spec. Carry the reserved identity
-	// labels into the snapshot so retries retain the restricted profile fence.
-	if resolvedTemplate.Labels == nil {
-		resolvedTemplate.Labels = map[string]string{}
-	}
-	for _, key := range []string{catalogueProfileLabel, catalogueIntentLabel, catalogueElevatedLabel} {
-		if value := template.Labels[key]; value != "" {
-			resolvedTemplate.Labels[key] = value
-		}
-	}
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
 	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
@@ -485,22 +474,6 @@ var errBindingClusterNotReady = errors.New("matching binding cluster is not Read
 func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	// If approved, activate
 	if ds.Status.Approval != nil && ds.Status.Approval.ApprovedAt != nil {
-<<<<<<< HEAD
-=======
-		var template *breakglassv1alpha1.DebugSessionTemplate
-		if ds.Status.ResolvedTemplate != nil {
-			template = &breakglassv1alpha1.DebugSessionTemplate{
-				ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef},
-				Spec:       *ds.Status.ResolvedTemplate.DeepCopy(),
-			}
-		} else {
-			var err error
-			template, err = c.getTemplate(ctx, ds.Spec.TemplateRef)
-			if err != nil {
-				return c.failSession(ctx, ds, fmt.Sprintf("template not found: %s", ds.Spec.TemplateRef))
-			}
-		}
->>>>>>> 5e7f293d2 (fix(debug): retry from persisted template and guard SSA)
 		if ds.Status.ResolvedTemplate == nil || !ds.Status.ResolvedBindingSnapshotCaptured {
 			return c.failSession(ctx, ds, "approved activation snapshots are missing; recreate this session")
 		}
@@ -1056,12 +1029,6 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
-			// Another replica can advance the persisted inventory while this
-			// activation is preparing a resource. Retry from a fresh session
-			// instead of failing it or replaying a stale full-status snapshot.
-			if isDebugSessionStatusConflict(err) {
-				return ctrl.Result{}, err
-			}
 			log.Errorw("Failed to deploy debug resources", "error", err)
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
 		}
