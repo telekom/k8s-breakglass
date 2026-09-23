@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recover concurrent typed workload creates without treating client-side GVK
+  clearing as content drift; retain strict operation and workload-content checks.
+
 - Preserve approved DebugSession templates and auxiliary cleanup inventory across
   activation retries; reject exception recovery without a session UID.
 

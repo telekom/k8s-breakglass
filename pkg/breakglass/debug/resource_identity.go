@@ -280,6 +280,12 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	if err := target.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
 		return fmt.Errorf("recover tracked resource after create error: %w; read existing resource: %w", createErr, err)
 	}
+	// Typed GET decoding clears TypeMeta. The concrete Go type and REST mapping
+	// already constrain its GVK; restore it for content comparison. Unstructured
+	// objects retain the server's explicit GVK and must still match it.
+	if _, unstructuredObject := existing.(*unstructured.Unstructured); !unstructuredObject && existing.GetObjectKind().GroupVersionKind().Empty() {
+		existing.GetObjectKind().SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
+	}
 	existingAnnotations := existing.GetAnnotations()
 	if existingAnnotations[sourceSessionUIDAnnotation] != string(session.UID) {
 		return fmt.Errorf("target resource %s/%s already exists and is owned by another session: %w", obj.GetNamespace(), obj.GetName(), createErr)
