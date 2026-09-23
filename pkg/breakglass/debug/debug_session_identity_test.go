@@ -154,8 +154,8 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 		identity   debugSessionReadIdentity
 		wantStatus int
 	}{
-		{"pending partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusBadRequest},
-		{"pending approval partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStatePendingApproval, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusBadRequest},
+		{"pending partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusForbidden},
+		{"pending approval partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStatePendingApproval, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusForbidden},
 		{"partial provider mismatches", breakglassv1alpha1.DebugSessionStatePending, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-b"}, http.StatusForbidden},
 		{"issuer matches trusted legacy identity", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer", legacyAllowed: true}, http.StatusOK},
 		{"issuer mismatches", breakglassv1alpha1.DebugSessionStatePending, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://other"}, http.StatusForbidden},
@@ -165,6 +165,8 @@ func TestTerminatePendingRetirementHandlerIdentityFence(t *testing.T) {
 		{"single jwks providerless requester", breakglassv1alpha1.DebugSessionStatePendingApproval, "", "", debugSessionReadIdentity{username: "owner", provider: "single", issuer: "https://single", legacyAllowed: true}, http.StatusOK},
 		{"single jwks provider-only requester is not retireable", breakglassv1alpha1.DebugSessionStatePendingApproval, "single", "", debugSessionReadIdentity{username: "owner", provider: "single", legacyAllowed: true}, http.StatusBadRequest},
 		{"active provider mismatch remains denied", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "https://issuer", debugSessionReadIdentity{username: "owner", provider: "idp-b", issuer: "https://issuer"}, http.StatusForbidden},
+		{"active partial provider requires trusted legacy identity", breakglassv1alpha1.DebugSessionStateActive, "idp-a", "", debugSessionReadIdentity{username: "owner", provider: "idp-a"}, http.StatusForbidden},
+		{"active partial issuer requires trusted legacy identity", breakglassv1alpha1.DebugSessionStateActive, "", "https://issuer", debugSessionReadIdentity{username: "owner", issuer: "https://issuer"}, http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
