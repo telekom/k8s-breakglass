@@ -1016,6 +1016,14 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			s.allowed = false
 			s.allowSource = ""
 			s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
+		} else if ra := s.sar.Spec.ResourceAttributes; ra != nil {
+			if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+				s.allowed = false
+				s.allowSource = ""
+				s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+			} else {
+				s.reason = wc.finalizeReason(reason, true, s.clusterName)
+			}
 		}
 	}
 
@@ -1180,11 +1188,14 @@ func (wc *WebhookController) recordDebugSessionActivity(ctx context.Context, nam
 		if session.UID != uid {
 			return fmt.Errorf("debug session UID changed")
 		}
+		now := time.Now()
+		if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) {
+			return fmt.Errorf("debug session is no longer active")
+		}
 		if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Constraints == nil || session.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
 			return nil
 		}
-		now := time.Now()
-		if session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&session, now) {
+		if breakglass.DebugSessionIdleExpired(&session, now) {
 			return fmt.Errorf("debug session is no longer active")
 		}
 		base := session.DeepCopy()
@@ -1193,6 +1204,6 @@ func (wc *WebhookController) recordDebugSessionActivity(ctx context.Context, nam
 		if session.Status.LastActivity == nil || session.Status.LastActivity.Before(&nowMeta) {
 			session.Status.LastActivity = &nowMeta
 		}
-		return wc.sesManager.Status().Patch(ctx, &session, client.MergeFrom(base))
+		return wc.sesManager.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	})
 }

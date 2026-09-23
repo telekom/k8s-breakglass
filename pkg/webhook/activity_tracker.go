@@ -331,13 +331,14 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 		for _, entry := range failed {
 			key := types.NamespacedName{Namespace: entry.namespace, Name: entry.name}
 			if existing, ok := at.entries[key]; ok {
+				if existing.uid != entry.uid || existing.debugSession != entry.debugSession {
+					continue
+				}
 				// Merge: keep the latest lastSeen and sum counts
 				if entry.lastSeen.After(existing.lastSeen) {
 					existing.lastSeen = entry.lastSeen
 				}
 				existing.count += entry.count
-				existing.debugSession = entry.debugSession
-				existing.uid = entry.uid
 				// Keep the higher retry count
 				if entry.retries > existing.retries {
 					existing.retries = entry.retries

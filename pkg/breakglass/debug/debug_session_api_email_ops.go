@@ -481,7 +481,10 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
+		return
+	}
 
 	reqLog.Infow("Ephemeral container injected",
 		"session", sessionName,
@@ -585,7 +588,10 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
+		return
+	}
 
 	reqLog.Infow("Pod copy created",
 		"session", sessionName,
@@ -691,7 +697,10 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
-	c.recordDebugSessionActivity(apiCtx, session)
+	if err := c.recordDebugSessionActivity(apiCtx, session); err != nil {
+		respondKubectlDebugOperationError(ctx, err, "failed to record debug session activity")
+		return
+	}
 
 	reqLog.Infow("Node debug pod created",
 		"session", sessionName,
