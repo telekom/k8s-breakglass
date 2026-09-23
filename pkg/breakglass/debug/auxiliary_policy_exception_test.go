@@ -261,6 +261,15 @@ func TestRestrictedCatalogueProfileUsesResolvedSnapshotLabels(t *testing.T) {
 	require.Equal(t, "workload-diagnostics", intent)
 }
 
+func TestResolvedPodTemplateSnapshotPreservesLabels(t *testing.T) {
+	labels := map[string]string{catalogueProfileLabel: "workload-diagnostics", catalogueIntentLabel: "workload-diagnostics", catalogueElevatedLabel: "false"}
+	raw, err := json.Marshal(resolvedPodTemplateSnapshot{Spec: breakglassv1alpha1.DebugPodTemplateSpec{}, Labels: labels})
+	require.NoError(t, err)
+	snapshot, err := decodeResolvedPodTemplateSnapshot(raw)
+	require.NoError(t, err)
+	require.Equal(t, labels, snapshot.Labels)
+}
+
 func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
 	ctx := context.Background()
 	scheme := runtime.NewScheme()
