@@ -128,7 +128,9 @@ function coerceValue(value: unknown, inputType: string): unknown {
 
 function compareDecimalValues(left: unknown, right: string): number | undefined {
   const parse = (value: unknown) => {
-    const match = String(value).trim().match(/^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
+    const match = String(value)
+      .trim()
+      .match(/^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
     if (!match) return undefined;
     const fraction = match[3] || "";
     const digits = `${match[2]}${fraction}`.replace(/^0+(?=\d)/, "");
