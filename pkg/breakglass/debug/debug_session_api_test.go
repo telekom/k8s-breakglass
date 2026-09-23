@@ -47,7 +47,8 @@ import (
 
 func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
 	variable := extraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
-		Name: "target",
+		Name:    "target",
+		Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
 		Validation: &breakglassv1alpha1.VariableValidation{
 			Pattern:            "-prod$",
 			AdditionalPatterns: []string{"^safe-"},
@@ -57,6 +58,7 @@ func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
 	data, err := json.Marshal(variable)
 	require.NoError(t, err)
 	var response struct {
+		Default    json.RawMessage `json:"default"`
 		Validation struct {
 			Pattern            string   `json:"pattern"`
 			AdditionalPatterns []string `json:"additionalPatterns"`
@@ -65,6 +67,7 @@ func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &response))
 	assert.Equal(t, "-prod$", response.Validation.Pattern)
 	assert.Equal(t, []string{"^safe-"}, response.Validation.AdditionalPatterns)
+	assert.Equal(t, `9007199254740993`, string(response.Default))
 }
 
 func init() {

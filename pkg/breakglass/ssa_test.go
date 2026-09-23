@@ -101,6 +101,7 @@ func TestStatusHelpersFreezeVariablePolicyAfterTemplatePersistence(t *testing.T)
 	desired := current.DeepCopy()
 	desired.Status.ResolvedTemplateVariablePolicy[0].Name = "changed"
 
+	assert.ErrorContains(t, validateDebugSessionStatusMutation(current.Status, desired.Status, time.Now()), "variable policy")
 	require.ErrorContains(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired), "variable policy")
 	require.ErrorContains(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
 		status.ResolvedTemplateVariablePolicy[0].Name = "changed"

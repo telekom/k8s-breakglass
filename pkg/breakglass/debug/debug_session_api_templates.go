@@ -48,7 +48,7 @@ type extraDeployVariableResponse breakglassv1alpha1.ExtraDeployVariable
 
 func (v extraDeployVariableResponse) MarshalJSON() ([]byte, error) {
 	type plain extraDeployVariableResponse
-	var out map[string]any
+	var out map[string]json.RawMessage
 	data, err := json.Marshal(plain(v))
 	if err != nil {
 		return nil, err
@@ -57,12 +57,21 @@ func (v extraDeployVariableResponse) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	if v.Validation != nil && len(v.Validation.AdditionalPatterns) > 0 {
-		validation, ok := out["validation"].(map[string]any)
-		if !ok {
-			validation = map[string]any{}
-			out["validation"] = validation
+		validation := map[string]json.RawMessage{}
+		if raw, ok := out["validation"]; ok {
+			if err := json.Unmarshal(raw, &validation); err != nil {
+				return nil, err
+			}
 		}
-		validation["additionalPatterns"] = v.Validation.AdditionalPatterns
+		patterns, err := json.Marshal(v.Validation.AdditionalPatterns)
+		if err != nil {
+			return nil, err
+		}
+		validation["additionalPatterns"] = patterns
+		out["validation"], err = json.Marshal(validation)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return json.Marshal(out)
 }
