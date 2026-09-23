@@ -1,0 +1,169 @@
+# Diagnostic artifact E2E acceptance
+
+The single-cluster API E2E lane must exercise the complete `system-summary.v1` and `crashdump-collection.v1`
+paths: an API-created active DebugSession and ConnectionLease, collection against
+an approved Pod, a controller-created collector Job, HTTPS upload, authenticated
+download, and cleanup. The lane uses an immutable digest for the test collector
+image and a test CA trust layer; it does not weaken production TLS or claim that
+the release image has been published.
+
+The test also checks outsider and replay denial, authorization after session
+termination, and provider/object cleanup. Unit and envtest suites remain the
+source of coverage for injected publication and CAS race failures.
+Revocation before the first authorized download bytes returns an error status
+without attachment or length headers; later revocation stops the existing stream.
+The real API-server reservation test also starts the artifact controller under
+RBAC that denies hub Job access. Collector Jobs are created and polled through
+spoke clients without hub owner references; a hub Job watch must not block
+artifact cache synchronization or require broader controller permissions.
+
+The single-cluster CI job explicitly runs `e2e/fixtures/artifacts/setup.sh`,
+then `go test -tags=e2e ./e2e/api -run '^TestDebugSessionArtifactCollectorE2E$'`.
+Missing fixture configuration fails this named lane. Other E2E suites keep their
+existing HTTP listener; a test-only TLS sidecar forwards to that listener.
+Once the environment and port-forwards are established, both artifact backends
+run even if an earlier test suite fails. Each matrix depends on its own successful
+fixture setup; failures still fail the job and cancellation stops further work.
+The shared E2E termination client retries only explicit optimistic `409 CONFLICT`
+responses, at most three times, without retrying authorization failures.
+Both fixture setup and S3 backend selection wait for `/api/config` through the
+runner's API port-forward after replacing the controller Pod. Deployment
+readiness alone does not mean the keepalive port-forward has reconnected.
+An unavailable endpoint fails setup before any session-creation POST is sent.
+Session reads, artifact API routes and archive identity checks use the namespace
+returned by session creation, which belongs to the ClusterConfig. The controller
+fixture and artifact reservations remain in the controller namespace; the two
+namespaces must not be assumed to match.
+Workload Pod identity checks tolerate Kubernetes' canonical
+`enableServiceLinks: true` admission default only when the workload left it
+unset; an explicit `false` remains authoritative.
+
+The setup creates a fresh private test CA and signing Secret, builds the actual
+collector/uploader from source, appends the CA to a test-only trust layer, and
+imports its archive into every disposable Kind node. It tags each node's actual
+containerd manifest digest and requires those digests to agree. Both generated
+Job containers use that immutable reference. This proves the test image; it does
+not publish or certify the release image.
+
+A single-replica Recreate controller mounts a private RWO PVC. A test-only init
+command calls `local.ProvisionSentinels`; production startup still fails closed
+on unprovisioned storage. The test observes the real object files through its
+administrator fixture, verifies removal after artifact finalization, and keeps a
+second artifact readable while the first is deleted. The disposable Kind cluster
+and its PVC are removed by the existing CI cluster teardown. Generated private
+keys are never printed or attached to diagnostics.
+
+## Activation and hard-expiry diagnostics
+
+The separate hard-expiry lane exercises authorization expiry and API-mediated
+ephemeral injection. Its failure bundle selects the deployed controller pods by
+`app=breakglass` and captures bounded, redacted logs. DebugSession wait failures
+report the last observed UID, resource version, state, message, expiry, and read
+error before fixture cleanup removes the object.
+
+`TestFreshKubectlDebugSessionActivatesWithRealAPI` runs the production reconciler
+with quota admission, a persisted template, and a real connection Lease against
+an envtest API server. Set `KUBEBUILDER_ASSETS` to run it. This is complementary
+to the Kind lane; it does not reproduce manager-cache timing or spoke transport.
+Completed ephemeral-operation replay records its existing reference once while
+preserving the separate Active-only allowed-Pod update.
+
+## Explicit backend and lifecycle matrix
+
+The same named test runs separately with `E2E_ARTIFACT_BACKEND=local` and `s3`.
+`select-s3.sh` replaces the local configuration with an explicit S3 configuration;
+there is no automatic failover. Each backend runs both recipes through terminate,
+expiry, and session deletion. Each case restarts the real controller before
+reading the retained control artifact, then verifies provider and tracked Job/
+Secret cleanup. Local object files must remain mode 0600 and UID/GID 65532; S3
+inventory includes all versions and delete markers so hidden versions cannot
+masquerade as successful cleanup.
+Permission checks run while both local objects are available, not while cleanup
+can remove files between inventory and `stat`. Expiry cases request five-minute
+sessions and wait for their real deadline; they never move an Active session's
+expiry backward through a forbidden status patch.
+The requester obtains a fresh OIDC token after cleanup so the final 404 checks
+prove artifact denial for an authenticated identity, not an expired login token.
+
+Before deleting a verified provider version, cleanup persists ownership evidence
+in the existing `CleanupPublicationObserved` status condition. A restarted worker
+can then finish after a lost completion-status write and two empty inventories.
+Without that evidence, an unobserved publication remains ambiguous and retains
+its finalizer; inventory errors and foreign versions still prevent finalization.
+
+The crashdump source is harmless synthetic text seeded only inside the disposable
+Kind nodes at `/var/lib/systemd/coredump/core.artifact-kind-fixture`. Tests inspect
+the admitted Pod's exact node, immutable image, read-only hostPath and mount,
+host namespace/runtime fields, and the downloaded archive's synthetic payload.
+Both recipes validate their manifest contract, stdout/stderr, and payload hashes.
+Generated Jobs pass recipe inputs through `DIAGNOSTIC_NODE`,
+`DIAGNOSTIC_MAX_AGE_MINUTES`, and `DIAGNOSTIC_DETAIL_LEVEL`, matching the shipping
+collector rather than relying on its standalone defaults.
+No production source directory or credential is used.
+
+The requester identity and groups used for API collection are impersonated for
+actual forbidden create/patch/delete attempts against Jobs, Pods, Secrets and
+NetworkPolicies carrying artifact labels in the execution namespace. Kyverno
+PolicyException authorization is checked through SubjectAccessReview; this
+upstream fixture does not install Kyverno and does not claim provider execution
+or the downstream three-Function integration required by the SI acceptance gate.
+The Kind API server calls the SAR webhook on the controller's API port 8080,
+not its metrics port 8081. A metrics-port 404 becomes an authorization error
+(HTTP 500), which must not be mistaken for the required forbidden response.
+
+## Disposable S3 dependency
+
+MinIO's official distribution is source-only. CI builds the official security
+release `RELEASE.2025-10-15T17-29-55Z`, commit
+`9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`, instead of using older registry images.
+Source: <https://github.com/minio/minio/tree/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a>.
+The fixture image includes its AGPL license and is imported by actual manifest
+digest into Kind; it is not a shipping utility catalogue image. A private internal
+HTTPS service uses the fixture CA. Random fixture credentials are confined to
+its Secret, MinIO, the controller startup, and administrator inventory helper;
+they never enter collector/uploader environment or public artifact metadata.
+The versioned bucket and backend sentinel are provisioned by the test helper.
+The fixture S3 service publishes not-yet-ready Pod addresses because its MinIO
+and TLS proxy are sidecars of the controller. Otherwise the controller's S3
+startup verification waits for service endpoints that require that same startup
+to finish. This does not change readiness gating for the controller API service.
+
+Compilation and lint are local checks only. Actual container, storage, admitted
+Pod and lifecycle behavior requires the named Kind CI matrix to pass.
+
+## Failure injection
+
+A fixture-only HTTPS edge can pause collector uploads while the test sends a
+freshly issued artifact token directly to the real Breakglass upload handler.
+A valid re-bound archive is accepted first; missing/extra outputs, a wrong output
+declaration, a cross-recipe manifest and a wrong session identity must then be
+rejected on separate reservations. The independent native
+`TestArtifactArchiveMutationContract` verifies the probe's payload-tar checksum,
+so rejection cannot be attributed solely to broken fixture serialization.
+
+The deletion paths also exercise real failure retention before repair:
+
+- Local/PVC: temporarily unreadable object root, then a corrupted stored file.
+- S3: a fixture HTTP 503 outage, then an actual foreign object version with
+  mismatched ownership metadata in the disposable versioned bucket.
+- Both: a persisted cleanup reference to a nonexistent ClusterConfig, while the
+  original tracked Job and Secret still exist.
+
+Each failure must preserve the artifact finalizer and tracked resource inventory.
+Provider failures must set the cleanup-ambiguous status. Repair restores the
+original fixture evidence, triggers reconciliation, and must remove only the
+owned artifact while keeping its control artifact readable. The missing-config
+case repairs the original reference without creating a substitute ClusterConfig
+or changing its UID. These controls exist only in the disposable E2E fixture.
+
+Collector Job and immutable upload Secret names include the reservation's CR UID,
+not its reusable artifact slot. A real kubelet can retain an immutable Secret's
+old value while an earlier Pod references that name, even after the Secret is
+deleted and recreated. Persisted legacy resource intents remain reconcilable.
+Each case waits for its session's artifact cleanup before the next provider
+inventory baseline is captured, including when an earlier assertion fails.
+
+S3 publication supplies the verified staged size as `Content-Length`; the
+digest-checking reader does not expose its length to the AWS SDK. Signed writes
+without that length are rejected by the real versioned MinIO fixture with 411,
+not treated as a successful or automatically retried upload.

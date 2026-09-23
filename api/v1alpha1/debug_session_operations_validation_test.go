@@ -110,7 +110,7 @@ func TestDebugSessionValidateUpdateRejectsTerminalSwapWithoutCompaction(t *testi
 	}
 }
 
-func TestDebugSessionValidateUpdateExpiredOperationFailureOnly(t *testing.T) {
+func TestDebugSessionValidateUpdateExpiredOperationOutcomeOnly(t *testing.T) {
 	old := &DebugSession{
 		Spec: DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "alice"},
 		Status: DebugSessionStatus{
@@ -144,18 +144,21 @@ func TestDebugSessionValidateUpdateExpiredOperationFailureOnly(t *testing.T) {
 		{"new prepared", func(s *DebugSession) {
 			s.Status.KubectlDebugStatus.Operations = append(s.Status.KubectlDebugStatus.Operations, testKubectlOperation("new", KubectlDebugOperationPrepared))
 		}},
-		{"completed", func(s *DebugSession) {
-			s.Status.KubectlDebugStatus.Operations[0].State = KubectlDebugOperationCompleted
-		}},
-		{"unknown", func(s *DebugSession) { s.Status.KubectlDebugStatus.Operations[0].State = KubectlDebugOperationUnknown }},
 		{"missing completion timestamp", func(s *DebugSession) { s.Status.KubectlDebugStatus.Operations[0].CompletedAt = nil }},
 		{"changed intent", func(s *DebugSession) { s.Status.KubectlDebugStatus.Operations[0].RequestedBy = "mallory" }},
 		{"retained prepared message", func(s *DebugSession) { s.Status.KubectlDebugStatus.Operations[1].Message = "changed" }},
 		{"retained prepared timestamp", func(s *DebugSession) { s.Status.KubectlDebugStatus.Operations[1].CompletedAt = ptrTime(metav1.Now()) }},
 		{"spec", func(s *DebugSession) { s.Spec.RequestedBy = "mallory" }},
 	}
-	if _, err := valid.ValidateUpdate(context.Background(), old, valid); err != nil {
-		t.Fatalf("evidence-only failure rejected: %v", err)
+	for _, outcome := range []KubectlDebugOperationState{KubectlDebugOperationFailed, KubectlDebugOperationUnknown, KubectlDebugOperationCompleted} {
+		candidate := valid.DeepCopy()
+		candidate.Status.KubectlDebugStatus.Operations[0].State = outcome
+		if _, err := candidate.ValidateUpdate(context.Background(), old, candidate); err != nil {
+			t.Fatalf("evidence-only %s rejected: %v", outcome, err)
+		}
+		if AllowsExpiredActiveEphemeralOperationFailure(old.Status, candidate.Status, time.Now()) != (outcome == KubectlDebugOperationFailed) {
+			t.Fatal("failure-only compatibility predicate changed")
+		}
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

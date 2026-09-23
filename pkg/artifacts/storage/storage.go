@@ -72,3 +72,11 @@ type Store interface {
 	Inventory(context.Context, Object) ([]Version, error)
 	DeleteVersion(context.Context, Object, Version) error
 }
+
+// KeyInventory is implemented by stores that can prove the identity of an
+// object after a controller restart lost its size and digest status fields.
+// It is intentionally separate from Store so ordinary reads still require the
+// complete immutable object binding.
+type KeyInventory interface {
+	InventoryKey(context.Context, string) ([]Version, error)
+}

@@ -3,6 +3,8 @@
 Debug resource mutations use an uncached hub read to recheck active state, expiry
 and operator participation immediately before the spoke mutation. This narrows
 the revocation window; it does not create an atomic transaction between clusters.
+Mutation handlers also require the lease validator service itself; missing lease
+validation dependencies fail closed before any kubectl-debug mutation attempt.
 Pod-copy and node-debug creation compensate for failed or revoked status recording
 by deleting only the UID returned from creation.
 

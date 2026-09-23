@@ -775,6 +775,7 @@ func TestWorkloadTemplateAllowsKubernetesDefaultSchedulingFields(t *testing.T) {
 			pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
 			pod.Spec.Priority = ptr.To[int32](0)
 			pod.Spec.PreemptionPolicy = ptr.To(corev1.PreemptLowerPriority)
+			pod.Spec.EnableServiceLinks = ptr.To(true)
 			templateBefore, podBefore := template.DeepCopy(), pod.DeepCopy()
 
 			target := fake.NewClientBuilder().WithScheme(testScheme()).Build()
@@ -782,6 +783,12 @@ func TestWorkloadTemplateAllowsKubernetesDefaultSchedulingFields(t *testing.T) {
 			require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, daemonSet), "canonical API defaults must not invalidate the workload identity")
 			require.Equal(t, templateBefore, template, "normalization must not mutate the template")
 			require.Equal(t, podBefore, pod, "normalization must not mutate the live pod")
+			template.Spec.EnableServiceLinks = ptr.To(false)
+			require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, daemonSet), "admission must not override an explicit service-link opt-out")
+			pod.Spec.EnableServiceLinks = ptr.To(false)
+			require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, daemonSet))
+			template.Spec.EnableServiceLinks = nil
+			require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, daemonSet), "only the canonical true default is accepted")
 		})
 	}
 
@@ -910,6 +917,7 @@ func TestTrackedWorkloadAdmittedPodMembership(t *testing.T) {
 				pod.Spec.PriorityClassName = class.Name
 				pod.Spec.Priority = ptr.To(class.Value)
 				pod.Spec.PreemptionPolicy = ptr.To(corev1.PreemptNever)
+				pod.Spec.EnableServiceLinks = ptr.To(true)
 				podBefore, templateBefore := pod.DeepCopy(), template.DeepCopy()
 				session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "apps/v1", Kind: kind, Name: meta.Name, Namespace: meta.Namespace, UID: string(meta.UID), Source: "debug-pod"}}}}
 				target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build()

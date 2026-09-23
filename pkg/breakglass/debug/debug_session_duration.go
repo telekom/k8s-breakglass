@@ -47,6 +47,13 @@ func mergeDebugSessionConstraints(template, binding *breakglassv1alpha1.DebugSes
 	if template != nil {
 		merged = template.DeepCopy()
 	}
+	if isPositiveDebugSessionDuration(binding.IdleTimeout) && (merged.IdleTimeout == "" || isShorterDebugSessionDuration(binding.IdleTimeout, merged.IdleTimeout)) {
+		merged.IdleTimeout = binding.IdleTimeout
+	}
+	// Retention is a minimum audit-preservation window, not an access lifetime.
+	if isPositiveDebugSessionDuration(binding.RetainFor) && (merged.RetainFor == "" || isShorterDebugSessionDuration(merged.RetainFor, binding.RetainFor)) {
+		merged.RetainFor = binding.RetainFor
+	}
 	if isPositiveDebugSessionDuration(binding.MaxDuration) && (merged.MaxDuration == "" || isShorterDebugSessionDuration(binding.MaxDuration, merged.MaxDuration)) {
 		merged.MaxDuration = binding.MaxDuration
 	}

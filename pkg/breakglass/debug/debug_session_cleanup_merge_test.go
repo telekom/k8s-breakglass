@@ -178,7 +178,7 @@ func TestCleanupStatusResidualsRespectRetentionAndUnresolvedIntents(t *testing.T
 	kept := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
 		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
 		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
-			Name: "kept", Created: true, UID: "confirmed-kept",
+			Name: "kept", Created: true, UID: "confirmed-kept", APIVersion: "v1", Kind: "ConfigMap", ResourceName: "kept",
 		}},
 	}}
 	assert.False(t, cleanupStatusHasResiduals(kept), "deleteAfter=false resources are intentionally retained")
@@ -499,4 +499,40 @@ func TestCleanupWithoutProviderPreservesConcurrentBookkeeping(t *testing.T) {
 	require.False(t, cleanupConditionFailed(baseline))
 	require.NoError(t, controller.cleanupResources(context.Background(), baseline))
 	require.Empty(t, baseline.Status.AllowedPods)
+}
+func TestFailedCleanupCompletesConfirmedRetention(t *testing.T) {
+	for _, missing := range []string{"", "uid", "version", "kind", "name"} {
+		t.Run(missing, func(t *testing.T) {
+			c, session, template, _ := newDeploymentFenceFixture(t)
+			session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+			session.Status.AllowedPods = nil
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep"}}}
+			status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep", Created: true, APIVersion: "v1", Kind: "Namespace", ResourceName: "evidence", UID: "uid"}
+			switch missing {
+			case "uid":
+				status.UID = ""
+			case "version":
+				status.APIVersion = ""
+			case "kind":
+				status.Kind = ""
+			case "name":
+				status.ResourceName = ""
+			}
+			session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{status}
+			session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: status.APIVersion, Kind: status.Kind, Name: status.ResourceName, UID: status.UID, Source: "auxiliary:keep"}}
+			require.NoError(t, c.client.Status().Update(t.Context(), session))
+			require.Equal(t, missing != "", hasTrackedSpokeResources(session))
+			if missing != "" {
+				return
+			}
+			template.Status.ActiveSessionCount = 1
+			require.NoError(t, c.client.Status().Update(t.Context(), template))
+			result, err := c.handleFailedCleanup(t.Context(), session)
+			require.NoError(t, err)
+			require.Zero(t, result.RequeueAfter)
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(template), template))
+			require.Zero(t, template.Status.ActiveSessionCount)
+			require.Len(t, session.Status.AuxiliaryResourceStatuses, 1, "intentional retention history remains")
+		})
+	}
 }

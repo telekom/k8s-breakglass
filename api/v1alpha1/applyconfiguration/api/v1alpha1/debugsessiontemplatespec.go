@@ -18,6 +18,8 @@ import (
 //
 // DebugSessionTemplateSpec defines the desired state of DebugSessionTemplate.
 type DebugSessionTemplateSpecApplyConfiguration struct {
+	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
+	ArtifactCollection *DebugSessionArtifactCollectionApplyConfiguration `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
 	DisplayName *string `json:"displayName,omitempty"`
 	// description provides detailed information about what this template does.
@@ -141,6 +143,14 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 // apply.
 func DebugSessionTemplateSpec() *DebugSessionTemplateSpecApplyConfiguration {
 	return &DebugSessionTemplateSpecApplyConfiguration{}
+}
+
+// WithArtifactCollection sets the ArtifactCollection field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ArtifactCollection field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithArtifactCollection(value *DebugSessionArtifactCollectionApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.ArtifactCollection = value
+	return b
 }
 
 // WithDisplayName sets the DisplayName field in the declarative configuration to the given value

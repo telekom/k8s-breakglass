@@ -69,15 +69,18 @@ func WaitForSessionState(t *testing.T, ctx context.Context, cli client.Client, n
 // WaitForDebugSessionState waits for a DebugSession to reach the specified state
 func WaitForDebugSessionState(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, expectedState breakglassv1alpha1.DebugSessionState, timeout time.Duration) *breakglassv1alpha1.DebugSession {
 	var session breakglassv1alpha1.DebugSession
+	var lastReadErr error
 
 	err := WaitForCondition(ctx, func() (bool, error) {
 		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &session); err != nil {
+			lastReadErr = err
 			return false, nil // Keep waiting
 		}
+		lastReadErr = nil
 		return session.Status.State == expectedState, nil
 	}, timeout, DefaultInterval)
 
-	require.NoError(t, err, "Timeout waiting for debug session %s to reach state %s (current: %s)", name, expectedState, session.Status.State)
+	require.NoError(t, err, "Timeout waiting for debug session %s/%s to reach state %s (UID=%s resourceVersion=%s current=%q message=%q expiry=%v lastReadError=%v)", namespace, name, expectedState, session.UID, session.ResourceVersion, session.Status.State, session.Status.Message, session.Status.ExpiresAt, lastReadErr)
 	return &session
 }
 

@@ -228,7 +228,7 @@ func TestDebugQuotaLegacyBindingDiscoveryFailsClosed(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(failQuotaClusterConfigReader{Reader: cli}).WithQuotaNamespace("controller")
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session"}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name}}
-	_, _, err := c.debugQuotaPolicy(t.Context(), session)
+	_, _, _, err := c.debugQuotaPolicy(t.Context(), session)
 	require.ErrorContains(t, err, "cluster config unavailable")
 }
 
@@ -238,7 +238,7 @@ func TestDebugQuotaLegacySelectorRequiresClusterConfig(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template, binding).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session"}, Spec: breakglassv1alpha1.DebugSessionSpec{TemplateRef: template.Name, Cluster: "missing"}}
-	_, _, err := c.debugQuotaPolicy(t.Context(), session)
+	_, _, _, err := c.debugQuotaPolicy(t.Context(), session)
 	require.ErrorContains(t, err, "cluster config required")
 }
 

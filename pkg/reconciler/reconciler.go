@@ -10,6 +10,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
@@ -147,6 +148,7 @@ func Setup(
 	escalationManager *escalation.EscalationManager,
 	enableControllers bool,
 	log *zap.SugaredLogger,
+	artifactReconcilers ...*artifactcontroller.Reconciler,
 ) error {
 	plan := newControllerSetupPlan(enableControllers)
 
@@ -320,10 +322,20 @@ func Setup(
 			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
+		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
+			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace)))
+		}
 		if err := debugSessionReconciler.SetupWithManager(mgr); err != nil {
 			return fmt.Errorf("failed to setup DebugSession reconciler with manager: %w", err)
 		}
 		log.Infow("Successfully registered DebugSession reconciler")
+
+		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
+			if err := artifactReconcilers[0].SetupWithManager(mgr); err != nil {
+				return fmt.Errorf("failed to setup DebugSessionArtifact reconciler with manager: %w", err)
+			}
+			log.Infow("Successfully registered DebugSessionArtifact reconciler")
+		}
 
 		// Register AuditConfig Reconciler with controller-runtime manager
 		log.Debugw("Setting up AuditConfig reconciler")

@@ -497,6 +497,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 
 	// Validate constraints if specified
 	if spec.Constraints != nil {
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(spec.Constraints.IdleTimeout, specPath.Child("constraints").Child("idleTimeout"))...)
+		result.Errors = append(result.Errors, validatePositiveDurationFormat(spec.Constraints.RetainFor, specPath.Child("constraints").Child("retainFor"))...)
+
 		constraintsPath := specPath.Child("constraints")
 		if spec.Constraints.MaxDuration != "" {
 			result.Errors = append(result.Errors, validateDurationFormat(spec.Constraints.MaxDuration, constraintsPath.Child("maxDuration"))...)

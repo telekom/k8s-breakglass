@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-logr/zapr"
 	"github.com/telekom/k8s-breakglass/pkg/api"
+	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
+	artifacthost "github.com/telekom/k8s-breakglass/pkg/artifacts/host"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/clusterconfig"
@@ -180,6 +182,10 @@ func run() error {
 		return fmt.Errorf("load config for breakglass controller: %w", err)
 	}
 
+	if err := validateArtifactDeployment(cfg.Artifacts.Enabled, cliConfig.EnableControllers); err != nil {
+		return err
+	}
+
 	system.SetLogRedaction(cfg.Server.RedactLogs)
 	if cfg.Server.RedactLogs {
 		log.Infow("Log redaction enabled via config")
@@ -264,7 +270,7 @@ func run() error {
 		return fmt.Errorf("create controller-runtime manager: %w", err)
 	}
 
-	svcs, err := setupServices(context.Background(), cliConfig, cfg, reconcilerMgr, uncachedClient, scheme, zapLogger, auth, server)
+	svcs, err := setupServices(context.Background(), cliConfig, cfg, reconcilerMgr, uncachedClient, scheme, zapLogger, auth, server, nil)
 	if err != nil {
 		return err
 	}
@@ -323,22 +329,23 @@ func run() error {
 	defer cancel()
 
 	startBackgroundRoutines(managerCtx, &wg, errCh, leaderElectedCh, &backgroundDeps{
-		cliConfig:         cliConfig,
-		cfg:               cfg,
-		log:               log,
-		sessionManager:    svcs.sessionManager,
-		escalationManager: svcs.escalationManager,
-		reconcilerMgr:     reconcilerMgr,
-		mailService:       svcs.mailService,
-		auditService:      svcs.auditService,
-		ccProvider:        svcs.ccProvider,
-		idpLoader:         svcs.idpLoader,
-		eventsRecorder:    eventsRecorder,
-		server:            server,
-		scheme:            scheme,
-		resourceLock:      resourceLock,
-		hostname:          hostname,
-		webhookCtrl:       svcs.webhookCtrl,
+		cliConfig:          cliConfig,
+		cfg:                cfg,
+		log:                log,
+		sessionManager:     svcs.sessionManager,
+		escalationManager:  svcs.escalationManager,
+		reconcilerMgr:      reconcilerMgr,
+		mailService:        svcs.mailService,
+		auditService:       svcs.auditService,
+		ccProvider:         svcs.ccProvider,
+		idpLoader:          svcs.idpLoader,
+		eventsRecorder:     eventsRecorder,
+		server:             server,
+		scheme:             scheme,
+		resourceLock:       resourceLock,
+		hostname:           hostname,
+		webhookCtrl:        svcs.webhookCtrl,
+		artifactReconciler: svcs.artifactReconciler,
 	})
 
 	// Optionally setup webhooks if enabled (webhooks are optional, reconcilers are not)
@@ -372,6 +379,11 @@ func run() error {
 	runErr := awaitShutdownSignal(sigChan, errCh, log)
 
 	shutdownServices(cfg, server, svcs.mailService, svcs.auditService, svcs.webhookCtrl, shouldEnableHTTPServer, otelShutdown, log)
+	if svcs.artifactClose != nil {
+		if err := svcs.artifactClose(); err != nil {
+			log.Warnw("artifact storage shutdown error", "error", err)
+		}
+	}
 	if svcs.sessionController != nil {
 		svcs.sessionController.Close()
 	}
@@ -386,16 +398,18 @@ func run() error {
 
 // services holds the runtime services created during initialization.
 type services struct {
-	idpLoader         *config.IdentityProviderLoader
-	idpConfig         *config.IdentityProviderConfig // may be nil if IDP load fails
-	escalationManager *escalation.EscalationManager
-	sessionManager    *breakglass.SessionManager
-	ccProvider        *cluster.ClientProvider
-	mailService       *mail.Service
-	auditService      *audit.Service
-	apiControllers    []api.APIController
-	webhookCtrl       *webhook.WebhookController
-	sessionController *breakglass.BreakglassSessionController
+	idpLoader          *config.IdentityProviderLoader
+	idpConfig          *config.IdentityProviderConfig // may be nil if IDP load fails
+	escalationManager  *escalation.EscalationManager
+	sessionManager     *breakglass.SessionManager
+	ccProvider         *cluster.ClientProvider
+	mailService        *mail.Service
+	auditService       *audit.Service
+	apiControllers     []api.APIController
+	webhookCtrl        *webhook.WebhookController
+	sessionController  *breakglass.BreakglassSessionController
+	artifactReconciler *artifactcontroller.Reconciler
+	artifactClose      func() error
 }
 
 // setupServices builds the business-logic services: IDP, escalation manager, session
@@ -403,6 +417,7 @@ type services struct {
 func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config,
 	reconcilerMgr ctrl.Manager, uncachedClient client.Client, scheme *runtime.Scheme,
 	zapLogger *zap.Logger, auth *api.AuthHandler, server *api.Server,
+	artifactDeps *artifacthost.Dependencies,
 ) (*services, error) {
 	log := zapLogger.Sugar()
 
@@ -503,6 +518,36 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		debugSessionAPICtrl.WithGroupMemberResolver(resolver)
 	}
 
+	var artifactReconciler *artifactcontroller.Reconciler
+	var artifactClose func() error
+	var artifactControllers []api.APIController
+	if cfg.Artifacts.Enabled {
+		var deps artifacthost.Dependencies
+		if artifactDeps != nil {
+			deps = *artifactDeps
+		}
+		deps.Client = uncachedClient
+		deps.Reader = reconcilerMgr.GetAPIReader()
+		deps.Manager = reconcilerMgr
+		deps.DebugAPI = debugSessionAPICtrl
+		deps.ClusterProvider = ccProvider
+		deps.Log = log
+		if deps.Lease == nil {
+			leaseService := debug.NewConnectionLeaseService(uncachedClient).
+				WithLiveReader(reconcilerMgr.GetAPIReader()).
+				WithNamespace(cliConfig.BreakglassNamespace)
+			deps.Lease = artifacthost.NewConnectionLeaseFence(reconcilerMgr.GetAPIReader(), leaseService, ccProvider)
+		}
+		components, buildErr := artifacthost.Build(ctx, cfg.Artifacts, cliConfig.BreakglassNamespace, deps)
+		if buildErr != nil {
+			return nil, fmt.Errorf("build diagnostic artifact host: %w", buildErr)
+		}
+		debugSessionAPICtrl.WithTerminalRecordingArtifacts(components.Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithLiveReader(reconcilerMgr.GetAPIReader()).WithNamespace(cliConfig.BreakglassNamespace)))
+		artifactReconciler = components.Controller
+		artifactClose = components.Close
+		artifactControllers = components.APIControllers
+	}
+
 	// Note: ClusterBindingAPIController is not exposed as a public API endpoint.
 	// Cluster bindings are aggregated internally through the template/clusters endpoint
 	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
@@ -510,19 +555,21 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Register API controllers based on component flags
 	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, sessionManager,
 		cliConfig.EnableFrontend, cliConfig.EnableAPI, cliConfig.ConfigPath, auth,
-		ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService)
+		ccProvider, denyEval, &cfg, log, debugSessionAPICtrl, auditService, artifactControllers...)
 
 	return &services{
-		idpLoader:         idpLoader,
-		idpConfig:         idpConfig,
-		escalationManager: escalationManager,
-		sessionManager:    sessionManager,
-		ccProvider:        ccProvider,
-		mailService:       mailService,
-		auditService:      auditService,
-		apiControllers:    apiControllers,
-		webhookCtrl:       webhookCtrl,
-		sessionController: sessionController,
+		idpLoader:          idpLoader,
+		idpConfig:          idpConfig,
+		escalationManager:  escalationManager,
+		sessionManager:     sessionManager,
+		ccProvider:         ccProvider,
+		mailService:        mailService,
+		auditService:       auditService,
+		apiControllers:     apiControllers,
+		webhookCtrl:        webhookCtrl,
+		sessionController:  sessionController,
+		artifactReconciler: artifactReconciler,
+		artifactClose:      artifactClose,
 	}, nil
 }
 
@@ -595,22 +642,23 @@ func createLeaderElectionLock(kubeClientset kubernetes.Interface, scheme *runtim
 
 // backgroundDeps holds the dependencies needed by background goroutines.
 type backgroundDeps struct {
-	cliConfig         *cli.Config
-	cfg               config.Config
-	log               *zap.SugaredLogger
-	sessionManager    *breakglass.SessionManager
-	escalationManager *escalation.EscalationManager
-	reconcilerMgr     ctrl.Manager
-	mailService       *mail.Service
-	auditService      *audit.Service
-	ccProvider        *cluster.ClientProvider
-	idpLoader         *config.IdentityProviderLoader
-	eventsRecorder    *eventrecorder.K8sEventRecorder
-	server            *api.Server
-	scheme            *runtime.Scheme
-	resourceLock      resourcelock.Interface
-	hostname          string
-	webhookCtrl       *webhook.WebhookController
+	cliConfig          *cli.Config
+	cfg                config.Config
+	log                *zap.SugaredLogger
+	sessionManager     *breakglass.SessionManager
+	escalationManager  *escalation.EscalationManager
+	reconcilerMgr      ctrl.Manager
+	mailService        *mail.Service
+	auditService       *audit.Service
+	ccProvider         *cluster.ClientProvider
+	idpLoader          *config.IdentityProviderLoader
+	eventsRecorder     *eventrecorder.K8sEventRecorder
+	server             *api.Server
+	scheme             *runtime.Scheme
+	resourceLock       resourcelock.Interface
+	hostname           string
+	webhookCtrl        *webhook.WebhookController
+	artifactReconciler *artifactcontroller.Reconciler
 }
 
 // startBackgroundRoutines launches all leader-gated background goroutines: cleanup,
@@ -705,7 +753,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
 			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
 			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
-			deps.escalationManager, deps.cliConfig.EnableControllers, log); err != nil {
+			deps.escalationManager, deps.cliConfig.EnableControllers, log, deps.artifactReconciler); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)
 		}
 	}()
@@ -828,4 +876,11 @@ func resolveOTelSamplingRate(cliValue float64, configValue *float64, defaultValu
 		return *configValue
 	}
 	return defaultValue
+}
+
+func validateArtifactDeployment(artifactsEnabled, controllersEnabled bool) error {
+	if artifactsEnabled && !controllersEnabled {
+		return fmt.Errorf("artifacts.enabled requires --enable-controllers=true for collection and cleanup")
+	}
+	return nil
 }
