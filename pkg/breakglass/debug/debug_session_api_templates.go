@@ -33,7 +33,7 @@ type DebugSessionTemplateResponse struct {
 	RequiresApproval      bool                                        `json:"requiresApproval"`
 	SchedulingOptions     *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
 	NamespaceConstraints  *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
-	ExtraDeployVariables  []extraDeployVariableResponse               `json:"extraDeployVariables,omitempty"`
+	ExtraDeployVariables  []ExtraDeployVariableResponse               `json:"extraDeployVariables,omitempty"`
 	Priority              int32                                       `json:"priority,omitempty"`
 	Hidden                bool                                        `json:"hidden,omitempty"`
 	Deprecated            bool                                        `json:"deprecated,omitempty"`
@@ -42,13 +42,13 @@ type DebugSessionTemplateResponse struct {
 	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
 
-// extraDeployVariableResponse includes the effective binding patterns that are
+// ExtraDeployVariableResponse includes the effective binding patterns that are
 // kept runtime-only on the API type. They are needed by clients for immediate
 // validation of values before submission.
-type extraDeployVariableResponse breakglassv1alpha1.ExtraDeployVariable
+type ExtraDeployVariableResponse breakglassv1alpha1.ExtraDeployVariable
 
-func (v extraDeployVariableResponse) MarshalJSON() ([]byte, error) {
-	type plain extraDeployVariableResponse
+func (v ExtraDeployVariableResponse) MarshalJSON() ([]byte, error) {
+	type plain ExtraDeployVariableResponse
 	var out map[string]json.RawMessage
 	data, err := json.Marshal(plain(v))
 	if err != nil {
@@ -93,13 +93,13 @@ func (v extraDeployVariableResponse) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
-func extraDeployVariableResponses(vars []breakglassv1alpha1.ExtraDeployVariable) []extraDeployVariableResponse {
+func extraDeployVariableResponses(vars []breakglassv1alpha1.ExtraDeployVariable) []ExtraDeployVariableResponse {
 	if vars == nil {
 		return nil
 	}
-	out := make([]extraDeployVariableResponse, len(vars))
+	out := make([]ExtraDeployVariableResponse, len(vars))
 	for i := range vars {
-		out[i] = extraDeployVariableResponse(vars[i])
+		out[i] = ExtraDeployVariableResponse(vars[i])
 	}
 	return out
 }
@@ -179,7 +179,7 @@ type AvailableClusterDetail struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
-	ExtraDeployVariables          []extraDeployVariableResponse               `json:"extraDeployVariables"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
@@ -198,7 +198,7 @@ type BindingOption struct {
 	RequestReason                 *breakglass.ReasonConfigInfo                `json:"requestReason,omitempty"`
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
-	ExtraDeployVariables          []extraDeployVariableResponse               `json:"extraDeployVariables"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 }
 
 // BindingReference identifies the binding that enabled access

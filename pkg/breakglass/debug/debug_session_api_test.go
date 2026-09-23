@@ -46,7 +46,7 @@ import (
 )
 
 func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
-	variable := extraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
+	variable := ExtraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
 		Name:    "target",
 		Default: &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
 		Validation: &breakglassv1alpha1.VariableValidation{

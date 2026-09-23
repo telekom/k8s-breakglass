@@ -10,7 +10,7 @@ import (
 )
 
 func TestExtraDeployVariableResponsePreservesNumericDefaultAsString(t *testing.T) {
-	variable := extraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
+	variable := ExtraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
 		Name:      "count",
 		InputType: breakglassv1alpha1.InputTypeNumber,
 		Default:   &apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
