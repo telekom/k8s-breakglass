@@ -60,6 +60,9 @@ spec:
 `,
 		}},
 	}
+	// Cleanup must use the policy persisted with the resolved session template,
+	// rather than falling back to the current/default resource policy.
+	session.Status.ResolvedTemplate = template.DeepCopy()
 	// A binding cannot switch off a required admission prerequisite.
 	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 		AuxiliaryResourceOverrides: map[string]bool{"policy-exception": false},
@@ -85,6 +88,7 @@ spec:
 	require.Equal(t, session.Name, selector[DebugSessionLabelKey])
 	// The generic controller inventory removes the exception at session cleanup.
 	session.Status.AuxiliaryResourceStatuses = statuses
+	template.AuxiliaryResources[0].DeleteAfter = false
 	require.NoError(t, mgr.CleanupAuxiliaryResources(ctx, session, target))
 	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
 	require.True(t, apierrors.IsNotFound(target.Get(ctx, key, obj)))
