@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +26,15 @@ func TestPolicyExceptionAuxiliaryLifecycle(t *testing.T) {
 	gvk := schema.GroupVersionKind{Group: "kyverno.io", Version: "v2", Kind: "PolicyException"}
 	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
 	target := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Apply: func(ctx context.Context, c client.WithWatch, cfg runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+			payload, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			var object map[string]interface{}
+			require.NoError(t, json.Unmarshal(payload, &object))
+			metadata, _ := object["metadata"].(map[string]interface{})
+			metadata["uid"] = "exception-uid"
+			return c.Create(ctx, &unstructured.Unstructured{Object: object})
+		},
 		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			obj.SetUID("exception-uid")
 			return c.Create(ctx, obj, opts...)

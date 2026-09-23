@@ -1032,7 +1032,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			// Another replica can advance the persisted inventory while this
 			// activation is preparing a resource. Retry from a fresh session
 			// instead of failing it or replaying a stale full-status snapshot.
-			if apierrors.IsConflict(err) {
+			if isDebugSessionStatusConflict(err) {
 				return ctrl.Result{}, err
 			}
 			log.Errorw("Failed to deploy debug resources", "error", err)

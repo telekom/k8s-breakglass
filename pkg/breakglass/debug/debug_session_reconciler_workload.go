@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -217,10 +218,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota", CreateOperationID: operationID,
 			})
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota intent: %w", err)
 			}
 			if err := fence(); err != nil {
@@ -234,8 +235,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return fmt.Errorf("failed to read resource quota after apply: %w", err)
 			}
 			log.Infow("ResourceQuota applied", "name", rq.Name)
-			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = rqUID
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			ds.Status.DeployedResources[resourceIndex].UID = rqUID
+			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota outcome: %w", err)
 			}
 		}
@@ -256,10 +257,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
-			ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb", CreateOperationID: operationID,
 			})
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB intent: %w", err)
 			}
 			if err := fence(); err != nil {
@@ -273,8 +274,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return fmt.Errorf("failed to read pod disruption budget after apply: %w", err)
 			}
 			log.Infow("PodDisruptionBudget applied", "name", pdb.Name)
-			ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = pdbUID
-			if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+			ds.Status.DeployedResources[resourceIndex].UID = pdbUID
+			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB outcome: %w", err)
 			}
 		}
@@ -325,10 +326,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if err != nil {
 		return fmt.Errorf("failed to stamp workload create operation: %w", err)
 	}
-	ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+	resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod", CreateOperationID: operationID,
 	})
-	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload intent: %w", err)
 	}
 	if err := fence(); err != nil {
@@ -345,8 +346,8 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	log.Infow("Debug workload applied", "name", workload.GetName())
 
 	// Record deployed resource using captured GVK
-	ds.Status.DeployedResources[len(ds.Status.DeployedResources)-1].UID = workloadUID
-	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+	ds.Status.DeployedResources[resourceIndex].UID = workloadUID
+	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload outcome: %w", err)
 	}
 
@@ -376,11 +377,43 @@ func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds 
 	for i := range ds.Status.AuxiliaryResourceStatuses {
 		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
 			ds.Status.AuxiliaryResourceStatuses[i] = status
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+			return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
 		}
 	}
 	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
+}
+
+func upsertDeployedResourceIntent(ds *breakglassv1alpha1.DebugSession, desired breakglassv1alpha1.DeployedResourceRef) int {
+	for i := range ds.Status.DeployedResources {
+		current := &ds.Status.DeployedResources[i]
+		if current.APIVersion == desired.APIVersion && current.Kind == desired.Kind &&
+			current.Name == desired.Name && current.Namespace == desired.Namespace && current.Source == desired.Source {
+			current.CreateOperationID = desired.CreateOperationID
+			return i
+		}
+	}
+	ds.Status.DeployedResources = append(ds.Status.DeployedResources, desired)
+	return len(ds.Status.DeployedResources) - 1
+}
+
+type debugSessionStatusConflict struct{ err error }
+
+func (e *debugSessionStatusConflict) Error() string { return e.err.Error() }
+
+func (e *debugSessionStatusConflict) Unwrap() error { return e.err }
+
+func isDebugSessionStatusConflict(err error) bool {
+	var statusConflict *debugSessionStatusConflict
+	return errors.As(err, &statusConflict)
+}
+
+func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
+	err := breakglass.ApplyDebugSessionStatus(ctx, c, ds)
+	if apierrors.IsConflict(err) {
+		return &debugSessionStatusConflict{err: err}
+	}
+	return err
 }
 
 // createOrRecoverTargetObject never adopts a resource owned by another session.
@@ -832,7 +865,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	}
 	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
 	if c.client != nil {
-		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
 		}
 	}
@@ -857,7 +890,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	now := time.Now().UTC().Format(time.RFC3339)
 	statusRef.CreatedAt = &now
 	if c.client != nil {
-		if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource outcome: %w", err)
 		}
 	}

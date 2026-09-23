@@ -80,6 +80,7 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 			require.Equal(t, expiry, current.Status.ExpiresAt)
 			require.Len(t, current.Status.AuxiliaryResourceStatuses, 1)
 			require.NotEmpty(t, current.Status.AuxiliaryResourceStatuses[0].UID)
+			require.Len(t, current.Status.DeployedResources, 1, "retry must reconcile the existing workload inventory entry")
 			var prerequisite corev1.ConfigMap
 			require.NoError(t, target.Get(ctx, client.ObjectKey{Namespace: "breakglass-debug", Name: "security-precondition"}, &prerequisite))
 			require.NoError(t, target.List(ctx, &workloads))
