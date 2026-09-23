@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Persist failed DebugSession authority before target cleanup and refuse to
+  recreate deleted auxiliary resources with already recorded UIDs.
+
 - Recover concurrent typed workload creates without treating client-side GVK
   clearing as content drift; retain strict operation and workload-content checks.
 

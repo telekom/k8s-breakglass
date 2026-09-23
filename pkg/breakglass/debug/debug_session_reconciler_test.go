@@ -6483,3 +6483,36 @@ func TestDebugSessionController_CleanupPodTemplateResourcesRetiresSameSessionRep
 	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKeyFromObject(replacement), &unchanged))
 	assert.Equal(t, types.UID("replacement-uid"), unchanged.UID)
 }
+
+func TestFailSessionRevokesActivationBeforeTargetCleanup(t *testing.T) {
+	ctx := context.Background()
+	scheme := testScheme()
+	session := newTestDebugSession("failure-fence", "template", "test-cluster", "requester")
+	session.UID = "session-uid"
+	session.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+	expiry := metav1.NewTime(time.Now().Add(time.Hour))
+	session.Status.ExpiresAt = &expiry
+	session.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "default", Name: "prerequisite", UID: "original-uid", Source: "debug-resourcequota"}}
+	stale := session.DeepCopy()
+	var fenceController *DebugSessionController
+	cleanupReads := 0
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).WithInterceptorFuncs(interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*breakglassv1alpha1.ClusterConfigList); ok {
+			cleanupReads++
+			// Interleave another replica at cleanup's first target-configuration read.
+			// A failed target lookup must retain inventory while activation stays revoked.
+			require.ErrorContains(t, fenceController.validateActivationBeforePublish(ctx, stale), "no longer authorized")
+		}
+		return c.List(ctx, list, opts...)
+	}}).Build()
+	fenceController = &DebugSessionController{client: hub}
+	controller := &DebugSessionController{log: zap.NewNop().Sugar(), client: hub, ccProvider: cluster.NewClientProvider(hub, zap.NewNop().Sugar())}
+	_, err := controller.failSession(ctx, session, "workload failed")
+	require.NoError(t, err)
+	require.Positive(t, cleanupReads)
+	var live breakglassv1alpha1.DebugSession
+	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(session), &live))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, live.Status.State)
+	require.Len(t, live.Status.DeployedResources, 1)
+	require.Equal(t, "original-uid", live.Status.DeployedResources[0].UID)
+}

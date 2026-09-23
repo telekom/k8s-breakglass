@@ -1200,6 +1200,15 @@ func (c *DebugSessionController) deferOnMissingGroupProvenance(ds *breakglassv1a
 func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglassv1alpha1.DebugSession, reason string) (ctrl.Result, error) {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
+	previousState := ds.Status.State
+	// Revoke activation authority before deleting prerequisites. A concurrent
+	// replica must observe a terminal state at its next target-write fence.
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+	ds.Status.Message = reason
+	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// Best-effort cleanup of any partially deployed resources on the target cluster.
 	// Short-circuit if the session never deployed anything to avoid noisy cross-cluster calls.
 	//
@@ -1220,7 +1229,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 		"reason", reason,
 		"template", ds.Spec.TemplateRef,
 		"requestedBy", ds.Spec.RequestedBy,
-		"previousState", ds.Status.State,
+		"previousState", previousState,
 	)
 
 	// Emit audit event if audit is enabled for this session
@@ -1229,7 +1238,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 			auditManager.DebugSessionFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, reason, map[string]interface{}{
 				"template":       ds.Spec.TemplateRef,
 				"requested_by":   ds.Spec.RequestedBy,
-				"previous_state": string(ds.Status.State),
+				"previous_state": string(previousState),
 			})
 			// Send to webhook destinations if configured
 			c.sendToWebhookDestinations(ctx, ds, "DebugSessionFailed", map[string]interface{}{
@@ -1241,9 +1250,6 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 		}
 	}
 
-	ds.Status.State = breakglassv1alpha1.DebugSessionStateFailed
-	ds.Status.Message = reason
-
 	// Send failure notification email to requester
 	c.sendDebugSessionFailedEmail(ds, reason)
 
@@ -1253,7 +1259,7 @@ func (c *DebugSessionController) failSession(ctx context.Context, ds *breakglass
 	// Failed is terminal and never requeues, so release the per-session series now.
 	releaseSessionMetricSeries(ds.Name)
 
-	return ctrl.Result{}, breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	return ctrl.Result{}, nil
 }
 
 // sendDebugSessionFailedEmail sends email notification to requester when a debug session fails

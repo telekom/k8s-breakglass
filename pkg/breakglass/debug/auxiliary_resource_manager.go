@@ -782,10 +782,19 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 // can reconcile them, which prevents concurrent foreign-object adoption while
 // allowing same-session updates.
 func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Client, obj *unstructured.Unstructured, session *breakglassv1alpha1.DebugSession, auxiliaryName string) error {
-	if err := targetClient.Create(ctx, obj); err == nil {
-		return nil
-	} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
-		return fmt.Errorf("create auxiliary resource: %w", err)
+	// A persisted UID identifies an existing operation outcome. Never recreate
+	// it after cleanup (or external deletion), even if a stale activation passed
+	// its authorization fence before the terminal transition.
+	recordedUID, recorded := "", false
+	if session != nil {
+		recordedUID, recorded = auxiliaryResourceIdentity(session, auxiliaryName, obj)
+	}
+	if recordedUID == "" {
+		if err := targetClient.Create(ctx, obj); err == nil {
+			return nil
+		} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
+			return fmt.Errorf("create auxiliary resource: %w", err)
+		}
 	}
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(obj.GroupVersionKind())
@@ -799,7 +808,6 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if operationID == "" || existing.GetAnnotations()[createOperationIDAnnotation] != operationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
 	}
-	recordedUID, recorded := auxiliaryResourceIdentity(session, auxiliaryName, obj)
 	if !recorded {
 		return fmt.Errorf("target resource %s/%s is not the recorded resource for auxiliary %s", obj.GetNamespace(), obj.GetName(), auxiliaryName)
 	}

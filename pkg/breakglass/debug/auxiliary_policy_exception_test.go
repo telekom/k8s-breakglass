@@ -305,3 +305,20 @@ func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
 	require.Equal(t, 1, persists)
 	require.Zero(t, writes, "must stop before the next auxiliary writes to the target")
 }
+
+func TestAuxiliaryRecoveryNeverRecreatesRecordedUID(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	desired := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind, "metadata": map[string]interface{}{"name": "deleted-exception", "namespace": "target", "annotations": map[string]interface{}{createOperationIDAnnotation: "operation", sourceSessionUIDAnnotation: "session-uid"}}}}
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}, Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "exception", APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Namespace: "target", ResourceName: "deleted-exception", CreateOperationID: "operation", UID: "deleted-uid", Created: true}}}}
+	creates := 0
+	target := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		creates++
+		return c.Create(ctx, obj, opts...)
+	}}).Build()
+	require.Error(t, applyOrRecoverAuxiliaryResource(ctx, target, desired, session, "exception"))
+	require.Zero(t, creates)
+	require.Equal(t, "deleted-uid", session.Status.AuxiliaryResourceStatuses[0].UID)
+}
