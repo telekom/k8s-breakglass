@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"net/url"
 	"path"
 	"regexp"
@@ -1806,24 +1807,24 @@ func validateVariableValidation(v *VariableValidation, inputType ExtraDeployInpu
 				"min/max validation is only valid for number input type"))
 		} else {
 			// Validate format of min and max individually
-			var minVal, maxVal float64
+			var minVal, maxVal *big.Rat
 			var minErr, maxErr error
 			if v.Min != "" {
-				minVal, minErr = strconv.ParseFloat(v.Min, 64)
+				minVal, minErr = parseDecimalRat(v.Min)
 				if minErr != nil {
 					errs = append(errs, field.Invalid(fieldPath.Child("min"), v.Min,
 						fmt.Sprintf("invalid number format: %v", minErr)))
 				}
 			}
 			if v.Max != "" {
-				maxVal, maxErr = strconv.ParseFloat(v.Max, 64)
+				maxVal, maxErr = parseDecimalRat(v.Max)
 				if maxErr != nil {
 					errs = append(errs, field.Invalid(fieldPath.Child("max"), v.Max,
 						fmt.Sprintf("invalid number format: %v", maxErr)))
 				}
 			}
 			// Compare min/max if both are valid
-			if v.Min != "" && v.Max != "" && minErr == nil && maxErr == nil && minVal > maxVal {
+			if v.Min != "" && v.Max != "" && minErr == nil && maxErr == nil && minVal.Cmp(maxVal) > 0 {
 				errs = append(errs, field.Invalid(fieldPath.Child("max"), v.Max,
 					"max must be greater than or equal to min"))
 			}

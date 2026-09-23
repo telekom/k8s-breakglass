@@ -947,16 +947,18 @@ func TestValidateNumberValuePreservesLargeIntegerRange(t *testing.T) {
 }
 
 func TestValidateExtraDeployValuesRejectsNullForEveryInputType(t *testing.T) {
-	for _, inputType := range []ExtraDeployInputType{InputTypeBoolean, InputTypeText, InputTypeNumber, InputTypeStorageSize, InputTypeSelect, InputTypeMultiSelect} {
-		t.Run(string(inputType), func(t *testing.T) {
-			errs := ValidateExtraDeployValues(
-				map[string]apiextensionsv1.JSON{"value": {Raw: []byte(`null`)}},
-				[]ExtraDeployVariable{{Name: "value", InputType: inputType}},
-				field.NewPath("values"),
-			)
-			require.Len(t, errs, 1)
-			assert.Contains(t, errs[0].Detail, "must not be null")
-		})
+	for _, raw := range []string{"null", "  null \n"} {
+		for _, inputType := range []ExtraDeployInputType{InputTypeBoolean, InputTypeText, InputTypeNumber, InputTypeStorageSize, InputTypeSelect, InputTypeMultiSelect} {
+			t.Run(raw+"/"+string(inputType), func(t *testing.T) {
+				errs := ValidateExtraDeployValues(
+					map[string]apiextensionsv1.JSON{"value": {Raw: []byte(raw)}},
+					[]ExtraDeployVariable{{Name: "value", InputType: inputType}},
+					field.NewPath("values"),
+				)
+				require.Len(t, errs, 1)
+				assert.Contains(t, errs[0].Detail, "must not be null")
+			})
+		}
 	}
 }
 
