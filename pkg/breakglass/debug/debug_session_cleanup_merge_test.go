@@ -552,3 +552,15 @@ func TestFailedCleanupCompletesConfirmedRetention(t *testing.T) {
 		})
 	}
 }
+
+func TestPromoteObservedCleanupIntentsPreservesAuxiliaryChildren(t *testing.T) {
+	desired := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "policy", ResourceName: "policy", APIVersion: "v1", Kind: "ConfigMap", CreateOperationID: "op"}
+	observed := desired
+	observed.UID = "primary-uid"
+	observed.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{ResourceName: "child", APIVersion: "v1", Kind: "ConfigMap", CreateOperationID: "child-op", UID: "child-uid"}}
+	merged := promoteObservedCleanupIntents([]breakglassv1alpha1.AuxiliaryResourceStatus{desired}, []breakglassv1alpha1.AuxiliaryResourceStatus{observed})
+	require.Len(t, merged, 1)
+	require.Equal(t, "primary-uid", merged[0].UID)
+	require.Len(t, merged[0].AdditionalResources, 1)
+	require.Equal(t, "child-uid", merged[0].AdditionalResources[0].UID)
+}

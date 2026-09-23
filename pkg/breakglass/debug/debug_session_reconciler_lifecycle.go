@@ -927,7 +927,7 @@ func promoteObservedCleanupIntents[T any](desired, current []T) []T {
 			// outcome of its own.
 			if parent, ok := any(resolved).(breakglassv1alpha1.AuxiliaryResourceStatus); ok {
 				replayed := any(item).(breakglassv1alpha1.AuxiliaryResourceStatus)
-				parent.AdditionalResources = mergeCleanupInventory(parent.AdditionalResources, replayed.AdditionalResources, nil, additionalResourceKey)
+				parent.AdditionalResources = mergeCleanupInventory(nil, replayed.AdditionalResources, parent.AdditionalResources, additionalResourceKey)
 				resolved = any(parent).(T)
 			}
 			merged[i] = resolved
