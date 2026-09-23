@@ -521,7 +521,7 @@ func TestFailedCleanupCompletesConfirmedRetention(t *testing.T) {
 			c, session, template, _ := newDeploymentFenceFixture(t)
 			session.Status.State = breakglassv1alpha1.DebugSessionStateFailed
 			session.Status.AllowedPods = nil
-			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep"}}}
+			session.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: kptr.To(false)}}}
 			status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep", Created: true, APIVersion: "v1", Kind: "Namespace", ResourceName: "evidence", UID: "uid"}
 			switch missing {
 			case "uid":

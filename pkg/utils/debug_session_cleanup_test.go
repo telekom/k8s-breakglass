@@ -108,7 +108,7 @@ func TestRetainedAuxiliaryRequiresCompleteIdentity(t *testing.T) {
 					ref.Name = ""
 				}
 
-				ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep"}}}}}
+				ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "keep", DeleteAfter: kptr.To(false)}}}}}
 				status := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "keep", Created: true, UID: ref.UID, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name}
 				if child {
 					item := breakglassv1alpha1.AdditionalResourceRef{UID: ref.UID, APIVersion: ref.APIVersion, Kind: ref.Kind, ResourceName: ref.Name}
