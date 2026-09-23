@@ -360,6 +360,9 @@
               "defaultDuration": {
                 "type": "string"
               },
+              "idleTimeout": {
+                "type": "string"
+              },
               "maxConcurrentSessions": {
                 "type": "integer"
               },
@@ -368,6 +371,9 @@
               },
               "maxRenewals": {
                 "type": "integer"
+              },
+              "retainFor": {
+                "type": "string"
               }
             },
             "type": "object"
