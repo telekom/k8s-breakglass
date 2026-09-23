@@ -1501,6 +1501,19 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if statusReader == nil {
 		statusReader = c.client
 	}
+	cleanupCreatedSession := func() {
+		if cleanupErr := c.client.Delete(apiCtx, session); cleanupErr != nil && !apierrors.IsNotFound(cleanupErr) {
+			reqLog.Errorw("Failed to clean up debug session after provenance persistence failure", "error", cleanupErr)
+			live := &breakglassv1alpha1.DebugSession{}
+			if getErr := c.client.Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); getErr == nil {
+				live.Status.State = breakglassv1alpha1.DebugSessionStateFailed
+				live.Status.Message = "authenticated session provenance could not be persisted"
+				if statusErr := c.client.Status().Update(apiCtx, live); statusErr != nil {
+					reqLog.Errorw("Failed to terminalize debug session after provenance persistence failure", "error", statusErr)
+				}
+			}
+		}
+	}
 	liveSession, provenanceErr := c.persistAuthenticatedGroupProvenance(apiCtx, session, statusReader, trustedGroups)
 	if provenanceErr != nil {
 		err := provenanceErr
@@ -1513,12 +1526,14 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				// status patch above.
 				if fallbackErr := c.client.Update(apiCtx, liveSession); fallbackErr != nil {
 					reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", fallbackErr)
+					cleanupCreatedSession()
 					apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
 					return
 				}
 			}
 		} else {
 			reqLog.Errorw("Failed to persist authenticated debug-session group provenance", "error", err)
+			cleanupCreatedSession()
 			apiresponses.RespondInternalErrorSimple(ctx, "failed to persist authenticated session provenance")
 			return
 		}
