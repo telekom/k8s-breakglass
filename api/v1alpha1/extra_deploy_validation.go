@@ -20,10 +20,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
+	"math/big"
 	"reflect"
 	"regexp"
 	"strconv"
+	"strings"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -382,28 +383,12 @@ func validateTextValue(value apiextensionsv1.JSON, validation *VariableValidatio
 // because HTML form inputs and YAML defaults often produce strings.
 func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidation, fldPath *field.Path) field.ErrorList {
 	allErrs := field.ErrorList{}
-
-	var numVal float64
-	if err := json.Unmarshal(value.Raw, &numVal); err != nil {
-		// Try parsing as a string-encoded number (e.g., "5" instead of 5).
-		// This handles YAML defaults like `default: "5"` and HTML form inputs.
-		var strVal string
-		if strErr := json.Unmarshal(value.Raw, &strVal); strErr == nil {
-			if parsed, parseErr := strconv.ParseFloat(strVal, 64); parseErr == nil {
-				numVal = parsed
-			} else {
-				allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
-					"must be a number"))
-				return allErrs
-			}
-		} else {
-			allErrs = append(allErrs, field.TypeInvalid(fldPath, string(value.Raw),
-				"must be a number"))
-			return allErrs
-		}
+	numberText, err := jsonNumberText(value.Raw)
+	if err != nil {
+		return append(allErrs, field.TypeInvalid(fldPath, string(value.Raw), "must be a number"))
 	}
-
-	if math.IsNaN(numVal) || math.IsInf(numVal, 0) {
+	numVal, err := parseDecimalRat(numberText)
+	if err != nil {
 		return append(allErrs, field.Invalid(fldPath, string(value.Raw), "must be a finite number"))
 	}
 	if validation == nil {
@@ -412,23 +397,87 @@ func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidat
 
 	// Validate min
 	if validation.Min != "" {
-		minVal, err := strconv.ParseFloat(validation.Min, 64)
-		if err == nil && numVal < minVal {
-			allErrs = append(allErrs, field.Invalid(fldPath, numVal,
+		if minVal, err := parseDecimalRat(validation.Min); err == nil && numVal.Cmp(minVal) < 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, numberText,
 				fmt.Sprintf("must be at least %s", validation.Min)))
 		}
 	}
 
 	// Validate max
 	if validation.Max != "" {
-		maxVal, err := strconv.ParseFloat(validation.Max, 64)
-		if err == nil && numVal > maxVal {
-			allErrs = append(allErrs, field.Invalid(fldPath, numVal,
+		if maxVal, err := parseDecimalRat(validation.Max); err == nil && numVal.Cmp(maxVal) > 0 {
+			allErrs = append(allErrs, field.Invalid(fldPath, numberText,
 				fmt.Sprintf("must be at most %s", validation.Max)))
 		}
 	}
 
 	return allErrs
+}
+
+func jsonNumberText(raw []byte) (string, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return "", err
+	}
+	switch value := value.(type) {
+	case json.Number:
+		return value.String(), nil
+	case string:
+		return value, nil
+	default:
+		return "", fmt.Errorf("not a number")
+	}
+}
+
+func parseDecimalRat(text string) (*big.Rat, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, fmt.Errorf("empty number")
+	}
+	sign := 1
+	if text[0] == '+' || text[0] == '-' {
+		if text[0] == '-' {
+			sign = -1
+		}
+		text = text[1:]
+	}
+	parts := strings.SplitN(strings.ToLower(text), "e", 2)
+	mantissa := parts[0]
+	exponent := 0
+	if len(parts) == 2 {
+		var err error
+		exponent, err = strconv.Atoi(parts[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+	decimal := strings.SplitN(mantissa, ".", 2)
+	digits := decimal[0]
+	if len(decimal) == 2 {
+		digits += decimal[1]
+	}
+	if digits == "" || strings.Trim(digits, "0123456789") != "" {
+		return nil, fmt.Errorf("invalid number")
+	}
+	numerator := new(big.Int)
+	if _, ok := numerator.SetString(digits, 10); !ok {
+		return nil, fmt.Errorf("invalid number")
+	}
+	if sign < 0 {
+		numerator.Neg(numerator)
+	}
+	scale := exponent
+	if len(decimal) == 2 {
+		scale -= len(decimal[1])
+	}
+	if scale >= 0 {
+		numerator.Mul(numerator, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))
+		return new(big.Rat).SetInt(numerator), nil
+	}
+	denominator := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(-scale)), nil)
+	return new(big.Rat).SetFrac(numerator, denominator), nil
 }
 
 // validateStorageSizeValue validates a storage size input value.

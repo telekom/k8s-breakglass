@@ -936,6 +936,16 @@ func TestValidateNumberValue_StringCoercion(t *testing.T) {
 	}
 }
 
+func TestValidateNumberValuePreservesLargeIntegerRange(t *testing.T) {
+	errs := validateNumberValue(
+		apiextensionsv1.JSON{Raw: []byte(`9007199254740993`)},
+		&VariableValidation{Max: "9007199254740992"},
+		field.NewPath("value"),
+	)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "at most 9007199254740992")
+}
+
 func TestCoerceExtraDeployValues(t *testing.T) {
 	tests := []struct {
 		name      string
