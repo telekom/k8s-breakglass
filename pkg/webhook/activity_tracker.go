@@ -148,6 +148,9 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID,
 
 // RecordDebugSessionActivity buffers activity for an active DebugSession.
 func (at *ActivityTracker) RecordDebugSessionActivity(namespace, name string, uid types.UID, ts time.Time) {
+	if uid == "" {
+		return
+	}
 	at.recordActivity(namespace, name, uid, ts, true)
 }
 

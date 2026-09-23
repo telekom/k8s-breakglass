@@ -1021,11 +1021,19 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 				s.reason = wc.finalizeReason(reason, true, s.clusterName)
 			}
 		}
-		if s.allowed {
+		if s.allowed && s.debugSessionIdleTrackingRequired() {
 			if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
 				s.allowed = false
 				s.allowSource = ""
 				s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
+			} else if ra := s.sar.Spec.ResourceAttributes; ra != nil {
+				if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
+					s.allowed = false
+					s.allowSource = ""
+					s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
+				} else {
+					s.reason = wc.finalizeReason(reason, true, s.clusterName)
+				}
 			}
 		}
 	}
@@ -1174,6 +1182,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		Observe(time.Since(s.startTime).Seconds())
 
 	s.reqLog.Debug("Authorization handler completed successfully")
+}
+
+func (s *authorizeState) debugSessionIdleTrackingRequired() bool {
+	return s.debugSessionCandidate != nil && s.debugSessionCandidate.Status.ResolvedTemplate != nil && s.debugSessionCandidate.Status.ResolvedTemplate.Constraints != nil && s.debugSessionCandidate.Status.ResolvedTemplate.Constraints.IdleTimeout != ""
 }
 
 // recordDebugSessionActivity durably advances the idle clock after the final

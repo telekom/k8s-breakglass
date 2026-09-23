@@ -50,6 +50,12 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 			session.Namespace, session.Name, current.Status.State, session.Status.State)
 	}
 	desiredStatus := session.Status
+	if current.Status.ActivityCount > desiredStatus.ActivityCount {
+		desiredStatus.ActivityCount = current.Status.ActivityCount
+	}
+	if current.Status.LastActivity != nil && (desiredStatus.LastActivity == nil || current.Status.LastActivity.After(desiredStatus.LastActivity.Time)) {
+		desiredStatus.LastActivity = current.Status.LastActivity.DeepCopy()
+	}
 	if (desiredStatus.RetainedUntil == nil || desiredStatus.RetainedUntil.IsZero()) && current.Status.RetainedUntil != nil && !current.Status.RetainedUntil.IsZero() {
 		desiredStatus.RetainedUntil = current.Status.RetainedUntil.DeepCopy()
 	}
