@@ -946,7 +946,8 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	// Recheck selectors from the approved snapshots. Live objects above are
 	// lookup inputs and may have changed since approval.
 	if binding != nil && !c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) &&
-		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) {
+		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) &&
+		(clusterConfig.Spec.Tenant == "" || !c.bindingMatchesCluster(binding, clusterConfig.Spec.Tenant, clusterConfig)) {
 		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
 	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
 		!directTemplateAllowsCluster(template, clusterConfig.Name, clusterConfig) {

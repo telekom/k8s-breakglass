@@ -3561,6 +3561,20 @@ func TestDirectTemplateAllowsClusterRejectsEmptySelector(t *testing.T) {
 	assert.False(t, directTemplateAllowsCluster(template, cluster.Name, cluster))
 }
 
+func TestBindingActivationRecheckAcceptsCanonicalClusterTenantAlias(t *testing.T) {
+	controller := &DebugSessionController{}
+	cluster := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "cluster-config-production"},
+		Spec:       breakglassv1alpha1.ClusterConfigSpec{Tenant: "production"},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Clusters: []string{"production"}},
+	}
+
+	assert.True(t, controller.bindingMatchesCluster(binding, cluster.Spec.Tenant, cluster))
+	assert.False(t, controller.bindingMatchesCluster(binding, cluster.Name, cluster))
+}
+
 func TestDebugSessionController_BindingMatchesTemplate_EdgeCases(t *testing.T) {
 	logger := zap.NewNop().Sugar()
 	ctrl := &DebugSessionController{log: logger}
