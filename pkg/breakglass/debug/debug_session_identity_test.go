@@ -31,6 +31,15 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderIssuer: "https://a.example"}}))
 }
 
+func TestDebugSessionApprovalActorMatchesRecordedProvider(t *testing.T) {
+	identity := debugSessionReadIdentity{username: "approver@example.com", provider: "idp-a", issuer: "https://a.example"}
+	require.True(t, debugSessionApprovalActorMatches(identity, "idp-a", "approver@example.com"))
+	require.False(t, debugSessionApprovalActorMatches(identity, "idp-b", "approver@example.com"))
+	require.False(t, debugSessionApprovalActorMatches(identity, "", "approver@example.com"))
+	require.True(t, debugSessionApprovalActorMatches(
+		debugSessionReadIdentity{username: "legacy@example.com", legacyAllowed: true}, "", "legacy@example.com"))
+}
+
 func TestDebugSessionApprovalIdentityMatches(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
 		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example/",

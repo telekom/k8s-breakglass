@@ -1024,7 +1024,13 @@ Status-changing DebugSession actions such as renew, terminate, approve, reject, 
 
 **Error Responses:**
 - `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, invalid scheduling option, or invalid request reason
-- `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints
+- `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints; provider-aware authentication is missing either the provider name or issuer, or the selected identity provider is not allowed
+
+For provider-aware authentication, session creation requires both the identity
+provider name and issuer claims. Requests without either claim are rejected with
+`403 Forbidden` before a session is persisted. The trusted
+`legacy_identity_allowed` compatibility path may create sessions without this
+pair for legacy single-provider deployments.
 
 ### Join Debug Session
 

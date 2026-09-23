@@ -1832,8 +1832,8 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 		}
 	}
 	if session.Status.Approval != nil &&
-		(debugSessionIdentityMatchesProvider(identity, session.Status.Approval.ApprovedByIdentityProvider, "", session.Status.Approval.ApprovedBy) ||
-			debugSessionIdentityMatchesProvider(identity, session.Status.Approval.RejectedByIdentityProvider, "", session.Status.Approval.RejectedBy)) {
+		(debugSessionApprovalActorMatches(identity, session.Status.Approval.ApprovedByIdentityProvider, session.Status.Approval.ApprovedBy) ||
+			debugSessionApprovalActorMatches(identity, session.Status.Approval.RejectedByIdentityProvider, session.Status.Approval.RejectedBy)) {
 		return true, nil
 	}
 	explicitApprover, err := a.isExplicitDebugSessionApprover(ctx, session)
@@ -1844,6 +1844,17 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 		return false, nil
 	}
 	return explicitApprover, nil
+}
+
+// Approval records historically persisted the provider name without an issuer.
+// Match that recorded provider independently while keeping provider-aware session
+// and participant records fenced by their complete provenance pair.
+func debugSessionApprovalActorMatches(identity debugSessionReadIdentity, provider string, values ...string) bool {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return identity.legacyAllowed && debugSessionIdentityMatches(identity, values...)
+	}
+	return strings.TrimSpace(identity.provider) == provider && debugSessionIdentityMatches(identity, values...)
 }
 
 func debugSessionProviderMatches(identity debugSessionReadIdentity, session *breakglassv1alpha1.DebugSession) bool {
