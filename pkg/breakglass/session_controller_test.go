@@ -38,6 +38,28 @@ type FakeMailSender struct {
 	SendCallCount         int // Track how many times Send was called
 }
 
+func TestSessionRequestIdentityIsProviderScoped(t *testing.T) {
+	for name, values := range map[string]struct {
+		provider string
+		issuer   string
+		legacy   bool
+		want     bool
+	}{
+		"complete provider identity": {provider: "idp-a", issuer: "https://a.example", want: true},
+		"missing issuer":             {provider: "idp-a"},
+		"missing provider":           {issuer: "https://a.example"},
+		"trusted legacy identity":    {legacy: true, want: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ctx := &gin.Context{}
+			ctx.Set("identity_provider_name", values.provider)
+			ctx.Set("issuer", values.issuer)
+			ctx.Set("legacy_identity_allowed", values.legacy)
+			require.Equal(t, values.want, sessionRequestIdentityIsProviderScoped(ctx))
+		})
+	}
+}
+
 func (s *FakeMailSender) Send(receivers []string, subject, body string) error {
 	s.LastRecivers = receivers
 	s.LastSubject = subject

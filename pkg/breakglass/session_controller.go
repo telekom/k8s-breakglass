@@ -269,6 +269,10 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for session creation")
 		return
 	}
+	if !sessionRequestIdentityIsProviderScoped(c) {
+		apiresponses.RespondForbidden(c, "provider and issuer are required for session creation")
+		return
+	}
 
 	// Apply per-user rate limit before the expensive group/escalation lookups.
 	if wc.sessionCreationLimiter != nil {
@@ -390,4 +394,15 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		"user", request.Username, "cluster", request.Clustername,
 		"group", system.RedactGroupName(request.GroupName), "generatedName", bs.Name)
 	c.JSON(http.StatusCreated, *bs)
+}
+
+func sessionRequestIdentityIsProviderScoped(c *gin.Context) bool {
+	if _, exists := c.Get("legacy_identity_allowed"); !exists {
+		return true
+	}
+	if c.GetBool("legacy_identity_allowed") {
+		return true
+	}
+	return strings.TrimSpace(c.GetString("identity_provider_name")) != "" &&
+		strings.TrimSpace(c.GetString("issuer")) != ""
 }
