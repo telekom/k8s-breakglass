@@ -89,4 +89,17 @@ spec:
 	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
 	require.True(t, apierrors.IsNotFound(target.Get(ctx, key, obj)))
 	require.NoError(t, mgr.CleanupAuxiliaryResources(ctx, session, target))
+
+	// A cluster binding can require the category even when the template does
+	// not. Its requirement also cannot be disabled by an override.
+	template.RequiredAuxiliaryResourceCategories = nil
+	binding.Spec.RequiredAuxiliaryResourceCategories = []string{"policy-exception"}
+	session.Status.AuxiliaryResourceStatuses = nil
+	statuses, err = mgr.DeployAuxiliaryResourcesForPhase(ctx, session, template, binding, target, "debug-target", false)
+	require.NoError(t, err)
+	require.Empty(t, statuses)
+	statuses, err = mgr.DeployAuxiliaryResourcesForPhase(ctx, session, template, binding, target, "debug-target", true)
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	require.True(t, statuses[0].Created)
 }
