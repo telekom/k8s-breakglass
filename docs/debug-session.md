@@ -1545,6 +1545,44 @@ Approval and rejection handlers block requester self-approval by comparing both 
 
 When a session is created through a `DebugSessionClusterBinding`, approval and rejection use the approvers from the recorded `spec.bindingRef`. Other bindings that match the same template or cluster do not grant approval for that session.
 
+Sessions created by provider-aware authentication persist both the identity-provider
+name and issuer on the session. Approval and rejection require both values to
+match the authenticated request; a provider name alone is not sufficient.
+Mismatched provider-aware identities are rejected with `403 Forbidden`.
+Sessions created before this provenance was persisted cannot be safely assigned to
+a provider during an upgrade. They are deliberately not approvable or rejectable
+through provider-aware authentication, and the API returns `409 Conflict`. The requester can use
+the supported administrator cleanup path while the session is still pending, then
+submit a new request. This preserves the provider boundary without guessing from
+the requester, approver, or current token. A trusted
+`legacy_identity_allowed` compatibility request may approve or reject a blank or
+issuer-only legacy record for its single trusted provider; provider-aware
+multi-provider authentication still requires the persisted provider and issuer.
+
+### Native Breakglass prerequisite and expiry
+
+For a provider-aware native deployment, the DebugSession authorization path is
+the approved Breakglass session, not a direct OIDC group. The Breakglass
+session must grant exactly `breakglass:platform:debugsession`, must be bound to
+the same provider and issuer as the request, and must still be approved and
+unexpired. The grant is removed or becomes unusable after drop, rejection,
+withdrawal, or expiry.
+
+TDI and TDG are separate provider scopes when both are configured. Each profile
+has its own issuer and approver route; a TDG approver cannot approve a TDI
+session, and vice versa, even if the visible username or group text is the
+same. The generated native deployment must create the exact persona-scoped
+impersonation allowlist; a live RBAC patch or wildcard user rule is not a
+supported substitute.
+
+Expiry is checked at every mutating operation, including approval, join, renew,
+leave, ordinary active-session termination, and pod authorization. The narrow
+owner-scoped retirement path for pending sessions is also allowed when expiry is
+missing or elapsed so abandoned requests can be cleaned up; it does not grant
+access or permit other pending mutations. A missing or elapsed expiry is not an
+invitation to repair status manually. Use the supported lifecycle to drop or
+terminate the session and create a new request when access is needed.
+
 ## Participant Roles
 
 Debug sessions support multiple participant roles:
@@ -1614,9 +1652,15 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
-When creating a session, active Breakglass grants are added only when the
-authenticated username or email claim exactly matches `BreakglassSession.spec.user`
-and the issuer matches unless `allowIDPMismatch` is enabled. The API does not
+When creating a session, only an approved, unexpired Breakglass grant for
+`breakglass:platform:debugsession` is considered. The authenticated username or
+email claim must exactly match `BreakglassSession.spec.user`. Complete provider
+records require both provider name and issuer to match; issuer-only legacy
+records require the trusted single-provider identity and matching issuer.
+Blank legacy records are accepted only through that trusted compatibility path,
+and provider-only records are not accepted. `allowIDPMismatch` is a spoke
+authorization compatibility setting; it does not bypass the provider/issuer
+fence for native DebugSession creation. The API does not
 infer an email address from a username's local part, because the same local part
 can belong to different domains. The authorization webhook has a separate,
 issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path

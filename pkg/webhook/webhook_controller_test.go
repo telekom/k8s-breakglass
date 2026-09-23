@@ -857,7 +857,7 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 			ExpiresAt:   &future,
 			AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{{
-				User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant,
+				User: "user", IdentityProviderName: "issuer-idp", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant,
 			}},
 		},
 	}
@@ -868,7 +868,7 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 	ra := &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
 
 	state := &authorizeState{
-		ctx: context.Background(), issuer: "https://issuer.example", clusterName: "cluster", clusterLabel: "cluster", allowed: true, allowSource: "debug-session",
+		ctx: context.Background(), issuer: "https://issuer.example", idpName: "issuer-idp", idpLookupOK: true, clusterName: "cluster", clusterLabel: "cluster", allowed: true, allowSource: "debug-session",
 		debugSessionNamespace: "default", debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
 		sar: authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{User: "user", ResourceAttributes: ra}},
 	}

@@ -179,12 +179,32 @@ func (wc *WebhookController) getIDPHintFromIssuer(ctx context.Context, sar *auth
 }
 
 // isRequestFromAllowedIDP checks if a requestor from a specific issuer (IDP) is allowed to use a specific escalation.
-// If the escalation has AllowedIdentityProvidersForRequests, the issuer must match one of those.
-// If AllowedIdentityProvidersForRequests is empty, the request is allowed from any IDP (backward compatible).
+// AllowedIdentityProvidersForRequests takes precedence over the legacy
+// AllowedIdentityProviders field. If neither is set, the request is allowed
+// from any IDP (backward compatible).
 // This function maps IDP issuer URLs to IDP names for matching.
 func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer string, esc *breakglassv1alpha1.BreakglassEscalation, reqLog *zap.SugaredLogger) bool {
+	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 &&
+		len(esc.Spec.AllowedIdentityProviders) == 0 {
+		return true
+	}
+	matchedIDPName, lookupOK := wc.resolveIdentityProviderName(ctx, issuer, reqLog)
+	return wc.isRequestFromAllowedIDPResolved(issuer, matchedIDPName, lookupOK, esc, reqLog)
+}
+
+func (wc *WebhookController) isRequestFromAllowedIDPResolved(
+	issuer, matchedIDPName string,
+	lookupOK bool,
+	esc *breakglassv1alpha1.BreakglassEscalation,
+	reqLog *zap.SugaredLogger,
+) bool {
+	allowedProviders := esc.Spec.AllowedIdentityProvidersForRequests
+	if len(allowedProviders) == 0 {
+		allowedProviders = esc.Spec.AllowedIdentityProviders
+	}
+
 	// If no IDP restrictions, request is allowed from any IDP
-	if len(esc.Spec.AllowedIdentityProvidersForRequests) == 0 {
+	if len(allowedProviders) == 0 {
 		return true
 	}
 
@@ -194,40 +214,61 @@ func (wc *WebhookController) isRequestFromAllowedIDP(ctx context.Context, issuer
 		return false
 	}
 
-	// Find matching IdentityProvider by issuer
-	idpList := &breakglassv1alpha1.IdentityProviderList{}
-	if err := wc.escalManager.List(ctx, idpList, client.MatchingFields{"spec.issuer": issuer}); err != nil {
-		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
-		// Fail closed: if we can't load IDPs, deny the request for security
-		// This prevents potential authorization bypass during transient API errors
-		return false
-	}
-
-	// Map issuer to IDP name
-	var matchedIDPName string
-	for _, idp := range idpList.Items {
-		if idp.Spec.Issuer == issuer && !idp.Spec.Disabled {
-			matchedIDPName = idp.Name
-			break
-		}
-	}
-
-	// If issuer doesn't match any enabled IDP, deny
-	if matchedIDPName == "" {
+	if !lookupOK || matchedIDPName == "" {
 		reqLog.Debugw("Request from unknown or disabled IDP issuer", "issuer", issuer, "escalation", esc.Name)
 		return false
 	}
 
 	// Check if the matched IDP is in the escalation's allowed list
-	for _, allowedIDPName := range esc.Spec.AllowedIdentityProvidersForRequests {
+	for _, allowedIDPName := range allowedProviders {
 		if allowedIDPName == matchedIDPName {
 			reqLog.Debugw("Request allowed: IDP in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "escalation", esc.Name)
 			return true
 		}
 	}
 
-	reqLog.Debugw("Request denied: IDP not in AllowedIdentityProvidersForRequests", "idp", matchedIDPName, "allowedIDPs", esc.Spec.AllowedIdentityProvidersForRequests, "escalation", esc.Name)
+	reqLog.Debugw("Request denied: IDP not in allowed request providers", "idp", matchedIDPName, "allowedIDPs", allowedProviders, "escalation", esc.Name)
 	return false
+}
+
+func (wc *WebhookController) resolveIdentityProviderName(ctx context.Context, issuer string, reqLog *zap.SugaredLogger) (string, bool) {
+	idpList := &breakglassv1alpha1.IdentityProviderList{}
+	normalizedIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	err := wc.escalManager.List(ctx, idpList, client.MatchingFields{
+		"spec.effectiveIssuer": normalizedIssuer,
+	})
+	if err != nil && breakglass.IsFieldIndexError(err) {
+		// Older test clients and upgraded caches may not have the new effective
+		// issuer index yet. Preserve fail-closed behavior while allowing the
+		// cache to finish registering it.
+		reqLog.With("error", err.Error()).Warn("Effective issuer index unavailable; using compatibility lookup")
+		err = wc.escalManager.List(ctx, idpList)
+	}
+	if err != nil {
+		reqLog.With("error", err.Error()).Error("Failed to list IdentityProviders for request validation - denying request (fail-closed)")
+		return "", false
+	}
+
+	// Map normalized effective issuer to IDP name.
+	matchedIDPName := ""
+	for _, idp := range idpList.Items {
+		effectiveIssuer := idp.Spec.Issuer
+		if effectiveIssuer == "" {
+			effectiveIssuer = idp.Spec.OIDC.Authority
+		}
+		if strings.TrimRight(effectiveIssuer, "/") == normalizedIssuer && !idp.Spec.Disabled {
+			if matchedIDPName != "" {
+				reqLog.Debugw("Request issuer matches multiple enabled IdentityProviders; denying request",
+					"issuer", issuer, "first", matchedIDPName, "second", idp.Name)
+				return "", false
+			}
+			matchedIDPName = idp.Name
+		}
+	}
+	if matchedIDPName == "" {
+		return "", false
+	}
+	return matchedIDPName, true
 }
 
 type SubjectAccessReviewResponseStatus struct {
@@ -316,6 +357,19 @@ func (wc *WebhookController) findDebugSessionAccessForIssuer(ctx context.Context
 }
 
 func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx context.Context, username, clusterName, issuer, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	return wc.findDebugSessionAccessForIdentity(ctx, username, clusterName, issuer, "", true, false, sessionNamespace, ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForProviderInNamespace(ctx context.Context, username, clusterName, issuer, provider string, providerLookupOK bool, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
+	// A manually constructed/legacy authorization state can have no resolved
+	// provider while still carrying a usable issuer. Preserve the historical
+	// issuer-only fence in that case; a failed lookup remains provider-fenced
+	// and therefore fails closed.
+	providerFence := provider != "" || !providerLookupOK
+	return wc.findDebugSessionAccessForIdentity(ctx, username, clusterName, issuer, provider, providerLookupOK, providerFence, sessionNamespace, ra, reqLog)
+}
+
+func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Context, username, clusterName, issuer, provider string, providerLookupOK, providerFence bool, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
 	// Only check for pods with supported subresources
 	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
 		return nil, ""
@@ -433,7 +487,10 @@ func (wc *WebhookController) findDebugSessionAccessForIssuerInNamespace(ctx cont
 			if p.User != username {
 				continue
 			}
-			if !debugParticipantIssuerMatches(ctx, wc.escalManager.Client, p, issuer) {
+			if providerFence && !debugParticipantProviderMatches(p, issuer, provider, providerLookupOK) {
+				continue
+			}
+			if !providerFence && !debugParticipantIssuerMatches(ctx, wc.escalManager.Client, p, issuer) {
 				continue
 			}
 			if p.LeftAt != nil {
@@ -527,6 +584,15 @@ func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.C
 // allow. It reads the exact candidate through the uncached reader and repeats
 // every identity/state/pod/participant/lease check at one decision instant.
 func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, username, issuer, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	return wc.liveDebugSessionAccessIdentity(ctx, username, issuer, "", true, false, clusterName, ra, namespace, name, uid)
+}
+
+func (wc *WebhookController) liveDebugSessionAccessForProvider(ctx context.Context, username, issuer, provider string, providerLookupOK bool, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
+	providerFence := provider != "" || !providerLookupOK
+	return wc.liveDebugSessionAccessIdentity(ctx, username, issuer, provider, providerLookupOK, providerFence, clusterName, ra, namespace, name, uid)
+}
+
+func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context, username, issuer, provider string, providerLookupOK, providerFence bool, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
 	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
 		return false, ""
 	}
@@ -572,7 +638,8 @@ func (wc *WebhookController) liveDebugSessionAccess(ctx context.Context, usernam
 	reader := wc.sesManager.Reader()
 	for _, participant := range ds.Status.Participants {
 		if participant.User == username && participant.LeftAt == nil &&
-			debugParticipantIssuerMatches(ctx, reader, participant, issuer) &&
+			((providerFence && debugParticipantProviderMatches(participant, issuer, provider, providerLookupOK)) ||
+				(!providerFence && debugParticipantIssuerMatches(ctx, reader, participant, issuer))) &&
 			canDebugSessionParticipantAccessPodOperations(participant.Role) {
 			fenceNow := time.Now().UTC()
 			if !fenceNow.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&ds, fenceNow) {
@@ -1324,6 +1391,24 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 	issuer string,
 	now time.Time,
 ) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
+	if issuer == "" {
+		out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
+		for _, session := range sessions {
+			if breakglass.IsSessionAuthorizationEligible(session, now) {
+				out = append(out, session)
+			}
+		}
+		return out, nil
+	}
+	return filterSessionsForAuthorizationWithProvider(sessions, issuer, "", true, now)
+}
+
+func filterSessionsForAuthorizationWithProvider(
+	sessions []breakglassv1alpha1.BreakglassSession,
+	issuer, provider string,
+	providerLookupOK bool,
+	now time.Time,
+) ([]breakglassv1alpha1.BreakglassSession, []breakglassv1alpha1.BreakglassSession) {
 	issuer = canonicalIssuer(issuer)
 	out := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions))
 	idpMismatches := make([]breakglassv1alpha1.BreakglassSession, 0)
@@ -1331,9 +1416,21 @@ func filterSessionsForAuthorization(sessions []breakglassv1alpha1.BreakglassSess
 		if !breakglass.IsSessionAuthorizationEligible(session, now) {
 			continue
 		}
-		if issuer != "" && !session.Spec.AllowIDPMismatch && canonicalIssuer(session.Spec.IdentityProviderIssuer) != issuer {
-			idpMismatches = append(idpMismatches, session)
-			continue
+		if !session.Spec.AllowIDPMismatch {
+			sessionIssuer := canonicalIssuer(session.Spec.IdentityProviderIssuer)
+			provenanceMismatch := false
+			if issuer == "" {
+				provenanceMismatch = sessionIssuer != "" || session.Spec.IdentityProviderName != ""
+			} else {
+				provenanceMismatch = sessionIssuer == "" ||
+					sessionIssuer != issuer ||
+					(providerLookupOK && provider != "" && session.Spec.IdentityProviderName != provider) ||
+					!providerLookupOK
+			}
+			if provenanceMismatch {
+				idpMismatches = append(idpMismatches, session)
+				continue
+			}
 		}
 		out = append(out, session)
 	}
@@ -1628,4 +1725,19 @@ func debugParticipantIssuerMatches(ctx context.Context, reader client.Reader, pa
 		return issuer != "" && strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
 	}
 	return config.IsOnlyEnabledIdentityProvider(ctx, reader, participant.IdentityProviderName, issuer)
+}
+
+func debugParticipantProviderMatches(
+	participant breakglassv1alpha1.DebugSessionParticipant,
+	issuer, provider string,
+	providerLookupOK bool,
+) bool {
+	if issuer == "" {
+		return providerLookupOK && provider == "" &&
+			participant.IdentityProviderName == "" && participant.IdentityProviderIssuer == ""
+	}
+	return providerLookupOK &&
+		provider != "" &&
+		participant.IdentityProviderName == provider &&
+		strings.TrimRight(participant.IdentityProviderIssuer, "/") == strings.TrimRight(issuer, "/")
 }

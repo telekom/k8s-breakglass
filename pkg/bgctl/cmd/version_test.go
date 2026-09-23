@@ -6,10 +6,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/version"
 	"gopkg.in/yaml.v3"
 )
+
+func TestVersionOutputCompletion(t *testing.T) {
+	cmd := NewVersionCommand()
+	completion, ok := cmd.GetFlagCompletionFunc("output")
+	require.True(t, ok)
+
+	values, directive := completion(cmd, nil, "")
+	require.Equal(t, []string{"json", "yaml"}, values)
+	require.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
+}
 
 func TestVersionCommand(t *testing.T) {
 	// Save original version info

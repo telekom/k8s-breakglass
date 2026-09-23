@@ -269,7 +269,8 @@ func TestDebugSessionTemplateAdvanced(t *testing.T) {
 
 // TestDebugSessionCRUD tests DebugSession create/read/update/delete operations.
 func TestDebugSessionCRUD(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrant(t, setup)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

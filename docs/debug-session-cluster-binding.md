@@ -1179,6 +1179,15 @@ When multiple bindings match a cluster, the UI displays an "Access Configuration
 
 The selected binding's configuration is then used for the session's constraints, approval flow, and impersonation settings.
 Approval and rejection of a binding-backed session are scoped to the recorded binding reference; approvers from other matching bindings are ignored.
+Provider-aware approval also requires the session's persisted identity-provider
+name and issuer to match the authenticated approver. The binding does not
+extend an expired session or bypass requester self-approval checks. For native
+Breakglass deployments, the resulting temporary authorization must grant
+`breakglass:platform:debugsession`; that group is not a static OIDC subject.
+A trusted `legacy_identity_allowed` compatibility request may approve or reject
+a blank or issuer-only legacy record for its single trusted provider. Provider-
+aware multi-provider authentication still requires the persisted provider and
+issuer.
 
 ### CLI Binding Selection
 
