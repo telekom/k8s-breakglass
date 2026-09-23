@@ -319,6 +319,10 @@ spec:
 
 If you have an `IdentityProvider` already configured for user authentication, you can reuse its OIDC settings for cluster authentication using `oidcFromIdentityProvider`. This avoids duplicating configuration and ensures consistency.
 
+Issuer discovery and token requests inherit `IdentityProvider.spec.oidc.certificateAuthority`.
+Set this PEM CA for private issuers; the separate `caSecretRef` below trusts the
+target Kubernetes API server.
+
 **oidcFromIdentityProvider Configuration**
 
 | Field | Required | Description |

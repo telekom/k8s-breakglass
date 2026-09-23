@@ -30,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Retire fresh auxiliary creation intents after explicit API validation or access
   rejection, preserving ambiguous outcomes and earlier document UID inventory.
+- Preserve the IdentityProvider issuer CA for referenced cluster authentication,
+  allowing TLS-verified OIDC discovery and token requests to private issuers.
 
 - Persist failed DebugSession authority before target cleanup and refuse to
   recreate deleted auxiliary resources with already recorded UIDs.
