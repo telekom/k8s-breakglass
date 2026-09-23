@@ -161,6 +161,7 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, backend.StateAvailable, record.State)
 			require.Equal(t, int64(1024), record.MaxBytes)
+			require.Equal(t, "lease-uid", record.ConnectionLeaseUID)
 			require.Equal(t, "pod-uid", record.Recording.PodUID)
 			require.Equal(t, !incomplete, record.Recording.Complete)
 			require.NotEmpty(t, record.ArtifactUID)

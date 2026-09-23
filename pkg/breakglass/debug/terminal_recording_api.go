@@ -256,6 +256,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	reservation, err := c.recordingArtifacts.ReserveRecording(apiCtx, backend.Record{
 		Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: targetClusterUID,
 		TargetPodNamespace: namespace, TargetPodName: podName, TargetPodUID: targetUID,
+		ConnectionLeaseUID:   binding.LeaseUID,
 		TargetIdentityDigest: sha256Hex(namespace + "\x00" + podName + "\x00" + targetUID), RuntimeBindingDigest: binding.RuntimeBindingDigest,
 		PlanDigest: sha256Hex(string(plan)), OperationEpoch: epoch, MaxBytes: maxBytes,
 		ExpiresAt: binding.ExpiresAt.Add(retention), Recording: &metadata,
