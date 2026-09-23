@@ -216,7 +216,7 @@ func TestAuxiliaryRecoveryRejectsOtherOperation(t *testing.T) {
 	annotations[createOperationIDAnnotation] = "approved-operation"
 	desired.SetAnnotations(annotations)
 	desired.Object["spec"] = map[string]interface{}{"changed": true}
-	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "same-session"}})
+	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "same-session"}}, "external")
 	require.ErrorContains(t, err, "different operation identity")
 	live := &unstructured.Unstructured{}
 	live.SetGroupVersionKind(gvk)
