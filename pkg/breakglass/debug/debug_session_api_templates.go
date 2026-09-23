@@ -1,6 +1,7 @@
 package debug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -55,6 +56,22 @@ func (v extraDeployVariableResponse) MarshalJSON() ([]byte, error) {
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, err
+	}
+	// Numeric defaults must cross the browser boundary as strings. JSON.parse
+	// rounds large literals to IEEE-754 before Vue can preserve them.
+	if v.InputType == breakglassv1alpha1.InputTypeNumber && v.Default != nil {
+		decoder := json.NewDecoder(bytes.NewReader(v.Default.Raw))
+		decoder.UseNumber()
+		var value any
+		if err := decoder.Decode(&value); err == nil {
+			if number, ok := value.(json.Number); ok {
+				raw, err := json.Marshal(number.String())
+				if err != nil {
+					return nil, err
+				}
+				out["default"] = raw
+			}
+		}
 	}
 	if v.Validation != nil && len(v.Validation.AdditionalPatterns) > 0 {
 		validation := map[string]json.RawMessage{}
