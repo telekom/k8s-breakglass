@@ -171,24 +171,24 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if oldStatus.AuthenticatedUserGroupsCaptured && !newStatus.AuthenticatedUserGroupsCaptured {
 		return fmt.Errorf("authenticated group provenance capture cannot be cleared")
 	}
-	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) && !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(oldStatus, newStatus.ResolvedTemplateVariablePolicy) {
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) && !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(oldStatus, newStatus.ResolvedTemplateVariablePolicy) {
 		return fmt.Errorf("approved resolved template variable policy is immutable")
 	}
-	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSnapshotCaptured || oldStatus.ResolvedBindingSpec != nil) &&
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) &&
 		!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
 		return fmt.Errorf("approved resolved binding snapshot is immutable")
 	}
-	if ((oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSpec != nil) &&
+	if (breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) &&
 		oldStatus.ResolvedBindingSnapshotCaptured != newStatus.ResolvedBindingSnapshotCaptured) ||
 		(oldStatus.ResolvedBindingSnapshotCaptured && !newStatus.ResolvedBindingSnapshotCaptured) {
 		return fmt.Errorf("approved resolved binding decision cannot be cleared")
 	}
-	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSnapshotCaptured || oldStatus.ResolvedBindingSpec != nil) &&
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) &&
 		(!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) ||
 			!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBinding, newStatus.ResolvedBinding)) {
 		return fmt.Errorf("approved resolved binding decision is immutable")
 	}
-	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedPodTemplate != nil) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
 		return fmt.Errorf("approved resolved pod-template snapshot is immutable")
 	}
 	oldExpiryMissing := oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero()

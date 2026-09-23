@@ -1,6 +1,7 @@
 package debug
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1512,12 +1513,13 @@ func extractJSONValueForPod(raw []byte) string {
 		return fmt.Sprintf("%t", boolVal)
 	}
 
-	var numVal float64
-	if err := json.Unmarshal(raw, &numVal); err == nil {
-		if numVal == float64(int64(numVal)) {
-			return fmt.Sprintf("%d", int64(numVal))
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err == nil {
+		if number, ok := decoded.(json.Number); ok {
+			return number.String()
 		}
-		return fmt.Sprintf("%g", numVal)
 	}
 
 	var arrVal []string

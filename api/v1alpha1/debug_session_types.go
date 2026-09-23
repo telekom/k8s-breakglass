@@ -1227,7 +1227,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateLabels"), newObj.Status.ResolvedTemplateLabels,
 			"resolvedTemplate labels are immutable once persisted"))
 	}
-	if oldObj.Status.ResolvedTemplate != nil &&
+	if HasAnyResolvedSnapshot(oldObj.Status) &&
 		oldObj.Status.ResolvedTemplateIdentityCaptured != newObj.Status.ResolvedTemplateIdentityCaptured {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateIdentityCaptured"),
 			newObj.Status.ResolvedTemplateIdentityCaptured, "resolved template identity capture is immutable once the resolved template is persisted"))
@@ -1241,27 +1241,27 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroupsCaptured"),
 			newObj.Status.AuthenticatedUserGroupsCaptured, "authenticated user group provenance capture cannot be cleared"))
 	}
-	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateVariablePolicy, newObj.Status.ResolvedTemplateVariablePolicy) && !CanInitializeLegacyVariablePolicy(oldObj.Status, newObj.Status.ResolvedTemplateVariablePolicy) {
+	if HasAnyResolvedSnapshot(oldObj.Status) && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateVariablePolicy, newObj.Status.ResolvedTemplateVariablePolicy) && !CanInitializeLegacyVariablePolicy(oldObj.Status, newObj.Status.ResolvedTemplateVariablePolicy) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateVariablePolicy"), newObj.Status.ResolvedTemplateVariablePolicy,
 			"resolvedTemplateVariablePolicy is immutable once the resolved template is persisted"))
 	}
-	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSnapshotCaptured || oldObj.Status.ResolvedBindingSpec != nil) &&
+	if HasAnyResolvedSnapshot(oldObj.Status) &&
 		!reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
 			"resolvedBindingSpec is immutable once persisted"))
 	}
-	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedPodTemplate != nil) &&
+	if HasAnyResolvedSnapshot(oldObj.Status) &&
 		!reflect.DeepEqual(oldObj.Status.ResolvedPodTemplate, newObj.Status.ResolvedPodTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
 			"resolvedPodTemplate is immutable once the resolved template is persisted"))
 	}
-	if ((oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSpec != nil) &&
+	if (HasAnyResolvedSnapshot(oldObj.Status) &&
 		oldObj.Status.ResolvedBindingSnapshotCaptured != newObj.Status.ResolvedBindingSnapshotCaptured) ||
 		(oldObj.Status.ResolvedBindingSnapshotCaptured && !newObj.Status.ResolvedBindingSnapshotCaptured) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSnapshotCaptured"),
 			newObj.Status.ResolvedBindingSnapshotCaptured, "resolved binding snapshot capture marker is immutable once the resolved template is persisted"))
 	}
-	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSnapshotCaptured) &&
+	if HasAnyResolvedSnapshot(oldObj.Status) &&
 		!reflect.DeepEqual(oldObj.Status.ResolvedBinding, newObj.Status.ResolvedBinding) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBinding"), newObj.Status.ResolvedBinding,
 			"resolvedBinding is immutable once the resolved template is persisted"))

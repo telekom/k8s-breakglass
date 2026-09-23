@@ -51,3 +51,10 @@ func HasCompleteResolvedBindingSnapshot(status DebugSessionStatus) bool {
 	var binding DebugSessionClusterBindingSpec
 	return json.Unmarshal(status.ResolvedBindingSpec.Raw, &binding) == nil && len(ValidateDebugSessionClusterBinding(&DebugSessionClusterBinding{Spec: binding}).Errors) == 0
 }
+
+// HasAnyResolvedSnapshot reports whether any approval provenance has been persisted.
+func HasAnyResolvedSnapshot(status DebugSessionStatus) bool {
+	return status.ResolvedTemplate != nil || status.ResolvedTemplateVariablePolicy != nil ||
+		status.ResolvedTemplateIdentityCaptured || status.ResolvedBindingSnapshotCaptured ||
+		status.ResolvedBinding != nil || status.ResolvedBindingSpec != nil || status.ResolvedPodTemplate != nil
+}
