@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve activation inventory and retriable status conflicts after integrating
+  immutable binding-variable snapshots.
+
 - Retire fresh auxiliary creation intents after explicit API validation or access
   rejection, preserving ambiguous outcomes and earlier document UID inventory.
 - Preserve the IdentityProvider issuer CA for referenced cluster authentication,

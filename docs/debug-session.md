@@ -1447,6 +1447,9 @@ persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
+Activation retries preserve earlier resource UIDs and unvisited auxiliary documents.
+A status conflict stops target writes and retries from the persisted session; it
+does not convert an incomplete activation into successful deployment.
 Failed sessions finish cleanup once all primary and child auxiliary resources
 are marked deleted; retained history alone does not trigger another retry.
 Terminal DebugSession states cannot transition again on the status mutation
