@@ -1029,6 +1029,12 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
+			// Another replica can advance the persisted inventory while this
+			// activation is preparing a resource. Retry from a fresh session
+			// instead of failing it or replaying a stale full-status snapshot.
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{}, err
+			}
 			log.Errorw("Failed to deploy debug resources", "error", err)
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
 		}

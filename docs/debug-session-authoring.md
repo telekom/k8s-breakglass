@@ -235,6 +235,9 @@ same auxiliary resource lifecycle as NetworkPolicies. Require its category
 through `requiredAuxiliaryResourceCategories`, and set `createBefore: true`,
 `deleteAfter: true`, and `failurePolicy: fail` explicitly. An exception creation
 failure then prevents workload creation; cleanup failures remain retryable.
+Optimistic status conflicts during activation trigger a fresh reconcile,
+which retains the original expiry and recovers controller-owned resources
+without overwriting another replica's status or failing the session.
 
 The central installation owns the reusable session and pod templates. Each
 cluster binding selects the reviewed profile and requires its auxiliary
