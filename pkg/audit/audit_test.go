@@ -40,8 +40,12 @@ var allSensitiveEventTypes = []EventType{
 	EventPolicyViolation, EventSecretAccessed, EventSecretCreated,
 	EventSecretUpdated, EventSecretDeleted, EventAuthFailure,
 	EventDebugSessionCreated, EventDebugSessionStarted,
-	EventDebugSessionTerminated, EventDebugSessionRejected, EventDebugSessionFailed,
+	EventDebugSessionApproved, EventDebugSessionRejected, EventDebugSessionRenewed,
+	EventDebugSessionValidated, EventDebugSessionValidationFailed,
+	EventDebugSessionTerminated, EventDebugSessionFailed,
 	EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
+	EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
+	EventDebugSessionBindingUnresolved,
 	EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 	EventResourceImpersonate, EventPolicyBypassed,
 	EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride,
@@ -581,8 +585,7 @@ func TestManager(t *testing.T) {
 	manager.SessionRequested(context.Background(), "session-2", "prod-admin", "user2@example.com", "debugging")
 	manager.SessionApproved(context.Background(), "session-3", "prod-admin", "approver@example.com", "user3@example.com")
 
-	// Wait for async processing
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, manager.Close())
 
 	mu.Lock()
 	assert.GreaterOrEqual(t, len(receivedEvents), 3)
@@ -595,9 +598,6 @@ func TestManager(t *testing.T) {
 		assert.False(t, event.Timestamp.IsZero())
 	}
 	mu.Unlock()
-
-	err := manager.Close()
-	require.NoError(t, err)
 }
 
 func TestManagerEmitSync(t *testing.T) {
@@ -810,15 +810,24 @@ func TestManagerHelperMethods(t *testing.T) {
 	manager.AccessDecision(ctx, "user@test.com", []string{"g1"}, "pods", "p2", "ns1", "c1", "delete", false, "s5")
 	manager.PolicyViolation(ctx, "user@test.com", []string{"g1"}, "pods", "p3", "ns1", "c1", "deny-policy", "violation")
 	manager.DebugSessionCreated(ctx, "ds1", "user@test.com", "c1", "template1")
+	manager.DebugSessionStarted(ctx, "ds-started", "debug-ns", "user@test.com", "c1", "template1")
 	manager.DebugSessionTerminated(ctx, "ds2", "admin@test.com", "expired")
 
-	time.Sleep(100 * time.Millisecond)
+	require.NoError(t, manager.Close())
 
 	mu.Lock()
-	assert.Len(t, events, 8)
+	assert.Len(t, events, 9)
+	var started *Event
+	for _, event := range events {
+		if event.Type == EventDebugSessionStarted {
+			started = event
+			break
+		}
+	}
+	require.NotNil(t, started)
+	assert.Equal(t, "debug-ns", started.Target.Namespace)
+	assert.Equal(t, "c1", started.Details["cluster"])
 	mu.Unlock()
-
-	_ = manager.Close()
 }
 
 func TestDefaultManagerConfig(t *testing.T) {
@@ -1954,8 +1963,7 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	// Test DebugSessionResourceCleanup
 	manager.DebugSessionResourceCleanup(ctx, "ds4", "ns1", "cluster1", "Pod", "debug-pod", "debug-ns")
 
-	time.Sleep(100 * time.Millisecond)
-
+	require.NoError(t, manager.Close())
 	mu.Lock()
 	defer mu.Unlock()
 
@@ -2016,8 +2024,38 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	require.Len(t, cleanupEvents, 1)
 	assert.Equal(t, SeverityInfo, cleanupEvents[0].Severity)
 	assert.Equal(t, "Pod", cleanupEvents[0].Target.Kind)
+}
 
-	_ = manager.Close()
+func TestDebugSessionCleanupAuditEvents(t *testing.T) {
+	var events []*Event
+	var mu sync.Mutex
+	sink := &testSink{
+		name: "cleanup-events",
+		writeFunc: func(event *Event) {
+			mu.Lock()
+			defer mu.Unlock()
+			events = append(events, event)
+		},
+	}
+	manager := NewManager(sink, DefaultManagerConfig(), zap.NewNop())
+	manager.DebugSessionCleanupFailed(context.Background(), "ds", "ns", "cluster", []string{"target/Pod/debug (uid=pod-uid)"})
+	manager.DebugSessionCleanupRecovered(context.Background(), "ds", "ns", "cluster")
+	require.NoError(t, manager.Close())
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, events, 2)
+	byType := make(map[EventType]*Event, len(events))
+	for _, event := range events {
+		byType[event.Type] = event
+	}
+	failure := byType[EventDebugSessionCleanupFailed]
+	require.NotNil(t, failure)
+	assert.Equal(t, SeverityWarning, failure.Severity)
+	assert.Equal(t, []string{"target/Pod/debug (uid=pod-uid)"}, failure.Details["residuals"])
+	recovered := byType[EventDebugSessionCleanupRecovered]
+	require.NotNil(t, recovered)
+	assert.Equal(t, SeverityInfo, recovered.Severity)
 }
 
 func TestSyncWriteDirect_AllSinksFail(t *testing.T) {

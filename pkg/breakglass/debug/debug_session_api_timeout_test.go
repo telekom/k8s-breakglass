@@ -154,7 +154,7 @@ func TestFailTimedOutDebugSessionApproval_UsesHandlerTimestampForLatestTimeout(t
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(Scheme).
-		WithObjects(session).
+		WithObjects(session, &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "standard-debug"}}).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
 	mockMail := NewMockMailEnqueuer(true)

@@ -2925,3 +2925,11 @@ stringData:
 	assert.Equal(t, "debug-ns", status.AdditionalResources[0].Namespace)
 	assert.Equal(t, "debug-ns", status.AdditionalResources[1].Namespace)
 }
+
+func TestCleanupAuxiliaryResourcesNeverCreatedDoesNotReadTarget(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "render-failure", Kind: "ConfigMap", APIVersion: "v1", Namespace: "ns", ResourceName: "never-created", Error: "render failed"}}}}
+	manager := NewAuxiliaryResourceManager(zap.NewNop().Sugar(), nil)
+	require.NoError(t, manager.CleanupAuxiliaryResources(context.Background(), session, nil))
+	require.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	require.Equal(t, "render failed", session.Status.AuxiliaryResourceStatuses[0].Error)
+}
