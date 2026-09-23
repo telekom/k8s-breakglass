@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"text/template"
@@ -642,6 +643,8 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 	// Deploy each document
 	var deployedResources []string
 	for i, docYAML := range nonEmptyDocs {
+		beforeDocument := status.DeepCopy()
+		beforeInventory := session.Status.DeepCopy().AuxiliaryResourceStatuses
 		obj := &unstructured.Unstructured{}
 		if err := yaml.Unmarshal(docYAML, &obj.Object); err != nil {
 			status.Error = fmt.Sprintf("YAML parsing failed for document %d: %v", i+1, err)
@@ -679,6 +682,8 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 			return status, fmt.Errorf("failed to stamp create operation for %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
 
+		_, priorIntent := auxiliaryResourceIdentity(session, auxRes.Name, obj)
+
 		// Create atomically and recover only a resource marked for this session.
 		obj.SetManagedFields(nil)
 		if i == 0 {
@@ -710,6 +715,20 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 			}
 		}
 		if err := applyOrRecoverAuxiliaryResource(ctx, targetClient, obj, session, auxRes.Name); err != nil {
+			var rejected *auxiliaryCreateRejectedError
+			if !priorIntent && errors.As(err, &rejected) {
+				// Only this attempt's fresh, definitively rejected request can be
+				// retired. Restore earlier documents and inventory, then persist
+				// with the same optimistic status precondition as the intent.
+				session.Status.AuxiliaryResourceStatuses = beforeInventory
+				status = *beforeDocument
+				status.Error = err.Error()
+				if persist != nil {
+					if persistErr := persist(status); persistErr != nil {
+						return status, fmt.Errorf("persist rejected auxiliary create outcome: %w", persistErr)
+					}
+				}
+			}
 			status.Error = fmt.Sprintf("SSA apply failed for %s/%s: %v", obj.GetKind(), obj.GetName(), err)
 			return status, fmt.Errorf("failed to apply resource %s/%s: %w", obj.GetKind(), obj.GetName(), err)
 		}
@@ -777,6 +796,13 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 	return status, nil
 }
 
+// auxiliaryCreateRejectedError means the API explicitly rejected this Create.
+// Transport failures and recovery errors never carry this retirement evidence.
+type auxiliaryCreateRejectedError struct{ err error }
+
+func (e *auxiliaryCreateRejectedError) Error() string { return e.err.Error() }
+func (e *auxiliaryCreateRejectedError) Unwrap() error { return e.err }
+
 // applyOrRecoverAuxiliaryResource creates unstructured auxiliary resources
 // atomically. Existing objects must belong to this session before native SSA
 // can reconcile them, which prevents concurrent foreign-object adoption while
@@ -793,6 +819,9 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 		if err := targetClient.Create(ctx, obj); err == nil {
 			return nil
 		} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
+			if apierrors.IsBadRequest(err) || apierrors.IsInvalid(err) || apierrors.IsForbidden(err) || apierrors.IsUnauthorized(err) {
+				return &auxiliaryCreateRejectedError{err: err}
+			}
 			return fmt.Errorf("create auxiliary resource: %w", err)
 		}
 	}

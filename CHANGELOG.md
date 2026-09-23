@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retire fresh auxiliary creation intents after explicit API validation or access
+  rejection, preserving ambiguous outcomes and earlier document UID inventory.
+
 - Persist failed DebugSession authority before target cleanup and refuse to
   recreate deleted auxiliary resources with already recorded UIDs.
 
