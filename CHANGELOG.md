@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve concurrent auxiliary child evidence without resurrecting child entries
+  already removed by cleanup.
+
 - Preserve activation inventory and retriable status conflicts after integrating
   immutable binding-variable snapshots.
 

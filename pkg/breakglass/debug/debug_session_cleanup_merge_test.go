@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	kptr "k8s.io/utils/ptr"
@@ -553,14 +554,40 @@ func TestFailedCleanupCompletesConfirmedRetention(t *testing.T) {
 	}
 }
 
-func TestPromoteObservedCleanupIntentsPreservesAuxiliaryChildren(t *testing.T) {
+func TestMergeAuxiliaryResourceStatusesPreservesObservedChildren(t *testing.T) {
 	desired := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "policy", ResourceName: "policy", APIVersion: "v1", Kind: "ConfigMap", CreateOperationID: "op"}
 	observed := desired
 	observed.UID = "primary-uid"
 	observed.AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{ResourceName: "child", APIVersion: "v1", Kind: "ConfigMap", CreateOperationID: "child-op", UID: "child-uid"}}
-	merged := promoteObservedCleanupIntents([]breakglassv1alpha1.AuxiliaryResourceStatus{desired}, []breakglassv1alpha1.AuxiliaryResourceStatus{observed})
+	merged := mergeAuxiliaryResourceStatuses(nil, []breakglassv1alpha1.AuxiliaryResourceStatus{desired}, []breakglassv1alpha1.AuxiliaryResourceStatus{observed})
 	require.Len(t, merged, 1)
 	require.Equal(t, "primary-uid", merged[0].UID)
 	require.Len(t, merged[0].AdditionalResources, 1)
 	require.Equal(t, "child-uid", merged[0].AdditionalResources[0].UID)
+}
+
+func TestCleanupParentPromotionPreservesConcurrentChildEvidence(t *testing.T) {
+	parent := breakglassv1alpha1.AuxiliaryResourceStatus{Name: "bundle", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "parent", CreateOperationID: "parent-operation"}
+	child := breakglassv1alpha1.AdditionalResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "child", UID: "child-uid", CreateOperationID: "child-operation"}
+	for _, removeKnownChild := range []bool{false, true} {
+		t.Run(fmt.Sprint(removeKnownChild), func(t *testing.T) {
+			baseline := []breakglassv1alpha1.AuxiliaryResourceStatus{parent}
+			desired := []breakglassv1alpha1.AuxiliaryResourceStatus{parent}
+			current := []breakglassv1alpha1.AuxiliaryResourceStatus{parent}
+			current[0].UID = "parent-uid"
+			current[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{child}
+			if removeKnownChild {
+				old := child
+				old.ResourceName = "removed"
+				old.UID = "removed-uid"
+				old.CreateOperationID = "removed-operation"
+				baseline[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{old}
+				current[0].AdditionalResources = append(current[0].AdditionalResources, old)
+			}
+			merged := mergeAuxiliaryResourceStatuses(baseline, desired, current)
+			require.Len(t, merged, 1)
+			require.Equal(t, "parent-uid", merged[0].UID)
+			require.Equal(t, []breakglassv1alpha1.AdditionalResourceRef{child}, merged[0].AdditionalResources)
+		})
+	}
 }

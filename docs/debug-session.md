@@ -1447,6 +1447,8 @@ persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
+Parent UID recovery leaves child cleanup to its own baseline-aware merge: newly
+observed children remain tracked, while confirmed local removals remain removed.
 Activation retries preserve earlier resource UIDs and unvisited auxiliary documents.
 A status conflict stops target writes and retries from the persisted session; it
 does not convert an incomplete activation into successful deployment.
