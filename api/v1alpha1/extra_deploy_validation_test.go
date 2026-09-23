@@ -1156,3 +1156,9 @@ func TestValidateNumberValueRejectsNonJSONDecimalSpellings(t *testing.T) {
 		assert.Contains(t, errs[0].Detail, "finite", raw)
 	}
 }
+
+func TestValidateNumberValueRejectsTrailingJSONValues(t *testing.T) {
+	errs := validateNumberValue(apiextensionsv1.JSON{Raw: []byte(`1 2`)}, nil, field.NewPath("value"))
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "must be a number")
+}

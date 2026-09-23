@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"reflect"
 	"regexp"
@@ -141,13 +142,7 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 
 func equalJSONValues(left, right apiextensionsv1.JSON) bool {
 	decode := func(raw []byte) (any, error) {
-		decoder := json.NewDecoder(bytes.NewReader(raw))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
-			return nil, err
-		}
-		return value, nil
+		return decodeJSONValue(raw)
 	}
 	actual, err := decode(left.Raw)
 	if err != nil {
@@ -428,10 +423,8 @@ func validateNumberValue(value apiextensionsv1.JSON, validation *VariableValidat
 }
 
 func jsonNumberText(raw []byte) (string, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
+	value, err := decodeJSONValue(raw)
+	if err != nil {
 		return "", err
 	}
 	switch value := value.(type) {
@@ -442,6 +435,23 @@ func jsonNumberText(raw []byte) (string, error) {
 	default:
 		return "", fmt.Errorf("not a number")
 	}
+}
+
+func decodeJSONValue(raw []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return nil, fmt.Errorf("JSON contains a trailing value")
+		}
+		return nil, err
+	}
+	return value, nil
 }
 
 var decimalJSONNumberPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
