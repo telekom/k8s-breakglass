@@ -893,6 +893,40 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 		"a debug-session allow metric must not be emitted before the final live fence")
 }
 
+func TestSendAuthorizationResponsePersistsIdleDebugActivity(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	starts := metav1.NewTime(time.Now())
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "response-idle", Namespace: "default", UID: "response-idle-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &starts, ExpiresAt: &future,
+			AllowedPods:      []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
+			Participants:     []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "5m"}},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
+		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
+	}}
+	state := &authorizeState{
+		ctx: context.Background(), issuer: "https://issuer.example", clusterName: "cluster", allowed: true, allowSource: "debug-session",
+		debugSessionNamespace: ds.Namespace, debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
+		debugSessionCandidate: ds.DeepCopy(),
+		sar:                   authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}},
+	}
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	wc.sendAuthorizationResponse(c, state)
+	assert.True(t, state.allowed)
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(ds), &updated))
+	assert.Equal(t, int64(1), updated.Status.ActivityCount)
+	assert.NotNil(t, updated.Status.LastActivity)
+}
+
 func TestRecordDebugSessionActivityPersistsIdleActivity(t *testing.T) {
 	expires := metav1.NewTime(time.Now().Add(time.Hour))
 	starts := metav1.NewTime(time.Now())
