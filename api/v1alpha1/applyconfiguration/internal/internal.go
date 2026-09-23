@@ -2079,9 +2079,6 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: resolvedTemplate
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateSpec
-    - name: retainedUntil
-      type:
-        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: resolvedTemplateIdentityCaptured
       type:
         scalar: boolean
@@ -2096,6 +2093,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
           elementRelationship: atomic
+    - name: retainedUntil
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: startsAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time

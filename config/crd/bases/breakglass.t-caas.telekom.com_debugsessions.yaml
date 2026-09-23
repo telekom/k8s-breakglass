@@ -6325,11 +6325,6 @@ spec:
                     - Job
                     type: string
                 type: object
-              retainedUntil:
-                description: RetainedUntil is the earliest time this terminal session
-                  may be removed.
-                format: date-time
-                type: string
               resolvedTemplateIdentityCaptured:
                 description: |-
                   resolvedTemplateIdentityCaptured distinguishes a current snapshot with
@@ -6498,6 +6493,11 @@ spec:
                   - name
                   type: object
                 type: array
+              retainedUntil:
+                description: RetainedUntil is the earliest time this terminal session
+                  may be removed.
+                format: date-time
+                type: string
               startsAt:
                 description: startsAt is when the session became active.
                 format: date-time
