@@ -117,6 +117,25 @@ func TestStatusHelpersFreezeBindingSnapshotAfterTemplatePersistence(t *testing.T
 	}
 }
 
+func TestStatusHelpersFreezePodSnapshotAfterTemplatePersistence(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pod-snapshot", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{}}`)}
+	require.ErrorContains(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired), "pod-template snapshot")
+	require.ErrorContains(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ResolvedPodTemplate = &apiextensionsv1.JSON{Raw: []byte(`{"spec":{}}`)}
+	}), "pod-template snapshot")
+}
+
 func TestPatchDebugSessionStatusWithOptimisticLockCannotRenewAtExpiry(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

@@ -188,7 +188,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 			!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBinding, newStatus.ResolvedBinding)) {
 		return fmt.Errorf("approved resolved binding decision is immutable")
 	}
-	if oldStatus.ResolvedPodTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
+	if (oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedPodTemplate != nil) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedPodTemplate, newStatus.ResolvedPodTemplate) {
 		return fmt.Errorf("approved resolved pod-template snapshot is immutable")
 	}
 	oldExpiryMissing := oldStatus.ExpiresAt == nil || oldStatus.ExpiresAt.IsZero()
