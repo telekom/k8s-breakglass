@@ -107,6 +107,9 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if artifactConfig.UploadMaxBytes < 1 || artifactConfig.UploadMaxBytes > archive.MaxCollectorArchiveBytes {
 		return nil, errors.New("artifact upload maximum is outside the bounded contract")
 	}
+	if artifactConfig.Backend == "local" && artifactConfig.Local != nil && artifactConfig.Local.MaximumObjectBytes > 0 && artifactConfig.UploadMaxBytes > artifactConfig.Local.MaximumObjectBytes {
+		return nil, errors.New("artifact upload maximum exceeds local storage object limit")
+	}
 	issuer, err := controllerOrigin(artifactConfig.ControllerURL)
 	if err != nil {
 		return nil, err
