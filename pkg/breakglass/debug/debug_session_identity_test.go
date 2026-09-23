@@ -27,6 +27,8 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.False(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
 	identity.legacyAllowed = true
 	require.True(t, debugSessionIdentityMatchesProvider(identity, "", "", "same@example.com"))
+	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderName: "idp-a"}}))
+	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderIssuer: "https://a.example"}}))
 }
 
 func TestDebugSessionApprovalIdentityMatches(t *testing.T) {

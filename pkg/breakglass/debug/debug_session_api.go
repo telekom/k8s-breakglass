@@ -1840,11 +1840,7 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 }
 
 func debugSessionProviderMatches(identity debugSessionReadIdentity, session *breakglassv1alpha1.DebugSession) bool {
-	if session.Spec.IdentityProviderName == "" && session.Spec.IdentityProviderIssuer == "" {
-		return identity.legacyAllowed
-	}
-	return (session.Spec.IdentityProviderName == "" || session.Spec.IdentityProviderName == identity.provider) &&
-		(session.Spec.IdentityProviderIssuer == "" || strings.TrimRight(session.Spec.IdentityProviderIssuer, "/") == strings.TrimRight(identity.issuer, "/"))
+	return debugSessionApprovalIdentityMatches(session, identity)
 }
 
 func debugSessionApprovalIdentityMatches(session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
@@ -1907,7 +1903,7 @@ func debugSessionPendingRetirementAuthorized(session *breakglassv1alpha1.DebugSe
 }
 
 func debugSessionIdentityMatchesProvider(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
-	if provider == "" && issuer == "" && !identity.legacyAllowed {
+	if (provider == "" || issuer == "") && !identity.legacyAllowed {
 		return false
 	}
 	if provider != "" && identity.provider != provider || issuer != "" && strings.TrimRight(identity.issuer, "/") != strings.TrimRight(issuer, "/") {

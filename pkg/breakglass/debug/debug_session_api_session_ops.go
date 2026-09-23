@@ -427,13 +427,6 @@ func (c *DebugSessionAPIController) handleTerminateDebugSession(ctx *gin.Context
 	pending := session.Status.State == breakglassv1alpha1.DebugSessionStatePending ||
 		session.Status.State == breakglassv1alpha1.DebugSessionStatePendingApproval
 	pendingRetirement := pending && debugSessionPendingRetirementAuthorized(session, identity)
-	partialProvenance := strings.TrimSpace(session.Spec.IdentityProviderName) == "" ||
-		strings.TrimSpace(session.Spec.IdentityProviderIssuer) == ""
-	if !pendingRetirement &&
-		partialProvenance && !identity.legacyAllowed {
-		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
-		return
-	}
 	if !pendingRetirement &&
 		!debugSessionIdentityMatchesProvider(identity, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		apiresponses.RespondForbidden(ctx, "only the session owner can terminate")
