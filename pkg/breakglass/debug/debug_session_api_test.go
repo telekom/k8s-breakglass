@@ -45,6 +45,28 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
+func TestExtraDeployVariableResponseIncludesIntersectedPatterns(t *testing.T) {
+	variable := extraDeployVariableResponse(breakglassv1alpha1.ExtraDeployVariable{
+		Name: "target",
+		Validation: &breakglassv1alpha1.VariableValidation{
+			Pattern:            "-prod$",
+			AdditionalPatterns: []string{"^safe-"},
+		},
+	})
+
+	data, err := json.Marshal(variable)
+	require.NoError(t, err)
+	var response struct {
+		Validation struct {
+			Pattern            string   `json:"pattern"`
+			AdditionalPatterns []string `json:"additionalPatterns"`
+		} `json:"validation"`
+	}
+	require.NoError(t, json.Unmarshal(data, &response))
+	assert.Equal(t, "-prod$", response.Validation.Pattern)
+	assert.Equal(t, []string{"^safe-"}, response.Validation.AdditionalPatterns)
+}
+
 func init() {
 	gin.SetMode(gin.TestMode)
 }

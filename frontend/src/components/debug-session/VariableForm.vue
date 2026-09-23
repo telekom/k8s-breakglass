@@ -207,10 +207,16 @@ const validationErrors = computed((): ValidationError[] => {
       if (validation?.maxLength !== undefined && value.length > validation.maxLength) {
         errors.push({ field: variable.name, message: `Must be at most ${validation.maxLength} characters` });
       }
-      if (validation?.pattern) {
-        const regex = new RegExp(validation.pattern);
+      const patterns = [validation?.pattern, ...(validation?.additionalPatterns || [])].filter(
+        (pattern): pattern is string => Boolean(pattern),
+      );
+      for (const pattern of patterns) {
+        const regex = new RegExp(pattern);
         if (!regex.test(value)) {
-          errors.push({ field: variable.name, message: validation.patternError || "Invalid format" });
+          errors.push({
+            field: variable.name,
+            message: pattern === validation?.pattern ? validation.patternError || "Invalid format" : "Invalid format",
+          });
         }
       }
     }

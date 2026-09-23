@@ -429,6 +429,7 @@ export interface SelectOption {
 // Validation rules for variables
 export interface VariableValidation {
   pattern?: string;
+  additionalPatterns?: string[];
   patternError?: string;
   minLength?: number;
   maxLength?: number;
