@@ -78,6 +78,7 @@ rules:
   - breakglassescalations/finalizers
   - breakglasssessions/finalizers
   - clusterconfigs/finalizers
+  - debugsessionartifacts/finalizers
   - debugsessions/finalizers
   - identityproviders/finalizers
   - mailproviders/finalizers
@@ -91,6 +92,7 @@ rules:
   - breakglasssessions/status
   - clusterconfigs/status
   - debugpodtemplates/status
+  - debugsessionartifacts/status
   - debugsessionclusterbindings/status
   - debugsessions/status
   - debugsessiontemplates/status
@@ -105,6 +107,7 @@ rules:
   - breakglass.t-caas.telekom.com
   resources:
   - breakglasssessions
+  - debugsessionartifacts
   - debugsessions
   verbs:
   - create

@@ -2024,11 +2024,13 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 		podUID     string
 		liveIssuer string
 		delay      time.Duration
+		idle       bool
 		want       bool
 	}{
 		{name: "replacement pod", podUID: "replacement-uid"},
 		{name: "changed issuer", podUID: "pod-uid", liveIssuer: "https://issuer-b.example"},
 		{name: "expiry after pod read", podUID: "pod-uid", delay: time.Millisecond},
+		{name: "idle expiry after pod read", podUID: "pod-uid", delay: time.Millisecond, idle: true},
 		{name: "valid original identity", podUID: "pod-uid", want: true},
 	}
 	for _, tt := range tests {
@@ -2044,6 +2046,13 @@ func TestSendAuthorizationResponseDebugSessionRechecksLivePodIssuerAndExpiry(t *
 				Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &future,
 					AllowedPods:  []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: issuer, Role: breakglassv1alpha1.ParticipantRoleParticipant}}},
+			}
+			if tt.idle {
+				activity := metav1.NewTime(future.Add(-time.Minute))
+				hardExpiry := metav1.NewTime(time.Now().Add(time.Hour))
+				ds.Status.ExpiresAt = &hardExpiry
+				ds.Status.LastActivity = &activity
+				ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"}}
 			}
 			if tt.liveIssuer != "" {
 				ds.Status.Participants[0].IdentityProviderIssuer = tt.liveIssuer

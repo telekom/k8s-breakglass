@@ -120,12 +120,22 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	engine := gin.New()
 
-	// Request body size limit middleware (1MB default)
-	// Prevents DoS attacks via excessively large request bodies
+	// Request body size limit middleware (1MB default). The artifact upload
+	// route has an explicit administrator-configured bound; every other route
+	// retains the default limit.
 	const maxBodySize = 1 << 20 // 1 MiB
+	const artifactUploadPath = "/api/debugSessionArtifactUploads/"
+	artifactBodySize := cfg.Artifacts.UploadMaxBytes
+	if artifactBodySize < 1 || artifactBodySize > 512<<20 {
+		artifactBodySize = maxBodySize
+	}
 	engine.Use(func(c *gin.Context) {
 		if c.Request.Body != nil {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBodySize)
+			limit := int64(maxBodySize)
+			if c.Request.Method == http.MethodPut && strings.HasPrefix(c.Request.URL.Path, artifactUploadPath) {
+				limit = artifactBodySize
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}
 		c.Next()
 	})
@@ -1394,7 +1404,7 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 	sessionManager *breakglass.SessionManager, enableFrontend, enableAPI bool, configPath string,
 	auth *AuthHandler, ccProvider *cluster.ClientProvider, denyEval *policy.Evaluator,
 	cfg *config.Config, log *zap.SugaredLogger, debugSessionCtrl *debug.DebugSessionAPIController,
-	auditService *audit.Service) ([]APIController, *webhook.WebhookController) {
+	auditService *audit.Service, extraControllers ...APIController) ([]APIController, *webhook.WebhookController) {
 	// Register API controllers based on component flags
 	apiControllers := []APIController{}
 
@@ -1414,6 +1424,11 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 		if debugSessionCtrl != nil {
 			apiControllers = append(apiControllers, debugSessionCtrl)
 			log.Infow("Debug session API controller enabled")
+		}
+		for _, controller := range extraControllers {
+			if controller != nil {
+				apiControllers = append(apiControllers, controller)
+			}
 		}
 		// Note: ClusterBindingAPIController is NOT registered as a public API.
 		// Cluster bindings are internal resources aggregated through the unified

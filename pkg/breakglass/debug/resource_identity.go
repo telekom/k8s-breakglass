@@ -163,6 +163,9 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		return true
 	}
 	actual := pod.Spec.DeepCopy()
+	if template.Spec.EnableServiceLinks == nil && actual.EnableServiceLinks != nil && *actual.EnableServiceLinks {
+		actual.EnableServiceLinks = nil
+	}
 	if !verifyAdmittedPriority(ctx, target, actual, template.Spec) {
 		return false
 	}

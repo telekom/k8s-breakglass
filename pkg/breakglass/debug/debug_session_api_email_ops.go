@@ -445,7 +445,13 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
+	}
 	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Validate the request
 	capabilities := extractCapabilities(req.SecurityContext)
@@ -475,6 +481,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		respondKubectlDebugOperationError(ctx, err, "failed to inject ephemeral container")
 		return
 	}
+	c.recordDebugSessionActivity(apiCtx, session)
 
 	reqLog.Infow("Ephemeral container injected",
 		"session", sessionName,
@@ -559,7 +566,13 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
+	}
 	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the pod copy
 	pod, err := handler.CreatePodCopy(apiCtx, session, req.Namespace, req.PodName, req.DebugImage, username)
@@ -572,6 +585,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create pod copy")
 		return
 	}
+	c.recordDebugSessionActivity(apiCtx, session)
 
 	reqLog.Infow("Pod copy created",
 		"session", sessionName,
@@ -658,7 +672,13 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 	if provider == nil {
 		provider = &clusterClientAdapter{ccProvider: c.ccProvider}
 	}
+	if c.connectionLeases == nil {
+		reqLog.Errorw("Connection lease validator is not configured")
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
+		return
+	}
 	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the node debug pod
 	pod, err := handler.CreateNodeDebugPod(apiCtx, session, req.NodeName, username)
@@ -671,6 +691,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		respondKubectlDebugOperationError(ctx, err, "failed to create node debug pod")
 		return
 	}
+	c.recordDebugSessionActivity(apiCtx, session)
 
 	reqLog.Infow("Node debug pod created",
 		"session", sessionName,
@@ -881,7 +902,8 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		if session.Status.State == breakglassv1alpha1.DebugSessionStateRejected || session.Status.State == breakglassv1alpha1.DebugSessionStateTerminated ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateExpired ||
 			session.Status.State == breakglassv1alpha1.DebugSessionStateFailed ||
-			isDebugSessionExpired(session, now) {
+			(session.Status.ExpiresAt != nil && !now.Before(session.Status.ExpiresAt.Time)) ||
+			(session.Status.State == breakglassv1alpha1.DebugSessionStateActive && breakglass.DebugSessionIdleExpired(session, now)) {
 			continue
 		}
 

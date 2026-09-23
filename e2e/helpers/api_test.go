@@ -61,6 +61,63 @@ func TestAPIClientDoesNotRefreshIntentionalUnauthorizedRequests(t *testing.T) {
 	assert.Equal(t, "invalid-token", client.AuthToken)
 }
 
+func TestTerminateDebugSessionRetriesOnlyBoundedOptimisticConflicts(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		first     int
+		body      string
+		next      int
+		calls     int
+		cancel    bool
+		wantError bool
+	}{
+		{name: "conflict then success", first: 409, body: `{"code":"CONFLICT"}`, next: 200, calls: 2},
+		{name: "conflict then denied", first: 409, body: `{"code":"CONFLICT"}`, next: 403, calls: 2, wantError: true},
+		{name: "bounded conflicts", first: 409, body: `{"code":"CONFLICT"}`, next: 409, calls: 4, wantError: true},
+		{name: "unrelated conflict", first: 409, body: `{"code":"OTHER"}`, calls: 1, wantError: true},
+		{name: "malformed conflict", first: 409, body: `{`, calls: 1, wantError: true},
+		{name: "forbidden", first: 403, body: `{"code":"CONFLICT"}`, calls: 1, wantError: true},
+		{name: "canceled backoff", first: 409, body: `{"code":"CONFLICT"}`, calls: 1, cancel: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			calls := 0
+			var correlationID string
+			api := NewAPIClientWithAuth("token")
+			api.BaseURL = "http://breakglass.test"
+			api.HTTPClient = &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				require.Equal(t, http.MethodPost, r.Method)
+				require.Equal(t, debugSessionsBasePath+"/session/terminate", r.URL.Path)
+				if calls == 1 {
+					correlationID = r.Header.Get(CorrelationIDHeader)
+					require.NotEmpty(t, correlationID)
+				}
+				require.Equal(t, correlationID, r.Header.Get(CorrelationIDHeader))
+				if test.cancel {
+					cancel()
+				}
+				status := test.first
+				if calls > 1 {
+					status = test.next
+				}
+				return testResponse(status, test.body), nil
+			})}
+			err := api.TerminateDebugSession(ctx, nil, "session")
+			if test.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			if test.cancel {
+				require.ErrorIs(t, err, context.Canceled)
+			}
+			require.Equal(t, test.calls, calls)
+		})
+	}
+}
+
 func TestAPIClientListSessionsDecodesItemsEnvelope(t *testing.T) {
 	var requestPath string
 	client := NewAPIClientWithAuth("token")

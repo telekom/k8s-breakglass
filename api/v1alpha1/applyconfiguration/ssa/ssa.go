@@ -189,7 +189,7 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 		result.WithReasonEnded(status.ReasonEnded)
 	}
 
-	// NOTE: LastActivity and ActivityCount are intentionally NOT included here.
+	// NOTE: BreakglassSession LastActivity and ActivityCount are intentionally NOT included here.
 	// These fields are managed exclusively by the activity tracker
 	// (see pkg/webhook/activity_tracker.go) via status merge-patch and must
 	// not be set by the main controller to avoid conflicting updates.
@@ -198,12 +198,25 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 }
 
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
+// Unlike BreakglassSession activity, DebugSession activity is included: callers
+// must use the shared live-read status writers to preserve monotonic updates.
 func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
 	}
 
 	result := ac.DebugSessionStatus()
+	if status.ConnectionLease != nil {
+		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
+	}
+
+	if status.LastActivity != nil {
+		result.WithLastActivity(*status.LastActivity)
+	}
+	result.WithActivityCount(status.ActivityCount)
+	if status.RetainedUntil != nil {
+		result.WithRetainedUntil(*status.RetainedUntil)
+	}
 
 	// Set observedGeneration for kstatus compliance
 	if status.ObservedGeneration > 0 {
@@ -309,6 +322,21 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 
 	return result
+}
+
+func DebugSessionConnectionLeaseFrom(lease *breakglassv1alpha1.DebugSessionConnectionLease) *ac.DebugSessionConnectionLeaseApplyConfiguration {
+	if lease == nil {
+		return nil
+	}
+	return ac.DebugSessionConnectionLease().
+		WithNamespace(lease.Namespace).
+		WithName(lease.Name).
+		WithUID(lease.UID).
+		WithHolderUID(lease.HolderUID).
+		WithTargetUID(lease.TargetUID).
+		WithProfileDigest(lease.ProfileDigest).
+		WithEpoch(lease.Epoch).
+		WithExpiresAt(lease.ExpiresAt)
 }
 
 // BreakglassEscalationStatusFrom converts a BreakglassEscalationStatus to its ApplyConfiguration.
@@ -915,6 +943,9 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	}
 
 	result := ac.DebugSessionTemplateSpec()
+	if t.ArtifactCollection != nil {
+		result.WithArtifactCollection(ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...))
+	}
 
 	if t.DisplayName != "" {
 		result.WithDisplayName(t.DisplayName)
@@ -1254,6 +1285,13 @@ func DebugSessionConstraintsFrom(c *breakglassv1alpha1.DebugSessionConstraints) 
 		return nil
 	}
 	result := ac.DebugSessionConstraints()
+	if c.IdleTimeout != "" {
+		result.WithIdleTimeout(c.IdleTimeout)
+	}
+	if c.RetainFor != "" {
+		result.WithRetainFor(c.RetainFor)
+	}
+
 	if c.MaxDuration != "" {
 		result.WithMaxDuration(c.MaxDuration)
 	}

@@ -689,6 +689,11 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 	createdAt := "2026-06-27T18:00:00Z"
 	deletedAt := "2026-06-27T18:02:00Z"
 	status := &breakglassv1alpha1.DebugSessionStatus{
+		ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{
+			Namespace: "hub", Name: "lease", UID: "lease-uid",
+			HolderUID: "session-uid", TargetUID: "cluster-uid", ProfileDigest: "digest", Epoch: 3,
+			ExpiresAt: metav1.Now(),
+		},
 		AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{
 			Exec:        &execAllowed,
 			Attach:      &attachAllowed,
@@ -738,6 +743,10 @@ func TestDebugSessionStatusFromPreservesAuthorizationAndResourceFields(t *testin
 
 	result := DebugSessionStatusFrom(status)
 	require.NotNil(t, result)
+	require.NotNil(t, result.ConnectionLease)
+	assert.Equal(t, "lease", *result.ConnectionLease.Name)
+	assert.Equal(t, int64(3), *result.ConnectionLease.Epoch)
+	assert.Equal(t, "digest", *result.ConnectionLease.ProfileDigest)
 
 	require.NotNil(t, result.AllowedPodOperations)
 	assert.Equal(t, &execAllowed, result.AllowedPodOperations.Exec)
