@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ import (
 )
 
 func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
-	for _, phase := range []string{"intent", "outcome"} {
+	for _, phase := range []string{"intent", "outcome", "warn-intent", "warn-outcome"} {
 		t.Run(phase, func(t *testing.T) {
 			ctx := context.Background()
 			c, ds, template, target := newDeploymentFenceFixture(t)
@@ -30,6 +31,9 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 				Name: "security", Category: "security", CreateBefore: true, DeleteAfter: true,
 				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: security-precondition\n",
 			}}
+			if strings.HasPrefix(phase, "warn-") {
+				template.Spec.AuxiliaryResources[0].FailurePolicy = breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn
+			}
 			require.NoError(t, c.client.Update(ctx, template))
 			// Another replica writes unrelated activity between activation's status write
 			// and persistence of the pre-apply auxiliary intent.
@@ -41,7 +45,7 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 				current.Status.ActivityCount++
 				require.NoError(t, c.client.Status().Update(ctx, current))
 			}
-			if phase == "intent" {
+			if strings.HasSuffix(phase, "intent") {
 				c.beforeDebugTargetWrite = func(string) {
 					if !injected {
 						advance()

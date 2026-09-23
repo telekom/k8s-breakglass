@@ -177,6 +177,11 @@ func (m *AuxiliaryResourceManager) deployAuxiliaryResources(
 		statuses = append(statuses, status)
 
 		if err != nil {
+			// A hub status conflict is not an optional target-resource failure.
+			// Retry from fresh persisted intent before any further target writes.
+			if isDebugSessionStatusConflict(err) {
+				return statuses, err
+			}
 			failurePolicy := effectiveAuxiliaryResourceFailurePolicy(auxRes)
 			logAuxiliaryResourceDeployFailure(log, auxRes, failurePolicy, err)
 			deployErrors = append(deployErrors, err)

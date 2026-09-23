@@ -243,3 +243,34 @@ func TestAuxiliaryRecoveryRejectsRecreatedUID(t *testing.T) {
 	err := applyOrRecoverAuxiliaryResource(ctx, target, desired, session, "external")
 	require.ErrorContains(t, err, "UID does not match")
 }
+
+func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	writes := 0
+	target := fake.NewClientBuilder().WithScheme(scheme).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			writes++
+			obj.SetUID("fixture-uid")
+			return c.Create(ctx, obj, opts...)
+		},
+	}).Build()
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "warn-session", UID: "warn-session-uid"}}
+	template := &breakglassv1alpha1.DebugSessionTemplateSpec{RequiredAuxiliaryResourceCategories: []string{"security"}}
+	for _, name := range []string{"first", "second"} {
+		template.AuxiliaryResources = append(template.AuxiliaryResources, breakglassv1alpha1.AuxiliaryResource{Name: name, Category: "security", CreateBefore: true, DeleteAfter: true, FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn, TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: " + name + "\n"})
+	}
+	persists := 0
+	_, err := newTestAuxiliaryResourceManager().DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, session, template, nil, target, "target", true, nil, func(breakglassv1alpha1.AuxiliaryResourceStatus) error {
+		persists++
+		if persists == 1 {
+			return &debugSessionStatusConflict{err: apierrors.NewConflict(schema.GroupResource{Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions"}, session.Name, nil)}
+		}
+		return nil
+	})
+	require.True(t, isDebugSessionStatusConflict(err), "expected dedicated retry conflict, got %v", err)
+	require.Equal(t, 1, persists)
+	require.Zero(t, writes, "must stop before the next auxiliary writes to the target")
+}
