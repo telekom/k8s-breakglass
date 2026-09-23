@@ -217,11 +217,11 @@ type ArtifactResourceReference struct {
 	// +required
 	Name string `json:"name"`
 	// uid is the exact UID observed after creation.
-	// +required
-	UID string `json:"uid"`
+	// +optional
+	UID string `json:"uid,omitempty"`
 	// resourceVersion is the version observed after creation.
-	// +required
-	ResourceVersion string `json:"resourceVersion"`
+	// +optional
+	ResourceVersion string `json:"resourceVersion,omitempty"`
 	// operationID is the persisted create intent marker used for recovery.
 	// +required
 	OperationID string `json:"operationID"`

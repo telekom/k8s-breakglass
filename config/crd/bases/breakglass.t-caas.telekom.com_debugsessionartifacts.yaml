@@ -518,8 +518,6 @@ spec:
                   - name
                   - namespace
                   - operationID
-                  - resourceVersion
-                  - uid
                   type: object
                 maxItems: 2
                 type: array

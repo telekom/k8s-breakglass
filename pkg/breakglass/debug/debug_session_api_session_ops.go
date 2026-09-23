@@ -270,6 +270,14 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	if c.connectionLeases != nil {
 		if err := c.connectionLeases.RenewSession(apiCtx, session, newExpiry.Time); err != nil {
 			reqLog.Warnw("Renewal committed; connection lease convergence will retry", "session", name, "error", err)
+		} else if session.Status.ConnectionLease != nil {
+			if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				if status.ConnectionLease != nil {
+					status.ConnectionLease.ExpiresAt = metav1.NewTime(newExpiry.Time)
+				}
+			}); err != nil {
+				reqLog.Warnw("Renewal committed; connection lease expiry status convergence will retry", "session", name, "error", err)
+			}
 		}
 	}
 
