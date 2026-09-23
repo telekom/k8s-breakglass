@@ -242,6 +242,11 @@ categories; concrete PolicyExceptions exist only for the session lifetime.
 Scope each exception to administrator-selected policy rules, the exact target
 namespace, and the controller-owned
 `breakglass.telekom.com/debug-session: {{ .session.name }}` pod label.
+Keep the exception object's `metadata.namespace` distinct from the namespaces
+in its `spec.match` resource selectors: the former scopes where the
+namespaced exception is installed, while the latter scopes which workload
+namespaces it may match. Set both explicitly to the intended target namespace
+and do not rely on object placement alone for workload scoping.
 Configure the target cluster's Kyverno exception namespace and grant the
 Breakglass spoke identity only the necessary exception resource permissions.
 Use the API group/version matching the installed policy engine: legacy
