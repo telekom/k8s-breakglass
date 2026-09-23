@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -1029,6 +1030,11 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	// All allow-side effects are deliberately after the final live fence and
 	// response. This includes audit/impersonation accounting and idle activity.
 	wc.noteImpersonationOutcome(s)
+	if s.allowed && s.allowSource == "debug-session" && wc.activityTracker != nil {
+		// The live fence above verified this exact UID. Record activity only
+		// after it passes so rejected or replaced sessions cannot be refreshed.
+		wc.activityTracker.RecordActivity(s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID), time.Now())
+	}
 	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
 		// If the first SAR winner expired during the request, attribute activity
 		// to the first candidate that survived the final live fence instead.
