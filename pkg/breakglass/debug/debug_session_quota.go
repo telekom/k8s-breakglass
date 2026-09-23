@@ -36,6 +36,25 @@ func (c *DebugSessionController) WithQuotaNamespace(namespace string) *DebugSess
 	}
 	return c
 }
+
+func listAllDebugQuotaPages(ctx context.Context, reader ctrlclient.Reader, newPage func() ctrlclient.ObjectList, appendPage func(ctrlclient.ObjectList)) error {
+	var continuation string
+	for {
+		page := newPage()
+		var opts []ctrlclient.ListOption
+		if continuation != "" {
+			opts = append(opts, ctrlclient.Continue(continuation))
+		}
+		if err := reader.List(ctx, page, opts...); err != nil {
+			return err
+		}
+		appendPage(page)
+		continuation = page.GetContinue()
+		if continuation == "" {
+			return nil
+		}
+	}
+}
 func (c *DebugSessionAPIController) WithQuotaNamespace(namespace string) *DebugSessionAPIController {
 	c.quotaNamespace = namespace
 	c.quotaEnabled = true
@@ -154,32 +173,44 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 	}
 	err = (quotas.Store{Client: c.client, Reader: reader, Namespace: c.quotaNamespace}).Reserve(ctx, entry, limits,
 		func(ctx context.Context, reserved map[string]quotas.Entry) ([]quotas.Entry, error) {
-			list := &breakglassv1alpha1.DebugSessionList{}
-			if err := reader.List(ctx, list); err != nil {
+			var sessions []breakglassv1alpha1.DebugSession
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionList{} }, func(page ctrlclient.ObjectList) {
+				sessions = append(sessions, page.(*breakglassv1alpha1.DebugSessionList).Items...)
+			}); err != nil {
 				return nil, err
 			}
-			templates := &breakglassv1alpha1.DebugSessionTemplateList{}
-			bindings := &breakglassv1alpha1.DebugSessionClusterBindingList{}
-			clusters := &breakglassv1alpha1.ClusterConfigList{}
-			for _, policyList := range []ctrlclient.ObjectList{templates, bindings, clusters} {
-				if err := reader.List(ctx, policyList); err != nil {
-					return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
-				}
+			var templateItems []breakglassv1alpha1.DebugSessionTemplate
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionTemplateList{} }, func(page ctrlclient.ObjectList) {
+				templateItems = append(templateItems, page.(*breakglassv1alpha1.DebugSessionTemplateList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
+			}
+			var bindingItems []breakglassv1alpha1.DebugSessionClusterBinding
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.DebugSessionClusterBindingList{} }, func(page ctrlclient.ObjectList) {
+				bindingItems = append(bindingItems, page.(*breakglassv1alpha1.DebugSessionClusterBindingList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
+			}
+			var clusterItems []breakglassv1alpha1.ClusterConfig
+			if err := listAllDebugQuotaPages(ctx, reader, func() ctrlclient.ObjectList { return &breakglassv1alpha1.ClusterConfigList{} }, func(page ctrlclient.ObjectList) {
+				clusterItems = append(clusterItems, page.(*breakglassv1alpha1.ClusterConfigList).Items...)
+			}); err != nil {
+				return nil, fmt.Errorf("list debug quota bootstrap policy: %w", err)
 			}
 			templatesByName := make(map[string]*breakglassv1alpha1.DebugSessionTemplate)
-			for i := range templates.Items {
-				template := &templates.Items[i]
+			for i := range templateItems {
+				template := &templateItems[i]
 				templatesByName[template.Name] = template
 			}
 			bindingsByKey := make(map[ctrlclient.ObjectKey]*breakglassv1alpha1.DebugSessionClusterBinding)
-			for i := range bindings.Items {
-				binding := &bindings.Items[i]
+			for i := range bindingItems {
+				binding := &bindingItems[i]
 				bindingsByKey[ctrlclient.ObjectKeyFromObject(binding)] = binding
 			}
 			discoveredBindings := make(map[[2]string]*breakglassv1alpha1.DebugSessionClusterBinding)
 			var entries []quotas.Entry
-			for i := range list.Items {
-				item := &list.Items[i]
+			for i := range sessions {
+				item := &sessions[i]
 				if _, exists := reserved[string(item.UID)]; exists {
 					continue
 				}
@@ -206,7 +237,7 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 					binding, found = discoveredBindings[key]
 					if !found {
 						var err error
-						binding, err = utils.SelectDebugSessionBinding(template, item.Spec.Cluster, bindings.Items, clusters.Items)
+						binding, err = utils.SelectDebugSessionBinding(template, item.Spec.Cluster, bindingItems, clusterItems)
 						if err != nil {
 							return nil, fmt.Errorf("read quota binding: %w", err)
 						}

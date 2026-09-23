@@ -2990,6 +2990,7 @@ func TestPodCopyPostCreateFenceRollsBackBeforeStatusPatch(t *testing.T) {
 				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator"},
 				Status: breakglassv1alpha1.DebugSessionStatus{
 					State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, LastActivity: &activity,
+					Participants: []breakglassv1alpha1.DebugSessionParticipant{{User: "operator", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 						Mode:         breakglassv1alpha1.DebugSessionModeKubectlDebug,
 						Constraints:  &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"},
@@ -3028,7 +3029,7 @@ func TestPodCopyPostCreateFenceRollsBackBeforeStatusPatch(t *testing.T) {
 				}
 				return hub.Status().Update(ctx, live)
 			}}).Build()
-			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}}).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 			pod, err := handler.CreatePodCopy(t.Context(), session, "production", "app", "", "operator")
 			require.ErrorContains(t, err, "pod copy was created after the session fence changed")
 			require.Nil(t, pod)

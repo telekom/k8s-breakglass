@@ -917,7 +917,7 @@ func TestSendAuthorizationResponsePersistsIdleDebugActivity(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive, StartsAt: &starts, ExpiresAt: &future,
 			AllowedPods:      []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
-			Participants:     []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
+			Participants:     []breakglassv1alpha1.DebugSessionParticipant{{User: "user", IdentityProviderName: "issuer-idp", IdentityProviderIssuer: "https://issuer.example", Role: breakglassv1alpha1.ParticipantRoleParticipant}},
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "5m"}},
 		},
 	}
@@ -926,7 +926,7 @@ func TestSendAuthorizationResponsePersistsIdleDebugActivity(t *testing.T) {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
 	}}
 	state := &authorizeState{
-		ctx: context.Background(), issuer: "https://issuer.example", clusterName: "cluster", allowed: true, allowSource: "debug-session",
+		ctx: context.Background(), issuer: "https://issuer.example", idpName: "issuer-idp", idpLookupOK: true, clusterName: "cluster", allowed: true, allowSource: "debug-session",
 		debugSessionNamespace: ds.Namespace, debugSessionName: ds.Name, debugSessionUID: string(ds.UID), reqLog: zap.NewNop().Sugar(),
 		debugSessionCandidate: ds.DeepCopy(),
 		sar:                   authorization.SubjectAccessReview{Spec: authorization.SubjectAccessReviewSpec{User: "user", ResourceAttributes: &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}},
