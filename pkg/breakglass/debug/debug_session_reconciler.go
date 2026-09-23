@@ -909,20 +909,13 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if slash := strings.LastIndexByte(clusterLookup, '/'); slash >= 0 {
 		clusterLookup = clusterLookup[slash+1:]
 	}
-	if clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterLookup); ambiguity != debugClusterConfigAmbiguityNone {
+	clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterLookup)
+	if ambiguity != debugClusterConfigAmbiguityNone {
 		return c.failSession(ctx, ds, "cluster configuration is ambiguous; activation denied")
 	} else if clusterConfig == nil {
 		return c.failSession(ctx, ds, "cluster configuration is missing; activation denied")
 	} else if !isDebugClusterConfigReady(clusterConfig) {
 		return c.failSession(ctx, ds, "cluster configuration is not Ready; activation denied")
-	} else if binding != nil && binding.Spec.ClusterSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err != nil || selector.Empty() || !selector.Matches(labels.Set(clusterConfig.Labels)) {
-			return c.failSession(ctx, ds, "binding cluster selector no longer grants access; recreate this session")
-		}
-	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
-		!directTemplateAllowsCluster(template, clusterLookup, clusterConfig) {
-		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if ds.Status.ResolvedTemplate != nil {
 		approvedTemplate := template.DeepCopy()
@@ -950,6 +943,17 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return ctrl.Result{}, fmt.Errorf("decode approved binding snapshot: %w", err)
 		}
 		binding = approvedBinding
+	}
+	// Recheck selectors from the approved snapshots. Live objects above are
+	// lookup inputs and may have changed since approval.
+	if binding != nil && binding.Spec.ClusterSelector != nil {
+		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
+		if err != nil || selector.Empty() || !selector.Matches(labels.Set(clusterConfig.Labels)) {
+			return c.failSession(ctx, ds, "binding cluster selector no longer grants access; recreate this session")
+		}
+	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
+		!directTemplateAllowsCluster(template, clusterLookup, clusterConfig) {
+		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if binding != nil {
 		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(ds.Status.ResolvedTemplateVariablePolicy, binding.Spec.ExtraDeployVariables)
