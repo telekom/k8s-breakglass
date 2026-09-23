@@ -808,7 +808,7 @@ func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
 	for _, ref := range status.DeployedResources {
-		if !utils.DebugSessionResourceIntentionallyRetained(session, ref) && (ref.UID != "" || ref.CreateOperationID == "") {
+		if !utils.DebugSessionResourceIntentionallyRetained(session, ref) && !utils.DebugSessionAuxiliaryResourceDeleted(session, ref) && (ref.UID != "" || ref.CreateOperationID == "") {
 			return true
 		}
 	}

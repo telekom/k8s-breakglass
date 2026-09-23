@@ -340,6 +340,20 @@ func TestCleanupUnknownDeployedIntentNeverQueriesTarget(t *testing.T) {
 	require.ErrorContains(t, manager.deleteResource(context.Background(), nil, breakglassv1alpha1.AuxiliaryResourceStatus{Created: true, CreateOperationID: "pending"}, session), "unresolved")
 }
 
+func TestCleanupConfirmedDeletedAuxiliaryDoesNotQueryTarget(t *testing.T) {
+	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "removed", UID: "removed-uid", Source: "auxiliary:removed"}
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
+		DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref},
+		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+			Name: "removed", APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID, Deleted: true,
+		}},
+	}}
+	controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	require.False(t, cleanupNeedsTargetCluster(session))
+	require.NoError(t, controller.cleanupDeployedResources(context.Background(), session, nil, false, false))
+	require.Empty(t, session.Status.DeployedResources)
+}
+
 func TestCleanupTransitionUsesSuccessfullyPersistedLiveCondition(t *testing.T) {
 	live := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "transition", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "previous failure"}}}}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(live).WithStatusSubresource(live).Build()
