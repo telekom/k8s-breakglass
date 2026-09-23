@@ -1033,7 +1033,7 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	if s.allowed && s.allowSource == "debug-session" && wc.activityTracker != nil {
 		// The live fence above verified this exact UID. Record activity only
 		// after it passes so rejected or replaced sessions cannot be refreshed.
-		wc.activityTracker.RecordActivity(s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID), time.Now())
+		wc.activityTracker.RecordDebugSessionActivity(s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID), time.Now())
 	}
 	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
 		// If the first SAR winner expired during the request, attribute activity

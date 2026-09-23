@@ -87,6 +87,28 @@ func TestActivityTracker_RecordActivity(t *testing.T) {
 	})
 }
 
+func TestActivityTracker_FlushesDebugSessionActivity(t *testing.T) {
+	scheme := newTestActivityScheme()
+	expires := metav1.NewTime(time.Now().Add(time.Hour))
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-activity", Namespace: "breakglass", UID: "debug-uid"},
+		Status:     breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	tracker := NewActivityTracker(fakeClient, WithFlushInterval(time.Hour), WithActivityLogger(zap.NewNop().Sugar()))
+	defer tracker.Stop(context.Background())
+
+	seen := time.Now().Add(-time.Second)
+	tracker.RecordDebugSessionActivity("breakglass", "debug-activity", session.UID, seen)
+	tracker.flush(context.Background())
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), &updated))
+	require.NotNil(t, updated.Status.LastActivity)
+	assert.Equal(t, seen.Unix(), updated.Status.LastActivity.Unix())
+	assert.Equal(t, int64(1), updated.Status.ActivityCount)
+}
+
 func TestActivityTracker_Flush(t *testing.T) {
 	scheme := newTestActivityScheme()
 

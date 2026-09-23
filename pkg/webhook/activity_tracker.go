@@ -52,7 +52,8 @@ type activityEntry struct {
 	name      string
 	// uid is the Kubernetes UID of the session at recording time.
 	// Used to detect session identity changes (delete+recreate with same name).
-	uid types.UID
+	uid          types.UID
+	debugSession bool
 	// lastSeen is the most recent activity time
 	lastSeen time.Time
 	// count is the number of requests since last flush
@@ -142,6 +143,15 @@ func NewActivityTracker(c client.Client, opts ...ActivityTrackerOption) *Activit
 // If the tracker has reached maxEntries, new sessions are silently dropped
 // to prevent unbounded memory growth.
 func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID, ts time.Time) {
+	at.recordActivity(namespace, name, uid, ts, false)
+}
+
+// RecordDebugSessionActivity buffers activity for an active DebugSession.
+func (at *ActivityTracker) RecordDebugSessionActivity(namespace, name string, uid types.UID, ts time.Time) {
+	at.recordActivity(namespace, name, uid, ts, true)
+}
+
+func (at *ActivityTracker) recordActivity(namespace, name string, uid types.UID, ts time.Time, debugSession bool) {
 	key := types.NamespacedName{Namespace: namespace, Name: name}
 
 	at.mu.Lock()
@@ -171,11 +181,12 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID,
 			metrics.SessionActivityDropped.Inc()
 		}
 		at.entries[key] = &activityEntry{
-			namespace: namespace,
-			name:      name,
-			uid:       uid,
-			lastSeen:  ts,
-			count:     1,
+			namespace:    namespace,
+			name:         name,
+			uid:          uid,
+			debugSession: debugSession,
+			lastSeen:     ts,
+			count:        1,
 		}
 		metrics.SessionActivityBufferSize.Set(float64(len(at.entries)))
 		return
@@ -185,6 +196,7 @@ func (at *ActivityTracker) RecordActivity(namespace, name string, uid types.UID,
 	// with the same name. Reset the entry to avoid cross-contamination.
 	if entry.uid != uid {
 		entry.uid = uid
+		entry.debugSession = debugSession
 		entry.count = 1
 		entry.lastSeen = ts
 		entry.retries = 0
@@ -288,7 +300,13 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 	// (tens, not thousands), the sequential approach is sufficient.
 	var failed []*activityEntry
 	for key, entry := range entries {
-		if err := at.updateSessionActivity(ctx, key, entry); err != nil {
+		var err error
+		if entry.debugSession {
+			err = at.updateDebugSessionActivity(ctx, key, entry)
+		} else {
+			err = at.updateSessionActivity(ctx, key, entry)
+		}
+		if err != nil {
 			at.log.Warnw("Failed to update session activity",
 				"session", key.String(),
 				"error", err,
@@ -318,6 +336,8 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 					existing.lastSeen = entry.lastSeen
 				}
 				existing.count += entry.count
+				existing.debugSession = entry.debugSession
+				existing.uid = entry.uid
 				// Keep the higher retry count
 				if entry.retries > existing.retries {
 					existing.retries = entry.retries
@@ -332,6 +352,31 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 
 	at.log.Debugw("Flushed session activity", "sessions", len(entries), "requeued", len(failed))
 	metrics.SessionActivityFlushes.Inc()
+}
+
+func (at *ActivityTracker) updateDebugSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
+	reader := at.getReader()
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var session breakglassv1alpha1.DebugSession
+		if err := reader.Get(ctx, key, &session); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.uid != "" && session.UID != entry.uid {
+			return nil
+		}
+		if session.Status.State != breakglassv1alpha1.DebugSessionStateActive {
+			return nil
+		}
+		base := session.DeepCopy()
+		if session.Status.LastActivity == nil || session.Status.LastActivity.Time.Before(entry.lastSeen) {
+			session.Status.LastActivity = &metav1.Time{Time: entry.lastSeen}
+		}
+		session.Status.ActivityCount += entry.count
+		return at.client.Status().Patch(ctx, &session, client.MergeFrom(base))
+	})
 }
 
 // updateSessionActivity applies the buffered activity data to a session's status
