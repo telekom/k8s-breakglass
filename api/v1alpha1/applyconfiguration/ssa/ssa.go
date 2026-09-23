@@ -86,6 +86,9 @@ func mergeDebugSessionActivityAndRetention(ctx context.Context, c client.Client,
 	if err := c.Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
 		return fmt.Errorf("failed to get object for status update (live debug session): %w", err)
 	}
+	if session.UID != "" && session.UID != current.UID {
+		return fmt.Errorf("debug session UID changed: expected %q, got %q", session.UID, current.UID)
+	}
 	if session.ResourceVersion == "" {
 		session.ResourceVersion = current.ResourceVersion
 	}

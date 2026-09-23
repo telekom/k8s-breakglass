@@ -33,7 +33,6 @@ import (
 	authorization "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -863,11 +862,9 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 		},
 	}
 	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(ds).Build()
-	tracker := NewActivityTracker(cli, WithFlushInterval(time.Hour))
-	defer tracker.Stop(context.Background())
 	wc := &WebhookController{log: zap.NewNop().Sugar(), sesManager: breakglass.NewSessionManagerWithClient(cli), podFetchFn: func(context.Context, string, string, string) (*corev1.Pod, error) {
 		return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{UID: "pod-uid"}}, nil
-	}, activityTracker: tracker}
+	}}
 	ra := &authorization.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}
 
 	state := &authorizeState{
@@ -880,12 +877,6 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 	wc.sendAuthorizationResponse(c, state)
 	require.True(t, state.allowed)
 	require.Equal(t, float64(1), testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues("cluster", "allowed", "debug-session")))
-	tracker.mu.Lock()
-	entry, recorded := tracker.entries[types.NamespacedName{Namespace: ds.Namespace, Name: ds.Name}]
-	tracker.mu.Unlock()
-	require.True(t, recorded, "an allowed debug-session request records activity")
-	require.Equal(t, ds.UID, entry.uid)
-	require.Equal(t, int64(1), entry.count)
 
 	current := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(ds), current))
@@ -900,6 +891,30 @@ func TestSendAuthorizationResponse_DebugSessionMetricFollowsFinalFence(t *testin
 	require.False(t, state.allowed)
 	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.WebhookSARDecisions.WithLabelValues("cluster", "allowed", "debug-session")),
 		"a debug-session allow metric must not be emitted before the final live fence")
+}
+
+func TestRecordDebugSessionActivityPersistsIdleActivity(t *testing.T) {
+	expires := metav1.NewTime(time.Now().Add(time.Hour))
+	starts := metav1.NewTime(time.Now())
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "durable-debug", Namespace: "default", UID: "durable-uid"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			StartsAt:  &starts,
+			ExpiresAt: &expires,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Constraints: &breakglassv1alpha1.DebugSessionConstraints{
+				IdleTimeout: "5m",
+			}},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+	wc := &WebhookController{sesManager: breakglass.NewSessionManagerWithClient(cli)}
+	require.NoError(t, wc.recordDebugSessionActivity(context.Background(), session.Namespace, session.Name, session.UID))
+
+	var updated breakglassv1alpha1.DebugSession
+	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(session), &updated))
+	assert.Equal(t, int64(1), updated.Status.ActivityCount)
+	assert.NotNil(t, updated.Status.LastActivity)
 }
 
 // Test that processing a SAR emits an Info log with a structured `action` field

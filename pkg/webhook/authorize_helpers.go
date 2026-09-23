@@ -15,8 +15,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	authorizationv1 "k8s.io/api/authorization/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -1008,6 +1011,13 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 			s.allowedSession = &s.allowedSessions[0]
 		}
 	}
+	if s.allowed && s.allowSource == "debug-session" {
+		if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
+			s.allowed = false
+			s.allowSource = ""
+			s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
+		}
+	}
 
 	response := SubjectAccessReviewResponse{
 		ApiVersion: s.sar.APIVersion,
@@ -1030,11 +1040,6 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	// All allow-side effects are deliberately after the final live fence and
 	// response. This includes audit/impersonation accounting and idle activity.
 	wc.noteImpersonationOutcome(s)
-	if s.allowed && s.allowSource == "debug-session" && wc.activityTracker != nil {
-		// The live fence above verified this exact UID. Record activity only
-		// after it passes so rejected or replaced sessions cannot be refreshed.
-		wc.activityTracker.RecordDebugSessionActivity(s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID), time.Now())
-	}
 	if s.allowed && s.allowSource == "session" && s.sessionActivityName != "" {
 		// If the first SAR winner expired during the request, attribute activity
 		// to the first candidate that survived the final live fence instead.
@@ -1158,4 +1163,36 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		Observe(time.Since(s.startTime).Seconds())
 
 	s.reqLog.Debug("Authorization handler completed successfully")
+}
+
+// recordDebugSessionActivity durably advances the idle clock after the final
+// authorization fence. DebugSession activity cannot use the optional buffered
+// BreakglassSession tracker because expiry is a security deadline.
+func (wc *WebhookController) recordDebugSessionActivity(ctx context.Context, namespace, name string, uid types.UID) error {
+	if wc.sesManager == nil || uid == "" {
+		return fmt.Errorf("debug session activity writer is unavailable")
+	}
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var session breakglassv1alpha1.DebugSession
+		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &session); err != nil {
+			return err
+		}
+		if session.UID != uid {
+			return fmt.Errorf("debug session UID changed")
+		}
+		if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Constraints == nil || session.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
+			return nil
+		}
+		now := time.Now()
+		if session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&session, now) {
+			return fmt.Errorf("debug session is no longer active")
+		}
+		base := session.DeepCopy()
+		session.Status.ActivityCount++
+		nowMeta := metav1.NewTime(now)
+		if session.Status.LastActivity == nil || session.Status.LastActivity.Before(&nowMeta) {
+			session.Status.LastActivity = &nowMeta
+		}
+		return wc.sesManager.Status().Patch(ctx, &session, client.MergeFrom(base))
+	})
 }
