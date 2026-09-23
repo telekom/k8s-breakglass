@@ -1219,7 +1219,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		}
 		allErrs = append(allErrs, validateKubectlDebugOperations(oldOperations, newOperations)...)
 	}
-	if oldObj.Status.ResolvedTemplate != nil && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
+	if HasAnyResolvedSnapshot(oldObj.Status) && !reflect.DeepEqual(oldObj.Status.ResolvedTemplate, newObj.Status.ResolvedTemplate) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplate"), newObj.Status.ResolvedTemplate,
 			"resolvedTemplate is immutable once persisted"))
 	}
@@ -1232,12 +1232,12 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateIdentityCaptured"),
 			newObj.Status.ResolvedTemplateIdentityCaptured, "resolved template identity capture is immutable once the resolved template is persisted"))
 	}
-	if oldObj.Status.AuthenticatedUserGroupsCaptured &&
+	if (oldObj.Status.AuthenticatedUserGroupsCaptured || oldObj.Status.AuthenticatedUserGroups != nil) &&
 		!reflect.DeepEqual(oldObj.Status.AuthenticatedUserGroups, newObj.Status.AuthenticatedUserGroups) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroups"), newObj.Status.AuthenticatedUserGroups,
 			"authenticated user group provenance is immutable once captured"))
 	}
-	if oldObj.Status.AuthenticatedUserGroupsCaptured && !newObj.Status.AuthenticatedUserGroupsCaptured {
+	if (oldObj.Status.AuthenticatedUserGroupsCaptured || oldObj.Status.AuthenticatedUserGroups != nil) && !newObj.Status.AuthenticatedUserGroupsCaptured {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroupsCaptured"),
 			newObj.Status.AuthenticatedUserGroupsCaptured, "authenticated user group provenance capture cannot be cleared"))
 	}

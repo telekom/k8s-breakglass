@@ -1020,6 +1020,16 @@ func TestCoerceExtraDeployValues(t *testing.T) {
 			},
 		},
 		{
+			name: "number: large exponent string coerced",
+			values: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`"1e309"`)},
+			},
+			variables: []ExtraDeployVariable{{Name: "count", InputType: InputTypeNumber}},
+			expected: map[string]apiextensionsv1.JSON{
+				"count": {Raw: []byte(`1e309`)},
+			},
+		},
+		{
 			name: "boolean: string true to JSON boolean",
 			values: map[string]apiextensionsv1.JSON{
 				"verbose": {Raw: []byte(`"true"`)},

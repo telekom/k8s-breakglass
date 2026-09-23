@@ -1524,6 +1524,29 @@ func TestDebugSessionValidateUpdateProtectsCapturedGroupProvenance(t *testing.T)
 	}
 }
 
+func TestDebugSessionValidateUpdateProtectsPartialProvenance(t *testing.T) {
+	base := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "requester"},
+		Status: DebugSessionStatus{
+			ResolvedBindingSpec:     &apiextensionsv1.JSON{Raw: []byte(`{"extraDeployVariables":[]}`)},
+			AuthenticatedUserGroups: []string{"trusted"},
+		},
+	}
+	for name, mutate := range map[string]func(*DebugSessionStatus){
+		"template": func(status *DebugSessionStatus) { status.ResolvedTemplate = &DebugSessionTemplateSpec{} },
+		"groups":   func(status *DebugSessionStatus) { status.AuthenticatedUserGroups = []string{"attacker"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			updated := base.DeepCopy()
+			mutate(&updated.Status)
+			if _, err := updated.ValidateUpdate(context.Background(), base, updated); err == nil {
+				t.Fatalf("expected partial provenance mutation to be rejected")
+			}
+		})
+	}
+}
+
 func TestDebugSessionValidateUpdateFreezesTemplateIdentityMarker(t *testing.T) {
 	oldSession := &DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},

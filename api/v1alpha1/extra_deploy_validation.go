@@ -112,7 +112,7 @@ func coerceJSONValue(value apiextensionsv1.JSON, inputType ExtraDeployInputType)
 		// Try parsing as a string-encoded number
 		var strVal string
 		if json.Unmarshal(value.Raw, &strVal) == nil {
-			if _, err := strconv.ParseFloat(strVal, 64); err == nil {
+			if _, err := parseDecimalRat(strVal); err == nil {
 				if raw, err := json.Marshal(json.Number(strVal)); err == nil {
 					return apiextensionsv1.JSON{Raw: raw}
 				}

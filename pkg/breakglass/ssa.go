@@ -155,7 +155,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 	if isTerminalDebugSessionState(oldStatus.State) && newStatus.State != oldStatus.State {
 		return fmt.Errorf("terminal state %q cannot change to %q", oldStatus.State, newStatus.State)
 	}
-	if oldStatus.ResolvedTemplate != nil && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplate, newStatus.ResolvedTemplate) {
+	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplate, newStatus.ResolvedTemplate) {
 		return fmt.Errorf("approved resolved template snapshot is immutable")
 	}
 	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateLabels, newStatus.ResolvedTemplateLabels) {
@@ -165,10 +165,10 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 		oldStatus.ResolvedTemplateIdentityCaptured != newStatus.ResolvedTemplateIdentityCaptured {
 		return fmt.Errorf("approved resolved template identity marker is immutable")
 	}
-	if oldStatus.AuthenticatedUserGroupsCaptured && !apiequality.Semantic.DeepEqual(oldStatus.AuthenticatedUserGroups, newStatus.AuthenticatedUserGroups) {
+	if (oldStatus.AuthenticatedUserGroupsCaptured || oldStatus.AuthenticatedUserGroups != nil) && !apiequality.Semantic.DeepEqual(oldStatus.AuthenticatedUserGroups, newStatus.AuthenticatedUserGroups) {
 		return fmt.Errorf("authenticated group provenance is immutable")
 	}
-	if oldStatus.AuthenticatedUserGroupsCaptured && !newStatus.AuthenticatedUserGroupsCaptured {
+	if (oldStatus.AuthenticatedUserGroupsCaptured || oldStatus.AuthenticatedUserGroups != nil) && !newStatus.AuthenticatedUserGroupsCaptured {
 		return fmt.Errorf("authenticated group provenance capture cannot be cleared")
 	}
 	if breakglassv1alpha1.HasAnyResolvedSnapshot(oldStatus) && !apiequality.Semantic.DeepEqual(oldStatus.ResolvedTemplateVariablePolicy, newStatus.ResolvedTemplateVariablePolicy) && !breakglassv1alpha1.CanInitializeLegacyVariablePolicy(oldStatus, newStatus.ResolvedTemplateVariablePolicy) {
