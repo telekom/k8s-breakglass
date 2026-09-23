@@ -72,12 +72,12 @@ type AuxiliaryResource struct {
 	// Useful for NetworkPolicies that must exist before pods start.
 	// +optional
 	// +kubebuilder:default=true
-	CreateBefore bool `json:"createBefore"`
+	CreateBefore *bool `json:"createBefore,omitempty"`
 
 	// deleteAfter specifies if this resource should be deleted after session ends.
 	// +optional
 	// +kubebuilder:default=true
-	DeleteAfter bool `json:"deleteAfter"`
+	DeleteAfter *bool `json:"deleteAfter,omitempty"`
 
 	// failurePolicy determines behavior if resource creation fails.
 	// +optional

@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	kptr "k8s.io/utils/ptr"
 	"strings"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestActivationRetriesAuxiliaryStatusConflict(t *testing.T) {
 			require.NoError(t, c.client.Status().Update(ctx, ds))
 			template.Spec.RequiredAuxiliaryResourceCategories = []string{"security"}
 			template.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
-				Name: "security", Category: "security", CreateBefore: true, DeleteAfter: true,
+				Name: "security", Category: "security", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true),
 				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: security-precondition\n",
 			}}
 			if strings.HasPrefix(phase, "warn-") {
@@ -101,7 +102,7 @@ func TestActivationRetryPreservesOtherAuxiliaryCleanupEvidence(t *testing.T) {
 	template.Spec.RequiredAuxiliaryResourceCategories = []string{"security"}
 	for _, name := range []string{"first", "second"} {
 		template.Spec.AuxiliaryResources = append(template.Spec.AuxiliaryResources, breakglassv1alpha1.AuxiliaryResource{
-			Name: name, Category: "security", CreateBefore: true, DeleteAfter: true,
+			Name: name, Category: "security", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true),
 			TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: " + name + "\n",
 		})
 	}

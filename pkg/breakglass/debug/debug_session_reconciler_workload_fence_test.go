@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 	"time"
 
@@ -351,7 +352,7 @@ metadata:
 func TestDeployDebugResourcesFencesEveryAuxiliaryDocument(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	template.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
-		Name: "multi-doc", Category: "configuration", CreateBefore: true,
+		Name: "multi-doc", Category: "configuration", CreateBefore: kptr.To(true),
 		TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: second\n",
 	}}
 	ds.Spec.SelectedAuxiliaryResources = []string{"multi-doc"}

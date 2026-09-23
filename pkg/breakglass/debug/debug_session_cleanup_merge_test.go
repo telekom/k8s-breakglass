@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -176,7 +177,7 @@ func TestCleanupStatusPatchRetainsFailureForPreparedKubectlOperation(t *testing.
 
 func TestCleanupStatusResidualsRespectRetentionAndUnresolvedIntents(t *testing.T) {
 	kept := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
-		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
+		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: kptr.To(false)}}},
 		AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
 			Name: "kept", Created: true, UID: "confirmed-kept", APIVersion: "v1", Kind: "ConfigMap", ResourceName: "kept",
 		}},
@@ -200,7 +201,7 @@ func TestCleanupRetainedAuxiliaryResourceSkipsTargetConfig(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "retained", Namespace: "ns", UID: "retained-uid"},
 		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "missing-cluster"},
 		Status: breakglassv1alpha1.DebugSessionStatus{
-			ResolvedTemplate:          &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}},
+			ResolvedTemplate:          &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: kptr.To(false)}}},
 			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, UID: "kept-uid", Kind: "ConfigMap", APIVersion: "v1", Namespace: "ns", ResourceName: "kept"}},
 			DeployedResources:         []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", Kind: "ConfigMap", APIVersion: "v1", Namespace: "ns", Name: "kept", UID: "kept-uid"}},
 			Conditions:                []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "retry"}},
@@ -447,7 +448,7 @@ func TestCleanupPreservesPartialPodTemplateEvidence(t *testing.T) {
 func TestCleanupDeployedAuxiliaryRequiresExactUID(t *testing.T) {
 	for _, source := range []string{"", "auxiliary:kept"} {
 		for _, uid := range []string{"original", "mismatch"} {
-			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "original", Deleted: true}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: uid, Source: source}}}}
+			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: kptr.To(false)}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "original", Deleted: true}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: uid, Source: source}}}}
 			controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
 			err := controller.cleanupDeployedResources(context.Background(), session, nil, false, false)
 			if uid == "original" {
@@ -472,7 +473,7 @@ func TestCleanupStatusExplicitNilBaseline(t *testing.T) {
 func TestCleanupAuxiliaryDeletedShortcutUsesChildUIDAndSource(t *testing.T) {
 	for _, deleted := range []bool{false, true} {
 		for _, source := range []string{"", "auxiliary:bundle", "auxiliary:other"} {
-			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "bundle", DeleteAfter: true}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "bundle", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "child", UID: "original", Deleted: deleted}}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "child", UID: "mismatch", Source: source}}}}
+			session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "bundle", DeleteAfter: kptr.To(true)}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "bundle", AdditionalResources: []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "child", UID: "original", Deleted: deleted}}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "child", UID: "mismatch", Source: source}}}}
 			controller := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
 			require.ErrorContains(t, controller.cleanupDeployedResources(context.Background(), session, nil, false, false), "missing matching auxiliary cleanup status")
 			require.Len(t, session.Status.DeployedResources, 1)

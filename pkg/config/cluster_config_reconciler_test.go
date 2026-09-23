@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 	"time"
 
@@ -1374,7 +1375,7 @@ func TestClusterConfigReconciler_AutoDiscoveredRetentionResolvedBeforeTerminatio
 func TestClusterConfigCleanupUsesRetainedAndUnknownInventory(t *testing.T) {
 	for _, evidence := range []string{"none", "operation", "created only", "name only", "empty child", "pod name only", "blank pod", "uid only", "kind only", "child uid only"} {
 		t.Run(evidence, func(t *testing.T) {
-			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: "kept-uid"}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "kept-uid"}}, PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{Created: true, Deleted: true, UID: "deleted"}}}}
+			session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "cleanup", Namespace: "ns", UID: "uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: kptr.To(false)}}}, DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{Source: "auxiliary:kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "kept", UID: "kept-uid"}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", Created: true, APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", ResourceName: "kept", UID: "kept-uid"}}, PodTemplateResourceStatuses: []breakglassv1alpha1.PodTemplateResourceStatus{{Created: true, Deleted: true, UID: "deleted"}}}}
 			session.Status.DeployedResources = nil
 			switch evidence {
 			case "uid only":

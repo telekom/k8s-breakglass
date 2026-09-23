@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	kptr "k8s.io/utils/ptr"
+
 	"github.com/stretchr/testify/require"
 	apiextensions "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -40,8 +42,8 @@ func TestAuxiliaryLifecycleFlagsSurviveDefaultedSnapshotRoundTrip(t *testing.T) 
 				raw  string
 				want bool
 			}{
-				{"omitted defaults true", `{"name":"policy"}`, true},
-				{"explicit false stays false", `{"name":"policy","createBefore":false,"deleteAfter":false}`, false},
+				{"omitted defaults true", `{"name":"policy","template":null}`, true},
+				{"explicit false stays false", `{"name":"policy","template":null,"createBefore":false,"deleteAfter":false}`, false},
 				{"explicit true stays true", `{"name":"policy","createBefore":true,"deleteAfter":true}`, true},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
@@ -65,4 +67,14 @@ func TestAuxiliaryLifecycleFlagsSurviveDefaultedSnapshotRoundTrip(t *testing.T) 
 			}
 		})
 	}
+}
+
+func TestAuxiliaryLifecycleFlagsTypedPresence(t *testing.T) {
+	omitted, err := json.Marshal(AuxiliaryResource{Name: "policy"})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"name":"policy","template":null}`, string(omitted))
+
+	explicit, err := json.Marshal(AuxiliaryResource{Name: "policy", CreateBefore: kptr.To(false), DeleteAfter: kptr.To(false)})
+	require.NoError(t, err)
+	require.JSONEq(t, `{"name":"policy","template":null,"createBefore":false,"deleteAfter":false}`, string(explicit))
 }

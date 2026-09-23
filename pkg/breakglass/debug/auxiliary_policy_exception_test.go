@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,7 +57,7 @@ func TestPolicyExceptionAuxiliaryLifecycle(t *testing.T) {
 	template := &breakglassv1alpha1.DebugSessionTemplateSpec{
 		RequiredAuxiliaryResourceCategories: []string{"policy-exception"},
 		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{
-			Name: "reviewed-policy", Category: "policy-exception", CreateBefore: true, DeleteAfter: true,
+			Name: "reviewed-policy", Category: "policy-exception", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true),
 			FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
 			TemplateString: `apiVersion: kyverno.io/v2
 kind: PolicyException
@@ -120,7 +121,7 @@ spec:
 	require.Equal(t, "second-reviewed-policy", exceptions[0].(map[string]interface{})["policyName"])
 	// The generic controller inventory removes the exception at session cleanup.
 	session.Status.AuxiliaryResourceStatuses = statuses
-	template.AuxiliaryResources[0].DeleteAfter = false
+	template.AuxiliaryResources[0].DeleteAfter = kptr.To(false)
 	require.NoError(t, mgr.CleanupAuxiliaryResources(ctx, session, target))
 	require.True(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
 	require.True(t, apierrors.IsNotFound(target.Get(ctx, key, obj)))
@@ -291,7 +292,7 @@ func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "warn-session", UID: "warn-session-uid"}}
 	template := &breakglassv1alpha1.DebugSessionTemplateSpec{RequiredAuxiliaryResourceCategories: []string{"security"}}
 	for _, name := range []string{"first", "second"} {
-		template.AuxiliaryResources = append(template.AuxiliaryResources, breakglassv1alpha1.AuxiliaryResource{Name: name, Category: "security", CreateBefore: true, DeleteAfter: true, FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn, TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: " + name + "\n"})
+		template.AuxiliaryResources = append(template.AuxiliaryResources, breakglassv1alpha1.AuxiliaryResource{Name: name, Category: "security", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true), FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn, TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: " + name + "\n"})
 	}
 	persists := 0
 	_, err := newTestAuxiliaryResourceManager().DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, session, template, nil, target, "target", true, nil, func(breakglassv1alpha1.AuxiliaryResourceStatus) error {

@@ -18,6 +18,7 @@ package debug
 
 import (
 	"context"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -409,13 +410,13 @@ func TestDeployAuxiliaryResourcesForPhaseHonorsCreateBefore(t *testing.T) {
 			{
 				Name:           "before-config",
 				Category:       "before",
-				CreateBefore:   true,
+				CreateBefore:   kptr.To(true),
 				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: before-config\n",
 			},
 			{
 				Name:           "after-config",
 				Category:       "after",
-				CreateBefore:   false,
+				CreateBefore:   kptr.To(false),
 				TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: after-config\n",
 			},
 		},
@@ -452,7 +453,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			resource: breakglassv1alpha1.AuxiliaryResource{
 				Name:         "default-fail",
 				Category:     "config",
-				CreateBefore: true,
+				CreateBefore: kptr.To(true),
 			},
 			expectError: true,
 		},
@@ -461,7 +462,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			resource: breakglassv1alpha1.AuxiliaryResource{
 				Name:          "explicit-fail",
 				Category:      "config",
-				CreateBefore:  true,
+				CreateBefore:  kptr.To(true),
 				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
 			},
 			expectError: true,
@@ -471,7 +472,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			resource: breakglassv1alpha1.AuxiliaryResource{
 				Name:          "ignore",
 				Category:      "config",
-				CreateBefore:  true,
+				CreateBefore:  kptr.To(true),
 				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore,
 			},
 		},
@@ -480,7 +481,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			resource: breakglassv1alpha1.AuxiliaryResource{
 				Name:          "warn",
 				Category:      "config",
-				CreateBefore:  true,
+				CreateBefore:  kptr.To(true),
 				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyWarn,
 			},
 		},
@@ -489,7 +490,7 @@ func TestDeployAuxiliaryResources_FailurePolicy(t *testing.T) {
 			resource: breakglassv1alpha1.AuxiliaryResource{
 				Name:          "optional",
 				Category:      "config",
-				CreateBefore:  true,
+				CreateBefore:  kptr.To(true),
 				FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
 				Optional:      true,
 			},
@@ -578,7 +579,7 @@ func TestDeployAuxiliaryResources_ReturnsPartialStatusesOnRequiredFailure(t *tes
 			{
 				Name:         "created-config",
 				Category:     "config",
-				CreateBefore: true,
+				CreateBefore: kptr.To(true),
 				TemplateString: `
 apiVersion: v1
 kind: ConfigMap
@@ -589,7 +590,7 @@ metadata:
 			{
 				Name:         "required-fail",
 				Category:     "config",
-				CreateBefore: true,
+				CreateBefore: kptr.To(true),
 			},
 		},
 		AuxiliaryResourceDefaults: map[string]bool{
@@ -662,7 +663,7 @@ func TestCleanupAuxiliaryResources_RespectsDeleteAfterFalse(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 				AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
-					{Name: "keep-config", DeleteAfter: false},
+					{Name: "keep-config", DeleteAfter: kptr.To(false)},
 				},
 			},
 			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{
@@ -969,7 +970,7 @@ metadata:
   name: "debug-{{ .session.name }}-config"
 data:
   key: value`)},
-		CreateBefore: true,
+		CreateBefore: kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -1045,7 +1046,7 @@ func TestDeployResource_WithTemplateObject(t *testing.T) {
 		Name:         "test-object",
 		Category:     "configmap",
 		Template:     runtime.RawExtension{Object: cm},
-		CreateBefore: true,
+		CreateBefore: kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -1129,7 +1130,7 @@ stringData:
 		Name:           "multi-resource",
 		Category:       "config",
 		TemplateString: multiDocTemplate,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -2160,7 +2161,7 @@ data:
 		Name:           "empty-doc-test",
 		Category:       "config",
 		TemplateString: multiDocWithEmpty,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -2238,7 +2239,7 @@ name: invalid - no indentation
 		Name:           "invalid-doc-test",
 		Category:       "config",
 		TemplateString: invalidSecondDoc,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -2312,7 +2313,7 @@ metadata:
 		Name:           "conditional-test",
 		Category:       "config",
 		TemplateString: conditionalTemplate,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -2391,7 +2392,7 @@ data:
 		Name:           "partial-conditional-test",
 		Category:       "config",
 		TemplateString: conditionalTemplate,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{
@@ -2897,7 +2898,7 @@ stringData:
 		Name:           "multi-kind-test",
 		Category:       "rbac",
 		TemplateString: multiKindTemplate,
-		CreateBefore:   true,
+		CreateBefore:   kptr.To(true),
 	}
 
 	renderCtx := breakglassv1alpha1.AuxiliaryResourceContext{

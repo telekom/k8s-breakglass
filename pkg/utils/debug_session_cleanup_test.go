@@ -4,6 +4,7 @@ package utils
 
 import (
 	"fmt"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 
 func TestDebugSessionResourceIntentionallyRetainedRequiresExactIdentity(t *testing.T) {
 	ref := breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "ns", Name: "evidence", UID: "uid", Source: "auxiliary:kept"}
-	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: false}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID}}}}
+	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: kptr.To(false)}}}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "kept", APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID}}}}
 	require.True(t, DebugSessionResourceIntentionallyRetained(ds, ref))
 	for _, field := range []string{"uid", "source", "kind", "version", "namespace", "name"} {
 		t.Run(field, func(t *testing.T) {
@@ -34,9 +35,9 @@ func TestDebugSessionResourceIntentionallyRetainedRequiresExactIdentity(t *testi
 			require.False(t, DebugSessionResourceIntentionallyRetained(ds, candidate))
 		})
 	}
-	ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = true
+	ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = kptr.To(true)
 	require.False(t, DebugSessionResourceIntentionallyRetained(ds, ref))
-	ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = false
+	ds.Status.ResolvedTemplate.AuxiliaryResources[0].DeleteAfter = kptr.To(false)
 	ds.Status.AuxiliaryResourceStatuses[0].UID = "primary"
 	ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{{APIVersion: ref.APIVersion, Kind: ref.Kind, Namespace: ref.Namespace, ResourceName: ref.Name, UID: ref.UID}}
 	require.True(t, DebugSessionResourceIntentionallyRetained(ds, ref))

@@ -5,6 +5,7 @@ package debug
 import (
 	"context"
 	"errors"
+	kptr "k8s.io/utils/ptr"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -52,7 +53,7 @@ func TestAuxiliaryRejectedCreateRetiresOnlyFreshIntent(t *testing.T) {
 			if tc.child {
 				doc = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: good\n---\n" + doc
 			}
-			template := &breakglassv1alpha1.DebugSessionTemplateSpec{RequiredAuxiliaryResourceCategories: []string{"required"}, AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "fixture", Category: "required", CreateBefore: true, DeleteAfter: true, FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, TemplateString: doc}}}
+			template := &breakglassv1alpha1.DebugSessionTemplateSpec{RequiredAuxiliaryResourceCategories: []string{"required"}, AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "fixture", Category: "required", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true), FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, TemplateString: doc}}}
 			manager := newTestAuxiliaryResourceManager()
 			persist := func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 				if tc.conflict && status.CreateOperationID == "" {

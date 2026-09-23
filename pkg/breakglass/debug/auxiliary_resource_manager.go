@@ -116,7 +116,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhaseWithFence(
 	fence func() error,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, func(auxRes breakglassv1alpha1.AuxiliaryResource) bool {
-		return auxRes.CreateBefore == createBefore
+		return ((auxRes.CreateBefore == nil || *auxRes.CreateBefore) == createBefore)
 	}, fence, nil)
 }
 
@@ -132,7 +132,7 @@ func (m *AuxiliaryResourceManager) DeployAuxiliaryResourcesForPhaseWithFenceAndP
 	persist func(breakglassv1alpha1.AuxiliaryResourceStatus) error,
 ) ([]breakglassv1alpha1.AuxiliaryResourceStatus, error) {
 	return m.deployAuxiliaryResources(ctx, session, template, binding, targetClient, targetNamespace, func(auxRes breakglassv1alpha1.AuxiliaryResource) bool {
-		return auxRes.CreateBefore == createBefore
+		return ((auxRes.CreateBefore == nil || *auxRes.CreateBefore) == createBefore)
 	}, fence, persist)
 }
 
