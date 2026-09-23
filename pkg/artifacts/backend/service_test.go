@@ -131,6 +131,15 @@ func TestDownloadRejectsBindingMismatchBeforeProviderRead(t *testing.T) {
 	require.False(t, store.opened)
 }
 
+func TestDownloadRejectsTerminalRecordingBeforeProviderRead(t *testing.T) {
+	repository := &memoryRepository{record: Record{Namespace: "ns", SessionName: "session", ArtifactID: "recording", ArtifactUID: "artifact-uid-1", SessionUID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2, Recipe: TerminalRecordingRecipe, State: StateAvailable, ExpiresAt: time.Unix(200, 0), Size: 1, SHA256: strings.Repeat("a", 64), RuntimeBindingDigest: "binding"}}
+	store := &fakeStore{backendID: "backend"}
+	service := newServiceForTest(t, repository, store, allowAuthorizer{})
+	_, _, err := service.Download(context.Background(), "ns", "session", repository.record.ArtifactID, SessionBinding{Namespace: "ns", Name: "session", UID: "uid", TargetIdentityDigest: "target", OperationEpoch: 2})
+	require.ErrorIs(t, err, ErrForbidden)
+	require.False(t, store.opened)
+}
+
 func TestArtifactStorageKeyRequiresUIDAndIsOpaque(t *testing.T) {
 	if _, err := artifactStorageKey(Record{ArtifactID: "public-id"}); err == nil {
 		t.Fatal("artifactStorageKey accepted a record without immutable UID")

@@ -480,6 +480,9 @@ func (service *Service) authorizeDownload(ctx context.Context, record Record, bi
 	if record.State != StateAvailable || record.ExpiresAt.IsZero() || !service.now().Before(record.ExpiresAt) {
 		return ErrExpired
 	}
+	if record.Recipe == TerminalRecordingRecipe {
+		return ErrForbidden
+	}
 	if record.TargetClusterUID != "" && binding.TargetClusterUID != record.TargetClusterUID {
 		return ErrForbidden
 	}
