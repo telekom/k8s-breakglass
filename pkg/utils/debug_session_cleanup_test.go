@@ -4,8 +4,9 @@ package utils
 
 import (
 	"fmt"
-	kptr "k8s.io/utils/ptr"
 	"testing"
+
+	kptr "k8s.io/utils/ptr"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"

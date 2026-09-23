@@ -374,13 +374,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 }
 
 func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
-	for i := range ds.Status.AuxiliaryResourceStatuses {
-		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
-			ds.Status.AuxiliaryResourceStatuses[i] = status
-			return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
-		}
-	}
-	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
+	// Merge replayed intents with the in-memory inventory so an empty outcome
+	// cannot erase a previously observed UID or child-document evidence.
+	ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
+		nil, []breakglassv1alpha1.AuxiliaryResourceStatus{status}, ds.Status.AuxiliaryResourceStatuses,
+	)
 	return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
 }
 
@@ -1087,7 +1085,11 @@ const (
 )
 
 func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
-	templateProfile := template.Labels[catalogueProfileLabel]
+	templateLabels := template.Labels
+	if len(templateLabels) == 0 {
+		templateLabels = template.Spec.Labels
+	}
+	templateProfile := templateLabels[catalogueProfileLabel]
 	podProfile := ""
 	if podTemplate != nil {
 		podProfile = podTemplate.Labels[catalogueProfileLabel]
@@ -1098,12 +1100,12 @@ func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplat
 	if templateProfile == "" || podProfile == "" || templateProfile != podProfile {
 		return false, "", fmt.Errorf("catalogue profile identity must match across session and pod templates")
 	}
-	templateIntent := template.Labels[catalogueIntentLabel]
+	templateIntent := templateLabels[catalogueIntentLabel]
 	podIntent := podTemplate.Labels[catalogueIntentLabel]
 	if templateIntent == "" || templateIntent != podIntent {
 		return false, "", fmt.Errorf("catalogue intent identity must match across session and pod templates")
 	}
-	templateElevated := template.Labels[catalogueElevatedLabel]
+	templateElevated := templateLabels[catalogueElevatedLabel]
 	podElevated := podTemplate.Labels[catalogueElevatedLabel]
 	if templateElevated != podElevated || (templateElevated != "true" && templateElevated != "false") {
 		return false, "", fmt.Errorf("catalogue elevation identity must be explicit and match across session and pod templates")

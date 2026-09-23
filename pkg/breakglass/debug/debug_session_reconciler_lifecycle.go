@@ -923,9 +923,11 @@ func promoteObservedCleanupIntents[T any](desired, current []T) []T {
 			continue
 		}
 		if resolved, ok := observed[operation]; ok {
-			// Child cleanup is merged separately against its own baseline below.
+			// Preserve child evidence already observed when a replay has no
+			// outcome of its own.
 			if parent, ok := any(resolved).(breakglassv1alpha1.AuxiliaryResourceStatus); ok {
-				parent.AdditionalResources = any(item).(breakglassv1alpha1.AuxiliaryResourceStatus).AdditionalResources
+				replayed := any(item).(breakglassv1alpha1.AuxiliaryResourceStatus)
+				parent.AdditionalResources = mergeCleanupInventory(parent.AdditionalResources, replayed.AdditionalResources, nil, additionalResourceKey)
 				resolved = any(parent).(T)
 			}
 			merged[i] = resolved
