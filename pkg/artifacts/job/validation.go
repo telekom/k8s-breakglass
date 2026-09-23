@@ -29,6 +29,9 @@ func ValidateExecution(actual, expected batchv1.Job) error {
 		}
 	}
 	a, e := actual.DeepCopy(), expected.DeepCopy()
+	if !equality.Semantic.DeepEqual(a.Spec.Template.Annotations, e.Spec.Template.Annotations) {
+		return errors.New("diagnostic artifact Job has unexpected pod-template annotations")
+	}
 	// The API generates this selector only when manualSelector is false.
 	if e.Spec.Selector == nil && (a.Spec.ManualSelector == nil || !*a.Spec.ManualSelector) && a.Spec.Selector != nil {
 		selector := a.Spec.Selector

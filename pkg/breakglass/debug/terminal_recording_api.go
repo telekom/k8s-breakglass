@@ -496,7 +496,18 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("X-Breakglass-Recording-SHA256", record.SHA256)
-	_, _ = io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, reader, record.Size)
+	if _, err := io.CopyN(authorizedRecordingWriter{ctx: replayCtx, writer: ctx.Writer, authorize: authorize}, reader, record.Size); err != nil && !ctx.Writer.Written() {
+		for _, header := range []string{"Content-Type", "Content-Length", "X-Content-Type-Options", "X-Breakglass-Recording-SHA256"} {
+			ctx.Writer.Header().Del(header)
+		}
+		if errors.Is(err, backend.ErrExpired) {
+			ctx.Status(http.StatusGone)
+		} else if errors.Is(err, backend.ErrForbidden) {
+			apiresponses.RespondForbidden(ctx, "terminal recording access denied")
+		} else {
+			apiresponses.RespondServiceUnavailable(ctx, "terminal recording stream failed")
+		}
+	}
 }
 
 func terminalRecordingRequest(ctx *gin.Context) (string, string, string, error) {

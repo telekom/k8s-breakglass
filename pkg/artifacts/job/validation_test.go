@@ -36,7 +36,10 @@ func TestCollectorExecutionRejectsMutations(t *testing.T) {
 		"hostPID":        func(j *batchv1.Job) { j.Spec.Template.Spec.HostPID = true },
 		"serviceAccount": func(j *batchv1.Job) { j.Spec.Template.Spec.ServiceAccountName = "privileged" },
 		"deadline":       func(j *batchv1.Job) { j.Spec.Template.Spec.ActiveDeadlineSeconds = int64Ptr(3600) },
-		"retries":        func(j *batchv1.Job) { j.Spec.BackoffLimit = int32Ptr(100) },
+		"podTemplateAnnotation": func(j *batchv1.Job) {
+			j.Spec.Template.Annotations["sidecar.example/inject"] = "true"
+		},
+		"retries": func(j *batchv1.Job) { j.Spec.BackoffLimit = int32Ptr(100) },
 		"sidecar": func(j *batchv1.Job) {
 			j.Spec.Template.Spec.Containers = append(j.Spec.Template.Spec.Containers, corev1.Container{Name: "sidecar", Image: "evil"})
 		},
