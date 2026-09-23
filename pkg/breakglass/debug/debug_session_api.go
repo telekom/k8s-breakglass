@@ -81,9 +81,17 @@ type DebugSessionAPIController struct {
 	baseURL                 string
 	recordingStreams        atomic.Int32
 	recordingArtifacts      *backend.Service
+	recordingMaxBytes       int64
 	recordingConnections    TerminalRecordingConnectionProvider
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
+}
+
+// WithTerminalRecordingMaxBytes applies the configured storage limit to
+// terminal recording reservations.
+func (c *DebugSessionAPIController) WithTerminalRecordingMaxBytes(maxBytes int64) *DebugSessionAPIController {
+	c.recordingMaxBytes = maxBytes
+	return c
 }
 
 // NewDebugSessionAPIController creates a new debug session API controller

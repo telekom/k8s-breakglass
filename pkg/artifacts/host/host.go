@@ -126,6 +126,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	if err != nil {
 		return nil, err
 	}
+	deps.DebugAPI.WithTerminalRecordingMaxBytes(artifactConfig.UploadMaxBytes)
 	service, err := backend.New(backend.Config{Repository: repository, Store: store, Authorizer: NewLiveSessionAuthorizer(deps.Reader, deps.Lease, nil), Tokens: keyring, StagingDir: artifactConfig.StagingDir})
 	if err != nil {
 		_ = closeStore()

@@ -78,6 +78,7 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).
 				WithAPIReader(cli).
 				WithTerminalRecordingArtifacts(service).
+				WithTerminalRecordingMaxBytes(1024).
 				WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
 			controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
 				return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
@@ -159,6 +160,7 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			record, err := service.Recording(context.Background(), session.Namespace, session.Name, artifactID)
 			require.NoError(t, err)
 			require.Equal(t, backend.StateAvailable, record.State)
+			require.Equal(t, int64(1024), record.MaxBytes)
 			require.Equal(t, "pod-uid", record.Recording.PodUID)
 			require.Equal(t, !incomplete, record.Recording.Complete)
 			require.NotEmpty(t, record.ArtifactUID)

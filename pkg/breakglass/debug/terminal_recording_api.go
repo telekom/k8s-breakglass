@@ -249,11 +249,15 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 	metadata := backend.RecordingMetadata{FormatVersion: 1, StartedAt: time.Now().UTC(), StreamExpiresAt: binding.ExpiresAt, PodNamespace: namespace, PodName: podName, PodUID: targetUID, ContainerName: ctx.Query("container"), Operation: operation, LeaseUID: binding.LeaseUID, LeaseEpoch: binding.Epoch, Generation: binding.Generation}
+	maxBytes := c.recordingMaxBytes
+	if maxBytes < 1 {
+		maxBytes = defaultTerminalRecordingMaxBytes
+	}
 	reservation, err := c.recordingArtifacts.ReserveRecording(apiCtx, backend.Record{
 		Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: targetClusterUID,
 		TargetPodNamespace: namespace, TargetPodName: podName, TargetPodUID: targetUID,
 		TargetIdentityDigest: sha256Hex(namespace + "\x00" + podName + "\x00" + targetUID), RuntimeBindingDigest: binding.RuntimeBindingDigest,
-		PlanDigest: sha256Hex(string(plan)), OperationEpoch: epoch, MaxBytes: defaultTerminalRecordingMaxBytes,
+		PlanDigest: sha256Hex(string(plan)), OperationEpoch: epoch, MaxBytes: maxBytes,
 		ExpiresAt: binding.ExpiresAt.Add(retention), Recording: &metadata,
 	}, connection.Validate)
 	if err != nil {
