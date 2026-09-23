@@ -2,6 +2,17 @@
 
 This guide covers upgrading the breakglass controller between versions, including breaking changes, migration steps, and rollback procedures.
 
+## Pending DebugSession approvals
+
+Pending approvals created before catalogue identity snapshot capture cannot safely
+activate after upgrade: their immutable snapshot does not establish whether the
+approved template carried catalogue restrictions. Once approved, these sessions
+fail closed and require a new session request and approval. Existing Active
+sessions keep their normal expiry and cleanup lifecycle. Do not patch old
+snapshots to bypass this check. New snapshots record the controller-owned
+`breakglass.t-caas.telekom.com/catalogue-snapshot: v1` label inside
+`status.resolvedTemplate.labels`, alongside the captured identity labels.
+
 ## General Upgrade Process
 
 ### Pre-Upgrade Checklist
