@@ -292,9 +292,7 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 	// (tens, not thousands), the sequential approach is sufficient.
 	var failed []*activityEntry
 	for key, entry := range entries {
-		var err error
-		err = at.updateSessionActivity(ctx, key, entry)
-		if err != nil {
+		if err := at.updateSessionActivity(ctx, key, entry); err != nil {
 			at.log.Warnw("Failed to update session activity",
 				"session", key.String(),
 				"error", err,
