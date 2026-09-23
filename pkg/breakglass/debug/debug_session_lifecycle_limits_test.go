@@ -312,7 +312,7 @@ func TestBindingLimitsCountPendingWithoutIdleBaseline(t *testing.T) {
 }
 
 func TestIdleExpiryDuringTargetReadPreventsJobDeadlineMutation(t *testing.T) {
-	deadline := time.Now().Add(2 * time.Second).Truncate(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	activity := metav1.NewTime(deadline.Add(-time.Minute))
 	expiry := metav1.NewTime(time.Now().Add(time.Hour))
 	started := metav1.NewTime(time.Now().Add(-time.Minute))
