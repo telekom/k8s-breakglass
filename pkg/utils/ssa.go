@@ -84,36 +84,6 @@ func ApplyTypedObject(ctx context.Context, c client.Client, obj client.Object, s
 	return ApplyUnstructured(ctx, c, u)
 }
 
-// unstructuredApplyConfiguration wraps an unstructured object to implement runtime.ApplyConfiguration.
-type unstructuredApplyConfiguration struct {
-	obj *unstructured.Unstructured
-}
-
-func (u *unstructuredApplyConfiguration) IsApplyConfiguration() {}
-
-// MarshalJSON implements json.Marshaler for use with the Apply API.
-func (u *unstructuredApplyConfiguration) MarshalJSON() ([]byte, error) {
-	// Clean up managed fields before marshaling
-	obj := u.obj.DeepCopy()
-	obj.SetManagedFields(nil)
-	if metaMap, ok := obj.Object["metadata"].(map[string]interface{}); ok {
-		delete(metaMap, "managedFields")
-	}
-	return json.Marshal(obj.Object)
-}
-
-// GetName returns the name from the unstructured object for Apply API requirements.
-func (u *unstructuredApplyConfiguration) GetName() *string {
-	name := u.obj.GetName()
-	return &name
-}
-
-// GetNamespace returns the namespace from the unstructured object for Apply API requirements.
-func (u *unstructuredApplyConfiguration) GetNamespace() *string {
-	ns := u.obj.GetNamespace()
-	return &ns
-}
-
 // ApplyStatus performs a server-side apply on the status subresource.
 func ApplyStatus(ctx context.Context, c client.Client, obj client.Object) error {
 	applyConfig, err := ToStatusApplyConfiguration(obj)

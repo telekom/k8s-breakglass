@@ -245,14 +245,18 @@ namespace, and the controller-owned
 Keep the exception object's `metadata.namespace` distinct from the namespaces
 in its `spec.match` resource selectors: the former scopes where the
 namespaced exception is installed, while the latter scopes which workload
-namespaces it may match. Set both explicitly to the intended target namespace
-and do not rely on object placement alone for workload scoping.
+namespaces it may match. Set the object namespace to Kyverno's configured
+exception namespace and the selector namespace to the intended workload
+namespace; do not rely on object placement alone for workload scoping.
 Configure the target cluster's Kyverno exception namespace and grant the
 Breakglass spoke identity only the necessary exception resource permissions.
 Use the API group/version matching the installed policy engine: legacy
 ClusterPolicy exceptions use `kyverno.io/v2`, while CEL policy exceptions use
 `policies.kyverno.io/v1` with their corresponding schema. See the
 [Kyverno exception documentation](https://kyverno.io/docs/guides/exceptions/).
+The native unstructured apply configuration lets the real Kubernetes client
+resolve the target API without a compiled-in Kyverno schema. HTTP-backed tests cover
+creation, no-op reconciliation, and updates of a CEL PolicyException.
 Creating the object proves API persistence, not admission-cache readiness;
 verify workload admission and exception removal against the target Kyverno
 version in the live integration test.
