@@ -33,6 +33,13 @@ func TestDebugSessionIdentityMatchesProvider(t *testing.T) {
 	require.False(t, debugSessionProviderMatches(debugSessionReadIdentity{provider: "idp-a", issuer: "https://a.example"}, &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{IdentityProviderIssuer: "https://a.example"}}))
 }
 
+func TestDebugSessionOperationIdentityRequiresTrustedLegacyForBlankProvenance(t *testing.T) {
+	identity := debugSessionReadIdentity{username: "same@example.com"}
+	require.False(t, debugSessionOperationIdentityMatches(identity, "", "", "same@example.com"))
+	identity.legacyAllowed = true
+	require.True(t, debugSessionOperationIdentityMatches(identity, "", "", "same@example.com"))
+}
+
 func TestDebugSessionApprovalActorMatchesRecordedProvider(t *testing.T) {
 	identity := debugSessionReadIdentity{username: "approver@example.com", provider: "idp-a", issuer: "https://a.example"}
 	require.True(t, debugSessionApprovalActorMatches(identity, "idp-a", "approver@example.com"))
