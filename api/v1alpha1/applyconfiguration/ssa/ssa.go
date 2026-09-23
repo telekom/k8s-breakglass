@@ -82,6 +82,12 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 // replace newer activity or retention data. An omitted resource version is
 // filled from the same live read to retain an optimistic concurrency fence.
 func mergeDebugSessionActivityAndRetention(ctx context.Context, c client.Client, session *breakglassv1alpha1.DebugSession) error {
+	// A caller-supplied resource version is already an optimistic snapshot
+	// fence. Avoid a second read; the API server will reject a concurrent or
+	// replacement-object write using that version.
+	if session.ResourceVersion != "" {
+		return nil
+	}
 	current := &breakglassv1alpha1.DebugSession{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(session), current); err != nil {
 		return fmt.Errorf("failed to get object for status update (live debug session): %w", err)
@@ -89,9 +95,7 @@ func mergeDebugSessionActivityAndRetention(ctx context.Context, c client.Client,
 	if session.UID != "" && session.UID != current.UID {
 		return fmt.Errorf("debug session UID changed: expected %q, got %q", session.UID, current.UID)
 	}
-	if session.ResourceVersion == "" {
-		session.ResourceVersion = current.ResourceVersion
-	}
+	session.ResourceVersion = current.ResourceVersion
 	if current.Status.ActivityCount > session.Status.ActivityCount {
 		session.Status.ActivityCount = current.Status.ActivityCount
 	}
