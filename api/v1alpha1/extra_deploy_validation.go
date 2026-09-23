@@ -444,17 +444,17 @@ func jsonNumberText(raw []byte) (string, error) {
 	}
 }
 
+var decimalJSONNumberPattern = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
+
 func parseDecimalRat(text string) (*big.Rat, error) {
 	const maxExpandedDigits = 10000
 	text = strings.TrimSpace(text)
-	if text == "" {
+	if text == "" || !decimalJSONNumberPattern.MatchString(text) {
 		return nil, fmt.Errorf("empty number")
 	}
 	sign := 1
-	if text[0] == '+' || text[0] == '-' {
-		if text[0] == '-' {
-			sign = -1
-		}
+	if text[0] == '-' {
+		sign = -1
 		text = text[1:]
 	}
 	parts := strings.SplitN(strings.ToLower(text), "e", 2)

@@ -111,11 +111,8 @@ function coerceValue(value: unknown, inputType: string): unknown {
   if (value === undefined || value === null) return value;
   switch (inputType) {
     case "number": {
-      if (typeof value === "number") return value;
-      if (typeof value === "string" && value !== "") {
-        const num = Number(value);
-        if (Number.isFinite(num)) return num;
-      }
+      // Keep decimal strings intact: converting through JavaScript Number loses
+      // precision for values above 2^53 before the API can validate them.
       return value;
     }
     case "boolean": {
@@ -331,8 +328,7 @@ function handleTextInput(variable: ExtraDeployVariable, event: Event) {
 
 function handleNumberInput(variable: ExtraDeployVariable, event: Event) {
   const target = event.target as HTMLInputElement;
-  const num = parseFloat(target.value);
-  updateValue(variable.name, isNaN(num) ? undefined : num);
+  updateValue(variable.name, target.value === "" ? undefined : target.value);
 }
 
 function handleBooleanInput(variable: ExtraDeployVariable, event: Event) {

@@ -1147,3 +1147,12 @@ func TestValidateNumberValueFiniteRegardlessOfBounds(t *testing.T) {
 	assert.NotContains(t, errs[0].Error(), "secret")
 	assert.Empty(t, validateMultiSelectValue(apiextensionsv1.JSON{Raw: []byte(`["safe"]`)}, options, nil, []string{"users"}, true, field.NewPath("value")))
 }
+
+func TestValidateNumberValueRejectsNonJSONDecimalSpellings(t *testing.T) {
+	for _, raw := range []string{`"1."`, `"+1"`, `"01"`} {
+		value := coerceJSONValue(apiextensionsv1.JSON{Raw: []byte(raw)}, InputTypeNumber)
+		errs := validateNumberValue(value, nil, field.NewPath("value"))
+		require.Len(t, errs, 1, raw)
+		assert.Contains(t, errs[0].Detail, "finite", raw)
+	}
+}

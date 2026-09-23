@@ -952,7 +952,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return c.failSession(ctx, ds, "binding cluster selector no longer grants access; recreate this session")
 		}
 	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
-		!directTemplateAllowsCluster(template, clusterLookup, clusterConfig) {
+		!directTemplateAllowsCluster(template, clusterConfig.Name, clusterConfig) {
 		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if binding != nil {
