@@ -69,7 +69,7 @@ func TestLegacyApprovedSnapshotFailsBeforeActivation(t *testing.T) {
 			var persisted breakglassv1alpha1.DebugSession
 			require.NoError(t, cl.Get(ctx, client.ObjectKeyFromObject(session), &persisted))
 			require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, persisted.Status.State)
-			require.Contains(t, persisted.Status.Message, "submit a new request")
+			require.Contains(t, persisted.Status.Message, "recreate this session")
 			require.Equal(t, marker, persisted.Status.ResolvedTemplate.Labels[catalogueSnapshotLabel])
 			require.Empty(t, persisted.Status.DeployedResources)
 		})

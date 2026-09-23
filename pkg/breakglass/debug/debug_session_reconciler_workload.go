@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -376,11 +377,30 @@ func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds 
 	for i := range ds.Status.AuxiliaryResourceStatuses {
 		if ds.Status.AuxiliaryResourceStatuses[i].Name == status.Name {
 			ds.Status.AuxiliaryResourceStatuses[i] = status
-			return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+			return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
 		}
 	}
 	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, status)
-	return breakglass.ApplyDebugSessionStatus(ctx, c.client, ds)
+	return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
+}
+
+type debugSessionStatusConflict struct{ err error }
+
+func (e *debugSessionStatusConflict) Error() string { return e.err.Error() }
+
+func (e *debugSessionStatusConflict) Unwrap() error { return e.err }
+
+func isDebugSessionStatusConflict(err error) bool {
+	var statusConflict *debugSessionStatusConflict
+	return errors.As(err, &statusConflict)
+}
+
+func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
+	err := breakglass.ApplyDebugSessionStatus(ctx, c, ds)
+	if apierrors.IsConflict(err) {
+		return &debugSessionStatusConflict{err: err}
+	}
+	return err
 }
 
 // createOrRecoverTargetObject never adopts a resource owned by another session.
@@ -1063,6 +1083,7 @@ const (
 	catalogueProfileLabel  = "breakglass.t-caas.telekom.com/catalogue-profile"
 	catalogueIntentLabel   = "breakglass.t-caas.telekom.com/catalogue-intent"
 	catalogueElevatedLabel = "breakglass.t-caas.telekom.com/elevated"
+	catalogueSnapshotLabel = "breakglass.t-caas.telekom.com/catalogue-snapshot"
 )
 
 func restrictedCatalogueProfile(template *breakglassv1alpha1.DebugSessionTemplate, podTemplate *breakglassv1alpha1.DebugPodTemplate) (bool, string, error) {
