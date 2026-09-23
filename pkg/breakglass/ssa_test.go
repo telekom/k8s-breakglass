@@ -466,8 +466,15 @@ func TestDebugSessionLifecycleStatusGuardsPreserveLiveObject(t *testing.T) {
 			case "idle expired":
 				desired.Status.Message = "continue"
 			}
-			require.Error(t, ApplyDebugSessionStatus(context.Background(), hub, desired))
-			require.Error(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), hub, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) { *status = desired.Status }))
+			requestedStatus := desired.Status
+			if name == "activity count" || name == "activity timestamp" {
+				require.NoError(t, ApplyDebugSessionStatus(context.Background(), hub, desired))
+				require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+				require.Error(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), hub, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) { *status = requestedStatus }))
+			} else {
+				require.Error(t, ApplyDebugSessionStatus(context.Background(), hub, desired))
+				require.Error(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), hub, session.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) { *status = requestedStatus }))
+			}
 			var stored breakglassv1alpha1.DebugSession
 			require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), &stored))
 			require.Equal(t, session.Status, stored.Status)
