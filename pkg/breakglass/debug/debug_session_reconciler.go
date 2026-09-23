@@ -47,7 +47,6 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -946,11 +945,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	// Recheck selectors from the approved snapshots. Live objects above are
 	// lookup inputs and may have changed since approval.
-	if binding != nil && binding.Spec.ClusterSelector != nil {
-		selector, err := metav1.LabelSelectorAsSelector(binding.Spec.ClusterSelector)
-		if err != nil || selector.Empty() || !selector.Matches(labels.Set(clusterConfig.Labels)) {
-			return c.failSession(ctx, ds, "binding cluster selector no longer grants access; recreate this session")
-		}
+	if binding != nil && !c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) &&
+		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) {
+		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
 	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
 		!directTemplateAllowsCluster(template, clusterConfig.Name, clusterConfig) {
 		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")

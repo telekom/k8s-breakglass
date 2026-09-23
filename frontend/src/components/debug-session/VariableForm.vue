@@ -126,6 +126,33 @@ function coerceValue(value: unknown, inputType: string): unknown {
   }
 }
 
+function compareDecimalValues(left: unknown, right: string): number | undefined {
+  const parse = (value: unknown) => {
+    const match = String(value).trim().match(/^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/);
+    if (!match) return undefined;
+    const fraction = match[3] || "";
+    const digits = `${match[2]}${fraction}`.replace(/^0+(?=\d)/, "");
+    const exponent = Number(match[4] || 0);
+    if (!Number.isSafeInteger(exponent)) return undefined;
+    return { negative: match[1] === "-", digits, scale: exponent - fraction.length };
+  };
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return undefined;
+  if (a.digits === "0" && b.digits === "0") return 0;
+  if (a.negative !== b.negative) return a.negative ? -1 : 1;
+  const magnitude = (() => {
+    const aOrder = a.digits.length + a.scale;
+    const bOrder = b.digits.length + b.scale;
+    if (aOrder !== bOrder) return aOrder < bOrder ? -1 : 1;
+    const length = Math.max(a.digits.length, b.digits.length);
+    const aDigits = a.digits.padEnd(length, "0");
+    const bDigits = b.digits.padEnd(length, "0");
+    return aDigits === bDigits ? 0 : aDigits < bDigits ? -1 : 1;
+  })();
+  return a.negative ? -magnitude : magnitude;
+}
+
 // Initialize values from defaults, coercing types to match inputType
 function initializeValues(): ExtraDeployValues {
   const values: ExtraDeployValues = { ...props.modelValue };
@@ -218,17 +245,17 @@ const validationErrors = computed((): ValidationError[] => {
       }
     }
 
-    if (variable.inputType === "number" && typeof value === "number") {
+    if (variable.inputType === "number") {
       if (validation?.min !== undefined) {
-        const minVal = parseFloat(validation.min);
-        if (!isNaN(minVal) && value < minVal) {
-          errors.push({ field: variable.name, message: `Must be at least ${minVal}` });
+        const comparison = compareDecimalValues(value, validation.min);
+        if (comparison !== undefined && comparison < 0) {
+          errors.push({ field: variable.name, message: `Must be at least ${validation.min}` });
         }
       }
       if (validation?.max !== undefined) {
-        const maxVal = parseFloat(validation.max);
-        if (!isNaN(maxVal) && value > maxVal) {
-          errors.push({ field: variable.name, message: `Must be at most ${maxVal}` });
+        const comparison = compareDecimalValues(value, validation.max);
+        if (comparison !== undefined && comparison > 0) {
+          errors.push({ field: variable.name, message: `Must be at most ${validation.max}` });
         }
       }
     }
