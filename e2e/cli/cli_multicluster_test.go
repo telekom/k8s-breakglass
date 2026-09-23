@@ -212,6 +212,37 @@ func TestCLIDebugSessionsMultiCluster(t *testing.T) {
 	cfg := createCLIConfig(t, mcConfig.HubAPIURL)
 	configPath := writeConfigFile(t, cfg)
 
+	// Native DebugSession creation requires an approved provider-bound grant in
+	// the multi-provider E2E environment.
+	hubClient := helpers.GetClientForCluster(t, mcConfig.HubKubeconfig)
+	cleanup := helpers.NewCleanup(t, hubClient)
+	nativeGrant := helpers.NewEscalationBuilder(
+		helpers.GenerateUniqueName("e2e-cli-debug-session-grant"),
+		helpers.GetTestNamespace(),
+	).WithEscalatedGroup("breakglass:platform:debugsession").
+		WithMaxValidFor("30m").
+		WithAllowedClusters(mcConfig.SpokeAClusterName).
+		WithAllowedGroups(helpers.TestUsers.Requester.Groups...).
+		WithApproverUsers(helpers.TestUsers.Approver.Email).
+		Build()
+	require.NoError(t, hubClient.Create(ctx, nativeGrant))
+	cleanup.Add(nativeGrant)
+	helpers.WaitForEscalationReady(t, ctx, hubClient, nativeGrant.Name, nativeGrant.Namespace, helpers.WaitForStateTimeout)
+
+	grantRequester := helpers.NewAPIClientWithAuth(token)
+	grantSession, err := grantRequester.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
+		Cluster: mcConfig.SpokeAClusterName,
+		User:    helpers.TestUsers.Requester.Email,
+		Group:   "breakglass:platform:debugsession",
+		Reason:  "CLI multi-cluster native DebugSession grant",
+	}, helpers.WaitForStateTimeout)
+	require.NoError(t, err)
+	cleanup.Add(grantSession)
+	grantApproverToken := oidcProvider.GetToken(t, ctx, helpers.TestUsers.Approver.Username, helpers.TestUsers.Approver.Password)
+	require.NoError(t, helpers.NewAPIClientWithAuth(grantApproverToken).ApproveSessionViaAPI(ctx, t, grantSession.Name, grantSession.Namespace))
+	helpers.WaitForSessionState(t, ctx, hubClient, grantSession.Name, grantSession.Namespace,
+		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+
 	t.Run("list debug templates", func(t *testing.T) {
 		buf := &bytes.Buffer{}
 		root := bgctlcmd.NewRootCommand(bgctlcmd.Config{

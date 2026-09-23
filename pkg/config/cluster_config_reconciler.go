@@ -144,18 +144,10 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					return nil
 				}
 				controllerutil.RemoveFinalizer(latest, ClusterConfigFinalizer)
-				patch := &breakglassv1alpha1.ClusterConfig{
-					TypeMeta: metav1.TypeMeta{
-						APIVersion: breakglassv1alpha1.GroupVersion.String(),
-						Kind:       "ClusterConfig",
-					},
-					ObjectMeta: metav1.ObjectMeta{
-						Name:       latest.Name,
-						Namespace:  latest.Namespace,
-						Finalizers: latest.Finalizers,
-					},
-				}
-				return utils.ApplyObject(ctx, r.Client, patch)
+				// Server-side apply cannot express an empty finalizers list because the
+				// generated apply configuration uses omitempty. Use an ordinary update
+				// so the API server receives finalizers: [] and can complete deletion.
+				return r.Update(ctx, latest)
 			}); err != nil {
 				log.Errorw("Failed to remove finalizer from ClusterConfig", "cluster", clusterName, "error", err)
 				return ctrl.Result{}, err

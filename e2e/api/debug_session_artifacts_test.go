@@ -57,6 +57,7 @@ func testArtifactRecipeLifecycle(t *testing.T, recipe, cleanup string) {
 	tc := helpers.NewTestContext(t, ctx)
 	requester := helpers.NewAPIClientWithAuth(tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.SecurityRequester))
 	outsider := helpers.NewAPIClientWithAuth(tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.UnauthorizedUser))
+	setupNativeDebugSessionGrantForUser(t, s, helpers.TestUsers.SecurityRequester, helpers.TestUsers.Approver)
 	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("artifact-e2e-%d", time.Now().UnixNano())}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		Mode: breakglassv1alpha1.DebugSessionModeWorkload, TargetNamespace: ns,
 		Allowed:            &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{s.Cluster}, Groups: []string{"*"}},

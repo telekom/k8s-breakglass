@@ -34,9 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// TestClusterConfigReconciler_PartialSessionTerminationContinues tests that when some
-// individual session terminations fail, the reconciler continues with other sessions
-// and completes the cleanup successfully.
+// TestClusterConfigReconciler_PartialSessionTerminationContinues tests that cleanup
+// continues processing sessions after an individual termination attempt.
 func TestClusterConfigReconciler_PartialSessionTerminationContinues(t *testing.T) {
 	// Note: The actual reconciler logs errors for individual session failures but
 	// continues processing other sessions. This test verifies that behavior.
@@ -109,6 +108,100 @@ func TestClusterConfigReconciler_PartialSessionTerminationContinues(t *testing.T
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "session-2", Namespace: "default"}, &s2)
 	require.NoError(t, err)
 	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, s2.Status.State)
+}
+
+func TestClusterConfigReconciler_StatusUpdateFailureBlocksDeletion(t *testing.T) {
+	scheme := newTestClusterConfigReconcilerScheme()
+	ctx := context.Background()
+
+	now := metav1.Now()
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              "test-cluster",
+			Namespace:         "default",
+			Finalizers:        []string{ClusterConfigFinalizer},
+			DeletionTimestamp: &now,
+		},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			ClusterID: "test-cluster-id",
+		},
+	}
+	session1 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-1", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStateApproved,
+		},
+	}
+	session2 := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-2", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			Cluster: "test-cluster",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			State: breakglassv1alpha1.SessionStatePending,
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(clusterConfig, session1, session2).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}, &breakglassv1alpha1.DebugSession{}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			if session, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && session.Spec.Cluster != "" {
+				return []string{session.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.clusterConfigRef", func(obj client.Object) []string {
+			if session, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok && session.Spec.ClusterConfigRef != "" {
+				return []string{session.Spec.ClusterConfigRef}
+			}
+			return nil
+		}).
+		WithIndex(&breakglassv1alpha1.DebugSession{}, "spec.cluster", func(obj client.Object) []string {
+			if session, ok := obj.(*breakglassv1alpha1.DebugSession); ok && session.Spec.Cluster != "" {
+				return []string{session.Spec.Cluster}
+			}
+			return nil
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if subResourceName == "status" && obj.GetName() == "session-1" {
+					return errors.New("simulated status conflict")
+				}
+				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+			},
+		}).
+		Build()
+
+	r := &ClusterConfigReconciler{
+		Client: fakeClient,
+		Scheme: scheme,
+		Log:    zap.NewNop().Sugar(),
+	}
+
+	result, err := r.Reconcile(ctx, reconcile.Request{
+		NamespacedName: types.NamespacedName{Name: "test-cluster", Namespace: "default"},
+	})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "session-1")
+	assert.Equal(t, reconcile.Result{}, result)
+
+	var updatedConfig breakglassv1alpha1.ClusterConfig
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updatedConfig))
+	assert.Contains(t, updatedConfig.Finalizers, ClusterConfigFinalizer)
+
+	var updatedSession1 breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "session-1", Namespace: "default"}, &updatedSession1))
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, updatedSession1.Status.State)
+
+	var updatedSession2 breakglassv1alpha1.BreakglassSession
+	require.NoError(t, fakeClient.Get(ctx, types.NamespacedName{Name: "session-2", Namespace: "default"}, &updatedSession2))
+	assert.Equal(t, breakglassv1alpha1.SessionStateExpired, updatedSession2.Status.State)
 }
 
 // TestClusterConfigReconciler_ListFailureBlocksCleanup tests that when the List

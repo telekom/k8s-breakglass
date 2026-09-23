@@ -1024,7 +1024,13 @@ Status-changing DebugSession actions such as renew, terminate, approve, reject, 
 
 **Error Responses:**
 - `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, invalid scheduling option, or invalid request reason
-- `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints
+- `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints; provider-aware authentication is missing either the provider name or issuer, or the selected identity provider is not allowed
+
+For provider-aware authentication, session creation requires both the identity
+provider name and issuer claims. Requests without either claim are rejected with
+`403 Forbidden` before a session is persisted. The trusted
+`legacy_identity_allowed` compatibility path may create sessions without this
+pair for legacy single-provider deployments.
 
 ### Join Debug Session
 
@@ -1127,6 +1133,15 @@ is `true`, and must satisfy the configured `minLength` after sanitization.
 If the session changes concurrently while recording approval status, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
+Provider-aware approval requires the authenticated identity's provider name and
+issuer to match the persisted session provenance. A persisted provider/issuer
+mismatch returns `403 Forbidden`. A legacy pending session with missing
+provenance returns `409 Conflict`; a cluster administrator must remove it
+through the supported DebugSession cleanup workflow before a new request is
+created. The trusted `legacy_identity_allowed` compatibility path may approve a
+blank or issuer-only legacy session for its single trusted provider; this
+exception does not infer provider provenance for provider-aware authentication.
+
 **Response:** Updated `DebugSession` object with recorded approval fields. The
 controller transitions approved sessions after the API update.
 
@@ -1160,6 +1175,12 @@ configured `minLength` after sanitization.
 
 If the session changes concurrently while recording rejection status, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+Provider-aware rejection uses the same provider fence as approval: a persisted
+provider/issuer mismatch returns `403 Forbidden`, while missing legacy
+provenance returns `409 Conflict` and requires supported administrator cleanup.
+The trusted `legacy_identity_allowed` compatibility path may reject a blank or
+issuer-only legacy session for its single trusted provider.
 
 **Response:** Updated `DebugSession` object with `state: Rejected`.
 

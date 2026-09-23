@@ -39,7 +39,7 @@ func TestEarlyDebugSessionDeniesDirectExecWhenRecordingIsRequired(t *testing.T) 
 				State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires,
 				AllowedPods:          []breakglassv1alpha1.AllowedPodRef{{Namespace: "default", Name: "pod", UID: "pod-uid"}},
 				AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: boolPtr(true)},
-				Participants:         []breakglassv1alpha1.DebugSessionParticipant{{User: "alice", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderIssuer: "https://issuer.example"}},
+				Participants:         []breakglassv1alpha1.DebugSessionParticipant{{User: "alice", Role: breakglassv1alpha1.ParticipantRoleParticipant, IdentityProviderName: "provider-a", IdentityProviderIssuer: "https://issuer.example"}},
 				ResolvedTemplate:     &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true}},
 			}}
 			if candidate == "wrong issuer" {
@@ -68,7 +68,7 @@ func TestEarlyDebugSessionDeniesDirectExecWhenRecordingIsRequired(t *testing.T) 
 				}
 				return &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "default", Name: "pod", UID: "pod-uid"}}, nil
 			}}
-			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://issuer.example", reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "alice", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
+			state := &authorizeState{ctx: context.Background(), clusterName: "cluster", issuer: "https://issuer.example", idpName: "provider-a", idpLookupOK: true, reqLog: zap.NewNop().Sugar(), phases: NewSARPhaseTracker("cluster", zap.NewNop().Sugar()), sar: authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: "alice", ResourceAttributes: &authorizationv1.ResourceAttributes{Resource: "pods", Subresource: "exec", Namespace: "default", Name: "pod"}}}}
 			handled := wc.checkEarlyDebugSession(nil, state)
 			if candidate != "authorized" {
 				assert.False(t, handled)

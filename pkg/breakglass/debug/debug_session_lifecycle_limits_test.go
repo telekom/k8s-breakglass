@@ -304,7 +304,7 @@ func TestIdleExpiryDuringEphemeralTargetUpdatePreservesOutcome(t *testing.T) {
 				return cl.SubResource(name).Patch(ctx, obj, patch, opts...)
 			}}).Build()
 			provider := &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}}
-			handler := NewKubectlDebugHandler(hub, provider)
+			handler := NewKubectlDebugHandler(hub, provider).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
 			require.Error(t, handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, session.Spec.RequestedBy))
 			live := &breakglassv1alpha1.DebugSession{}
 			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), live))

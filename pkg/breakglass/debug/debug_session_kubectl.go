@@ -896,9 +896,6 @@ func (h *KubectlDebugHandler) liveSessionForMutation(
 // created before identity-provider binding existed while enforcing every
 // provider/issuer field that is present on the immutable session record.
 func debugSessionOperationIdentityMatches(identity debugSessionReadIdentity, provider, issuer string, values ...string) bool {
-	if provider == "" && issuer == "" {
-		return debugSessionIdentityMatches(identity, values...)
-	}
 	return debugSessionIdentityMatchesProvider(identity, provider, issuer, values...)
 }
 

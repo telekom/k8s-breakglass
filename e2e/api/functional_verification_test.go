@@ -191,7 +191,8 @@ func TestAuditEventFunctionalVerification(t *testing.T) {
 // (DaemonSets/Deployments) are actually created on the target cluster when
 // a debug session is approved and activated.
 func TestDebugSessionWorkloadDeployment(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrantForUser(t, setup, helpers.TestUsers.Requester, helpers.TestUsers.Approver)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -505,7 +506,8 @@ func TestDebugSessionPodSecurityContext(t *testing.T) {
 // TestDebugSessionParticipantJoin verifies that additional users can join
 // an active debug session as participants.
 func TestDebugSessionParticipantJoin(t *testing.T) {
-	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
+	setupNativeDebugSessionGrantForUser(t, setup, helpers.TestUsers.Requester, helpers.TestUsers.Approver)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

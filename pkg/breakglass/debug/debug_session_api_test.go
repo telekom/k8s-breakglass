@@ -60,6 +60,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example/",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -73,6 +74,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "breakglass:platform:diagnostics",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -86,6 +88,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:debugsession",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -99,6 +102,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "expired",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -112,6 +116,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "pending",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -125,6 +130,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-b",
 				User:                   "platform-requester@example.test",
 				GrantedGroup:           "wrong-cluster",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -138,6 +144,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "other@example.test",
 				GrantedGroup:           "wrong-user",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -151,6 +158,7 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "wrong-issuer",
+				IdentityProviderName:   "idp-a",
 				IdentityProviderIssuer: "https://idp-b.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -164,8 +172,22 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 				Cluster:                "tenant-a",
 				User:                   "platform-requester",
 				GrantedGroup:           "breakglass:platform:legacy",
+				IdentityProviderName:   "idp-b",
 				IdentityProviderIssuer: "https://idp-b.example",
 				AllowIDPMismatch:       true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State:     breakglassv1alpha1.SessionStateApproved,
+				ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "missing-provider"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster:                "tenant-a",
+				User:                   "platform-requester",
+				GrantedGroup:           "missing-provider",
+				IdentityProviderIssuer: "https://idp-a.example",
 			},
 			Status: breakglassv1alpha1.BreakglassSessionStatus{
 				State:     breakglassv1alpha1.SessionStateApproved,
@@ -175,13 +197,11 @@ func TestActiveBreakglassGroupsFiltersByClusterIdentityStateAndExpiry(t *testing
 	).Build()
 
 	controller := &DebugSessionAPIController{}
-	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test", "https://idp-a.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), client, "tenant-a", "platform-requester", "platform-requester@example.test", "idp-a", "https://idp-a.example", true)
 
 	require.NoError(t, err)
 	assert.ElementsMatch(t, []string{
 		"breakglass:platform:debugsession",
-		"breakglass:platform:diagnostics",
-		"breakglass:platform:legacy",
 	}, groups)
 }
 
@@ -205,10 +225,84 @@ func TestActiveBreakglassGroupsDoesNotInferEmailFromUsername(t *testing.T) {
 	).Build()
 
 	controller := &DebugSessionAPIController{}
-	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "https://idp-a.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "", "https://idp-a.example", true)
 
 	require.NoError(t, err)
 	assert.Empty(t, groups, "the API must require an exact authenticated username or email claim")
+}
+
+func TestActiveBreakglassGroupsRequiresProviderNameAndIssuer(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	reader := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "matching-provider"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession",
+				IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://idp.example/",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "different-provider"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "wrong-provider",
+				IdentityProviderName: "idp-b", IdentityProviderIssuer: "https://idp.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
+			},
+		},
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "mismatch-debug-grant"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession",
+				IdentityProviderName: "idp-b", IdentityProviderIssuer: "https://other.example",
+				AllowIDPMismatch: true,
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(context.Background(), reader, "tenant-a", "alice", "", "idp-a", "https://idp.example", true)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
+}
+
+func TestActiveBreakglassGroupsAllowsTrustedLegacyProvenance(t *testing.T) {
+	future := metav1.NewTime(time.Now().Add(time.Hour))
+	reader := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(
+		&breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "legacy-grant"},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future,
+			},
+		},
+	).Build()
+
+	controller := &DebugSessionAPIController{}
+	groups, err := controller.activeBreakglassGroups(
+		context.Background(), reader, "tenant-a", "alice", "", "idp-a", "https://idp.example", true,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
+}
+
+func TestProviderAwareDebugSessionRequestPreservesSingleJWKSCompatibility(t *testing.T) {
+	assert.False(t, isProviderAwareDebugSessionRequest("", "https://single-jwks.example", true))
+	assert.False(t, isProviderAwareDebugSessionRequest("single-idp", "https://single-jwks.example", true))
+	assert.True(t, isProviderAwareDebugSessionRequest("multi-idp", "https://multi.example", false))
+	assert.True(t, isProviderAwareDebugSessionRequest("", "", false))
+	assert.True(t, isProviderAwareDebugSessionRequest("", "https://multi.example", false))
 }
 
 func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *testing.T) {
@@ -218,7 +312,7 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -238,10 +332,10 @@ func TestActiveBreakglassGroupsUsesCachedIndexWhenFreshReaderIsConfigured(t *tes
 	cached := &debugSessionRecordingListClient{Client: base}
 	controller := &DebugSessionAPIController{client: cached}
 
-	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "", "https://idp-a.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "", "", "https://idp-a.example", true)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
@@ -251,12 +345,12 @@ func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *tes
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	usernameSession := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "username-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:username", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	emailSession := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(usernameSession, emailSession).
@@ -268,10 +362,10 @@ func TestActiveBreakglassGroupsQueriesEachUniqueIdentityWithCompoundIndex(t *tes
 	cached := &debugSessionRecordingListClient{Client: base}
 	controller := &DebugSessionAPIController{client: cached}
 
-	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "", "https://idp.example", true)
 
 	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"breakglass:username", "breakglass:email"}, groups)
+	assert.ElementsMatch(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 2)
 	assert.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
 	for _, call := range cached.calls {
@@ -285,17 +379,17 @@ func TestActiveBreakglassGroupsFallsBackToOneFullListWhenIdentityIndexMissing(t 
 	future := metav1.NewTime(time.Now().Add(time.Hour))
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "email-grant"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:email", IdentityProviderIssuer: "https://idp.example"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: future},
 	}
 	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(session).Build()
 	missingIndex := &debugSessionMissingIndexClient{Client: base}
 	controller := &DebugSessionAPIController{client: missingIndex}
 
-	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "https://idp.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), base, "tenant-a", "alice", "alice@example.test", "", "https://idp.example", true)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:email"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, missingIndex.calls, 1, "one failed indexed query must trigger one full-list fallback")
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(missingIndex.calls, "spec.user"))
@@ -307,7 +401,7 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -317,6 +411,9 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 	}
 	freshSession := cachedSession.DeepCopy()
 	freshSession.Status.ExpiresAt = metav1.NewTime(time.Now().Add(time.Hour))
+	unrelatedSession := freshSession.DeepCopy()
+	unrelatedSession.Name = "unrelated"
+	unrelatedSession.Spec.GrantedGroup = "breakglass:platform:diagnostics"
 	cachedBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(cachedSession).WithIndex(
 		&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
@@ -326,15 +423,15 @@ func TestActiveBreakglassGroupsRefreshesFreshReaderWhenCacheHasNoGrant(t *testin
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 		},
 	).Build()
-	freshBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(freshSession).Build()
+	freshBase := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(freshSession, unrelatedSession).Build()
 	cached := &debugSessionRecordingListClient{Client: cachedBase}
 	fresh := &debugSessionRecordingListClient{Client: freshBase}
 	controller := &DebugSessionAPIController{client: cached, apiReader: fresh}
 
-	groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+	groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "", "https://idp-a.example", true)
 
 	require.NoError(t, err)
-	assert.Equal(t, []string{"breakglass:debug"}, groups)
+	assert.Equal(t, []string{"breakglass:platform:debugsession"}, groups)
 	require.Len(t, cached.calls, 1)
 	assert.Equal(t, []string{"tenant-a"}, debugSessionRecordedFieldValues(cached.calls, "spec.cluster"))
 	assert.Equal(t, []string{"alice"}, debugSessionRecordedFieldValues(cached.calls, "spec.user"))
@@ -347,7 +444,7 @@ func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			Cluster:                "tenant-a",
 			User:                   "alice",
-			GrantedGroup:           "breakglass:debug",
+			GrantedGroup:           "breakglass:platform:debugsession",
 			IdentityProviderIssuer: "https://idp-a.example",
 		},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
@@ -390,7 +487,7 @@ func TestActiveBreakglassGroupsRejectsStaleCachedGrant(t *testing.T) {
 			fresh := &debugSessionRecordingGetClient{Client: tt.freshSetup(testScheme())}
 			controller := &DebugSessionAPIController{client: cachedBase, apiReader: fresh}
 
-			groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "https://idp-a.example")
+			groups, err := controller.activeBreakglassGroups(context.Background(), fresh, "tenant-a", "alice", "", "", "https://idp-a.example", true)
 
 			require.NoError(t, err)
 			assert.Empty(t, groups)
@@ -6338,7 +6435,7 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		assert.Equal(t, breakglassv1alpha1.DebugSessionStateActive, updatedSession.Status.State)
 	})
 
-	t.Run("terminate non-active session is rejected", func(t *testing.T) {
+	t.Run("terminate pending session is allowed for the owner", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "test-session",
@@ -6379,13 +6476,12 @@ func TestDebugSessionAPIController_HandleTerminateDebugSession(t *testing.T) {
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 
-		assert.Equal(t, http.StatusBadRequest, w.Code)
-		assert.Contains(t, w.Body.String(), "cannot terminate session in state 'Pending'")
+		assert.Equal(t, http.StatusOK, w.Code)
 
 		var updatedSession breakglassv1alpha1.DebugSession
 		err = fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-session", Namespace: "default"}, &updatedSession)
 		require.NoError(t, err)
-		assert.Equal(t, breakglassv1alpha1.DebugSessionStatePending, updatedSession.Status.State)
+		assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, updatedSession.Status.State)
 	})
 
 	t.Run("terminate already terminated session", func(t *testing.T) {
