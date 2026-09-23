@@ -1285,44 +1285,6 @@ func captureResourceUID(_ context.Context, _ ctrlclient.Client, obj ctrlclient.O
 	return string(obj.GetUID()), nil
 }
 
-func auxiliaryResourceDeleted(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	if ref.UID == "" {
-		return false
-	}
-	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if ref.UID != "" && status.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
-			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
-			return status.Deleted
-		}
-		for _, additional := range status.AdditionalResources {
-			if ref.UID != "" && additional.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
-				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
-				return additional.Deleted
-			}
-		}
-	}
-	return false
-}
-
-func auxiliaryResourceRequiresCleanup(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
-	for _, status := range ds.Status.AuxiliaryResourceStatuses {
-		if ref.UID != "" && status.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && status.Kind == ref.Kind && status.APIVersion == ref.APIVersion &&
-			status.ResourceName == ref.Name && status.Namespace == ref.Namespace {
-			return shouldDeleteAuxiliaryResource(ds, status.Name)
-		}
-		for _, additional := range status.AdditionalResources {
-			if ref.UID != "" && additional.UID == ref.UID && (ref.Source == "" || ref.Source == "auxiliary:"+status.Name) && additional.Kind == ref.Kind && additional.APIVersion == ref.APIVersion &&
-				additional.ResourceName == ref.Name && additional.Namespace == ref.Namespace {
-				return shouldDeleteAuxiliaryResource(ds, status.Name)
-			}
-		}
-	}
-	// Without the durable status metadata, deleteAfter cannot be determined.
-	// Retain the inventory and surface the ambiguity rather than guessing that
-	// the resource was controller-owned.
-	return false
-}
-
 func auxiliaryResourceStatusKnown(ds *breakglassv1alpha1.DebugSession, ref breakglassv1alpha1.DeployedResourceRef) bool {
 	if ref.UID == "" {
 		return false
