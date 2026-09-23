@@ -480,6 +480,9 @@ func parseDecimalRat(text string) (*big.Rat, error) {
 	decimal := strings.SplitN(mantissa, ".", 2)
 	digits := decimal[0]
 	if len(decimal) == 2 {
+		if len(decimal[0]) > maxExpandedDigits || len(decimal[1]) > maxExpandedDigits-len(decimal[0]) {
+			return nil, fmt.Errorf("number is too large")
+		}
 		digits += decimal[1]
 	}
 	if digits == "" || strings.Trim(digits, "0123456789") != "" {

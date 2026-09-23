@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -24,6 +25,14 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
+
+func TestParseDecimalRatRejectsOversizedMantissaBeforeJoiningDigits(t *testing.T) {
+	text := strings.Repeat("1", 6000) + "." + strings.Repeat("2", 6000)
+
+	_, err := parseDecimalRat(text)
+
+	require.ErrorContains(t, err, "number is too large")
+}
 
 func TestValidateExtraDeployValues(t *testing.T) {
 	intPtr := func(i int) *int { return &i }
