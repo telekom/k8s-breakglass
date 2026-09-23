@@ -772,36 +772,19 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 	return status, nil
 }
 
-// applyOrRecoverAuxiliaryResource uses server-side apply for unstructured
-// auxiliary resources, including external CRDs, while retaining the same
-// session and operation identity checks used by create/recovery paths.
+// applyOrRecoverAuxiliaryResource creates unstructured auxiliary resources
+// atomically and recovers only objects that pass the same session and
+// operation identity checks used by the legacy create path. Create is used for
+// external CRDs as well; this preserves the no-adoption guarantee.
 func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Client, obj *unstructured.Unstructured, session *breakglassv1alpha1.DebugSession) error {
-	existing := &unstructured.Unstructured{}
-	existing.SetGroupVersionKind(obj.GroupVersionKind())
-	err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), existing)
-	if err == nil {
-		if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
-			return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
-		}
-		if existing.GetAnnotations()[createOperationIDAnnotation] != obj.GetAnnotations()[createOperationIDAnnotation] {
-			return fmt.Errorf("target resource %s/%s already exists with a different operation identity", obj.GetNamespace(), obj.GetName())
-		}
-		matches, matchErr := recoveredCreateContentMatches(obj, existing)
-		if matchErr != nil {
-			return fmt.Errorf("validate recovered resource %s/%s content: %w", obj.GetNamespace(), obj.GetName(), matchErr)
-		}
-		if !matches {
-			return fmt.Errorf("target resource %s/%s already exists with different desired content", obj.GetNamespace(), obj.GetName())
-		}
-		obj.SetUID(existing.GetUID())
-		obj.SetResourceVersion(existing.GetResourceVersion())
+	if err := targetClient.Create(ctx, obj); err == nil {
 		return nil
+	} else {
+		if err := recoverTrackedCreateResult(ctx, targetClient, obj, session, err); err != nil {
+			return err
+		}
 	}
-	if !apierrors.IsNotFound(err) {
-		return fmt.Errorf("check existing auxiliary resource %s/%s: %w", obj.GetNamespace(), obj.GetName(), err)
-	}
-	obj.SetManagedFields(nil)
-	return utils.ApplyUnstructured(ctx, targetClient, obj)
+	return nil
 }
 
 // renderTemplate renders a Go template with the given context.

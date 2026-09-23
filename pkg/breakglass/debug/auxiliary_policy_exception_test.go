@@ -117,3 +117,26 @@ spec:
 	require.Len(t, statuses, 1)
 	require.True(t, statuses[0].Created)
 }
+
+func TestAuxiliaryCreateDoesNotAdoptConcurrentForeignResource(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	gvk := schema.GroupVersionKind{Group: "example.telekom.com", Version: "v1", Kind: "ExternalResource"}
+	scheme.AddKnownTypeWithName(gvk, &unstructured.Unstructured{})
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "owner-session"}}
+	foreign := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
+		"metadata": map[string]interface{}{"name": "concurrent", "namespace": "target", "annotations": map[string]interface{}{
+			sourceSessionUIDAnnotation: "foreign-session", createOperationIDAnnotation: "operation",
+		}},
+	}}
+	target := fake.NewClientBuilder().WithScheme(scheme).WithObjects(foreign).Build()
+	obj := &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": gvk.GroupVersion().String(), "kind": gvk.Kind,
+		"metadata": map[string]interface{}{"name": "concurrent", "namespace": "target", "annotations": map[string]interface{}{
+			sourceSessionUIDAnnotation: string(session.UID), createOperationIDAnnotation: "operation",
+		}},
+	}}
+	err := recoverTrackedCreateResult(ctx, target, obj, session, apierrors.NewAlreadyExists(schema.GroupResource{Group: gvk.Group, Resource: "externalresources"}, obj.GetName()))
+	require.ErrorContains(t, err, "owned by another session")
+}
