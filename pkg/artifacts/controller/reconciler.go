@@ -123,6 +123,9 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		return ctrl.Result{RequeueAfter: min(30*time.Second, time.Until(record.ExpiresAt))}, nil
 	}
 	if object.DeletionTimestamp.IsZero() && record.Recipe != backend.TerminalRecordingRecipe && (record.State == backend.StatePending || record.State == backend.StateUploading || record.State == backend.StateAvailable) {
+		if object.Spec.ConnectionLeaseUID == "" {
+			return ctrl.Result{}, errors.New("artifact connection lease identity is missing")
+		}
 		revoked, err := reconciler.collectionRevoked(ctx, &object, now)
 		if err != nil {
 			return ctrl.Result{}, err
