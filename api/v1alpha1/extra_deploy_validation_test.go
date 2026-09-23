@@ -946,6 +946,20 @@ func TestValidateNumberValuePreservesLargeIntegerRange(t *testing.T) {
 	assert.Contains(t, errs[0].Detail, "at most 9007199254740992")
 }
 
+func TestValidateExtraDeployValuesRejectsNullForEveryInputType(t *testing.T) {
+	for _, inputType := range []ExtraDeployInputType{InputTypeBoolean, InputTypeText, InputTypeNumber, InputTypeStorageSize, InputTypeSelect, InputTypeMultiSelect} {
+		t.Run(string(inputType), func(t *testing.T) {
+			errs := ValidateExtraDeployValues(
+				map[string]apiextensionsv1.JSON{"value": {Raw: []byte(`null`)}},
+				[]ExtraDeployVariable{{Name: "value", InputType: inputType}},
+				field.NewPath("values"),
+			)
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Detail, "must not be null")
+		})
+	}
+}
+
 func TestCoerceExtraDeployValues(t *testing.T) {
 	tests := []struct {
 		name      string

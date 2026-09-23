@@ -289,6 +289,9 @@ func validateVariableValue(
 	fldPath *field.Path,
 ) field.ErrorList {
 	allErrs := field.ErrorList{}
+	if string(value.Raw) == "null" {
+		return append(allErrs, field.TypeInvalid(fldPath, "null", "must not be null"))
+	}
 
 	inputType := varDef.InputType
 	if inputType == "" {
