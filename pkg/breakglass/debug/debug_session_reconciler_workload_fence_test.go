@@ -104,7 +104,15 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 				require.NoError(t, json.Unmarshal(payload, &object))
 				metadata, _ := object["metadata"].(map[string]interface{})
 				metadata["uid"] = "applied-target-uid"
-				return cl.Create(ctx, &unstructured.Unstructured{Object: object})
+				desired := &unstructured.Unstructured{Object: object}
+				current := &unstructured.Unstructured{}
+				current.SetGroupVersionKind(desired.GroupVersionKind())
+				if err := cl.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+					desired.SetUID(current.GetUID())
+					desired.SetResourceVersion(current.GetResourceVersion())
+					return cl.Update(ctx, desired)
+				}
+				return cl.Create(ctx, desired)
 			},
 			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 				if obj.GetUID() == "" {

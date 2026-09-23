@@ -33,7 +33,15 @@ func TestPolicyExceptionAuxiliaryLifecycle(t *testing.T) {
 			require.NoError(t, json.Unmarshal(payload, &object))
 			metadata, _ := object["metadata"].(map[string]interface{})
 			metadata["uid"] = "exception-uid"
-			return c.Create(ctx, &unstructured.Unstructured{Object: object})
+			desired := &unstructured.Unstructured{Object: object}
+			current := &unstructured.Unstructured{}
+			current.SetGroupVersionKind(desired.GroupVersionKind())
+			if err := c.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+				desired.SetUID(current.GetUID())
+				desired.SetResourceVersion(current.GetResourceVersion())
+				return c.Update(ctx, desired)
+			}
+			return c.Create(ctx, desired)
 		},
 		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			obj.SetUID("exception-uid")
@@ -96,6 +104,19 @@ spec:
 	require.Equal(t, []interface{}{"debug-target"}, resources["namespaces"])
 	selector := resources["selector"].(map[string]interface{})["matchLabels"].(map[string]interface{})
 	require.Equal(t, session.Name, selector[DebugSessionLabelKey])
+	require.NoError(t, unstructured.SetNestedSlice(obj.Object, []interface{}{map[string]interface{}{
+		"policyName": "second-reviewed-policy", "ruleNames": []interface{}{"second-rule"},
+	}}, "spec", "exceptions"))
+	obj.SetUID("")
+	obj.SetResourceVersion("")
+	require.NoError(t, applyOrRecoverAuxiliaryResource(ctx, target, obj, session))
+	updated := &unstructured.Unstructured{}
+	updated.SetGroupVersionKind(gvk)
+	require.NoError(t, target.Get(ctx, key, updated))
+	exceptions, found, err := unstructured.NestedSlice(updated.Object, "spec", "exceptions")
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "second-reviewed-policy", exceptions[0].(map[string]interface{})["policyName"])
 	// The generic controller inventory removes the exception at session cleanup.
 	session.Status.AuxiliaryResourceStatuses = statuses
 	template.AuxiliaryResources[0].DeleteAfter = false

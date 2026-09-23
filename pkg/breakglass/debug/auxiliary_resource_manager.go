@@ -773,18 +773,27 @@ func (m *AuxiliaryResourceManager) deployResourceWithFence(
 }
 
 // applyOrRecoverAuxiliaryResource creates unstructured auxiliary resources
-// atomically and recovers only objects that pass the same session and
-// operation identity checks used by the legacy create path. Create is used for
-// external CRDs as well; this preserves the no-adoption guarantee.
+// atomically. Existing objects must belong to this session before native SSA
+// can reconcile them, which prevents concurrent foreign-object adoption while
+// allowing same-session updates.
 func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Client, obj *unstructured.Unstructured, session *breakglassv1alpha1.DebugSession) error {
 	if err := targetClient.Create(ctx, obj); err == nil {
 		return nil
-	} else {
-		if err := recoverTrackedCreateResult(ctx, targetClient, obj, session, err); err != nil {
-			return err
-		}
+	} else if !apierrors.IsAlreadyExists(err) && !isAmbiguousCreateError(err) {
+		return fmt.Errorf("create auxiliary resource: %w", err)
 	}
-	return nil
+	existing := &unstructured.Unstructured{}
+	existing.SetGroupVersionKind(obj.GroupVersionKind())
+	if err := targetClient.Get(ctx, client.ObjectKeyFromObject(obj), existing); err != nil {
+		return fmt.Errorf("recover auxiliary resource after create error: %w", err)
+	}
+	if session == nil || existing.GetAnnotations()[sourceSessionUIDAnnotation] != string(session.UID) {
+		return fmt.Errorf("target resource %s/%s already exists and is owned by another session", obj.GetNamespace(), obj.GetName())
+	}
+	obj.SetUID(existing.GetUID())
+	obj.SetResourceVersion(existing.GetResourceVersion())
+	obj.SetManagedFields(nil)
+	return utils.ApplyUnstructured(ctx, targetClient, obj)
 }
 
 // renderTemplate renders a Go template with the given context.
