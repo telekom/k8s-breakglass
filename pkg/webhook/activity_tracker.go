@@ -376,7 +376,7 @@ func (at *ActivityTracker) updateDebugSessionActivity(ctx context.Context, key t
 			session.Status.LastActivity = &metav1.Time{Time: entry.lastSeen}
 		}
 		session.Status.ActivityCount += entry.count
-		return at.client.Status().Patch(ctx, &session, client.MergeFrom(base))
+		return at.client.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	})
 }
 

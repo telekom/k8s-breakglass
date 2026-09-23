@@ -1012,17 +1012,20 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 		}
 	}
 	if s.allowed && s.allowSource == "debug-session" {
-		if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
-			s.allowed = false
-			s.allowSource = ""
-			s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
-		} else if ra := s.sar.Spec.ResourceAttributes; ra != nil {
+		if ra := s.sar.Spec.ResourceAttributes; ra != nil {
 			if ok, reason := wc.liveDebugSessionAccess(s.ctx, username, s.issuer, s.clusterName, ra, s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID); !ok {
 				s.allowed = false
 				s.allowSource = ""
 				s.reason = wc.finalizeReason("Debug session expired, was revoked, or no longer authorizes this pod operation", false, s.clusterName)
 			} else {
 				s.reason = wc.finalizeReason(reason, true, s.clusterName)
+			}
+		}
+		if s.allowed {
+			if err := wc.recordDebugSessionActivity(s.ctx, s.debugSessionNamespace, s.debugSessionName, types.UID(s.debugSessionUID)); err != nil {
+				s.allowed = false
+				s.allowSource = ""
+				s.reason = wc.finalizeReason("Debug session activity could not be persisted before authorization completed", false, s.clusterName)
 			}
 		}
 	}
