@@ -504,6 +504,32 @@ func TestDebugSessionReadAuthorizerCachesTemplateApprovers(t *testing.T) {
 	require.Equal(t, 1, countingClient.gets["template:shared-template"])
 }
 
+func TestDebugSessionReadAuthorizerFencesConfiguredApproverByProvider(t *testing.T) {
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "provider-fenced-template"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{
+			Groups: []string{"debug-approvers"},
+		}},
+	}
+	ctrl := NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fake.NewClientBuilder().WithScheme(Scheme).WithObjects(template).Build(), nil, nil)
+	session := &breakglassv1alpha1.DebugSession{Spec: breakglassv1alpha1.DebugSessionSpec{
+		TemplateRef: "provider-fenced-template", RequestedBy: "requester",
+		IdentityProviderName: "idp-a", IdentityProviderIssuer: "https://a.example",
+	}}
+
+	allowed, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+		provider: "idp-a", issuer: "https://a.example", groups: []string{"debug-approvers"},
+	})
+	require.NoError(t, err)
+	require.True(t, allowed)
+
+	denied, err := ctrl.canReadDebugSession(context.Background(), session, debugSessionReadIdentity{
+		provider: "idp-b", issuer: "https://b.example", groups: []string{"debug-approvers"},
+	})
+	require.NoError(t, err)
+	require.False(t, denied)
+}
+
 func TestCanReadDebugSession_ReturnsErrorWhenBindingApproverLookupFails(t *testing.T) {
 	logger := zaptest.NewLogger(t).Sugar()
 	baseClient := fake.NewClientBuilder().

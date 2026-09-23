@@ -1836,7 +1836,14 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 			debugSessionIdentityMatchesProvider(identity, session.Status.Approval.RejectedByIdentityProvider, "", session.Status.Approval.RejectedBy)) {
 		return true, nil
 	}
-	return a.isExplicitDebugSessionApprover(ctx, session)
+	explicitApprover, err := a.isExplicitDebugSessionApprover(ctx, session)
+	if err != nil {
+		return false, err
+	}
+	if !debugSessionApprovalIdentityMatches(session, identity) {
+		return false, nil
+	}
+	return explicitApprover, nil
 }
 
 func debugSessionProviderMatches(identity debugSessionReadIdentity, session *breakglassv1alpha1.DebugSession) bool {
