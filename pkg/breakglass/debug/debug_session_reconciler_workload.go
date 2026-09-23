@@ -904,7 +904,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Created:           true,
 		CreateOperationID: operationID,
 	}
-	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, status)
+	statusIndex := upsertPodTemplateResourceIntent(ds, status)
 	if c.client != nil {
 		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
@@ -923,7 +923,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		return fmt.Errorf("apply pod template resource failed: %w", err)
 	}
 	// Record the target UID as the durable outcome.
-	statusRef := &ds.Status.PodTemplateResourceStatuses[len(ds.Status.PodTemplateResourceStatuses)-1]
+	statusRef := &ds.Status.PodTemplateResourceStatuses[statusIndex]
 	statusRef.UID = string(obj.GetUID())
 	if statusRef.UID == "" {
 		return fmt.Errorf("created pod template resource %s/%s has no UID", obj.GetNamespace(), obj.GetName())
@@ -954,6 +954,21 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		"namespace", obj.GetNamespace())
 
 	return nil
+}
+
+func upsertPodTemplateResourceIntent(ds *breakglassv1alpha1.DebugSession, desired breakglassv1alpha1.PodTemplateResourceStatus) int {
+	for i := range ds.Status.PodTemplateResourceStatuses {
+		current := &ds.Status.PodTemplateResourceStatuses[i]
+		if current.APIVersion == desired.APIVersion && current.Kind == desired.Kind && current.Namespace == desired.Namespace && current.ResourceName == desired.ResourceName && current.Source == desired.Source && current.CreateOperationID == desired.CreateOperationID {
+			if desired.UID == "" {
+				desired.UID = current.UID
+			}
+			*current = desired
+			return i
+		}
+	}
+	ds.Status.PodTemplateResourceStatuses = append(ds.Status.PodTemplateResourceStatuses, desired)
+	return len(ds.Status.PodTemplateResourceStatuses) - 1
 }
 
 // buildPodSpec creates the pod spec from templates and overrides.
