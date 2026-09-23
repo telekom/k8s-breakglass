@@ -206,6 +206,15 @@ func TestValidateExtraDeployValuesWithBindingPreservesLargeIntegerDistinction(t 
 	require.Contains(t, errs[0].Detail, "restricted")
 }
 
+func TestEffectiveExtraDeployVariablesMergesLargeIntegerBoundsExactly(t *testing.T) {
+	base := []ExtraDeployVariable{{Name: "value", InputType: InputTypeNumber, Validation: &VariableValidation{Min: "9007199254740992"}}}
+	binding := []ExtraDeployVariableConstraint{{Name: "value", Validation: &VariableValidation{Min: "9007199254740993"}}}
+	effective, err := EffectiveExtraDeployVariables(base, binding)
+	require.NoError(t, err)
+	require.NotNil(t, effective[0].Validation)
+	require.Equal(t, "9007199254740993", effective[0].Validation.Min)
+}
+
 func TestBindingPatternErrorBelongsToNarrowPattern(t *testing.T) {
 	vars, err := EffectiveExtraDeployVariables([]ExtraDeployVariable{{Name: "value", InputType: InputTypeText, Validation: &VariableValidation{Pattern: "^safe-", PatternError: "template error"}}}, []ExtraDeployVariableConstraint{{Name: "value", Validation: &VariableValidation{Pattern: "-prod$", PatternError: "binding error"}}})
 	if err != nil {

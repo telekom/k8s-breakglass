@@ -960,6 +960,14 @@ func TestValidateExtraDeployValuesRejectsNullForEveryInputType(t *testing.T) {
 	}
 }
 
+func TestValidateNumberValueRejectsUnboundedExponent(t *testing.T) {
+	errs := validateNumberValue(
+		apiextensionsv1.JSON{Raw: []byte(`1e100000000`)}, nil, field.NewPath("value"),
+	)
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Detail, "finite number")
+}
+
 func TestCoerceExtraDeployValues(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -1255,7 +1255,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedPodTemplate"), newObj.Status.ResolvedPodTemplate,
 			"resolvedPodTemplate is immutable once the resolved template is persisted"))
 	}
-	if (oldObj.Status.ResolvedTemplate != nil &&
+	if ((oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSpec != nil) &&
 		oldObj.Status.ResolvedBindingSnapshotCaptured != newObj.Status.ResolvedBindingSnapshotCaptured) ||
 		(oldObj.Status.ResolvedBindingSnapshotCaptured && !newObj.Status.ResolvedBindingSnapshotCaptured) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSnapshotCaptured"),

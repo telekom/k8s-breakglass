@@ -18,9 +18,7 @@ package v1alpha1
 
 import (
 	"fmt"
-	"math"
 	"regexp"
-	"strconv"
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -290,15 +288,15 @@ func mergeVariableValidation(base, narrow *VariableValidation) (*VariableValidat
 		return nil, fmt.Errorf("validation bounds are contradictory")
 	}
 	if merged.Min != "" && merged.Max != "" {
-		minValue, err := parseFiniteFloat(merged.Min)
+		minValue, err := parseDecimalRat(merged.Min)
 		if err != nil {
 			return nil, fmt.Errorf("min: %w", err)
 		}
-		maxValue, err := parseFiniteFloat(merged.Max)
+		maxValue, err := parseDecimalRat(merged.Max)
 		if err != nil {
 			return nil, fmt.Errorf("max: %w", err)
 		}
-		if minValue > maxValue {
+		if minValue.Cmp(maxValue) > 0 {
 			return nil, fmt.Errorf("validation bounds are contradictory")
 		}
 	}
@@ -326,7 +324,7 @@ func validateFiniteNumericBounds(validation *VariableValidation) error {
 		if value == "" {
 			continue
 		}
-		if _, err := parseFiniteFloat(value); err != nil {
+		if _, err := parseDecimalRat(value); err != nil {
 			return fmt.Errorf("%s: %w", name, err)
 		}
 	}
@@ -358,17 +356,6 @@ func validateStorageBounds(validation *VariableValidation) error {
 	return nil
 }
 
-func parseFiniteFloat(value string) (float64, error) {
-	parsed, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return 0, err
-	}
-	if math.IsNaN(parsed) || math.IsInf(parsed, 0) {
-		return 0, fmt.Errorf("must be finite")
-	}
-	return parsed, nil
-}
-
 func cloneVariableValidation(validation *VariableValidation) *VariableValidation {
 	if validation == nil {
 		return nil
@@ -396,23 +383,23 @@ func tighterMin(base, narrow string) (string, error) {
 		return base, nil
 	}
 	if base == "" {
-		if _, err := parseFiniteFloat(narrow); err != nil {
+		if _, err := parseDecimalRat(narrow); err != nil {
 			return "", err
 		}
 		return narrow, nil
 	}
-	b, err := parseFiniteFloat(base)
+	b, err := parseDecimalRat(base)
 	if err != nil {
 		return "", err
 	}
-	n, err := parseFiniteFloat(narrow)
+	n, err := parseDecimalRat(narrow)
 	if err != nil {
 		return "", err
 	}
-	if n < b {
+	if n.Cmp(b) < 0 {
 		return "", fmt.Errorf("would widen template minimum %q", base)
 	}
-	if n > b {
+	if n.Cmp(b) > 0 {
 		return narrow, nil
 	}
 	return base, nil
@@ -423,23 +410,23 @@ func tighterMax(base, narrow string) (string, error) {
 		return base, nil
 	}
 	if base == "" {
-		if _, err := parseFiniteFloat(narrow); err != nil {
+		if _, err := parseDecimalRat(narrow); err != nil {
 			return "", err
 		}
 		return narrow, nil
 	}
-	b, err := parseFiniteFloat(base)
+	b, err := parseDecimalRat(base)
 	if err != nil {
 		return "", err
 	}
-	n, err := parseFiniteFloat(narrow)
+	n, err := parseDecimalRat(narrow)
 	if err != nil {
 		return "", err
 	}
-	if n > b {
+	if n.Cmp(b) > 0 {
 		return "", fmt.Errorf("would widen template maximum %q", base)
 	}
-	if n < b {
+	if n.Cmp(b) < 0 {
 		return narrow, nil
 	}
 	return base, nil

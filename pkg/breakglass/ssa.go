@@ -178,7 +178,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 		!apiequality.Semantic.DeepEqual(oldStatus.ResolvedBindingSpec, newStatus.ResolvedBindingSpec) {
 		return fmt.Errorf("approved resolved binding snapshot is immutable")
 	}
-	if (oldStatus.ResolvedTemplate != nil &&
+	if ((oldStatus.ResolvedTemplate != nil || oldStatus.ResolvedBindingSpec != nil) &&
 		oldStatus.ResolvedBindingSnapshotCaptured != newStatus.ResolvedBindingSnapshotCaptured) ||
 		(oldStatus.ResolvedBindingSnapshotCaptured && !newStatus.ResolvedBindingSnapshotCaptured) {
 		return fmt.Errorf("approved resolved binding decision cannot be cleared")

@@ -445,6 +445,7 @@ func jsonNumberText(raw []byte) (string, error) {
 }
 
 func parseDecimalRat(text string) (*big.Rat, error) {
+	const maxExpandedDigits = 10000
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, fmt.Errorf("empty number")
@@ -484,6 +485,9 @@ func parseDecimalRat(text string) (*big.Rat, error) {
 	scale := exponent
 	if len(decimal) == 2 {
 		scale -= len(decimal[1])
+	}
+	if len(digits) > maxExpandedDigits || scale > maxExpandedDigits-len(digits) || scale < -(maxExpandedDigits-len(digits)) {
+		return nil, fmt.Errorf("number is too large")
 	}
 	if scale >= 0 {
 		numerator.Mul(numerator, new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(scale)), nil))

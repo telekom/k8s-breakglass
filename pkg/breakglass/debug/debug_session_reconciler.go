@@ -909,7 +909,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	if clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterLookup); ambiguity != debugClusterConfigAmbiguityNone {
 		return c.failSession(ctx, ds, "cluster configuration is ambiguous; activation denied")
-	} else if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
+	} else if clusterConfig == nil {
+		return c.failSession(ctx, ds, "cluster configuration is missing; activation denied")
+	} else if !isDebugClusterConfigReady(clusterConfig) {
 		return c.failSession(ctx, ds, "cluster configuration is not Ready; activation denied")
 	} else if binding == nil && template.Spec.Allowed != nil && template.Spec.Allowed.ClusterSelector != nil &&
 		!directTemplateAllowsCluster(template, clusterLookup, clusterConfig) {
