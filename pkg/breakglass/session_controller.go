@@ -397,9 +397,6 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 }
 
 func sessionRequestIdentityIsProviderScoped(c *gin.Context) bool {
-	if _, exists := c.Get("legacy_identity_allowed"); !exists {
-		return true
-	}
 	if c.GetBool("legacy_identity_allowed") {
 		return true
 	}

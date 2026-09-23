@@ -1832,6 +1832,7 @@ func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *break
 		}
 	}
 	if session.Status.Approval != nil &&
+		debugSessionApprovalIdentityMatches(session, identity) &&
 		(debugSessionApprovalActorMatches(identity, session.Status.Approval.ApprovedByIdentityProvider, session.Status.Approval.ApprovedBy) ||
 			debugSessionApprovalActorMatches(identity, session.Status.Approval.RejectedByIdentityProvider, session.Status.Approval.RejectedBy)) {
 		return true, nil

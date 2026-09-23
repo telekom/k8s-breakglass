@@ -39,6 +39,9 @@ type FakeMailSender struct {
 }
 
 func TestSessionRequestIdentityIsProviderScoped(t *testing.T) {
+	missingTrustMetadata := &gin.Context{}
+	require.False(t, sessionRequestIdentityIsProviderScoped(missingTrustMetadata))
+
 	for name, values := range map[string]struct {
 		provider string
 		issuer   string
@@ -243,15 +246,21 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 			switch c.Request.Method {
 			case http.MethodGet:
 				c.Set("email", "approver@telekom.de")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
+				c.Set("legacy_identity_allowed", true)
 			case http.MethodPost:
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
 					c.Set("email", "tester@telekom.de")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Tester")
+					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/approve") || strings.Contains(url, "/reject") {
 					c.Set("email", "approver@telekom.de")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Approver")
+					c.Set("legacy_identity_allowed", true)
 				}
 			}
 
@@ -394,7 +403,9 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 				return
 			}
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Approver")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -527,19 +538,27 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 			case http.MethodGet:
 				// default to approver for GET
 				c.Set("email", "approver@telekom.de")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
+				c.Set("legacy_identity_allowed", true)
 			case http.MethodPost:
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
 					// session creation uses requester identity
 					c.Set("email", "requester@telekom.de")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Requester")
+					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/approve") {
 					c.Set("email", "approver@telekom.de")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Approver")
+					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/reject") {
 					c.Set("email", "rejector@telekom.de")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Rejector")
+					c.Set("legacy_identity_allowed", true)
 				}
 			}
 			c.Next()
@@ -678,7 +697,9 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 		func(c *gin.Context) {
 			// always requester identity
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -757,7 +778,9 @@ func TestCreateSessionRejectsEscalationWithoutUID(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -829,7 +852,9 @@ func TestCreateSessionRejectsUnreadyClusterConfig(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -908,7 +933,9 @@ func TestCreateSessionRejectsDuplicateClusterConfigName(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -951,7 +978,9 @@ func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -1024,7 +1053,9 @@ func TestEscalation_BlockSelfApproval_OverridesClusterAllow(t *testing.T) {
 		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		// middleware to set identity as self@example.com
 		c.Set("email", "self@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "Self")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
 
@@ -1095,11 +1126,15 @@ func TestEscalation_AllowedApproverDomains_OverridesCluster(t *testing.T) {
 		// default identity middleware for request creation
 		if c.Request.Method == http.MethodPost && c.Request.URL.Path == "/breakglassSessions" {
 			c.Set("email", "requester@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Requester")
+			c.Set("legacy_identity_allowed", true)
 		} else {
 			// approver identity (example.com domain) -> should be denied by escalation
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Approver")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -1390,7 +1425,9 @@ func newApprovalAuthorizationTestContext(email, identityProvider string) *gin.Co
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/breakglassSessions/test/approve", nil)
 	c.Set("email", email)
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", strings.Split(email, "@")[0])
+	c.Set("legacy_identity_allowed", true)
 	c.Set("user_id", email)
 	if identityProvider != "" {
 		c.Set("identity_provider_name", identityProvider)
@@ -1433,7 +1470,9 @@ func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
 		func(c *gin.Context) {
 			// set requester identity for POST
 			c.Set("email", "req@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Req")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -1502,7 +1541,9 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "req@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Req")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "sub-req")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -1585,7 +1626,9 @@ func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLook
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "req@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Req")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "sub-123")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -1728,7 +1771,9 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 				func(c *gin.Context) {
 					// Set all identity claims in context
 					c.Set("email", tt.contextEmail)
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", tt.contextUsername)
+					c.Set("legacy_identity_allowed", true)
 					c.Set("user_id", tt.contextUserID)
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
@@ -1831,12 +1876,16 @@ func TestFilterBreakglassSessionsByUser(t *testing.T) {
 		switch c.Request.Method {
 		case http.MethodGet:
 			c.Set("email", "user1@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "user1")
+			c.Set("legacy_identity_allowed", true)
 		case http.MethodPost:
 			url := c.Request.URL.String()
 			if url == "/breakglassSessions" {
 				c.Set("email", "user1@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "user1")
+				c.Set("legacy_identity_allowed", true)
 			}
 		}
 		c.Next()
@@ -1928,7 +1977,9 @@ func TestFilterBreakglassSessionsExplicitOwnershipFiltersDoNotIncludeImplicitApp
 			return
 		}
 		c.Set("email", "bob@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "bob")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -2010,6 +2061,7 @@ func TestFilterBreakglassSessionsMineUsesAlternateIdentifiersWhenEmailMissing(t 
 			return
 		}
 		c.Set("username", "bob")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "subject-123")
 		c.Next()
 	}
@@ -2126,6 +2178,7 @@ func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {
 			return
 		}
 		c.Set("username", "bob")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "subject-123")
 		c.Next()
 	}
@@ -2201,6 +2254,7 @@ func TestApproveByNonApprover_ReturnsUnauthorized(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "not-an-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -2283,7 +2337,9 @@ func TestSessionApproveRejectInvalidOptionalBody(t *testing.T) {
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 				func(c *gin.Context) {
 					c.Set("email", "approver@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "approver@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
 			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2350,7 +2406,9 @@ func TestApproveExpiredPendingSessionReturnsBadRequest(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2413,7 +2471,9 @@ func TestApproveExpiredPendingSessionChecksAuthorizationBeforeTimeout(t *testing
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "intruder@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "intruder@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2515,7 +2575,9 @@ func TestApproveRejectChecksAuthorizationBeforeBodyAndStateResponses(t *testing.
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 				func(c *gin.Context) {
 					c.Set("email", "intruder@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "intruder@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
 			ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2604,7 +2666,9 @@ func TestApprovalAuthorizationUsesOwningEscalation(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "other-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "other-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2694,7 +2758,9 @@ func TestApprovalAuthorizationIgnoresNonControllerEscalationOwnerRefs(t *testing
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "non-controller-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "non-controller-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2767,7 +2833,9 @@ func TestApprovalAuthorizationRequiresOwnerReferenceUIDMatch(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "owner-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "owner-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -2834,7 +2902,9 @@ func TestApprovalReasonMandatoryEnforced(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "approver@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
+				c.Set("legacy_identity_allowed", true)
 				c.Next()
 			}, "/config/config.yaml", nil, cli)
 		ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -3046,7 +3116,9 @@ func TestApprovalAuthorizationDetailedResponses(t *testing.T) {
 				func(c *gin.Context) {
 					c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 					c.Set("email", tt.approverEmail)
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", tt.approverEmail)
+					c.Set("legacy_identity_allowed", true)
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
 			ctrl.clusterConfigManager = ccmanager
@@ -3099,7 +3171,9 @@ func TestApprovalAuthorizationCachesApproverGroupsPerCluster(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3122,7 +3196,9 @@ func TestApprovalAuthorizationCachesApproverGroupsPerCluster(t *testing.T) {
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 
 	clusterASession := breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "session-a", Namespace: "default"},
@@ -3165,7 +3241,9 @@ func TestApprovalAuthorizationIgnoresInvalidApproverGroupCacheEntry(t *testing.T
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3182,7 +3260,9 @@ func TestApprovalAuthorizationIgnoresInvalidApproverGroupCacheEntry(t *testing.T
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set(`approverGroups_"target-cluster"_"approver@example.com"`, "not-a-group-slice")
 
 	session := breakglassv1alpha1.BreakglassSession{
@@ -3216,7 +3296,9 @@ func TestApprovalAuthorizationPrefersTargetClusterGroupsOverRequestGroups(t *tes
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3231,7 +3313,9 @@ func TestApprovalAuthorizationPrefersTargetClusterGroupsOverRequestGroups(t *tes
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"unrelated-request-group"})
 	c.Set("identity_provider_name", "approver-idp")
 
@@ -3271,7 +3355,9 @@ func TestApprovalAuthorizationUsesResolvedApproverGroupMembers(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3286,7 +3372,9 @@ func TestApprovalAuthorizationUsesResolvedApproverGroupMembers(t *testing.T) {
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"unrelated-request-group"})
 	c.Set("identity_provider_name", "approver-idp")
 
@@ -3322,7 +3410,9 @@ func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembers
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3337,7 +3427,9 @@ func TestApprovalAuthorizationFallsBackToTargetGroupsWhenResolvedApproverMembers
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"unrelated-request-group"})
 	c.Set("identity_provider_name", "approver-idp")
 
@@ -3376,7 +3468,9 @@ func TestApprovalAuthorizationDoesNotFallbackWhenResolvedApproverGroupIsEmpty(t 
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3391,7 +3485,9 @@ func TestApprovalAuthorizationDoesNotFallbackWhenResolvedApproverGroupIsEmpty(t 
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"unrelated-request-group"})
 
 	session := breakglassv1alpha1.BreakglassSession{
@@ -3426,7 +3522,9 @@ func TestApprovalAuthorizationUsesRequestGroupsWhenTargetLookupOnlyHasSystemGrou
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3441,7 +3539,9 @@ func TestApprovalAuthorizationUsesRequestGroupsWhenTargetLookupOnlyHasSystemGrou
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"target-approvers"})
 
 	session := breakglassv1alpha1.BreakglassSession{
@@ -3474,7 +3574,9 @@ func TestApprovalAuthorizationDoesNotUseRequestGroupsWhenTargetLookupSucceeds(t 
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -3489,7 +3591,9 @@ func TestApprovalAuthorizationDoesNotUseRequestGroupsWhenTargetLookupSucceeds(t 
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("groups", []string{"target-approvers"})
 
 	session := breakglassv1alpha1.BreakglassSession{
@@ -3550,14 +3654,18 @@ func TestTerminalStateImmutability(t *testing.T) {
 		if c.Request.Method == http.MethodPost {
 			if strings.Contains(c.Request.URL.String(), "/approve") {
 				c.Set("email", "a@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else if strings.Contains(c.Request.URL.String(), "/reject") {
 				c.Set("email", "a@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else {
 				// plain POST (e.g. session creation) -> set requester email to avoid IDP call
 				c.Set("email", "a@e.com")
+				c.Set("legacy_identity_allowed", true)
 			}
 		} else {
 			c.Set("email", "a@e.com")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -3657,13 +3765,17 @@ func TestDropApprovedSessionExpires(t *testing.T) {
 		if c.Request.Method == http.MethodPost {
 			if strings.Contains(c.Request.URL.String(), "/approve") {
 				c.Set("email", "approver@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else if strings.Contains(c.Request.URL.String(), "/drop") {
 				c.Set("email", "user@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else {
 				c.Set("email", "user@e.com")
+				c.Set("legacy_identity_allowed", true)
 			}
 		} else {
 			c.Set("email", "user@e.com")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -3805,6 +3917,7 @@ func TestDropScheduledApprovedSessionExpiresAndPreservesApprovalHistory(t *testi
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
 		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("email", "user@e.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
 	engine := gin.New()
@@ -3876,6 +3989,7 @@ func TestDropTerminalSessionRejected(t *testing.T) {
 			ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
 				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 				c.Set("email", "user@e.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Next()
 			}, "/config/config.yaml", nil, cli)
 			engine := gin.New()
@@ -3952,6 +4066,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &ss, &es, func(c *gin.Context) {
 		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("username", "owner-username")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "owner-subject")
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -4036,14 +4151,18 @@ func TestApproverCancelRunningSession(t *testing.T) {
 		if c.Request.Method == http.MethodPost {
 			if strings.Contains(c.Request.URL.String(), "/approve") {
 				c.Set("email", "approver@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else if strings.Contains(c.Request.URL.String(), "/cancel") {
 				// default to approver for cancel tests, tests can override by setting different middleware
 				c.Set("email", "approver@e.com")
+				c.Set("legacy_identity_allowed", true)
 			} else {
 				c.Set("email", "user@e.com")
+				c.Set("legacy_identity_allowed", true)
 			}
 		} else {
 			c.Set("email", "user@e.com")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -4121,8 +4240,10 @@ func TestApproverCancelRunningSession(t *testing.T) {
 	ctrl = NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
 		if c.Request.Method == http.MethodPost {
 			c.Set("email", "not-approver@e.com")
+			c.Set("legacy_identity_allowed", true)
 		} else {
 			c.Set("email", "not-approver@e.com")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -4175,7 +4296,9 @@ func TestFilterBreakglassSessionsByClusterQueryParam(t *testing.T) {
 		}
 		// set identity to the owner of session s1 so cluster filter returns it
 		c.Set("email", "user1@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "user1")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -4233,7 +4356,9 @@ func TestFilterBreakglassSessionsByUserQueryParam(t *testing.T) {
 		}
 		// Set identity to alice so mine=true will apply
 		c.Set("email", "alice@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "alice")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -4291,7 +4416,9 @@ func TestFilterBreakglassSessionsByGroupQueryParam(t *testing.T) {
 		}
 		// identity belongs to the user owning the matching session
 		c.Set("email", "u@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "u")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -4358,7 +4485,9 @@ func TestWithdrawMyRequest_Scenarios(t *testing.T) {
 		// allow test to override requester via header
 		if h := c.GetHeader("X-Test-Email"); h != "" {
 			c.Set("email", h)
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", strings.Split(h, "@")[0])
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}
@@ -4481,7 +4610,9 @@ func TestNoBodySessionActionsRejectUnexpectedBody(t *testing.T) {
 		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		if h := c.GetHeader("X-Test-Email"); h != "" {
 			c.Set("email", h)
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", strings.Split(h, "@")[0])
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
@@ -4574,7 +4705,9 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 		}
 		// identity of u1 so mine=true applies
 		c.Set("email", "u1@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "u1")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -4630,15 +4763,21 @@ func TestRequestAndApproveWithReasons(t *testing.T) {
 			switch c.Request.Method {
 			case http.MethodGet:
 				c.Set("email", "approver@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
+				c.Set("legacy_identity_allowed", true)
 			case http.MethodPost:
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
 					c.Set("email", "requester@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Requester")
+					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/approve") {
 					c.Set("email", "approver@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Approver")
+					c.Set("legacy_identity_allowed", true)
 				}
 			}
 			c.Next()
@@ -4749,10 +4888,14 @@ func TestLongReasonStored(t *testing.T) {
 			}
 			if c.Request.Method == http.MethodPost && c.Request.URL.String() == "/breakglassSessions" {
 				c.Set("email", "longreq@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "LongReq")
+				c.Set("legacy_identity_allowed", true)
 			} else if c.Request.Method == http.MethodGet {
 				c.Set("email", "approver@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
+				c.Set("legacy_identity_allowed", true)
 			}
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -4810,7 +4953,9 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 		func(c *gin.Context) {
 			if c.Request.Method == http.MethodPost && c.Request.URL.String() == "/breakglassSessions" {
 				c.Set("email", "ws@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "WS")
+				c.Set("legacy_identity_allowed", true)
 			}
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -4852,15 +4997,21 @@ func TestOwnerCanRejectPendingSession(t *testing.T) {
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
 					c.Set("email", "owner@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Owner")
+					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/reject") {
 					c.Set("email", "owner@example.com")
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Owner")
+					c.Set("legacy_identity_allowed", true)
 				}
 			}
 			if c.Request.Method == http.MethodGet {
 				c.Set("email", "owner@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Owner")
+				c.Set("legacy_identity_allowed", true)
 			}
 			c.Next()
 		}, "/config/config.yaml", nil, cli).WithAuditService(mockAudit)
@@ -4945,7 +5096,9 @@ func TestFilterBreakglassSessionsByClusterAndGroupQueryParams(t *testing.T) {
 			return
 		}
 		c.Set("email", "x@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "x")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -5002,7 +5155,9 @@ func TestFilterBreakglassSessionsByUserAndGroupQueryParams(t *testing.T) {
 			return
 		}
 		c.Set("email", "sam@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "sam")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -5059,7 +5214,9 @@ func TestFilterBreakglassSessionsByClusterUserGroupQueryParams(t *testing.T) {
 			return
 		}
 		c.Set("email", "p@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "p")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -5152,39 +5309,61 @@ func TestFilterBreakglassSessionsByState(t *testing.T) {
 		switch state {
 		case "pending":
 			c.Set("email", "a@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "a")
+			c.Set("legacy_identity_allowed", true)
 		case "approved":
 			c.Set("email", "b@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "b")
+			c.Set("legacy_identity_allowed", true)
 		case "active":
 			c.Set("email", "b@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "b")
+			c.Set("legacy_identity_allowed", true)
 		case "rejected":
 			c.Set("email", "c@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "c")
+			c.Set("legacy_identity_allowed", true)
 		case "withdrawn":
 			c.Set("email", "d@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "d")
+			c.Set("legacy_identity_allowed", true)
 		case "expired":
 			c.Set("email", "e@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "e")
+			c.Set("legacy_identity_allowed", true)
 		case "timeout":
 			c.Set("email", "f@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "f")
+			c.Set("legacy_identity_allowed", true)
 		case "waiting", "waitingforscheduledtime":
 			c.Set("email", "g@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "g")
+			c.Set("legacy_identity_allowed", true)
 		case "":
 			if ParseBoolQuery(c.Query("activeOnly"), false) {
 				c.Set("email", "b@ex.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "b")
+				c.Set("legacy_identity_allowed", true)
 			} else {
 				c.Set("email", "approver@ex.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "approver")
+				c.Set("legacy_identity_allowed", true)
 			}
 		default:
 			c.Set("email", "approver@ex.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "approver")
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}
@@ -5273,7 +5452,9 @@ func TestFilterBreakglassSessionsByMultipleStates(t *testing.T) {
 			return
 		}
 		c.Set("email", viewer)
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "viewer")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -5388,7 +5569,9 @@ func TestBreakglassSessionStatusListPushesExactStateFiltersAndPreservesAuthoriza
 		func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("email", viewer)
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "viewer")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, recordingClient)
 
@@ -5457,7 +5640,9 @@ func TestFilterBreakglassSessionsApprovedByMe(t *testing.T) {
 			return
 		}
 		c.Set("email", approver)
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "approver")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, ctxSetup, "/config/config.yaml", nil, cli)
@@ -5530,7 +5715,9 @@ func TestApproverCanSeePendingSessions(t *testing.T) {
 			return
 		}
 		c.Set("email", "bob@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "bob")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -5647,12 +5834,14 @@ func TestGetBreakglassSessionByNameRequiresParticipantAuthorization(t *testing.T
 		userID := c.GetHeader("X-Test-User-ID")
 		if email != "" {
 			c.Set("email", email)
+			c.Set("legacy_identity_allowed", true)
 		}
 		if username == "" && email != "" {
 			username = strings.TrimSuffix(email, "@example.com")
 		}
 		if username != "" {
 			c.Set("username", username)
+			c.Set("legacy_identity_allowed", true)
 		}
 		if userID == "" && email != "" {
 			userID = email
@@ -5775,7 +5964,9 @@ func TestGetBreakglassSessionByNameApprovalTimedOutMetadata(t *testing.T) {
 	ctxSetup := func(c *gin.Context) {
 		email := c.GetHeader("X-Test-Email")
 		c.Set("email", email)
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", strings.TrimSuffix(email, "@example.com"))
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", email)
 		c.Set("groups", []string{"system:authenticated"})
 		c.Next()
@@ -5830,7 +6021,9 @@ func TestGetBreakglassSessionByNameExpiredApprovalMetadata(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sessionManager, &escalationManager, func(c *gin.Context) {
 		c.Set("email", "alice@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "alice")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "alice@example.com")
 		c.Set("legacy_identity_allowed", true)
 		c.Next()
@@ -5884,6 +6077,7 @@ func TestAuthenticatedUserIdentifiersUsesContextClaimsWithoutEmailLookup(t *test
 	t.Run("username and subject without email", func(t *testing.T) {
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Set("username", "owner-username")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "owner-subject")
 
 		requester, identifiers, err := ctrl.authenticatedUserIdentifiers(c)
@@ -6093,7 +6287,9 @@ func runBlockSelfApprovalPreventsSelfApproval(t *testing.T, sessionUser string) 
 			return
 		}
 		c.Set("email", "self@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "self")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -6162,7 +6358,9 @@ func TestClusterConfig_AllowedApproverDomains_AllowsDomain(t *testing.T) {
 			return
 		}
 		c.Set("email", "approver@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "approver")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -6229,7 +6427,9 @@ func TestClusterConfig_BlockSelfApproval_CrossNamespacePreventsSelfApproval(t *t
 			return
 		}
 		c.Set("email", "self@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "self")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -6295,7 +6495,9 @@ func TestClusterConfig_AllowedApproverDomains_CrossNamespaceRestrictsDomain(t *t
 			return
 		}
 		c.Set("email", "approver@external.example")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "approver")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -6364,7 +6566,9 @@ func TestClusterConfig_DuplicateNameFailsClosedForApprovalPolicy(t *testing.T) {
 			return
 		}
 		c.Set("email", "approver@external.example")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "approver")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}
 
@@ -6414,7 +6618,9 @@ func TestClusterConfigLookupErrorUsesLookupFailedApprovalPolicyMessage(t *testin
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager, func(c *gin.Context) {
 		c.Set("email", "approver@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "approver")
+		c.Set("legacy_identity_allowed", true)
 		c.Next()
 	}, "/config/config.yaml", nil, cli)
 	ctrl.clusterConfigManager = NewClusterConfigManager(clusterConfigListErrorClient{
@@ -6428,7 +6634,9 @@ func TestClusterConfigLookupErrorUsesLookupFailedApprovalPolicyMessage(t *testin
 	require.NoError(t, err)
 	c.Request = req
 	c.Set("email", "approver@example.com")
+	c.Set("legacy_identity_allowed", true)
 	c.Set("username", "approver")
+	c.Set("legacy_identity_allowed", true)
 
 	result := ctrl.checkApprovalAuthorization(c, *pending)
 	require.False(t, result.Allowed)
@@ -6496,7 +6704,9 @@ func TestFilterBreakglassSessions_ExhaustivePermutations(t *testing.T) {
 		}
 		if h := c.GetHeader("X-Test-Email"); h != "" {
 			c.Set("email", h)
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", strings.Split(h, "@")[0])
+			c.Set("legacy_identity_allowed", true)
 		}
 		c.Next()
 	}
@@ -7108,7 +7318,9 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -7206,7 +7418,9 @@ func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "requester@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Requester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -8500,7 +8714,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "test-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "TestUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "test-user@example.com")
 				c.Set("identity_provider_name", idpName) // Set IDP name
 				c.Set("groups", []string{"system:authenticated"})
@@ -8630,7 +8846,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "platform-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "PlatformUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "platform-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"platform-team"})
@@ -8761,7 +8979,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "platform-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "PlatformUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "platform-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"platform-team"})
@@ -8835,7 +9055,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "test-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "TestUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "test-user@example.com")
 				// No IDP name set - simulating legacy single-IDP mode
 				c.Set("groups", []string{"system:authenticated"})
@@ -8978,7 +9200,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "new-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "NewUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "new-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"system:authenticated"})
@@ -9110,7 +9334,9 @@ func TestSessionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "sre-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "SREUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "sre-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"sre-oncall"})
@@ -9349,7 +9575,9 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "platform-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "PlatformUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "platform-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"platform-sre"}) // Matches glob pattern "platform-*"
@@ -9485,7 +9713,9 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "sre-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "SREUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "sre-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"platform-sre"}) // Matches BOTH patterns
@@ -9611,7 +9841,9 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "platform-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "PlatformUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "platform-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"platform-team"})
@@ -9744,7 +9976,9 @@ func TestSessionLimits_GlobPatterns(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "special-user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "SpecialUser")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "special-user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"special-group"}) // Matches the empty group override
@@ -9841,7 +10075,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -9942,7 +10178,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10057,7 +10295,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10224,7 +10464,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10333,7 +10575,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10438,7 +10682,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10538,7 +10784,9 @@ func TestApproverResolutionLimits(t *testing.T) {
 		ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 			func(c *gin.Context) {
 				c.Set("email", "user@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "User")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "user@example.com")
 				c.Set("identity_provider_name", idpName)
 				c.Set("groups", []string{"requester-group"})
@@ -10620,7 +10868,9 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "tester@telekom.de")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Tester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
@@ -10709,7 +10959,9 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "tester@telekom.de")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Tester")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(_ context.Context, _ ClusterUserGroup) ([]string, error) {
@@ -10809,7 +11061,9 @@ func TestHandleRequestBreakglassSession_PerUserRateLimit(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "user@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "user@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "user@example.com")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -10881,7 +11135,9 @@ func TestHandleRequestBreakglassSession_RateLimitBeforeSessionCreation(t *testin
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "ratelimited@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "ratelimited@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "ratelimited@example.com")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -10954,7 +11210,9 @@ func TestHandleRequestBreakglassSession_EmptyEmailRejectedBeforeRateLimit(t *tes
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", username)
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", username)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -11018,7 +11276,9 @@ func TestHandleRequestBreakglassSession_ConcurrentSameUserRateLimited(t *testing
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "concurrent@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "concurrent@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "concurrent@example.com")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -11159,7 +11419,9 @@ func TestTokenValidation_ApprovalTimedOutPendingSessionIsNotApprovable(t *testin
 	logger, _ := zap.NewDevelopment()
 	ctxSetup := func(c *gin.Context) {
 		c.Set("email", "bob@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "bob")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "bob@example.com")
 		c.Set("groups", []string{"system:authenticated"})
 		c.Next()
@@ -11229,7 +11491,9 @@ func TestTokenValidation_TerminalStatesAreInvalid(t *testing.T) {
 			ctxSetup := func(c *gin.Context) {
 				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 				c.Set("email", "alice@example.com")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "alice")
+				c.Set("legacy_identity_allowed", true)
 				c.Set("user_id", "alice@example.com")
 				c.Set("groups", []string{"system:authenticated"})
 				c.Next()
@@ -11365,7 +11629,9 @@ func TestTokenValidation_ExistingSessionRequiresReadAuthorization(t *testing.T) 
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "observer@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "observer@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 	ctrl.getUserGroupsFn = func(ctx context.Context, cug ClusterUserGroup) ([]string, error) {
@@ -11437,7 +11703,9 @@ func TestTokenValidation_ExistingSessionAllowsAuthorizedReaders(t *testing.T) {
 				func(c *gin.Context) {
 					c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 					c.Set("email", tt.email)
+					c.Set("legacy_identity_allowed", true)
 					c.Set("username", tt.email)
+					c.Set("legacy_identity_allowed", true)
 					c.Set("user_id", tt.email)
 					c.Next()
 				}, "/config/config.yaml", nil, cli)
@@ -11502,7 +11770,9 @@ func TestTokenValidation_ExistingSessionAllowsHistoricalApprover(t *testing.T) {
 		func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("email", "historical-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "historical-approver@example.com")
+			c.Set("legacy_identity_allowed", true)
 			c.Set("user_id", "historical-approver@example.com")
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
@@ -11571,7 +11841,9 @@ func TestTokenValidation_StateAndExpiryValidity(t *testing.T) {
 	ctxSetup := func(c *gin.Context) {
 		c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 		c.Set("email", "requester@example.com")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("username", "requester")
+		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "requester@example.com")
 		c.Next()
 	}
