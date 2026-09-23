@@ -45,6 +45,14 @@ func stalePreparedAt() metav1.Time {
 	return metav1.NewTime(time.Now().Add(-ephemeralOperationRecoveryGrace - time.Second))
 }
 
+func newTestKubectlDebugHandler(client ctrlclient.Client, provider ClientProviderInterface) *KubectlDebugHandler {
+	return NewKubectlDebugHandler(client, provider).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
+}
+
+func newTestKubectlDebugHandlerWithReader(client ctrlclient.Client, reader ctrlclient.Reader, provider ClientProviderInterface) *KubectlDebugHandler {
+	return NewKubectlDebugHandlerWithReader(client, reader, provider).withIdentity(debugSessionReadIdentity{legacyAllowed: true})
+}
+
 // mockClientProvider is a test implementation of ClientProviderInterface
 type mockClientProvider struct {
 	clients       map[string]ctrlclient.Client
@@ -380,7 +388,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequest(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			client := fake.NewClientBuilder().WithScheme(scheme).Build()
-			handler := NewKubectlDebugHandler(client, nil)
+			handler := newTestKubectlDebugHandler(client, nil)
 
 			err := handler.ValidateEphemeralContainerRequest(
 				context.Background(),
@@ -495,7 +503,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 				WithObjects(tt.targetObjects...).
 				Build()
 			hubClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+			handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 				clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 			})
 
@@ -532,7 +540,7 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 			WithScheme(scheme).
 			WithObjects(prodNamespace).
 			Build()
-		handler := NewKubectlDebugHandler(hubClient, nil)
+		handler := newTestKubectlDebugHandler(hubClient, nil)
 
 		err := handler.ValidateEphemeralContainerRequest(
 			context.Background(),
@@ -869,7 +877,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 		},
 	}
 
-	handler := NewKubectlDebugHandler(hubClient, mockProvider).withIdentity(debugSessionReadIdentity{
+	handler := newTestKubectlDebugHandler(hubClient, mockProvider).withIdentity(debugSessionReadIdentity{
 		username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
 	})
 
@@ -923,7 +931,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			},
 		}
 
-		handler2 := NewKubectlDebugHandler(hubClient, mockProvider2).withIdentity(debugSessionReadIdentity{
+		handler2 := newTestKubectlDebugHandler(hubClient, mockProvider2).withIdentity(debugSessionReadIdentity{
 			username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
 		})
 
@@ -1029,7 +1037,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerSecurityContextFence(t *tes
 				return cl.Update(ctx, obj)
 			}}).Build()
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, securityContext, "test-user@example.com")
 			if test.wantError {
 				require.Error(t, err)
@@ -1107,7 +1115,7 @@ func TestKubectlDebugHandler_EphemeralOperationIntentPrecedesTargetMutation(t *t
 				return nil
 			},
 		}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	err := handler.InjectEphemeralContainer(context.Background(), newEphemeralOperationTestSession(), "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
 	require.Error(t, err)
@@ -1143,7 +1151,7 @@ func TestKubectlDebugHandler_DeterministicEphemeralMutationErrorsFailOperation(t
 			}).Build()
 			session := newEphemeralOperationTestSession()
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
-			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
 			require.Error(t, err)
 			stored := &breakglassv1alpha1.DebugSession{}
@@ -1197,7 +1205,7 @@ func TestKubectlDebugHandler_CanceledPreWritePersistsFailedOutcome(t *testing.T)
 			return cl.SubResource(name).Update(context.Background(), obj, opts...)
 		},
 	}).Build()
-	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+	handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
 
 	err := handler.InjectEphemeralContainer(requestCtx, session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
 	require.ErrorIs(t, err, context.Canceled)
@@ -1252,7 +1260,7 @@ func TestKubectlDebugHandler_ExpiryAfterIntentFailsOperationWithoutTargetWrite(t
 			return nil
 		},
 	}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
 	require.Error(t, err)
@@ -1283,7 +1291,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsDuplicateTuple(t *t
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
 	first := newEphemeralContainerOperation(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
@@ -1310,7 +1318,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsPreparedDigestColli
 	session := newEphemeralOperationTestSession()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	first := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 	conflicting := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "alpine:latest", []string{"sh"}, nil), "operator@example.com")
 
@@ -1328,7 +1336,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsRetainedUnknownRepl
 	session := newEphemeralOperationTestSession()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	unknown := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 	unknown.State = breakglassv1alpha1.KubectlDebugOperationUnknown
 	unknown.ID = "unknown-operation"
@@ -1403,7 +1411,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationConflictRejectsUnknownRepl
 			}
 			return underlying.Status().Patch(ctx, obj, patch, opts...)
 		}}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, requested)
 	require.ErrorContains(t, err, "Unknown outcome")
 	var stored breakglassv1alpha1.DebugSession
@@ -1430,7 +1438,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsConcurrentPreparedD
 			}
 			return underlying.Status().Patch(ctx, obj, patch, opts...)
 		}}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	requested := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 
 	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, requested)
@@ -1457,7 +1465,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerRejectsRetainedUnknownWitho
 			return cl.SubResource(name).Update(ctx, obj, opts...)
 		}}).Build()
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
-	handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+	handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
 	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
 	require.ErrorContains(t, err, "Unknown outcome")
 	assert.Zero(t, updates)
@@ -1506,7 +1514,7 @@ func TestKubectlDebugHandler_CompactedUnknownStillRequiresLiveAuthorization(t *t
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
 			before := &breakglassv1alpha1.DebugSession{}
 			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), before))
-			handler := NewKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
 			user := "test-user@example.com"
 			if !test.authorized {
 				user = "unrelated@example.com"
@@ -1538,7 +1546,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationPersistsProviderIdentity(t
 	session := newEphemeralOperationTestSession()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
 	operation := newEphemeralContainerOperationWithIdentity(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
@@ -1567,7 +1575,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsNewIdentityAtCapaci
 	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs}
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
 	operation := newEphemeralContainerOperation(&corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"},
@@ -1603,7 +1611,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRecomputesCapacityAfterCon
 			}
 			return underlying.Status().Patch(ctx, obj, patch, opts...)
 		}}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	container := desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil)
 	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, container, "operator@example.com")
 
@@ -1625,7 +1633,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationCountsPreparedReservations
 	reserved := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "reserved", Namespace: "default", UID: "reserved-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs, Operations: []breakglassv1alpha1.KubectlDebugOperation{reserved}}
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 
 	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
@@ -1641,7 +1649,7 @@ func TestKubectlDebugHandler_PrepareEphemeralOperationRejectsLegacyOversizedInve
 	}
 	session.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{EphemeralContainersInjected: refs}
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	operation := newEphemeralContainerOperation(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "new-pod", Namespace: "default", UID: "new-uid"}}, desiredEphemeralContainerForIntent("debugger", "busybox:latest", []string{"sh"}, nil), "operator@example.com")
 
 	_, err := handler.prepareEphemeralContainerOperation(context.Background(), session, operation)
@@ -1665,7 +1673,7 @@ func TestKubectlDebugHandler_RecoveryPreservesProviderIdentity(t *testing.T) {
 	}).Build()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
 	var stored breakglassv1alpha1.DebugSession
@@ -1694,7 +1702,7 @@ func TestKubectlDebugHandler_RecoveryCompletesAtAuthorizationCapacity(t *testing
 		Spec:       corev1.PodSpec{EphemeralContainers: []corev1.EphemeralContainer{container}},
 	}).Build()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
 	var stored breakglassv1alpha1.DebugSession
@@ -1719,7 +1727,7 @@ func TestKubectlDebugHandler_RecoverySkipsFreshPreparedOperation(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
 	var stored breakglassv1alpha1.DebugSession
@@ -1743,7 +1751,7 @@ func TestKubectlDebugHandler_CompletionReplacesStaleAllowedPodUID(t *testing.T) 
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 	ref := &breakglassv1alpha1.EphemeralContainerRef{
 		PodName: "target", Namespace: "default", PodUID: "new-pod-uid",
 		ContainerName: "debugger", Image: "busybox:latest", InjectedAt: operation.PreparedAt, InjectedBy: operation.RequestedBy,
@@ -1782,7 +1790,7 @@ func TestKubectlDebugHandler_RecoveryReplacesStaleAllowedPodUID(t *testing.T) {
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), session))
 
@@ -1829,7 +1837,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 			},
 		}).Build()
 	provider := &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}}
-	handler := NewKubectlDebugHandler(hubClient, provider)
+	handler := newTestKubectlDebugHandler(hubClient, provider)
 	session := newEphemeralOperationTestSession()
 
 	err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
@@ -1849,7 +1857,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 	// healthy again, recovery inspects the exact Pod UID and container request,
 	// then commits the existing operation without re-applying the mutation.
 	statusPatches = 2
-	restarted := NewKubectlDebugHandler(hubClient, provider)
+	restarted := newTestKubectlDebugHandler(hubClient, provider)
 	require.NoError(t, restarted.RecoverPendingKubectlDebugOperations(context.Background(), &afterFailure))
 
 	var recovered breakglassv1alpha1.DebugSession
@@ -1901,7 +1909,7 @@ func TestKubectlDebugHandler_CanceledRequestBoundsOutcomePersistence(t *testing.
 		blockWhen: mutationDone,
 		blocked:   make(chan struct{}),
 	}
-	handler := NewKubectlDebugHandlerWithReader(hubClient, reader, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandlerWithReader(hubClient, reader, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	started := time.Now()
 	err := handler.InjectEphemeralContainer(requestCtx, session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, nil, "test-user@example.com")
@@ -1946,7 +1954,7 @@ func TestKubectlDebugHandler_EphemeralOperationAmbiguousTargetIsNotGuessed(t *te
 		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
 	}).Build()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
 	var recovered breakglassv1alpha1.DebugSession
@@ -1964,7 +1972,7 @@ func TestKubectlDebugHandler_CleanupTerminalizesUnsupportedPreparedOperation(t *
 		PreparedAt: metav1.Now(),
 	}}}
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
-	handler := NewKubectlDebugHandler(hub, nil)
+	handler := newTestKubectlDebugHandler(hub, nil)
 
 	require.NoError(t, handler.CleanupKubectlDebugResources(context.Background(), session))
 	stored := &breakglassv1alpha1.DebugSession{}
@@ -2019,7 +2027,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresTTYAndStdinMatch(
 		},
 	}).Build()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
 	var recovered breakglassv1alpha1.DebugSession
@@ -2073,7 +2081,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoveryRequiresExactContainerDig
 		},
 	}).Build()
 	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(prepared).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.RecoverPendingKubectlDebugOperations(context.Background(), prepared))
 	var recovered breakglassv1alpha1.DebugSession
@@ -2153,7 +2161,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerIdempotentWhenCompletedOper
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	err := handler.InjectEphemeralContainer(
 		context.Background(),
@@ -2205,7 +2213,7 @@ func TestKubectlDebugHandler_CompleteEphemeralContainerOperationDoesNotOverwrite
 		WithObjects(session).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{})
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{})
 
 	err := handler.completeEphemeralContainerOperation(
 		context.Background(),
@@ -2294,7 +2302,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStal
 		WithObjects(liveSession).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 	})
 
@@ -2410,7 +2418,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerFinalSessionFence(t *testin
 				},
 			}).Build()
 
-			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 			err := handler.InjectEphemeralContainer(context.Background(), candidate, "production", "target", "debug", "busybox:latest", nil, nil, "operator@example.com")
 			require.Error(t, err)
 			assert.Zero(t, targetUpdates, "denied mutation must not update target Pod")
@@ -2461,7 +2469,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerRepeatsNamespacePolicyAtMut
 			return nil
 		},
 	}).Build()
-	handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+	handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 	require.NoError(t, handler.ValidateEphemeralContainerRequest(context.Background(), session, "production", "app", "busybox:stable", nil, false, false))
 	err := handler.InjectEphemeralContainer(context.Background(), session, "production", "app", "debugger", "busybox:stable", nil, nil, "operator@example.com")
@@ -2555,7 +2563,7 @@ func TestKubectlDebugHandler_PrivilegedWritesFenceClusterConfig(t *testing.T) {
 						events:      &events,
 						validateErr: outcome.validateErr,
 					}
-					handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, provider)
+					handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, provider)
 
 					err := tt.operation(context.Background(), handler, session.DeepCopy())
 					if outcome.validateErr != nil {
@@ -2653,7 +2661,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		},
 	}
 
-	handler := NewKubectlDebugHandler(hubClient, mockProvider)
+	handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 	t.Run("create pod copy", func(t *testing.T) {
 		pod, err := handler.CreatePodCopy(
@@ -2687,7 +2695,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		disabledSession.Status.ResolvedTemplate.KubectlDebug.PodCopy.Enabled = false
 		disabledHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(disabledSession).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-		disabledHandler := NewKubectlDebugHandler(disabledHub, mockProvider)
+		disabledHandler := newTestKubectlDebugHandler(disabledHub, mockProvider)
 
 		_, err := disabledHandler.CreatePodCopy(
 			context.Background(),
@@ -2707,7 +2715,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		sessionWithMissingNs.Status.ResolvedTemplate.KubectlDebug.PodCopy.TargetNamespace = "missing-namespace"
 		missingNsHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithMissingNs).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-		missingNsHandler := NewKubectlDebugHandler(missingNsHub, mockProvider)
+		missingNsHandler := newTestKubectlDebugHandler(missingNsHub, mockProvider)
 
 		_, err := missingNsHandler.CreatePodCopy(
 			context.Background(),
@@ -2737,7 +2745,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			WithObjects(sessionWithAllowed).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
-		handler2 := NewKubectlDebugHandler(hubClient2, &mockClientProvider{
+		handler2 := newTestKubectlDebugHandler(hubClient2, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient2},
 		})
 
@@ -2761,7 +2769,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		}
 		deniedHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithDenied).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-		deniedHandler := NewKubectlDebugHandler(deniedHub, mockProvider)
+		deniedHandler := newTestKubectlDebugHandler(deniedHub, mockProvider)
 
 		_, err := deniedHandler.CreatePodCopy(
 			context.Background(),
@@ -2785,7 +2793,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(testPod, testNs, productionNs).
 			Build()
-		handler3 := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		handler3 := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient3},
 		})
 
@@ -2825,7 +2833,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			WithObjects(sessionWithSelector).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
-		handler4 := NewKubectlDebugHandler(hubClient4, &mockClientProvider{
+		handler4 := newTestKubectlDebugHandler(hubClient4, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient4},
 		})
 
@@ -2854,7 +2862,7 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			WithScheme(scheme).
 			WithObjects(testPod, testNs, productionNs).
 			Build()
-		handler5 := NewKubectlDebugHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithSelector).
+		handler5 := newTestKubectlDebugHandler(fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithSelector).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build(), &mockClientProvider{
 			clients: map[string]ctrlclient.Client{"test-cluster": targetClient5},
 		})
@@ -2946,7 +2954,7 @@ func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t 
 		WithObjects(liveSession).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 	})
 
@@ -3023,7 +3031,7 @@ func TestKubectlDebugHandler_CreatePodCopyFailsClosedOnDestinationNamespaceUID(t
 					return cl.Create(ctx, obj, opts...)
 				},
 			}).Build()
-			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 			pod, err := handler.CreatePodCopy(context.Background(), session, "production", "app", "", "operator@example.com")
 			require.Error(t, err)
@@ -3108,7 +3116,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		},
 	}
 
-	handler := NewKubectlDebugHandler(hubClient, mockProvider)
+	handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 	t.Run("create node debug pod", func(t *testing.T) {
 		pod, err := handler.CreateNodeDebugPod(
@@ -3158,7 +3166,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 			}()).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
-		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{
 				"test-cluster": targetClient,
 			},
@@ -3184,7 +3192,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		disabledSession.Status.ResolvedTemplate.KubectlDebug.NodeDebug.Enabled = false
 		disabledHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(disabledSession).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-		disabledHandler := NewKubectlDebugHandler(disabledHub, mockProvider)
+		disabledHandler := newTestKubectlDebugHandler(disabledHub, mockProvider)
 
 		_, err := disabledHandler.CreateNodeDebugPod(
 			context.Background(),
@@ -3204,7 +3212,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		}
 		selectorHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(selectorSession).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
-		selectorHandler := NewKubectlDebugHandler(selectorHub, mockProvider)
+		selectorHandler := newTestKubectlDebugHandler(selectorHub, mockProvider)
 
 		_, err := selectorHandler.CreateNodeDebugPod(
 			context.Background(),
@@ -3283,7 +3291,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodFencesLiveNamespace(t *testing.T)
 					return cl.Create(ctx, obj, opts...)
 				},
 			}).Build()
-			handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 			pod, err := handler.CreateNodeDebugPod(context.Background(), session, "worker-1", "operator@example.com")
 			require.Error(t, err)
@@ -3357,7 +3365,7 @@ func TestKubectlDebugHandler_CreateNodeDebugPodPreservesLiveStatusFromStaleSessi
 		WithObjects(liveSession).
 		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 		Build()
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 	})
 
@@ -3472,7 +3480,7 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 					return cl.Create(ctx, obj, opts...)
 				},
 			}).Build()
-			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 			copyPod, err := handler.CreatePodCopy(context.Background(), session.DeepCopy(), "production", "app", "busybox:stable", "debugger@example.com")
 			assert.Error(t, err)
@@ -3537,7 +3545,7 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsPrivilegedCreates(t *test
 					return cl.Create(ctx, obj, opts...)
 				},
 			}).Build()
-			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 			debugPod, err := handler.CreateNodeDebugPod(context.Background(), session.DeepCopy(), "worker-1", "debugger@example.com")
 			assert.Error(t, err)
@@ -3629,7 +3637,7 @@ func TestKubectlDebugHandler_FinalMutationFencePreventsEphemeralUpdate(t *testin
 						return cl.Update(ctx, obj)
 					},
 				}).Build()
-			handler := NewKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
 
 			err := handler.InjectEphemeralContainer(context.Background(), session.DeepCopy(), "production", "app", "debugger", "busybox:stable", nil, nil, "debugger@example.com")
 			assert.Error(t, err)
@@ -3647,7 +3655,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			Build()
 
 		mockProvider := &mockClientProvider{}
-		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+		handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -3716,7 +3724,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			WithObjects(session).
 			WithStatusSubresource(session).
 			Build()
-		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{err: assert.AnError})
+		handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{err: assert.AnError})
 
 		err := handler.CleanupKubectlDebugResources(context.Background(), session)
 		require.NoError(t, err)
@@ -3737,7 +3745,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		mockProvider := &mockClientProvider{
 			err: assert.AnError,
 		}
-		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+		handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -3828,7 +3836,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				"test-cluster": targetClient,
 			},
 		}
-		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+		handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 		err := handler.CleanupKubectlDebugResources(context.Background(), session)
 		require.NoError(t, err)
@@ -3891,7 +3899,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 			WithObjects(liveSession).
 			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).
 			Build()
-		handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+		handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 			clients: map[string]ctrlclient.Client{
 				"test-cluster": targetClient,
 			},
@@ -3955,7 +3963,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 				"test-cluster": targetClient,
 			},
 		}
-		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+		handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 		err := handler.CleanupKubectlDebugResources(context.Background(), session)
 		require.Error(t, err)
@@ -3978,7 +3986,7 @@ func TestKubectlDebugHandler_CleanupKubectlDebugResources(t *testing.T) {
 		mockProvider := &mockClientProvider{
 			err: wrappedErr,
 		}
-		handler := NewKubectlDebugHandler(hubClient, mockProvider)
+		handler := newTestKubectlDebugHandler(hubClient, mockProvider)
 
 		session := &breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
@@ -4058,7 +4066,7 @@ func TestCreateNodeDebugPod_StatusFailureDeletesOrphan(t *testing.T) {
 		}).
 		Build()
 
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 	})
 
@@ -4137,7 +4145,7 @@ func TestCreatePodCopy_StatusFailureDeletesOrphan(t *testing.T) {
 		}).
 		Build()
 
-	handler := NewKubectlDebugHandler(hubClient, &mockClientProvider{
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
 		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
 	})
 
