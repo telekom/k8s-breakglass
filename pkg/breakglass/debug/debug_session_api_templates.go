@@ -975,6 +975,24 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
 		addCluster(clusterName)
+		// Requests may use a ClusterConfig tenant alias. Resolve a unique alias
+		// to the canonical name so admission and activation use the same grant.
+		if _, exists := clusterMap[clusterName]; !exists {
+			var alias *breakglassv1alpha1.ClusterConfig
+			for _, cluster := range clusterMap {
+				if cluster.Spec.Tenant != clusterName {
+					continue
+				}
+				if alias != nil {
+					alias = nil // ambiguous tenant aliases do not grant access
+					break
+				}
+				alias = cluster
+			}
+			if alias != nil {
+				addCluster(alias.Name)
+			}
+		}
 	}
 
 	c.log.Debugw("resolveClustersFromBinding: explicit clusters",

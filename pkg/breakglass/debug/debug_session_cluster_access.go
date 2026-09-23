@@ -29,3 +29,15 @@ func directTemplateAllowsCluster(template *breakglassv1alpha1.DebugSessionTempla
 			len(template.Spec.Allowed.ClusterSelector.MatchExpressions) > 0) &&
 		selector.Matches(labels.Set(cluster.Labels))
 }
+
+// directTemplateAllowsClusterReference checks the canonical name, requested
+// reference, and tenant alias used to reach a uniquely resolved cluster.
+func directTemplateAllowsClusterReference(template *breakglassv1alpha1.DebugSessionTemplate, requested string, cluster *breakglassv1alpha1.ClusterConfig) bool {
+	if cluster == nil {
+		return false
+	}
+	if directTemplateAllowsCluster(template, cluster.Name, cluster) || directTemplateAllowsCluster(template, requested, cluster) {
+		return true
+	}
+	return cluster.Spec.Tenant != "" && directTemplateAllowsCluster(template, cluster.Spec.Tenant, cluster)
+}
