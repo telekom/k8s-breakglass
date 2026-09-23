@@ -1041,6 +1041,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
+			if isDebugSessionStatusConflict(err) {
+				return ctrl.Result{}, err
+			}
 			log.Errorw("Failed to deploy debug resources", "error", err)
 			return c.failSession(ctx, ds, fmt.Sprintf("failed to deploy resources: %v", err))
 		}

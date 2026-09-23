@@ -301,16 +301,14 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	}
 
 	auxiliaryResourcesConfigured := c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
-	auxStatuses := startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
+	startAuxiliaryStatusTracking(ds, auxiliaryResourcesConfigured)
 	if auxiliaryResourcesConfigured {
 		if err := fence(); err != nil {
 			return err
 		}
-		beforeStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+		_, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		auxStatuses = append(auxStatuses, beforeStatuses...)
-		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources before workload: %w", auxErr)
 		}
@@ -360,11 +358,9 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		if err := fence(); err != nil {
 			return err
 		}
-		afterStatuses, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+		_, auxErr := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, false, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
 			return c.persistAuxiliaryStatus(ctx, ds, status)
 		})
-		auxStatuses = append(auxStatuses, afterStatuses...)
-		ds.Status.AuxiliaryResourceStatuses = auxStatuses
 		if auxErr != nil {
 			return fmt.Errorf("failed to deploy auxiliary resources after workload: %w", auxErr)
 		}
@@ -374,12 +370,49 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 }
 
 func (c *DebugSessionController) persistAuxiliaryStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, status breakglassv1alpha1.AuxiliaryResourceStatus) error {
-	// Merge replayed intents with the in-memory inventory so an empty outcome
-	// cannot erase a previously observed UID or child-document evidence.
-	ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
-		nil, []breakglassv1alpha1.AuxiliaryResourceStatus{status}, ds.Status.AuxiliaryResourceStatuses,
-	)
+	statuses := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), ds.Status.AuxiliaryResourceStatuses...)
+	matched := false
+	for i := range statuses {
+		existing := &statuses[i]
+		if existing.Name != status.Name || existing.APIVersion != status.APIVersion || existing.Kind != status.Kind ||
+			existing.Namespace != status.Namespace || existing.ResourceName != status.ResourceName {
+			continue
+		}
+		if status.UID == "" {
+			status.UID = existing.UID
+			status.CreateOperationID = existing.CreateOperationID
+		}
+		status.AdditionalResources = mergeAdditionalResourceEvidence(existing.AdditionalResources, status.AdditionalResources)
+		*existing = status
+		matched = true
+		break
+	}
+	if !matched {
+		statuses = append(statuses, status)
+	}
+	ds.Status.AuxiliaryResourceStatuses = statuses
 	return applyDebugSessionDeploymentStatus(ctx, c.client, ds)
+}
+
+func mergeAdditionalResourceEvidence(existing, replay []breakglassv1alpha1.AdditionalResourceRef) []breakglassv1alpha1.AdditionalResourceRef {
+	merged := append([]breakglassv1alpha1.AdditionalResourceRef(nil), replay...)
+	for _, old := range existing {
+		found := false
+		for i := range merged {
+			if old.CreateOperationID != "" && old.CreateOperationID == merged[i].CreateOperationID ||
+				old.APIVersion == merged[i].APIVersion && old.Kind == merged[i].Kind && old.Namespace == merged[i].Namespace && old.ResourceName == merged[i].ResourceName {
+				if merged[i].UID == "" {
+					merged[i] = old
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			merged = append(merged, old)
+		}
+	}
+	return merged
 }
 
 type debugSessionStatusConflict struct{ err error }
@@ -453,9 +486,9 @@ func startAuxiliaryStatusTracking(ds *breakglassv1alpha1.DebugSession, auxiliary
 	if !auxiliaryResourcesConfigured {
 		return nil
 	}
-	statuses := []breakglassv1alpha1.AuxiliaryResourceStatus{}
-	ds.Status.AuxiliaryResourceStatuses = statuses
-	return statuses
+	// Keep persisted intents across activation retries; only append outcomes
+	// observed during this invocation.
+	return append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), ds.Status.AuxiliaryResourceStatuses...)
 }
 
 // buildWorkload creates the DaemonSet or Deployment for debug pods.
