@@ -1534,8 +1534,9 @@ func TestDebugSessionValidateUpdateProtectsPartialProvenance(t *testing.T) {
 		},
 	}
 	for name, mutate := range map[string]func(*DebugSessionStatus){
-		"template": func(status *DebugSessionStatus) { status.ResolvedTemplate = &DebugSessionTemplateSpec{} },
-		"groups":   func(status *DebugSessionStatus) { status.AuthenticatedUserGroups = []string{"attacker"} },
+		"template":                func(status *DebugSessionStatus) { status.ResolvedTemplate = &DebugSessionTemplateSpec{} },
+		"groups":                  func(status *DebugSessionStatus) { status.AuthenticatedUserGroups = []string{"attacker"} },
+		"group capture promotion": func(status *DebugSessionStatus) { status.AuthenticatedUserGroupsCaptured = true },
 	} {
 		t.Run(name, func(t *testing.T) {
 			updated := base.DeepCopy()

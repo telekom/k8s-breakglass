@@ -86,6 +86,24 @@ func TestStatusHelpersFreezeTemplateIdentityMarker(t *testing.T) {
 	require.ErrorContains(t, err, "identity marker")
 }
 
+func TestStatusHelpersRejectGroupProvenancePromotion(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "group-promotion", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			AuthenticatedUserGroups: []string{"untrusted"},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.AuthenticatedUserGroupsCaptured = true
+
+	require.ErrorContains(t, validateDebugSessionStatusMutation(current.Status, desired.Status, time.Now()), "provenance")
+	require.ErrorContains(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired), "provenance")
+}
+
 func TestStatusHelpersFreezeVariablePolicyAfterTemplatePersistence(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

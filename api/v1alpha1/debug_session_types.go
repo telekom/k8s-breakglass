@@ -1241,6 +1241,10 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroupsCaptured"),
 			newObj.Status.AuthenticatedUserGroupsCaptured, "authenticated user group provenance capture cannot be cleared"))
 	}
+	if oldObj.Status.AuthenticatedUserGroups != nil && !oldObj.Status.AuthenticatedUserGroupsCaptured && newObj.Status.AuthenticatedUserGroupsCaptured {
+		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("authenticatedUserGroupsCaptured"),
+			newObj.Status.AuthenticatedUserGroupsCaptured, "authenticated user group provenance cannot be promoted after an uncaptured list was persisted"))
+	}
 	if HasAnyResolvedSnapshot(oldObj.Status) && !reflect.DeepEqual(oldObj.Status.ResolvedTemplateVariablePolicy, newObj.Status.ResolvedTemplateVariablePolicy) && !CanInitializeLegacyVariablePolicy(oldObj.Status, newObj.Status.ResolvedTemplateVariablePolicy) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateVariablePolicy"), newObj.Status.ResolvedTemplateVariablePolicy,
 			"resolvedTemplateVariablePolicy is immutable once the resolved template is persisted"))
