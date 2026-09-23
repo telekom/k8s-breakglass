@@ -1245,7 +1245,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedTemplateVariablePolicy"), newObj.Status.ResolvedTemplateVariablePolicy,
 			"resolvedTemplateVariablePolicy is immutable once the resolved template is persisted"))
 	}
-	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSnapshotCaptured) &&
+	if (oldObj.Status.ResolvedTemplate != nil || oldObj.Status.ResolvedBindingSnapshotCaptured || oldObj.Status.ResolvedBindingSpec != nil) &&
 		!reflect.DeepEqual(oldObj.Status.ResolvedBindingSpec, newObj.Status.ResolvedBindingSpec) {
 		allErrs = append(allErrs, field.Invalid(field.NewPath("status").Child("resolvedBindingSpec"), newObj.Status.ResolvedBindingSpec,
 			"resolvedBindingSpec is immutable once persisted"))

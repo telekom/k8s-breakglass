@@ -139,6 +139,25 @@ func TestStatusHelpersFreezeBindingSnapshotAfterTemplatePersistence(t *testing.T
 	}
 }
 
+func TestStatusHelpersFreezePartialBindingSpec(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	current := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "partial-binding", Namespace: "default"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedBindingSpec: &apiextensionsv1.JSON{Raw: []byte(`{"clusters":["cluster"]}`)},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(current).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	desired := current.DeepCopy()
+	desired.Status.ResolvedBindingSpec = nil
+	require.ErrorContains(t, ApplyDebugSessionStatus(context.Background(), fakeClient, desired), "binding snapshot")
+	require.ErrorContains(t, PatchDebugSessionStatusWithOptimisticLock(context.Background(), fakeClient, current.DeepCopy(), func(status *breakglassv1alpha1.DebugSessionStatus) {
+		status.ResolvedBindingSpec = nil
+	}), "binding snapshot")
+}
+
 func TestStatusHelpersFreezePodSnapshotAfterTemplatePersistence(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))

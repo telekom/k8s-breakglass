@@ -1566,6 +1566,21 @@ func TestDebugSessionValidateUpdateFreezesBindingSnapshotAfterTemplatePersistenc
 	}
 }
 
+func TestDebugSessionValidateUpdateFreezesPartialBindingSpec(t *testing.T) {
+	oldSession := &DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "breakglass"},
+		Spec:       DebugSessionSpec{Cluster: "cluster", TemplateRef: "template", RequestedBy: "user@example.com"},
+		Status: DebugSessionStatus{
+			ResolvedBindingSpec: &apiextensionsv1.JSON{Raw: []byte(`{"clusters":["cluster"]}`)},
+		},
+	}
+	updated := oldSession.DeepCopy()
+	updated.Status.ResolvedBindingSpec = nil
+	if _, err := updated.ValidateUpdate(context.Background(), oldSession, updated); err == nil {
+		t.Fatal("expected partial binding snapshot mutation to be rejected")
+	}
+}
+
 func TestDebugSessionValidateUpdateRejectsRejectedResurrection(t *testing.T) {
 	base := &DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "rejected", Namespace: "breakglass"},

@@ -162,6 +162,7 @@ func TestValidateExtraDeployValuesWithBindingNormalizesDefaults(t *testing.T) {
 		def       string
 	}{
 		{name: "number", inputType: InputTypeNumber, value: "5", def: `"5"`},
+		{name: "number spelling", inputType: InputTypeNumber, value: "5.0", def: `5`},
 		{name: "boolean", inputType: InputTypeBoolean, value: "true", def: `"true"`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

@@ -154,7 +154,17 @@ func equalJSONValues(left, right apiextensionsv1.JSON) bool {
 		return false
 	}
 	expected, err := decode(right.Raw)
-	return err == nil && reflect.DeepEqual(actual, expected)
+	if err != nil {
+		return false
+	}
+	if actualNumber, ok := actual.(json.Number); ok {
+		if expectedNumber, ok := expected.(json.Number); ok {
+			actualRat, actualErr := parseDecimalRat(actualNumber.String())
+			expectedRat, expectedErr := parseDecimalRat(expectedNumber.String())
+			return actualErr == nil && expectedErr == nil && actualRat.Cmp(expectedRat) == 0
+		}
+	}
+	return reflect.DeepEqual(actual, expected)
 }
 
 // ValidateExtraDeployValues validates user-provided values against variable definitions.
