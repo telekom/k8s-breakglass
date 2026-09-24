@@ -361,7 +361,7 @@ func (c *DebugSessionAPIController) templateResponseRequester(
 ) debugTemplateRequester {
 	for name, cluster := range requester.grantedClusters {
 		scoped := requester.forCluster(name)
-		if directTemplateAllowsCluster(template, name, cluster) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+		if directTemplateAllowsClusterReference(template, name, cluster) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
 			return scoped
 		}
 	}
@@ -530,7 +530,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 	if template.Spec.Allowed != nil {
 		if clusterMap != nil {
 			for name, configured := range clusterMap {
-				if requester.forCluster(name).canRequest(effectiveDebugSessionAllowed(template, nil)) && directTemplateAllowsCluster(template, name, configured) {
+				if requester.forCluster(name).canRequest(effectiveDebugSessionAllowed(template, nil)) && directTemplateAllowsClusterReference(template, name, configured) {
 					resp.AllowedClusters = append(resp.AllowedClusters, name)
 				}
 			}
@@ -824,7 +824,7 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) || !debugSchedulingOptionsAvailableForRequester(template, nil, scoped) {
 				continue
 			}
-			if directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) {
+			if directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName]) {
 				seenClusters[clusterName] = true
 			}
 		}
@@ -953,7 +953,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) || !debugSchedulingOptionsAvailableForRequester(template, nil, scoped) {
 				continue
 			}
-			if !directTemplateAllowsCluster(template, clusterName, clusterMap[clusterName]) || seenClusters[clusterName] {
+			if !directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName]) || seenClusters[clusterName] {
 				continue
 			}
 			seenClusters[clusterName] = true
