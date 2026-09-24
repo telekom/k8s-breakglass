@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between discovery and creation while rejecting ambiguous aliases. Apply direct
   template cluster patterns to canonical names and unique, non-shadowed tenant
   aliases during discovery, creation, and reconciliation; retain unready configs
-  in direct-template and binding alias ambiguity checks.
+  in direct-template and binding alias ambiguity checks, including before approved
+  bindings activate workloads.
 
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.

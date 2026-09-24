@@ -4,6 +4,8 @@
 package debug
 
 import (
+	"strings"
+
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -43,12 +45,24 @@ func directTemplateAllowsClusterReference(template *breakglassv1alpha1.DebugSess
 		if reference == "" || reference == cluster.Name {
 			continue
 		}
-		resolved, ambiguity := findDebugClusterConfigByNameOrTenant(configured, reference)
-		if ambiguity == debugClusterConfigAmbiguityNone && resolved != nil &&
-			resolved.Name == cluster.Name && resolved.Namespace == cluster.Namespace &&
+		if debugClusterReferenceResolvesTo(reference, cluster, configured) &&
 			directTemplateAllowsCluster(template, reference, cluster) {
 			return true
 		}
 	}
 	return false
+}
+
+// Namespaced session references must identify the resolved config's namespace;
+// aliases use the same full-snapshot ambiguity and exact-name checks as names.
+func debugClusterReferenceResolvesTo(reference string, cluster *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
+	if slash := strings.LastIndexByte(reference, '/'); slash >= 0 {
+		if reference[:slash] != cluster.Namespace {
+			return false
+		}
+		reference = reference[slash+1:]
+	}
+	resolved, ambiguity := findDebugClusterConfigByNameOrTenant(configured, reference)
+	return ambiguity == debugClusterConfigAmbiguityNone && resolved != nil &&
+		resolved.Name == cluster.Name && resolved.Namespace == cluster.Namespace
 }

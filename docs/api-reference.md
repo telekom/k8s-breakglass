@@ -1304,7 +1304,9 @@ Direct template cluster patterns match the resolved cluster's canonical name or
 uniquely resolved tenant alias consistently during discovery, creation, and
 reconciliation. Both direct templates and binding aliases include unready configs
 in ambiguity checks and preserve exact-name precedence before filtering targets
-for readiness.
+for readiness. Approved binding aliases are rechecked against the current full
+config snapshot before activation; a newly ambiguous or shadowed alias cannot
+create a workload.
 
 ### Get Debug Session Template
 
