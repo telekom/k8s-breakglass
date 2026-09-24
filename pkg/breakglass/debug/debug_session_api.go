@@ -861,6 +861,13 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
+		return
+	}
+
 	if err := authorizationReader.Get(apiCtx, ctrlclient.ObjectKey{Name: req.TemplateRef}, template); err != nil {
 		if apierrors.IsNotFound(err) {
 			reqLog.Warnw("Template not found", "templateRef", req.TemplateRef)
@@ -903,13 +910,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
 			return
 		}
-	}
-
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
-		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
-		return
 	}
 
 	requestedClusterConfig, clusterAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
