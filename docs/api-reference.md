@@ -1285,6 +1285,13 @@ Deployment or DaemonSet.
 | `namespaceConstraints.allowedLabelSelectors` | array | Label selectors for allowed namespaces |
 | `namespaceConstraints.deniedLabelSelectors` | array | Label selectors for denied namespaces |
 
+Temporary `breakglass:platform:debugsession` groups used for template and binding
+access come from active BreakglassSessions, not token claims. Discovery queries
+requester identities and the required granted group using selectable fields,
+then applies the same provider, issuer, target-cluster, state, and expiry checks
+as creation. Template-wide variable and scheduling fields aggregate authorized
+target clusters; the cluster endpoint returns each target's scoped fields.
+
 ### Get Debug Session Template
 
 ```http

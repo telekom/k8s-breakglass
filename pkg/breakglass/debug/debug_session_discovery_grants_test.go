@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -130,5 +131,43 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
+	grant := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(grant).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.grantedGroup", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).Build()
+	reader := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: base, apiReader: reader}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "alice")
+	ctx.Set("email", "alice@example.test")
+	ctx.Set("identity_provider_name", "idp")
+	ctx.Set("issuer", "https://idp.example")
+	requester, err := controller.templateRequester(ctx, context.Background(), map[string]*breakglassv1alpha1.ClusterConfig{"tenant-a": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}}})
+	require.NoError(t, err)
+	require.Contains(t, requester.grantedClusters, "tenant-a")
+	require.Len(t, reader.calls, 2) // fresh discovery queries; authorization uses cached indexes and fresh Get
+	require.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(reader.calls[:2], "spec.user"))
+	for _, call := range reader.calls[:2] {
+		value, found := call.FieldSelector.RequiresExactMatch("spec.grantedGroup")
+		require.True(t, found)
+		require.Equal(t, "breakglass:platform:debugsession", value)
+	}
+	for _, call := range reader.calls {
+		require.False(t, call.FieldSelector.Empty(), "indexed discovery must not list the entire session collection")
 	}
 }

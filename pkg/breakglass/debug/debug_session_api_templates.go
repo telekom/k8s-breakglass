@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -290,15 +291,36 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 	}
 	r.clusters = clusters
 	r.grantedClusters = make(map[string]*breakglassv1alpha1.ClusterConfig)
-	// Discover candidate clusters once instead of querying every configured cluster.
+	// Query fresh requester grants using the CRD's selectable fields. Older
+	// servers and clients without these indexes retain the filtered fallback.
 	var sessions breakglassv1alpha1.BreakglassSessionList
-	if err := c.reader().List(apiCtx, &sessions); err != nil {
-		return r, fmt.Errorf("list debug discovery grants: %w", err)
+	seenIdentities := make(map[string]bool)
+	for _, identity := range []string{r.username, r.email} {
+		if identity == "" || seenIdentities[identity] {
+			continue
+		}
+		seenIdentities[identity] = true
+		var matches breakglassv1alpha1.BreakglassSessionList
+		err := c.reader().List(apiCtx, &matches, ctrlclient.MatchingFields{
+			"spec.user": identity, "spec.grantedGroup": "breakglass:platform:debugsession",
+		})
+		if err == nil {
+			sessions.Items = append(sessions.Items, matches.Items...)
+			continue
+		}
+		if !breakglass.IsFieldIndexError(err) {
+			return r, fmt.Errorf("list debug discovery grants: %w", err)
+		}
+		if err := c.reader().List(apiCtx, &sessions); err != nil {
+			return r, fmt.Errorf("list debug discovery grants without indexes: %w", err)
+		}
+		break
 	}
 	checked := make(map[string]bool)
+	now := time.Now()
 	for _, session := range sessions.Items {
 		name := session.Spec.Cluster
-		if clusters[name] == nil || checked[name] || session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
+		if clusters[name] == nil || checked[name] || !breakglass.IsSessionAuthorizationEligible(session, now) || session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
 			(session.Spec.User != r.username && session.Spec.User != r.email) {
 			continue
 		}
