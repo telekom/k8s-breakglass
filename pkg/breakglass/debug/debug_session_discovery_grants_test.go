@@ -23,11 +23,8 @@ import (
 
 func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 	const group = "breakglass:platform:debugsession"
-	for _, bindingBacked := range []bool{false, true} {
-		mode := "direct"
-		if bindingBacked {
-			mode = "binding"
-		}
+	for _, mode := range []string{"direct", "direct alias", "binding"} {
+		bindingBacked := mode == "binding"
 		t.Run(mode, func(t *testing.T) {
 			for _, tc := range []struct {
 				name    string
@@ -57,13 +54,17 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 					otherTemplate := template.DeepCopy()
 					otherTemplate.Name = "ungranted"
 					otherTemplate.Spec.Allowed.Clusters = []string{"tenant-b"}
+					if mode == "direct alias" {
+						template.Spec.Allowed.Clusters = []string{"alias-*"}
+						otherTemplate.Spec.Allowed.Clusters = []string{"alias-tenant-b"}
+					}
 					grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant", Namespace: "breakglass"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: group, IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
 					if tc.mutate != nil {
 						tc.mutate(grant)
 					}
 					objects := []client.Object{template, otherTemplate, grant}
 					for _, name := range []string{"tenant-a", "tenant-b"} {
-						objects = append(objects, &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}}})
+						objects = append(objects, &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: "alias-" + name}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}}})
 					}
 					if bindingBacked {
 						template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"unavailable"}}
@@ -183,13 +184,15 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 
 func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 	for _, tc := range []struct {
-		name         string
-		secondName   string
-		secondTenant string
-		secondReady  bool
-		allowed      bool
+		name          string
+		secondName    string
+		secondTenant  string
+		secondReady   bool
+		templateAlias bool
+		allowed       bool
 	}{
 		{name: "unique alias", allowed: true},
+		{name: "template allows alias", templateAlias: true, allowed: true},
 		{name: "ambiguous alias", secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
 		{name: "unready alias collision", secondName: "cluster-b", secondTenant: "tenant-a"},
 		{name: "name takes precedence", secondName: "tenant-a", secondReady: true},
@@ -198,6 +201,9 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 			ready := []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}
 			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}, Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: "tenant-a"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: ready}}
 			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Mode: breakglassv1alpha1.DebugSessionModeWorkload, WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"cluster-a"}, Groups: []string{"breakglass:platform:debugsession"}}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "1h", DefaultDuration: "1h"}}}
+			if tc.templateAlias {
+				template.Spec.Allowed.Clusters = []string{"tenant-a"}
+			}
 			grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
 			objects := []client.Object{cluster, template, grant}
 			if tc.secondName != "" {
