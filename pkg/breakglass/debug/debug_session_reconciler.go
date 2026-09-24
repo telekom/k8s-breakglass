@@ -647,7 +647,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 
 	// Update allowed pods list from deployed workloads
 	if err := c.updateAllowedPods(ctx, ds); err != nil {
-		log.Warnw("Failed to update allowed pods", "error", err)
+		return ctrl.Result{}, fmt.Errorf("update allowed pods: %w", err)
 	}
 
 	// Calculate next requeue based on expiration
