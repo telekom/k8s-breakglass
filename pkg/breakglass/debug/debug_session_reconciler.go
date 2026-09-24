@@ -945,9 +945,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	// Recheck selectors from the approved snapshots. Live objects above are
 	// lookup inputs and may have changed since approval.
-	if binding != nil && !c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) &&
-		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) &&
-		(clusterConfig.Spec.Tenant == "" || !c.bindingMatchesCluster(binding, clusterConfig.Spec.Tenant, clusterConfig)) {
+	if binding != nil && !c.bindingMatchesClusterReference(binding, ds.Spec.Cluster, clusterConfig, clusterConfigList.Items) {
 		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
 	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig, clusterConfigList.Items) {
 		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
@@ -1538,7 +1536,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		}
 
 		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+		if !c.bindingMatchesClusterReference(binding, clusterName, clusterConfig, clusterConfigList.Items) {
 			continue
 		}
 		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
@@ -1588,6 +1586,28 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
 	return utils.DebugBindingMatchesTemplate(binding, template)
 }
+
+// Match aliases only while they resolve uniquely to this target, including when
+// rechecking an approved binding immediately before workload creation.
+func (c *DebugSessionController) bindingMatchesClusterReference(binding *breakglassv1alpha1.DebugSessionClusterBinding, requested string, clusterConfig *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
+	if clusterConfig == nil {
+		return c.bindingMatchesCluster(binding, requested, nil)
+	}
+	if c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) {
+		return true
+	}
+	for _, reference := range []string{requested, clusterConfig.Spec.Tenant} {
+		if reference == "" || reference == clusterConfig.Name {
+			continue
+		}
+		if debugClusterReferenceResolvesTo(reference, clusterConfig, configured) &&
+			c.bindingMatchesCluster(binding, reference, clusterConfig) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
 	return utils.DebugBindingMatchesCluster(binding, clusterName, clusterConfig)
 }

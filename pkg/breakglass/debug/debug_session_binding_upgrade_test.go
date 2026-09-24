@@ -631,3 +631,61 @@ func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestApprovedBindingAliasIsRecheckedBeforeActivation(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		collisionName   string
+		collisionTenant string
+		allowed         bool
+	}{
+		{name: "unique alias", allowed: true},
+		{name: "alias becomes ambiguous", collisionName: "other", collisionTenant: "tenant-a"},
+		{name: "alias becomes shadowed", collisionName: "tenant-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, template, target := newDeploymentFenceFixture(t)
+			var cluster breakglassv1alpha1.ClusterConfig
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "spoke"}, &cluster))
+			cluster.Spec.Tenant = "tenant-a"
+			require.NoError(t, c.client.Update(t.Context(), &cluster))
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"tenant-a"}}}
+			require.NoError(t, c.client.Create(t.Context(), binding))
+			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
+			ds.Status.ResolvedBindingSnapshotCaptured = true
+			ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: binding.Name, Namespace: binding.Namespace}
+			raw, err := json.Marshal(binding.Spec)
+			require.NoError(t, err)
+			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+			require.NoError(t, c.client.Status().Update(t.Context(), ds))
+			if tc.collisionName != "" {
+				collision := cluster.DeepCopy()
+				collision.Name, collision.Spec.Tenant = tc.collisionName, tc.collisionTenant
+				collision.ResourceVersion, collision.UID = "", ""
+				collision.Status.Conditions = []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse}}
+				require.NoError(t, c.client.Create(t.Context(), collision))
+			}
+			selected, err := c.findBindingForSession(t.Context(), template, cluster.Name)
+			require.NoError(t, err)
+			if tc.allowed {
+				require.NotNil(t, selected)
+			} else {
+				require.Nil(t, selected)
+			}
+			_, err = c.activateSession(t.Context(), ds, template, binding)
+			require.NoError(t, err)
+			var deployments appsv1.DeploymentList
+			require.NoError(t, target.List(t.Context(), &deployments))
+			if tc.allowed {
+				require.Len(t, deployments.Items, 1)
+			} else {
+				require.Empty(t, deployments.Items)
+				require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				require.Contains(t, ds.Status.Message, "binding cluster grant no longer grants access")
+			}
+		})
+	}
+}
