@@ -140,7 +140,9 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"},
 		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
 	}
-	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(grant).
+	second := grant.DeepCopy()
+	second.Name, second.Spec.Cluster, second.Spec.User = "second-grant", "tenant-b", "alice"
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(grant, second).
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
 		}).
@@ -151,16 +153,22 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
 		}).Build()
 	reader := &debugSessionRecordingListClient{Client: base}
-	controller := &DebugSessionAPIController{client: base, apiReader: reader}
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached, apiReader: reader}
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Set("username", "alice")
 	ctx.Set("email", "alice@example.test")
 	ctx.Set("identity_provider_name", "idp")
 	ctx.Set("issuer", "https://idp.example")
-	requester, err := controller.templateRequester(ctx, context.Background(), map[string]*breakglassv1alpha1.ClusterConfig{"tenant-a": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}}})
+	requester, err := controller.templateRequester(ctx, context.Background(), map[string]*breakglassv1alpha1.ClusterConfig{
+		"tenant-a": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}},
+		"tenant-b": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-b"}},
+	})
 	require.NoError(t, err)
 	require.Contains(t, requester.grantedClusters, "tenant-a")
-	require.Len(t, reader.calls, 2) // fresh discovery queries; authorization uses cached indexes and fresh Get
+	require.Contains(t, requester.grantedClusters, "tenant-b")
+	require.Empty(t, cached.calls, "fresh discovery must not query grants again per cluster")
+	require.Len(t, reader.calls, 2) // one fresh snapshot query per distinct requester identity
 	require.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(reader.calls[:2], "spec.user"))
 	for _, call := range reader.calls[:2] {
 		value, found := call.FieldSelector.RequiresExactMatch("spec.grantedGroup")
