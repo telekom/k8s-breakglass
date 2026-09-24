@@ -158,8 +158,8 @@ func RegisterCommonFieldIndexes(ctx context.Context, idx client.FieldIndexer, lo
 			}
 			users := make([]string, 0, len(ds.Status.Participants))
 			for _, p := range ds.Status.Participants {
-				if p.User != "" && p.LeftAt == nil {
-					users = append(users, p.User)
+				if user := p.KubernetesUsername(); user != "" && p.LeftAt == nil {
+					users = append(users, user)
 				}
 			}
 			if len(users) == 0 {

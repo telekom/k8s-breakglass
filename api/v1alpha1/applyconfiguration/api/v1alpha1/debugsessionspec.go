@@ -23,6 +23,10 @@ type DebugSessionSpecApplyConfiguration struct {
 	TemplateRef *string `json:"templateRef,omitempty"`
 	// requestedBy is the email/identifier of the user who requested the session.
 	RequestedBy *string `json:"requestedBy,omitempty"`
+	// requestedByKubernetesUser is the exact authenticated identity selected by the
+	// target cluster userIdentifierClaim policy for Kubernetes authorization.
+	// API ownership continues to use requestedBy and its provider identity.
+	RequestedByKubernetesUser *string `json:"requestedByKubernetesUser,omitempty"`
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
 	RequestedByEmail *string `json:"requestedByEmail,omitempty"`
@@ -105,6 +109,14 @@ func (b *DebugSessionSpecApplyConfiguration) WithTemplateRef(value string) *Debu
 // If called multiple times, the RequestedBy field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithRequestedBy(value string) *DebugSessionSpecApplyConfiguration {
 	b.RequestedBy = &value
+	return b
+}
+
+// WithRequestedByKubernetesUser sets the RequestedByKubernetesUser field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestedByKubernetesUser field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithRequestedByKubernetesUser(value string) *DebugSessionSpecApplyConfiguration {
+	b.RequestedByKubernetesUser = &value
 	return b
 }
 

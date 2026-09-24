@@ -96,6 +96,16 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		}
 	}
 
+	var clusterConfig breakglassv1alpha1.ClusterConfig
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: session.Spec.Cluster}, &clusterConfig); err != nil {
+		apiresponses.RespondForbidden(ctx, "target-cluster identity policy is unavailable")
+		return
+	}
+	kubernetesUser, err := c.kubernetesUser(ctx, &clusterConfig)
+	if err != nil {
+		apiresponses.RespondForbidden(ctx, "required target-cluster identity claim is missing")
+		return
+	}
 	role := breakglassv1alpha1.ParticipantRoleViewer
 
 	// Get display name from context (set by auth middleware from "name" claim)
@@ -110,6 +120,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	now := metav1.Now()
 	participant := breakglassv1alpha1.DebugSessionParticipant{
 		User:                   username,
+		KubernetesUser:         kubernetesUser,
 		Email:                  userEmail,
 		IdentityProviderName:   ctx.GetString("identity_provider_name"),
 		IdentityProviderIssuer: ctx.GetString("issuer"),

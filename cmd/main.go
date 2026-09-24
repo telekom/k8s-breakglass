@@ -507,6 +507,7 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 	// Uses APIReader for consistent reads after writes (avoids cache coherence issues)
 	debugSessionAPICtrl := debug.NewDebugSessionAPIController(log, reconcilerMgr.GetClient(), ccProvider, authMiddleware).
 		WithAPIReader(reconcilerMgr.GetAPIReader()).
+		WithUserIdentifierClaim(cfg.GetUserIdentifierClaim()).
 		WithQuotaNamespace(cliConfig.BreakglassNamespace).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).

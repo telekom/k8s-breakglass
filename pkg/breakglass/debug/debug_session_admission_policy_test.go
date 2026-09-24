@@ -50,6 +50,7 @@ func TestCreateDebugSessionFencesAdmissionPolicy(t *testing.T) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "tester")
+				ctx.Set("email", "tester")
 				ctx.Next()
 			})
 			require.NoError(t, api.Register(router.Group("/api/v1/"+api.BasePath())))

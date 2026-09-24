@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"testing"
 
+	kptr "k8s.io/utils/ptr"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -1567,8 +1569,8 @@ func TestValidateDebugSessionTemplateSpec_AuxiliaryResources(t *testing.T) {
 				{
 					Name:         "config-map",
 					Description:  "Test config map",
-					CreateBefore: true,
-					DeleteAfter:  true,
+					CreateBefore: kptr.To(true),
+					DeleteAfter:  kptr.To(true),
 					Template:     runtime.RawExtension{Raw: []byte(`{"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"test"}}`)},
 				},
 			},

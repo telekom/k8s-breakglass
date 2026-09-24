@@ -296,9 +296,9 @@ func TestIndexerFunctions_DebugSession(t *testing.T) {
 		Status: breakglassv1alpha1.DebugSessionStatus{
 			State: breakglassv1alpha1.DebugSessionStateActive,
 			Participants: []breakglassv1alpha1.DebugSessionParticipant{
-				{User: "user-a@example.com"},
+				{User: "api-user-a", Email: "unrelated-alias@example.com", KubernetesUser: "user-a@example.com"},
 				{User: "user-b@example.com"},
-				{User: "left-user@example.com", LeftAt: &leftAt},
+				{User: "left-user@example.com", KubernetesUser: "left-subject", LeftAt: &leftAt},
 			},
 		},
 	}

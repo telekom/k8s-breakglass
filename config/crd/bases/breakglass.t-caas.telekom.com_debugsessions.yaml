@@ -197,6 +197,13 @@ spec:
                   requestedByEmail is the email address of the requester (from OIDC "email" claim).
                   Used for sending email notifications.
                 type: string
+              requestedByKubernetesUser:
+                description: |-
+                  requestedByKubernetesUser is the exact authenticated identity selected by the
+                  target cluster userIdentifierClaim policy for Kubernetes authorization.
+                  API ownership continues to use requestedBy and its provider identity.
+                minLength: 1
+                type: string
               requestedDuration:
                 description: |-
                   requestedDuration is the desired session duration (e.g., "2h").
@@ -1658,6 +1665,12 @@ spec:
                     joinedAt:
                       description: joinedAt is when the user joined the session.
                       format: date-time
+                      type: string
+                    kubernetesUser:
+                      description: |-
+                        kubernetesUser is the exact target-cluster authenticated identity. When absent,
+                        legacy sessions use user; email is never treated as an authorization alias.
+                      minLength: 1
                       type: string
                     leftAt:
                       description: leftAt is when the user left the session (if they

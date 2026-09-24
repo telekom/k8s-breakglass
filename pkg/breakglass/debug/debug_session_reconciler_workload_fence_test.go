@@ -5,8 +5,11 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
+
+	kptr "k8s.io/utils/ptr"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -18,6 +21,7 @@ import (
 	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -95,6 +99,23 @@ func newDeploymentFenceFixture(t *testing.T) (*DebugSessionController, *breakgla
 	target := fake.NewClientBuilder().WithScheme(s).
 		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}).
 		WithInterceptorFuncs(interceptor.Funcs{
+			Apply: func(ctx context.Context, cl client.WithWatch, cfg runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+				payload, err := json.Marshal(cfg)
+				require.NoError(t, err)
+				var object map[string]interface{}
+				require.NoError(t, json.Unmarshal(payload, &object))
+				metadata, _ := object["metadata"].(map[string]interface{})
+				metadata["uid"] = "applied-target-uid"
+				desired := &unstructured.Unstructured{Object: object}
+				current := &unstructured.Unstructured{}
+				current.SetGroupVersionKind(desired.GroupVersionKind())
+				if err := cl.Get(ctx, client.ObjectKeyFromObject(desired), current); err == nil {
+					desired.SetUID(current.GetUID())
+					desired.SetResourceVersion(current.GetResourceVersion())
+					return cl.Update(ctx, desired)
+				}
+				return cl.Create(ctx, desired)
+			},
 			Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 				if obj.GetUID() == "" {
 					obj.SetUID("created-workload-uid")
@@ -332,7 +353,7 @@ metadata:
 func TestDeployDebugResourcesFencesEveryAuxiliaryDocument(t *testing.T) {
 	c, ds, template, target := newDeploymentFenceFixture(t)
 	template.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
-		Name: "multi-doc", Category: "configuration", CreateBefore: true,
+		Name: "multi-doc", Category: "configuration", CreateBefore: kptr.To(true),
 		TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: first\n---\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: second\n",
 	}}
 	ds.Spec.SelectedAuxiliaryResources = []string{"multi-doc"}

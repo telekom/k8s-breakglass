@@ -100,7 +100,9 @@ func TestActiveReconciliationRepairsFailedAccountingWithoutChangingSession(t *te
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)
 	fail = false
 	_, err = c.handleActive(ctx, ds)
-	require.NoError(t, err)
+	// This fixture has no reachable spoke API. Accounting still converges,
+	// while Pod refresh failures now request a controller retry.
+	require.ErrorContains(t, err, "update allowed pods")
 	require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(template), template))
 	require.EqualValues(t, 1, template.Status.ActiveSessionCount)
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State)

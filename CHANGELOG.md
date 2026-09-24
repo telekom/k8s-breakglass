@@ -28,6 +28,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry DebugSession allowed-Pod publication conflicts from fresh session and
+  workload identities, preserving terminal and expiry fences across replicas.
+
+- Snapshot the target-cluster canonical Kubernetes identity for DebugSession
+  owners and joined participants, preserving API identity and exact issuer-scoped
+  webhook matching when username and email claims differ.
+
+- Preserve concurrent auxiliary child evidence without resurrecting child entries
+  already removed by cleanup.
+
+- Preserve activation inventory and retriable status conflicts after integrating
+  immutable binding-variable snapshots.
+
+- Retire fresh auxiliary creation intents after explicit API validation or access
+  rejection, preserving ambiguous outcomes and earlier document UID inventory.
+- Preserve the IdentityProvider issuer CA for referenced cluster authentication,
+  allowing TLS-verified OIDC discovery and token requests to private issuers.
+
+- Persist failed DebugSession authority before target cleanup and refuse to
+  recreate deleted auxiliary resources with already recorded UIDs.
+
+- Recover concurrent typed workload creates without treating client-side GVK
+  clearing as content drift; retain strict operation and workload-content checks.
+
+- Preserve approved DebugSession templates and auxiliary cleanup inventory across
+  activation retries; reject exception recovery without a session UID.
+
+- Manage session-scoped Kyverno PolicyExceptions through the controller-owned
+  auxiliary-resource lifecycle with explicit pre-apply and cleanup behavior.
+
 - Honor debug-session audit opt-out for expiry and approval-timeout events even
   when the periodic cleanup routine wins the lifecycle status update (#1337).
 

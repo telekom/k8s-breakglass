@@ -20,6 +20,9 @@ import (
 type DebugSessionParticipantApplyConfiguration struct {
 	// user is the username/identifier of the participant.
 	User *string `json:"user,omitempty"`
+	// kubernetesUser is the exact target-cluster authenticated identity. When absent,
+	// legacy sessions use user; email is never treated as an authorization alias.
+	KubernetesUser *string `json:"kubernetesUser,omitempty"`
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.
 	Email *string `json:"email,omitempty"`
@@ -48,6 +51,14 @@ func DebugSessionParticipant() *DebugSessionParticipantApplyConfiguration {
 // If called multiple times, the User field is set to the value of the last call.
 func (b *DebugSessionParticipantApplyConfiguration) WithUser(value string) *DebugSessionParticipantApplyConfiguration {
 	b.User = &value
+	return b
+}
+
+// WithKubernetesUser sets the KubernetesUser field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesUser field is set to the value of the last call.
+func (b *DebugSessionParticipantApplyConfiguration) WithKubernetesUser(value string) *DebugSessionParticipantApplyConfiguration {
+	b.KubernetesUser = &value
 	return b
 }
 

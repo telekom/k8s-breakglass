@@ -102,6 +102,7 @@ func TestCreateDebugSessionCoercesBindingDefaults(t *testing.T) {
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set("legacy_identity_allowed", true)
 		ctx.Set("username", "tester")
+		ctx.Set("email", "tester")
 		ctx.Next()
 	})
 	require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
@@ -4285,6 +4286,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4323,6 +4325,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", " ")
+			c.Set("email", " ")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4372,6 +4375,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4404,6 +4408,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4440,6 +4445,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4495,6 +4501,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
@@ -4561,6 +4568,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4603,6 +4611,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4647,6 +4656,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4694,6 +4704,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4758,6 +4769,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4810,6 +4822,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4854,6 +4867,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4901,6 +4915,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
+			c.Set("email", "bob@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4930,6 +4945,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4958,6 +4974,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -4986,6 +5003,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5013,6 +5031,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5040,6 +5059,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5067,6 +5087,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5096,6 +5117,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5132,6 +5154,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
 		})
@@ -5179,6 +5202,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
+			c.Set("email", "bob@example.com")
 			c.Set("email", "bob@example.com")
 			c.Next()
 		})
@@ -5241,6 +5265,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "bob@example.com")
 			c.Set("email", "bob@example.com")
+			c.Set("email", "bob@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
 		})
@@ -5298,6 +5323,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
@@ -5363,6 +5389,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
 		})
@@ -5418,6 +5445,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
@@ -5475,6 +5503,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"developers"})
 			c.Next()
 		})
@@ -5525,6 +5554,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
@@ -5579,6 +5609,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"ops"})
 			c.Next()
@@ -5636,6 +5667,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
 		})
@@ -5686,6 +5718,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
 		})
@@ -5716,6 +5749,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5754,6 +5788,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5802,6 +5837,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
 		})
@@ -5849,6 +5885,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"sre"})
 			c.Next()
@@ -5903,6 +5940,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -5972,6 +6010,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("email", "alice@example.com")
 			c.Next()
 		})
@@ -6044,6 +6083,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -6088,6 +6128,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -6150,6 +6191,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -6222,6 +6264,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
 			c.Set("email", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{"tenant-admins"})
 			c.Next()
 		})
@@ -6270,6 +6313,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -6704,7 +6748,7 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 
 		fakeClient := fake.NewClientBuilder().
 			WithScheme(scheme).
-			WithObjects(&session).
+			WithObjects(&session, &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "default"}}).
 			WithStatusSubresource(&session).
 			Build()
 
@@ -9241,6 +9285,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9293,6 +9338,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Set("groups", []string{})
 			c.Next()
 		})
@@ -9330,6 +9376,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9365,6 +9412,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9400,6 +9448,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9435,6 +9484,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9471,6 +9521,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9506,6 +9557,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())
@@ -9546,6 +9598,7 @@ func TestDebugSessionAPIController_CreateWithExtraDeployValues(t *testing.T) {
 		router.Use(func(c *gin.Context) {
 			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
 			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
 			c.Next()
 		})
 		rg := router.Group("/api/v1/" + ctrl.BasePath())

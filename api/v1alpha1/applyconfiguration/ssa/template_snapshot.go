@@ -145,8 +145,12 @@ func AuxiliaryResourceFrom(t *breakglassv1alpha1.AuxiliaryResource) *ac.Auxiliar
 	result.WithCategory(t.Category)
 	result.WithTemplateString(t.TemplateString)
 	result.WithTemplate(t.Template)
-	result.WithCreateBefore(t.CreateBefore)
-	result.WithDeleteAfter(t.DeleteAfter)
+	if t.CreateBefore != nil {
+		result.WithCreateBefore(*t.CreateBefore)
+	}
+	if t.DeleteAfter != nil {
+		result.WithDeleteAfter(*t.DeleteAfter)
+	}
 	if t.FailurePolicy != "" {
 		result.WithFailurePolicy(t.FailurePolicy)
 	}

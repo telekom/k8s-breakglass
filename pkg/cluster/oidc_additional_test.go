@@ -1663,6 +1663,66 @@ func TestOIDCTokenProvider_RefreshToken_Failure(t *testing.T) {
 // resolveOIDCFromIdentityProvider Tests
 // ============================================================================
 
+func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_IssuerCA(t *testing.T) {
+	issuer, ca := createTLSTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			_ = json.NewEncoder(w).Encode(map[string]string{"token_endpoint": "https://" + r.Host + "/token"})
+		case "/token":
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"access_token": "test-token", "token_type": "Bearer", "expires_in": 300})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(issuer.Close)
+	_, _, unrelatedCA := generateTestCACert(t)
+	for _, tc := range []struct {
+		name string
+		ca   []byte
+		want bool
+	}{
+		{name: "configured issuer CA", ca: ca, want: true},
+		{name: "missing issuer CA"},
+		{name: "unrelated issuer CA", ca: unrelatedCA},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			require.NoError(t, corev1.AddToScheme(scheme))
+			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+			secretRef := &breakglassv1alpha1.SecretKeyReference{Name: "client", Namespace: "default", Key: "client-secret"}
+			idp := &breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "private-issuer"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{OIDC: breakglassv1alpha1.OIDCConfig{
+					Authority: issuer.URL, ClientID: "test-client", CertificateAuthority: string(tc.ca),
+				}},
+			}
+			secret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{Name: secretRef.Name, Namespace: secretRef.Namespace},
+				Data:       map[string][]byte{secretRef.Key: []byte("test-secret")},
+			}
+			provider := NewOIDCTokenProvider(fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp, secret).Build(), zap.NewNop().Sugar())
+			cc := &breakglassv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cluster", Namespace: "default"},
+				Spec: breakglassv1alpha1.ClusterConfigSpec{OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+					Name: idp.Name, Server: "https://api.example.test:6443", ClientSecretRef: secretRef,
+				}},
+			}
+			resolved, err := provider.resolveOIDCFromIdentityProvider(context.Background(), cc)
+			require.NoError(t, err)
+			token, err := provider.getToken(context.Background(), cc.Name, resolved, cc.Namespace)
+			if tc.want {
+				require.NoError(t, err)
+				assert.Equal(t, "test-token", token)
+			} else {
+				var certificateError *tls.CertificateVerificationError
+				require.ErrorAs(t, err, &certificateError)
+				assert.Empty(t, token)
+			}
+		})
+	}
+}
+
 func TestOIDCTokenProvider_ResolveOIDCFromIdentityProvider_WithKeycloak(t *testing.T) {
 	scheme := runtime.NewScheme()
 	_ = corev1.AddToScheme(scheme)

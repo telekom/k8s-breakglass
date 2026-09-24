@@ -289,6 +289,7 @@ func (p *OIDCTokenProvider) resolveOIDCFromIdentityProvider(ctx context.Context,
 	// Build OIDCAuthConfig from IdentityProvider OIDC settings + cluster-specific settings
 	oidc := &breakglassv1alpha1.OIDCAuthConfig{
 		IssuerURL:             idp.Spec.OIDC.Authority,
+		CertificateAuthority:  idp.Spec.OIDC.CertificateAuthority,
 		ClientID:              clientID,
 		Server:                ref.Server,
 		CASecretRef:           ref.CASecretRef,

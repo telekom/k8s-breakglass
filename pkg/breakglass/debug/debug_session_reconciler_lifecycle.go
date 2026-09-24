@@ -88,6 +88,30 @@ func (c *DebugSessionController) updateAllowedPods(ctx context.Context, ds *brea
 		return nil
 	}
 
+	reader := c.reader
+	if reader == nil {
+		reader = c.client
+	}
+	// Recompute from live inventory on every conflict. Replaying an old Pod
+	// list could restore access removed by a concurrent terminal transition.
+	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
+		live := &breakglassv1alpha1.DebugSession{}
+		if err := reader.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+			return err
+		}
+		if live.UID != ds.UID || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+			!live.DeletionTimestamp.IsZero() || isDebugSessionExpired(live, time.Now().UTC()) {
+			return fmt.Errorf("session no longer authorizes allowed Pod refresh")
+		}
+		if err := c.refreshAllowedPods(ctx, live); err != nil {
+			return err
+		}
+		*ds = *live
+		return nil
+	})
+}
+
+func (c *DebugSessionController) refreshAllowedPods(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	restCfg, err := c.ccProvider.GetRESTConfig(ctx, ds.Spec.Cluster)
@@ -923,9 +947,11 @@ func promoteObservedCleanupIntents[T any](desired, current []T) []T {
 			continue
 		}
 		if resolved, ok := observed[operation]; ok {
-			// Child cleanup is merged separately against its own baseline below.
+			// Promote only the parent identity. The auxiliary merge below uses
+			// the original child intent with its own baseline and current inventory.
 			if parent, ok := any(resolved).(breakglassv1alpha1.AuxiliaryResourceStatus); ok {
-				parent.AdditionalResources = any(item).(breakglassv1alpha1.AuxiliaryResourceStatus).AdditionalResources
+				replayed := any(item).(breakglassv1alpha1.AuxiliaryResourceStatus)
+				parent.AdditionalResources = replayed.AdditionalResources
 				resolved = any(parent).(T)
 			}
 			merged[i] = resolved

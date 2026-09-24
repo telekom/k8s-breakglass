@@ -2,6 +2,26 @@
 
 This guide covers upgrading the breakglass controller between versions, including breaking changes, migration steps, and rollback procedures.
 
+## Pending DebugSession approvals
+
+Pending approvals created before catalogue identity snapshot capture cannot safely
+activate after upgrade: their immutable snapshot does not establish whether the
+approved template carried catalogue restrictions. Once approved, these sessions
+fail closed and require a new session request and approval. Existing Active
+sessions keep their normal expiry and cleanup lifecycle. Do not patch old
+snapshots to bypass this check. New snapshots record identity labels in `status.resolvedTemplateLabels` and
+set `status.resolvedTemplateIdentityCaptured`, including when the approved
+template has no catalogue labels. The earlier preview-only label marker does
+not replace this immutable identity provenance.
+
+## Auxiliary resource lifecycle flags
+
+Explicit `createBefore: false` and `deleteAfter: false` now survive typed template
+and resolved-snapshot serialization. Omitted fields in YAML still default to
+`true`. Previously, serialization could drop explicit false values and the API
+would restore its true defaults. Already persisted snapshots are immutable;
+request a new session if an older snapshot has the wrong phase or cleanup policy.
+
 ## General Upgrade Process
 
 ### Pre-Upgrade Checklist

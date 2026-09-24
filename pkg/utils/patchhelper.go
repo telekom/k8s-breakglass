@@ -140,7 +140,7 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 	err := c.Get(ctx, client.ObjectKey{Name: obj.GetName(), Namespace: obj.GetNamespace()}, current)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			applyConfig := &unstructuredApplyConfiguration{obj: obj}
+			applyConfig := client.ApplyConfigurationFromUnstructured(obj)
 			if applyErr := c.Apply(ctx, applyConfig, client.FieldOwner(FieldOwnerController), client.ForceOwnership); applyErr != nil {
 				return 0, applyErr
 			}
@@ -160,7 +160,7 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 		return PatchApplyResultSkipped, nil
 	}
 
-	applyConfig := &unstructuredApplyConfiguration{obj: obj}
+	applyConfig := client.ApplyConfigurationFromUnstructured(obj)
 	if applyErr := c.Apply(ctx, applyConfig, client.FieldOwner(FieldOwnerController), client.ForceOwnership); applyErr != nil {
 		if apierrors.IsConflict(applyErr) {
 			zap.S().Warnw("SSA apply conflict",

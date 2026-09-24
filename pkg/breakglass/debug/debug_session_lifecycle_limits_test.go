@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	kptr "k8s.io/utils/ptr"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/stretchr/testify/require"
@@ -92,7 +94,7 @@ func TestAuxiliaryCleanupRetainsMismatchedIdentity(t *testing.T) {
 						ref.UID = ""
 					}
 					session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{
-						ResolvedTemplate:  &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "retained", DeleteAfter: false}}},
+						ResolvedTemplate:  &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "retained", DeleteAfter: kptr.To(false)}}},
 						DeployedResources: []breakglassv1alpha1.DeployedResourceRef{ref}, AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{status},
 					}}
 					object := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: ref.Name, Namespace: ref.Namespace, UID: "original"}}

@@ -12,7 +12,7 @@ func DebugSessionResourceIntentionallyRetained(ds *breakglassv1alpha1.DebugSessi
 		return false
 	}
 	for _, configured := range ds.Status.ResolvedTemplate.AuxiliaryResources {
-		if configured.DeleteAfter || (ref.Source != "" && ref.Source != "auxiliary:"+configured.Name) {
+		if configured.DeleteAfter == nil || *configured.DeleteAfter || (ref.Source != "" && ref.Source != "auxiliary:"+configured.Name) {
 			continue
 		}
 		for _, status := range ds.Status.AuxiliaryResourceStatuses {
@@ -70,7 +70,7 @@ func DebugSessionDeletesAuxiliaryResource(session *breakglassv1alpha1.DebugSessi
 	if session.Status.ResolvedTemplate != nil {
 		for _, resource := range session.Status.ResolvedTemplate.AuxiliaryResources {
 			if resource.Name == name {
-				return resource.DeleteAfter
+				return resource.DeleteAfter == nil || *resource.DeleteAfter
 			}
 		}
 	}

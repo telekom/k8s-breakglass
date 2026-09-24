@@ -1447,12 +1447,31 @@ persisted failure; later reconciles preserve the status without repeating it.
 Auxiliary documents continue to be retried after their primary resource is
 deleted; once the primary and every child are deleted, their history no longer
 counts as outstanding cleanup inventory.
+Parent UID recovery leaves child cleanup to its own baseline-aware merge: newly
+observed children remain tracked, while confirmed local removals remain removed.
+Activation retries preserve earlier resource UIDs and unvisited auxiliary documents.
+A status conflict stops target writes and retries from the persisted session; it
+does not convert an incomplete activation into successful deployment.
 Failed sessions finish cleanup once all primary and child auxiliary resources
 are marked deleted; retained history alone does not trigger another retry.
 Terminal DebugSession states cannot transition again on the status mutation
 path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,
 so a request that reaches the boundary cannot extend or resurrect the lease.
+
+## Kubernetes user identity
+
+DebugSession creation and participant joins select the Kubernetes identity from
+the authenticated token using `ClusterConfig.spec.userIdentifierClaim`, then the
+global `userIdentifierClaim` (default `email`). Supported policies are `email`,
+`preferred_username`, and `sub`; a missing required claim rejects the request.
+The API snapshots this value in `spec.requestedByKubernetesUser` and participant
+`kubernetesUser`. API ownership and notification identities remain separate.
+The authorization webhook matches only this exact Kubernetes identity, retaining
+issuer/provider, participant role, leave, session expiry, and Pod UID checks.
+Email is never an additional authorization alias. Existing participants without
+the new field retain exact `user` matching; create a new session to capture the
+configured Kubernetes identity.
 
 ## Terminal Sharing
 

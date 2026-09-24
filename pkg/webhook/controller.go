@@ -484,7 +484,7 @@ func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Conte
 
 		// Check if the user is a participant of this session
 		for _, p := range ds.Status.Participants {
-			if p.User != username {
+			if username == "" || p.KubernetesUsername() != username {
 				continue
 			}
 			if providerFence && !debugParticipantProviderMatches(p, issuer, provider, providerLookupOK) {
@@ -566,7 +566,7 @@ func (wc *WebhookController) listLiveDebugSessionsForAuthorization(ctx context.C
 				continue
 			}
 			for _, participant := range ds.Status.Participants {
-				if participant.User == username && participant.LeftAt == nil {
+				if username != "" && participant.KubernetesUsername() == username && participant.LeftAt == nil {
 					sessions = append(sessions, *ds.DeepCopy())
 					break
 				}
@@ -637,7 +637,7 @@ func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context,
 	}
 	reader := wc.sesManager.Reader()
 	for _, participant := range ds.Status.Participants {
-		if participant.User == username && participant.LeftAt == nil &&
+		if username != "" && participant.KubernetesUsername() == username && participant.LeftAt == nil &&
 			((providerFence && debugParticipantProviderMatches(participant, issuer, provider, providerLookupOK)) ||
 				(!providerFence && debugParticipantIssuerMatches(ctx, reader, participant, issuer))) &&
 			canDebugSessionParticipantAccessPodOperations(participant.Role) {
