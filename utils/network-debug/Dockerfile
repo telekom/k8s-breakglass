@@ -14,7 +14,7 @@ ARG BUILD_DATE=unknown
 # pwru is built from its immutable Go module version with the pinned builder.
 # The compiler and build dependencies never enter the runtime image. Storage
 # tooling is intentionally excluded; kubestr belongs to storage-debug.
-FROM golang:1.27@sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea AS tools
+FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS tools
 ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
