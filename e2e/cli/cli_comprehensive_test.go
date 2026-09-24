@@ -22,7 +22,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +36,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	bgctlclient "github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	bgctlcmd "github.com/telekom/k8s-breakglass/pkg/bgctl/cmd"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 )
@@ -1581,11 +1584,19 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step6_TerminateDebugSession", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		output, err := runWithToken(requesterToken, "debug", "session", "terminate", sessionName, "--yes")
-		if err != nil {
-			t.Logf("Terminate error (may be expected): %v", err)
-		} else {
-			t.Logf("Terminate response: %s", output)
+		for attempt := 1; attempt <= 3; attempt++ {
+			output, err := runWithToken(requesterToken, "debug", "session", "terminate", sessionName, "--yes")
+			if err == nil {
+				t.Logf("Terminate response: %s", output)
+				return
+			}
+			var httpErr *bgctlclient.HTTPError
+			if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
+				t.Logf("Terminate error (may be expected): %v", err)
+				return
+			}
+			t.Logf("Terminate conflicted with a concurrent status update (attempt %d/3): %v", attempt, err)
+			time.Sleep(helpers.PollInterval)
 		}
 	})
 
