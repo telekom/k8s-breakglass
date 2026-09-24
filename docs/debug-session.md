@@ -2216,3 +2216,8 @@ binding options restricted to another cluster.
 
 The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
 API endpoints; no separate client-side grant configuration is needed.
+
+Template list and detail fields aggregate the grant-protected variables and
+scheduling options available on the template's authorized target clusters.
+After selecting a cluster, use that cluster's resolved fields and binding
+options; those remain limited to the grant for that specific cluster.
