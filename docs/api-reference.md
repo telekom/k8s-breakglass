@@ -1295,6 +1295,12 @@ creation's legacy provenance rules; provider-aware authentication requires both
 the matching provider name and issuer. Template-wide variable and scheduling fields aggregate authorized
 target clusters; the cluster endpoint returns each target's scoped fields.
 
+Grant targets use the same unique ClusterConfig name/tenant-alias resolution as
+creation. An exact ClusterConfig name takes precedence over a tenant alias;
+ambiguous aliases (including collisions with unready configurations) do not grant
+access. Discovery returns canonical ClusterConfig names, and creation accepts an
+active grant recorded under that canonical name or its uniquely resolved alias.
+
 ### Get Debug Session Template
 
 ```http

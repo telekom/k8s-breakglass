@@ -284,11 +284,12 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 
 // Resolve temporary grants with the same live authorization checks as creation.
 // Keep them scoped to a cluster: a grant on one cluster cannot reveal another.
-func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, clusters map[string]*breakglassv1alpha1.ClusterConfig) (debugTemplateRequester, error) {
+func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, configured []breakglassv1alpha1.ClusterConfig) (debugTemplateRequester, error) {
 	r := debugTemplateRequesterFromContext(ctx)
 	if r.username == "" {
 		return r, nil
 	}
+	clusters, _ := readyDebugClusterConfigMap(configured)
 	r.clusters = clusters
 	r.grantedClusters = make(map[string]*breakglassv1alpha1.ClusterConfig)
 	// Query fresh requester grants using the CRD's selectable fields. Older
@@ -318,7 +319,11 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 	}
 	now := time.Now()
 	for _, session := range sessions.Items {
-		name := session.Spec.Cluster
+		configuredCluster, ambiguity := findDebugClusterConfigByNameOrTenant(configured, session.Spec.Cluster)
+		if configuredCluster == nil || ambiguity != debugClusterConfigAmbiguityNone {
+			continue
+		}
+		name := configuredCluster.Name
 		if clusters[name] != nil && isActiveDebugSessionGrant(session, r.username, r.email,
 			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"), now) {
 			r.grantedClusters[name] = clusters[name]
@@ -589,7 +594,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		return
 	}
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterMap)
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
 	if err != nil {
 		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -682,7 +687,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	}
 	clusterMap, allClusterNames := readyDebugClusterConfigMap(clusterConfigList.Items)
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterMap)
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
 	if err != nil {
 		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -732,7 +737,7 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterMap)
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
 	if err != nil {
 		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
