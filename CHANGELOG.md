@@ -31,7 +31,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Resolve active, identity-provider-scoped Breakglass grants when discovering debug
   templates and cluster bindings in the UI and bgctl, retaining per-cluster scope
   and rejecting token-only grants. Resolve unique tenant aliases consistently
-  between discovery and creation while rejecting ambiguous aliases.
+  between discovery and creation while rejecting ambiguous aliases. Apply direct
+  template cluster patterns to canonical names and tenant aliases consistently
+  during discovery, creation, and reconciliation.
 
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.

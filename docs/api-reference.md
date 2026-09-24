@@ -1300,6 +1300,8 @@ creation. An exact ClusterConfig name takes precedence over a tenant alias;
 ambiguous aliases (including collisions with unready configurations) do not grant
 access. Discovery returns canonical ClusterConfig names, and creation accepts an
 active grant recorded under that canonical name or its uniquely resolved alias.
+Direct template cluster patterns match the resolved cluster's canonical name or
+tenant alias consistently during discovery, creation, and reconciliation.
 
 ### Get Debug Session Template
 

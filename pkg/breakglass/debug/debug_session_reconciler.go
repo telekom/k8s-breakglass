@@ -1558,7 +1558,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if invalidPolicy != nil {
 		// Match API discovery: an invalid binding must not shadow a direct
 		// template grant. Valid bindings still take precedence above.
-		if directTemplateAllowsCluster(template, clusterName, readyClusterConfig) {
+		if directTemplateAllowsClusterReference(template, clusterName, readyClusterConfig) {
 			return nil, nil
 		}
 		return nil, invalidPolicy
