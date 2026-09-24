@@ -543,7 +543,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: psql
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
