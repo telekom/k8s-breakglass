@@ -1036,18 +1036,21 @@ func TestDebugSessionParticipantFrom(t *testing.T) {
 		now := metav1.Now()
 		left := metav1.Now()
 		participant := &breakglassv1alpha1.DebugSessionParticipant{
-			User:        "user@example.com",
-			Role:        breakglassv1alpha1.ParticipantRoleOwner,
-			JoinedAt:    now,
-			Email:       "user@example.com",
-			DisplayName: "Test User",
-			LeftAt:      &left,
+			User:           "user@example.com",
+			KubernetesUser: "canonical-subject",
+			Role:           breakglassv1alpha1.ParticipantRoleOwner,
+			JoinedAt:       now,
+			Email:          "user@example.com",
+			DisplayName:    "Test User",
+			LeftAt:         &left,
 		}
 
 		result := DebugSessionParticipantFrom(participant)
 
 		require.NotNil(t, result)
 		assert.Equal(t, "user@example.com", *result.User)
+		require.NotNil(t, result.KubernetesUser)
+		assert.Equal(t, "canonical-subject", *result.KubernetesUser)
 		assert.Equal(t, breakglassv1alpha1.ParticipantRoleOwner, *result.Role)
 		assert.Equal(t, "user@example.com", *result.Email)
 		assert.Equal(t, "Test User", *result.DisplayName)

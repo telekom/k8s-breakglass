@@ -61,13 +61,14 @@ const (
 
 // DebugSessionAPIController provides REST API endpoints for debug sessions
 type DebugSessionAPIController struct {
-	quotaNamespace   string
-	quotaEnabled     bool
-	log              *zap.SugaredLogger
-	client           ctrlclient.Client
-	apiReader        ctrlclient.Reader // Uncached reader for consistent reads
-	ccProvider       *cluster.ClientProvider
-	connectionLeases *ConnectionLeaseService
+	userIdentifierClaim breakglassv1alpha1.UserIdentifierClaimType
+	quotaNamespace      string
+	quotaEnabled        bool
+	log                 *zap.SugaredLogger
+	client              ctrlclient.Client
+	apiReader           ctrlclient.Reader // Uncached reader for consistent reads
+	ccProvider          *cluster.ClientProvider
+	connectionLeases    *ConnectionLeaseService
 	// clusterClients optionally overrides how target-cluster clients are
 	// obtained. When nil, ccProvider is used. Tests set this to evaluate
 	// namespace selectorTerms without a live spoke cluster.
@@ -105,6 +106,20 @@ func NewDebugSessionAPIController(log *zap.SugaredLogger, client ctrlclient.Clie
 		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
 		middleware:           middleware,
 	}
+}
+
+// WithUserIdentifierClaim sets the global fallback; ClusterConfig overrides it.
+func (c *DebugSessionAPIController) WithUserIdentifierClaim(claim breakglassv1alpha1.UserIdentifierClaimType) *DebugSessionAPIController {
+	c.userIdentifierClaim = claim
+	return c
+}
+
+func (c *DebugSessionAPIController) kubernetesUser(ctx *gin.Context, clusterConfig *breakglassv1alpha1.ClusterConfig) (string, error) {
+	claim := c.userIdentifierClaim
+	if clusterConfig.Spec.UserIdentifierClaim != "" {
+		claim = clusterConfig.GetUserIdentifierClaim()
+	}
+	return breakglass.NewKeycloakIdentityProvider(c.log).GetUserIdentifier(ctx, claim)
 }
 
 // WithMailService sets the mail service for sending email notifications
@@ -1145,6 +1160,11 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, fmt.Sprintf("cluster '%s' is not ready for debug sessions", req.Cluster))
 		return
 	}
+	kubernetesUser, err := c.kubernetesUser(ctx, requestedClusterConfig)
+	if err != nil {
+		apiresponses.RespondForbidden(ctx, "required target-cluster identity claim is missing")
+		return
+	}
 	if req.Cluster != requestedClusterConfig.Name {
 		reqLog.Debugw("Resolved debug session cluster alias",
 			"requestedCluster", req.Cluster,
@@ -1371,6 +1391,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			TemplateRef:                   req.TemplateRef,
 			Cluster:                       req.Cluster,
 			RequestedBy:                   currentUserStr,
+			RequestedByKubernetesUser:     kubernetesUser,
 			RequestedByEmail:              userEmail,
 			IdentityProviderName:          ctx.GetString("identity_provider_name"),
 			IdentityProviderIssuer:        ctx.GetString("issuer"),

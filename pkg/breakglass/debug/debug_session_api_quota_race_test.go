@@ -121,6 +121,7 @@ func TestCreateDebugSessionHandlerRetriesAfterIndependentAdmission(t *testing.T)
 			router.Use(func(c *gin.Context) {
 				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "alice@example.com")
+				c.Set("email", "alice@example.com")
 				c.Next()
 			})
 			require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))
@@ -276,6 +277,7 @@ func TestAPIQuotaRejectionStampsEffectiveRetention(t *testing.T) {
 			router.Use(func(c *gin.Context) {
 				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "alice@example.com")
+				c.Set("email", "alice@example.com")
 				c.Next()
 			})
 			require.NoError(t, controller.Register(router.Group("/api/v1/"+controller.BasePath())))

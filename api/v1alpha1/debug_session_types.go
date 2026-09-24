@@ -96,6 +96,13 @@ type DebugSessionSpec struct {
 	// +required
 	RequestedBy string `json:"requestedBy"`
 
+	// requestedByKubernetesUser is the exact authenticated identity selected by the
+	// target cluster userIdentifierClaim policy for Kubernetes authorization.
+	// API ownership continues to use requestedBy and its provider identity.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	RequestedByKubernetesUser string `json:"requestedByKubernetesUser,omitempty"`
+
 	// requestedByEmail is the email address of the requester (from OIDC "email" claim).
 	// Used for sending email notifications.
 	// +optional
@@ -466,6 +473,12 @@ type DebugSessionParticipant struct {
 	// user is the username/identifier of the participant.
 	// +required
 	User string `json:"user"`
+
+	// kubernetesUser is the exact target-cluster authenticated identity. When absent,
+	// legacy sessions use user; email is never treated as an authorization alias.
+	// +optional
+	// +kubebuilder:validation:MinLength=1
+	KubernetesUser string `json:"kubernetesUser,omitempty"`
 
 	// email is the email address of the participant (from OIDC "email" claim).
 	// Used for sending email notifications.

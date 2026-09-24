@@ -358,8 +358,8 @@ var debugSessionIndexFnsWebhook = map[string]client.IndexerFunc{
 		}
 		users := make([]string, 0, len(ds.Status.Participants))
 		for _, p := range ds.Status.Participants {
-			if p.User != "" {
-				users = append(users, p.User)
+			if user := p.KubernetesUsername(); user != "" && p.LeftAt == nil {
+				users = append(users, user)
 			}
 		}
 		if len(users) == 0 {

@@ -1459,6 +1459,20 @@ path or status admission path. Renewal performs its final uncached state and
 strict `now < expiresAt` check immediately before the optimistic status patch,
 so a request that reaches the boundary cannot extend or resurrect the lease.
 
+## Kubernetes user identity
+
+DebugSession creation and participant joins select the Kubernetes identity from
+the authenticated token using `ClusterConfig.spec.userIdentifierClaim`, then the
+global `userIdentifierClaim` (default `email`). Supported policies are `email`,
+`preferred_username`, and `sub`; a missing required claim rejects the request.
+The API snapshots this value in `spec.requestedByKubernetesUser` and participant
+`kubernetesUser`. API ownership and notification identities remain separate.
+The authorization webhook matches only this exact Kubernetes identity, retaining
+issuer/provider, participant role, leave, session expiry, and Pod UID checks.
+Email is never an additional authorization alias. Existing participants without
+the new field retain exact `user` matching; create a new session to capture the
+configured Kubernetes identity.
+
 ## Terminal Sharing
 
 Enable collaborative debugging with terminal sharing:

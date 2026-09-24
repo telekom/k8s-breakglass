@@ -107,6 +107,7 @@ func TestBindingDefaultAdmissionDoesNotMaterializeHiddenTemplateDefaults(t *test
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("email", "alice@example.com")
 				ctx.Set("identity_provider_name", "keycloak")
 				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()
@@ -215,6 +216,7 @@ func TestBindingRestrictedDefaultSurvivesAPIAndActivation(t *testing.T) {
 				router.Use(func(ctx *gin.Context) {
 					ctx.Set("legacy_identity_allowed", true)
 					ctx.Set("username", "alice@example.com")
+					ctx.Set("email", "alice@example.com")
 					if provided != "unsafe" {
 						ctx.Set("groups", []string{"admins"})
 					}
@@ -309,6 +311,7 @@ func TestSessionDetailHidesRecoveryVariablePolicy(t *testing.T) {
 	router.Use(func(ctx *gin.Context) {
 		ctx.Set("legacy_identity_allowed", true)
 		ctx.Set("username", ds.Spec.RequestedBy)
+		ctx.Set("email", ds.Spec.RequestedBy)
 		ctx.Set("identity_provider_name", ds.Spec.IdentityProviderName)
 		ctx.Set("issuer", ds.Spec.IdentityProviderIssuer)
 		ctx.Next()
@@ -401,6 +404,7 @@ func testNoVariableSessionAPIActivation(t *testing.T, selectorOnly bool) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("email", "alice@example.com")
 				ctx.Set("identity_provider_name", "keycloak")
 				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()
@@ -603,6 +607,7 @@ func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", "alice@example.com")
+				ctx.Set("email", "alice@example.com")
 				ctx.Set("identity_provider_name", "keycloak")
 				ctx.Set("issuer", "https://keycloak.example.com/realms/breakglass")
 				ctx.Next()

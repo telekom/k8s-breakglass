@@ -610,6 +610,9 @@ func DebugSessionParticipantFrom(p *breakglassv1alpha1.DebugSessionParticipant) 
 		WithRole(p.Role).
 		WithJoinedAt(p.JoinedAt)
 
+	if p.KubernetesUser != "" {
+		result.WithKubernetesUser(p.KubernetesUser)
+	}
 	if p.Email != "" {
 		result.WithEmail(p.Email)
 	}

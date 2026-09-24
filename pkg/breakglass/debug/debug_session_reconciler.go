@@ -1052,6 +1052,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	// Add the requesting user as owner participant
 	ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{
 		User:                   ds.Spec.RequestedBy,
+		KubernetesUser:         ds.Spec.RequestedByKubernetesUser,
 		Email:                  ds.Spec.RequestedByEmail,
 		DisplayName:            ds.Spec.RequestedByDisplayName,
 		IdentityProviderName:   ds.Spec.IdentityProviderName,

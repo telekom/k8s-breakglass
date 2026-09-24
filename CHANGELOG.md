@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Snapshot the target-cluster canonical Kubernetes identity for DebugSession
+  owners and joined participants, preserving API identity and exact issuer-scoped
+  webhook matching when username and email claims differ.
+
 - Preserve concurrent auxiliary child evidence without resurrecting child entries
   already removed by cleanup.
 

@@ -1897,6 +1897,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: joinedAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: kubernetesUser
+      type:
+        scalar: string
     - name: leftAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
@@ -1953,6 +1956,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: requestedByEmail
+      type:
+        scalar: string
+    - name: requestedByKubernetesUser
       type:
         scalar: string
     - name: requestedDuration
