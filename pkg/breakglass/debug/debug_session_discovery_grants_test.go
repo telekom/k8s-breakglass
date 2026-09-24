@@ -184,15 +184,24 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 
 func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 	for _, tc := range []struct {
-		name          string
-		secondName    string
-		secondTenant  string
-		secondReady   bool
-		templateAlias bool
-		allowed       bool
+		name           string
+		secondName     string
+		secondTenant   string
+		secondReady    bool
+		templateAlias  bool
+		canonicalGrant bool
+		bindingAlias   bool
+		allowed        bool
 	}{
 		{name: "unique alias", allowed: true},
 		{name: "template allows alias", templateAlias: true, allowed: true},
+		{name: "template ambiguous alias", templateAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
+		{name: "template unready alias collision", templateAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "template shadowed alias", templateAlias: true, canonicalGrant: true, secondName: "tenant-a", secondReady: true},
+		{name: "template unready name shadows alias", templateAlias: true, canonicalGrant: true, secondName: "tenant-a"},
+		{name: "binding unique alias", bindingAlias: true, canonicalGrant: true, allowed: true},
+		{name: "binding unready alias collision", bindingAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "binding unready name shadows alias", bindingAlias: true, canonicalGrant: true, secondName: "tenant-a"},
 		{name: "ambiguous alias", secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
 		{name: "unready alias collision", secondName: "cluster-b", secondTenant: "tenant-a"},
 		{name: "name takes precedence", secondName: "tenant-a", secondReady: true},
@@ -205,7 +214,14 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 				template.Spec.Allowed.Clusters = []string{"tenant-a"}
 			}
 			grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
+			if tc.canonicalGrant {
+				grant.Spec.Cluster = cluster.Name
+			}
 			objects := []client.Object{cluster, template, grant}
+			if tc.bindingAlias {
+				template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"unavailable"}}
+				objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"tenant-a"}, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{grant.Spec.GrantedGroup}}}})
+			}
 			if tc.secondName != "" {
 				second := cluster.DeepCopy()
 				second.Name = tc.secondName
@@ -244,7 +260,9 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 				return
 			}
 			require.Len(t, templates.Templates, 1)
-			require.Equal(t, []string{"cluster-a"}, templates.Templates[0].AllowedClusters)
+			if !tc.bindingAlias {
+				require.Equal(t, []string{"cluster-a"}, templates.Templates[0].AllowedClusters)
+			}
 			require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
 			var detail TemplateClustersResponse
 			require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &detail))
@@ -254,6 +272,41 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 			var session DebugSessionDetailResponse
 			require.NoError(t, json.Unmarshal(create.Body.Bytes(), &session))
 			require.Equal(t, "cluster-a", session.Spec.Cluster)
+		})
+	}
+}
+
+func TestInvalidBindingFallbackRejectsAmbiguousTemplateAlias(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		collisionName   string
+		collisionTenant string
+		allowed         bool
+	}{
+		{name: "unique", allowed: true},
+		{name: "unready alias collision", collisionName: "other", collisionTenant: "tenant-a"},
+		{name: "unready name shadows alias", collisionName: "tenant-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := readyDebugClusterConfig("breakglass", "target", nil)
+			cluster.Spec.Tenant = "tenant-a"
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"tenant-a"}}, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}}}}}
+			invalid := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{cluster.Name}, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", AllowedValues: []string{"unknown"}}}}}
+			objects := []client.Object{&cluster, invalid}
+			if tc.collisionName != "" {
+				collision := cluster.DeepCopy()
+				collision.Name, collision.Spec.Tenant = tc.collisionName, tc.collisionTenant
+				collision.Status.Conditions[0].Status = metav1.ConditionFalse
+				objects = append(objects, collision)
+			}
+			controller := &DebugSessionController{client: fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), log: zap.NewNop().Sugar()}
+			binding, err := controller.findBindingForSession(t.Context(), template, cluster.Name)
+			require.Nil(t, binding)
+			if tc.allowed {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "invalid variable policy")
+			}
 		})
 	}
 }
