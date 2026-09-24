@@ -75,7 +75,7 @@ func TestBindingOptionEmitsEmptyVariablesWhenAllDisabled(t *testing.T) {
 	require.NoError(t, err)
 	encoded = nil
 	require.NoError(t, json.Unmarshal(payload, &encoded))
-	assert.Equal(t, "null", string(encoded["extraDeployVariables"]), "no-binding fallback must retain the absent-variable result")
+	assert.JSONEq(t, `[{"name":"mode","inputType":"text"}]`, string(encoded["extraDeployVariables"]), "direct cluster details must expose their effective template variables")
 }
 
 type stagedDebugSessionReader struct {
