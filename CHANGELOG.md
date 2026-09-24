@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resolve active, identity-provider-scoped Breakglass grants when discovering debug
+  templates and cluster bindings in the UI and bgctl, retaining per-cluster scope
+  and rejecting token-only grants.
+
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.
 
