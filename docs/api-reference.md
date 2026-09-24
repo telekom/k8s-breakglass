@@ -1288,8 +1288,11 @@ Deployment or DaemonSet.
 Temporary `breakglass:platform:debugsession` groups used for template and binding
 access come from active BreakglassSessions, not token claims. Discovery queries
 requester identities and the required granted group using selectable fields,
-then applies the same provider, issuer, target-cluster, state, and expiry checks
-as creation. Template-wide variable and scheduling fields aggregate authorized
+then validates that fresh snapshot with the same provider, issuer, target-cluster,
+state, and expiry checks as creation, without querying grants again per cluster.
+The trusted single-provider `legacy_identity_allowed` compatibility path retains
+creation's legacy provenance rules; provider-aware authentication requires both
+the matching provider name and issuer. Template-wide variable and scheduling fields aggregate authorized
 target clusters; the cluster endpoint returns each target's scoped fields.
 
 ### Get Debug Session Template

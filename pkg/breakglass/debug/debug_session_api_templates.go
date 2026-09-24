@@ -316,21 +316,11 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 		}
 		break
 	}
-	checked := make(map[string]bool)
 	now := time.Now()
 	for _, session := range sessions.Items {
 		name := session.Spec.Cluster
-		if clusters[name] == nil || checked[name] || !breakglass.IsSessionAuthorizationEligible(session, now) || session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
-			(session.Spec.User != r.username && session.Spec.User != r.email) {
-			continue
-		}
-		checked[name] = true
-		groups, err := c.activeBreakglassGroups(apiCtx, c.reader(), name, r.username, r.email,
-			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"))
-		if err != nil {
-			return r, fmt.Errorf("resolve debug discovery grant: %w", err)
-		}
-		if len(groups) > 0 {
+		if clusters[name] != nil && isActiveDebugSessionGrant(session, r.username, r.email,
+			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"), now) {
 			r.grantedClusters[name] = clusters[name]
 		}
 	}
