@@ -1,0 +1,312 @@
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
+package debug
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+)
+
+func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
+	const group = "breakglass:platform:debugsession"
+	for _, mode := range []string{"direct", "direct alias", "binding"} {
+		bindingBacked := mode == "binding"
+		t.Run(mode, func(t *testing.T) {
+			for _, tc := range []struct {
+				name    string
+				mutate  func(*breakglassv1alpha1.BreakglassSession)
+				allowed bool
+			}{
+				{"approved", nil, true},
+				{"email identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "alice@example.test" }, true},
+				{"expired", func(s *breakglassv1alpha1.BreakglassSession) {
+					s.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-time.Minute))
+				}, false},
+				{"missing expiry", func(s *breakglassv1alpha1.BreakglassSession) { s.Status.ExpiresAt = metav1.Time{} }, false},
+				{"pending", func(s *breakglassv1alpha1.BreakglassSession) { s.Status.State = breakglassv1alpha1.SessionStatePending }, false},
+				{"withdrawn", func(s *breakglassv1alpha1.BreakglassSession) {
+					s.Status.State = breakglassv1alpha1.SessionStateWithdrawn
+				}, false},
+				{"wrong provider", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.IdentityProviderName = "other" }, false},
+				{"wrong issuer", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.IdentityProviderIssuer = "https://other.example" }, false},
+				{"wrong identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "other" }, false},
+				{"wrong cluster", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.Cluster = "unrelated" }, false},
+				{"OIDC claim alone", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.GrantedGroup = "other" }, false},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}, Clusters: []string{"tenant-*"}}}}
+					template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "target", AllowedGroups: []string{group}}}
+					template.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{Required: true, Options: []breakglassv1alpha1.SchedulingOption{{Name: "granted", AllowedGroups: []string{group}}}}
+					otherTemplate := template.DeepCopy()
+					otherTemplate.Name = "ungranted"
+					otherTemplate.Spec.Allowed.Clusters = []string{"tenant-b"}
+					if mode == "direct alias" {
+						template.Spec.Allowed.Clusters = []string{"alias-*"}
+						otherTemplate.Spec.Allowed.Clusters = []string{"alias-tenant-b"}
+					}
+					grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant", Namespace: "breakglass"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: group, IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
+					if tc.mutate != nil {
+						tc.mutate(grant)
+					}
+					objects := []client.Object{template, otherTemplate, grant}
+					for _, name := range []string{"tenant-a", "tenant-b"} {
+						objects = append(objects, &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name}, Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: "alias-" + name}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}}})
+					}
+					if bindingBacked {
+						template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"unavailable"}}
+						objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "debug"}, Clusters: []string{"tenant-a", "tenant-b"}, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}}}})
+					}
+					controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
+					router := gin.New()
+					router.Use(func(ctx *gin.Context) {
+						ctx.Set("username", "alice")
+						ctx.Set("email", "alice@example.test")
+						ctx.Set("groups", []string{"tenant-user"})
+						if tc.name == "OIDC claim alone" {
+							ctx.Set("groups", []string{group})
+						}
+						ctx.Set("identity_provider_name", "idp")
+						ctx.Set("issuer", "https://idp.example")
+					})
+					require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
+					get := func(path string) *httptest.ResponseRecorder {
+						w := httptest.NewRecorder()
+						router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates"+path, nil))
+						return w
+					}
+					listed := get("")
+					require.Equal(t, http.StatusOK, listed.Code, listed.Body.String())
+					var list struct {
+						Templates []DebugSessionTemplateResponse `json:"templates"`
+					}
+					require.NoError(t, json.Unmarshal(listed.Body.Bytes(), &list))
+					detail := get("/debug")
+					clusters := get("/debug/clusters")
+					require.Equal(t, http.StatusForbidden, get("/ungranted").Code)
+					if !tc.allowed {
+						require.Empty(t, list.Templates)
+						require.Equal(t, http.StatusForbidden, detail.Code)
+						require.Equal(t, http.StatusForbidden, clusters.Code)
+						return
+					}
+					require.Len(t, list.Templates, 1)
+					require.Equal(t, "debug", list.Templates[0].Name)
+					require.Equal(t, 1, list.Templates[0].AvailableClusterCount)
+					require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
+					require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
+					var templateDetail DebugSessionTemplateResponse
+					require.NoError(t, json.Unmarshal(detail.Body.Bytes(), &templateDetail))
+					for _, got := range []DebugSessionTemplateResponse{list.Templates[0], templateDetail} {
+						require.Len(t, got.ExtraDeployVariables, 1)
+						require.Equal(t, "target", got.ExtraDeployVariables[0].Name)
+						require.Len(t, got.SchedulingOptions.Options, 1)
+						require.Equal(t, "granted", got.SchedulingOptions.Options[0].Name)
+					}
+					var response TemplateClustersResponse
+					require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &response))
+					require.Len(t, response.Clusters, 1)
+					require.Equal(t, "tenant-a", response.Clusters[0].Name)
+					require.Len(t, response.Clusters[0].ExtraDeployVariables, 1)
+					require.Equal(t, "target", response.Clusters[0].ExtraDeployVariables[0].Name)
+					require.Len(t, response.Clusters[0].SchedulingOptions.Options, 1)
+					require.Equal(t, "granted", response.Clusters[0].SchedulingOptions.Options[0].Name)
+					if bindingBacked {
+						require.Len(t, response.Clusters[0].BindingOptions, 1)
+						require.Equal(t, "binding", response.Clusters[0].BindingOptions[0].BindingRef.Name)
+					} else {
+						require.Equal(t, []string{"tenant-a"}, list.Templates[0].AllowedClusters)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
+	grant := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "grant"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice@example.test", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+	}
+	second := grant.DeepCopy()
+	second.Name, second.Spec.Cluster, second.Spec.User = "second-grant", "tenant-b", "alice"
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(grant, second).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.user", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.User}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.grantedGroup", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.GrantedGroup}
+		}).
+		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "spec.cluster", func(obj client.Object) []string {
+			return []string{obj.(*breakglassv1alpha1.BreakglassSession).Spec.Cluster}
+		}).Build()
+	reader := &debugSessionRecordingListClient{Client: base}
+	cached := &debugSessionRecordingListClient{Client: base}
+	controller := &DebugSessionAPIController{client: cached, apiReader: reader}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "alice")
+	ctx.Set("email", "alice@example.test")
+	ctx.Set("identity_provider_name", "idp")
+	ctx.Set("issuer", "https://idp.example")
+	requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{
+		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-b"}},
+	})
+	require.NoError(t, err)
+	require.Contains(t, requester.grantedClusters, "tenant-a")
+	require.Contains(t, requester.grantedClusters, "tenant-b")
+	require.Empty(t, cached.calls, "fresh discovery must not query grants again per cluster")
+	require.Len(t, reader.calls, 2) // one fresh snapshot query per distinct requester identity
+	require.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(reader.calls[:2], "spec.user"))
+	for _, call := range reader.calls[:2] {
+		value, found := call.FieldSelector.RequiresExactMatch("spec.grantedGroup")
+		require.True(t, found)
+		require.Equal(t, "breakglass:platform:debugsession", value)
+	}
+	for _, call := range reader.calls {
+		require.False(t, call.FieldSelector.Empty(), "indexed discovery must not list the entire session collection")
+	}
+}
+
+func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		secondName     string
+		secondTenant   string
+		secondReady    bool
+		templateAlias  bool
+		canonicalGrant bool
+		bindingAlias   bool
+		allowed        bool
+	}{
+		{name: "unique alias", allowed: true},
+		{name: "template allows alias", templateAlias: true, allowed: true},
+		{name: "template ambiguous alias", templateAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
+		{name: "template unready alias collision", templateAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "template shadowed alias", templateAlias: true, canonicalGrant: true, secondName: "tenant-a", secondReady: true},
+		{name: "template unready name shadows alias", templateAlias: true, canonicalGrant: true, secondName: "tenant-a"},
+		{name: "binding unique alias", bindingAlias: true, canonicalGrant: true, allowed: true},
+		{name: "binding unready alias collision", bindingAlias: true, canonicalGrant: true, secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "binding unready name shadows alias", bindingAlias: true, canonicalGrant: true, secondName: "tenant-a"},
+		{name: "ambiguous alias", secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
+		{name: "unready alias collision", secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "name takes precedence", secondName: "tenant-a", secondReady: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ready := []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}
+			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}, Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: "tenant-a"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: ready}}
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Mode: breakglassv1alpha1.DebugSessionModeWorkload, WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"cluster-a"}, Groups: []string{"breakglass:platform:debugsession"}}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "1h", DefaultDuration: "1h"}}}
+			if tc.templateAlias {
+				template.Spec.Allowed.Clusters = []string{"tenant-a"}
+			}
+			grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
+			if tc.canonicalGrant {
+				grant.Spec.Cluster = cluster.Name
+			}
+			objects := []client.Object{cluster, template, grant}
+			if tc.bindingAlias {
+				template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"unavailable"}}
+				objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"tenant-a"}, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{grant.Spec.GrantedGroup}}}})
+			}
+			if tc.secondName != "" {
+				second := cluster.DeepCopy()
+				second.Name = tc.secondName
+				second.Spec.Tenant = tc.secondTenant
+				if !tc.secondReady {
+					second.Status.Conditions[0].Status = metav1.ConditionFalse
+				}
+				objects = append(objects, second)
+			}
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set("username", "alice")
+				ctx.Set("email", "alice@example.test")
+				ctx.Set("identity_provider_name", "idp")
+				ctx.Set("issuer", "https://idp.example")
+			})
+			require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
+			list := httptest.NewRecorder()
+			router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates", nil))
+			require.Equal(t, http.StatusOK, list.Code)
+			var templates struct {
+				Templates []DebugSessionTemplateResponse `json:"templates"`
+			}
+			require.NoError(t, json.Unmarshal(list.Body.Bytes(), &templates))
+			clusters := httptest.NewRecorder()
+			router.ServeHTTP(clusters, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/debug/clusters", nil))
+			create := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/debugSessions", strings.NewReader(`{"templateRef":"debug","cluster":"cluster-a","reason":"debugging"}`))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(create, request)
+			if !tc.allowed {
+				require.Empty(t, templates.Templates)
+				require.Equal(t, http.StatusForbidden, clusters.Code)
+				require.Equal(t, http.StatusForbidden, create.Code, create.Body.String())
+				return
+			}
+			require.Len(t, templates.Templates, 1)
+			if !tc.bindingAlias {
+				require.Equal(t, []string{"cluster-a"}, templates.Templates[0].AllowedClusters)
+			}
+			require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
+			var detail TemplateClustersResponse
+			require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &detail))
+			require.Len(t, detail.Clusters, 1)
+			require.Equal(t, "cluster-a", detail.Clusters[0].Name)
+			require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
+			var session DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(create.Body.Bytes(), &session))
+			require.Equal(t, "cluster-a", session.Spec.Cluster)
+		})
+	}
+}
+
+func TestInvalidBindingFallbackRejectsAmbiguousTemplateAlias(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		collisionName   string
+		collisionTenant string
+		allowed         bool
+	}{
+		{name: "unique", allowed: true},
+		{name: "unready alias collision", collisionName: "other", collisionTenant: "tenant-a"},
+		{name: "unready name shadows alias", collisionName: "tenant-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := readyDebugClusterConfig("breakglass", "target", nil)
+			cluster.Spec.Tenant = "tenant-a"
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"tenant-a"}}, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{Name: "mode", InputType: breakglassv1alpha1.InputTypeSelect, Options: []breakglassv1alpha1.SelectOption{{Value: "safe"}}}}}}
+			invalid := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "invalid", Namespace: "breakglass"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{cluster.Name}, ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariableConstraint{{Name: "mode", AllowedValues: []string{"unknown"}}}}}
+			objects := []client.Object{&cluster, invalid}
+			if tc.collisionName != "" {
+				collision := cluster.DeepCopy()
+				collision.Name, collision.Spec.Tenant = tc.collisionName, tc.collisionTenant
+				collision.Status.Conditions[0].Status = metav1.ConditionFalse
+				objects = append(objects, collision)
+			}
+			controller := &DebugSessionController{client: fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), log: zap.NewNop().Sugar()}
+			binding, err := controller.findBindingForSession(t.Context(), template, cluster.Name)
+			require.Nil(t, binding)
+			if tc.allowed {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "invalid variable policy")
+			}
+		})
+	}
+}

@@ -994,7 +994,10 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindin
 	}
 
 	// 1. Apply direct template names and label selectors consistently with discovery.
-	if directTemplateAllowsCluster(template, clusterName, clusterConfigs[clusterName]) {
+	// Keep name-pattern authorization when no unique config is available so the
+	// caller can return the existing missing/ambiguous-cluster error afterward.
+	if directTemplateAllowsCluster(template, clusterName, clusterConfigs[clusterName]) ||
+		directTemplateAllowsClusterReference(template, clusterName, clusterConfigs[clusterName], clusterConfigItems) {
 		result.Allowed = true
 		result.AllowedBySource = "template"
 	}
@@ -1015,7 +1018,7 @@ func (c *DebugSessionAPIController) isClusterAllowedByTemplateOrApplicableBindin
 
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
-		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs)
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterConfigs, clusterConfigItems)
 		bindingAllowsCluster := false
 		c.log.Debugw("Binding cluster resolution",
 			"binding", fmt.Sprintf("%s/%s", binding.Namespace, binding.Name),
