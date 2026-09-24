@@ -49,7 +49,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: debug
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -129,7 +129,7 @@ spec:
       containers:
       - name: debug
         # Use alpine with tmux installed, or a custom image with tmux
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "apk add --no-cache tmux && trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -324,7 +324,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: dns-debug
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "apk add --no-cache bind-tools drill && trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -432,7 +432,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: pvc-test
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "apk add --no-cache fio hdparm && trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -773,7 +773,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: scanner
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "apk add --no-cache curl jq && trap : TERM INT; sleep infinity & wait"]
         securityContext:
@@ -934,7 +934,7 @@ spec:
       - operator: Exists
       containers:
       - name: nsenter
-        image: alpine:3.20
+        image: alpine:3.24
         imagePullPolicy: IfNotPresent
         # nsenter into PID 1 to access host shell
         command: ["/bin/sh", "-c", "apk add --no-cache util-linux && trap : TERM INT; sleep infinity & wait"]
