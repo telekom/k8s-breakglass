@@ -2221,3 +2221,8 @@ Template list and detail fields aggregate the grant-protected variables and
 scheduling options available on the template's authorized target clusters.
 After selecting a cluster, use that cluster's resolved fields and binding
 options; those remain limited to the grant for that specific cluster.
+
+Discovery retains creation's trusted single-provider `legacy_identity_allowed`
+compatibility for legacy grant provenance. Provider-aware authentication requires
+both a matching provider name and issuer; this compatibility is not inferred
+from the requester's token.
