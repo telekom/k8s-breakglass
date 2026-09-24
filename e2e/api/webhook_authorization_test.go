@@ -618,17 +618,19 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 	require.NoError(t, err, "Timeout waiting for AllowedPods to be populated")
 	require.NotEmpty(t, allowedPodName, "Expected at least one allowed pod")
 	require.NotEmpty(t, allowedPodNamespace, "Expected allowed pod to have namespace")
+	require.Equal(t, testUser.Email, session.Spec.RequestedByKubernetesUser, "default target identity policy is email")
+	require.NotEqual(t, testUser.Username, session.Spec.RequestedByKubernetesUser)
 
 	t.Run("PodExecAllowedForAllowedPod", func(t *testing.T) {
 		// Create SAR for pods/exec to an allowed pod (using real pod name and namespace from reconciler)
-		// Use Username because debug sessions store RequestedBy as preferred_username claim
+		// Authorize the target-cluster identity captured separately from API ownership.
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUser.Username,
+				User:   session.Spec.RequestedByKubernetesUser,
 				Groups: testUser.Groups,
 				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
@@ -651,6 +653,25 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 		require.True(t, sarResp.Status.Allowed, "Pod exec should be allowed for allowed pod")
 	})
 
+	t.Run("PodExecDeniedForAPIUsername", func(t *testing.T) {
+		// API ownership remains preferred_username; it must not become a second
+		// Kubernetes identity when the target policy selected email.
+		sar := &authorizationv1.SubjectAccessReview{
+			TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
+			Spec: authorizationv1.SubjectAccessReviewSpec{
+				User: testUser.Username, Groups: testUser.Groups, Extra: issuerExtra,
+				ResourceAttributes: &authorizationv1.ResourceAttributes{
+					Namespace: allowedPodNamespace, Name: allowedPodName,
+					Verb: "create", Resource: "pods", Subresource: "exec",
+				},
+			},
+		}
+		response, statusCode, err := helpers.SendSARToWebhook(t, ctx, sar, clusterName)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, statusCode)
+		require.False(t, response.Status.Allowed, "API username must not alias the canonical target identity")
+	})
+
 	for _, tc := range []struct {
 		name  string
 		extra map[string]authorizationv1.ExtraValue
@@ -664,7 +685,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			sar := &authorizationv1.SubjectAccessReview{
 				TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
 				Spec: authorizationv1.SubjectAccessReviewSpec{
-					User: testUser.Username, Groups: testUser.Groups, Extra: tc.extra,
+					User: session.Spec.RequestedByKubernetesUser, Groups: testUser.Groups, Extra: tc.extra,
 					ResourceAttributes: &authorizationv1.ResourceAttributes{
 						Namespace: allowedPodNamespace, Name: allowedPodName,
 						Verb: "create", Resource: "pods", Subresource: "exec",
@@ -680,14 +701,14 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 	t.Run("PodExecDeniedForNonAllowedPod", func(t *testing.T) {
 		// Create SAR for pods/exec to a pod NOT in the allowed list
-		// Use Username because debug sessions store RequestedBy as preferred_username claim
+		// Authorize the target-cluster identity captured separately from API ownership.
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUser.Username,
+				User:   session.Spec.RequestedByKubernetesUser,
 				Groups: testUser.Groups,
 				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
@@ -712,7 +733,7 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 
 	t.Run("PodExecDeniedForNonParticipant", func(t *testing.T) {
 		// Create SAR for pods/exec from a user who is NOT a participant
-		nonParticipant := helpers.TestUsers.WebhookTestApprover.Username
+		nonParticipant := helpers.TestUsers.WebhookTestApprover.Email
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
@@ -751,14 +772,14 @@ func TestDebugSessionWebhookAuthorization(t *testing.T) {
 			breakglassv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
 
 		// Create SAR for pods/exec to an allowed pod
-		// Use Username because debug sessions store RequestedBy as preferred_username claim
+		// Authorize the target-cluster identity captured separately from API ownership.
 		sar := &authorizationv1.SubjectAccessReview{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: "authorization.k8s.io/v1",
 				Kind:       "SubjectAccessReview",
 			},
 			Spec: authorizationv1.SubjectAccessReviewSpec{
-				User:   testUser.Username,
+				User:   session.Spec.RequestedByKubernetesUser,
 				Groups: testUser.Groups,
 				Extra:  issuerExtra,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
