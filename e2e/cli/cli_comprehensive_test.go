@@ -1504,7 +1504,9 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	// Track if session was auto-approved (to skip manual approval step)
 	var wasAutoApproved bool
 
-	// Step 3: Wait for pending or approved state (template may have auto-approve enabled)
+	// Step 3: Wait for the durable approval decision. Auto-approved sessions pass
+	// through Pending while the controller persists the decision, so treating that
+	// transient state as "manual approval required" races the controller.
 	t.Run("Step3_WaitForPendingOrApprovedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
@@ -1520,20 +1522,20 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 			require.NoError(t, err, "Should parse debug session")
 
 			lastState = session.Status.State
-			if lastState == breakglassv1alpha1.DebugSessionStatePending {
-				t.Logf("Debug session %s reached Pending state (will require approval)", sessionName)
+			if lastState == breakglassv1alpha1.DebugSessionStatePendingApproval {
+				t.Logf("Debug session %s reached PendingApproval state (will require approval)", sessionName)
 				return
 			}
-			// Auto-approved - session went directly to Active or already past Pending
+			// Auto-approved sessions briefly report Pending before activation.
 			if lastState == breakglassv1alpha1.DebugSessionStateActive {
 				t.Logf("Debug session %s was auto-approved, now in %s state", sessionName, lastState)
 				wasAutoApproved = true
 				return
 			}
-			t.Logf("Debug session state: %s, waiting for Pending or Approved...", lastState)
+			t.Logf("Debug session state: %s, waiting for PendingApproval or Active...", lastState)
 			time.Sleep(helpers.PollInterval)
 		}
-		t.Fatalf("Debug session %s did not reach Pending or Approved state in time, last state: %s", sessionName, lastState)
+		t.Fatalf("Debug session %s did not reach PendingApproval or Active state in time, last state: %s", sessionName, lastState)
 	})
 
 	// Step 4: Approver approves the debug session (skip if auto-approved)
