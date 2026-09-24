@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -871,16 +872,33 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(
-		apiCtx,
-		authorizationReader,
-		req.Cluster,
-		currentUserStr,
-		userEmail,
-		ctx.GetString("identity_provider_name"),
-		ctx.GetString("issuer"),
-		ctx.GetBool("legacy_identity_allowed"),
-	)
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
+		return
+	}
+
+	grantReferences := []string{req.Cluster}
+	grantCluster, grantAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	if grantCluster != nil && grantAmbiguity == debugClusterConfigAmbiguityNone {
+		for _, reference := range []string{grantCluster.Name, grantCluster.Spec.Tenant} {
+			resolved, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, reference)
+			if reference != "" && resolved != nil && ambiguity == debugClusterConfigAmbiguityNone &&
+				resolved.Name == grantCluster.Name && !slices.Contains(grantReferences, reference) {
+				grantReferences = append(grantReferences, reference)
+			}
+		}
+	}
+	var sessionGroups []string
+	var err error
+	for _, reference := range grantReferences {
+		sessionGroups, err = c.activeBreakglassGroups(apiCtx, authorizationReader, reference, currentUserStr, userEmail,
+			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"))
+		if err != nil || len(sessionGroups) > 0 {
+			break
+		}
+	}
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -939,13 +957,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
 			return
 		}
-	}
-
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
-		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
-		return
 	}
 
 	requestedClusterConfig, clusterAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)

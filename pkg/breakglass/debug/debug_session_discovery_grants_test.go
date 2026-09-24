@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,9 +161,9 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 	ctx.Set("email", "alice@example.test")
 	ctx.Set("identity_provider_name", "idp")
 	ctx.Set("issuer", "https://idp.example")
-	requester, err := controller.templateRequester(ctx, context.Background(), map[string]*breakglassv1alpha1.ClusterConfig{
-		"tenant-a": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}},
-		"tenant-b": {ObjectMeta: metav1.ObjectMeta{Name: "tenant-b"}},
+	requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{
+		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-b"}},
 	})
 	require.NoError(t, err)
 	require.Contains(t, requester.grantedClusters, "tenant-a")
@@ -177,5 +178,76 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 	}
 	for _, call := range reader.calls {
 		require.False(t, call.FieldSelector.Empty(), "indexed discovery must not list the entire session collection")
+	}
+}
+
+func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		secondName   string
+		secondTenant string
+		secondReady  bool
+		allowed      bool
+	}{
+		{name: "unique alias", allowed: true},
+		{name: "ambiguous alias", secondName: "cluster-b", secondTenant: "tenant-a", secondReady: true},
+		{name: "unready alias collision", secondName: "cluster-b", secondTenant: "tenant-a"},
+		{name: "name takes precedence", secondName: "tenant-a", secondReady: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ready := []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionTrue, Reason: "Verified"}}
+			cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster-a"}, Spec: breakglassv1alpha1.ClusterConfigSpec{Tenant: "tenant-a"}, Status: breakglassv1alpha1.ClusterConfigStatus{Conditions: ready}}
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Mode: breakglassv1alpha1.DebugSessionModeWorkload, WorkloadType: breakglassv1alpha1.DebugWorkloadDaemonSet, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"cluster-a"}, Groups: []string{"breakglass:platform:debugsession"}}, Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "1h", DefaultDuration: "1h"}}}
+			grant := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "grant"}, Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant-a", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"}, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))}}
+			objects := []client.Object{cluster, template, grant}
+			if tc.secondName != "" {
+				second := cluster.DeepCopy()
+				second.Name = tc.secondName
+				second.Spec.Tenant = tc.secondTenant
+				if !tc.secondReady {
+					second.Status.Conditions[0].Status = metav1.ConditionFalse
+				}
+				objects = append(objects, second)
+			}
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
+			router := gin.New()
+			router.Use(func(ctx *gin.Context) {
+				ctx.Set("username", "alice")
+				ctx.Set("email", "alice@example.test")
+				ctx.Set("identity_provider_name", "idp")
+				ctx.Set("issuer", "https://idp.example")
+			})
+			require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
+			list := httptest.NewRecorder()
+			router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates", nil))
+			require.Equal(t, http.StatusOK, list.Code)
+			var templates struct {
+				Templates []DebugSessionTemplateResponse `json:"templates"`
+			}
+			require.NoError(t, json.Unmarshal(list.Body.Bytes(), &templates))
+			clusters := httptest.NewRecorder()
+			router.ServeHTTP(clusters, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/debug/clusters", nil))
+			create := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/debugSessions", strings.NewReader(`{"templateRef":"debug","cluster":"cluster-a","reason":"debugging"}`))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(create, request)
+			if !tc.allowed {
+				require.Empty(t, templates.Templates)
+				require.Equal(t, http.StatusForbidden, clusters.Code)
+				require.Equal(t, http.StatusForbidden, create.Code, create.Body.String())
+				return
+			}
+			require.Len(t, templates.Templates, 1)
+			require.Equal(t, []string{"cluster-a"}, templates.Templates[0].AllowedClusters)
+			require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
+			var detail TemplateClustersResponse
+			require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &detail))
+			require.Len(t, detail.Clusters, 1)
+			require.Equal(t, "cluster-a", detail.Clusters[0].Name)
+			require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
+			var session DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(create.Body.Bytes(), &session))
+			require.Equal(t, "cluster-a", session.Spec.Cluster)
+		})
 	}
 }
