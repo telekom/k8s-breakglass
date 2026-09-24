@@ -993,7 +993,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			return
 		}
 
-		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap, clusterConfigList.Items)
 		bindingAllowsRequestedCluster := false
 		for _, authorizationCluster := range authorizationClusters {
 			if slices.Contains(bindingClusters, authorizationCluster) {
