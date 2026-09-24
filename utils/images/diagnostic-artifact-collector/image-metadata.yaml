@@ -12,7 +12,7 @@ base:
   digest: sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616
 build:
   image: golang:1.27
-  digest: sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea
+  digest: sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244
   purpose: static-stdlib-uploader-and-pinned-ca-bundle
 runtime:
   # The image default and all uploader/summary containers are unprivileged.
@@ -71,7 +71,7 @@ dependencies:
     license: GPL-2.0-only
   - name: golang
     version: 1.27
-    digest: sha256:f44f6e88636cfb311f9ebace870ded69d943f227bb3cb27d32ffd84ea18c43ea
+    digest: sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244
     purpose: static uploader and safe-copy build toolchain
 contract:
   schema_version: diagnostic-artifact/v1
