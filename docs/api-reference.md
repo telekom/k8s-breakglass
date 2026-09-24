@@ -1301,7 +1301,10 @@ ambiguous aliases (including collisions with unready configurations) do not gran
 access. Discovery returns canonical ClusterConfig names, and creation accepts an
 active grant recorded under that canonical name or its uniquely resolved alias.
 Direct template cluster patterns match the resolved cluster's canonical name or
-tenant alias consistently during discovery, creation, and reconciliation.
+uniquely resolved tenant alias consistently during discovery, creation, and
+reconciliation. Both direct templates and binding aliases include unready configs
+in ambiguity checks and preserve exact-name precedence before filtering targets
+for readiness.
 
 ### Get Debug Session Template
 
