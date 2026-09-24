@@ -258,6 +258,7 @@ type debugTemplateRequester struct {
 	groups          []string
 	grantedClusters map[string]*breakglassv1alpha1.ClusterConfig
 	clusters        map[string]*breakglassv1alpha1.ClusterConfig
+	configured      []breakglassv1alpha1.ClusterConfig
 }
 
 func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester {
@@ -291,6 +292,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 	}
 	clusters, _ := readyDebugClusterConfigMap(configured)
 	r.clusters = clusters
+	r.configured = configured
 	r.grantedClusters = make(map[string]*breakglassv1alpha1.ClusterConfig)
 	// Query fresh requester grants using the CRD's selectable fields. Older
 	// servers and clients without these indexes retain the filtered fallback.
@@ -361,12 +363,12 @@ func (c *DebugSessionAPIController) templateResponseRequester(
 ) debugTemplateRequester {
 	for name, cluster := range requester.grantedClusters {
 		scoped := requester.forCluster(name)
-		if directTemplateAllowsClusterReference(template, name, cluster) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+		if directTemplateAllowsClusterReference(template, name, cluster, requester.configured) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
 			return scoped
 		}
 	}
 	for i := range bindings {
-		for _, name := range c.resolveClustersFromBinding(&bindings[i], requester.clusters) {
+		for _, name := range c.resolveClustersFromBinding(&bindings[i], requester.clusters, requester.configured) {
 			if requester.grantedClusters[name] != nil {
 				scoped := requester.forCluster(name)
 				if scoped.canRequest(effectiveDebugSessionAllowed(template, &bindings[i])) {
@@ -530,7 +532,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 	if template.Spec.Allowed != nil {
 		if clusterMap != nil {
 			for name, configured := range clusterMap {
-				if requester.forCluster(name).canRequest(effectiveDebugSessionAllowed(template, nil)) && directTemplateAllowsClusterReference(template, name, configured) {
+				if requester.forCluster(name).canRequest(effectiveDebugSessionAllowed(template, nil)) && directTemplateAllowsClusterReference(template, name, configured, requester.configured) {
 					resp.AllowedClusters = append(resp.AllowedClusters, name)
 				}
 			}
@@ -805,7 +807,7 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 	// Collect clusters from bindings
 	for i := range applicableBindings {
 		binding := &applicableBindings[i]
-		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap, requester.configured)
 		for _, clusterName := range bindingClusters {
 			scoped := requester.forCluster(clusterName)
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, binding)) || !debugSchedulingOptionsAvailableForRequester(template, binding, scoped) {
@@ -824,7 +826,7 @@ func (c *DebugSessionAPIController) countAvailableClustersForTemplate(
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) || !debugSchedulingOptionsAvailableForRequester(template, nil, scoped) {
 				continue
 			}
-			if directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName]) {
+			if directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName], requester.configured) {
 				seenClusters[clusterName] = true
 			}
 		}
@@ -912,7 +914,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 	// Collect all bindings for each cluster
 	for i := range bindings {
 		binding := &bindings[i]
-		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(binding, clusterMap, requester.configured)
 		for _, clusterName := range bindingClusters {
 			scoped := requester.forCluster(clusterName)
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, binding)) || !debugSchedulingOptionsAvailableForRequester(template, binding, scoped) {
@@ -953,7 +955,7 @@ func (c *DebugSessionAPIController) resolveTemplateClusters(template *breakglass
 			if !scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) || !debugSchedulingOptionsAvailableForRequester(template, nil, scoped) {
 				continue
 			}
-			if !directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName]) || seenClusters[clusterName] {
+			if !directTemplateAllowsClusterReference(template, clusterName, clusterMap[clusterName], requester.configured) || seenClusters[clusterName] {
 				continue
 			}
 			seenClusters[clusterName] = true
@@ -1072,7 +1074,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 }
 
 // resolveClustersFromBinding resolves cluster names from a binding's spec
-func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig) []string {
+func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterMap map[string]*breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) []string {
 	var result []string
 	seen := make(map[string]struct{}, len(binding.Spec.Clusters))
 	addCluster := func(clusterName string) {
@@ -1087,24 +1089,12 @@ func (c *DebugSessionAPIController) resolveClustersFromBinding(binding *breakgla
 	}
 	bindingID := fmt.Sprintf("%s/%s", binding.Namespace, binding.Name)
 
-	// Add explicit clusters
 	for _, clusterName := range binding.Spec.Clusters {
 		addCluster(clusterName)
-		// Requests may use a ClusterConfig tenant alias. Resolve a unique alias
-		// to the canonical name so admission and activation use the same grant.
+		// Resolve aliases against all configs before filtering to available targets.
 		if _, exists := clusterMap[clusterName]; !exists {
-			var alias *breakglassv1alpha1.ClusterConfig
-			for _, cluster := range clusterMap {
-				if cluster.Spec.Tenant != clusterName {
-					continue
-				}
-				if alias != nil {
-					alias = nil // ambiguous tenant aliases do not grant access
-					break
-				}
-				alias = cluster
-			}
-			if alias != nil {
+			alias, ambiguity := findDebugClusterConfigByNameOrTenant(configured, clusterName)
+			if ambiguity == debugClusterConfigAmbiguityNone && alias != nil {
 				addCluster(alias.Name)
 			}
 		}

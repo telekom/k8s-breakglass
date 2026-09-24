@@ -949,7 +949,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) &&
 		(clusterConfig.Spec.Tenant == "" || !c.bindingMatchesCluster(binding, clusterConfig.Spec.Tenant, clusterConfig)) {
 		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
-	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig) {
+	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig, clusterConfigList.Items) {
 		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if binding != nil {
@@ -1558,7 +1558,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if invalidPolicy != nil {
 		// Match API discovery: an invalid binding must not shadow a direct
 		// template grant. Valid bindings still take precedence above.
-		if directTemplateAllowsClusterReference(template, clusterName, readyClusterConfig) {
+		if directTemplateAllowsClusterReference(template, clusterName, readyClusterConfig, clusterConfigList.Items) {
 			return nil, nil
 		}
 		return nil, invalidPolicy
