@@ -34,6 +34,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	bgctlclient "github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	bgctlcmd "github.com/telekom/k8s-breakglass/pkg/bgctl/cmd"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 )
@@ -1461,6 +1462,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 
 	var sessionName string
 	var templateName string
+	var requiresManualApproval bool
 
 	// Step 1: List available debug templates
 	t.Run("Step1_ListDebugTemplates", func(t *testing.T) {
@@ -1477,6 +1479,19 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		templateName = templates[0].Name
 		require.NotEmpty(t, templateName, "Template name should not be empty")
 		t.Logf("Using template: %s", templateName)
+
+		output, err = runWithToken(requesterToken, "debug", "template", "clusters", templateName, "-o", "json")
+		require.NoError(t, err, "Should resolve approval requirements for the target cluster")
+		var clusters bgctlclient.TemplateClustersResponse
+		require.NoError(t, json.Unmarshal([]byte(output), &clusters))
+		for _, cluster := range clusters.Clusters {
+			if cluster.Name == mcConfig.HubClusterName {
+				require.NotNil(t, cluster.Approval, "Target cluster must expose effective approval requirements")
+				requiresManualApproval = cluster.Approval.Required && !cluster.Approval.CanAutoApprove
+				return
+			}
+		}
+		t.Fatalf("Template %s is not available on cluster %s", templateName, mcConfig.HubClusterName)
 	})
 
 	// Step 2: Create debug session
@@ -1501,10 +1516,8 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 		t.Logf("Created debug session: %s (state: %s)", sessionName, session.Status.State)
 	})
 
-	// Track if session was auto-approved (to skip manual approval step)
-	var wasAutoApproved bool
-
-	// Step 3: Wait for pending or approved state (template may have auto-approve enabled)
+	// Step 3: Auto-approval can briefly expose Pending before the controller makes
+	// the session Active. Only treat Pending as ready when manual approval is required.
 	t.Run("Step3_WaitForPendingOrApprovedState", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
@@ -1520,14 +1533,13 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 			require.NoError(t, err, "Should parse debug session")
 
 			lastState = session.Status.State
-			if lastState == breakglassv1alpha1.DebugSessionStatePending {
+			if requiresManualApproval && lastState == breakglassv1alpha1.DebugSessionStatePending {
 				t.Logf("Debug session %s reached Pending state (will require approval)", sessionName)
 				return
 			}
 			// Auto-approved - session went directly to Active or already past Pending
-			if lastState == breakglassv1alpha1.DebugSessionStateActive {
+			if !requiresManualApproval && lastState == breakglassv1alpha1.DebugSessionStateActive {
 				t.Logf("Debug session %s was auto-approved, now in %s state", sessionName, lastState)
-				wasAutoApproved = true
 				return
 			}
 			t.Logf("Debug session state: %s, waiting for Pending or Approved...", lastState)
@@ -1540,7 +1552,7 @@ func TestCLIFullChainDebugSessionLifecycle(t *testing.T) {
 	t.Run("Step4_ApproveDebugSession", func(t *testing.T) {
 		require.NotEmpty(t, sessionName, "Session should have been created in previous step")
 
-		if wasAutoApproved {
+		if !requiresManualApproval {
 			t.Skip("Session was auto-approved, skipping manual approval step")
 		}
 
