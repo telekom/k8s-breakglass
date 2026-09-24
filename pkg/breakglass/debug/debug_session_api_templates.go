@@ -335,23 +335,39 @@ func (r debugTemplateRequester) schedulingOptionRequester() schedulingOptionRequ
 	}
 }
 
+// Template-wide fields aggregate grants only from clusters where this template
+// or a matching binding permits the requester. Cluster details stay scoped.
+func (c *DebugSessionAPIController) templateResponseRequester(
+	template *breakglassv1alpha1.DebugSessionTemplate,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
+	requester debugTemplateRequester,
+) debugTemplateRequester {
+	for name, cluster := range requester.grantedClusters {
+		scoped := requester.forCluster(name)
+		if directTemplateAllowsCluster(template, name, cluster) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
+			return scoped
+		}
+	}
+	for i := range bindings {
+		for _, name := range c.resolveClustersFromBinding(&bindings[i], requester.clusters) {
+			if requester.grantedClusters[name] != nil {
+				scoped := requester.forCluster(name)
+				if scoped.canRequest(effectiveDebugSessionAllowed(template, &bindings[i])) {
+					return scoped
+				}
+			}
+		}
+	}
+	return requester
+}
+
 func (c *DebugSessionAPIController) canReadTemplateWithBindings(
 	template *breakglassv1alpha1.DebugSessionTemplate,
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	requester debugTemplateRequester,
 ) bool {
-	for name, cluster := range requester.grantedClusters {
-		scoped := requester.forCluster(name)
-		if directTemplateAllowsCluster(template, name, cluster) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
-			return true
-		}
-	}
-	for i := range bindings {
-		for _, name := range c.resolveClustersFromBinding(&bindings[i], requester.clusters) {
-			if requester.grantedClusters[name] != nil && requester.forCluster(name).canRequest(effectiveDebugSessionAllowed(template, &bindings[i])) {
-				return true
-			}
-		}
+	if len(c.templateResponseRequester(template, bindings, requester).groups) > len(requester.groups) {
+		return true
 	}
 	hasDirectClusters := template.Spec.Allowed != nil && (len(template.Spec.Allowed.Clusters) > 0 || template.Spec.Allowed.ClusterSelector != nil)
 	if hasDirectClusters && requester.canRequest(effectiveDebugSessionAllowed(template, nil)) {
@@ -470,7 +486,9 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 	requester debugTemplateRequester,
 	clusterMap map[string]*breakglassv1alpha1.ClusterConfig,
 	availableClusterCount int,
+	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 ) DebugSessionTemplateResponse {
+	responseRequester := c.templateResponseRequester(template, bindings, requester)
 	resp := DebugSessionTemplateResponse{
 		Name:                  template.Name,
 		DisplayName:           template.Spec.DisplayName,
@@ -480,7 +498,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 		TargetNamespace:       template.Spec.TargetNamespace,
 		Constraints:           template.Spec.Constraints,
 		RequiresApproval:      template.Spec.Approvers != nil && (len(template.Spec.Approvers.Groups) > 0 || len(template.Spec.Approvers.Users) > 0),
-		ExtraDeployVariables:  extraDeployVariableResponses(filterExtraDeployVariablesForRequester(template.Spec.ExtraDeployVariables, requester)),
+		ExtraDeployVariables:  extraDeployVariableResponses(filterExtraDeployVariablesForRequester(template.Spec.ExtraDeployVariables, responseRequester)),
 		Priority:              template.Spec.Priority,
 		Hidden:                template.Spec.Hidden,
 		Deprecated:            template.Spec.Deprecated,
@@ -507,7 +525,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 			resp.AllowedGroups = template.Spec.Allowed.Groups
 		}
 	}
-	resp.SchedulingOptions = buildSchedulingOptionsResponseForRequester(template.Spec.SchedulingOptions, requester)
+	resp.SchedulingOptions = buildSchedulingOptionsResponseForRequester(template.Spec.SchedulingOptions, responseRequester)
 
 	if template.Spec.NamespaceConstraints != nil {
 		resp.NamespaceConstraints = &NamespaceConstraintsResponse{
@@ -595,7 +613,7 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 			continue
 		}
 
-		templates = append(templates, c.buildTemplateResponse(&t, requester, clusterMap, availableClusterCount))
+		templates = append(templates, c.buildTemplateResponse(&t, requester, clusterMap, availableClusterCount, applicableBindings))
 	}
 
 	sort.Slice(templates, func(i, j int) bool {
@@ -667,7 +685,7 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	visibleBindings := visibleDebugSessionBindings(applicableBindings)
 	availableClusterCount := c.countAvailableClustersForTemplate(template, visibleBindings, clusterMap, allClusterNames, requester)
 
-	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, clusterMap, availableClusterCount))
+	ctx.JSON(http.StatusOK, c.buildTemplateResponse(template, requester, clusterMap, availableClusterCount, applicableBindings))
 }
 
 // handleGetTemplateClusters returns cluster-specific details for a template

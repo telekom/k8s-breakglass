@@ -105,6 +105,14 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 					require.Equal(t, 1, list.Templates[0].AvailableClusterCount)
 					require.Equal(t, http.StatusOK, detail.Code, detail.Body.String())
 					require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
+					var templateDetail DebugSessionTemplateResponse
+					require.NoError(t, json.Unmarshal(detail.Body.Bytes(), &templateDetail))
+					for _, got := range []DebugSessionTemplateResponse{list.Templates[0], templateDetail} {
+						require.Len(t, got.ExtraDeployVariables, 1)
+						require.Equal(t, "target", got.ExtraDeployVariables[0].Name)
+						require.Len(t, got.SchedulingOptions.Options, 1)
+						require.Equal(t, "granted", got.SchedulingOptions.Options[0].Name)
+					}
 					var response TemplateClustersResponse
 					require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &response))
 					require.Len(t, response.Clusters, 1)
