@@ -120,11 +120,13 @@ updates:
       interval: "daily"
     groups:
       docker-major:
+        group-by: dependency-name
         patterns:
           - "*"
         update-types:
           - "major"
       docker-minor-patch:
+        group-by: dependency-name
         patterns:
           - "*"
         update-types:
@@ -133,6 +135,7 @@ updates:
       # Digest-only updates have no SemVer increase. Handle updates left over
       # after the version groups together across all configured directories.
       docker-digests:
+        group-by: dependency-name
         patterns:
           - "*"
     commit-message:
