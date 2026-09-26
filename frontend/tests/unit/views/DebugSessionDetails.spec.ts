@@ -13,6 +13,7 @@ import { AuthKey } from "@/keys";
 const mockPush = vi.fn();
 const mockGetSession = vi.fn();
 const mockJoinSession = vi.fn();
+const mockApproveSession = vi.fn();
 const mockCopy = vi.fn().mockResolvedValue(true);
 const mockCleanup = vi.fn();
 const mockCopied = ref(false);
@@ -34,7 +35,7 @@ vi.mock("@/services/debugSession", () => ({
     leaveSession = vi.fn();
     terminateSession = vi.fn();
     renewSession = vi.fn();
-    approveSession = vi.fn();
+    approveSession = mockApproveSession;
     rejectSession = vi.fn();
     injectEphemeralContainer = vi.fn();
     createPodCopy = vi.fn();
@@ -79,6 +80,7 @@ describe("DebugSessionDetails", () => {
     mockPush.mockReset();
     mockGetSession.mockReset();
     mockJoinSession.mockReset();
+    mockApproveSession.mockReset();
     mockRouteParams.name = "dbg-1";
   });
 
@@ -377,6 +379,36 @@ describe("DebugSessionDetails", () => {
 
     expect(wrapper.find('[data-testid="approve-session-button"]').exists()).toBe(true);
     expect(wrapper.find('[data-testid="reject-session-button"]').exists()).toBe(true);
+  });
+
+  it.each([true, false])("submits entered approval reason (mandatory=%s)", async (mandatory) => {
+    mockGetSession.mockResolvedValue({
+      metadata: { name: "dbg-1" },
+      spec: { cluster: "test", approvalReasonConfig: { mandatory, minLength: 10 } },
+      status: { state: "PendingApproval" },
+      canApprove: true,
+    });
+    mockApproveSession.mockResolvedValue({});
+    wrapper = mount(DebugSessionDetails, {
+      global: {
+        provide: { [AuthKey as symbol]: { getAccessToken: vi.fn() } },
+      },
+    });
+    await flushPromises();
+    await wrapper.get('[data-testid="approve-session-button"]').trigger("click");
+    expect(mockApproveSession).not.toHaveBeenCalled();
+    const confirm = wrapper.get('[data-testid="confirm-approve-button"]');
+    expect(confirm.attributes("disabled")).toBe(String(mandatory));
+    const input = wrapper.get('[data-testid="approve-reason-input"]');
+    (input.element as HTMLInputElement).value = "short";
+    await input.trigger("input");
+    await confirm.trigger("click");
+    expect(mockApproveSession).not.toHaveBeenCalled();
+    (input.element as HTMLInputElement).value = "  Approved for investigation  ";
+    await input.trigger("input");
+    await confirm.trigger("click");
+    await flushPromises();
+    expect(mockApproveSession).toHaveBeenCalledWith("dbg-1", { reason: "Approved for investigation" });
   });
 
   it("hides approval actions when the API does not authorize them", async () => {

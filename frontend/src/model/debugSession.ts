@@ -4,7 +4,13 @@
 
 // Debug Session states - matches backend api/v1alpha1/debug_session_types.go
 export type DebugSessionState =
-  "Pending" | "PendingApproval" | "Active" | "Expired" | "Terminated" | "Failed" | "Rejected";
+  | "Pending"
+  | "PendingApproval"
+  | "Active"
+  | "Expired"
+  | "Terminated"
+  | "Failed"
+  | "Rejected";
 
 // Debug Session modes
 export type DebugSessionMode = "workload" | "kubectl-debug" | "hybrid";
@@ -173,6 +179,7 @@ export interface DebugSession {
     requestedByDisplayName?: string;
     requestedByEmail?: string;
     requestedDuration?: string;
+    approvalReasonConfig?: ReasonConfigInfo;
     reason?: string;
     nodeSelector?: Record<string, string>;
   };
