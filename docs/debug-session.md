@@ -1077,12 +1077,23 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 | Variable | Description |
 |----------|-------------|
 | `.session.name` | Debug session name |
+| `.session.uid` | Immutable Kubernetes DebugSession UID; controller-provided, never taken from user variables |
 | `.session.namespace` | Session's namespace |
 | `.session.cluster` | Target cluster name |
 | `.session.requestedBy` | Requesting user |
 | `.target.namespace` | Target namespace for debug pods |
 | `.session.reason` | Session request reason |
 | `.template.name` | Template name |
+
+Use `{{ required "session UID is required" .session.uid | yamlQuote }}` when a
+resource must be scoped to the exact session. A missing UID then fails rendering.
+User input remains under `.vars` and cannot override `.session.uid`.
+
+Templates that need child Pods scoped to the exact session can explicitly set
+`spec.template.metadata.annotations["breakglass.t-caas.telekom.com/source-session-uid"]`
+on the Job, Deployment, or DaemonSet using `.session.uid`. Rendered Pod-template
+annotations take precedence over session, binding, and template annotations.
+This is opt-in; existing workload identity and recovery behavior is unchanged.
 
 ### Lifecycle
 
