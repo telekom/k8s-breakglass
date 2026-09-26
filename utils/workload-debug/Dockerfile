@@ -14,7 +14,7 @@ ARG CREATED=${BUILD_DATE}
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
       bash=5.3.9-r1 \
-      bind-tools=9.20.27-r0 \
+      bind-tools=9.20.29-r0 \
       ca-certificates=20260909-r0 \
       curl=8.22.0-r0 \
       jq=1.8.2-r0 \
