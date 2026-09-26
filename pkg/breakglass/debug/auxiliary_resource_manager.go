@@ -431,6 +431,7 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 ) breakglassv1alpha1.AuxiliaryResourceContext {
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+			UID:         string(session.UID),
 			Name:        session.Name,
 			Namespace:   session.Namespace,
 			Cluster:     session.Spec.Cluster,
@@ -1025,6 +1026,7 @@ func ValidateAuxiliaryResources(resources []breakglassv1alpha1.AuxiliaryResource
 			// Use sample context for validation
 			sampleCtx := breakglassv1alpha1.AuxiliaryResourceContext{
 				Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+					UID:         "validation-session-uid",
 					Name:        "validation-session",
 					Namespace:   "breakglass-system",
 					Cluster:     "validation-cluster",
