@@ -283,6 +283,32 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 	return requester
 }
 
+// Bound both selective queries and the compatibility fallback. Never authorize
+// from a partial snapshot when a requester has more grant history than this.
+const discoveryGrantPageSize = 250
+const discoveryGrantMaxPages = 4
+
+func (c *DebugSessionAPIController) discoveryGrants(ctx context.Context, opts ...ctrlclient.ListOption) (breakglassv1alpha1.BreakglassSessionList, error) {
+	var all breakglassv1alpha1.BreakglassSessionList
+	continuation := ""
+	for range discoveryGrantMaxPages {
+		var page breakglassv1alpha1.BreakglassSessionList
+		pageOpts := append(append([]ctrlclient.ListOption(nil), opts...), ctrlclient.Limit(discoveryGrantPageSize), ctrlclient.Continue(continuation))
+		if err := c.reader().List(ctx, &page, pageOpts...); err != nil {
+			return breakglassv1alpha1.BreakglassSessionList{}, err
+		}
+		if len(page.Items) > discoveryGrantPageSize {
+			return breakglassv1alpha1.BreakglassSessionList{}, fmt.Errorf("debug discovery grant page exceeds limit")
+		}
+		all.Items = append(all.Items, page.Items...)
+		continuation = page.Continue
+		if continuation == "" {
+			return all, nil
+		}
+	}
+	return breakglassv1alpha1.BreakglassSessionList{}, fmt.Errorf("debug discovery grant history exceeds limit")
+}
+
 // Resolve temporary grants with the same live authorization checks as creation.
 // Keep them scoped to a cluster: a grant on one cluster cannot reveal another.
 func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, configured []breakglassv1alpha1.ClusterConfig) (debugTemplateRequester, error) {
@@ -303,8 +329,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 			continue
 		}
 		seenIdentities[identity] = true
-		var matches breakglassv1alpha1.BreakglassSessionList
-		err := c.reader().List(apiCtx, &matches, ctrlclient.MatchingFields{
+		matches, err := c.discoveryGrants(apiCtx, ctrlclient.MatchingFields{
 			"spec.user": identity, "spec.grantedGroup": "breakglass:platform:debugsession",
 		})
 		if err == nil {
@@ -314,7 +339,8 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 		if !breakglass.IsFieldIndexError(err) {
 			return r, fmt.Errorf("list debug discovery grants: %w", err)
 		}
-		if err := c.reader().List(apiCtx, &sessions); err != nil {
+		sessions, err = c.discoveryGrants(apiCtx)
+		if err != nil {
 			return r, fmt.Errorf("list debug discovery grants without indexes: %w", err)
 		}
 		break
