@@ -287,12 +287,12 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 // Keep them scoped to a cluster: a grant on one cluster cannot reveal another.
 func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, configured []breakglassv1alpha1.ClusterConfig) (debugTemplateRequester, error) {
 	r := debugTemplateRequesterFromContext(ctx)
+	r.clusters, _ = readyDebugClusterConfigMap(configured)
+	r.configured = configured
 	if r.username == "" {
 		return r, nil
 	}
-	clusters, _ := readyDebugClusterConfigMap(configured)
-	r.clusters = clusters
-	r.configured = configured
+	clusters := r.clusters
 	r.grantedClusters = make(map[string]*breakglassv1alpha1.ClusterConfig)
 	// Query fresh requester grants using the CRD's selectable fields. Older
 	// servers and clients without these indexes retain the filtered fallback.

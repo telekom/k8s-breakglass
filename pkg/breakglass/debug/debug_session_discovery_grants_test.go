@@ -310,3 +310,48 @@ func TestInvalidBindingFallbackRejectsAmbiguousTemplateAlias(t *testing.T) {
 		})
 	}
 }
+
+func TestAnonymousTemplateDiscoveryRetainsUniqueAliases(t *testing.T) {
+	for _, bindingBacked := range []bool{false, true} {
+		name := "direct"
+		if bindingBacked {
+			name = "binding"
+		}
+		t.Run(name, func(t *testing.T) {
+			cluster := readyDebugClusterConfig("breakglass", "target", nil)
+			cluster.Spec.Tenant = "tenant-a"
+			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "public"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"tenant-a"}}}}
+			restricted := template.DeepCopy()
+			restricted.Name = "restricted"
+			restricted.Spec.Allowed.Groups = []string{"breakglass:platform:debugsession"}
+			objects := []client.Object{&cluster, template, restricted}
+			if bindingBacked {
+				template.Spec.Allowed.Clusters = nil
+				objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"tenant-a"}}})
+			}
+			base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build()
+			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), base, nil, nil)
+			router := gin.New()
+			require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
+			list := httptest.NewRecorder()
+			router.ServeHTTP(list, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates", nil))
+			require.Equal(t, http.StatusOK, list.Code, list.Body.String())
+			var templates struct {
+				Templates []DebugSessionTemplateResponse `json:"templates"`
+			}
+			require.NoError(t, json.Unmarshal(list.Body.Bytes(), &templates))
+			require.Len(t, templates.Templates, 1)
+			require.Equal(t, "public", templates.Templates[0].Name)
+			clusters := httptest.NewRecorder()
+			router.ServeHTTP(clusters, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/public/clusters", nil))
+			require.Equal(t, http.StatusOK, clusters.Code, clusters.Body.String())
+			var detail TemplateClustersResponse
+			require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &detail))
+			require.Len(t, detail.Clusters, 1)
+			require.Equal(t, "target", detail.Clusters[0].Name)
+			denied := httptest.NewRecorder()
+			router.ServeHTTP(denied, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/restricted", nil))
+			require.Equal(t, http.StatusForbidden, denied.Code)
+		})
+	}
+}
