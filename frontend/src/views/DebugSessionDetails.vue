@@ -109,6 +109,16 @@ const renewDurationOptions = [
   { value: "4h", label: "4 hours" },
 ];
 
+const approveDialogOpen = ref(false);
+const approveReason = ref("");
+const approving = ref(false);
+const approvalReasonConfig = computed(() => session.value?.spec.approvalReasonConfig);
+const approvalReasonValid = computed(() => {
+  const reason = approveReason.value.trim();
+  if (!reason) return !approvalReasonConfig.value?.mandatory;
+  return Array.from(reason).length >= (approvalReasonConfig.value?.minLength ?? 0);
+});
+
 // Rejection dialog state
 const rejectDialogOpen = ref(false);
 const rejectReason = ref("");
@@ -179,6 +189,8 @@ onMounted(() => {
 
 watch(sessionName, async (nextName, previousName) => {
   if (nextName === previousName) return;
+  approveDialogOpen.value = false;
+  approveReason.value = "";
   const requestID = ++routeRefreshRequestID;
   stopPolling();
   session.value = null;
@@ -338,13 +350,23 @@ async function confirmRenew() {
   }
 }
 
-async function handleApprove() {
+function handleApprove() {
+  approveReason.value = "";
+  approveDialogOpen.value = true;
+}
+
+async function confirmApprove() {
+  if (!approvalReasonValid.value || approving.value) return;
+  approving.value = true;
   try {
-    await debugSessionService.approveSession(sessionName.value);
+    await debugSessionService.approveSession(sessionName.value, { reason: approveReason.value.trim() });
+    approveDialogOpen.value = false;
     pushSuccess("Session approved");
     await fetchSession();
   } catch {
     // Error already handled by debugSessionService (pushError with CID)
+  } finally {
+    approving.value = false;
   }
 }
 
@@ -935,6 +957,32 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       <div slot="action" class="modal-actions">
         <scale-button variant="secondary" @click="renewDialogOpen = false">Cancel</scale-button>
         <scale-button variant="primary" @click="confirmRenew">Renew</scale-button>
+      </div>
+    </scale-modal>
+
+    <scale-modal
+      :opened="approveDialogOpen"
+      heading="Approve Session"
+      size="small"
+      @scale-close="approveDialogOpen = false"
+    >
+      <p>{{ approvalReasonConfig?.description || "Provide a reason for approving this session." }}</p>
+      <p v-if="approvalReasonConfig?.minLength">Minimum {{ approvalReasonConfig.minLength }} characters.</p>
+      <scale-text-field
+        v-model="approveReason"
+        label="Approval Reason"
+        :required="approvalReasonConfig?.mandatory"
+        data-testid="approve-reason-input"
+      ></scale-text-field>
+      <div slot="action" class="modal-actions">
+        <scale-button variant="secondary" @click="approveDialogOpen = false">Cancel</scale-button>
+        <scale-button
+          variant="primary"
+          :disabled="!approvalReasonValid || approving"
+          data-testid="confirm-approve-button"
+          @click="confirmApprove"
+          >Approve</scale-button
+        >
       </div>
     </scale-modal>
 
