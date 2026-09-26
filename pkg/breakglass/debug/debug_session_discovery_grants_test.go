@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -354,4 +355,79 @@ func TestAnonymousTemplateDiscoveryRetainsUniqueAliases(t *testing.T) {
 			require.Equal(t, http.StatusForbidden, denied.Code)
 		})
 	}
+}
+
+type discoveryPagedReader struct {
+	client.Client
+	list func(client.ObjectList, client.ListOptions) error
+}
+
+func (r discoveryPagedReader) List(_ context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	options := client.ListOptions{}
+	for _, opt := range opts {
+		opt.ApplyToList(&options)
+	}
+	return r.list(list, options)
+}
+
+func TestTemplateRequesterBoundedGrantHistory(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		for _, overflow := range []bool{false, true} {
+			t.Run(fmt.Sprintf("fallback=%t/overflow=%t", fallback, overflow), func(t *testing.T) {
+				calls, pages := 0, 0
+				reader := discoveryPagedReader{list: func(list client.ObjectList, options client.ListOptions) error {
+					calls++
+					require.EqualValues(t, discoveryGrantPageSize, options.Limit)
+					if fallback && options.FieldSelector != nil && !options.FieldSelector.Empty() {
+						return fmt.Errorf("Index with name field:spec.user does not exist")
+					}
+					if pages == 0 {
+						require.Empty(t, options.Continue)
+					} else {
+						require.Equal(t, "next", options.Continue)
+					}
+					pages++
+					out := list.(*breakglassv1alpha1.BreakglassSessionList)
+					out.Items = []breakglassv1alpha1.BreakglassSession{{
+						Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant", User: "alice", GrantedGroup: "breakglass:platform:debugsession", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"},
+						Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+					}}
+					if overflow || pages < 2 {
+						out.Continue = "next"
+					}
+					return nil
+				}}
+				controller := &DebugSessionAPIController{apiReader: reader}
+				ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+				ctx.Set("username", "alice")
+				ctx.Set("identity_provider_name", "idp")
+				ctx.Set("issuer", "https://idp.example")
+				requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{{ObjectMeta: metav1.ObjectMeta{Name: "tenant"}}})
+				if overflow {
+					require.ErrorContains(t, err, "history exceeds limit")
+					require.Empty(t, requester.grantedClusters, "a valid grant in a partial snapshot must not authorize")
+					require.Equal(t, discoveryGrantMaxPages, pages)
+				} else {
+					require.NoError(t, err)
+					require.Contains(t, requester.grantedClusters, "tenant")
+					require.Equal(t, 2, pages)
+				}
+				if fallback {
+					require.Equal(t, pages+1, calls)
+				} else {
+					require.Equal(t, pages, calls)
+				}
+			})
+		}
+	}
+}
+
+func TestDiscoveryGrantsRejectsReaderIgnoringPageLimit(t *testing.T) {
+	controller := &DebugSessionAPIController{apiReader: discoveryPagedReader{list: func(list client.ObjectList, _ client.ListOptions) error {
+		list.(*breakglassv1alpha1.BreakglassSessionList).Items = make([]breakglassv1alpha1.BreakglassSession, discoveryGrantPageSize+1)
+		return nil
+	}}}
+	grants, err := controller.discoveryGrants(context.Background())
+	require.ErrorContains(t, err, "page exceeds limit")
+	require.Empty(t, grants.Items)
 }

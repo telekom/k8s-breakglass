@@ -1717,6 +1717,13 @@ the historic grant name is treated like any other authenticated identity group;
 it has no special meaning. Provider/issuer provenance is still persisted and
 enforced on later session operations.
 
+Template list, detail, and cluster discovery resolve temporary grants through
+fresh selectable-field queries for each distinct username/email identity. Each
+query, including the compatibility fallback on servers without selectable fields,
+is limited to four pages of 250 sessions. Incomplete or oversized responses fail
+closed rather than exposing profiles from a partial grant snapshot. Operators
+should prune retained grant history if discovery reports this limit.
+
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
 Request`. The join endpoint may omit its body and defaults to the `viewer` role;
