@@ -2,12 +2,14 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"gopkg.in/yaml.v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -248,6 +250,37 @@ type DebugTemplateService struct {
 	client *Client
 }
 
+// Discovery YAML uses the API JSON representation, including raw JSON variable
+// defaults and runtime-only validation fields, without changing generic output.
+func discoveryYAML(value any) (any, error) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return nil, err
+	}
+	return node.Content[0], nil
+}
+
+func (v DebugSessionTemplateSummary) MarshalYAML() (any, error) { return discoveryYAML(v) }
+func (v TemplateClustersResponse) MarshalYAML() (any, error)    { return discoveryYAML(v) }
+func (v AvailableClusterDetail) MarshalYAML() (any, error)      { return discoveryYAML(v) }
+func (v BindingOption) MarshalYAML() (any, error)               { return discoveryYAML(v) }
+
+// ExtraDeployVariableResponse preserves the effective variable policy returned
+// by discovery, including binding patterns that are not stored on the CRD.
+type ExtraDeployVariableResponse struct {
+	breakglassv1alpha1.ExtraDeployVariable
+	Validation *VariableValidationResponse `json:"validation,omitempty"`
+}
+
+type VariableValidationResponse struct {
+	breakglassv1alpha1.VariableValidation
+	AdditionalPatterns []string `json:"additionalPatterns,omitempty"`
+}
+
 // DebugSessionTemplateSummary represents a template summary from the API
 type DebugSessionTemplateSummary struct {
 	Name                  string                                      `json:"name"`
@@ -261,6 +294,13 @@ type DebugSessionTemplateSummary struct {
 	AllowedClusters       []string                                    `json:"allowedClusters,omitempty"`
 	AllowedGroups         []string                                    `json:"allowedGroups,omitempty"`
 	RequiresApproval      bool                                        `json:"requiresApproval"`
+	SchedulingOptions     *SchedulingOptionsResponse                  `json:"schedulingOptions,omitempty"`
+	NamespaceConstraints  *NamespaceConstraintsResponse               `json:"namespaceConstraints,omitempty"`
+	ExtraDeployVariables  []ExtraDeployVariableResponse               `json:"extraDeployVariables,omitempty"`
+	Priority              int32                                       `json:"priority,omitempty"`
+	Hidden                bool                                        `json:"hidden,omitempty"`
+	Deprecated            bool                                        `json:"deprecated,omitempty"`
+	DeprecationMessage    string                                      `json:"deprecationMessage,omitempty"`
 	HasAvailableClusters  bool                                        `json:"hasAvailableClusters"`            // True if at least one cluster is available
 	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
@@ -328,6 +368,10 @@ type AvailableClusterDetail struct {
 	Impersonation                 *ImpersonationSummary                       `json:"impersonation,omitempty"`
 	RequiredAuxResourceCategories []string                                    `json:"requiredAuxiliaryResourceCategories,omitempty"`
 	Approval                      *ApprovalInfo                               `json:"approval,omitempty"`
+	RequestReason                 *ReasonConfigInfo                           `json:"requestReason,omitempty"`
+	ApprovalReason                *ReasonConfigInfo                           `json:"approvalReason,omitempty"`
+	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
@@ -345,6 +389,7 @@ type BindingOption struct {
 	RequestReason                 *ReasonConfigInfo                           `json:"requestReason,omitempty"`
 	ApprovalReason                *ReasonConfigInfo                           `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
+	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -356,8 +401,17 @@ type BindingReference struct {
 
 // SchedulingConstraintsSummary summarizes scheduling constraints for API responses
 type SchedulingConstraintsSummary struct {
-	Summary          string            `json:"summary,omitempty"`
-	DeniedNodeLabels map[string]string `json:"deniedNodeLabels,omitempty"`
+	Summary          string              `json:"summary,omitempty"`
+	DeniedNodeLabels map[string]string   `json:"deniedNodeLabels,omitempty"`
+	NodeSelector     map[string]string   `json:"nodeSelector,omitempty"`
+	Tolerations      []TolerationSummary `json:"tolerations,omitempty"`
+}
+
+type TolerationSummary struct {
+	Key      string `json:"key"`
+	Operator string `json:"operator,omitempty"`
+	Value    string `json:"value,omitempty"`
+	Effect   string `json:"effect,omitempty"`
 }
 
 // SchedulingOptionsResponse represents scheduling options in API responses
@@ -368,10 +422,11 @@ type SchedulingOptionsResponse struct {
 
 // SchedulingOptionResponse represents a single scheduling option in API responses
 type SchedulingOptionResponse struct {
-	Name        string `json:"name"`
-	DisplayName string `json:"displayName"`
-	Description string `json:"description,omitempty"`
-	Default     bool   `json:"default,omitempty"`
+	Name                  string                        `json:"name"`
+	DisplayName           string                        `json:"displayName"`
+	Description           string                        `json:"description,omitempty"`
+	Default               bool                          `json:"default,omitempty"`
+	SchedulingConstraints *SchedulingConstraintsSummary `json:"schedulingConstraints,omitempty"`
 }
 
 // NamespaceConstraintsResponse represents namespace constraints in API responses
