@@ -52,6 +52,17 @@ function expectAccessibleLabel(wrapper: ReturnType<typeof mount>, targetId: stri
 }
 
 describe("DebugSessionCard", () => {
+  it("routes approval review to session details where the reason policy is loaded", async () => {
+    const wrapper = mount(DebugSessionCard, {
+      props: { session: makeSession("pending-session") },
+      global: { stubs: SCALE_STUBS },
+    });
+    const review = wrapper.get('[data-testid="approve-button"]');
+    await review.trigger("click");
+    expect(wrapper.emitted("viewDetails")).toHaveLength(1);
+    expect(wrapper.emitted("approve")).toBeUndefined();
+  });
+
   it("uses collision-safe label targets for per-card reject controls", async () => {
     const sessions = [makeSession("team/session-b"), makeSession("team-session-b")];
     const rejectWrapper = mount(

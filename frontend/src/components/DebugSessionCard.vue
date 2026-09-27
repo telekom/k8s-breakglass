@@ -17,7 +17,6 @@ const emit = defineEmits<{
   leave: [];
   terminate: [];
   renew: [duration: string];
-  approve: [];
   reject: [reason: string];
   viewDetails: [];
 }>();
@@ -205,8 +204,14 @@ function openRenewModal() {
           Terminate
         </scale-button>
 
-        <scale-button v-if="canApprove" variant="primary" data-testid="approve-button" @click="emit('approve')">
-          Approve
+        <scale-button
+          v-if="canApprove"
+          variant="primary"
+          size="small"
+          data-testid="approve-button"
+          @click="emit('viewDetails')"
+        >
+          Review
         </scale-button>
 
         <scale-button v-if="canReject" variant="secondary" data-testid="reject-button" @click="openRejectModal">
