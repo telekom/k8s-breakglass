@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Collect and validate DebugSession approval reasons in the UI; session-card
+  review actions use the same policy-aware detail flow. Preserve effective
+  variable and scheduling policy in bgctl discovery JSON and YAML output.
+
 - Resolve active, identity-provider-scoped Breakglass grants when discovering debug
   templates and cluster bindings in the UI and bgctl, retaining per-cluster scope
   and rejecting token-only grants. Resolve unique tenant aliases consistently
