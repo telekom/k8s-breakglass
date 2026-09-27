@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Expose the trusted DebugSession UID as `.session.uid` to auxiliary resource and
+  Pod templates, isolated from user variables.
+
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
 
@@ -27,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Collect and validate DebugSession approval reasons in the UI; session-card
+  review actions use the same policy-aware detail flow. Preserve effective
+  variable and scheduling policy in bgctl discovery JSON and YAML output.
+
+- Resolve active, identity-provider-scoped Breakglass grants when discovering debug
+  templates and cluster bindings in the UI and bgctl, retaining per-cluster scope
+  and rejecting token-only grants. Resolve unique tenant aliases consistently
+  between discovery and creation while rejecting ambiguous aliases. Apply direct
+  template cluster patterns to canonical names and unique, non-shadowed tenant
+  aliases during discovery, creation, and reconciliation; retain unready configs
+  in direct-template and binding alias ambiguity checks, including before approved
+  bindings activate workloads.
 
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.

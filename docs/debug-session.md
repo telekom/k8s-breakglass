@@ -1077,12 +1077,23 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 | Variable | Description |
 |----------|-------------|
 | `.session.name` | Debug session name |
+| `.session.uid` | Immutable Kubernetes DebugSession UID; controller-provided, never taken from user variables |
 | `.session.namespace` | Session's namespace |
 | `.session.cluster` | Target cluster name |
 | `.session.requestedBy` | Requesting user |
 | `.target.namespace` | Target namespace for debug pods |
 | `.session.reason` | Session request reason |
 | `.template.name` | Template name |
+
+Use `{{ required "session UID is required" .session.uid | yamlQuote }}` when a
+resource must be scoped to the exact session. A missing UID then fails rendering.
+User input remains under `.vars` and cannot override `.session.uid`.
+
+Templates that need child Pods scoped to the exact session can explicitly set
+`spec.template.metadata.annotations["breakglass.t-caas.telekom.com/source-session-uid"]`
+on the Job, Deployment, or DaemonSet using `.session.uid`. Rendered Pod-template
+annotations take precedence over session, binding, and template annotations.
+This is opt-in; existing workload identity and recovery behavior is unchanged.
 
 ### Lifecycle
 
@@ -1692,6 +1703,13 @@ one full-list fallback. If no eligible exact grant remains, it performs a fresh
 full-reader fallback, so newly approved grants are not hidden by cache
 propagation delay and revoked or deleted cached grants are not trusted.
 
+Template list, detail, and cluster discovery resolve temporary grants through
+fresh selectable-field queries for each distinct username/email identity. Each
+query, including the compatibility fallback on servers without selectable fields,
+is limited to four pages of 250 sessions. Incomplete or oversized responses fail
+closed rather than exposing profiles from a partial grant snapshot. Operators
+should prune retained grant history if discovery reports this limit.
+
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
 Request`. The join endpoint may omit its body and defaults to the `viewer` role;
@@ -2200,3 +2218,31 @@ Fresh auto-approved sessions persist `Pending` with their approval snapshot befo
 Approval snapshots use their canonical persisted JSON representation: runtime-only regex intersections are reconstructed from the stored original policy and binding, and empty policy slices normalize to nil under the separate capture marker. Once complete approval is recorded, deleting the live template does not invalidate the captured activation decision; current session identity, approval, cluster readiness and expiry fences still apply. Binding references must retain valid nonempty name and namespace values.
 
 Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.
+
+### Discovering profiles authorized by a Breakglass grant
+
+Templates and cluster bindings may require `breakglass:platform:debugsession` in
+`allowed.groups`. Request and approve the corresponding Breakglass escalation
+through the normal UI or `bgctl` before listing these debug profiles. Template
+list, detail, and cluster discovery use the same active-session authorization
+checks as debug-session creation: the grant must match the requester username
+or email, identity-provider name and issuer, and target cluster, and must be
+approved with an unexpired lease. A token containing that group alone does not
+make these profiles available. Withdrawn, rejected, expired, and retained grants
+cannot authorize discovery. A grant on one cluster does not reveal profiles or
+binding options restricted to another cluster.
+
+The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
+API endpoints; no separate client-side grant configuration is needed. API
+creation persists the canonical ClusterConfig name and selected binding reference
+before reconciliation, retaining the binding approval and constraint policy.
+
+Template list and detail fields aggregate the grant-protected variables and
+scheduling options available on the template's authorized target clusters.
+After selecting a cluster, use that cluster's resolved fields and binding
+options; those remain limited to the grant for that specific cluster.
+
+Discovery retains creation's trusted single-provider `legacy_identity_allowed`
+compatibility for legacy grant provenance. Provider-aware authentication requires
+both a matching provider name and issuer; this compatibility is not inferred
+from the requester's token.

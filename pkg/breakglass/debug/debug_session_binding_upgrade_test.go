@@ -631,3 +631,116 @@ func TestExplicitVisibleBindingDoesNotSelectHiddenBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestApprovedBindingAliasIsRecheckedBeforeActivation(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		collisionName   string
+		collisionTenant string
+		allowed         bool
+	}{
+		{name: "unique alias", allowed: true},
+		{name: "alias becomes ambiguous", collisionName: "other", collisionTenant: "tenant-a"},
+		{name: "alias becomes shadowed", collisionName: "tenant-a"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, template, target := newDeploymentFenceFixture(t)
+			var cluster breakglassv1alpha1.ClusterConfig
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "spoke"}, &cluster))
+			cluster.Spec.Tenant = "tenant-a"
+			require.NoError(t, c.client.Update(t.Context(), &cluster))
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "default"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name}, Clusters: []string{"tenant-a"}}}
+			require.NoError(t, c.client.Create(t.Context(), binding))
+			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
+			ds.Status.ResolvedBindingSnapshotCaptured = true
+			ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: binding.Name, Namespace: binding.Namespace}
+			raw, err := json.Marshal(binding.Spec)
+			require.NoError(t, err)
+			ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+			require.NoError(t, c.client.Status().Update(t.Context(), ds))
+			if tc.collisionName != "" {
+				collision := cluster.DeepCopy()
+				collision.Name, collision.Spec.Tenant = tc.collisionName, tc.collisionTenant
+				collision.ResourceVersion, collision.UID = "", ""
+				collision.Status.Conditions = []metav1.Condition{{Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse}}
+				require.NoError(t, c.client.Create(t.Context(), collision))
+			}
+			selected, err := c.findBindingForSession(t.Context(), template, cluster.Name)
+			require.NoError(t, err)
+			if tc.allowed {
+				require.NotNil(t, selected)
+			} else {
+				require.Nil(t, selected)
+			}
+			_, err = c.activateSession(t.Context(), ds, template, binding)
+			require.NoError(t, err)
+			var deployments appsv1.DeploymentList
+			require.NoError(t, target.List(t.Context(), &deployments))
+			if tc.allowed {
+				require.Len(t, deployments.Items, 1)
+			} else {
+				require.Empty(t, deployments.Items)
+				require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+				require.Contains(t, ds.Status.Message, "binding cluster grant no longer grants access")
+			}
+		})
+	}
+}
+
+func TestAPITenantAliasPersistsCanonicalBindingPolicy(t *testing.T) {
+	for _, matching := range []string{"canonical", "selector"} {
+		t.Run(matching, func(t *testing.T) {
+			c, prior, template, target := newDeploymentFenceFixture(t)
+			require.NoError(t, c.client.Delete(t.Context(), prior))
+			cc := &breakglassv1alpha1.ClusterConfig{}
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Name: "spoke", Namespace: "default"}, cc))
+			cc.Spec.Tenant = "tenant"
+			cc.Labels = map[string]string{"pool": "debug"}
+			cc.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionTrue, Reason: "Verified"}}
+			require.NoError(t, c.client.Update(t.Context(), cc))
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "approval-binding", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+					Clusters:    []string{"spoke"},
+					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"tester@example.com"}},
+					Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Groups: []string{"approvers"}},
+					Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "15m"},
+				},
+			}
+			if matching == "selector" {
+				binding.Spec.Clusters = nil
+				binding.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"pool": "debug"}}
+			}
+			require.NoError(t, c.client.Create(t.Context(), binding))
+			api := NewDebugSessionAPIController(zap.NewNop().Sugar(), c.client, nil, nil)
+			router := setupAuthenticatedDebugSessionRouter(t, api, "tester@example.com", "tester@example.com", nil)
+			response := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodPost, "/api/debugSessions", strings.NewReader(`{"templateRef":"template","cluster":"tenant","requestedDuration":"10m"}`))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(response, request)
+			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+			sessions := &breakglassv1alpha1.DebugSessionList{}
+			require.NoError(t, c.client.List(t.Context(), sessions))
+			require.Len(t, sessions.Items, 1)
+			ds := &sessions.Items[0]
+			require.Equal(t, "spoke", ds.Spec.Cluster, "API aliases must be canonical before persistence")
+			require.NotNil(t, ds.Spec.BindingRef)
+			require.Equal(t, binding.Name, ds.Spec.BindingRef.Name)
+			require.Equal(t, binding.Namespace, ds.Spec.BindingRef.Namespace)
+			_, err := c.handlePending(t.Context(), ds)
+			require.NoError(t, err)
+			require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), ds))
+			require.Equal(t, breakglassv1alpha1.DebugSessionStatePendingApproval, ds.Status.State)
+			require.NotNil(t, ds.Status.ResolvedBinding)
+			require.Equal(t, binding.Name, ds.Status.ResolvedBinding.Name)
+			require.Equal(t, "15m", ds.Status.ResolvedTemplate.Constraints.MaxDuration)
+			workloads := &appsv1.DeploymentList{}
+			require.NoError(t, target.List(t.Context(), workloads))
+			require.Empty(t, workloads.Items, "binding approval must precede workload creation")
+		})
+	}
+}

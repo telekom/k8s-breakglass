@@ -4,6 +4,8 @@
 package debug
 
 import (
+	"strings"
+
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -32,12 +34,35 @@ func directTemplateAllowsCluster(template *breakglassv1alpha1.DebugSessionTempla
 
 // directTemplateAllowsClusterReference checks the canonical name, requested
 // reference, and tenant alias used to reach a uniquely resolved cluster.
-func directTemplateAllowsClusterReference(template *breakglassv1alpha1.DebugSessionTemplate, requested string, cluster *breakglassv1alpha1.ClusterConfig) bool {
+func directTemplateAllowsClusterReference(template *breakglassv1alpha1.DebugSessionTemplate, requested string, cluster *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
 	if cluster == nil {
 		return false
 	}
-	if directTemplateAllowsCluster(template, cluster.Name, cluster) || directTemplateAllowsCluster(template, requested, cluster) {
+	if directTemplateAllowsCluster(template, cluster.Name, cluster) {
 		return true
 	}
-	return cluster.Spec.Tenant != "" && directTemplateAllowsCluster(template, cluster.Spec.Tenant, cluster)
+	for _, reference := range []string{requested, cluster.Spec.Tenant} {
+		if reference == "" || reference == cluster.Name {
+			continue
+		}
+		if debugClusterReferenceResolvesTo(reference, cluster, configured) &&
+			directTemplateAllowsCluster(template, reference, cluster) {
+			return true
+		}
+	}
+	return false
+}
+
+// Namespaced session references must identify the resolved config's namespace;
+// aliases use the same full-snapshot ambiguity and exact-name checks as names.
+func debugClusterReferenceResolvesTo(reference string, cluster *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
+	if slash := strings.LastIndexByte(reference, '/'); slash >= 0 {
+		if reference[:slash] != cluster.Namespace {
+			return false
+		}
+		reference = reference[slash+1:]
+	}
+	resolved, ambiguity := findDebugClusterConfigByNameOrTenant(configured, reference)
+	return ambiguity == debugClusterConfigAmbiguityNone && resolved != nil &&
+		resolved.Name == cluster.Name && resolved.Namespace == cluster.Namespace
 }

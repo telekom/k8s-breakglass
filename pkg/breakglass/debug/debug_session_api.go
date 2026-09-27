@@ -23,6 +23,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -871,16 +872,33 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	apiCtx, cancel := context.WithTimeout(ctx.Request.Context(), breakglass.APIContextTimeout)
 	defer cancel()
 	authorizationReader := c.reader()
-	sessionGroups, err := c.activeBreakglassGroups(
-		apiCtx,
-		authorizationReader,
-		req.Cluster,
-		currentUserStr,
-		userEmail,
-		ctx.GetString("identity_provider_name"),
-		ctx.GetString("issuer"),
-		ctx.GetBool("legacy_identity_allowed"),
-	)
+	var clusterConfigList breakglassv1alpha1.ClusterConfigList
+	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
+		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
+		return
+	}
+
+	grantReferences := []string{req.Cluster}
+	grantCluster, grantAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
+	if grantCluster != nil && grantAmbiguity == debugClusterConfigAmbiguityNone {
+		for _, reference := range []string{grantCluster.Name, grantCluster.Spec.Tenant} {
+			resolved, ambiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, reference)
+			if reference != "" && resolved != nil && ambiguity == debugClusterConfigAmbiguityNone &&
+				resolved.Name == grantCluster.Name && !slices.Contains(grantReferences, reference) {
+				grantReferences = append(grantReferences, reference)
+			}
+		}
+	}
+	var sessionGroups []string
+	var err error
+	for _, reference := range grantReferences {
+		sessionGroups, err = c.activeBreakglassGroups(apiCtx, authorizationReader, reference, currentUserStr, userEmail,
+			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"))
+		if err != nil || len(sessionGroups) > 0 {
+			break
+		}
+	}
 	if err != nil {
 		reqLog.Errorw("Failed to load active Breakglass session groups", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
@@ -939,13 +957,6 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
 			return
 		}
-	}
-
-	var clusterConfigList breakglassv1alpha1.ClusterConfigList
-	if err := authorizationReader.List(apiCtx, &clusterConfigList); err != nil {
-		reqLog.Errorw("Failed to list cluster configs for cluster validation", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate cluster access")
-		return
 	}
 
 	requestedClusterConfig, clusterAmbiguity := findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, req.Cluster)
@@ -1029,7 +1040,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			return
 		}
 
-		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap, clusterConfigList.Items)
 		bindingAllowsRequestedCluster := false
 		for _, authorizationCluster := range authorizationClusters {
 			if stringInSlice(authorizationCluster, bindingClusters) {
@@ -1605,6 +1616,30 @@ func isProviderAwareDebugSessionRequest(provider, issuer string, legacyAllowed b
 	return !legacyAllowed
 }
 
+// isActiveDebugSessionGrant applies the same lease and identity provenance
+// checks to creation authorization and fresh discovery snapshots.
+func isActiveDebugSessionGrant(session breakglassv1alpha1.BreakglassSession, username, email, provider, issuer string, legacyAllowed bool, now time.Time) bool {
+	if session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
+		!breakglass.IsSessionAuthorizationEligible(session, now) ||
+		(session.Spec.User != username && session.Spec.User != email) {
+		return false
+	}
+	sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	requestProvider := strings.TrimSpace(provider)
+	requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	switch {
+	case sessionProvider == "" && sessionIssuer == "":
+		return legacyAllowed
+	case sessionProvider == "":
+		return legacyAllowed && requestIssuer == sessionIssuer
+	case sessionIssuer == "":
+		return false
+	default:
+		return requestProvider == sessionProvider && requestIssuer == sessionIssuer
+	}
+}
+
 func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, reader ctrlclient.Reader, cluster, username, email, provider, issuer string, legacyAllowed bool) ([]string, error) {
 	indexedReader := reader
 	if c.client != nil {
@@ -1633,22 +1668,6 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		}
 		seen[key] = struct{}{}
 		sessions.Items = append(sessions.Items, session)
-	}
-	matchesIdentityProvider := func(session breakglassv1alpha1.BreakglassSession) bool {
-		sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
-		sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
-		requestProvider := strings.TrimSpace(provider)
-		requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
-		switch {
-		case sessionProvider == "" && sessionIssuer == "":
-			return legacyAllowed
-		case sessionProvider == "":
-			return legacyAllowed && requestIssuer == sessionIssuer
-		case sessionIssuer == "":
-			return false
-		default:
-			return requestProvider == sessionProvider && requestIssuer == sessionIssuer
-		}
 	}
 	seenSessions := make(map[string]struct{})
 	if len(identities) == 0 {
@@ -1697,9 +1716,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		freshCandidates := make([]breakglassv1alpha1.BreakglassSession, 0, len(sessions.Items))
 		for i := range sessions.Items {
 			candidate := sessions.Items[i]
-			if !breakglass.IsSessionAuthorizationEligible(candidate, now) ||
-				(candidate.Spec.User != username && candidate.Spec.User != email) ||
-				!matchesIdentityProvider(candidate) {
+			if !isActiveDebugSessionGrant(candidate, username, email, provider, issuer, legacyAllowed, now) {
 				continue
 			}
 			fresh := &breakglassv1alpha1.BreakglassSession{}
@@ -1720,10 +1737,7 @@ func (c *DebugSessionAPIController) activeBreakglassGroups(ctx context.Context, 
 		groups := make([]string, 0, len(items))
 		seen := make(map[string]struct{}, len(items))
 		for _, session := range items {
-			if session.Spec.GrantedGroup != "breakglass:platform:debugsession" ||
-				!breakglass.IsSessionAuthorizationEligible(session, now) ||
-				(session.Spec.User != username && session.Spec.User != email) ||
-				!matchesIdentityProvider(session) {
+			if !isActiveDebugSessionGrant(session, username, email, provider, issuer, legacyAllowed, now) {
 				continue
 			}
 			if _, ok := seen[session.Spec.GrantedGroup]; ok {

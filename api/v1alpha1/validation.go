@@ -1028,6 +1028,7 @@ func tryRenderTemplateString(templateStr string, vars map[string]string) []strin
 	// Build sample context matching AuxiliaryResourceContext
 	sampleCtx := AuxiliaryResourceContext{
 		Session: AuxiliaryResourceSessionContext{
+			UID:         "validation-session-uid",
 			Name:        "validation-session",
 			Namespace:   "breakglass-system",
 			Cluster:     "validation-cluster",

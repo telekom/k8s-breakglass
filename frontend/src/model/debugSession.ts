@@ -173,6 +173,7 @@ export interface DebugSession {
     requestedByDisplayName?: string;
     requestedByEmail?: string;
     requestedDuration?: string;
+    approvalReasonConfig?: ReasonConfigInfo;
     reason?: string;
     nodeSelector?: Record<string, string>;
   };

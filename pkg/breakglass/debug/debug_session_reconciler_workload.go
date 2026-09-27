@@ -1520,6 +1520,7 @@ func validateRestrictedCatalogueResources(resources []*unstructured.Unstructured
 func (c *DebugSessionController) buildPodRenderContext(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) breakglassv1alpha1.AuxiliaryResourceContext {
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+			UID:         string(ds.UID),
 			Name:        ds.Name,
 			Namespace:   ds.Namespace,
 			Cluster:     ds.Spec.Cluster,
