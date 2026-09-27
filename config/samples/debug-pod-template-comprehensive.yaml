@@ -1015,7 +1015,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: rabbitmq
-        image: rabbitmq:3.13-management-alpine
+        image: rabbitmq:4.3-management-alpine
         imagePullPolicy: IfNotPresent
         command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
