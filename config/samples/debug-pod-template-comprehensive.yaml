@@ -1017,7 +1017,7 @@ spec:
       - name: rabbitmq
         image: rabbitmq:4.3-management-alpine
         imagePullPolicy: IfNotPresent
-        command: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+        command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
           allowPrivilegeEscalation: false
           readOnlyRootFilesystem: false
