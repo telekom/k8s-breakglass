@@ -25,6 +25,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
 func TestDebugCommandStructure(t *testing.T) {
@@ -842,5 +843,65 @@ func TestDebugSessionWatchCommand_ShowFullRespectsOutputFormat(t *testing.T) {
 				assert.NotContains(t, out, `"name": "watch-session-1"`, "should not be JSON format")
 			}
 		})
+	}
+}
+
+func TestDebugTemplateDiscoveryPreservesEffectivePolicy(t *testing.T) {
+	const variables = `[{"name":"count","inputType":"number","default":"9007199254740993","required":true,"validation":{"pattern":"^[0-9]+$","additionalPatterns":["^9"],"minLength":2}}]`
+	const scheduling = `{"required":true,"options":[{"name":"workers","displayName":"Workers","schedulingConstraints":{"summary":"Debug workers","nodeSelector":{"pool":"debug"},"deniedNodeLabels":{"pool":"system"},"tolerations":[{"key":"debug","operator":"Exists","effect":"NoSchedule"}]}}]}`
+	policy := `"extraDeployVariables":` + variables + `,"schedulingOptions":` + scheduling
+	template := `{"name":"profile",` + policy + `}`
+	binding := `{"bindingRef":{"name":"binding","namespace":"breakglass"},` + policy + `}`
+	clusters := `{"templateName":"profile","templateDisplayName":"Profile","clusters":[{"name":"tenant",` + policy + `,"bindingOptions":[` + binding + `]}]}`
+	for _, format := range []string{"json", "yaml"} {
+		for _, action := range []string{"list", "get", "clusters", "bindings"} {
+			t.Run(format+"/"+action, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Content-Type", "application/json")
+					switch r.URL.Path {
+					case "/api/debugSessions/templates":
+						_, _ = io.WriteString(w, `{"templates":[`+template+`],"total":1}`)
+					case "/api/debugSessions/templates/profile":
+						_, _ = io.WriteString(w, template)
+					case "/api/debugSessions/templates/profile/clusters":
+						_, _ = io.WriteString(w, clusters)
+					default:
+						t.Errorf("unexpected API path %s", r.URL.Path)
+						w.WriteHeader(http.StatusNotFound)
+					}
+				}))
+				defer server.Close()
+				buf := &bytes.Buffer{}
+				cmd := NewRootCommand(Config{ConfigPath: writeTestConfigForDebug(t, server.URL), OutputWriter: buf})
+				args := []string{"--server", server.URL, "--token", "test-token", "debug", "template", action}
+				if action != "list" {
+					args = append(args, "profile")
+				}
+				if action == "bindings" {
+					args = append(args, "tenant")
+				}
+				cmd.SetArgs(append(args, "-o", format))
+				require.NoError(t, cmd.Execute())
+				data := buf.Bytes()
+				if format == "yaml" {
+					var err error
+					data, err = yaml.YAMLToJSON(data)
+					require.NoError(t, err)
+				}
+				var decoded any
+				require.NoError(t, json.Unmarshal(data, &decoded))
+				if action == "list" || action == "bindings" {
+					decoded = decoded.([]any)[0]
+				} else if action == "clusters" {
+					decoded = decoded.(map[string]any)["clusters"].([]any)[0]
+				}
+				result := decoded.(map[string]any)
+				for key, expected := range map[string]string{"extraDeployVariables": variables, "schedulingOptions": scheduling} {
+					actual, err := json.Marshal(result[key])
+					require.NoError(t, err)
+					require.JSONEq(t, expected, string(actual), key)
+				}
+			})
+		}
 	}
 }
