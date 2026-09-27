@@ -176,16 +176,6 @@ async function handleRenew(session: DebugSessionSummary, duration: string) {
   }
 }
 
-async function handleApprove(session: DebugSessionSummary) {
-  try {
-    await debugSessionService.approveSession(session.name);
-    pushSuccess(`Approved debug session ${session.name}`);
-    await refresh();
-  } catch (e: unknown) {
-    reportError(e, "Failed to approve session");
-  }
-}
-
 async function handleReject(session: DebugSessionSummary, reason: string) {
   try {
     await debugSessionService.rejectSession(session.name, { reason });
@@ -328,7 +318,6 @@ function onStateToggle(state: string, event: Event) {
         @leave="handleLeave(session)"
         @terminate="handleTerminate(session)"
         @renew="(duration) => handleRenew(session, duration)"
-        @approve="handleApprove(session)"
         @reject="(reason) => handleReject(session, reason)"
         @view-details="handleViewDetails(session)"
       />
