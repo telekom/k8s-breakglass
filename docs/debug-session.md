@@ -2247,7 +2247,9 @@ cannot authorize discovery. A grant on one cluster does not reveal profiles or
 binding options restricted to another cluster.
 
 The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
-API endpoints; no separate client-side grant configuration is needed.
+API endpoints; no separate client-side grant configuration is needed. API
+creation persists the canonical ClusterConfig name and selected binding reference
+before reconciliation, retaining the binding approval and constraint policy.
 
 Template list and detail fields aggregate the grant-protected variables and
 scheduling options available on the template's authorized target clusters.
