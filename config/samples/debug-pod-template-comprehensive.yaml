@@ -623,7 +623,7 @@ spec:
         kubernetes.io/os: linux
       containers:
       - name: redis
-        image: redis:7-alpine
+        image: redis:8-alpine
         imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c", "trap : TERM INT; sleep infinity & wait"]
         securityContext:
