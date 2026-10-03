@@ -25,13 +25,19 @@ import (
 // retry.DefaultBackoff for retrying callers, or wait.Backoff{Steps: 1} for a
 // single attempt that surfaces the conflict to the caller.
 //
+// mutate must only edit the object in memory (reads are fine). It must not
+// write the object itself: the patch base is captured before mutate runs, so a
+// write that advances the resourceVersion would make every patch conflict.
+//
 // When mutate returns changed=false no patch is sent. Errors from reader.Get,
 // mutate and the patch are returned unwrapped, so callers can use
 // apierrors.IsNotFound / errors.As; a mutate error that is itself a conflict
 // is retried like a patch conflict.
 //
-// On success the returned object is the patched object (or the object as read
-// when the patch was skipped). On error the zero value of T is returned.
+// On success the returned object is the patched object as returned by the API
+// server. When the patch was skipped it is the object as read plus any
+// in-memory edits mutate made before returning changed=false; those edits are
+// not persisted. On error the zero value of T is returned.
 func PatchStatusWithOptimisticLock[T client.Object](
 	ctx context.Context,
 	c client.Client,

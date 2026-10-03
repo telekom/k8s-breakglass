@@ -23,7 +23,6 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	ssapatch "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -226,33 +225,37 @@ func (ssa *ScheduledSessionActivator) updateWaitingScheduledSessionStatus(
 	ctx context.Context,
 	session breakglassv1alpha1.BreakglassSession,
 ) error {
-	_, err := ssapatch.PatchStatusWithOptimisticLock(ctx, ssa.sessionManager.Client, ssa.sessionManager.Reader(), retry.DefaultRetry,
-		client.ObjectKeyFromObject(&session),
-		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
-		func(current *breakglassv1alpha1.BreakglassSession) (bool, error) {
-			if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
-				return false, &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
+	key := client.ObjectKeyFromObject(&session)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		current := breakglassv1alpha1.BreakglassSession{}
+		if err := ssa.sessionManager.Reader().Get(ctx, key, &current); err != nil {
+			return err
+		}
+		if current.Status.State != breakglassv1alpha1.SessionStateWaitingForScheduledTime {
+			return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
+		}
+		// The list and the activation decision may have crossed the lease
+		// boundary while the live object was being read. Re-check with a fresh
+		// clock immediately before the status patch; equality is expired. This
+		// prevents a late WaitingForScheduledTime -> Approved write from
+		// resurrecting a session even when cleanup has not yet terminalized it.
+		if session.Status.State == breakglassv1alpha1.SessionStateApproved {
+			decisionNow := ssa.currentTime()
+			if current.Status.ExpiresAt.IsZero() || !decisionNow.Before(current.Status.ExpiresAt.Time) {
+				return &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
 			}
-			// The list and the activation decision may have crossed the lease
-			// boundary while the live object was being read. Re-check with a fresh
-			// clock immediately before the status patch; equality is expired. This
-			// prevents a late WaitingForScheduledTime -> Approved write from
-			// resurrecting a session even when cleanup has not yet terminalized it.
-			if session.Status.State == breakglassv1alpha1.SessionStateApproved {
-				decisionNow := ssa.currentTime()
-				if current.Status.ExpiresAt.IsZero() || !decisionNow.Before(current.Status.ExpiresAt.Time) {
-					return false, &scheduledSessionStateChangedError{name: current.Name, state: current.Status.State}
-				}
-			}
+		}
 
-			if !IsSessionTerminalState(session.Status.State) {
-				if err := ssa.sessionManager.admitSession(ctx, current); err != nil {
-					return false, err
-				}
+		if !IsSessionTerminalState(session.Status.State) {
+			if err := ssa.sessionManager.admitSession(ctx, &current); err != nil {
+				return err
 			}
-			applyScheduledSessionStatusTransition(current, session)
-			return true, nil
-		})
+		}
+		base := current.DeepCopy()
+		applyScheduledSessionStatusTransition(&current, session)
+		patch := client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})
+		return ssa.sessionManager.Client.Status().Patch(ctx, &current, patch)
+	})
 	if err == nil {
 		return nil
 	}

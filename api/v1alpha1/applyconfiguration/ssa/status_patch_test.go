@@ -100,7 +100,8 @@ func TestPatchStatusWithOptimisticLock_NoChangeSkipsPatch(t *testing.T) {
 			return false, nil
 		})
 	require.NoError(t, err)
-	assert.Equal(t, "esc", got.Name, "skipped path returns the object as read")
+	assert.Equal(t, "esc", got.Name)
+	assert.Equal(t, int64(99), got.Status.ObservedGeneration, "skipped path returns the read object including in-memory edits")
 	assert.Equal(t, 0, counters.patches)
 
 	stored := &breakglassv1alpha1.BreakglassEscalation{}
