@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"strings"
 
+	sharedssa "github.com/telekom/auth-operator/pkg/ssa"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -39,32 +40,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// PatchApplyResult indicates the outcome of a patch-or-skip operation.
-type PatchApplyResult int
+// PatchApplyResult indicates the outcome of a patch-or-skip operation. It is
+// the shared result type of github.com/telekom/auth-operator/pkg/ssa.
+type PatchApplyResult = sharedssa.PatchApplyResult
 
 const (
 	// PatchApplyResultSkipped means the status was already up-to-date (no API call made).
-	PatchApplyResultSkipped PatchApplyResult = iota
-	// PatchApplyResultCreated is unused for status (objects must already exist) but
-	// kept for API compatibility with the spec-side patchHelper.
-	PatchApplyResultCreated
+	PatchApplyResultSkipped = sharedssa.PatchApplyResultSkipped
+	// PatchApplyResultCreated is unused for status (objects must already exist).
+	PatchApplyResultCreated = sharedssa.PatchApplyResultCreated
 	// PatchApplyResultPatched means the status differed and was patched via SSA.
-	PatchApplyResultPatched
+	PatchApplyResultPatched = sharedssa.PatchApplyResultPatched
 )
-
-// String returns a human-readable label for the result.
-func (r PatchApplyResult) String() string {
-	switch r {
-	case PatchApplyResultSkipped:
-		return "skipped"
-	case PatchApplyResultCreated:
-		return "created"
-	case PatchApplyResultPatched:
-		return "patched"
-	default:
-		return "unknown"
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Core infrastructure
