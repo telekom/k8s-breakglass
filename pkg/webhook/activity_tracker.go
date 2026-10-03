@@ -29,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 )
 
@@ -346,50 +347,41 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 //
 // In multi-replica deployments, concurrent flushes could race: two replicas read
 // the same base ActivityCount, each adds its own delta, and the last writer wins
-// (losing the other's increments). Using retry.RetryOnConflict with a status
-// merge-patch ensures that if the ResourceVersion changes between our read and
-// write (i.e., another replica patched first), we re-read the latest status and
-// recompute the monotonic merge before retrying.
+// (losing the other's increments). The status merge-patch carries the read
+// ResourceVersion, so if another replica patched first the API server rejects
+// our write with a conflict; we then re-read the latest status and recompute
+// the monotonic merge before retrying.
 func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
-	reader := at.getReader()
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var session breakglassv1alpha1.BreakglassSession
-		if err := reader.Get(ctx, key, &session); err != nil {
-			if apierrors.IsNotFound(err) {
-				// Session was deleted — discard the entry, no point retrying
-				return nil
+	_, err := ssa.PatchStatusWithOptimisticLock(ctx, at.client, at.getReader(), retry.DefaultRetry, key,
+		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
+		func(session *breakglassv1alpha1.BreakglassSession) (bool, error) {
+			// Guard against name reuse: if the session was deleted and recreated
+			// with the same name, the UID will differ. Discard stale entries.
+			if entry.uid != "" && session.UID != entry.uid {
+				return false, nil
 			}
-			return err
-		}
 
-		// Guard against name reuse: if the session was deleted and recreated
-		// with the same name, the UID will differ. Discard stale entries.
-		if entry.uid != "" && session.UID != entry.uid {
-			return nil
-		}
+			// Only update active sessions — skip terminal states
+			if session.Status.State != breakglassv1alpha1.SessionStateApproved {
+				return false, nil
+			}
 
-		// Only update active sessions — skip terminal states
-		if session.Status.State != breakglassv1alpha1.SessionStateApproved {
-			return nil
-		}
-
-		// Monotonic merge: LastActivity only moves forward and ActivityCount
-		// never decreases. Combined with retry-on-conflict, this ensures
-		// concurrent flushes across replicas converge correctly.
-		newLastActivity := entry.lastSeen
-		if session.Status.LastActivity != nil && session.Status.LastActivity.Time.After(newLastActivity) {
-			newLastActivity = session.Status.LastActivity.Time
-		}
-		newCount := session.Status.ActivityCount + entry.count
-
-		// Patch only the activity fields via the status subresource.
-		// MergeFrom uses the session's ResourceVersion for conflict detection.
-		base := session.DeepCopy()
-		session.Status.LastActivity = &metav1.Time{Time: newLastActivity}
-		session.Status.ActivityCount = newCount
-
-		return at.client.Status().Patch(ctx, &session, client.MergeFrom(base))
-	})
+			// Monotonic merge: LastActivity only moves forward and ActivityCount
+			// never decreases. Combined with retry-on-conflict, this ensures
+			// concurrent flushes across replicas converge correctly.
+			newLastActivity := entry.lastSeen
+			if session.Status.LastActivity != nil && session.Status.LastActivity.Time.After(newLastActivity) {
+				newLastActivity = session.Status.LastActivity.Time
+			}
+			session.Status.LastActivity = &metav1.Time{Time: newLastActivity}
+			session.Status.ActivityCount += entry.count
+			return true, nil
+		})
+	if apierrors.IsNotFound(err) {
+		// Session was deleted — discard the entry, no point retrying
+		return nil
+	}
+	return err
 }
 
 // getReader returns the uncached reader if configured, otherwise falls back to the cached client.
