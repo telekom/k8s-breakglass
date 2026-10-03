@@ -9,6 +9,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
@@ -21,7 +22,6 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -85,7 +85,7 @@ func NewManager(
 		LeaderElectionID:        leaderElectionID,
 		LeaderElectionNamespace: leaderElectionNamespace,
 		Client: crclient.Options{
-			FieldOwner:      utils.FieldOwnerController,
+			FieldOwner:      ssa.FieldOwnerController,
 			FieldValidation: metav1.FieldValidationWarn,
 		},
 		Controller: ctrlconfig.Controller{

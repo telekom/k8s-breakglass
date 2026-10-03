@@ -8,9 +8,9 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/system"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -747,7 +747,7 @@ func (c *SessionManager) UpdateBreakglassSession(ctx context.Context, bs breakgl
 			Kind:       "BreakglassSession",
 		}
 	}
-	if err := utils.ApplyObject(ctx, c.Client, &bs); err != nil {
+	if err := ssa.ApplyObject(ctx, c.Client, &bs); err != nil {
 		log.Errorw("Failed to update BreakglassSession", append(system.NamespacedFields(bs.Name, bs.Namespace), "error", err)...)
 		return fmt.Errorf("failed to update BreakglassSession %s/%s: %w", bs.Namespace, bs.Name, err)
 	}

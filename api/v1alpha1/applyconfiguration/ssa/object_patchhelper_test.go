@@ -1,4 +1,4 @@
-package utils
+package ssa
 
 import (
 	"context"
@@ -10,17 +10,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-func newPatchHelperTestScheme() *runtime.Scheme {
-	scheme := runtime.NewScheme()
-	_ = breakglassv1alpha1.AddToScheme(scheme)
-	_ = corev1.AddToScheme(scheme)
-	return scheme
-}
 
 // ---------------------------------------------------------------------------
 // PatchApplyObject
@@ -28,7 +20,7 @@ func newPatchHelperTestScheme() *runtime.Scheme {
 
 func TestPatchApplyObject_Creates(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	session := &breakglassv1alpha1.BreakglassSession{
@@ -58,7 +50,7 @@ func TestPatchApplyObject_Creates(t *testing.T) {
 
 func TestPatchApplyObject_Skipped(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 
 	session := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
@@ -96,7 +88,7 @@ func TestPatchApplyObject_Skipped(t *testing.T) {
 
 func TestPatchApplyObject_Patched(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 
 	session := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
@@ -137,7 +129,7 @@ func TestPatchApplyObject_Patched(t *testing.T) {
 
 func TestPatchApplyUnstructured_Creates(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).Build()
 
 	obj := &unstructured.Unstructured{
@@ -161,7 +153,7 @@ func TestPatchApplyUnstructured_Creates(t *testing.T) {
 
 func TestPatchApplyUnstructured_Skipped(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 
 	// WithReturnManagedFields is required: the skip optimization only fires when
 	// the operator can see which fields it owns, so that a field REMOVED from the
@@ -203,7 +195,7 @@ func TestPatchApplyUnstructured_Skipped(t *testing.T) {
 // the API server — permanent drift for every auxiliary resource.
 func TestPatchApplyUnstructured_KeyRemovalIsApplied(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
 
 	cm := func(data map[string]interface{}) *unstructured.Unstructured {
@@ -242,7 +234,7 @@ func TestPatchApplyUnstructured_KeyRemovalIsApplied(t *testing.T) {
 // map key (spec.template.foo), which the subset comparison also could not see.
 func TestPatchApplyUnstructured_NestedKeyRemovalIsApplied(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 	c := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
 
 	cm := func(annotations map[string]interface{}) *unstructured.Unstructured {
@@ -276,7 +268,7 @@ func TestPatchApplyUnstructured_NestedKeyRemovalIsApplied(t *testing.T) {
 // PATCH round-trip.
 func TestPatchApplyUnstructured_NoOwnershipInfoAppliesConservatively(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 
 	existing := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: "no-mf", Namespace: "default"},
@@ -299,7 +291,7 @@ func TestPatchApplyUnstructured_NoOwnershipInfoAppliesConservatively(t *testing.
 
 func TestPatchApplyUnstructured_Patched(t *testing.T) {
 	ctx := context.Background()
-	scheme := newPatchHelperTestScheme()
+	scheme := newTestScheme()
 
 	existing := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -328,17 +320,6 @@ func TestPatchApplyUnstructured_Patched(t *testing.T) {
 	result, err := PatchApplyUnstructured(ctx, c, obj)
 	require.NoError(t, err)
 	assert.Equal(t, PatchApplyResultPatched, result)
-}
-
-// ---------------------------------------------------------------------------
-// PatchApplyResult.String
-// ---------------------------------------------------------------------------
-
-func TestPatchApplyResult_String(t *testing.T) {
-	assert.Equal(t, "skipped", PatchApplyResultSkipped.String())
-	assert.Equal(t, "created", PatchApplyResultCreated.String())
-	assert.Equal(t, "patched", PatchApplyResultPatched.String())
-	assert.Equal(t, "unknown", PatchApplyResult(42).String())
 }
 
 // ---------------------------------------------------------------------------

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -148,7 +148,7 @@ func (m *Manager) getManagerFactory() func(*runtime.Scheme) (ctrl.Manager, error
 				BindAddress: "0", // disable metrics server
 			},
 			Client: client.Options{
-				FieldOwner:      utils.FieldOwnerController,
+				FieldOwner:      ssa.FieldOwnerController,
 				FieldValidation: metav1.FieldValidationWarn,
 			},
 		})

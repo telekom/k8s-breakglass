@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-// patchhelper implements a cache-aware diff-before-apply pattern inspired by
-// the cluster-api patchHelper (https://github.com/kubernetes-sigs/cluster-api).
+// Spec-side (main resource) counterpart of patchhelper.go: a cache-aware
+// diff-before-apply pattern inspired by the cluster-api patchHelper (https://github.com/kubernetes-sigs/cluster-api).
 //
 // The core idea: before sending an SSA Patch to the API server, read the current
 // state from the controller-runtime informer cache (a free, local operation) and
@@ -12,7 +12,8 @@
 //
 // In clusters with many managed resources, this eliminates thousands of
 // no-op PATCH requests per reconciliation cycle.
-package utils
+
+package ssa
 
 import (
 	"bytes"
@@ -29,32 +30,6 @@ import (
 
 	"go.uber.org/zap"
 )
-
-// PatchApplyResult indicates the outcome of a patch-or-skip operation.
-type PatchApplyResult int
-
-const (
-	// PatchApplyResultSkipped means the resource was already up-to-date (no API call made).
-	PatchApplyResultSkipped PatchApplyResult = iota
-	// PatchApplyResultCreated means the resource did not exist and was created via SSA.
-	PatchApplyResultCreated
-	// PatchApplyResultPatched means the resource existed but differed and was patched via SSA.
-	PatchApplyResultPatched
-)
-
-// String returns a human-readable label for the result.
-func (r PatchApplyResult) String() string {
-	switch r {
-	case PatchApplyResultSkipped:
-		return "skipped"
-	case PatchApplyResultCreated:
-		return "created"
-	case PatchApplyResultPatched:
-		return "patched"
-	default:
-		return "unknown"
-	}
-}
 
 // PatchApplyObject reads the current object via the provided client, converts both
 // current and desired to ApplyConfigurations, and only sends an SSA Patch if there
@@ -263,8 +238,8 @@ func desiredCoversOwnedFields(desired, current *unstructured.Unstructured) bool 
 //   - Operation == Apply: Update entries describe imperative writes, whose field
 //     set carries no SSA pruning semantics.
 //   - Subresource == "": this is the load-bearing filter. This operator applies to
-//     the status subresource with the SAME field manager (see [ApplyStatus] and
-//     UpdateStatusWithRetry), so an object routinely carries TWO Apply entries for
+//     the status subresource with the SAME field manager (see the
+//     PatchApply*Status helpers in this package), so an object routinely carries TWO Apply entries for
 //     [FieldOwnerController] — one for the main resource and one with
 //     Subresource: "status". The status entry's field set describes status fields
 //     only, which [unstructuredSpecEqual] never compares. Accepting it would make
