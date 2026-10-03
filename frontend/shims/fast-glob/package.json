@@ -1,0 +1,11 @@
+{
+  "name": "fast-glob",
+  "version": "3.3.3-tinyglobby.0",
+  "private": true,
+  "description": "Minimal fast-glob compatible shim backed by tinyglobby. Removes the vulnerable braces/micromatch chain (GHSA-vfj7-8cjw-p6xm, no patched braces release). Drop once upstream consumers no longer depend on fast-glob.",
+  "license": "Apache-2.0",
+  "main": "index.cjs",
+  "dependencies": {
+    "tinyglobby": "^0.2.17"
+  }
+}
