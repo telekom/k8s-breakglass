@@ -8,10 +8,10 @@ import (
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/cert"
 	"github.com/telekom/k8s-breakglass/pkg/cli"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -66,7 +66,7 @@ func Setup(
 		LeaderElection:   false,
 		LeaderElectionID: "",
 		Client: client.Options{
-			FieldOwner:      utils.FieldOwnerController,
+			FieldOwner:      ssa.FieldOwnerController,
 			FieldValidation: metav1.FieldValidationWarn,
 		},
 	})

@@ -39,16 +39,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// PatchApplyResult indicates the outcome of a patch-or-skip operation.
+// PatchApplyResult indicates the outcome of a patch-or-skip operation. It is
+// shared by the spec-side (PatchApplyObject, PatchApplyUnstructured) and the
+// status-side (PatchApply*Status) helpers.
 type PatchApplyResult int
 
 const (
-	// PatchApplyResultSkipped means the status was already up-to-date (no API call made).
+	// PatchApplyResultSkipped means the resource was already up-to-date (no API call made).
 	PatchApplyResultSkipped PatchApplyResult = iota
-	// PatchApplyResultCreated is unused for status (objects must already exist) but
-	// kept for API compatibility with the spec-side patchHelper.
+	// PatchApplyResultCreated means the resource did not exist and was created via SSA.
+	// Status helpers never return it because the object must already exist.
 	PatchApplyResultCreated
-	// PatchApplyResultPatched means the status differed and was patched via SSA.
+	// PatchApplyResultPatched means the resource existed but differed and was patched via SSA.
 	PatchApplyResultPatched
 )
 

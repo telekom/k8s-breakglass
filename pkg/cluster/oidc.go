@@ -29,7 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 )
 
 // TokenRefreshBuffer is the duration before expiry when we proactively refresh tokens
@@ -571,7 +571,7 @@ func (p *OIDCTokenProvider) persistRotatedRefreshToken(ctx context.Context, oidc
 			oidc.RotatedRefreshTokenKey: []byte(newRefreshToken),
 		},
 	}
-	if err := utils.ApplyObject(ctx, p.k8s, &secret); err != nil {
+	if err := ssa.ApplyObject(ctx, p.k8s, &secret); err != nil {
 		p.log.Warnw("Failed to persist rotated refresh token (best-effort)",
 			"secret", oidc.RefreshTokenSecretRef.Name, "namespace", ns,
 			"key", oidc.RotatedRefreshTokenKey, "error", err)
