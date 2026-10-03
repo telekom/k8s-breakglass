@@ -31,6 +31,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -696,4 +697,60 @@ func TestActivityTracker_CleanupEmptyTracker(t *testing.T) {
 	pruned := tracker.Cleanup(activeIDs)
 	assert.Equal(t, 0, pruned, "Cleanup on empty tracker should prune nothing")
 	assert.Equal(t, 0, tracker.Pending())
+}
+
+// A concurrent replica flushing between our read and our patch must not lose
+// its increments: the optimistic-lock patch conflicts and is recomputed.
+func TestActivityTracker_ConcurrentFlushDoesNotLoseIncrements(t *testing.T) {
+	scheme := newTestActivityScheme()
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session-race", Namespace: "breakglass", UID: "uid-race"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "production", User: "race@example.com", GrantedGroup: "group-1"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved},
+	}
+	var c client.Client
+	gets := 0
+	c = fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(session).
+		WithStatusSubresource(session).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, w client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if err := w.Get(ctx, key, obj, opts...); err != nil {
+					return err
+				}
+				gets++
+				if gets == 1 {
+					// Another replica flushes 5 events right after our read.
+					other := &breakglassv1alpha1.BreakglassSession{}
+					if err := w.Get(ctx, key, other); err != nil {
+						return err
+					}
+					other.Status.ActivityCount += 5
+					return w.Status().Update(ctx, other)
+				}
+				return nil
+			},
+		}).
+		Build()
+	tracker := NewActivityTracker(c, WithActivityLogger(zap.NewNop().Sugar()))
+	defer tracker.Stop(context.Background())
+
+	key := types.NamespacedName{Namespace: "breakglass", Name: "session-race"}
+	require.NoError(t, tracker.updateSessionActivity(context.Background(), key, &activityEntry{uid: "uid-race", lastSeen: time.Now(), count: 1}))
+
+	stored := &breakglassv1alpha1.BreakglassSession{}
+	require.NoError(t, c.Get(context.Background(), key, stored))
+	assert.Equal(t, int64(6), stored.Status.ActivityCount, "both replicas' increments must survive")
+	assert.Equal(t, 3, gets, "conflict must trigger a re-read (2 tracker reads + 1 verification)")
+}
+
+func TestActivityTracker_UpdateDeletedSessionIsDiscarded(t *testing.T) {
+	scheme := newTestActivityScheme()
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	tracker := NewActivityTracker(c, WithActivityLogger(zap.NewNop().Sugar()))
+	defer tracker.Stop(context.Background())
+
+	err := tracker.updateSessionActivity(context.Background(), types.NamespacedName{Namespace: "breakglass", Name: "gone"}, &activityEntry{lastSeen: time.Now(), count: 1})
+	assert.NoError(t, err)
 }
