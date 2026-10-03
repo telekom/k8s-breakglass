@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Session activity flushes now send the read `resourceVersion` with the status
+  merge-patch, so concurrent flushes from multiple webhook replicas conflict and
+  retry instead of silently overwriting each other's `activityCount`.
+
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.
 
@@ -342,6 +346,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digest-pinned utility templates, namespaced RBAC, isolation, lifecycle
   cleanup, and downstream admission boundaries.
 ### Changed
+
+- Consolidated the Server-Side Apply helpers into
+  `api/v1alpha1/applyconfiguration/ssa`: `ApplyObject`, `ApplyUnstructured`,
+  `PatchApplyObject`, `PatchApplyUnstructured`, `ToApplyConfiguration` and
+  `FieldOwnerController` moved there from `pkg/utils`, `PatchApplyResult` is
+  defined once, and per-type converters were replaced by the generic
+  `ApplyConfigurationFrom`. The unused `pkg/utils` helpers `ApplyTypedObject`,
+  `ApplyStatus`, `ToStatusApplyConfiguration`, `StatusUpdateWithRetry` and
+  `UpdateWithRetry` were removed. Repeated optimistic-lock status patch loops
+  now use the generic `ssa.PatchStatusWithOptimisticLock`.
 
 - Clarified privileged CR writers, browser token storage, and the gateway/network
   authentication required for both SAR webhook routes (PR #1311).
