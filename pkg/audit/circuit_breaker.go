@@ -154,7 +154,7 @@ func (cb *CircuitBreaker) newBreaker(generation int64) *gobreaker.TwoStepCircuit
 }
 
 func breakerMaxRequests(successThreshold, halfOpenMaxRequests int) uint32 {
-	maxRequests := maxInt(successThreshold, halfOpenMaxRequests)
+	maxRequests := max(successThreshold, halfOpenMaxRequests)
 	if maxRequests <= 0 {
 		return 1
 	}
@@ -485,11 +485,4 @@ func mapGobreakerState(state gobreaker.State) CircuitState {
 	default:
 		return CircuitClosed
 	}
-}
-
-func maxInt(left, right int) int {
-	if left > right {
-		return left
-	}
-	return right
 }

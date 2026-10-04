@@ -730,6 +730,8 @@ inject_hub_hostnames_into_spoke() {
 # PORT FORWARDING
 # ============================================================================
 
+source "$(dirname "${BASH_SOURCE[0]}")/port-forward.sh"
+
 # Start port forward to a service
 start_port_forward() {
   local kubeconfig="$1"

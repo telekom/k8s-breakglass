@@ -1,5 +1,5 @@
 /**
- * Tests for useDuration composable
+ * Tests for duration utilities
  */
 
 import {
@@ -13,7 +13,7 @@ import {
   formatEndTime,
 } from "@/composables/useDuration";
 
-describe("useDuration", () => {
+describe("duration utilities", () => {
   describe("parseDurationString", () => {
     it("parses hours only", () => {
       expect(parseDurationString("1h0m0s")).toEqual({

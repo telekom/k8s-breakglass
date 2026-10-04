@@ -6,7 +6,7 @@ import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
 import { pushError, pushSuccess } from "@/services/toast";
-import { useDateFormatting, useClipboard } from "@/composables";
+import { formatDateTime, formatRelativeTime, useClipboard } from "@/composables";
 import type {
   DebugSessionDetailResponse,
   DebugSessionParticipant,
@@ -14,7 +14,6 @@ import type {
   AllowedPodOperations,
 } from "@/model/debugSession";
 
-const { formatDateTime, formatRelativeTime } = useDateFormatting();
 const { copy: clipboardCopy, copied: clipboardCopied, cleanup: clipboardCleanup } = useClipboard();
 const copiedPodKey = ref<string | null>(null);
 

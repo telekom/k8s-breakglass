@@ -276,9 +276,16 @@ func (b *EscalationBuilder) Build() *breakglassv1alpha1.BreakglassEscalation {
 			Labels:    b.labels,
 		},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:  b.escalatedGroup,
-			MaxValidFor:     b.maxValidFor,
-			ApprovalTimeout: b.approvalTimeout,
+			EscalatedGroup:       b.escalatedGroup,
+			MaxValidFor:          b.maxValidFor,
+			ApprovalTimeout:      b.approvalTimeout,
+			MailProvider:         b.mailProvider,
+			BlockSelfApproval:    b.blockSelfApproval,
+			RetainFor:            b.retainFor,
+			RequestReason:        b.requestReason,
+			ApprovalReason:       b.approvalReason,
+			DisableNotifications: b.disableNotifications,
+			PodSecurityOverrides: b.podSecurityOverrides,
 			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 				Clusters: b.allowedClusters,
 				Groups:   allowedGroups,
@@ -295,32 +302,11 @@ func (b *EscalationBuilder) Build() *breakglassv1alpha1.BreakglassEscalation {
 	if len(b.denyPolicyRefs) > 0 {
 		escalation.Spec.DenyPolicyRefs = b.denyPolicyRefs
 	}
-	if b.mailProvider != "" {
-		escalation.Spec.MailProvider = b.mailProvider
-	}
-	if b.blockSelfApproval != nil {
-		escalation.Spec.BlockSelfApproval = b.blockSelfApproval
-	}
-	if b.retainFor != "" {
-		escalation.Spec.RetainFor = b.retainFor
-	}
 	if len(b.clusterConfigRefs) > 0 {
 		escalation.Spec.ClusterConfigRefs = b.clusterConfigRefs
 	}
 	if len(b.approverDomains) > 0 {
 		escalation.Spec.AllowedApproverDomains = b.approverDomains
-	}
-	if b.requestReason != nil {
-		escalation.Spec.RequestReason = b.requestReason
-	}
-	if b.approvalReason != nil {
-		escalation.Spec.ApprovalReason = b.approvalReason
-	}
-	if b.disableNotifications != nil {
-		escalation.Spec.DisableNotifications = b.disableNotifications
-	}
-	if b.podSecurityOverrides != nil {
-		escalation.Spec.PodSecurityOverrides = b.podSecurityOverrides
 	}
 	if len(b.allowedIDPsForRequests) > 0 {
 		escalation.Spec.AllowedIdentityProvidersForRequests = b.allowedIDPsForRequests
@@ -487,28 +473,19 @@ func (b *DenyPolicyBuilder) WithPodSecurityRules(rules *breakglassv1alpha1.PodSe
 
 // Build constructs the DenyPolicy resource
 func (b *DenyPolicyBuilder) Build() *breakglassv1alpha1.DenyPolicy {
-	policy := &breakglassv1alpha1.DenyPolicy{
+	return &breakglassv1alpha1.DenyPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      b.name,
 			Namespace: b.namespace,
 			Labels:    b.labels,
 		},
 		Spec: breakglassv1alpha1.DenyPolicySpec{
-			Rules: b.rules,
+			Rules:            b.rules,
+			Precedence:       b.precedence,
+			AppliesTo:        b.appliesTo,
+			PodSecurityRules: b.podSecurityRules,
 		},
 	}
-
-	if b.precedence != nil {
-		policy.Spec.Precedence = b.precedence
-	}
-	if b.appliesTo != nil {
-		policy.Spec.AppliesTo = b.appliesTo
-	}
-	if b.podSecurityRules != nil {
-		policy.Spec.PodSecurityRules = b.podSecurityRules
-	}
-
-	return policy
 }
 
 // =============================================================================
@@ -605,24 +582,18 @@ func (b *SessionBuilder) Build() *breakglassv1alpha1.BreakglassSession {
 			Labels:    b.labels,
 		},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      b.cluster,
-			User:         b.user,
-			GrantedGroup: b.grantedGroup,
-			MaxValidFor:  b.maxValidFor,
+			Cluster:          b.cluster,
+			User:             b.user,
+			GrantedGroup:     b.grantedGroup,
+			MaxValidFor:      b.maxValidFor,
+			RetainFor:        b.retainFor,
+			RequestReason:    b.requestReason,
+			ClusterConfigRef: b.clusterConfigRef,
 		},
 	}
 
-	if b.retainFor != "" {
-		session.Spec.RetainFor = b.retainFor
-	}
-	if b.requestReason != "" {
-		session.Spec.RequestReason = b.requestReason
-	}
 	if len(b.denyPolicyRefs) > 0 {
 		session.Spec.DenyPolicyRefs = b.denyPolicyRefs
-	}
-	if b.clusterConfigRef != "" {
-		session.Spec.ClusterConfigRef = b.clusterConfigRef
 	}
 
 	return session
@@ -966,46 +937,22 @@ func (b *ClusterConfigBuilder) Build() *breakglassv1alpha1.ClusterConfig {
 			Labels:    b.labels,
 		},
 		Spec: breakglassv1alpha1.ClusterConfigSpec{
-			BlockSelfApproval: b.blockSelfApproval,
+			BlockSelfApproval:        b.blockSelfApproval,
+			ClusterID:                b.clusterID,
+			Tenant:                   b.tenant,
+			Environment:              b.environment,
+			Site:                     b.site,
+			Location:                 b.location,
+			QPS:                      b.qps,
+			Burst:                    b.burst,
+			KubeconfigSecretRef:      b.kubeconfigSecretRef,
+			AuthType:                 b.authType,
+			OIDCAuth:                 b.oidcAuth,
+			OIDCFromIdentityProvider: b.oidcFromIdentityProvider,
 		},
-	}
-
-	if b.clusterID != "" {
-		config.Spec.ClusterID = b.clusterID
-	}
-	if b.tenant != "" {
-		config.Spec.Tenant = b.tenant
-	}
-	if b.environment != "" {
-		config.Spec.Environment = b.environment
-	}
-	if b.site != "" {
-		config.Spec.Site = b.site
-	}
-	if b.location != "" {
-		config.Spec.Location = b.location
-	}
-	if b.qps != nil {
-		config.Spec.QPS = b.qps
-	}
-	if b.burst != nil {
-		config.Spec.Burst = b.burst
-	}
-	if b.kubeconfigSecretRef != nil {
-		config.Spec.KubeconfigSecretRef = b.kubeconfigSecretRef
 	}
 	if len(b.identityProviderRefs) > 0 {
 		config.Spec.IdentityProviderRefs = b.identityProviderRefs
-	}
-	// OIDC authentication support
-	if b.authType != "" {
-		config.Spec.AuthType = b.authType
-	}
-	if b.oidcAuth != nil {
-		config.Spec.OIDCAuth = b.oidcAuth
-	}
-	if b.oidcFromIdentityProvider != nil {
-		config.Spec.OIDCFromIdentityProvider = b.oidcFromIdentityProvider
 	}
 
 	return config

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 	"time"
 
@@ -83,7 +84,7 @@ func (reconciler *Reconciler) Reconcile(ctx context.Context, request ctrl.Reques
 		now = reconciler.Now
 	}
 	terminalRecord := record.State == backend.StateDeleted || record.State == backend.StateExpired || record.State == backend.StateRevoked
-	if object.DeletionTimestamp.IsZero() && !terminalRecord && !containsString(object.Finalizers, artifactFinalizer) {
+	if object.DeletionTimestamp.IsZero() && !terminalRecord && !slices.Contains(object.Finalizers, artifactFinalizer) {
 		object.Finalizers = append(object.Finalizers, artifactFinalizer)
 		if err := reconciler.Update(ctx, &object); err != nil {
 			return ctrl.Result{}, fmt.Errorf("add diagnostic artifact finalizer: %w", err)
@@ -400,14 +401,6 @@ func valueOrZero(value *int64) int64 {
 }
 func boolPtr(value bool) *bool { return &value }
 
-func containsString(values []string, needle string) bool {
-	for _, value := range values {
-		if value == needle {
-			return true
-		}
-	}
-	return false
-}
 func removeString(values []string, needle string) []string {
 	result := values[:0]
 	for _, value := range values {

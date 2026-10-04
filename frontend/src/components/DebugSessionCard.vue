@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { DebugSessionSummary } from "@/model/debugSession";
-import { useDateFormatting } from "@/composables";
-
-const { formatDateTime, formatRelativeTime } = useDateFormatting();
+import { formatDateTime, formatRelativeTime } from "@/composables/useDateFormatting";
 
 const props = defineProps<{
   session: DebugSessionSummary;

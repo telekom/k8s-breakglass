@@ -1,5 +1,5 @@
 /**
- * Tests for useDateFormatting composable
+ * Tests for date formatting utilities
  */
 
 import { vi } from "vitest";
@@ -9,11 +9,12 @@ import {
   formatTimeOnly,
   formatTimeCompact,
   formatRelativeTime,
+  formatWithTimezone,
   isValidDate,
   nowISO,
 } from "@/composables/useDateFormatting";
 
-describe("useDateFormatting", () => {
+describe("date formatting utilities", () => {
   describe("formatDateTime", () => {
     it("formats ISO string", () => {
       const result = formatDateTime("2025-12-01T14:30:45Z");
@@ -76,6 +77,19 @@ describe("useDateFormatting", () => {
 
     it("returns dash for null", () => {
       expect(formatTimeCompact(null)).toBe("—");
+    });
+  });
+
+  describe("formatWithTimezone", () => {
+    it.each(["2025-12-01T14:30:45Z", "2025-06-01T14:30:45Z"])("includes the local timezone for %s", (date) => {
+      const timezone = new Intl.DateTimeFormat(navigator.language || "en-US", {
+        timeZoneName: "short",
+      })
+        .formatToParts(new Date(date))
+        .find((part) => part.type === "timeZoneName");
+
+      expect(timezone).toBeDefined();
+      expect(formatWithTimezone(date)).toContain(timezone?.value);
     });
   });
 

@@ -479,6 +479,28 @@ func TestService_BuildWebhookSink(t *testing.T) {
 	_ = svc.Close()
 }
 
+func TestService_BuildWebhookSinkCopiesHeaders(t *testing.T) {
+	serverHeader := ""
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverHeader = r.Header.Get("X-Custom-Header")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	webhook := &breakglassv1alpha1.WebhookSinkSpec{
+		URL:     server.URL,
+		Headers: map[string]string{"X-Custom-Header": "original"},
+	}
+	sink, err := svc.buildWebhookSink(context.Background(), breakglassv1alpha1.AuditSinkConfig{
+		Name: "webhook-sink", Type: breakglassv1alpha1.AuditSinkTypeWebhook, Webhook: webhook,
+	})
+	require.NoError(t, err)
+	webhook.Headers["X-Custom-Header"] = "changed"
+	require.NoError(t, sink.Write(context.Background(), &Event{ID: "header-copy", Type: EventSessionRequested}))
+	assert.Equal(t, "original", serverHeader)
+}
+
 func TestService_BuildWebhookSinkAuthSecretBearer(t *testing.T) {
 	logger := zap.NewNop()
 	scheme := runtime.NewScheme()
