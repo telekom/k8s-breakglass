@@ -19,7 +19,7 @@ require (
 	github.com/sony/gobreaker/v2 v2.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.12.1
-	github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003132112-127a054d3575
+	github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003133912-1072510d49ca
 	github.com/zalando/go-keyring v0.2.8
 	go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin v0.71.0
 	go.opentelemetry.io/otel v1.46.0

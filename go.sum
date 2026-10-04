@@ -279,8 +279,8 @@ github.com/stretchr/testify v1.8.4/go.mod h1:sz/lmYIOXD/1dqDmKjjqLyZ2RngseejIcXl
 github.com/stretchr/testify v1.10.0/go.mod h1:r2ic/lqez/lEtzL7wO/rwa5dbSLXVDPFyf8C91i36aY=
 github.com/stretchr/testify v1.12.1 h1:EuwCh5fleGS7H32xRwO3wRGT7DxrDhLAT6FF8MpWDWE=
 github.com/stretchr/testify v1.12.1/go.mod h1:MDEgiDPPsNp5cuIrHPPCyornHKgEVbtFUmoNlxoYthg=
-github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003132112-127a054d3575 h1:V5t+omMJM1mYLZrytY257UTPv5DkbGUUHQajv1Qh99E=
-github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003132112-127a054d3575/go.mod h1:6/uZwqrYBE/aD04Fc1iQvYcQRrjNqxTWTBm5/j8hD6A=
+github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003133912-1072510d49ca h1:7H3S6cj/X0JOTC2y6Waw/791itLpq01e4hiItY5QhWk=
+github.com/telekom/auth-operator v0.5.0-rc.12.0.20261003133912-1072510d49ca/go.mod h1:6/uZwqrYBE/aD04Fc1iQvYcQRrjNqxTWTBm5/j8hD6A=
 github.com/twitchyliquid64/golang-asm v0.15.1 h1:SU5vSMR7hnwNxj24w34ZyCi/FmDZTkS4MhqMhdFk5YI=
 github.com/twitchyliquid64/golang-asm v0.15.1/go.mod h1:a1lVb/DtPvCB8fslRZhAngC2+aY1QWCk3Cedj/Gdt08=
 github.com/ugorji/go/codec v1.3.2 h1:zkEASHHyEClGeURfgNT9PJZVfAbs9oEX9QXggwWNJbc=
