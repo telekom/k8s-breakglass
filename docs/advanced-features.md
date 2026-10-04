@@ -13,9 +13,12 @@ structured and consistent.
 All of these helpers live in `api/v1alpha1/applyconfiguration/ssa`: `PatchApplyObject` /
 `PatchApplyUnstructured` and the `PatchApply*Status` functions skip the apply when the cached
 object already matches and report a `PatchApplyResult` (`skipped`, `created`, `patched`).
-Status writers that must recompute from the live object instead use
+Status writers that must recompute from the read object instead use
 `PatchStatusWithOptimisticLock`, which re-reads, mutates, and sends a
 `resourceVersion`-guarded status merge-patch inside `retry.RetryOnConflict`.
+Reads use the supplied reader, or the client when the reader is nil. A
+cache-backed reader can remain stale across conflict retries; callers requiring
+fresh API-server reads must pass an uncached API reader.
 
 > **Exception:** The `ActivityTracker` uses optimistic-concurrency status merge-patch
 > (`client.MergeFromWithOptimisticLock` with `retry.RetryOnConflict`, via

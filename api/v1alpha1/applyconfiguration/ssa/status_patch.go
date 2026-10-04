@@ -20,8 +20,10 @@ import (
 //     read resourceVersion (client.MergeFromWithOptimisticLock), so a concurrent
 //     writer makes the API server reject the patch with a conflict.
 //
-// The whole cycle is retried with retry.RetryOnConflict using backoff, so mutate
-// always works on the latest live object. Pass retry.DefaultRetry or
+// The whole cycle is retried with retry.RetryOnConflict using backoff. Each
+// attempt re-reads through reader; a cache-backed reader may still return stale
+// state after a conflict. Pass an uncached API reader when retries require fresh
+// API-server reads. Pass retry.DefaultRetry or
 // retry.DefaultBackoff for retrying callers, or wait.Backoff{Steps: 1} for a
 // single attempt that surfaces the conflict to the caller.
 //
