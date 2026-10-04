@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve concurrent activity-count updates through resourceVersion-guarded
+  status patches, with shared SSA and optimistic-lock status helpers.
+
 - Retry DebugSession allowed-Pod publication conflicts from fresh session and
   workload identities, preserving terminal and expiry fences across replicas.
 
