@@ -48,7 +48,8 @@ An optional fifth argument selects a kubeconfig; otherwise the helper uses
 prints the wrapper PID, and records it when `PF_FILE` is set. Stopping the
 wrapper also stops and reaps the active forwarder or restart-delay process.
 Kubectl diagnostics are quiet by default; a sixth argument of `/dev/stderr`
-preserves the caller's stderr capture, as used by the hard-expiry workflow.
+duplicates the caller's stderr descriptor, preserving its capture and shared
+file offset on Linux, as used by the hard-expiry workflow.
 Endpoint-specific readiness checks remain with the callers.
 
 Run `go test -race ./e2e/helpers`, `bash e2e/lib/port-forward_test.sh`, and

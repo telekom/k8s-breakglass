@@ -9,6 +9,12 @@ start_keepalive_port_forward() {
   local stderr="${6:-/dev/null}"
   (
     set +e
+    if [ "$stderr" = /dev/stderr ]; then
+      # Reopening /dev/stderr gives Linux a separate file offset.
+      exec 3>&2
+    else
+      exec 3>>"$stderr" || exit 1
+    fi
     local child_pid=""
     # shellcheck disable=SC2317
     stop_forward() {
@@ -22,7 +28,7 @@ start_keepalive_port_forward() {
     trap 'stop_forward' EXIT TERM INT
     while true; do
       KUBECONFIG="$kubeconfig" "${KUBECTL:-kubectl}" -n "$namespace" \
-        port-forward "svc/$service" "$local_port:$remote_port" 2>>"$stderr" &
+        port-forward "svc/$service" "$local_port:$remote_port" 2>&3 &
       child_pid=$!
       wait "$child_pid"
       printf '[keepalive] %s port-forward exited, restarting in 2s...\n' "$service" >&2
