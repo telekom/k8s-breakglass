@@ -12,7 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -227,7 +227,7 @@ func isDefaultServiceAccountVolume(volume corev1.Volume) bool {
 func applyTrackedResource(ctx context.Context, target client.Client, obj client.Object) error {
 	if u, ok := obj.(*unstructured.Unstructured); ok {
 		cfg := client.ApplyConfigurationFromUnstructured(u)
-		if err := target.Apply(ctx, cfg, client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership); err != nil {
+		if err := target.Apply(ctx, cfg, client.FieldOwner(ssa.FieldOwnerController), client.ForceOwnership); err != nil {
 			return err
 		}
 		response, err := json.Marshal(cfg)
@@ -239,11 +239,11 @@ func applyTrackedResource(ctx context.Context, target client.Client, obj client.
 		}
 		return nil
 	}
-	cfg, err := utils.ToApplyConfiguration(obj)
+	cfg, err := ssa.ToApplyConfiguration(obj)
 	if err != nil {
 		return fmt.Errorf("build tracked apply configuration: %w", err)
 	}
-	if err := target.Apply(ctx, cfg, client.FieldOwner(utils.FieldOwnerController), client.ForceOwnership); err != nil {
+	if err := target.Apply(ctx, cfg, client.FieldOwner(ssa.FieldOwnerController), client.ForceOwnership); err != nil {
 		return err
 	}
 	response, err := json.Marshal(cfg)

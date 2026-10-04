@@ -1,4 +1,7 @@
-package utils
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
+package ssa
 
 import (
 	"context"
@@ -8,13 +11,17 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -149,49 +156,6 @@ func TestApplyObject_Update(t *testing.T) {
 	assert.Equal(t, "new@example.com", result.Spec.User)
 }
 
-func TestApplyStatus_BreakglassSession(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	// Pre-create an object (status updates require existing object)
-	existing := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-session",
-			Namespace: "default",
-		},
-		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "test-cluster",
-			User:         "test@example.com",
-			GrantedGroup: "test-group",
-		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{
-			State: breakglassv1alpha1.SessionStatePending,
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(existing).
-		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
-		Build()
-
-	// Update status
-	updated := existing.DeepCopy()
-	updated.TypeMeta = metav1.TypeMeta{
-		APIVersion: breakglassv1alpha1.GroupVersion.String(),
-		Kind:       "BreakglassSession",
-	}
-	updated.Status.State = breakglassv1alpha1.SessionStateApproved
-
-	err := ApplyStatus(ctx, fakeClient, updated)
-	require.NoError(t, err)
-
-	var result breakglassv1alpha1.BreakglassSession
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, result.Status.State)
-}
-
 func TestToApplyConfiguration_UnsupportedType(t *testing.T) {
 	// Test with an unsupported type
 	unsupported := &corev1.ConfigMap{
@@ -213,20 +177,6 @@ func TestToApplyConfiguration_Job(t *testing.T) {
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"debug-job","namespace":"default"},"spec":{"template":{"metadata":{},"spec":{}}}}`, string(data))
-}
-
-func TestToStatusApplyConfiguration_UnsupportedType(t *testing.T) {
-	// Test with an unsupported type for status
-	unsupported := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	_, err := ToStatusApplyConfiguration(unsupported)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported type")
 }
 
 func TestApplyObject_ClusterConfig(t *testing.T) {
@@ -450,120 +400,90 @@ func TestApplyUnstructured_Deployment(t *testing.T) {
 	assert.Equal(t, "debug-session", labels["app"])
 }
 
-func TestApplyTypedObject_WithTypeMeta(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	// ConfigMap with TypeMeta explicitly set
-	cm := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "typed-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "value"},
+func TestApplyConfigurationFrom_DropsStatusAndUsesSeedTypeMeta(t *testing.T) {
+	// Objects read through a client have no TypeMeta; the seed supplies it.
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "ns", Labels: map[string]string{"a": "b"}},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1"},
+		Status:     breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved},
 	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
+	cfg, err := ApplyConfigurationFrom(ac.BreakglassSession(session.Name, session.Namespace), session)
 	require.NoError(t, err)
-
-	// Verify the ConfigMap was created
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "typed-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "typed-cm", result.Name)
-	assert.Equal(t, "value", result.Data["key"])
+	assert.Nil(t, cfg.Status)
+	require.NotNil(t, cfg.Spec)
+	assert.Equal(t, "c1", *cfg.Spec.Cluster)
+	assert.Equal(t, "BreakglassSession", *cfg.Kind)
+	assert.Equal(t, breakglassv1alpha1.GroupVersion.String(), *cfg.APIVersion)
+	assert.Equal(t, "ns", *cfg.GetNamespace())
+	assert.Equal(t, map[string]string{"a": "b"}, cfg.Labels)
+	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, session.Status.State, "input must not be mutated")
 }
 
-func TestApplyTypedObject_GVKFromScheme(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	// ConfigMap WITHOUT TypeMeta — GVK should be resolved from the scheme
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "schemeless-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"foo": "bar"},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
+func TestApplyConfigurationFrom_ClusterScopedSeedDropsNamespace(t *testing.T) {
+	idp := &breakglassv1alpha1.IdentityProvider{ObjectMeta: metav1.ObjectMeta{Name: "idp", Namespace: "stray"}}
+	cfg, err := ApplyConfigurationFrom(ac.IdentityProvider(idp.Name), idp)
 	require.NoError(t, err)
-
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "schemeless-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "bar", result.Data["foo"])
+	assert.Nil(t, cfg.GetNamespace())
+	assert.Equal(t, "idp", *cfg.GetName())
 }
 
-func TestApplyTypedObject_NoGVK_ReturnsError(t *testing.T) {
-	ctx := context.Background()
+func TestApplyConfigurationFrom_PreservesLargeIntegers(t *testing.T) {
+	const generation = int64(1<<62 + 1) // not representable as float64
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "ns", Generation: generation}}
+	cfg, err := ApplyConfigurationFrom(corev1ac.Pod(pod.Name, pod.Namespace), pod)
+	require.NoError(t, err)
+	assert.Equal(t, generation, *cfg.Generation)
+}
 
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(runtime.NewScheme()). // empty scheme — no GVK resolution
-		Build()
-
-	// ConfigMap with no TypeMeta and no scheme registration → cannot determine GVK
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "unknown-cm",
-			Namespace: "default",
-		},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, nil)
+func TestApplyConfigurationFrom_MarshalErrorReturnsZero(t *testing.T) {
+	cfg, err := ApplyConfigurationFrom(ac.DenyPolicy("p"), map[string]any{"bad": make(chan int)})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot apply object without GVK")
+	assert.Nil(t, cfg)
 }
 
-func TestApplyTypedObject_Update(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	// Pre-create a ConfigMap
-	existing := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "update-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "old"},
+func TestToApplyConfiguration_AllSupportedTypesOmitStatus(t *testing.T) {
+	meta := metav1.ObjectMeta{Name: "obj", Namespace: "ns"}
+	for _, tc := range []struct {
+		obj        client.Object
+		kind       string
+		namespaced bool
+	}{
+		{&breakglassv1alpha1.BreakglassSession{ObjectMeta: meta, Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved}}, "BreakglassSession", true},
+		{&breakglassv1alpha1.ClusterConfig{ObjectMeta: meta, Status: breakglassv1alpha1.ClusterConfigStatus{ObservedGeneration: 1}}, "ClusterConfig", true},
+		{&breakglassv1alpha1.DebugSession{ObjectMeta: meta, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}, "DebugSession", true},
+		{&breakglassv1alpha1.BreakglassEscalation{ObjectMeta: meta, Status: breakglassv1alpha1.BreakglassEscalationStatus{ObservedGeneration: 1}}, "BreakglassEscalation", true},
+		{&breakglassv1alpha1.IdentityProvider{ObjectMeta: meta, Status: breakglassv1alpha1.IdentityProviderStatus{ObservedGeneration: 1}}, "IdentityProvider", false},
+		{&breakglassv1alpha1.MailProvider{ObjectMeta: meta, Status: breakglassv1alpha1.MailProviderStatus{ObservedGeneration: 1}}, "MailProvider", false},
+		{&breakglassv1alpha1.DenyPolicy{ObjectMeta: meta, Status: breakglassv1alpha1.DenyPolicyStatus{ObservedGeneration: 1}}, "DenyPolicy", false},
+		{&breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: meta, Status: breakglassv1alpha1.DebugSessionTemplateStatus{ObservedGeneration: 1}}, "DebugSessionTemplate", false},
+		{&breakglassv1alpha1.DebugPodTemplate{ObjectMeta: meta, Status: breakglassv1alpha1.DebugPodTemplateStatus{ObservedGeneration: 1}}, "DebugPodTemplate", false},
+		{&breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: meta, Status: breakglassv1alpha1.DebugSessionClusterBindingStatus{ObservedGeneration: 1}}, "DebugSessionClusterBinding", true},
+		{&corev1.Secret{ObjectMeta: meta}, "Secret", true},
+		{&corev1.Pod{ObjectMeta: meta, Status: corev1.PodStatus{Phase: corev1.PodRunning}}, "Pod", true},
+		{&corev1.ResourceQuota{ObjectMeta: meta, Status: corev1.ResourceQuotaStatus{Hard: corev1.ResourceList{}}}, "ResourceQuota", true},
+		{&policyv1.PodDisruptionBudget{ObjectMeta: meta, Status: policyv1.PodDisruptionBudgetStatus{ObservedGeneration: 1}}, "PodDisruptionBudget", true},
+		{&appsv1.DaemonSet{ObjectMeta: meta, Status: appsv1.DaemonSetStatus{ObservedGeneration: 1}}, "DaemonSet", true},
+		{&appsv1.Deployment{ObjectMeta: meta, Status: appsv1.DeploymentStatus{ObservedGeneration: 1}}, "Deployment", true},
+		{&batchv1.Job{ObjectMeta: meta, Status: batchv1.JobStatus{Active: 1}}, "Job", true},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			cfg, err := ToApplyConfiguration(tc.obj)
+			require.NoError(t, err)
+			data, err := json.Marshal(cfg)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(data, &fields))
+			assert.Equal(t, tc.kind, fields["kind"])
+			assert.NotEmpty(t, fields["apiVersion"])
+			assert.NotContains(t, fields, "status")
+			metadata, ok := fields["metadata"].(map[string]any)
+			require.True(t, ok)
+			assert.Equal(t, "obj", metadata["name"])
+			if tc.namespaced {
+				assert.Equal(t, "ns", metadata["namespace"])
+			} else {
+				assert.NotContains(t, metadata, "namespace")
+			}
+		})
 	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(existing).
-		Build()
-
-	// Apply an update via ApplyTypedObject
-	updated := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "update-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "new"},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, updated, scheme)
-	require.NoError(t, err)
-
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "update-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "new", result.Data["key"])
 }

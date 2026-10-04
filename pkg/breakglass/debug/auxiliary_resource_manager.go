@@ -28,6 +28,7 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -846,7 +847,7 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)
-	return utils.ApplyUnstructured(ctx, targetClient, obj)
+	return ssa.ApplyUnstructured(ctx, targetClient, obj)
 }
 
 func auxiliaryResourceIdentity(session *breakglassv1alpha1.DebugSession, auxiliaryName string, obj *unstructured.Unstructured) (string, bool) {

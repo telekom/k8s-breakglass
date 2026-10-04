@@ -10,8 +10,16 @@ multiple controller instances. For object updates (metadata/spec), controllers u
 apply-configurations where available (CRDs and core types like Secrets) to keep SSA patches
 structured and consistent.
 
+All of these helpers live in `api/v1alpha1/applyconfiguration/ssa`: `PatchApplyObject` /
+`PatchApplyUnstructured` and the `PatchApply*Status` functions skip the apply when the cached
+object already matches and report a `PatchApplyResult` (`skipped`, `created`, `patched`).
+Status writers that must recompute from the live object instead use
+`PatchStatusWithOptimisticLock`, which re-reads, mutates, and sends a
+`resourceVersion`-guarded status merge-patch inside `retry.RetryOnConflict`.
+
 > **Exception:** The `ActivityTracker` uses optimistic-concurrency status merge-patch
-> (`client.MergeFrom` with `retry.RetryOnConflict`) instead of SSA. This avoids dedicated
+> (`client.MergeFromWithOptimisticLock` with `retry.RetryOnConflict`, via
+> `ssa.PatchStatusWithOptimisticLock`) instead of SSA. This avoids dedicated
 > field-manager ownership for the `lastActivity`/`activityCount` fields, allowing multiple
 > replicas to safely merge activity data through monotonic convergence (latest timestamp,
 > additive count).

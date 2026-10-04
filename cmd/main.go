@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-logr/zapr"
+	"github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/api"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	artifacthost "github.com/telekom/k8s-breakglass/pkg/artifacts/host"
@@ -252,7 +253,7 @@ func run() error {
 
 	uncachedClient, err := client.New(restConfig, client.Options{
 		Scheme:          scheme,
-		FieldOwner:      utils.FieldOwnerController,
+		FieldOwner:      ssa.FieldOwnerController,
 		FieldValidation: metav1.FieldValidationWarn,
 	})
 	if err != nil {
