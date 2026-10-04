@@ -91,6 +91,8 @@ manifest with keyless Cosign.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 12. **Utility-image mutation boundary**: Bind every supplied repair flag to an immutable controller-owned approval tuple, reject duplicates and irrelevant flags, pin kernel object identity (for example ifindex) across preflight and mutation, and make volume leases crash-recoverable only for the same immutable operation.
 
+For utility image changes, keep `IMAGE-METADATA.yaml` synchronized with image labels, dependency locks, supported platforms, the shared `network-diagnostics` intent, and digest-gated signing targets. Multi-architecture local builds must produce a reviewable OCI archive without pushing mutable tags.
+
 ## Reuse upstream libraries before writing helpers
 
 Before adding a helper, check for a maintained upstream implementation in this
@@ -145,8 +147,6 @@ and [PR #1411](https://github.com/telekom/k8s-breakglass/pull/1411) provide
 context for ongoing SSA helper consolidation and shared-applier adoption. Their
 open status does not settle the final API or justify duplicating upstream
 behavior.
-
-For utility image changes, keep `IMAGE-METADATA.yaml` synchronized with image labels, dependency locks, supported platforms, the shared `network-diagnostics` intent, and digest-gated signing targets. Multi-architecture local builds must produce a reviewable OCI archive without pushing mutable tags.
 
 ## Standalone cluster-validator image (TCAAS-1619)
 
