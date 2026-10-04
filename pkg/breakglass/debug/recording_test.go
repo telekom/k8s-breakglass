@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -64,14 +65,16 @@ func (e *testTerminalExecutor) StreamWithContext(_ context.Context, options remo
 }
 
 func recordingFixture(enabled bool) (*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionTemplate) {
-	return &breakglassv1alpha1.DebugSession{
-			ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
-			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
-		}, &breakglassv1alpha1.DebugSessionTemplate{
-			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
-				Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
-			},
-		}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug-one", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "prod", TemplateRef: "netshoot"},
+	}
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: enabled, RecordingRetention: "30d"},
+		},
+	}
+	return session, template
 }
 
 func TestRejectUnsupportedTerminalRecordingContract(t *testing.T) {
@@ -167,6 +170,33 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	}
 	if stdout.String() != "before-expiry" || len(recording.Bytes) == 0 {
 		t.Fatalf("expiry discarded partial output: stdout=%q recording=%d", stdout.String(), len(recording.Bytes))
+	}
+}
+
+// Context cancellation closes Done() before AfterFunc callbacks are started, so
+// an executor returning on cancellation can race the deferred transport abort.
+func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		var aborts atomic.Int32
+		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want cancellation", i, err)
+		}
+		if got := aborts.Load(); got != 1 {
+			t.Fatalf("iteration %d: transport aborted %d times, want exactly once", i, got)
+		}
+	}
+}
+
+func TestStreamTerminalWithLeaseDoesNotAbortTransportOnCompletion(t *testing.T) {
+	var aborts atomic.Int32
+	executor := &testTerminalExecutor{output: []byte("done")}
+	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+	if err != nil {
+		t.Fatalf("streamTerminalWithLease() error = %v", err)
+	}
+	if got := aborts.Load(); got != 0 {
+		t.Fatalf("transport aborted %d times after normal completion, want 0", got)
 	}
 }
 
