@@ -19,46 +19,51 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 
+	sharedssa "github.com/telekom/auth-operator/pkg/ssa"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
+	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	appsv1ac "k8s.io/client-go/applyconfigurations/apps/v1"
+	batchv1ac "k8s.io/client-go/applyconfigurations/batch/v1"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	policyv1ac "k8s.io/client-go/applyconfigurations/policy/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"go.uber.org/zap"
 )
 
-// PatchApplyResult indicates the outcome of a patch-or-skip operation.
-type PatchApplyResult int
+// PatchApplyResult indicates the outcome of a patch-or-skip operation. It is
+// the shared result type of github.com/telekom/auth-operator/pkg/ssa.
+type PatchApplyResult = sharedssa.PatchApplyResult
 
 const (
 	// PatchApplyResultSkipped means the resource was already up-to-date (no API call made).
-	PatchApplyResultSkipped PatchApplyResult = iota
+	PatchApplyResultSkipped = sharedssa.PatchApplyResultSkipped
 	// PatchApplyResultCreated means the resource did not exist and was created via SSA.
-	PatchApplyResultCreated
+	PatchApplyResultCreated = sharedssa.PatchApplyResultCreated
 	// PatchApplyResultPatched means the resource existed but differed and was patched via SSA.
-	PatchApplyResultPatched
+	PatchApplyResultPatched = sharedssa.PatchApplyResultPatched
 )
 
-// String returns a human-readable label for the result.
-func (r PatchApplyResult) String() string {
-	switch r {
-	case PatchApplyResultSkipped:
-		return "skipped"
-	case PatchApplyResultCreated:
-		return "created"
-	case PatchApplyResultPatched:
-		return "patched"
-	default:
-		return "unknown"
-	}
-}
-
-// PatchApplyObject reads the current object via the provided client, converts both
-// current and desired to ApplyConfigurations, and only sends an SSA Patch if there
-// is a diff. Returns the result (skipped/created/patched) and any error.
+// PatchApplyObject reads the current object via the provided client and only
+// sends a forced SSA apply when the desired values differ or when the
+// [FieldOwnerController] managed fields differ from the desired fields (so a
+// field removed from obj is pruned). Returns the result (skipped/created/patched)
+// and any error.
+//
+// The skip-if-unchanged decision is delegated to the shared
+// [sharedssa.Applier]. Desired objects carrying a resourceVersion or uid are
+// never skipped, so the API server always evaluates those preconditions.
 //
 // When used with a cache-backed controller-runtime client the Get is served from
 // the informer cache (a free local operation). With an uncached client the Get
@@ -71,54 +76,83 @@ func PatchApplyObject(ctx context.Context, c client.Client, obj client.Object) (
 	if err != nil {
 		return 0, fmt.Errorf("failed to convert object to apply configuration: %w", err)
 	}
-
-	// Read from cache (no API call if informer cache is warmed).
-	current := obj.DeepCopyObject().(client.Object)
-	err = c.Get(ctx, client.ObjectKeyFromObject(obj), current)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			// Resource does not exist — must apply (create).
-			if applyErr := c.Apply(ctx, desiredAC, client.FieldOwner(FieldOwnerController), client.ForceOwnership); applyErr != nil {
-				return 0, applyErr
-			}
-			return PatchApplyResultCreated, nil
-		}
-		return 0, fmt.Errorf("get %s/%s from cache: %w", obj.GetNamespace(), obj.GetName(), err)
+	desired, ok := desiredAC.(sharedssa.ApplyConfiguration)
+	if !ok {
+		return 0, fmt.Errorf("apply configuration %T does not expose its name and namespace", desiredAC)
 	}
 
-	// Restore GVK on current — c.Get strips TypeMeta from typed objects,
-	// but ToApplyConfiguration needs it for certain conversions.
-	current.GetObjectKind().SetGroupVersionKind(obj.GetObjectKind().GroupVersionKind())
-
-	currentAC, err := ToApplyConfiguration(current)
-	if err != nil {
-		// Can't compare — apply to be safe.
-		if applyErr := c.Apply(ctx, desiredAC, client.FieldOwner(FieldOwnerController), client.ForceOwnership); applyErr != nil {
-			return 0, applyErr
-		}
-		return PatchApplyResultPatched, nil
+	objType := reflect.TypeOf(obj).Elem()
+	kind := obj.GetObjectKind().GroupVersionKind().Kind
+	if kind == "" {
+		kind = objType.Name()
+	}
+	applier := sharedssa.Applier[client.Object, sharedssa.ApplyConfiguration]{
+		Kind:       kind,
+		Namespaced: obj.GetNamespace() != "",
+		New: func() client.Object {
+			return reflect.New(objType).Interface().(client.Object)
+		},
+		Matches: func(existing client.Object, desired sharedssa.ApplyConfiguration) bool {
+			currentAC, err := ToApplyConfiguration(existing)
+			return err == nil && applyConfigCoveredBy(desired, currentAC)
+		},
+		Extract: extractOwnedApplyConfiguration,
 	}
 
-	if applyConfigsEqual(desiredAC, currentAC) {
-		zap.S().Debugw("Object unchanged, skipping SSA apply",
-			"kind", obj.GetObjectKind().GroupVersionKind().Kind,
+	result, err := applier.PatchApply(ctx, c, desired, false,
+		client.FieldOwner(FieldOwnerController), client.ForceOwnership)
+	if apierrors.IsConflict(err) {
+		zap.S().Warnw("SSA apply conflict",
+			"kind", kind,
 			"name", obj.GetName(),
 			"namespace", obj.GetNamespace(),
-		)
-		return PatchApplyResultSkipped, nil
+			"error", err)
 	}
+	return result, err
+}
 
-	if applyErr := c.Apply(ctx, desiredAC, client.FieldOwner(FieldOwnerController), client.ForceOwnership); applyErr != nil {
-		if apierrors.IsConflict(applyErr) {
-			zap.S().Warnw("SSA apply conflict",
-				"kind", obj.GetObjectKind().GroupVersionKind().Kind,
-				"name", obj.GetName(),
-				"namespace", obj.GetNamespace(),
-				"error", applyErr)
-		}
-		return 0, applyErr
+// extractOwnedApplyConfiguration returns the main-resource fields owned by
+// fieldManager on existing. Unsupported types return an error, which makes the
+// shared applier send the apply rather than skip it.
+func extractOwnedApplyConfiguration(existing client.Object, fieldManager string) (sharedssa.ApplyConfiguration, error) {
+	switch o := existing.(type) {
+	case *breakglassv1alpha1.BreakglassSession:
+		return ac.ExtractBreakglassSession(o, fieldManager)
+	case *breakglassv1alpha1.ClusterConfig:
+		return ac.ExtractClusterConfig(o, fieldManager)
+	case *breakglassv1alpha1.DebugSession:
+		return ac.ExtractDebugSession(o, fieldManager)
+	case *breakglassv1alpha1.BreakglassEscalation:
+		return ac.ExtractBreakglassEscalation(o, fieldManager)
+	case *breakglassv1alpha1.IdentityProvider:
+		return ac.ExtractIdentityProvider(o, fieldManager)
+	case *breakglassv1alpha1.MailProvider:
+		return ac.ExtractMailProvider(o, fieldManager)
+	case *breakglassv1alpha1.DenyPolicy:
+		return ac.ExtractDenyPolicy(o, fieldManager)
+	case *breakglassv1alpha1.DebugSessionTemplate:
+		return ac.ExtractDebugSessionTemplate(o, fieldManager)
+	case *breakglassv1alpha1.DebugPodTemplate:
+		return ac.ExtractDebugPodTemplate(o, fieldManager)
+	case *breakglassv1alpha1.DebugSessionClusterBinding:
+		return ac.ExtractDebugSessionClusterBinding(o, fieldManager)
+	case *corev1.Secret:
+		return corev1ac.ExtractSecret(o, fieldManager)
+	case *corev1.Pod:
+		return corev1ac.ExtractPod(o, fieldManager)
+	case *corev1.ResourceQuota:
+		return corev1ac.ExtractResourceQuota(o, fieldManager)
+	case *policyv1.PodDisruptionBudget:
+		return policyv1ac.ExtractPodDisruptionBudget(o, fieldManager)
+	case *appsv1.DaemonSet:
+		return appsv1ac.ExtractDaemonSet(o, fieldManager)
+	case *appsv1.Deployment:
+		return appsv1ac.ExtractDeployment(o, fieldManager)
+	case *batchv1.Job:
+		return batchv1ac.ExtractJob(o, fieldManager)
+	default:
+		return nil, fmt.Errorf("unsupported type for managed fields extraction: %T", existing)
 	}
-	return PatchApplyResultPatched, nil
 }
 
 // PatchApplyUnstructured reads the current unstructured object via the provided
@@ -178,22 +212,26 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 // Comparison helpers
 // ---------------------------------------------------------------------------
 
-// applyConfigsEqual compares two ApplyConfigurations by marshaling both to JSON
-// and comparing the bytes. Since both ACs are built using the same
-// [ToApplyConfiguration] function (which uses jsonDecodeInto), the resulting JSON
-// is deterministic and comparable: struct field order is fixed by the Go type
-// definitions, and map key order is sorted by encoding/json.
-//
-// Note: unlike [unstructuredSpecEqual], this uses exact comparison because typed
-// ApplyConfigurations are always built from the same conversion pipeline, so
-// extra/defaulted fields are not a concern.
-func applyConfigsEqual(desired, current runtime.ApplyConfiguration) bool {
-	aJSON, err1 := json.Marshal(desired)
-	bJSON, err2 := json.Marshal(current)
+// applyConfigCoveredBy reports whether every value declared by desired is
+// present with the same value in current, using the same recursive subset
+// semantics as [unstructuredSpecEqual]. Fields removed from desired are caught
+// by the shared applier's managed-fields ownership check.
+func applyConfigCoveredBy(desired, current runtime.ApplyConfiguration) bool {
+	desiredFields, err1 := applyConfigFields(desired)
+	currentFields, err2 := applyConfigFields(current)
 	if err1 != nil || err2 != nil {
 		return false // Can't compare, assume different.
 	}
-	return bytes.Equal(aJSON, bJSON)
+	return jsonSubsetEqual(desiredFields, currentFields)
+}
+
+func applyConfigFields(applyConfig runtime.ApplyConfiguration) (map[string]interface{}, error) {
+	data, err := json.Marshal(applyConfig)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]interface{}
+	return fields, json.Unmarshal(data, &fields)
 }
 
 // unstructuredSpecEqual performs a recursive subset comparison of two

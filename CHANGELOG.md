@@ -343,6 +343,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup, and downstream admission boundaries.
 ### Changed
 
+- Typed skip-if-unchanged SSA (`PatchApplyObject`) now delegates to the shared
+  `github.com/telekom/auth-operator/pkg/ssa` `Applier`, which also re-applies
+  when the controller's managed fields differ from the desired object (so
+  removed fields are pruned) and never skips applies that carry a
+  `resourceVersion`/`uid` precondition. `PatchApplyResult` is now the shared type.
+
 - Clarified privileged CR writers, browser token storage, and the gateway/network
   authentication required for both SAR webhook routes (PR #1311).
 

@@ -76,22 +76,74 @@ func TestPatchApplyObject_Skipped(t *testing.T) {
 		},
 	}
 
-	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	// WithReturnManagedFields is required for the ownership check to allow skipping.
+	c := fake.NewClientBuilder().WithScheme(scheme).WithReturnManagedFields().Build()
 
 	// Create via first apply.
 	result, err := PatchApplyObject(ctx, c, session)
 	require.NoError(t, err)
 	assert.Equal(t, PatchApplyResultCreated, result)
 
-	// Re-fetch so the object matches cache.
-	var fetched breakglassv1alpha1.BreakglassSession
-	require.NoError(t, c.Get(ctx, types.NamespacedName{Name: "existing-session", Namespace: "default"}, &fetched))
-	fetched.TypeMeta = session.TypeMeta
-
-	// Apply same state — should skip.
-	result, err = PatchApplyObject(ctx, c, &fetched)
+	// Apply the same desired state — should skip.
+	result, err = PatchApplyObject(ctx, c, session.DeepCopy())
 	require.NoError(t, err)
 	assert.Equal(t, PatchApplyResultSkipped, result)
+}
+
+// TestPatchApplyObject_ResourceVersionIsNeverSkipped verifies that a desired
+// object carrying a resourceVersion is always sent, so the API server checks
+// the optimistic-concurrency precondition.
+func TestPatchApplyObject_ResourceVersionIsNeverSkipped(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithScheme(newPatchHelperTestScheme()).Build()
+
+	session := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "rv-session", Namespace: "default"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster-a", User: "user@example.com"},
+	}
+	_, err := PatchApplyObject(ctx, c, session)
+	require.NoError(t, err)
+
+	var fetched breakglassv1alpha1.BreakglassSession
+	require.NoError(t, c.Get(ctx, types.NamespacedName{Name: "rv-session", Namespace: "default"}, &fetched))
+	require.NotEmpty(t, fetched.ResourceVersion)
+
+	result, err := PatchApplyObject(ctx, c, &fetched)
+	require.NoError(t, err)
+	assert.Equal(t, PatchApplyResultPatched, result)
+}
+
+// TestPatchApplyObject_FieldRemovalIsApplied verifies that removing a field
+// from the desired object is applied (and pruned) even though the remaining
+// desired values are still a subset of the live object.
+func TestPatchApplyObject_FieldRemovalIsApplied(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithScheme(newPatchHelperTestScheme()).WithReturnManagedFields().Build()
+
+	secret := func(data map[string][]byte) *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "token", Namespace: "default"},
+			Type:       corev1.SecretTypeOpaque,
+			Data:       data,
+		}
+	}
+
+	created, err := PatchApplyObject(ctx, c, secret(map[string][]byte{"keep": []byte("1"), "drop": []byte("2")}))
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultCreated, created)
+
+	unchanged, err := PatchApplyObject(ctx, c, secret(map[string][]byte{"keep": []byte("1"), "drop": []byte("2")}))
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultSkipped, unchanged)
+
+	result, err := PatchApplyObject(ctx, c, secret(map[string][]byte{"keep": []byte("1")}))
+	require.NoError(t, err)
+	assert.Equal(t, PatchApplyResultPatched, result,
+		"removing a key must apply even though desired is a subset of current")
+
+	var got corev1.Secret
+	require.NoError(t, c.Get(ctx, types.NamespacedName{Name: "token", Namespace: "default"}, &got))
+	assert.Equal(t, map[string][]byte{"keep": []byte("1")}, got.Data)
 }
 
 func TestPatchApplyObject_Patched(t *testing.T) {
@@ -127,6 +179,26 @@ func TestPatchApplyObject_Patched(t *testing.T) {
 	fetched.Spec.GrantedGroup = "group-b" // Changed.
 
 	result, err := PatchApplyObject(ctx, c, &fetched)
+	require.NoError(t, err)
+	assert.Equal(t, PatchApplyResultPatched, result)
+}
+
+// TestPatchApplyObject_NoOwnershipInfoAppliesConservatively verifies that an
+// unchanged object is still applied when managedFields are unavailable.
+func TestPatchApplyObject_NoOwnershipInfoAppliesConservatively(t *testing.T) {
+	ctx := context.Background()
+	c := fake.NewClientBuilder().WithScheme(newPatchHelperTestScheme()).Build()
+
+	secret := func() *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "token", Namespace: "default"},
+			Data:       map[string][]byte{"k": []byte("v")},
+		}
+	}
+	_, err := PatchApplyObject(ctx, c, secret())
+	require.NoError(t, err)
+
+	result, err := PatchApplyObject(ctx, c, secret())
 	require.NoError(t, err)
 	assert.Equal(t, PatchApplyResultPatched, result)
 }
@@ -342,10 +414,10 @@ func TestPatchApplyResult_String(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// applyConfigsEqual
+// applyConfigCoveredBy
 // ---------------------------------------------------------------------------
 
-func TestApplyConfigsEqual_SameContent(t *testing.T) {
+func TestApplyConfigCoveredBy_SameContent(t *testing.T) {
 	session := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: breakglassv1alpha1.GroupVersion.String(),
@@ -360,10 +432,28 @@ func TestApplyConfigsEqual_SameContent(t *testing.T) {
 	ac2, err := ToApplyConfiguration(session)
 	require.NoError(t, err)
 
-	assert.True(t, applyConfigsEqual(ac1, ac2))
+	assert.True(t, applyConfigCoveredBy(ac1, ac2))
 }
 
-func TestApplyConfigsEqual_DifferentSpec(t *testing.T) {
+func TestApplyConfigCoveredBy_ToleratesExtraCurrentFields(t *testing.T) {
+	desired := &breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "s1", Namespace: "ns"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "c1", User: "u1"},
+	}
+	current := desired.DeepCopy()
+	current.ResourceVersion = "7"
+	current.Labels = map[string]string{"other-controller": "x"}
+
+	desiredAC, err := ToApplyConfiguration(desired)
+	require.NoError(t, err)
+	currentAC, err := ToApplyConfiguration(current)
+	require.NoError(t, err)
+
+	assert.True(t, applyConfigCoveredBy(desiredAC, currentAC))
+	assert.False(t, applyConfigCoveredBy(currentAC, desiredAC))
+}
+
+func TestApplyConfigCoveredBy_DifferentSpec(t *testing.T) {
 	s1 := &breakglassv1alpha1.BreakglassSession{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: breakglassv1alpha1.GroupVersion.String(),
@@ -380,7 +470,7 @@ func TestApplyConfigsEqual_DifferentSpec(t *testing.T) {
 	ac2, err := ToApplyConfiguration(s2)
 	require.NoError(t, err)
 
-	assert.False(t, applyConfigsEqual(ac1, ac2))
+	assert.False(t, applyConfigCoveredBy(ac1, ac2))
 }
 
 // ---------------------------------------------------------------------------
