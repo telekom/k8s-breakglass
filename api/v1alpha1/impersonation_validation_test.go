@@ -591,6 +591,14 @@ func TestWarnImpersonationDenyRuleIssues_IneffectiveFields(t *testing.T) {
 			"no effect",
 		},
 		{
+			"asterisk is not an identity-resource wildcard",
+			ImpersonationDenyRule{
+				IdentityResources: []string{"*"},
+				ExtraKeys:         []string{"k"},
+			},
+			"no effect",
+		},
+		{
 			"namespaces without serviceaccounts",
 			ImpersonationDenyRule{
 				Modes:             []ImpersonationMode{ImpersonationModeLegacy},

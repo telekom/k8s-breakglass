@@ -124,20 +124,3 @@ export function isValidDate(value: DateValue): boolean {
 export function nowISO(): string {
   return new Date().toISOString();
 }
-
-/**
- * Composable hook for date formatting utilities
- */
-export function useDateFormatting() {
-  return {
-    formatDateTime,
-    formatDateOnly,
-    formatTimeOnly,
-    formatTimeCompact,
-    formatWithTimezone,
-    formatRelativeTime,
-    isValidDate,
-    nowISO,
-    toISOString,
-  };
-}

@@ -274,10 +274,29 @@ func TestResolvedPodTemplateSnapshotPreservesLabels(t *testing.T) {
 	podTemplate := &breakglassv1alpha1.DebugPodTemplate{ObjectMeta: metav1.ObjectMeta{Labels: labels}}
 	raw, err := marshalApprovedPodTemplateSnapshot(template, podTemplate)
 	require.NoError(t, err)
+	labels[catalogueProfileLabel] = "changed"
 	_, podLabels, templateLabels, err := decodeApprovedPodTemplateSnapshot(raw.Raw)
 	require.NoError(t, err)
-	require.Equal(t, labels, podLabels)
-	require.Equal(t, labels, templateLabels)
+	require.Equal(t, "workload-diagnostics", podLabels[catalogueProfileLabel])
+	require.Equal(t, "workload-diagnostics", templateLabels[catalogueProfileLabel])
+	podLabels[catalogueProfileLabel] = "mutated"
+	require.Equal(t, "workload-diagnostics", templateLabels[catalogueProfileLabel])
+	require.Equal(t, "changed", labels[catalogueProfileLabel])
+
+	emptyLabels, err := approvedTemplateLabelsFromStatus(breakglassv1alpha1.DebugSessionStatus{
+		ResolvedTemplateIdentityCaptured: true,
+		ResolvedTemplateLabels:           map[string]string{},
+	})
+	require.NoError(t, err)
+	require.Nil(t, emptyLabels)
+
+	emptyRaw, err := marshalApprovedPodTemplateSnapshot(
+		&breakglassv1alpha1.DebugSessionTemplate{}, &breakglassv1alpha1.DebugPodTemplate{})
+	require.NoError(t, err)
+	_, emptyPodLabels, emptyTemplateLabels, err := decodeApprovedPodTemplateSnapshot(emptyRaw.Raw)
+	require.NoError(t, err)
+	require.Nil(t, emptyPodLabels)
+	require.Nil(t, emptyTemplateLabels)
 }
 
 func TestWarnAuxiliaryReturnsStatusConflictBeforeNextTargetWrite(t *testing.T) {

@@ -21,8 +21,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -568,14 +570,6 @@ func (c *DebugSessionAPIController) listDebugSessionsWithFields(ctx context.Cont
 	return sessionList.Items, false, nil
 }
 
-func copyDebugSessionMatchingFields(in ctrlclient.MatchingFields) ctrlclient.MatchingFields {
-	out := make(ctrlclient.MatchingFields, len(in)+1)
-	for field, value := range in {
-		out[field] = value
-	}
-	return out
-}
-
 func filterDebugSessionsForIndexedFallback(sessions []breakglassv1alpha1.DebugSession, cluster string, states []breakglassv1alpha1.DebugSessionState) []breakglassv1alpha1.DebugSession {
 	if cluster == "" && len(states) == 0 {
 		return sessions
@@ -610,7 +604,7 @@ func (c *DebugSessionAPIController) listDebugSessionsForFilters(ctx context.Cont
 	sessions := make([]breakglassv1alpha1.DebugSession, 0)
 	seen := map[string]struct{}{}
 	for _, state := range states {
-		matchingFields := copyDebugSessionMatchingFields(baseFields)
+		matchingFields := maps.Clone(baseFields)
 		matchingFields["status.state"] = string(state)
 		stateSessions, fellBack, err := c.listDebugSessionsWithFields(ctx, matchingFields)
 		if err != nil {
@@ -1032,7 +1026,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
 		bindingAllowsRequestedCluster := false
 		for _, authorizationCluster := range authorizationClusters {
-			if stringInSlice(authorizationCluster, bindingClusters) {
+			if slices.Contains(bindingClusters, authorizationCluster) {
 				bindingAllowsRequestedCluster = true
 				break
 			}
@@ -2269,15 +2263,6 @@ func validateDebugReasonLength(reason string, minLength, maxLength int32) error 
 		return fmt.Errorf("reason must be at most %d characters", maxLength)
 	}
 	return nil
-}
-
-func stringInSlice(value string, values []string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
 }
 
 // AuthorizeArtifactCollection returns the exact active session only to a

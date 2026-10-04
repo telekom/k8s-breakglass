@@ -7,7 +7,6 @@ export { usePendingRequests } from "./usePendingRequests";
 
 // Duration utilities
 export {
-  useDuration,
   parseDurationString,
   formatDuration,
   formatDurationRounded,
@@ -37,7 +36,6 @@ export {
 
 // Date formatting utilities
 export {
-  useDateFormatting,
   formatDateTime,
   formatDateOnly,
   formatTimeOnly,

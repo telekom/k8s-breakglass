@@ -181,19 +181,3 @@ export function formatEndTime(
 
   return formatter(endTime.toISOString());
 }
-
-/**
- * Composable hook for duration utilities
- */
-export function useDuration() {
-  return {
-    parseDurationString,
-    formatDuration,
-    formatDurationRounded,
-    formatDurationFromSeconds,
-    formatDurationFromSecondsRounded,
-    formatRoundedSeconds,
-    computeEndTime,
-    formatEndTime,
-  };
-}

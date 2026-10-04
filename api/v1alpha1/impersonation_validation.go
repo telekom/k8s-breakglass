@@ -6,6 +6,7 @@ package v1alpha1
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -412,7 +413,7 @@ func warnImpersonationDenyRuleIssues(rules []ImpersonationDenyRule, fieldPath *f
 		// constrained modes accomplishes nothing on a cluster that still carries a
 		// blanket `impersonate` grant, because the API server falls back to it when
 		// every constrained mode denies.
-		if len(r.Modes) > 0 && !containsMode(r.Modes, ImpersonationModeLegacy) {
+		if len(r.Modes) > 0 && !slices.Contains(r.Modes, ImpersonationModeLegacy) {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s.modes: this rule denies only constrained impersonation modes. The API server falls "+
 					"back to legacy (unconstrained) impersonation whenever every constrained mode "+
@@ -421,14 +422,14 @@ func warnImpersonationDenyRuleIssues(rules []ImpersonationDenyRule, fieldPath *f
 		}
 
 		if len(r.ExtraKeys) > 0 && len(r.IdentityResources) > 0 &&
-			!containsString(r.IdentityResources, "userextras") {
+			!slices.Contains(r.IdentityResources, "userextras") {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s.extraKeys: extraKeys only applies to userextras identity checks, which are not in "+
 					"this rule's identityResources; the field will have no effect.", rulePath))
 		}
 
 		if len(r.Namespaces.patternsOrNil()) > 0 && len(r.IdentityResources) > 0 &&
-			!containsString(r.IdentityResources, "serviceaccounts") {
+			!slices.Contains(r.IdentityResources, "serviceaccounts") {
 			warnings = append(warnings, fmt.Sprintf(
 				"%s.namespaces: serviceaccounts is the only namespaced identity kind, and it is not in "+
 					"this rule's identityResources; the namespace filter will have no effect.", rulePath))
@@ -436,24 +437,6 @@ func warnImpersonationDenyRuleIssues(rules []ImpersonationDenyRule, fieldPath *f
 	}
 
 	return warnings
-}
-
-func containsMode(modes []ImpersonationMode, want ImpersonationMode) bool {
-	for _, m := range modes {
-		if m == want {
-			return true
-		}
-	}
-	return false
-}
-
-func containsString(in []string, want string) bool {
-	for _, v := range in {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }
 
 func keysOf(m map[string][]string) []string {

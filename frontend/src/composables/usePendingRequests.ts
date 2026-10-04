@@ -9,7 +9,6 @@ export function usePendingRequests(service: BreakglassService | null) {
   const requests = ref<SessionCR[]>([]);
   const loading = ref(true);
   const error = ref("");
-  const withdrawing = ref("");
 
   async function loadRequests() {
     if (!service) {
@@ -36,36 +35,10 @@ export function usePendingRequests(service: BreakglassService | null) {
     }
   }
 
-  async function withdrawRequest(req: SessionCR) {
-    if (!service) {
-      warn(`${TAG}.withdrawRequest`, "Missing BreakglassService instance");
-      return;
-    }
-
-    const sessionName = req.metadata?.name || req.name || "";
-    withdrawing.value = sessionName;
-    debug(`${TAG}.withdrawRequest`, "Attempting withdraw", { sessionName });
-
-    try {
-      await service.withdrawMyRequest(req);
-      requests.value = requests.value.filter((existing) => existing.metadata?.name !== sessionName);
-      error.value = "";
-      debug(`${TAG}.withdrawRequest`, "Withdraw complete", { sessionName });
-    } catch (err: unknown) {
-      const message = (err instanceof Error ? err.message : undefined) || "Failed to withdraw request";
-      error.value = message;
-      warn(`${TAG}.withdrawRequest`, "Withdraw failed", { sessionName, errorMessage: message });
-    } finally {
-      withdrawing.value = "";
-    }
-  }
-
   return {
     requests,
     loading,
     error,
-    withdrawing,
     loadRequests,
-    withdrawRequest,
   };
 }

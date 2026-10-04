@@ -1,5 +1,5 @@
 /**
- * Tests for useDateFormatting composable
+ * Tests for date formatting utilities
  */
 
 import { vi } from "vitest";
@@ -9,11 +9,12 @@ import {
   formatTimeOnly,
   formatTimeCompact,
   formatRelativeTime,
+  formatWithTimezone,
   isValidDate,
   nowISO,
 } from "@/composables/useDateFormatting";
 
-describe("useDateFormatting", () => {
+describe("date formatting utilities", () => {
   describe("formatDateTime", () => {
     it("formats ISO string", () => {
       const result = formatDateTime("2025-12-01T14:30:45Z");
@@ -85,6 +86,12 @@ describe("useDateFormatting", () => {
     beforeEach(() => {
       vi.useFakeTimers();
       vi.setSystemTime(NOW);
+    });
+
+    describe("formatWithTimezone", () => {
+      it("includes the timezone in formatted output", () => {
+        expect(formatWithTimezone("2025-12-01T14:30:45Z")).toMatch(/UTC|GMT|[+-]\d{2}:?\d{2}/);
+      });
     });
 
     afterEach(() => {
