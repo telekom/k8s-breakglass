@@ -38,6 +38,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -762,11 +763,7 @@ func cloneHeaders(headers map[string]string) map[string]string {
 		return nil
 	}
 
-	cloned := make(map[string]string, len(headers))
-	for key, value := range headers {
-		cloned[key] = value
-	}
-	return cloned
+	return maps.Clone(headers)
 }
 
 func (s *Service) applyWebhookAuth(ctx context.Context, webhookCfg *breakglassv1alpha1.WebhookSinkSpec, headers map[string]string) (map[string]string, error) {

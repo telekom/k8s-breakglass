@@ -343,6 +343,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleanup, and downstream admission boundaries.
 ### Changed
 
+- Simplify internal backend/frontend helpers and E2E setup without changing
+  matching, normalization, session actions, or retry behavior; reuse one
+  port-forward lifecycle helper and Vite's native literal dynamic imports.
+
 - Clarified privileged CR writers, browser token storage, and the gateway/network
   authentication required for both SAR webhook routes (PR #1311).
 

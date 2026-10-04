@@ -2066,13 +2066,6 @@ func TestValidateOIDCAuthConfig_MissingRequiredFields(t *testing.T) {
 	}
 }
 
-// Test containsDot
-func TestContainsDot(t *testing.T) {
-	assert.True(t, containsDot("example.com"))
-	assert.False(t, containsDot("localhost"))
-	assert.True(t, containsDot("sub.domain.com"))
-}
-
 // Test isValidDomainChar
 func TestIsValidDomainChar(t *testing.T) {
 	assert.True(t, isValidDomainChar('a'))

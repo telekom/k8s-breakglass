@@ -387,34 +387,37 @@ func TestDefaultImpersonationDenyReason_EmptyFieldsRenderReadably(t *testing.T) 
 	}
 }
 
-func TestModeMatches(t *testing.T) {
-	// An empty mode list matches every mode, which is what makes a bare rule
-	// deny-all.
-	for _, mode := range impersonation.ModeEvaluationOrder {
-		if !modeMatches(nil, mode) {
-			t.Errorf("empty mode list did not match %q", mode)
-		}
+func TestImpersonationRuleMatches_ExactFieldsAndIdentityWildcard(t *testing.T) {
+	tests := []struct {
+		name string
+		rule breakglassv1alpha1.ImpersonationDenyRule
+		act  ImpersonationAction
+		want bool
+	}{
+		{
+			name: "asterisk is not a mode wildcard",
+			rule: breakglassv1alpha1.ImpersonationDenyRule{Modes: []breakglassv1alpha1.ImpersonationMode{"*"}},
+			act:  identityAction("impersonate:user-info", "users", "jane"),
+		},
+		{
+			name: "asterisk is not an identity-resource wildcard",
+			rule: breakglassv1alpha1.ImpersonationDenyRule{IdentityResources: []string{"*"}},
+			act:  identityAction("impersonate:user-info", "users", "jane"),
+		},
+		{
+			name: "asterisk remains an identity wildcard",
+			rule: breakglassv1alpha1.ImpersonationDenyRule{Identities: []string{"*"}},
+			act:  identityAction("impersonate:user-info", "users", "jane"),
+			want: true,
+		},
 	}
 
-	if !modeMatches([]breakglassv1alpha1.ImpersonationMode{"legacy"}, impersonation.ModeLegacy) {
-		t.Error("legacy did not match")
-	}
-	if modeMatches([]breakglassv1alpha1.ImpersonationMode{"legacy"}, impersonation.ModeUserInfo) {
-		t.Error("legacy rule matched user-info")
-	}
-}
-
-func TestContainsExact(t *testing.T) {
-	// containsExact must NOT treat "*" as a wildcard, because it guards enum fields
-	// where "*" is not a legal value.
-	if !containsExact([]string{"a", "b"}, "a") {
-		t.Error("containsExact missed a present value")
-	}
-	if containsExact([]string{"*"}, "a") {
-		t.Error("containsExact treated * as a wildcard")
-	}
-	if containsExact(nil, "a") {
-		t.Error("containsExact matched against a nil slice")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := impersonationRuleMatches(tc.rule, tc.act); got != tc.want {
+				t.Errorf("impersonationRuleMatches() = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

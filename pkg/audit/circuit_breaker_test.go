@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -55,6 +56,26 @@ func TestCircuitBreaker_ClosedState(t *testing.T) {
 	assert.Equal(t, int64(1), stats.TotalRequests)
 	assert.Equal(t, int64(1), stats.TotalSuccesses)
 	assert.Equal(t, int64(0), stats.TotalFailures)
+}
+
+func TestBreakerMaxRequests(t *testing.T) {
+	tests := []struct {
+		name             string
+		successThreshold int
+		halfOpenMax      int
+		want             uint32
+	}{
+		{name: "success threshold is the minimum", successThreshold: 4, halfOpenMax: 2, want: 4},
+		{name: "configured probe limit is respected", successThreshold: 2, halfOpenMax: 4, want: 4},
+		{name: "nonpositive values retain one request", successThreshold: -1, halfOpenMax: 0, want: 1},
+		{name: "large value is clamped", successThreshold: int(math.MaxInt32) + 1, want: math.MaxInt32},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, breakerMaxRequests(tc.successThreshold, tc.halfOpenMax))
+		})
+	}
 }
 
 func TestCircuitBreaker_OpensAfterFailureThreshold(t *testing.T) {

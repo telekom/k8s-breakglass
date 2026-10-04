@@ -230,34 +230,6 @@ wait_for_local_port() {
   return 1
 }
 
-start_keepalive_port_forward() {
-  # Usage: start_keepalive_port_forward namespace svc localPort remotePort
-  # Like start_port_forward but wraps kubectl port-forward in a while-true loop
-  # so it auto-restarts if the connection drops (pod restart, idle timeout, etc.).
-  # Uses global $HUB_KUBECONFIG, $PF_FILE
-  local ns="$1"
-  local svc="$2"
-  local local_port="$3"
-  local remote_port="$4"
-  log "Starting keepalive port-forward for svc/$svc in ns $ns -> localhost:$local_port:$remote_port"
-  (
-    # Disable errexit so non-zero kubectl exits don't kill the loop
-    set +e
-    PF_PID=""
-    trap 'kill $PF_PID 2>/dev/null; exit 0' EXIT TERM INT
-    while true; do
-      KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$ns" port-forward svc/"$svc" ${local_port}:${remote_port} 2>/dev/null &
-      PF_PID=$!
-      wait $PF_PID
-      sleep 2
-    done
-  ) &
-  local pid=$!
-  [ -n "$PF_FILE" ] && mkdir -p "$(dirname "$PF_FILE")" 2>/dev/null || true
-  echo $pid >> "$PF_FILE" 2>/dev/null || true
-  echo $pid
-}
-
 apply_kustomize() {
   # Usage: apply_kustomize path
   local path="$1"

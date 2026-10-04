@@ -52,6 +52,32 @@ func TestEscalationBuilder_Build(t *testing.T) {
 			},
 		},
 		{
+			name: "optional fields preserve explicit false and pointer values",
+			builder: func() *EscalationBuilder {
+				return NewEscalationBuilder("optional", "default").
+					WithMailProvider("mail").
+					WithRetainFor("24h").
+					WithBlockSelfApproval(false).
+					WithDisableNotifications(false).
+					WithRequestReason(true, "request").
+					WithApprovalReason(false, "approval").
+					WithPodSecurityOverrides(&breakglassv1alpha1.PodSecurityOverrides{Enabled: true}).
+					WithDenyPolicyRefs([]string{}...)
+			},
+			validate: func(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation) {
+				assert.Equal(t, "mail", esc.Spec.MailProvider)
+				assert.Equal(t, "24h", esc.Spec.RetainFor)
+				require.NotNil(t, esc.Spec.BlockSelfApproval)
+				assert.False(t, *esc.Spec.BlockSelfApproval)
+				require.NotNil(t, esc.Spec.DisableNotifications)
+				assert.False(t, *esc.Spec.DisableNotifications)
+				assert.Equal(t, &breakglassv1alpha1.ReasonConfig{Mandatory: true, Description: "request"}, esc.Spec.RequestReason)
+				assert.Equal(t, &breakglassv1alpha1.ReasonConfig{Description: "approval"}, esc.Spec.ApprovalReason)
+				assert.Equal(t, &breakglassv1alpha1.PodSecurityOverrides{Enabled: true}, esc.Spec.PodSecurityOverrides)
+				assert.Nil(t, esc.Spec.DenyPolicyRefs)
+			},
+		},
+		{
 			name: "escalation with custom approvers",
 			builder: func() *EscalationBuilder {
 				return NewEscalationBuilder("custom-approvers", "breakglass").
@@ -152,6 +178,21 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 			},
 		},
 		{
+			name: "optional fields preserve zero precedence and scope",
+			builder: func() *DenyPolicyBuilder {
+				return NewDenyPolicyBuilder("optional", "default").
+					WithPrecedence(0).
+					AppliesToClusters("cluster-a").
+					WithPodSecurityRules(&breakglassv1alpha1.PodSecurityRules{})
+			},
+			validate: func(t *testing.T, policy *breakglassv1alpha1.DenyPolicy) {
+				require.NotNil(t, policy.Spec.Precedence)
+				assert.Zero(t, *policy.Spec.Precedence)
+				assert.Equal(t, &breakglassv1alpha1.DenyPolicyScope{Clusters: []string{"cluster-a"}}, policy.Spec.AppliesTo)
+				require.NotNil(t, policy.Spec.PodSecurityRules)
+			},
+		},
+		{
 			name: "deny secrets in specific namespaces",
 			builder: func() *DenyPolicyBuilder {
 				return NewDenyPolicyBuilder("no-secrets-prod", "default").
@@ -224,6 +265,49 @@ func TestDenyPolicyBuilder_Build(t *testing.T) {
 			tt.validate(t, policy)
 		})
 	}
+}
+
+func TestSessionBuilder_Build(t *testing.T) {
+	session := NewSessionBuilder("session", "default").WithCluster("cluster").
+		WithUser("requester@example.com").WithGrantedGroup("group").
+		WithRetainFor("24h").WithRequestReason("incident").WithClusterConfigRef("config").
+		WithDenyPolicyRefs([]string{}...).Build()
+	assert.Equal(t, "session", session.Name)
+	assert.Equal(t, "default", session.Namespace)
+	assert.Equal(t, breakglassv1alpha1.BreakglassSessionSpec{
+		Cluster: "cluster", User: "requester@example.com", GrantedGroup: "group",
+		MaxValidFor: "1h", RetainFor: "24h", RequestReason: "incident", ClusterConfigRef: "config",
+	}, session.Spec)
+	assert.Equal(t, breakglassv1alpha1.BreakglassSessionSpec{MaxValidFor: "1h"},
+		NewSessionBuilder("minimal", "default").Build().Spec)
+}
+
+func TestClusterConfigBuilder_Build(t *testing.T) {
+	assert.Equal(t, breakglassv1alpha1.ClusterConfigSpec{}, NewClusterConfigBuilder("minimal", "default").Build().Spec)
+	for _, qps := range []int32{0, 100} {
+		config := NewClusterConfigBuilder("config", "default").WithClusterID("cluster").
+			WithTenant("tenant").WithEnvironment("dev").WithSite("site").WithLocation("region").
+			WithQPS(qps).WithBurst(qps).WithKubeconfigSecret("kubeconfig", "value").
+			WithIdentityProviderRefs([]string{}...).Build()
+		assert.Equal(t, breakglassv1alpha1.ClusterConfigSpec{
+			ClusterID: "cluster", Tenant: "tenant", Environment: "dev", Site: "site", Location: "region",
+			QPS: &qps, Burst: &qps,
+			KubeconfigSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: "kubeconfig", Namespace: "default", Key: "value"},
+		}, config.Spec)
+	}
+	direct := NewClusterConfigBuilder("direct", "default").WithOIDCAuth("https://issuer", "client", "https://server").Build()
+	assert.Equal(t, breakglassv1alpha1.ClusterAuthTypeOIDC, direct.Spec.AuthType)
+	require.NotNil(t, direct.Spec.OIDCAuth)
+	assert.Equal(t, "https://issuer", direct.Spec.OIDCAuth.IssuerURL)
+	assert.Equal(t, "client", direct.Spec.OIDCAuth.ClientID)
+	assert.Equal(t, "https://server", direct.Spec.OIDCAuth.Server)
+	assert.Nil(t, direct.Spec.OIDCFromIdentityProvider)
+	inherited := NewClusterConfigBuilder("inherited", "default").WithOIDCFromIdentityProvider("idp", "https://server").Build()
+	assert.Equal(t, breakglassv1alpha1.ClusterAuthTypeOIDC, inherited.Spec.AuthType)
+	require.NotNil(t, inherited.Spec.OIDCFromIdentityProvider)
+	assert.Equal(t, "idp", inherited.Spec.OIDCFromIdentityProvider.Name)
+	assert.Equal(t, "https://server", inherited.Spec.OIDCFromIdentityProvider.Server)
+	assert.Nil(t, inherited.Spec.OIDCAuth)
 }
 
 func TestE2ETestLabels(t *testing.T) {

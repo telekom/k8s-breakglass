@@ -1,42 +1,28 @@
 /**
- * Tests for MyPendingRequests view component
+ * Behavioral tests for MyPendingRequests
  *
  * @vitest-environment jsdom
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
-import { createRouter, createMemoryHistory } from "vue-router";
 import { ref } from "vue";
 import MyPendingRequests from "@/views/MyPendingRequests.vue";
 import { AuthKey } from "@/keys";
+import { pushError } from "@/services/toast";
 import type { SessionCR } from "@/model/breakglass";
 
-const mocks = await vi.hoisted(async () => {
-  const { ref: vueRef } = await import("vue");
+const mocks = vi.hoisted(() => ({
+  fetchMyOutstandingRequests: vi.fn(),
+  withdrawMyRequest: vi.fn(),
+  dropMySession: vi.fn(),
+}));
 
-  return {
-    normalizeState: (state?: string) => (state || "").toLowerCase().replace(/[_\s-]/g, ""),
-    requests: vueRef<SessionCR[]>([]),
-    loading: vueRef(false),
-    error: vueRef(""),
-    withdrawTarget: vueRef<SessionCR | null>(null),
-    withdrawDialogOpen: vueRef(false),
-    loadRequests: vi.fn(),
-    requestWithdraw: vi.fn(),
-    confirmWithdraw: vi.fn(),
-    cancelWithdraw: vi.fn(),
-    withdraw: vi.fn(),
-    drop: vi.fn(),
-  };
-});
-
-// Mock services
 vi.mock("@/services/breakglass", () => ({
   default: class MockBreakglassService {
-    searchSessions = vi.fn().mockResolvedValue([]);
-    withdrawMyRequest = vi.fn().mockResolvedValue(undefined);
-    dropMySession = vi.fn().mockResolvedValue(undefined);
+    fetchMyOutstandingRequests = mocks.fetchMyOutstandingRequests;
+    withdrawMyRequest = mocks.withdrawMyRequest;
+    dropMySession = mocks.dropMySession;
   },
 }));
 
@@ -45,254 +31,192 @@ vi.mock("@/services/toast", () => ({
   pushSuccess: vi.fn(),
 }));
 
-// Mock composables
-vi.mock("@/composables", () => ({
-  usePendingRequests: vi.fn().mockReturnValue({
-    requests: mocks.requests,
-    loading: mocks.loading,
-    error: mocks.error,
-    loadRequests: mocks.loadRequests,
-  }),
-  useSessionActions: vi.fn().mockReturnValue({
-    isActionRunning: vi.fn().mockReturnValue(false),
-    isSessionBusy: vi.fn().mockReturnValue(false),
-    handleAction: vi.fn(),
-    withdraw: mocks.withdraw,
-    drop: mocks.drop,
-  }),
-  useWithdrawConfirmation: vi.fn((onConfirm) => ({
-    withdrawDialogOpen: mocks.withdrawDialogOpen,
-    withdrawTarget: mocks.withdrawTarget,
-    requestWithdraw: mocks.requestWithdraw,
-    confirmWithdraw: async () => {
-      mocks.confirmWithdraw();
-      if (mocks.withdrawTarget.value) {
-        await onConfirm(mocks.withdrawTarget.value);
-      }
-    },
-    cancelWithdraw: mocks.cancelWithdraw,
-  })),
-  getSessionKey: vi.fn((session) => session.metadata?.name || "key"),
-  getSessionState: vi.fn((session) => session.status?.state || "pending"),
-  getSessionUser: vi.fn((session) => session.spec?.user || "user@example.com"),
-  getSessionCluster: vi.fn((session) => session.spec?.cluster || "test-cluster"),
-  getSessionGroup: vi.fn((session) => session.spec?.grantedGroup || "admin-group"),
-  formatDateTime: vi.fn((date) => new Date(date).toLocaleString()),
-  isFuture: vi.fn((date) => new Date(date) > new Date()),
-  isScheduled: vi.fn((session) => {
-    const state = mocks.normalizeState(session.status?.state);
-    return state === "waitingforscheduledtime" || state === "scheduled";
-  }),
-}));
-
-// Mock common components
-const commonStubs = {
+const stubs = {
   PageHeader: {
-    template: '<div class="page-header" data-testid="my-requests-header">{{ title }} {{ badge }}<slot /></div>',
+    template: '<div data-testid="my-requests-header">{{ title }} {{ badge }}<slot /></div>',
     props: ["title", "subtitle", "badge", "badgeVariant"],
   },
-  LoadingState: {
-    template: '<div class="loading-state" data-testid="my-requests-loading">Loading...</div>',
-    props: ["message"],
-  },
+  LoadingState: { template: '<div data-testid="my-requests-loading">Loading...</div>', props: ["message"] },
   ErrorBanner: {
-    template: '<div class="error-banner" data-testid="my-requests-error"><slot /></div>',
+    template: '<div data-testid="my-requests-error">{{ message }}</div>',
     props: ["message", "showRetry"],
   },
-  EmptyState: {
-    template: '<div class="empty-state" data-testid="empty-state">No requests</div>',
-    props: ["title", "description", "icon"],
-  },
-  StatusTag: {
-    template: '<span class="status-tag">{{ status }}</span>',
-    props: ["status", "tone"],
-  },
-  ReasonPanel: {
-    template: '<div class="reason-panel">{{ reason }}</div>',
-    props: ["reason", "label", "variant"],
-  },
+  EmptyState: { template: '<div data-testid="empty-state">No requests</div>', props: ["title", "description", "icon"] },
+  StatusTag: { template: "<span>{{ status }}</span>", props: ["status", "tone"] },
+  ReasonPanel: { template: "<div>{{ reason }}</div>", props: ["reason", "label", "variant"] },
   ActionButton: {
-    template: '<button v-bind="$attrs" class="action-button" @click="$emit(\'click\')">{{ label }}</button>',
+    template:
+      '<button v-bind="$attrs" :disabled="disabled" :aria-busy="loading" @click="$emit(\'click\')">{{ loading ? loadingLabel : label }}</button>',
     props: ["label", "loadingLabel", "variant", "loading", "disabled"],
   },
-  CountdownTimer: {
-    template: '<span class="countdown">Countdown</span>',
-    props: ["expiresAt"],
-  },
+  CountdownTimer: { template: "<span>Countdown</span>", props: ["expiresAt"] },
   SessionSummaryCard: {
     template:
-      '<div class="session-summary-card"><slot /><slot name="status" /><slot name="chips" /><slot name="meta" /><slot name="body" /><slot name="footer" /></div>',
+      '<article><slot /><slot name="status" /><slot name="chips" /><slot name="meta" /><slot name="body" /><slot name="footer" /></article>',
     props: ["eyebrow", "title", "subtitle", "statusTone"],
   },
-  SessionMetaGrid: {
-    template: '<div class="session-meta-grid"><slot v-for="item in items" :item="item" /></div>',
-    props: ["items"],
-  },
-  "scale-tag": {
-    template: '<span class="scale-tag"><slot /></span>',
-    props: ["variant"],
-  },
+  SessionMetaGrid: { template: '<div><slot v-for="item in items" :item="item" /></div>', props: ["items"] },
+  "scale-tag": { template: "<span><slot /></span>", props: ["variant"] },
   WithdrawConfirmDialog: {
     template:
-      '<div v-if="opened" data-testid="withdraw-confirm-modal">{{ heading }} {{ message }} <button data-testid="withdraw-confirm-button" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+      '<div v-if="opened" data-testid="withdraw-confirm-modal"><span>{{ heading }}</span><span>{{ message }}</span><button data-testid="withdraw-confirm-button" @click="$emit(\'confirm\')">{{ confirmLabel }}</button><button data-testid="withdraw-cancel-button" @click="$emit(\'cancel\')">Cancel</button></div>',
     props: ["opened", "sessionName", "heading", "message", "confirmLabel"],
   },
 };
 
+const mockAuth = {
+  user: ref({ email: "test@example.com" }),
+  token: ref("test-token"),
+  isAuthenticated: ref(true),
+};
+
+function request(name: string): SessionCR {
+  return {
+    metadata: { name },
+    spec: { user: "test@example.com", cluster: "test-cluster", grantedGroup: "admin-group" },
+    status: { state: "Pending" },
+  };
+}
+
+async function mountView() {
+  const wrapper = mount(MyPendingRequests, {
+    global: {
+      stubs,
+      provide: { [AuthKey as symbol]: mockAuth },
+    },
+  });
+  await flushPromises();
+  return wrapper;
+}
+
 describe("MyPendingRequests", () => {
-  let router: ReturnType<typeof createRouter>;
-
-  const mockAuth = {
-    user: ref({ email: "test@example.com" }),
-    token: ref("test-token"),
-    isAuthenticated: ref(true),
-  };
-
   beforeEach(() => {
-    mocks.requests.value = [];
-    mocks.loading.value = false;
-    mocks.error.value = "";
-    mocks.withdrawTarget.value = null;
-    mocks.withdrawDialogOpen.value = false;
-    mocks.loadRequests.mockClear();
-    mocks.requestWithdraw.mockClear();
-    mocks.confirmWithdraw.mockClear();
-    mocks.cancelWithdraw.mockClear();
-    mocks.withdraw.mockClear();
-    mocks.drop.mockClear();
-    router = createRouter({
-      history: createMemoryHistory(),
-      routes: [{ path: "/my-requests", name: "my-requests", component: MyPendingRequests }],
-    });
+    mocks.fetchMyOutstandingRequests.mockReset().mockResolvedValue([]);
+    mocks.withdrawMyRequest.mockReset().mockResolvedValue(undefined);
+    mocks.dropMySession.mockReset().mockResolvedValue(undefined);
+    vi.mocked(pushError).mockClear();
   });
 
-  afterEach(() => {
-    vi.clearAllMocks();
-  });
+  afterEach(() => vi.clearAllMocks());
 
-  const createWrapper = async () => {
-    await router.push("/my-requests");
-    await router.isReady();
-
-    const wrapper = mount(MyPendingRequests, {
-      global: {
-        plugins: [router],
-        stubs: commonStubs,
-        provide: {
-          [AuthKey as symbol]: mockAuth,
-        },
-      },
-    });
-
-    await flushPromises();
-    return wrapper;
-  };
-
-  it("throws a clear error when auth provider is missing", async () => {
-    await router.push("/my-requests");
-    await router.isReady();
-
-    expect(() => {
+  it("requires the auth provider and renders the empty page", async () => {
+    expect(() =>
       mount(MyPendingRequests, {
-        global: {
-          plugins: [router],
-          stubs: commonStubs,
-        },
-      });
-    }).toThrow("MyPendingRequests view requires an Auth provider");
+        global: { stubs },
+      }),
+    ).toThrow("MyPendingRequests view requires an Auth provider");
+
+    const wrapper = await mountView();
+
+    expect(wrapper.find('[data-testid="my-requests-view"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="my-requests-header"]').text()).toContain("My Outstanding Requests");
+    expect(wrapper.find('[data-testid="requests-section"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
   });
 
-  describe("Component Structure", () => {
-    it("renders the main page container", async () => {
-      const wrapper = await createWrapper();
-      expect(wrapper.find('[data-testid="my-requests-view"]').exists()).toBe(true);
-    });
+  it("loads and renders the current outstanding requests", async () => {
+    mocks.fetchMyOutstandingRequests.mockResolvedValue([request("req-1")]);
 
-    it("renders page header", async () => {
-      const wrapper = await createWrapper();
-      expect(wrapper.find('[data-testid="my-requests-header"]').exists()).toBe(true);
-    });
+    const wrapper = await mountView();
 
-    it("renders requests section", async () => {
-      const wrapper = await createWrapper();
-      expect(wrapper.find('[data-testid="requests-section"]').exists()).toBe(true);
-    });
+    expect(mocks.fetchMyOutstandingRequests).toHaveBeenCalledOnce();
+    expect(wrapper.find('[data-testid="pending-request-card-req-1"]').exists()).toBe(true);
   });
 
-  describe("Empty State", () => {
-    it("shows empty state when no requests", async () => {
-      const wrapper = await createWrapper();
-      expect(wrapper.find('[data-testid="empty-state"]').exists()).toBe(true);
-    });
+  it("requires confirmation, then withdraws and prunes only the withdrawn request", async () => {
+    const first = request("req-1");
+    mocks.fetchMyOutstandingRequests.mockResolvedValue([first, request("req-2")]);
+    let finishWithdrawal!: () => void;
+    mocks.withdrawMyRequest.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishWithdrawal = resolve;
+        }),
+    );
+
+    const wrapper = await mountView();
+    await wrapper.find('[data-testid="withdraw-button"]').trigger("click");
+
+    expect(wrapper.find('[data-testid="withdraw-confirm-modal"]').exists()).toBe(true);
+    expect(mocks.withdrawMyRequest).not.toHaveBeenCalled();
+
+    await wrapper.find('[data-testid="withdraw-confirm-button"]').trigger("click");
+    const withdrawButton = wrapper.find('[data-testid="withdraw-button"]');
+    expect(mocks.withdrawMyRequest).toHaveBeenCalledWith(first);
+    expect(withdrawButton.text()).toBe("Withdrawing...");
+    expect(withdrawButton.attributes("aria-busy")).toBe("true");
+    expect(withdrawButton.attributes("disabled")).toBeDefined();
+
+    finishWithdrawal();
+    await flushPromises();
+
+    expect(wrapper.find('[data-testid="pending-request-card-req-1"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="pending-request-card-req-2"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="withdraw-confirm-modal"]').exists()).toBe(false);
   });
 
-  describe("Page Header", () => {
-    it("displays correct title", async () => {
-      const wrapper = await createWrapper();
-      const header = wrapper.find('[data-testid="my-requests-header"]');
-      expect(header.exists()).toBe(true);
-      expect(header.text()).toContain("My Outstanding Requests");
-    });
+  it("keeps the request and confirmation available when withdrawal fails", async () => {
+    mocks.fetchMyOutstandingRequests.mockResolvedValue([request("req-1")]);
+    mocks.withdrawMyRequest.mockRejectedValue(new Error("withdraw denied"));
+
+    const wrapper = await mountView();
+    await wrapper.find('[data-testid="withdraw-button"]').trigger("click");
+    await wrapper.find('[data-testid="withdraw-confirm-button"]').trigger("click");
+    await flushPromises();
+
+    expect(mocks.withdrawMyRequest).toHaveBeenCalledOnce();
+    expect(vi.mocked(pushError)).toHaveBeenCalledWith("withdraw denied");
+    expect(wrapper.find('[data-testid="pending-request-card-req-1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="withdraw-confirm-modal"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="withdraw-button"]').text()).toBe("Withdraw");
+    expect(wrapper.find('[data-testid="withdraw-button"]').attributes("disabled")).toBeUndefined();
   });
 
-  describe("Scheduled Requests", () => {
-    it("renders scheduled outstanding requests with a drop action", async () => {
-      const scheduled = {
-        metadata: { name: "req-awaiting-activation" },
-        spec: {
-          user: "test@example.com",
-          cluster: "edge-hub",
-          grantedGroup: "edge-hotfix",
-          scheduledStartTime: "2026-02-20T12:00:00Z",
-        },
-        status: { state: "WaitingForScheduledTime" },
-      } as SessionCR;
-      mocks.requests.value = [scheduled];
+  it("does not call the API when the user cancels confirmation", async () => {
+    mocks.fetchMyOutstandingRequests.mockResolvedValue([request("req-1")]);
 
-      const wrapper = await createWrapper();
+    const wrapper = await mountView();
+    await wrapper.find('[data-testid="withdraw-button"]').trigger("click");
+    await wrapper.find('[data-testid="withdraw-cancel-button"]').trigger("click");
 
-      expect(wrapper.find('[data-testid="drop-button"]').text()).toBe("Drop");
-      expect(wrapper.find('[data-testid="withdraw-button"]').exists()).toBe(false);
+    expect(mocks.withdrawMyRequest).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="pending-request-card-req-1"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="withdraw-confirm-modal"]').exists()).toBe(false);
+  });
 
-      await wrapper.find('[data-testid="drop-button"]').trigger("click");
+  it("confirms scheduled requests with Drop and prunes them after the drop API succeeds", async () => {
+    const scheduled: SessionCR = {
+      metadata: { name: "req-scheduled" },
+      spec: {
+        user: "test@example.com",
+        cluster: "test-cluster",
+        grantedGroup: "admin-group",
+        scheduledStartTime: "2026-10-05T12:00:00Z",
+      },
+      status: { state: "WaitingForScheduledTime" },
+    };
+    mocks.fetchMyOutstandingRequests.mockResolvedValue([scheduled]);
 
-      expect(mocks.requestWithdraw).toHaveBeenCalledWith(scheduled);
-    });
+    const wrapper = await mountView();
 
-    it("uses drop confirmation copy for scheduled outstanding requests", async () => {
-      mocks.withdrawDialogOpen.value = true;
-      mocks.withdrawTarget.value = {
-        metadata: { name: "req-awaiting-activation" },
-        status: { state: "WaitingForScheduledTime" },
-      } as SessionCR;
+    expect(wrapper.find('[data-testid="drop-button"]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="withdraw-button"]').exists()).toBe(false);
+    await wrapper.find('[data-testid="drop-button"]').trigger("click");
 
-      const wrapper = await createWrapper();
-      const modal = wrapper.find('[data-testid="withdraw-confirm-modal"]');
+    const dialog = wrapper.find('[data-testid="withdraw-confirm-modal"]');
+    expect(dialog.text()).toContain("Drop Scheduled Session");
+    expect(dialog.text()).toContain(
+      "This session is already approved and waiting for its scheduled start. Dropping it will cancel the scheduled activation.",
+    );
+    expect(mocks.dropMySession).not.toHaveBeenCalled();
+    expect(mocks.withdrawMyRequest).not.toHaveBeenCalled();
 
-      expect(modal.text()).toContain("Drop Scheduled Session");
-      expect(modal.text()).toContain("scheduled start");
-      expect(modal.text()).toContain("Drop");
-    });
+    await wrapper.find('[data-testid="withdraw-confirm-button"]').trigger("click");
+    await flushPromises();
 
-    it("confirms scheduled outstanding requests through the drop action", async () => {
-      const scheduled = {
-        metadata: { name: "req-awaiting-activation" },
-        spec: {
-          user: "test@example.com",
-          cluster: "edge-hub",
-          grantedGroup: "edge-hotfix",
-          scheduledStartTime: "2026-02-20T12:00:00Z",
-        },
-        status: { state: "WaitingForScheduledTime" },
-      } as SessionCR;
-      mocks.withdrawDialogOpen.value = true;
-      mocks.withdrawTarget.value = scheduled;
-
-      const wrapper = await createWrapper();
-      await wrapper.find('[data-testid="withdraw-confirm-button"]').trigger("click");
-
-      expect(mocks.drop).toHaveBeenCalledWith(scheduled, { skipConfirm: true });
-      expect(mocks.withdraw).not.toHaveBeenCalled();
-    });
+    expect(mocks.dropMySession).toHaveBeenCalledWith(scheduled);
+    expect(mocks.withdrawMyRequest).not.toHaveBeenCalled();
+    expect(wrapper.find('[data-testid="pending-request-card-req-scheduled"]').exists()).toBe(false);
+    expect(wrapper.find('[data-testid="withdraw-confirm-modal"]').exists()).toBe(false);
   });
 });

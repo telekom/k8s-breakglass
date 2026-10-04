@@ -87,6 +87,35 @@ func TestToRFC1123Label(t *testing.T) {
 	}
 }
 
+func TestToRFC1123LengthBoundaries(t *testing.T) {
+	tests := []struct {
+		name  string
+		got   string
+		want  string
+		limit int
+	}{
+		{
+			name:  "subdomain trims a separator at the truncation boundary",
+			got:   ToRFC1123Subdomain(strings.Repeat("a", validation.DNS1123SubdomainMaxLength-1) + ".z"),
+			want:  strings.Repeat("a", validation.DNS1123SubdomainMaxLength-1),
+			limit: validation.DNS1123SubdomainMaxLength,
+		},
+		{
+			name:  "label trims a separator at the truncation boundary",
+			got:   ToRFC1123Label(strings.Repeat("a", validation.LabelValueMaxLength-1) + ".z"),
+			want:  strings.Repeat("a", validation.LabelValueMaxLength-1),
+			limit: validation.LabelValueMaxLength,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, tc.got)
+			require.LessOrEqual(t, len(tc.got), tc.limit)
+		})
+	}
+}
+
 func TestIsAlnum(t *testing.T) {
 	tests := []struct {
 		input    rune

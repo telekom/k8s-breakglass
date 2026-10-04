@@ -26,6 +26,23 @@ var (
 // multiple separators, and ensures the result starts and ends with an alphanumeric character.
 // If the input cannot produce a valid name, returns "x" as a fallback.
 func ToRFC1123Subdomain(s string) string {
+	return toRFC1123(s, validation.DNS1123SubdomainMaxLength)
+}
+
+// ToRFC1123Label converts an arbitrary string to a Kubernetes label-safe value.
+// Label values must:
+//   - contain only lowercase alphanumeric characters, '-', '_' or '.'
+//   - start and end with an alphanumeric character
+//   - be at most 63 characters long
+//
+// This function lowercases the string, replaces invalid characters with '-', collapses
+// multiple separators, and ensures the result starts and ends with an alphanumeric character.
+// If the input cannot produce a valid value, returns "x" as a fallback.
+func ToRFC1123Label(s string) string {
+	return toRFC1123(s, validation.LabelValueMaxLength)
+}
+
+func toRFC1123(s string, maxLength int) string {
 	if s == "" {
 		return "x"
 	}
@@ -50,56 +67,9 @@ func ToRFC1123Subdomain(s string) string {
 		return "x"
 	}
 
-	// Truncate to max subdomain length
-	if len(s) > validation.DNS1123SubdomainMaxLength {
-		s = s[:validation.DNS1123SubdomainMaxLength]
-		s = trimNonAlnum(s)
-		if s == "" {
-			return "x"
-		}
-	}
-
-	return s
-}
-
-// ToRFC1123Label converts an arbitrary string to a Kubernetes label-safe value.
-// Label values must:
-//   - contain only lowercase alphanumeric characters, '-', '_' or '.'
-//   - start and end with an alphanumeric character
-//   - be at most 63 characters long
-//
-// This function lowercases the string, replaces invalid characters with '-', collapses
-// multiple separators, and ensures the result starts and ends with an alphanumeric character.
-// If the input cannot produce a valid value, returns "x" as a fallback.
-func ToRFC1123Label(s string) string {
-	if s == "" {
-		return "x"
-	}
-
-	// Lowercase first
-	s = strings.ToLower(s)
-
-	// Replace invalid characters with '-'
-	// Note: Label values allow underscores, but we replace invalid chars with '-' for consistency
-	s = invalidCharsRegex.ReplaceAllString(s, "-")
-
-	// Collapse multiple separators
-	s = multiDashRegex.ReplaceAllString(s, "-")
-	s = multiDotRegex.ReplaceAllString(s, ".")
-
-	// Trim leading/trailing non-alphanumeric characters
-	s = strings.Trim(s, "-._")
-
-	// Ensure starts and ends with alphanumeric
-	s = trimNonAlnum(s)
-
-	if s == "" {
-		return "x"
-	}
-
-	// Truncate to max label value length
-	if len(s) > validation.LabelValueMaxLength {
-		s = s[:validation.LabelValueMaxLength]
+	// Truncate to the maximum length
+	if len(s) > maxLength {
+		s = s[:maxLength]
 		s = trimNonAlnum(s)
 		if s == "" {
 			return "x"

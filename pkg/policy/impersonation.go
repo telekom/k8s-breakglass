@@ -7,6 +7,7 @@ package policy
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -105,7 +106,7 @@ func impersonationRuleMatches(r breakglassv1alpha1.ImpersonationDenyRule, act Im
 		return isUnconstrainedRule(r)
 	}
 
-	if !modeMatches(r.Modes, act.Verb.Mode) {
+	if len(r.Modes) > 0 && !slices.Contains(r.Modes, breakglassv1alpha1.ImpersonationMode(act.Verb.Mode)) {
 		return false
 	}
 
@@ -140,7 +141,7 @@ func impersonationRuleMatches(r breakglassv1alpha1.ImpersonationDenyRule, act Im
 		return false
 	}
 
-	if len(r.IdentityResources) > 0 && !containsExact(r.IdentityResources, act.IdentityResource) {
+	if len(r.IdentityResources) > 0 && !slices.Contains(r.IdentityResources, act.IdentityResource) {
 		return false
 	}
 
@@ -189,31 +190,6 @@ func isUnconstrainedRule(r breakglassv1alpha1.ImpersonationDenyRule) bool {
 		len(r.TargetAPIGroups) == 0 &&
 		r.Namespaces.IsEmpty() &&
 		len(r.Modes) == 0
-}
-
-// modeMatches reports whether the rule's mode list covers mode. An empty list
-// matches every mode.
-func modeMatches(modes []breakglassv1alpha1.ImpersonationMode, mode impersonation.Mode) bool {
-	if len(modes) == 0 {
-		return true
-	}
-	for _, m := range modes {
-		if string(m) == string(mode) {
-			return true
-		}
-	}
-	return false
-}
-
-// containsExact is contains without the "*" wildcard, for enum-valued fields
-// where "*" is not a legal value.
-func containsExact(sl []string, v string) bool {
-	for _, s := range sl {
-		if s == v {
-			return true
-		}
-	}
-	return false
 }
 
 func defaultImpersonationDenyReason(act ImpersonationAction) string {

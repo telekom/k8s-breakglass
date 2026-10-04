@@ -25,28 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// RetryConfig configures retry behavior for update operations.
-type RetryConfig struct {
-	// MaxRetries is the maximum number of retry attempts (default: 5)
-	MaxRetries int
-	// InitialBackoff is the initial backoff duration (default: 50ms)
-	InitialBackoff time.Duration
-	// MaxBackoff is the maximum backoff duration (default: 1s)
-	MaxBackoff time.Duration
-	// BackoffMultiplier is the multiplier for exponential backoff (default: 2.0)
-	BackoffMultiplier float64
-}
-
-// DefaultRetryConfig returns a default retry configuration suitable for e2e tests.
-func DefaultRetryConfig() RetryConfig {
-	return RetryConfig{
-		MaxRetries:        5,
-		InitialBackoff:    50 * time.Millisecond,
-		MaxBackoff:        1 * time.Second,
-		BackoffMultiplier: 2.0,
-	}
-}
-
 // UpdateWithRetry performs an object update with automatic retry on conflict errors.
 // This is essential for e2e tests where controllers may be reconciling the same
 // object concurrently (e.g., updating status while test updates spec).
@@ -66,18 +44,8 @@ func UpdateWithRetry[T client.Object](
 	obj T,
 	modifyFunc func(T) error,
 ) error {
-	return UpdateWithRetryConfig(ctx, c, obj, modifyFunc, DefaultRetryConfig())
-}
-
-// UpdateWithRetryConfig is like UpdateWithRetry but allows custom retry configuration.
-func UpdateWithRetryConfig[T client.Object](
-	ctx context.Context,
-	c client.Client,
-	obj T,
-	modifyFunc func(T) error,
-	config RetryConfig,
-) error {
-	backoff := config.InitialBackoff
+	const maxRetries = 5
+	backoff := 50 * time.Millisecond
 
 	// First, get the latest version
 	objKey := client.ObjectKeyFromObject(obj)
@@ -85,7 +53,7 @@ func UpdateWithRetryConfig[T client.Object](
 		return err
 	}
 
-	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= maxRetries; attempt++ {
 		// Apply the modification function
 		if err := modifyFunc(obj); err != nil {
 			return err
@@ -98,7 +66,7 @@ func UpdateWithRetryConfig[T client.Object](
 		}
 
 		// Check if it's a conflict error and we should retry
-		if !apierrors.IsConflict(err) || attempt >= config.MaxRetries {
+		if !apierrors.IsConflict(err) || attempt >= maxRetries {
 			return err
 		}
 
@@ -110,10 +78,7 @@ func UpdateWithRetryConfig[T client.Object](
 		}
 
 		// Increase backoff for next retry
-		backoff = time.Duration(float64(backoff) * config.BackoffMultiplier)
-		if backoff > config.MaxBackoff {
-			backoff = config.MaxBackoff
-		}
+		backoff = min(backoff*2, time.Second)
 
 		// Re-fetch the object to get the latest version
 		if err := c.Get(ctx, objKey, obj); err != nil {

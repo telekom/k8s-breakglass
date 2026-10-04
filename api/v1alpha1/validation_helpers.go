@@ -854,7 +854,7 @@ func validateEmailDomainList(domains []string, fieldPath *field.Path) field.Erro
 		}
 
 		// Basic domain validation - should have at least one dot
-		if !containsDot(domain) && domain != "localhost" {
+		if !strings.ContainsRune(domain, '.') && domain != "localhost" {
 			errs = append(errs, field.Invalid(fieldPath.Index(i), domain, "domain should include a dot (e.g., example.com)"))
 		}
 
@@ -868,16 +868,6 @@ func validateEmailDomainList(domains []string, fieldPath *field.Path) field.Erro
 	}
 
 	return errs
-}
-
-// containsDot checks if a string contains a dot
-func containsDot(s string) bool {
-	for _, ch := range s {
-		if ch == '.' {
-			return true
-		}
-	}
-	return false
 }
 
 // isValidDomainChar checks if a character is valid in a domain name
