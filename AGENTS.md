@@ -91,6 +91,61 @@ manifest with keyless Cosign.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
 12. **Utility-image mutation boundary**: Bind every supplied repair flag to an immutable controller-owned approval tuple, reject duplicates and irrelevant flags, pin kernel object identity (for example ifindex) across preflight and mutation, and make volume leases crash-recoverable only for the same immutable operation.
 
+## Reuse upstream libraries before writing helpers
+
+Before adding a helper, check for a maintained upstream implementation in this
+order: Go standard library → Kubernetes, controller-runtime, client-go, and
+apimachinery → Flux `fluxcd/pkg` → other well-known libraries → merged
+`telekom/t-caas-go-library` packages → custom code. Use the upstream package
+directly when its behavior fits; explain any semantic mismatch before choosing
+custom code. This rule applies even while an adoption PR is open or unmerged.
+
+| Concern | Prefer these exact import paths |
+| --- | --- |
+| Conditions and condition slices | `github.com/fluxcd/pkg/runtime/conditions`; `k8s.io/apimachinery/pkg/api/meta` |
+| Generic resource readiness | `sigs.k8s.io/cli-utils/pkg/kstatus/status` |
+| Snapshot patching | `github.com/fluxcd/pkg/runtime/patch` |
+| Optimistic-lock retry | `sigs.k8s.io/controller-runtime/pkg/client`; `k8s.io/client-go/util/retry` |
+| Server-side apply | `github.com/fluxcd/pkg/ssa`; `sigs.k8s.io/controller-runtime/pkg/client` |
+| Test API server and assertions | `sigs.k8s.io/controller-runtime/pkg/envtest`; `sigs.k8s.io/controller-runtime/pkg/envtest/komega` |
+| E2E waits and manifest decoding | `sigs.k8s.io/e2e-framework/klient/wait`; `sigs.k8s.io/e2e-framework/klient/decoder` |
+| Kubernetes port forwarding | `k8s.io/client-go/tools/portforward`; `k8s.io/client-go/transport/spdy` |
+| Leader election | `k8s.io/client-go/tools/leaderelection`; `github.com/fluxcd/pkg/runtime/leaderelection` |
+| Remote cluster clients | `sigs.k8s.io/controller-runtime/pkg/cluster`; `github.com/telekom/t-caas-go-library/pkg/remoteclient` |
+| Circuit breaking and retry | `github.com/sony/gobreaker/v2`; `github.com/cenkalti/backoff/v5` |
+| Tracing and exporter selection | `go.opentelemetry.io/otel/sdk/trace`; `go.opentelemetry.io/contrib/exporters/autoexport` |
+| Metrics | `github.com/prometheus/client_golang/prometheus`; `github.com/fluxcd/pkg/runtime/metrics` |
+| Webhook certificate rotation | `github.com/open-policy-agent/cert-controller/pkg/rotator` |
+| Context-aware polling | `k8s.io/apimachinery/pkg/util/wait` |
+| Shared patch and IP helpers | `github.com/telekom/t-caas-go-library/pkg/patch`; `github.com/telekom/t-caas-go-library/pkg/netutil` |
+
+The detailed guide is
+[`telekom/t-caas-go-library/docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md);
+the library repository is currently private and is planned to become public,
+so use the package paths and recommendations here without relying on that link.
+Relevant merged packages include `pkg/patch`, `pkg/remoteclient`, and
+`pkg/netutil`. The guide's `pkg/ssa` and `pkg/certrotation` proposals are
+pending, not available dependencies.
+
+Convenience wrappers are appropriate only when the same glue demonstrably
+repeats across multiple repositories; contribute that shared glue to
+`telekom/t-caas-go-library` instead of duplicating it. Keep domain policy local.
+Migration candidates (no code changes in this guidance update) include
+`api/v1alpha1/condition_helpers.go`, `pkg/telemetry/telemetry.go`,
+`e2e/helpers/{wait,retry,client,portforward}.go`,
+`pkg/leaderelection/leaderelection.go`,
+`pkg/cluster/{cache.go,watchers.go,circuitbreaker.go}`,
+`pkg/audit/circuit_breaker.go`, `pkg/utils/patchhelper.go`, and
+`pkg/cert/cert.go`. Preserve local readiness, authorization, OIDC/TTL,
+reacquisition, error-classification, and cleanup semantics when evaluating
+these candidates.
+
+As of 2026-10-04, open [PR #1410](https://github.com/telekom/k8s-breakglass/pull/1410)
+and [PR #1411](https://github.com/telekom/k8s-breakglass/pull/1411) provide
+context for ongoing SSA helper consolidation and shared-applier adoption. Their
+open status does not settle the final API or justify duplicating upstream
+behavior.
+
 For utility image changes, keep `IMAGE-METADATA.yaml` synchronized with image labels, dependency locks, supported platforms, the shared `network-diagnostics` intent, and digest-gated signing targets. Multi-architecture local builds must produce a reviewable OCI archive without pushing mutable tags.
 
 ## Standalone cluster-validator image (TCAAS-1619)
