@@ -357,6 +357,12 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 			stopped = true
 			if !stop() {
 				<-abortDone
+				return
+			}
+			// Cancellation closes Done() before starting AfterFunc callbacks, so a
+			// stream that returned on cancellation can unregister the callback first.
+			if streamCtx.Err() != nil {
+				abortTransport()
 			}
 		}
 	}

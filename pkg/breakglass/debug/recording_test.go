@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -169,6 +170,33 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	}
 	if stdout.String() != "before-expiry" || len(recording.Bytes) == 0 {
 		t.Fatalf("expiry discarded partial output: stdout=%q recording=%d", stdout.String(), len(recording.Bytes))
+	}
+}
+
+// Context cancellation closes Done() before AfterFunc callbacks are started, so
+// an executor returning on cancellation can race the deferred transport abort.
+func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) {
+	for i := 0; i < 500; i++ {
+		var aborts atomic.Int32
+		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want cancellation", i, err)
+		}
+		if got := aborts.Load(); got != 1 {
+			t.Fatalf("iteration %d: transport aborted %d times, want exactly once", i, got)
+		}
+	}
+}
+
+func TestStreamTerminalWithLeaseDoesNotAbortTransportOnCompletion(t *testing.T) {
+	var aborts atomic.Int32
+	executor := &testTerminalExecutor{output: []byte("done")}
+	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+	if err != nil {
+		t.Fatalf("streamTerminalWithLease() error = %v", err)
+	}
+	if got := aborts.Load(); got != 0 {
+		t.Fatalf("transport aborted %d times after normal completion, want 0", got)
 	}
 }
 
