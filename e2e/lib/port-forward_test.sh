@@ -19,6 +19,7 @@ trap cleanup EXIT
 
 kubectl() {
   printf '%s|%s\n' "${KUBECONFIG:-}" "$*" >> "$test_dir/calls"
+  printf '%s\n' 'mock kubectl diagnostic' >&2
   if [ "$mode" = fail ] || { [ "$mode" = restart ] && [ ! -f "$test_dir/failed" ]; }; then
     : > "$test_dir/failed"
     return 1
@@ -67,11 +68,23 @@ for configuration in explicit hub ambient; do
   test "$(tail -n 1 "$test_dir/calls")" = "$expected"
   test "$(tail -n 1 "$PF_FILE")" = "$wrapper_pid"
   test "$(cat "$test_dir/pid-output")" = "$wrapper_pid"
+  test "$(grep -c 'mock kubectl diagnostic' "$test_dir/forward.log" || true)" -eq 0
   child="$(cat "$test_dir/child")"
   kill -0 "$wrapper_pid"
   kill -0 "$child"
   stop_and_check "$child"
 done
+
+# Captured diagnostics must survive both the initial failure and restart.
+rm -f "$test_dir/calls" "$test_dir/failed" "$test_dir/child"
+mode=restart
+unset PF_FILE
+start_keepalive_port_forward test-ns test-service 8080 9090 "" /dev/stderr \
+  > "$test_dir/pid-output" 2> "$test_dir/forward.log"
+wrapper_pid=$!
+wait_for_calls 2
+test "$(grep -c 'mock kubectl diagnostic' "$test_dir/forward.log")" -eq 2
+stop_and_check "$(cat "$test_dir/child")"
 
 # A stop during the restart delay must not leave the delay process behind.
 rm -f "$test_dir/calls"
@@ -95,4 +108,4 @@ if kill -0 "$!" 2>/dev/null; then
   exit 1
 fi
 
-printf '%s\n' 'Port-forward restart, kubeconfig, PID tracking, and cleanup behavior passed'
+printf '%s\n' 'Port-forward restart, diagnostics, kubeconfig, PID tracking, and cleanup behavior passed'

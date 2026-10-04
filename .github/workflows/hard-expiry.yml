@@ -131,7 +131,7 @@ jobs:
           # the normal E2E CI lanes do.
           source e2e/lib/port-forward.sh
           start_keepalive_port_forward breakglass-system breakglass-breakglass "$api_port" 8080 \
-            "$E2E_HUB_KUBECONFIG" > hard-expiry-api-port-forward.log 2>&1
+            "$E2E_HUB_KUBECONFIG" /dev/stderr > hard-expiry-api-port-forward.log 2>&1
           echo "HARD_EXPIRY_API_FORWARD_PID=$!" >> "$GITHUB_ENV"
           for _ in $(seq 1 30); do
             if curl --fail --silent "http://127.0.0.1:${api_port}/healthz" >/dev/null; then

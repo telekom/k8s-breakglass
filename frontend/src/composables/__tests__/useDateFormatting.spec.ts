@@ -80,18 +80,25 @@ describe("date formatting utilities", () => {
     });
   });
 
+  describe("formatWithTimezone", () => {
+    it.each(["2025-12-01T14:30:45Z", "2025-06-01T14:30:45Z"])("includes the local timezone for %s", (date) => {
+      const timezone = new Intl.DateTimeFormat(navigator.language || "en-US", {
+        timeZoneName: "short",
+      })
+        .formatToParts(new Date(date))
+        .find((part) => part.type === "timeZoneName");
+
+      expect(timezone).toBeDefined();
+      expect(formatWithTimezone(date)).toContain(timezone?.value);
+    });
+  });
+
   describe("formatRelativeTime", () => {
     const NOW = new Date("2025-12-01T12:00:00Z").getTime();
 
     beforeEach(() => {
       vi.useFakeTimers();
       vi.setSystemTime(NOW);
-    });
-
-    describe("formatWithTimezone", () => {
-      it("includes the timezone in formatted output", () => {
-        expect(formatWithTimezone("2025-12-01T14:30:45Z")).toMatch(/UTC|GMT|[+-]\d{2}:?\d{2}/);
-      });
     });
 
     afterEach(() => {
