@@ -27,6 +27,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -168,11 +169,11 @@ func TestClusterConfigReconciler_StatusUpdateFailureBlocksDeletion(t *testing.T)
 			return nil
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if subResourceName == "status" && obj.GetName() == "session-1" {
+			SubResourceApply: func(ctx context.Context, cl client.Client, subResourceName string, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+				if subResourceName == "status" && obj.(client.Object).GetName() == "session-1" {
 					return errors.New("simulated status conflict")
 				}
-				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				return cl.SubResource(subResourceName).Apply(ctx, obj, opts...)
 			},
 		}).
 		Build()

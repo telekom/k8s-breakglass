@@ -6,6 +6,7 @@ package ssatest
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -19,6 +20,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -100,8 +102,9 @@ func Escalation(t *testing.T, c client.Client, name string) *breakglassv1alpha1.
 // Hooks deliberately race a second writer between the helper's read and write.
 type CountingClient struct {
 	client.Client
-	Applies           atomic.Int64
-	Patches           atomic.Int64
+	Applies atomic.Int64
+	Patches atomic.Int64
+	// StatusPatches counts status writes through either Patch or native Apply.
 	StatusPatches     atomic.Int64
 	BeforePatch       func(context.Context, client.Object)
 	BeforeApply       func(context.Context)
@@ -164,5 +167,19 @@ func (c *subResourceClient) Patch(ctx context.Context, obj client.Object, patch 
 
 func (c *subResourceClient) Apply(ctx context.Context, obj k8sruntime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
 	c.counter.Applies.Add(1)
+	if c.name == "status" {
+		c.counter.StatusPatches.Add(1)
+		if c.counter.BeforeStatusPatch != nil {
+			data, err := json.Marshal(obj)
+			if err != nil {
+				return err
+			}
+			object := &unstructured.Unstructured{}
+			if err := json.Unmarshal(data, object); err != nil {
+				return err
+			}
+			c.counter.BeforeStatusPatch(ctx, object)
+		}
+	}
 	return c.SubResourceClient.Apply(ctx, obj, opts...)
 }

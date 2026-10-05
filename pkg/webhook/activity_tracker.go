@@ -30,6 +30,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
 
 // DefaultFlushInterval is the default interval between buffered status updates.
@@ -351,45 +352,38 @@ func (at *ActivityTracker) flush(ctx context.Context) {
 // write (i.e., another replica patched first), we re-read the latest status and
 // recompute the monotonic merge before retrying.
 func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.NamespacedName, entry *activityEntry) error {
-	reader := at.getReader()
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var session breakglassv1alpha1.BreakglassSession
-		if err := reader.Get(ctx, key, &session); err != nil {
-			if apierrors.IsNotFound(err) {
-				// Session was deleted — discard the entry, no point retrying
-				return nil
+	_, err := sharedpatch.Status(ctx, at.client, at.getReader(), retry.DefaultRetry, key,
+		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
+		func(session *breakglassv1alpha1.BreakglassSession) (bool, error) {
+			// Guard against name reuse: if the session was deleted and recreated
+			// with the same name, the UID will differ. Discard stale entries.
+			if entry.uid != "" && session.UID != entry.uid {
+				return false, nil
 			}
-			return err
-		}
 
-		// Guard against name reuse: if the session was deleted and recreated
-		// with the same name, the UID will differ. Discard stale entries.
-		if entry.uid != "" && session.UID != entry.uid {
-			return nil
-		}
+			// Only update active sessions — skip terminal states
+			if session.Status.State != breakglassv1alpha1.SessionStateApproved {
+				return false, nil
+			}
 
-		// Only update active sessions — skip terminal states
-		if session.Status.State != breakglassv1alpha1.SessionStateApproved {
-			return nil
-		}
+			// Monotonic merge: LastActivity only moves forward and ActivityCount
+			// never decreases. Combined with retry-on-conflict, this ensures
+			// concurrent flushes across replicas converge correctly.
+			newLastActivity := entry.lastSeen
+			if session.Status.LastActivity != nil && session.Status.LastActivity.Time.After(newLastActivity) {
+				newLastActivity = session.Status.LastActivity.Time
+			}
+			newCount := session.Status.ActivityCount + entry.count
 
-		// Monotonic merge: LastActivity only moves forward and ActivityCount
-		// never decreases. Combined with retry-on-conflict, this ensures
-		// concurrent flushes across replicas converge correctly.
-		newLastActivity := entry.lastSeen
-		if session.Status.LastActivity != nil && session.Status.LastActivity.Time.After(newLastActivity) {
-			newLastActivity = session.Status.LastActivity.Time
-		}
-		newCount := session.Status.ActivityCount + entry.count
+			session.Status.LastActivity = &metav1.Time{Time: newLastActivity}
+			session.Status.ActivityCount = newCount
 
-		// Patch only the activity fields via the status subresource.
-		// Include the resource version so a competing replica causes a retry.
-		base := session.DeepCopy()
-		session.Status.LastActivity = &metav1.Time{Time: newLastActivity}
-		session.Status.ActivityCount = newCount
-
-		return at.client.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
+			return true, nil
+		})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	return err
 }
 
 // getReader returns the uncached reader if configured, otherwise falls back to the cached client.

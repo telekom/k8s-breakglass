@@ -915,12 +915,12 @@ func TestExpireIdleSessions_RetrySucceedsOnSecondAttempt(t *testing.T) {
 		WithStatusSubresource(ses).
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", idleTestMetadataNameIndexer).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+			SubResourceApply: func(ctx context.Context, cl client.Client, subResourceName string, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
 				patchCallCount++
 				if patchCallCount == 1 {
 					return fmt.Errorf("simulated conflict")
 				}
-				return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				return cl.SubResource(subResourceName).Apply(ctx, obj, opts...)
 			},
 		}).
 		Build()
@@ -965,7 +965,7 @@ func TestExpireIdleSessions_AllRetriesExhausted(t *testing.T) {
 		WithStatusSubresource(ses).
 		WithIndex(&breakglassv1alpha1.BreakglassSession{}, "metadata.name", idleTestMetadataNameIndexer).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			SubResourceApply: func(_ context.Context, _ client.Client, _ string, _ runtime.ApplyConfiguration, _ ...client.SubResourceApplyOption) error {
 				return fmt.Errorf("permanent API server error")
 			},
 		}).
@@ -1022,7 +1022,7 @@ func TestExpireIdleSessions_ReportsRevalidationErrorAfterStatusUpdateFailure(t *
 				}
 				return cl.Get(ctx, key, obj, opts...)
 			},
-			SubResourcePatch: func(_ context.Context, _ client.Client, _ string, _ client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			SubResourceApply: func(_ context.Context, _ client.Client, _ string, _ runtime.ApplyConfiguration, _ ...client.SubResourceApplyOption) error {
 				patchCallCount++
 				statusUpdateFailed = true
 				return fmt.Errorf("transient status update")

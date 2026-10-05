@@ -12,6 +12,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -742,63 +743,53 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 	if baseline != nil {
 		cleanupBaseline = *baseline
 	}
-	var patchedStatus breakglassv1alpha1.DebugSessionStatus
-	var patchedResourceVersion string
+	var previouslyFailed bool
+	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+			if ds.UID != "" && current.UID != ds.UID {
+				return false, fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
+			}
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current := &breakglassv1alpha1.DebugSession{}
-		if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), current); err != nil {
-			return err
-		}
-		if ds.UID != "" && current.UID != ds.UID {
-			return fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
-		}
+			previouslyFailed = cleanupConditionFailed(current)
+			current.Status.DeployedResources = mergeCleanupInventory(
+				cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
+				deployedResourceKey,
+			)
+			current.Status.AllowedPods = mergeCleanupInventory(
+				cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
+				allowedPodKey,
+			)
+			current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
+				cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
+			)
+			current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
+				cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
+				podTemplateResourceStatusKey,
+			)
+			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
+				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
+			)
+			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
+				// Classify the fresh merged inventory, not the operation or status-write error.
+				setCleanupCondition(current)
+			}
 
-		previouslyFailed := cleanupConditionFailed(current)
-		base := current.DeepCopy()
-		current.Status.DeployedResources = mergeCleanupInventory(
-			cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
-			deployedResourceKey,
-		)
-		current.Status.AllowedPods = mergeCleanupInventory(
-			cleanupBaseline.AllowedPods, desiredStatus.AllowedPods, current.Status.AllowedPods,
-			allowedPodKey,
-		)
-		current.Status.AuxiliaryResourceStatuses = mergeAuxiliaryResourceStatuses(
-			cleanupBaseline.AuxiliaryResourceStatuses, desiredStatus.AuxiliaryResourceStatuses, current.Status.AuxiliaryResourceStatuses,
-		)
-		current.Status.PodTemplateResourceStatuses = mergeCleanupInventory(
-			cleanupBaseline.PodTemplateResourceStatuses, desiredStatus.PodTemplateResourceStatuses, current.Status.PodTemplateResourceStatuses,
-			podTemplateResourceStatusKey,
-		)
-		current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
-			cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
-		)
-		if desiredCleanupCondition(desiredStatus.Conditions) != nil {
-			// Classify the fresh merged inventory, not the operation or status-write error.
-			setCleanupCondition(current)
-		}
+			if current.Generation > 0 {
+				current.Status.ObservedGeneration = current.Generation
+			}
 
-		if current.Generation > 0 {
-			current.Status.ObservedGeneration = current.Generation
-		}
-
-		if err := c.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
-			return err
-		}
-		if wasFailed != nil {
-			*wasFailed = previouslyFailed
-		}
-		patchedStatus = current.Status
-		patchedResourceVersion = current.ResourceVersion
-		return nil
-	})
+			return true, nil
+		})
 	if err != nil {
 		return fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
 
-	ds.Status = patchedStatus
-	ds.ResourceVersion = patchedResourceVersion
+	if wasFailed != nil {
+		*wasFailed = previouslyFailed
+	}
+	ds.Status = patched.Status
+	ds.ResourceVersion = patched.ResourceVersion
 	return nil
 }
 

@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -25,6 +26,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
 
 // EscalationReconciler watches BreakglassEscalation CRs and validates their configuration.
@@ -51,16 +53,16 @@ type EscalationReconciler struct {
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	current := &breakglassv1alpha1.BreakglassEscalation{}
-	if err := r.client.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
-		return err
-	}
-	if current.UID != escalation.UID || current.Generation != escalation.Generation {
-		return fmt.Errorf("escalation %s/%s changed while updating validation status", escalation.Namespace, escalation.Name)
-	}
-	base := current.DeepCopy()
-	copyEscalationValidationStatus(current, escalation)
-	return r.client.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+	_, err := sharedpatch.Status(ctx, r.client, nil, wait.Backoff{Steps: 1}, client.ObjectKeyFromObject(escalation),
+		func() *breakglassv1alpha1.BreakglassEscalation { return &breakglassv1alpha1.BreakglassEscalation{} },
+		func(current *breakglassv1alpha1.BreakglassEscalation) (bool, error) {
+			if current.UID != escalation.UID || current.Generation != escalation.Generation {
+				return false, fmt.Errorf("escalation %s/%s changed while updating validation status", escalation.Namespace, escalation.Name)
+			}
+			copyEscalationValidationStatus(current, escalation)
+			return true, nil
+		})
+	return err
 }
 
 func copyEscalationValidationStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {

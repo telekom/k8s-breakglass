@@ -11,10 +11,32 @@ apply-configurations where available (CRDs and core types like Secrets) to keep 
 structured and consistent.
 
 > **Exception:** The `ActivityTracker` uses optimistic-concurrency status merge-patch
-> (`client.MergeFrom` with `retry.RetryOnConflict`) instead of SSA. This avoids dedicated
+> (`t-caas-go-library/pkg/patch.Status` with `retry.DefaultRetry`) instead of SSA. This avoids dedicated
 > field-manager ownership for the `lastActivity`/`activityCount` fields, allowing multiple
 > replicas to safely merge activity data through monotonic convergence (latest timestamp,
 > additive count).
+
+Status SSA uses `github.com/telekom/t-caas-go-library/pkg/ssa` at `v0.1.0`;
+CRD-specific builders, subset comparisons and explicit empty-list handling stay local.
+The status adapter checks existence and captures the resource version before the shared
+cache gate, preserving missing-object/no-write behavior and stale-writer conflicts.
+With an uncached client this requires two reads; manager clients normally serve them
+from their cache.
+
+Repeated fresh-read/status-mutation cycles use the shared `pkg/patch.Status`.
+Their existing readers, retry budgets, UID/generation checks and no-change decisions
+are unchanged. Snapshot-bound writes, survivor selection, admission side effects and
+template accounting continue to use native controller-runtime optimistic patches:
+their pre-write policy and outer retry boundaries are not generic mutation callbacks.
+Finalizer removal uses `pkg/patch.RemoveFinalizer`, which can explicitly remove the last
+finalizer where generated SSA omits an empty list.
+
+Main-resource SSA retains its characterized consumer comparison gates. Typed comparisons
+include server metadata; dynamic manifests use exact list comparisons and the existing
+owned-field pruning policy. The shared main-resource `Applier` normalizes metadata,
+always evaluates UID/resource-version preconditions and reclaims ownership; Flux adds
+server-side dry-run requests. Neither preserves those existing skip/apply counts.
+See the public [upstream selection guide](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md).
 
 Additional controller-runtime features in use:
 

@@ -27,34 +27,21 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	sharedssa "github.com/telekom/t-caas-go-library/pkg/ssa"
 	"go.uber.org/zap"
 )
 
 // PatchApplyResult indicates the outcome of a patch-or-skip operation.
-type PatchApplyResult int
+type PatchApplyResult = sharedssa.PatchApplyResult
 
 const (
 	// PatchApplyResultSkipped means the resource was already up-to-date (no API call made).
-	PatchApplyResultSkipped PatchApplyResult = iota
+	PatchApplyResultSkipped = sharedssa.PatchApplyResultSkipped
 	// PatchApplyResultCreated means the resource did not exist and was created via SSA.
-	PatchApplyResultCreated
+	PatchApplyResultCreated = sharedssa.PatchApplyResultCreated
 	// PatchApplyResultPatched means the resource existed but differed and was patched via SSA.
-	PatchApplyResultPatched
+	PatchApplyResultPatched = sharedssa.PatchApplyResultPatched
 )
-
-// String returns a human-readable label for the result.
-func (r PatchApplyResult) String() string {
-	switch r {
-	case PatchApplyResultSkipped:
-		return "skipped"
-	case PatchApplyResultCreated:
-		return "created"
-	case PatchApplyResultPatched:
-		return "patched"
-	default:
-		return "unknown"
-	}
-}
 
 // PatchApplyObject reads the current object via the provided client, converts both
 // current and desired to ApplyConfigurations, and only sends an SSA Patch if there

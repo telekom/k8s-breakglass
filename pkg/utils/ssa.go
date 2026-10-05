@@ -21,6 +21,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
+	sharedssa "github.com/telekom/t-caas-go-library/pkg/ssa"
 	"go.uber.org/zap"
 )
 
@@ -91,7 +92,7 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object) error 
 		return fmt.Errorf("failed to convert object to status apply configuration: %w", err)
 	}
 
-	if err := c.SubResource("status").Apply(ctx, applyConfig, client.FieldOwner(FieldOwnerController), client.ForceOwnership); err != nil {
+	if err := sharedssa.ApplyStatus(ctx, c, applyConfig, FieldOwnerController); err != nil {
 		if apierrors.IsConflict(err) {
 			zap.S().Warnw("SSA status apply conflict",
 				"kind", obj.GetObjectKind().GroupVersionKind().String(),

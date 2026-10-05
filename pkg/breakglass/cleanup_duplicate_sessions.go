@@ -14,6 +14,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -486,40 +487,37 @@ func drainDuplicateCleanupAudit(ctx context.Context, log *zap.SugaredLogger, mgr
 		return fmt.Errorf("synchronous duplicate cleanup audit delivery: %w", err)
 	}
 
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current, getErr := getLiveDuplicateSession(ctx, mgr, live)
-		if getErr != nil {
-			return getErr
-		}
-		currentCondition := duplicateCleanupAuditCondition(&current)
-		if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
-			return nil
-		}
-		if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
-			return fmt.Errorf("duplicate cleanup audit intent changed during acknowledgement")
-		}
-		if legacyPending {
-			if current.Status.State != terminalState {
-				return fmt.Errorf("legacy duplicate cleanup terminal state changed during acknowledgement")
+	_, err = sharedpatch.Status(ctx, mgr.Client, mgr.Reader(), retry.DefaultRetry, client.ObjectKeyFromObject(&live),
+		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
+		func(current *breakglassv1alpha1.BreakglassSession) (bool, error) {
+			currentCondition := duplicateCleanupAuditCondition(current)
+			if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
+				return false, nil
 			}
-		} else if current.Status.State != terminalState {
-			return fmt.Errorf("duplicate cleanup terminal state changed during acknowledgement")
-		}
-		base := current.DeepCopy()
-		ackReason := condition.Reason
-		if legacyPending {
-			ackReason = "EmissionAccepted"
-		}
-		current.SetCondition(metav1.Condition{
-			Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
-			Status:             metav1.ConditionTrue,
-			LastTransitionTime: condition.LastTransitionTime,
-			Reason:             ackReason,
-			Message:            "Duplicate cleanup terminal audit was synchronously accepted by every configured sink.",
+			if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
+				return false, fmt.Errorf("duplicate cleanup audit intent changed during acknowledgement")
+			}
+			if legacyPending {
+				if current.Status.State != terminalState {
+					return false, fmt.Errorf("legacy duplicate cleanup terminal state changed during acknowledgement")
+				}
+			} else if current.Status.State != terminalState {
+				return false, fmt.Errorf("duplicate cleanup terminal state changed during acknowledgement")
+			}
+			ackReason := condition.Reason
+			if legacyPending {
+				ackReason = "EmissionAccepted"
+			}
+			current.SetCondition(metav1.Condition{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: condition.LastTransitionTime,
+				Reason:             ackReason,
+				Message:            "Duplicate cleanup terminal audit was synchronously accepted by every configured sink.",
+			})
+			current.Status.ObservedGeneration = current.Generation
+			return true, nil
 		})
-		current.Status.ObservedGeneration = current.Generation
-		return mgr.Client.Status().Patch(ctx, &current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
 	if err != nil {
 		log.Warnw("Duplicate cleanup audit delivered but acknowledgement failed; retaining retryable outbox state", "session", name, "namespace", namespace, "error", err)
 		return fmt.Errorf("acknowledge duplicate cleanup audit: %w", err)
@@ -534,47 +532,48 @@ func commitDuplicateCleanupWithoutAudit(
 	live breakglassv1alpha1.BreakglassSession,
 	condition metav1.Condition,
 ) error {
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		current, err := getLiveDuplicateSession(ctx, mgr, live)
-		if err != nil {
-			return err
-		}
-		currentCondition := duplicateCleanupAuditCondition(&current)
-		if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
-			return nil
-		}
-		if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
-			return fmt.Errorf("duplicate cleanup audit intent changed before disabled commit")
-		}
+	if live.Namespace == "" {
+		return fmt.Errorf("get live duplicate session %q: namespace is required for live reader lookup", live.Name)
+	}
+	_, err := sharedpatch.Status(ctx, mgr.Client, mgr.Reader(), retry.DefaultRetry, client.ObjectKeyFromObject(&live),
+		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
+		func(current *breakglassv1alpha1.BreakglassSession) (bool, error) {
+			currentCondition := duplicateCleanupAuditCondition(current)
+			if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
+				return false, nil
+			}
+			if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
+				return false, fmt.Errorf("duplicate cleanup audit intent changed before disabled commit")
+			}
 
-		base := current.DeepCopy()
-		if condition.Reason == duplicateCleanupLegacyPending {
-			current.SetCondition(metav1.Condition{
-				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: condition.LastTransitionTime,
-				Reason:             "AuditingDisabledAtCommit",
-				Message:            "Duplicate cleanup terminal audit was not required because auditing was intentionally disabled at commit.",
-			})
-		} else {
-			terminalState, stateErr := duplicateCleanupTerminalState(condition)
-			if stateErr != nil {
-				return stateErr
+			if condition.Reason == duplicateCleanupLegacyPending {
+				current.SetCondition(metav1.Condition{
+					Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: condition.LastTransitionTime,
+					Reason:             "AuditingDisabledAtCommit",
+					Message:            "Duplicate cleanup terminal audit was not required because auditing was intentionally disabled at commit.",
+				})
+			} else {
+				terminalState, stateErr := duplicateCleanupTerminalState(condition)
+				if stateErr != nil {
+					return false, stateErr
+				}
+				if current.Status.State != terminalState {
+					return false, fmt.Errorf("duplicate cleanup intent %q does not match terminal state %q", condition.Reason, current.Status.State)
+				}
+				current.SetCondition(metav1.Condition{
+					Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
+					Status:             metav1.ConditionTrue,
+					LastTransitionTime: condition.LastTransitionTime,
+					Reason:             condition.Reason,
+					Message:            "Duplicate cleanup audit was not required because auditing is intentionally disabled.",
+				})
 			}
-			if current.Status.State != terminalState {
-				return fmt.Errorf("duplicate cleanup intent %q does not match terminal state %q", condition.Reason, current.Status.State)
-			}
-			current.SetCondition(metav1.Condition{
-				Type:               string(breakglassv1alpha1.SessionConditionTypeDuplicateCleanupAuditComplete),
-				Status:             metav1.ConditionTrue,
-				LastTransitionTime: condition.LastTransitionTime,
-				Reason:             condition.Reason,
-				Message:            "Duplicate cleanup audit was not required because auditing is intentionally disabled.",
-			})
-		}
-		current.Status.ObservedGeneration = current.Generation
-		return mgr.Client.Status().Patch(ctx, &current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
+			current.Status.ObservedGeneration = current.Generation
+			return true, nil
+		})
+	return err
 }
 
 func emitDuplicateCleanupAudit(ctx context.Context, event *audit.Event, emitter AuditEmitter) error {

@@ -24,6 +24,7 @@ import (
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
 
 const (
@@ -837,18 +838,16 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 }
 
 func (u EscalationStatusUpdater) patchStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
-	return retry.RetryOnConflict(retry.DefaultBackoff, func() error {
-		current := &breakglassv1alpha1.BreakglassEscalation{}
-		if err := u.K8sClient.Get(ctx, client.ObjectKeyFromObject(escalation), current); err != nil {
-			return err
-		}
-		if current.UID != escalation.UID || current.Generation != escalation.Generation {
-			return fmt.Errorf("escalation %s/%s changed while updating group status", escalation.Namespace, escalation.Name)
-		}
-		base := current.DeepCopy()
-		copyEscalationGroupSyncStatus(current, escalation)
-		return u.K8sClient.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
+	_, err := sharedpatch.Status(ctx, u.K8sClient, nil, retry.DefaultBackoff, client.ObjectKeyFromObject(escalation),
+		func() *breakglassv1alpha1.BreakglassEscalation { return &breakglassv1alpha1.BreakglassEscalation{} },
+		func(current *breakglassv1alpha1.BreakglassEscalation) (bool, error) {
+			if current.UID != escalation.UID || current.Generation != escalation.Generation {
+				return false, fmt.Errorf("escalation %s/%s changed while updating group status", escalation.Namespace, escalation.Name)
+			}
+			copyEscalationGroupSyncStatus(current, escalation)
+			return true, nil
+		})
+	return err
 }
 
 func copyEscalationGroupSyncStatus(current, desired *breakglassv1alpha1.BreakglassEscalation) {
