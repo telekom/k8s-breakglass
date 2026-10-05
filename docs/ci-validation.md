@@ -17,8 +17,10 @@ informers. It verifies Secret-backed clients reach the API server, shared-Secret
 rotation/deletion evicts REST configs, clientsets and bare-name aliases,
 ClusterConfig reference changes/deletion remove dependencies, and concurrent
 refresh cannot repopulate the cache after invalidation completes. Privileged
-client tests fence Secret resource versions, ClusterConfig versions and UIDs,
-including credential rotation during construction, without relying on watchers.
+client tests fence Secret and inherited IdentityProvider resource versions,
+ClusterConfig versions, specs and UIDs, including credential rotation during
+construction, without relying on watchers. Ambiguous bare names fail closed
+both on live list results and cached matches; explicit namespace keys still work.
 The OIDC path uses real Kubernetes Secrets and a TLS issuer/spoke fixture to
 verify token injection, client-secret and CA dependency invalidation, and refusal
 to send a cached token after credentials are deleted. Configuration construction

@@ -120,6 +120,28 @@ func TestClientProviderRealAPI(t *testing.T) {
 		}, 10*time.Second, 10*time.Millisecond)
 	}
 
+	t.Run("ambiguous bare names fail closed while explicit namespaces remain usable", func(t *testing.T) {
+		left := newNamespace(t, "remote-ambiguous-left")
+		right := newNamespace(t, "remote-ambiguous-right")
+		for _, ns := range []string{left, right} {
+			secret := newSecret(t, ns, "credentials", config.Host)
+			newCluster(t, ns, "ambiguous-target", secret.Name)
+		}
+		p := NewClientProvider(live, zaptest.NewLogger(t).Sugar())
+		_, err := p.GetRESTConfig(ctx, "ambiguous-target")
+		require.ErrorContains(t, err, "multiple ClusterConfigs")
+		for _, ns := range []string{left, right} {
+			cfg, err := p.GetRESTConfig(ctx, cacheKey(ns, "ambiguous-target"))
+			require.NoError(t, err)
+			require.Equal(t, config.Host, cfg.Host)
+		}
+		_, err = p.GetAcrossAllNamespaces(ctx, "ambiguous-target")
+		require.ErrorContains(t, err, "multiple ClusterConfigs")
+		_, snapshot, err := p.GetRESTConfigForPrivilegedOperation(ctx, "ambiguous-target")
+		require.ErrorContains(t, err, "multiple ClusterConfigs")
+		require.Nil(t, snapshot)
+	})
+
 	t.Run("Secret rotation fans out and removes bare aliases and clientsets", func(t *testing.T) {
 		ns := newNamespace(t, "remote-fanout")
 		secret := newSecret(t, ns, "shared", config.Host)
@@ -193,6 +215,9 @@ func TestClientProviderRealAPI(t *testing.T) {
 		cc.Annotations = map[string]string{"version": "changed"}
 		require.NoError(t, live.Update(ctx, cc))
 		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "resource version changed")
+		cc.Spec.KubeconfigSecretRef.Key = "value"
+		require.NoError(t, live.Update(ctx, cc))
+		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "spec changed")
 		require.NoError(t, live.Delete(ctx, cc))
 		require.Error(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
 		recreated := cc.DeepCopy()
@@ -362,6 +387,63 @@ func TestClientProviderRealAPI(t *testing.T) {
 		require.NoError(t, live.Update(ctx, caSecret))
 		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
 		require.Equal(t, ca, checkToken("second").CAData)
+		t.Run("inherited credentials and IdentityProvider versions remain live fenced", func(t *testing.T) {
+			idp := &breakglassv1alpha1.IdentityProvider{
+				ObjectMeta: metav1.ObjectMeta{Name: "remote-inherited-idp"},
+				Spec: breakglassv1alpha1.IdentityProviderSpec{
+					OIDC: breakglassv1alpha1.OIDCConfig{
+						Authority: server.URL, ClientID: "frontend", ExpectedAudience: "test",
+						CertificateAuthority: string(ca),
+					},
+					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
+						BaseURL: server.URL, Realm: "test", ClientID: "service",
+						ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
+							Namespace: ns, Name: secret.Name, Key: "client-secret",
+						},
+					},
+				},
+			}
+			require.NoError(t, live.Create(ctx, idp))
+			inherited := &breakglassv1alpha1.ClusterConfig{
+				ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "inherited-target"},
+				Spec: breakglassv1alpha1.ClusterConfigSpec{
+					AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+					OIDCFromIdentityProvider: &breakglassv1alpha1.OIDCFromIdentityProviderConfig{
+						Name: idp.Name, Server: server.URL,
+						CASecretRef: &breakglassv1alpha1.SecretKeyReference{Namespace: ns, Name: caSecret.Name, Key: "ca.crt"},
+					},
+				},
+			}
+			require.NoError(t, live.Create(ctx, inherited))
+			// No watchers: inherited input fences must reject even a warm stale cache.
+			fenced := NewClientProvider(live, zaptest.NewLogger(t).Sugar()).WithLiveReader(live)
+			cfg, snapshot, err := fenced.GetRESTConfigForPrivilegedOperation(ctx, cacheKey(ns, inherited.Name))
+			require.NoError(t, err)
+			defer fenced.ReleasePrivilegedOperationClusterConfig(snapshot)
+			require.True(t, fenced.IsOIDCSecretTracked(ns, secret.Name))
+			httpClient, err := rest.HTTPClientFor(cfg)
+			require.NoError(t, err)
+			response, err := httpClient.Get(server.URL + "/spoke")
+			require.NoError(t, err)
+			body, err := io.ReadAll(response.Body)
+			require.NoError(t, response.Body.Close())
+			require.NoError(t, err)
+			require.Equal(t, "Bearer second", string(body))
+			require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, snapshot))
+			idp.Spec.DisplayName = "updated"
+			require.NoError(t, live.Update(ctx, idp))
+			require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, snapshot), "identityprovider/"+idp.Name+" changed")
+			_, next, err := fenced.GetRESTConfigForPrivilegedOperation(ctx, cacheKey(ns, inherited.Name))
+			require.NoError(t, err)
+			defer fenced.ReleasePrivilegedOperationClusterConfig(next)
+			secret.Data["client-secret"] = []byte("third")
+			require.NoError(t, live.Update(ctx, secret))
+			require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "secret/"+cacheKey(ns, secret.Name)+" changed")
+			require.NoError(t, live.Delete(ctx, idp))
+			require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "get referenced IdentityProvider")
+		})
+		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
+		checkToken("third")
 		require.NoError(t, live.Delete(ctx, secret))
 		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
 		cfg, err := provider.GetRESTConfig(ctx, cc.Name)
