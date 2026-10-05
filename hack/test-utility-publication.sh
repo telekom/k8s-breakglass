@@ -235,6 +235,7 @@ case "$*" in
 esac
 EOF
 chmod +x "${tmp}/bin/gh"
+# The release tag also starts REUSE, whose "test" check must not shadow main CI.
 tag_action_runs='{"workflow_runs":[{"id":100,"event":"push","head_branch":"main","path":".github/workflows/ci.yml"},{"id":200,"event":"push","head_branch":"v1.2.3","path":".github/workflows/reuse-compliance.yml"},{"id":300,"event":"push","head_branch":"v1.2.3","path":".github/workflows/release.yml"},{"id":400,"event":"push","head_branch":"v1.2.3","path":".github/workflows/utility-release.yml"}]}'
 tag_check_runs='{"check_runs":[{"id":1,"app":{"slug":"github-actions"},"name":"Essential CI","status":"completed","conclusion":"success","details_url":"https://github.com/o/r/actions/runs/100/job/1"},{"id":2,"app":{"slug":"github-actions"},"name":"test","status":"in_progress","conclusion":null,"details_url":"https://github.com/o/r/actions/runs/200/job/2"},{"id":3,"app":{"slug":"github-actions"},"name":"validate-tag","status":"in_progress","conclusion":null,"details_url":"https://github.com/o/r/actions/runs/300/job/3"}]}'
 tag_gate=(env GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_REF_NAME=v1.2.3 REQUIRED_CHECKS_JSON='["Essential CI"]' IGNORE_RELEASE_WORKFLOW_RUNS=true MOCK_ACTION_RUNS_JSON="${tag_action_runs}" MOCK_CHECK_RUNS_JSON="${tag_check_runs}")
