@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/internal/ssatest"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -139,4 +140,85 @@ func TestSSAEnvtestStatusCompetingManagerAndEmptyLists(t *testing.T) {
 	require.Empty(t, session.Status.Approvers)
 	require.Equal(t, "foreign", session.Status.ReasonEnded)
 	require.EqualValues(t, 2, c.StatusPatches.Load())
+}
+
+func TestSSAEnvtestDebugStatusMergesLiveMonotonicFields(t *testing.T) {
+	apiClient := ssatest.Start(t)
+	session := ssatest.DebugSession(t, apiClient, "live-monotonic")
+	now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
+	retained := metav1.NewTime(now.Add(time.Hour))
+	session.Status.State = breakglassv1alpha1.DebugSessionStateExpired
+	session.Status.ActivityCount = 7
+	session.Status.LastActivity = &now
+	session.Status.RetainedUntil = &retained
+	require.NoError(t, apiClient.Status().Update(t.Context(), session))
+	stale := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace, UID: session.UID},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateExpired, ActivityCount: 1, Message: "terminal bookkeeping",
+		},
+	}
+	c := &ssatest.CountingClient{Client: apiClient}
+	result, err := PatchApplyDebugSessionStatus(t.Context(), c, stale)
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultPatched, result)
+	require.NotEmpty(t, stale.ResourceVersion)
+	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.EqualValues(t, 7, session.Status.ActivityCount)
+	require.True(t, now.Equal(session.Status.LastActivity))
+	require.True(t, retained.Equal(session.Status.RetainedUntil))
+	stale.UID = "wrong-uid"
+	stale.ResourceVersion = ""
+	_, err = PatchApplyDebugSessionStatus(t.Context(), c, stale)
+	require.ErrorContains(t, err, "UID changed")
+	require.EqualValues(t, 1, c.StatusPatches.Load())
+}
+
+func TestSSAEnvtestExplicitEmptyDebugStatusList(t *testing.T) {
+	apiClient := ssatest.Start(t)
+	session := ssatest.DebugSession(t, apiClient, "empty-status-list")
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{Name: "auxiliary", Created: true}}
+	c := &ssatest.CountingClient{Client: apiClient}
+	result, err := PatchApplyDebugSessionStatus(t.Context(), c, session)
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultPatched, result)
+	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	result, err = PatchApplyDebugSessionStatus(t.Context(), c, session)
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultPatched, result)
+	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.Empty(t, session.Status.AuxiliaryResourceStatuses)
+	require.EqualValues(t, 2, c.StatusPatches.Load())
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{}
+	result, err = PatchApplyDebugSessionStatus(t.Context(), c, session)
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultSkipped, result)
+	require.EqualValues(t, 2, c.StatusPatches.Load())
+}
+
+func TestSSAEnvtestCustomStatusOwnerIsolation(t *testing.T) {
+	apiClient := ssatest.Start(t)
+	session := ssatest.Session(t, apiClient, "custom-status-owner")
+	c := &ssatest.CountingClient{Client: apiClient}
+	desired := ac.BreakglassSession(session.Name, session.Namespace).WithStatus(ac.BreakglassSessionStatus().WithActivityCount(2))
+	result, err := PatchApplyViaUnstructuredWithOwner(t.Context(), c, desired, "activity-owner")
+	require.NoError(t, err)
+	require.Equal(t, PatchApplyResultPatched, result)
+	require.NoError(t, ApplyViaUnstructuredWithOwner(t.Context(), c, desired, "activity-owner"))
+	require.EqualValues(t, 1, c.StatusPatches.Load())
+	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	session.Status.State = breakglassv1alpha1.SessionStateApproved
+	require.NoError(t, ApplyBreakglassSessionStatus(t.Context(), c, session))
+	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
+	require.EqualValues(t, 2, session.Status.ActivityCount)
+	require.Equal(t, breakglassv1alpha1.SessionStateApproved, session.Status.State)
+	owners := map[string]bool{}
+	for _, entry := range session.ManagedFields {
+		if entry.Subresource == "status" && entry.Operation == metav1.ManagedFieldsOperationApply {
+			owners[entry.Manager] = true
+		}
+	}
+	require.True(t, owners["activity-owner"])
+	require.True(t, owners[FieldOwnerController])
 }
