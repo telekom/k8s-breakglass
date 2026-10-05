@@ -11,12 +11,130 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestToApplyConfiguration_ConsolidatedConverters(t *testing.T) {
+	for _, tc := range []struct {
+		kind       string
+		obj        client.Object
+		namespaced bool
+	}{
+		{"BreakglassSession", &breakglassv1alpha1.BreakglassSession{}, true},
+		{"ClusterConfig", &breakglassv1alpha1.ClusterConfig{}, true},
+		{"DebugSession", &breakglassv1alpha1.DebugSession{}, true},
+		{"BreakglassEscalation", &breakglassv1alpha1.BreakglassEscalation{}, true},
+		{"IdentityProvider", &breakglassv1alpha1.IdentityProvider{}, false},
+		{"MailProvider", &breakglassv1alpha1.MailProvider{}, false},
+		{"DenyPolicy", &breakglassv1alpha1.DenyPolicy{}, false},
+		{"DebugSessionTemplate", &breakglassv1alpha1.DebugSessionTemplate{}, false},
+		{"DebugPodTemplate", &breakglassv1alpha1.DebugPodTemplate{}, false},
+		{"DebugSessionClusterBinding", &breakglassv1alpha1.DebugSessionClusterBinding{}, true},
+		{"Secret", &corev1.Secret{}, true},
+		{"Pod", &corev1.Pod{}, true},
+		{"ResourceQuota", &corev1.ResourceQuota{}, true},
+		{"PodDisruptionBudget", &policyv1.PodDisruptionBudget{}, true},
+		{"DaemonSet", &appsv1.DaemonSet{}, true},
+		{"Deployment", &appsv1.Deployment{}, true},
+		{"Job", &batchv1.Job{}, true},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			tc.obj.SetName("converted")
+			tc.obj.SetNamespace("default")
+			tc.obj.SetUID("identity")
+			tc.obj.SetResourceVersion("17")
+			tc.obj.SetLabels(map[string]string{"foreign": "preserve"})
+			config, err := ToApplyConfiguration(tc.obj)
+			require.NoError(t, err)
+			data, err := json.Marshal(config)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(data, &fields))
+			require.Equal(t, tc.kind, fields["kind"])
+			require.NotEmpty(t, fields["apiVersion"])
+			require.NotContains(t, fields, "status")
+			metadata := fields["metadata"].(map[string]any)
+			require.Equal(t, "converted", metadata["name"])
+			require.Equal(t, map[string]any{"foreign": "preserve"}, metadata["labels"])
+			if tc.namespaced {
+				require.Equal(t, "default", metadata["namespace"])
+			} else {
+				require.NotContains(t, metadata, "namespace")
+			}
+			if tc.kind == "Secret" {
+				require.NotContains(t, metadata, "uid")
+				require.NotContains(t, metadata, "resourceVersion")
+			} else {
+				require.Equal(t, "identity", metadata["uid"])
+				require.Equal(t, "17", metadata["resourceVersion"])
+			}
+		})
+	}
+}
+
+func TestToStatusApplyConfiguration_ConsolidatedConverters(t *testing.T) {
+	for _, tc := range []struct {
+		kind string
+		obj  client.Object
+	}{
+		{"BreakglassSession", &breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{ObservedGeneration: 7}}},
+		{"ClusterConfig", &breakglassv1alpha1.ClusterConfig{Status: breakglassv1alpha1.ClusterConfigStatus{ObservedGeneration: 7}}},
+		{"DebugSession", &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ObservedGeneration: 7}}},
+		{"BreakglassEscalation", &breakglassv1alpha1.BreakglassEscalation{Status: breakglassv1alpha1.BreakglassEscalationStatus{ObservedGeneration: 7}}},
+		{"IdentityProvider", &breakglassv1alpha1.IdentityProvider{Status: breakglassv1alpha1.IdentityProviderStatus{ObservedGeneration: 7}}},
+		{"MailProvider", &breakglassv1alpha1.MailProvider{Status: breakglassv1alpha1.MailProviderStatus{ObservedGeneration: 7}}},
+	} {
+		t.Run(tc.kind, func(t *testing.T) {
+			tc.obj.SetName("status-converted")
+			tc.obj.SetNamespace("default")
+			tc.obj.SetResourceVersion("19")
+			config, err := ToStatusApplyConfiguration(tc.obj)
+			require.NoError(t, err)
+			data, err := json.Marshal(config)
+			require.NoError(t, err)
+			var fields map[string]any
+			require.NoError(t, json.Unmarshal(data, &fields))
+			require.Equal(t, tc.kind, fields["kind"])
+			require.NotContains(t, fields, "spec")
+			require.EqualValues(t, 7, fields["status"].(map[string]any)["observedGeneration"])
+			metadata := fields["metadata"].(map[string]any)
+			require.Equal(t, "19", metadata["resourceVersion"])
+			if tc.kind == "IdentityProvider" || tc.kind == "MailProvider" {
+				require.NotContains(t, metadata, "namespace")
+			} else {
+				require.Equal(t, "default", metadata["namespace"])
+			}
+		})
+	}
+}
+
+func TestApplyConfigurationFrom_PreservesIntegerPrecisionAndStatusIsolation(t *testing.T) {
+	grace := int64(1<<63 - 1)
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "precision", Namespace: "default"},
+		Spec:       corev1.PodSpec{TerminationGracePeriodSeconds: &grace},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	config, err := ApplyConfigurationFrom(corev1ac.Pod(pod.Name, pod.Namespace), pod)
+	require.NoError(t, err)
+	require.Nil(t, config.Status)
+	require.NotNil(t, config.Spec)
+	require.Equal(t, grace, *config.Spec.TerminationGracePeriodSeconds)
+	_, err = ApplyConfigurationFrom(corev1ac.Pod("invalid", "default"), make(chan int))
+	var unsupported *json.UnsupportedTypeError
+	require.ErrorAs(t, err, &unsupported)
+	_, err = ApplyConfigurationFrom((*corev1ac.PodApplyConfiguration)(nil), pod)
+	require.ErrorContains(t, err, "seed must not be nil")
+	_, err = ApplyConfigurationFrom(corev1ac.Pod("invalid", "default"), nil)
+	require.ErrorContains(t, err, "source must encode a JSON object")
+}
 
 func newSSATestScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()

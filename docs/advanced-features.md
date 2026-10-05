@@ -38,6 +38,13 @@ always evaluates UID/resource-version preconditions and reclaims ownership; Flux
 server-side dry-run requests. Neither preserves those existing skip/apply counts.
 See the public [upstream selection guide](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md).
 
+Main-resource and status conversion share a seed-typed JSON decoder. Generated
+constructor seeds preserve GVK when client reads omit TypeMeta; cluster-scoped
+constructors exclude namespace. Main applies omit status and status applies omit spec,
+while exact integer decoding and the specialized Secret builder preserve the existing
+metadata/precondition behavior. The duplicate per-type private converters are removed;
+public helper names and the characterized retry APIs remain compatible.
+
 Additional controller-runtime features in use:
 
 - **Reconciliation timeout**: Default timeout is 5 minutes per reconciliation. Timeouts are surfaced

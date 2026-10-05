@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Adopt the tagged `t-caas-go-library` status SSA and optimistic patch helpers,
+  preserving conflict retries, field ownership and session lifecycle fences.
+- Consolidate main-resource and status ApplyConfiguration conversion without
+  changing resource scope, integer precision or metadata/precondition semantics.
+
 ### Added
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with

@@ -1,9 +1,11 @@
 package utils
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -110,39 +112,39 @@ func ApplyStatus(ctx context.Context, c client.Client, obj client.Object) error 
 func ToApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error) {
 	switch o := obj.(type) {
 	case *breakglassv1alpha1.BreakglassSession:
-		return breakglassSessionToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.BreakglassSession(o.Name, o.Namespace), o)
 	case *breakglassv1alpha1.ClusterConfig:
-		return clusterConfigToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.ClusterConfig(o.Name, o.Namespace), o)
 	case *breakglassv1alpha1.DebugSession:
-		return debugSessionToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.DebugSession(o.Name, o.Namespace), o)
 	case *breakglassv1alpha1.BreakglassEscalation:
-		return breakglassEscalationToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.BreakglassEscalation(o.Name, o.Namespace), o)
 	case *breakglassv1alpha1.IdentityProvider:
-		return identityProviderToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.IdentityProvider(o.Name), o)
 	case *breakglassv1alpha1.MailProvider:
-		return mailProviderToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.MailProvider(o.Name), o)
 	case *breakglassv1alpha1.DenyPolicy:
-		return denyPolicyToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.DenyPolicy(o.Name), o)
 	case *breakglassv1alpha1.DebugSessionTemplate:
-		return debugSessionTemplateToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.DebugSessionTemplate(o.Name), o)
 	case *breakglassv1alpha1.DebugPodTemplate:
-		return debugPodTemplateToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.DebugPodTemplate(o.Name), o)
 	case *breakglassv1alpha1.DebugSessionClusterBinding:
-		return debugSessionClusterBindingToApplyConfig(o)
+		return ApplyConfigurationFrom(ac.DebugSessionClusterBinding(o.Name, o.Namespace), o)
 	case *corev1.Secret:
 		return secretToApplyConfig(o), nil
 	case *corev1.Pod:
-		return podToApplyConfig(o)
+		return ApplyConfigurationFrom(corev1ac.Pod(o.Name, o.Namespace), o)
 	case *corev1.ResourceQuota:
-		return resourceQuotaToApplyConfig(o)
+		return ApplyConfigurationFrom(corev1ac.ResourceQuota(o.Name, o.Namespace), o)
 	case *policyv1.PodDisruptionBudget:
-		return pdbToApplyConfig(o)
+		return ApplyConfigurationFrom(policyv1ac.PodDisruptionBudget(o.Name, o.Namespace), o)
 	case *appsv1.DaemonSet:
-		return daemonSetToApplyConfig(o)
+		return ApplyConfigurationFrom(appsv1ac.DaemonSet(o.Name, o.Namespace), o)
 	case *appsv1.Deployment:
-		return deploymentToApplyConfig(o)
+		return ApplyConfigurationFrom(appsv1ac.Deployment(o.Name, o.Namespace), o)
 	case *batchv1.Job:
-		return jobToApplyConfig(o)
+		return ApplyConfigurationFrom(batchv1ac.Job(o.Name, o.Namespace), o)
 	default:
 		return nil, fmt.Errorf("unsupported type for ApplyConfiguration: %T", obj)
 	}
@@ -153,173 +155,20 @@ func ToApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error)
 func ToStatusApplyConfiguration(obj client.Object) (runtime.ApplyConfiguration, error) {
 	switch o := obj.(type) {
 	case *breakglassv1alpha1.BreakglassSession:
-		return breakglassSessionStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.BreakglassSession(o.Name, o.Namespace), o, "spec")
 	case *breakglassv1alpha1.ClusterConfig:
-		return clusterConfigStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.ClusterConfig(o.Name, o.Namespace), o, "spec")
 	case *breakglassv1alpha1.DebugSession:
-		return debugSessionStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.DebugSession(o.Name, o.Namespace), o, "spec")
 	case *breakglassv1alpha1.BreakglassEscalation:
-		return breakglassEscalationStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.BreakglassEscalation(o.Name, o.Namespace), o, "spec")
 	case *breakglassv1alpha1.IdentityProvider:
-		return identityProviderStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.IdentityProvider(o.Name), o, "spec")
 	case *breakglassv1alpha1.MailProvider:
-		return mailProviderStatusApplyConfig(o)
+		return decodeApplyConfiguration(ac.MailProvider(o.Name), o, "spec")
 	default:
 		return nil, fmt.Errorf("unsupported type for status ApplyConfiguration: %T", obj)
 	}
-}
-
-// Helper functions for each type
-
-func breakglassSessionToApplyConfig(o *breakglassv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
-	cfg := ac.BreakglassSession(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil // Don't include status when applying spec
-	return cfg, nil
-}
-
-func breakglassSessionStatusApplyConfig(o *breakglassv1alpha1.BreakglassSession) (*ac.BreakglassSessionApplyConfiguration, error) {
-	cfg := ac.BreakglassSession(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Spec = nil // Only include status
-	return cfg, nil
-}
-
-func clusterConfigToApplyConfig(o *breakglassv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
-	cfg := ac.ClusterConfig(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func clusterConfigStatusApplyConfig(o *breakglassv1alpha1.ClusterConfig) (*ac.ClusterConfigApplyConfiguration, error) {
-	cfg := ac.ClusterConfig(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Spec = nil
-	return cfg, nil
-}
-
-func debugSessionToApplyConfig(o *breakglassv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
-	cfg := ac.DebugSession(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func debugSessionStatusApplyConfig(o *breakglassv1alpha1.DebugSession) (*ac.DebugSessionApplyConfiguration, error) {
-	cfg := ac.DebugSession(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Spec = nil
-	return cfg, nil
-}
-
-func breakglassEscalationToApplyConfig(o *breakglassv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
-	cfg := ac.BreakglassEscalation(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func breakglassEscalationStatusApplyConfig(o *breakglassv1alpha1.BreakglassEscalation) (*ac.BreakglassEscalationApplyConfiguration, error) {
-	cfg := ac.BreakglassEscalation(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Spec = nil
-	return cfg, nil
-}
-
-func identityProviderToApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
-	cfg := ac.IdentityProvider(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func identityProviderStatusApplyConfig(o *breakglassv1alpha1.IdentityProvider) (*ac.IdentityProviderApplyConfiguration, error) {
-	cfg := ac.IdentityProvider(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Spec = nil
-	return cfg, nil
-}
-
-func mailProviderToApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
-	cfg := ac.MailProvider(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func mailProviderStatusApplyConfig(o *breakglassv1alpha1.MailProvider) (*ac.MailProviderApplyConfiguration, error) {
-	cfg := ac.MailProvider(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Spec = nil
-	return cfg, nil
-}
-
-func denyPolicyToApplyConfig(o *breakglassv1alpha1.DenyPolicy) (*ac.DenyPolicyApplyConfiguration, error) {
-	cfg := ac.DenyPolicy(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func debugSessionTemplateToApplyConfig(o *breakglassv1alpha1.DebugSessionTemplate) (*ac.DebugSessionTemplateApplyConfiguration, error) {
-	cfg := ac.DebugSessionTemplate(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func debugPodTemplateToApplyConfig(o *breakglassv1alpha1.DebugPodTemplate) (*ac.DebugPodTemplateApplyConfiguration, error) {
-	cfg := ac.DebugPodTemplate(o.Name)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Namespace = nil
-	cfg.Status = nil
-	return cfg, nil
-}
-
-func debugSessionClusterBindingToApplyConfig(o *breakglassv1alpha1.DebugSessionClusterBinding) (*ac.DebugSessionClusterBindingApplyConfiguration, error) {
-	cfg := ac.DebugSessionClusterBinding(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
 }
 
 func secretToApplyConfig(o *corev1.Secret) *corev1ac.SecretApplyConfiguration {
@@ -353,76 +202,43 @@ func secretToApplyConfig(o *corev1.Secret) *corev1ac.SecretApplyConfiguration {
 	return cfg
 }
 
-// podToApplyConfig converts a Pod to its ApplyConfiguration equivalent.
-func podToApplyConfig(o *corev1.Pod) (*corev1ac.PodApplyConfiguration, error) {
-	cfg := corev1ac.Pod(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	// Clear status - SSA should only set spec
-	cfg.Status = nil
-	return cfg, nil
+// ApplyConfigurationFrom decodes obj into a generated constructor seed,
+// preserving its GVK and scope while excluding status from the main-resource apply.
+func ApplyConfigurationFrom[AC runtime.ApplyConfiguration](seed AC, obj any) (AC, error) {
+	return decodeApplyConfiguration(seed, obj, "status")
 }
 
-// resourceQuotaToApplyConfig converts a ResourceQuota to its ApplyConfiguration equivalent.
-func resourceQuotaToApplyConfig(o *corev1.ResourceQuota) (*corev1ac.ResourceQuotaApplyConfiguration, error) {
-	cfg := corev1ac.ResourceQuota(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
+func decodeApplyConfiguration[AC runtime.ApplyConfiguration](seed AC, obj any, excludedField string) (AC, error) {
+	var zero AC
+	value := reflect.ValueOf(seed)
+	if !value.IsValid() || (value.Kind() == reflect.Pointer && value.IsNil()) {
+		return zero, fmt.Errorf("apply configuration seed must not be nil")
 	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-// pdbToApplyConfig converts a PodDisruptionBudget to its ApplyConfiguration equivalent.
-func pdbToApplyConfig(o *policyv1.PodDisruptionBudget) (*policyv1ac.PodDisruptionBudgetApplyConfiguration, error) {
-	cfg := policyv1ac.PodDisruptionBudget(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-// daemonSetToApplyConfig converts a DaemonSet to its ApplyConfiguration equivalent.
-func daemonSetToApplyConfig(o *appsv1.DaemonSet) (*appsv1ac.DaemonSetApplyConfiguration, error) {
-	cfg := appsv1ac.DaemonSet(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-// deploymentToApplyConfig converts a Deployment to its ApplyConfiguration equivalent.
-func deploymentToApplyConfig(o *appsv1.Deployment) (*appsv1ac.DeploymentApplyConfiguration, error) {
-	cfg := appsv1ac.Deployment(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-// jobToApplyConfig converts a Job to its ApplyConfiguration equivalent.
-func jobToApplyConfig(o *batchv1.Job) (*batchv1ac.JobApplyConfiguration, error) {
-	cfg := batchv1ac.Job(o.Name, o.Namespace)
-	if err := jsonDecodeInto(o, cfg); err != nil {
-		return nil, err
-	}
-	cfg.Status = nil
-	return cfg, nil
-}
-
-// jsonDecodeInto marshals src to JSON and unmarshals into dst.
-// This is used to convert typed objects to their ApplyConfiguration equivalents.
-func jsonDecodeInto(src, dst interface{}) error {
-	data, err := json.Marshal(src)
+	data, err := json.Marshal(obj)
 	if err != nil {
-		return fmt.Errorf("failed to marshal %T: %w", src, err)
+		return zero, fmt.Errorf("failed to marshal %T: %w", obj, err)
 	}
-	if err := json.Unmarshal(data, dst); err != nil {
-		return fmt.Errorf("failed to unmarshal into %T: %w", dst, err)
+	var fields map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := decoder.Decode(&fields); err != nil {
+		return zero, fmt.Errorf("failed to unmarshal %T: %w", obj, err)
 	}
-	return nil
+	if fields == nil {
+		return zero, fmt.Errorf("apply configuration source must encode a JSON object")
+	}
+	delete(fields, excludedField)
+	if scoped, ok := any(seed).(interface{ GetNamespace() *string }); ok && scoped.GetNamespace() == nil {
+		if metadata, ok := fields["metadata"].(map[string]any); ok {
+			delete(metadata, "namespace")
+		}
+	}
+	data, err = json.Marshal(fields)
+	if err != nil {
+		return zero, fmt.Errorf("failed to marshal %T: %w", obj, err)
+	}
+	if err := json.Unmarshal(data, seed); err != nil {
+		return zero, fmt.Errorf("failed to unmarshal into %T: %w", seed, err)
+	}
+	return seed, nil
 }
