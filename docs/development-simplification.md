@@ -51,9 +51,15 @@ missing resources are pending, same-name replacements fail, and legacy
 resources without a recorded UID are never accepted as ready.
 
 The naming goldens preserve user-visible normalization and truncation, not
-merely validation. Config reload coverage preserves interval-based checks,
+merely validation. A session-creation envtest exercises the actual naming
+consumer, checks persisted generated names and resolved-identity labels, and
+selects the created session through the canonical user label. CLI tests pin
+certificate filename/path defaults and environment/flag precedence; existing
+webhook options tests cover how those paths reach the serving configuration.
+Config reload coverage preserves interval-based checks,
 mtime equality, last-known-good fallback on malformed/deleted files, recovery
-and atomic replacement. Neither Kubernetes name validation nor a strict YAML
+and atomic replacement, including the escalation manager's injected shared
+loader. Neither Kubernetes name validation nor a strict YAML
 decoder is a behavior-preserving replacement for those policies by itself.
 Rate-limit tests preserve per-IP/per-identity isolation, denial responses,
 retry reservation cancellation and idle eviction. General Gin middleware does

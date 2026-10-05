@@ -33,6 +33,24 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestRespondTooManyRequestsWithRetryAfter(t *testing.T) {
+	for _, message := range []string{"", "session creation rate limit exceeded"} {
+		t.Run(message, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			ctx, _ := gin.CreateTestContext(response)
+			RespondTooManyRequestsWithRetryAfter(ctx, "3", message)
+			require.Equal(t, http.StatusTooManyRequests, response.Code)
+			require.Equal(t, "3", response.Header().Get("Retry-After"))
+			if message == "" {
+				message = "too many requests"
+			}
+			var body APIError
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+			require.Equal(t, APIError{Error: message, Code: "TOO_MANY_REQUESTS"}, body)
+		})
+	}
+}
+
 func TestRespondNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
