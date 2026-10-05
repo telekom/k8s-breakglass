@@ -263,7 +263,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
 			return fmt.Errorf("re-read debug session before renewal: %w", err)
 		}
-		if live.UID != originalUID || !canRenewDebugSession(live, identity) ||
+		if live.UID != originalUID || !live.DeletionTimestamp.IsZero() || !canRenewDebugSession(live, identity) ||
 			live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
 			live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
 			renewalConflict = true
