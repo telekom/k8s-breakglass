@@ -23,6 +23,11 @@ All new features and significant changes **must include automated tests**:
 - Cover success cases, error cases, and edge cases
 - Aim for >70% code coverage for new code
 - Run `make test` (Go) and `cd frontend && npm test` (frontend) before opening PRs
+- For SSA/status patch changes, also run `make test-ssa-envtest`. This installs
+  the repository CRDs into envtest and checks actual apply counts, ownership,
+  resource-version conflicts, live-read retries, status isolation and deletion.
+  CI runs this target with real API-server assets; ordinary unit-test runs skip
+  these tests when `KUBEBUILDER_ASSETS` is unset.
 
 If testing is impractical, document why in the PR description.
 
