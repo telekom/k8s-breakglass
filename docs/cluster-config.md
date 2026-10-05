@@ -215,6 +215,8 @@ kubeconfigSecretRef:
   data or a bearer token. Exec/auth-provider plugins, `tokenFile`, and filesystem
   CA/certificate/key references are rejected, even in unused cluster or user
   entries. A kubeconfig accepted by `kubectl` can therefore still be rejected.
+  The periodic readiness checker applies the same restriction and sets
+  `Ready=False` with reason `KubeconfigParseFailed` when it fails.
 - `metadata.name` MUST be unique across **all namespaces**. The controller now enforces globally-unique names and will raise an error if two namespaces contain the same ClusterConfig name. Pick descriptive names that remain unique even when teams manage their own namespaces.
 
 #### Migrating file/plugin-based kubeconfigs

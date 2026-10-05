@@ -65,6 +65,12 @@ files and filesystem certificate/key/CA references are rejected, including
 unused entries in the kubeconfig. Errors do not include credential/parser
 details. `TestKubeconfigRegistryRequiresEmbeddedCredentials` pins this contract;
 the other registry tests pin client association and lazy TLS-error behavior.
+The periodic ClusterConfig readiness checker uses the same upstream registry
+validation, so rejected credentials cannot remain `Ready=True`. The focused
+target also runs `TestClusterConfigReadinessEmbeddedKubeconfig` against the real
+API: allowed embedded credentials reach discovery, while each forbidden active
+or unused-entry form clears a previously true Ready condition without exposing
+credential details.
 
 The [upstream-first guide](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md)
 still applies to circuit breakers. Audit already uses `sony/gobreaker/v2`.
