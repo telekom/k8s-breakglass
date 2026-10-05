@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	kptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,6 +62,8 @@ func TestPlatformCertBootstrapRotationEnvtest(t *testing.T) {
 	manager := NewManager(cfg, key.Name, key.Namespace, certDir, webhook.Name, ready, leadership, zap.NewNop().Sugar())
 	manager.rotatorAdder = func(mgr ctrl.Manager, cr *rotator.CertRotator) error {
 		cr.RotationCheckFrequency = 100 * time.Millisecond
+		// Controller names are registered process-wide, including across -count runs.
+		cr.ControllerName = "platform-cert-" + string(uuid.NewUUID())
 		return rotator.AddRotator(mgr, cr)
 	}
 	managerCtx, cancel := context.WithCancel(ctx)
