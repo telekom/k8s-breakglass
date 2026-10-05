@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// ErrDebugSessionExpired marks a status mutation rejected because the session expired concurrently.
 var ErrDebugSessionExpired = errors.New("debug session expired during status update")
 
 func applyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
