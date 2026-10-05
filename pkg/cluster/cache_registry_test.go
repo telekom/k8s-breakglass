@@ -89,32 +89,44 @@ func TestKubeconfigRegistryPreservesLazyTransportErrors(t *testing.T) {
 
 func TestKubeconfigRegistryRequiresEmbeddedCredentials(t *testing.T) {
 	for _, kind := range []string{"exec", "auth-provider", "token-file", "certificate-file", "key-file", "ca-file"} {
-		t.Run(kind, func(t *testing.T) {
-			raw, err := clientcmd.Load(mustBuildKubeconfigYAML("https://target.example"))
-			require.NoError(t, err)
-			auth := raw.AuthInfos[raw.Contexts[raw.CurrentContext].AuthInfo]
-			const marker = "private-credential-marker"
-			switch kind {
-			case "exec":
-				auth.Exec = &clientcmdapi.ExecConfig{Command: marker}
-			case "auth-provider":
-				auth.AuthProvider = &clientcmdapi.AuthProviderConfig{Name: marker}
-			case "token-file":
-				auth.TokenFile = marker
-			case "certificate-file":
-				auth.ClientCertificate = marker
-			case "key-file":
-				auth.ClientKey = marker
-			case "ca-file":
-				raw.Clusters[raw.Contexts[raw.CurrentContext].Cluster].CertificateAuthority = marker
-			}
-			data, err := clientcmd.Write(*raw)
-			require.NoError(t, err)
-			p, _ := registryTestProvider(t, data)
-			cfg, err := p.GetRESTConfig(context.Background(), "registry/target")
-			require.ErrorIs(t, err, remoteclient.ErrInvalidKubeconfig)
-			require.NotContains(t, err.Error(), marker)
-			require.Nil(t, cfg)
-		})
+		for _, placement := range []string{"active", "unused"} {
+			t.Run(kind+"/"+placement, func(t *testing.T) {
+				raw, err := clientcmd.Load(mustBuildKubeconfigYAML("https://target.example"))
+				require.NoError(t, err)
+				active := raw.Contexts[raw.CurrentContext]
+				auth, cluster := raw.AuthInfos[active.AuthInfo], raw.Clusters[active.Cluster]
+				if placement == "unused" {
+					auth, cluster = &clientcmdapi.AuthInfo{}, &clientcmdapi.Cluster{Server: "https://unused.example"}
+					raw.AuthInfos["unused"], raw.Clusters["unused"] = auth, cluster
+				}
+				const marker = "private-credential-marker"
+				switch kind {
+				case "exec":
+					auth.Exec = &clientcmdapi.ExecConfig{Command: marker}
+				case "auth-provider":
+					auth.AuthProvider = &clientcmdapi.AuthProviderConfig{Name: marker}
+				case "token-file":
+					auth.TokenFile = marker
+				case "certificate-file":
+					auth.ClientCertificate = marker
+				case "key-file":
+					auth.ClientKey = marker
+				case "ca-file":
+					cluster.CertificateAuthority = marker
+				}
+				data, err := clientcmd.Write(*raw)
+				require.NoError(t, err)
+				if placement == "unused" {
+					native, err := clientcmd.RESTConfigFromKubeConfig(data)
+					require.NoError(t, err, "unused entries do not affect the selected native config")
+					require.Equal(t, "https://target.example", native.Host)
+				}
+				p, _ := registryTestProvider(t, data)
+				cfg, err := p.GetRESTConfig(context.Background(), "registry/target")
+				require.ErrorIs(t, err, remoteclient.ErrInvalidKubeconfig)
+				require.NotContains(t, err.Error(), marker)
+				require.Nil(t, cfg)
+			})
+		}
 	}
 }
