@@ -1018,7 +1018,7 @@ ClusterConfig readiness, missing-cluster, and tenant-alias errors are returned o
 
 The same strict JSON parsing applies to DebugSession renew, approve, reject, and kubectl-debug operation bodies. Bodyless actions such as join, leave, and terminate reject any non-empty body before JSON parsing.
 
-Status-changing DebugSession actions such as renew, terminate, approve, reject, join, and leave use optimistic locking. If another request updates the same session between the API read and status write, the endpoint returns `409 Conflict`; clients should refresh the session before retrying.
+Status-changing DebugSession actions such as renew, terminate, approve, reject, join, and leave use optimistic locking. Renewal retries concurrent status conflicts using the latest session and revalidates authorization, state, expiry, and template limits. It returns `409 Conflict` if the session changes or becomes ineligible during a retry, or if retries are exhausted. Other actions return `409 Conflict` when another request updates the session; clients should refresh before retrying.
 
 **Response:** Created `DebugSession` object (201 Created).
 
@@ -1085,8 +1085,9 @@ live session and privileged cluster configuration. Only the requester or an acti
 `participant` status entry can renew; `viewer` entries and participants with
 `leftAt` set cannot renew sessions.
 
-If the session changes concurrently while updating expiration status, the
-endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
+Renewal retries concurrent status conflicts against the latest session. The
+request still returns `409 Conflict` if the session changes, is deleted, or
+becomes ineligible while retrying; refresh the `DebugSession` before retrying.
 
 ### Terminate Debug Session
 
