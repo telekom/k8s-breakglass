@@ -151,7 +151,7 @@ test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) witho
 
 .PHONY: test-ssa-envtest
 test-ssa-envtest: setup-envtest ## Characterize SSA and optimistic status patches against a real API server.
-	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(abspath $(LOCALBIN)) -p path)" go test $(GO_TEST_FLAGS) ./pkg/utils ./api/v1alpha1/applyconfiguration/ssa ./pkg/config ./pkg/cluster ./pkg/breakglass ./pkg/breakglass/escalation ./pkg/breakglass/debug ./pkg/webhook -run '^TestSSAEnvtest' -v
+	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(abspath $(LOCALBIN)) -p path)" && test -n "$$assets" && CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$assets" go test $(GO_TEST_FLAGS) ./pkg/utils ./api/v1alpha1/applyconfiguration/ssa ./pkg/config ./pkg/cluster ./pkg/breakglass ./pkg/breakglass/escalation ./pkg/breakglass/debug ./pkg/webhook -run '^TestSSAEnvtest' -v
 
 .PHONY: test-hard-expiry-unit
 test-hard-expiry-unit: vet ## Run the focused unit boundary tests for regular-session hard expiry.
