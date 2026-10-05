@@ -26,7 +26,6 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/cli-utils/pkg/kstatus/status"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -140,35 +139,37 @@ func (r *ReadinessChecker) WaitForReadiness(
 	pollInterval time.Duration,
 ) ResourceReadiness {
 	deadline := time.Now().Add(timeout)
-	readiness := r.CheckResourceReadiness(ctx, c, gvk, name, namespace)
-	terminal := func() bool {
-		return readiness.IsReady() || readiness.IsFailed() || readiness.IsTerminating()
-	}
-	if terminal() {
-		return readiness
-	}
-	err := wait.PollUntilContextTimeout(ctx, pollInterval, time.Until(deadline), false, func(ctx context.Context) (bool, error) {
-		next := r.CheckResourceReadiness(ctx, c, gvk, name, namespace)
-		if next.Error != nil && ctx.Err() != nil {
-			return false, ctx.Err()
+
+	for {
+		readiness := r.CheckResourceReadiness(ctx, c, gvk, name, namespace)
+
+		// Return immediately if ready, failed, or terminating
+		if readiness.IsReady() || readiness.IsFailed() || readiness.IsTerminating() {
+			return readiness
 		}
-		readiness = next
-		return terminal(), nil
-	})
-	if err == nil {
-		return readiness
-	}
-	if ctx.Err() != nil {
-		return ResourceReadiness{
-			Status:  status.UnknownStatus,
-			Message: "context cancelled",
-			Error:   ctx.Err(),
+
+		// Check timeout
+		if time.Now().After(deadline) {
+			return ResourceReadiness{
+				Ready:   false,
+				Status:  readiness.Status,
+				Message: fmt.Sprintf("timeout waiting for readiness after %v: %s", timeout, readiness.Message),
+				Error:   fmt.Errorf("timeout waiting for readiness"),
+			}
 		}
-	}
-	return ResourceReadiness{
-		Status:  readiness.Status,
-		Message: fmt.Sprintf("timeout waiting for readiness after %v: %s", timeout, readiness.Message),
-		Error:   fmt.Errorf("timeout waiting for readiness"),
+
+		// Wait before next poll
+		select {
+		case <-ctx.Done():
+			return ResourceReadiness{
+				Ready:   false,
+				Status:  status.UnknownStatus,
+				Message: "context cancelled",
+				Error:   ctx.Err(),
+			}
+		case <-time.After(pollInterval):
+			// Continue polling
+		}
 	}
 }
 

@@ -345,8 +345,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Adopt public `t-caas-go-library` certificate setup and audit URL redaction
   while preserving certificate/leadership and HTTP response contracts. Hide
-  opaque URL diagnostics; use upstream context-bounded
-  readiness polling without changing domain readiness decisions.
+  opaque URL diagnostics without changing domain readiness decisions.
 
 - Simplify internal backend/frontend helpers and E2E setup without changing
   matching, normalization, session actions, or retry behavior; reuse one

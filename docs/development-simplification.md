@@ -89,12 +89,14 @@ known URL components and cannot hide arbitrary nested transport details while
 preserving the original `errors.Is`/`errors.As` chain.
 
 Generic readiness already delegates to `kstatus/status.Compute`, and CRD
-condition setters already use apimachinery. Polling now uses
-`wait.PollUntilContextTimeout`; domain terminal states, not-found errors and
-timeout/cancellation response shapes stay local. The polling deadline now
-also bounds polled API requests, retaining the last completed resource state
-if a request reaches that deadline. Name trimming uses `strings.TrimFunc`, while
-normalization keeps apimachinery's existing length constants and exact goldens.
+condition setters already use apimachinery. Their domain adapters are unchanged.
+An attempted `wait.PollUntilContextTimeout` replacement was dropped: applying its
+deadline to the initial API request changes the Phase 1 timeout result from
+NotFound to Unknown, and leaving that request outside the deadline would not
+provide a strict end-to-end deadline. Callers needing one must supply a deadline
+on their context.
+Name trimming uses `strings.TrimFunc`, while normalization keeps apimachinery's
+existing length constants and exact goldens.
 
 The following helpers deliberately remain local after inspecting the tagged
 APIs; replacing them would break unchanged Phase 1 contracts:
