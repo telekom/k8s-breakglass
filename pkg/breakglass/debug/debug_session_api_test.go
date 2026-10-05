@@ -8000,6 +8000,76 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		}
 	})
 
+	t.Run("renew retries transient status conflict", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels:    map[string]string{DebugSessionLabelKey: "test-session"},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+		patchAttempts := 0
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					if _, ok := obj.(*breakglassv1alpha1.DebugSession); !ok || subResourceName != "status" {
+						return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+					}
+					patchAttempts++
+					if patchAttempts == 1 {
+						live := &breakglassv1alpha1.DebugSession{}
+						if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+							return err
+						}
+						live.Status.ActivityCount++
+						activity := metav1.Now()
+						live.Status.LastActivity = &activity
+						if err := cl.Status().Update(ctx, live); err != nil {
+							return err
+						}
+						return apierrors.NewConflict(schema.GroupResource{
+							Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+						}, obj.GetName(), fmt.Errorf("controller updated activity during renewal"))
+					}
+					return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				},
+			}).
+			Build()
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true)
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		require.NoError(t, ctrl.Register(router.Group("/api/v1/"+ctrl.BasePath())))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(`{"extendBy":"1h"}`))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Equal(t, 2, patchAttempts)
+		updated := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&session), updated))
+		require.Equal(t, int32(1), updated.Status.RenewalCount)
+		require.Equal(t, int64(1), updated.Status.ActivityCount)
+	})
+
 	t.Run("renew status conflict returns conflict", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{
