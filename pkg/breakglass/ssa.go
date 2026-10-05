@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+var ErrDebugSessionExpired = errors.New("debug session expired during status update")
 
 func applyBreakglassSessionStatus(ctx context.Context, c client.Client, session *breakglassv1alpha1.BreakglassSession) error {
 	// Set observedGeneration for kstatus compliance
@@ -149,7 +152,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 		}
 	}
 	if oldStatus.State == breakglassv1alpha1.DebugSessionStateActive && DebugSessionIdleExpired(&breakglassv1alpha1.DebugSession{Status: oldStatus}, now) && !isTerminalDebugSessionState(newStatus.State) && !breakglassv1alpha1.AllowsExpiredActiveEphemeralOperationOutcome(oldStatus, newStatus, now) {
-		return fmt.Errorf("idle-expired session must become terminal")
+		return fmt.Errorf("%w: idle-expired session must become terminal", ErrDebugSessionExpired)
 	}
 
 	if isTerminalDebugSessionState(oldStatus.State) && newStatus.State != oldStatus.State {
@@ -211,7 +214,7 @@ func validateDebugSessionStatusMutation(oldStatus, newStatus breakglassv1alpha1.
 		!oldExpiryMissing && !now.Before(oldStatus.ExpiresAt.Time) &&
 		newStatus.State == breakglassv1alpha1.DebugSessionStateActive &&
 		!breakglassv1alpha1.AllowsExpiredActiveEphemeralOperationOutcome(oldStatus, newStatus, now) {
-		return fmt.Errorf("expired active session cannot receive a non-terminal status update")
+		return fmt.Errorf("%w: expired active session cannot receive a non-terminal status update", ErrDebugSessionExpired)
 	}
 	if oldStatus.ExpiresAt != nil && !oldStatus.ExpiresAt.IsZero() &&
 		(newStatus.ExpiresAt == nil || newStatus.ExpiresAt.IsZero()) && newStatus.State == breakglassv1alpha1.DebugSessionStateActive {

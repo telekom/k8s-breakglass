@@ -303,7 +303,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		})
 	})
 	if err != nil {
-		if renewalConflict || apierrors.IsNotFound(err) {
+		if renewalConflict || apierrors.IsNotFound(err) || errors.Is(err, breakglass.ErrDebugSessionExpired) {
 			apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
 			return
 		}

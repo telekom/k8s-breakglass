@@ -8081,6 +8081,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 			wantRenewalCount     int32
 			deleted              bool
 			deleteAfterRetryRead bool
+			expireAfterRetryRead bool
 			mutateOnConflict     func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error
 		}{
 			{
@@ -8147,6 +8148,16 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					return nil
 				},
 			},
+			{
+				name:                 "session expires before patch helper read",
+				username:             "alice@example.com",
+				initialExpiry:        expiresAt.Time.Truncate(time.Second),
+				wantExpiry:           expiresAt.Time.Truncate(time.Second),
+				expireAfterRetryRead: true,
+				mutateOnConflict: func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error {
+					return nil
+				},
+			},
 		}
 
 		for _, tt := range tests {
@@ -8155,6 +8166,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				deletionStarted := false
 				retryReadAfterConflict := false
 				deletedAfterRetryRead := false
+				expiredAfterRetryRead := false
 				session := breakglassv1alpha1.DebugSession{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-session",
@@ -8202,6 +8214,16 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 									return apierrors.NewNotFound(schema.GroupResource{
 										Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
 									}, key.Name)
+								}
+							}
+							if tt.expireAfterRetryRead && patchAttempts > 0 && key.Name == "test-session" {
+								if !retryReadAfterConflict {
+									retryReadAfterConflict = true
+								} else if !expiredAfterRetryRead {
+									live := obj.(*breakglassv1alpha1.DebugSession)
+									expired := metav1.NewTime(time.Now().Add(-time.Minute))
+									live.Status.ExpiresAt = &expired
+									expiredAfterRetryRead = true
 								}
 							}
 							if deletionStarted && key.Name == "test-session" {
