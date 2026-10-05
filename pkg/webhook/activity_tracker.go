@@ -383,12 +383,12 @@ func (at *ActivityTracker) updateSessionActivity(ctx context.Context, key types.
 		newCount := session.Status.ActivityCount + entry.count
 
 		// Patch only the activity fields via the status subresource.
-		// MergeFrom uses the session's ResourceVersion for conflict detection.
+		// Include the resource version so a competing replica causes a retry.
 		base := session.DeepCopy()
 		session.Status.LastActivity = &metav1.Time{Time: newLastActivity}
 		session.Status.ActivityCount = newCount
 
-		return at.client.Status().Patch(ctx, &session, client.MergeFrom(base))
+		return at.client.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
 	})
 }
 
