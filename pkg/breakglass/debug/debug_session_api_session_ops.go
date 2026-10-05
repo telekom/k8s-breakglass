@@ -261,6 +261,10 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		live := &breakglassv1alpha1.DebugSession{}
 		if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+			if apierrors.IsNotFound(err) {
+				renewalConflict = true
+				return fmt.Errorf("debug session was deleted during renewal")
+			}
 			return fmt.Errorf("re-read debug session before renewal: %w", err)
 		}
 		if live.UID != originalUID || !live.DeletionTimestamp.IsZero() || !canRenewDebugSession(live, identity) ||

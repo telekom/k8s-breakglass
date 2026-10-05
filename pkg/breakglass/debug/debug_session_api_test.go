@@ -8079,6 +8079,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 			initialExpiry    time.Time
 			wantExpiry       time.Time
 			wantRenewalCount int32
+			deleted          bool
 			mutateOnConflict func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error
 		}{
 			{
@@ -8122,6 +8123,16 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				wantExpiry:    expiresAt.Time.Truncate(time.Second),
 				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
 					return nil
+				},
+			},
+			{
+				name:          "session deleted before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				deleted:       true,
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					return cl.Delete(ctx, live)
 				},
 			},
 		}
@@ -8215,7 +8226,12 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
 				require.Equal(t, 1, patchAttempts)
 				updated := &breakglassv1alpha1.DebugSession{}
-				require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&session), updated))
+				err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&session), updated)
+				if tt.deleted {
+					require.True(t, apierrors.IsNotFound(err), "deleted session should remain absent: %v", err)
+					return
+				}
+				require.NoError(t, err)
 				require.Equal(t, tt.wantRenewalCount, updated.Status.RenewalCount)
 				require.True(t, updated.Status.ExpiresAt.Equal(&metav1.Time{Time: tt.wantExpiry}),
 					"got expiry %s, want %s", updated.Status.ExpiresAt.Time, tt.wantExpiry)
