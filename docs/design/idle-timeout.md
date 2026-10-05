@@ -90,7 +90,7 @@ for _, session := range activeSessions {
 | Per-session RBAC re-check (proposed) | High (first match) | O(n) extra SAR checks | O(1) per request (update only the attributed session) |
 | Async batch update | Medium | O(1) combined check only | O(n) per batch, off the webhook critical path |
 
-**Recommendation:** The implementation uses per-session attribution (re-check each session individually) with buffered writes via the `ActivityTracker`. Activity is recorded in-memory and flushed to the API server every 30 seconds using optimistic-concurrency status merge-patch (`client.MergeFrom` + `retry.RetryOnConflict`), avoiding hot-path latency while still providing per-session granularity.
+**Recommendation:** The implementation uses per-session attribution (re-check each session individually) with buffered writes via the `ActivityTracker`. Activity is recorded in-memory and flushed to the API server every 30 seconds using optimistic-concurrency status merge-patch (`client.MergeFromWithOptions` with `client.MergeFromWithOptimisticLock{}` + `retry.RetryOnConflict`), avoiding hot-path latency while still providing per-session granularity. Competing replicas trigger a fresh read and recomputation, preserving summed activity counts and the newest activity timestamp.
 
 ### 4.2 Write Concern
 

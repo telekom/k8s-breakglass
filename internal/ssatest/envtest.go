@@ -121,6 +121,7 @@ func (c *CountingClient) Patch(ctx context.Context, obj client.Object, patch cli
 	if c.BeforePatch != nil {
 		c.BeforePatch(ctx, obj)
 	}
+
 	return c.Client.Patch(ctx, obj, patch, opts...)
 }
 

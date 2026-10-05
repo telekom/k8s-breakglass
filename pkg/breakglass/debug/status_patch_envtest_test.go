@@ -137,6 +137,9 @@ func TestSSAEnvtestDebugPatchSites(t *testing.T) {
 			once.Do(func() {
 				live := job.DeepCopy()
 				require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(job), live))
+				if live.Labels == nil {
+					live.Labels = make(map[string]string)
+				}
 				live.Labels["foreign"] = "preserve"
 				require.NoError(t, apiClient.Update(ctx, live))
 			})
