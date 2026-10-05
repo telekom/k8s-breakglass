@@ -211,7 +211,30 @@ kubeconfigSecretRef:
 - The referenced Secret MUST exist in the specified namespace
 - The kubeconfig MUST provide admin-level access to the target cluster
 - The kubeconfig should be valid and accessible from the hub cluster
+- The kubeconfig MUST be self-contained: embed CA and client certificate/key
+  data or a bearer token. Exec/auth-provider plugins, `tokenFile`, and filesystem
+  CA/certificate/key references are rejected, even in unused cluster or user
+  entries. A kubeconfig accepted by `kubectl` can therefore still be rejected.
 - `metadata.name` MUST be unique across **all namespaces**. The controller now enforces globally-unique names and will raise an error if two namespaces contain the same ClusterConfig name. Pick descriptive names that remain unique even when teams manage their own namespaces.
+
+#### Migrating file/plugin-based kubeconfigs
+
+For CA and client certificate/key files, select the target context and flatten
+its data into a protected file before replacing the referenced Secret:
+
+```bash
+umask 077
+kubectl --kubeconfig=source-kubeconfig.yaml --context=target-context config view --raw --flatten --minify > embedded-kubeconfig.yaml
+```
+
+The output contains credentials: do not log it, commit it, or paste it into
+tickets. `--flatten` embeds certificate files but does not convert exec/auth
+plugins or token files. Replace those with an embedded `user.token` or
+`client-certificate-data`/`client-key-data` issued for the target service account;
+use OIDC authentication below when dynamic token acquisition is required.
+Ensure trust uses `certificate-authority-data`, remove forbidden fields from
+every remaining entry, and update the Secret's configured data key (default:
+`value`). Remove the protected local credential file after updating the Secret.
 
 ### OIDC Authentication
 
@@ -1244,21 +1267,26 @@ kubectl get clusterconfig <name> -o yaml
 
 #### Ready Condition: False (KubeconfigValidationFailed)
 
-**Cause:** The referenced kubeconfig secret doesn't exist or contains invalid data.
+**Cause:** The referenced kubeconfig secret doesn't exist, contains invalid data,
+or includes forbidden file/plugin credential references.
 
 **Diagnosis:**
 ```bash
 # Check if secret exists
 kubectl get secret <secret-name> -n <namespace>
 
-# Verify secret format
-kubectl get secret <secret-name> -n <namespace> -o yaml | grep kubeconfig
+# Inspect data key names and sizes without printing credential values
+kubectl describe secret <secret-name> -n <namespace>
 ```
 
 **Solution:**
 - Ensure the Secret exists in the specified namespace
-- Verify the kubeconfig key name (defaults to `kubeconfig`)
-- Validate kubeconfig syntax with `kubectl config view`
+- Verify the kubeconfig key name (defaults to `value`)
+- Validate kubeconfig syntax with `kubectl config view`; native parsing alone
+  does not verify the self-contained requirement
+- Follow the [kubeconfig migration guidance](#migrating-fileplugin-based-kubeconfigs)
+  above to embed credentials/trust and remove forbidden fields from active and
+  unused entries
 
 #### Ready Condition: False (ConnectionFailed)
 
@@ -1267,8 +1295,10 @@ kubectl get secret <secret-name> -n <namespace> -o yaml | grep kubeconfig
 **Diagnosis:**
 ```bash
 # Test kubeconfig connectivity
-kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.kubeconfig}' | base64 -d > /tmp/test.kubeconfig
-kubectl --kubeconfig=/tmp/test.kubeconfig cluster-info
+umask 077
+kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.value}' | base64 -d > test.kubeconfig
+kubectl --kubeconfig=test.kubeconfig cluster-info
+rm test.kubeconfig
 ```
 
 **Solution:**
