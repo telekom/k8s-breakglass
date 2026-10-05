@@ -8000,6 +8000,333 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		}
 	})
 
+	t.Run("renew retries transient status conflict", func(t *testing.T) {
+		session := breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "test-session",
+				Namespace: "default",
+				Labels:    map[string]string{DebugSessionLabelKey: "test-session"},
+			},
+			Spec: breakglassv1alpha1.DebugSessionSpec{
+				Cluster:     "production",
+				TemplateRef: "standard-debug",
+				RequestedBy: "alice@example.com",
+			},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:     breakglassv1alpha1.DebugSessionStateActive,
+				StartsAt:  &now,
+				ExpiresAt: &expiresAt,
+			},
+		}
+		patchAttempts := 0
+		fakeClient := fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(&session).
+			WithStatusSubresource(&session).
+			WithInterceptorFuncs(interceptor.Funcs{
+				SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+					if _, ok := obj.(*breakglassv1alpha1.DebugSession); !ok || subResourceName != "status" {
+						return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+					}
+					patchAttempts++
+					if patchAttempts == 1 {
+						live := &breakglassv1alpha1.DebugSession{}
+						if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+							return err
+						}
+						live.Status.ActivityCount++
+						activity := metav1.Now()
+						live.Status.LastActivity = &activity
+						if err := cl.Status().Update(ctx, live); err != nil {
+							return err
+						}
+						return apierrors.NewConflict(schema.GroupResource{
+							Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+						}, obj.GetName(), fmt.Errorf("controller updated activity during renewal"))
+					}
+					return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+				},
+			}).
+			Build()
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true)
+			c.Set("username", "alice@example.com")
+			c.Next()
+		})
+		require.NoError(t, ctrl.Register(router.Group("/api/v1/"+ctrl.BasePath())))
+
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(`{"extendBy":"1h"}`))
+		req.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, req)
+
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.Equal(t, 2, patchAttempts)
+		updated := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&session), updated))
+		require.Equal(t, int32(1), updated.Status.RenewalCount)
+		require.Equal(t, int64(1), updated.Status.ActivityCount)
+	})
+
+	t.Run("renew retry revalidates live session", func(t *testing.T) {
+		maxRenewals := int32(1)
+		tests := []struct {
+			name                 string
+			username             string
+			constraints          *breakglassv1alpha1.DebugSessionConstraints
+			initialExpiry        time.Time
+			wantExpiry           time.Time
+			wantRenewalCount     int32
+			wantState            breakglassv1alpha1.DebugSessionState
+			wantUID              string
+			deleted              bool
+			deleteAfterRetryRead bool
+			expireAfterRetryRead bool
+			mutateOnConflict     func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error
+		}{
+			{
+				name:             "last renewal slot consumed",
+				username:         "alice@example.com",
+				constraints:      &breakglassv1alpha1.DebugSessionConstraints{MaxRenewals: &maxRenewals},
+				initialExpiry:    expiresAt.Time.Truncate(time.Second),
+				wantExpiry:       expiresAt.Time.Truncate(time.Second),
+				wantRenewalCount: 1,
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					live.Status.RenewalCount = 1
+					return cl.Status().Update(ctx, live)
+				},
+			},
+			{
+				name:          "maximum duration consumed",
+				username:      "alice@example.com",
+				constraints:   &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "2h"},
+				initialExpiry: now.Add(time.Hour).Truncate(time.Second),
+				wantExpiry:    now.Add(90 * time.Minute).Truncate(time.Second),
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					expiry := metav1.NewTime(now.Add(90 * time.Minute).Truncate(time.Second))
+					live.Status.ExpiresAt = &expiry
+					return cl.Status().Update(ctx, live)
+				},
+			},
+			{
+				name:          "participant authorization revoked",
+				username:      "bob@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					live.Status.Participants = nil
+					return cl.Status().Update(ctx, live)
+				},
+			},
+			{
+				name:          "session deletion started",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					return nil
+				},
+			},
+			{
+				name:          "session deleted before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				deleted:       true,
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					return cl.Delete(ctx, live)
+				},
+			},
+			{
+				name:                 "session deleted before patch helper read",
+				username:             "alice@example.com",
+				initialExpiry:        expiresAt.Time.Truncate(time.Second),
+				wantExpiry:           expiresAt.Time.Truncate(time.Second),
+				deleted:              true,
+				deleteAfterRetryRead: true,
+				mutateOnConflict: func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error {
+					return nil
+				},
+			},
+			{
+				name:                 "session expires before patch helper read",
+				username:             "alice@example.com",
+				initialExpiry:        expiresAt.Time.Truncate(time.Second),
+				wantExpiry:           expiresAt.Time.Truncate(time.Second),
+				expireAfterRetryRead: true,
+				mutateOnConflict: func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error {
+					return nil
+				},
+			},
+			{
+				name:          "session replaced before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				wantState:     breakglassv1alpha1.DebugSessionStateActive,
+				wantUID:       "replacement-session-uid",
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					if err := cl.Delete(ctx, live); err != nil {
+						return err
+					}
+					replacement := live.DeepCopy()
+					replacement.UID = "replacement-session-uid"
+					replacement.ResourceVersion = ""
+					return cl.Create(ctx, replacement)
+				},
+			},
+			{
+				name:          "session becomes terminal before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				wantState:     breakglassv1alpha1.DebugSessionStateTerminated,
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+					return cl.Status().Update(ctx, live)
+				},
+			},
+		}
+
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				expiry := metav1.NewTime(tt.initialExpiry)
+				deletionStarted := false
+				retryReadAfterConflict := false
+				deletedAfterRetryRead := false
+				expiredAfterRetryRead := false
+				session := breakglassv1alpha1.DebugSession{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-session",
+						Namespace: "default",
+						UID:       "session-uid",
+						Labels:    map[string]string{DebugSessionLabelKey: "test-session"},
+					},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:     "production",
+						TemplateRef: "standard-debug",
+						RequestedBy: "alice@example.com",
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{
+						State:     breakglassv1alpha1.DebugSessionStateActive,
+						StartsAt:  &now,
+						ExpiresAt: &expiry,
+						ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+							Constraints: tt.constraints,
+						},
+					},
+				}
+				if tt.username == "bob@example.com" {
+					session.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{
+						{User: tt.username, Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now},
+					}
+				}
+
+				patchAttempts := 0
+				fakeClient := fake.NewClientBuilder().
+					WithScheme(scheme).
+					WithObjects(&session).
+					WithStatusSubresource(&session).
+					WithInterceptorFuncs(interceptor.Funcs{
+						Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+							if err := cl.Get(ctx, key, obj, opts...); err != nil {
+								return err
+							}
+							if tt.deleteAfterRetryRead && patchAttempts > 0 && key.Name == "test-session" {
+								if !retryReadAfterConflict {
+									retryReadAfterConflict = true
+								} else if !deletedAfterRetryRead {
+									if err := cl.Delete(ctx, obj); err != nil {
+										return err
+									}
+									deletedAfterRetryRead = true
+									return apierrors.NewNotFound(schema.GroupResource{
+										Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+									}, key.Name)
+								}
+							}
+							if tt.expireAfterRetryRead && patchAttempts > 0 && key.Name == "test-session" {
+								if !retryReadAfterConflict {
+									retryReadAfterConflict = true
+								} else if !expiredAfterRetryRead {
+									live := obj.(*breakglassv1alpha1.DebugSession)
+									expired := metav1.NewTime(time.Now().Add(-time.Minute))
+									live.Status.ExpiresAt = &expired
+									expiredAfterRetryRead = true
+								}
+							}
+							if deletionStarted && key.Name == "test-session" {
+								live := obj.(*breakglassv1alpha1.DebugSession)
+								deletionTime := metav1.Now()
+								live.DeletionTimestamp = &deletionTime
+								live.Finalizers = []string{"test"}
+							}
+							return nil
+						},
+						SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+							if _, ok := obj.(*breakglassv1alpha1.DebugSession); !ok || subResourceName != "status" {
+								return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+							}
+							patchAttempts++
+							if patchAttempts == 1 {
+								live := &breakglassv1alpha1.DebugSession{}
+								if err := cl.Get(ctx, client.ObjectKeyFromObject(obj), live); err != nil {
+									return err
+								}
+								if tt.name == "session deletion started" {
+									deletionStarted = true
+								}
+								if err := tt.mutateOnConflict(ctx, cl, live); err != nil {
+									return err
+								}
+								return apierrors.NewConflict(schema.GroupResource{
+									Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+								}, obj.GetName(), fmt.Errorf("controller updated session during renewal"))
+							}
+							return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
+						},
+					}).
+					Build()
+				ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+				router := gin.New()
+				router.Use(func(c *gin.Context) {
+					c.Set("legacy_identity_allowed", true)
+					c.Set("username", tt.username)
+					c.Next()
+				})
+				require.NoError(t, ctrl.Register(router.Group("/api/v1/"+ctrl.BasePath())))
+
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions/test-session/renew", strings.NewReader(`{"extendBy":"1h"}`))
+				req.Header.Set("Content-Type", "application/json")
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, req)
+
+				require.Equal(t, http.StatusConflict, response.Code, response.Body.String())
+				require.Equal(t, 1, patchAttempts)
+				updated := &breakglassv1alpha1.DebugSession{}
+				err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&session), updated)
+				if tt.deleted {
+					require.True(t, apierrors.IsNotFound(err), "deleted session should remain absent: %v", err)
+					return
+				}
+				require.NoError(t, err)
+				require.Equal(t, tt.wantRenewalCount, updated.Status.RenewalCount)
+				if tt.wantUID != "" {
+					require.Equal(t, tt.wantUID, string(updated.UID))
+				} else {
+					require.Equal(t, "session-uid", string(updated.UID))
+				}
+				if tt.wantState != "" {
+					require.Equal(t, tt.wantState, updated.Status.State)
+				}
+				require.True(t, updated.Status.ExpiresAt.Equal(&metav1.Time{Time: tt.wantExpiry}),
+					"got expiry %s, want %s", updated.Status.ExpiresAt.Time, tt.wantExpiry)
+			})
+		}
+	})
+
 	t.Run("renew status conflict returns conflict", func(t *testing.T) {
 		session := breakglassv1alpha1.DebugSession{
 			ObjectMeta: metav1.ObjectMeta{

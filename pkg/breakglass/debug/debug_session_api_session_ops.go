@@ -19,6 +19,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/util/retry"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -254,27 +255,58 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	newRenewalCount := session.Status.RenewalCount + 1
-	// Re-read immediately before the status patch. The status mutation path and
-	// admission webhook both repeat the strict time check at the API boundary.
-	live := &breakglassv1alpha1.DebugSession{}
-	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
-		reqLog.Errorw("Failed to re-read debug session before renewal", "session", name, "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to renew session")
-		return
-	}
-	if live.UID != session.UID || live.ResourceVersion != session.ResourceVersion ||
-		!canRenewDebugSession(live, identity) || live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
-		live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
-		apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
-		return
-	}
-	session = live
-	newExpiry = metav1.NewTime(session.Status.ExpiresAt.Add(extendBy))
-	if err := c.patchDebugSessionStatusWithOptimisticLock(apiCtx, session, func(status *breakglassv1alpha1.DebugSessionStatus) {
-		status.ExpiresAt = &newExpiry
-		status.RenewalCount = newRenewalCount
-	}); err != nil {
+	originalUID := session.UID
+	var newRenewalCount int32
+	renewalConflict := false
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		live := &breakglassv1alpha1.DebugSession{}
+		if err := c.reader().Get(apiCtx, ctrlclient.ObjectKeyFromObject(session), live); err != nil {
+			if apierrors.IsNotFound(err) {
+				renewalConflict = true
+				return fmt.Errorf("debug session was deleted during renewal")
+			}
+			return fmt.Errorf("re-read debug session before renewal: %w", err)
+		}
+		if live.UID != originalUID || !live.DeletionTimestamp.IsZero() || !canRenewDebugSession(live, identity) ||
+			live.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+			live.Status.ExpiresAt == nil || isDebugSessionExpired(live, time.Now().UTC()) {
+			renewalConflict = true
+			return fmt.Errorf("debug session changed or expired before renewal")
+		}
+
+		newExpiry = metav1.NewTime(live.Status.ExpiresAt.Add(extendBy))
+		newRenewalCount = live.Status.RenewalCount + 1
+		if constraints := live.Status.ResolvedTemplate; constraints != nil && constraints.Constraints != nil {
+			limits := constraints.Constraints
+			maxRenewals := int32(3)
+			if limits.MaxRenewals != nil {
+				maxRenewals = *limits.MaxRenewals
+			}
+			exceedsMaxDuration := false
+			if limits.MaxDuration != "" {
+				if maxDuration, parseErr := breakglassv1alpha1.ParseDuration(limits.MaxDuration); parseErr == nil {
+					exceedsMaxDuration = live.Status.StartsAt == nil ||
+						newExpiry.Time.After(live.Status.StartsAt.Add(maxDuration))
+				}
+			}
+			if (limits.AllowRenewal != nil && !*limits.AllowRenewal) ||
+				maxRenewals == 0 || live.Status.RenewalCount >= maxRenewals || exceedsMaxDuration {
+				renewalConflict = true
+				return fmt.Errorf("debug session renewal constraints changed")
+			}
+		}
+
+		session = live
+		return c.patchDebugSessionStatusWithOptimisticLock(apiCtx, live, func(status *breakglassv1alpha1.DebugSessionStatus) {
+			status.ExpiresAt = &newExpiry
+			status.RenewalCount = newRenewalCount
+		})
+	})
+	if err != nil {
+		if renewalConflict || apierrors.IsNotFound(err) || errors.Is(err, breakglass.ErrDebugSessionExpired) {
+			apiresponses.RespondConflict(ctx, "debug session changed or expired before renewal; refresh the session before retrying")
+			return
+		}
 		respondDebugSessionStatusPatchError(ctx, reqLog, "renew session", "failed to renew session", name, err)
 		return
 	}

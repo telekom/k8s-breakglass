@@ -131,6 +131,12 @@ prepare-test: ## Regenerate code/manifests, format Go files, and run vet before 
 test: vet ## Run all unit tests (controller + CLI) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE)) -coverprofile cover.out
 
+.PHONY: test-cluster-clients
+test-cluster-clients: setup-envtest ## Characterize remote client invalidation and freshness against a real API server.
+	@assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" && \
+		assets="$$(cd "$$assets" && pwd)" && \
+		CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$assets" go test $(GO_TEST_FLAGS) ./pkg/cluster ./pkg/audit -run 'Test(ClientProviderRealAPI|ClusterBreakerLifecycleMetricsAndGeneration|AuditBreakerLifecycleMetrics)$$' -count=1
+
 .PHONY: test-validator
 test-validator: ## Run the standalone cluster-validator unit tests.
 	go test $(GO_TEST_FLAGS) ./pkg/clustervalidator ./cmd/cluster-validator ./hack/cluster-validator-extension
@@ -184,6 +190,13 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	@echo "Validating e2e fixture files..."
 	go test ./e2e/helpers/... -run TestFixturesAreValid -v -count=1
 	@echo "Fixture validation passed"
+
+.PHONY: test-platform
+test-platform: setup-envtest ## Characterize platform helpers, including real-API certificate, condition and leadership behavior.
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(GO_TEST_FLAGS) ./pkg/ratelimit ./pkg/cert ./pkg/utils ./pkg/leaderelection ./pkg/naming ./pkg/config
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(GO_TEST_FLAGS) ./pkg/breakglass/debug -run '^TestPlatformAuxiliaryReadinessEnvtest$$'
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(GO_TEST_FLAGS) ./pkg/breakglass -run '^TestPlatformSessionNamingEnvtest$$'
+	go test $(GO_TEST_FLAGS) ./pkg/audit ./pkg/api ./pkg/apiresponses ./pkg/breakglass ./pkg/webhook ./pkg/cli ./pkg/breakglass/escalation -run '^(TestRedactURL|TestWebhookSinkRedactsTransportURL|TestWebhookSinkRedactsMalformedRequestURL|TestAPIServerRateLimiting|TestOptionalAuthRateLimiting|TestMiddlewareWithRateLimiting|TestRespondTooManyRequestsWithRetryAfter|TestHandleRequestBreakglassSession_.*RateLimit.*|TestWebhookRateLimiting|TestWebhookControllerWithNilRateLimiter|TestBuildWebhookServerOptions|TestBuildWebhookMetricsOptions|TestPlatformCertificateCLIPaths|TestPlatformEscalationCachedConfig)$$'
 
 .PHONY: verify
 verify: fmt vet lint-strict test verify-release-provenance test-release-security vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).

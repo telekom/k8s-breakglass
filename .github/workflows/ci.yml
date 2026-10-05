@@ -74,6 +74,8 @@ jobs:
           cache: true
       - name: Controller unit tests (excluding bgctl and e2e)
         run: make test-controller
+      - name: Remote cluster clients real-API characterization
+        run: make test-cluster-clients
       - name: Upload coverage
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         if: ${{ always() && env.CODECOV_TOKEN != '' }}
@@ -135,6 +137,8 @@ jobs:
           cache: true
       - name: Validate CRDs (offline schema + envtest API server)
         run: make validate-crds
+      - name: Characterize platform helpers against the API server
+        run: make test-platform
       - name: Validate e2e fixtures against Go validation rules
         run: make validate-fixtures
       - name: Test e2e helpers
