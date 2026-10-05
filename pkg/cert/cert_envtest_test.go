@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	kptr "k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
@@ -47,7 +48,7 @@ func TestPlatformCertBootstrapRotationEnvtest(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "platform-cert"},
 		Webhooks: []admissionv1.ValidatingWebhook{{
 			Name: "platform.example.com", AdmissionReviewVersions: []string{"v1"},
-			SideEffects: ptrSideEffects(admissionv1.SideEffectClassNone),
+			SideEffects: kptr.To(admissionv1.SideEffectClassNone),
 			ClientConfig: admissionv1.WebhookClientConfig{Service: &admissionv1.ServiceReference{
 				Name: key.Name, Namespace: key.Namespace,
 			}},
@@ -144,8 +145,4 @@ func TestPlatformCertBootstrapRotationEnvtest(t *testing.T) {
 	project()
 	require.NoError(t, Ensure(certDir, DefaultTLSCertFile, ready, make(chan error), zap.NewNop().Sugar()),
 		"rotation keeps the manager running and the readiness channel usable")
-}
-
-func ptrSideEffects(value admissionv1.SideEffectClass) *admissionv1.SideEffectClass {
-	return &value
 }
