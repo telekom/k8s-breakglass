@@ -22,6 +22,43 @@ behavior, and modifying a copied map must not modify its input. Both exported
 RFC 1123 name normalizers retain their fallback, trimming, and 63/253-character
 limits while sharing the normalization pipeline.
 
+### Platform characterization before shared-library adoption
+
+Run `make test-platform` for race-enabled tests of rate limiting, certificates,
+resource readiness, leader election, name outputs, config reload and audit
+redaction. The target installs the pinned envtest assets and runs certificate,
+condition and leadership tests against a real API server; ordinary unit runs
+without `KUBEBUILDER_ASSETS` skip these envtests. CI runs the target in the
+CRD validation job.
+
+The certificate test supplies the same empty Secret as production manifests
+and explicitly projects Secret data onto disk because envtest has no kubelet.
+It checks leadership gating, service SANs and CA identity, CA injection,
+readiness after projection, leaf refresh with a preserved CA, and CA rotation.
+The election test uses two real Lease clients with shorter election durations
+and partitions one client's transport. It checks cancellation of per-epoch
+work, channel replacement, competing leadership and reacquisition without
+restarting the election loop.
+
+Readiness tests persist ClusterConfig and BreakglassEscalation status
+transitions, including status-subresource round trips, stable transition times
+for reason-only changes and stale generation handling. Generic kstatus treats
+unknown kinds without conditions as Current and ignores the local `Failed`
+condition; `Stalled=True` yields Failed. Domain-specific escalation readiness
+is stricter. Do not substitute one readiness predicate for another.
+The auxiliary-resource integration test preserves the recorded-UID guard:
+missing resources are pending, same-name replacements fail, and legacy
+resources without a recorded UID are never accepted as ready.
+
+The naming goldens preserve user-visible normalization and truncation, not
+merely validation. Config reload coverage preserves interval-based checks,
+mtime equality, last-known-good fallback on malformed/deleted files, recovery
+and atomic replacement. Neither Kubernetes name validation nor a strict YAML
+decoder is a behavior-preserving replacement for those policies by itself.
+Rate-limit tests preserve per-IP/per-identity isolation, denial responses,
+retry reservation cancellation and idle eviction. General Gin middleware does
+not set Retry-After; session creation does, using rounded-up seconds.
+
 Import frontend date and duration utilities by their named exports rather than
 constructing a stateless composable object. Pending-request withdrawals remain
 in the view's confirmation/action flow, including busy state, error handling,

@@ -185,6 +185,12 @@ validate-fixtures: manifests ## Validate all e2e YAML fixtures decode and pass G
 	go test ./e2e/helpers/... -run TestFixturesAreValid -v -count=1
 	@echo "Fixture validation passed"
 
+.PHONY: test-platform
+test-platform: setup-envtest ## Characterize platform helpers, including real-API certificate, condition and leadership behavior.
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(GO_TEST_FLAGS) ./pkg/ratelimit ./pkg/cert ./pkg/utils ./pkg/leaderelection ./pkg/naming ./pkg/config
+	CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $(GO_TEST_FLAGS) ./pkg/breakglass/debug -run '^TestPlatformAuxiliaryReadinessEnvtest$$'
+	go test $(GO_TEST_FLAGS) ./pkg/audit ./pkg/api ./pkg/apiresponses ./pkg/breakglass ./pkg/webhook -run '^(TestRedactURL|TestWebhookSinkRedactsTransportURL|TestAPIServerRateLimiting|TestOptionalAuthRateLimiting|TestMiddlewareWithRateLimiting|TestRespondTooManyRequestsWithRetryAfter|TestHandleRequestBreakglassSession_.*RateLimit.*|TestWebhookRateLimiting|TestWebhookControllerWithNilRateLimiter)$$'
+
 .PHONY: verify
 verify: fmt vet lint-strict test verify-release-provenance test-release-security vulncheck ## Run all verification checks (fmt, vet, lint, test, release workflow, vulncheck).
 	go build ./...
