@@ -46,7 +46,7 @@ npm test           # Vitest
 
 ## Critical Conventions
 
-### Reuse upstream libraries before writing helpers
+**Reuse upstream libraries before writing helpers.**
 
 Do not write a custom helper until checking, in order: the Go standard library,
 Kubernetes/controller-runtime/client-go/apimachinery, Flux `fluxcd/pkg`, other
