@@ -343,17 +343,32 @@ func TestClientProviderRealAPI(t *testing.T) {
 		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
 		after := checkToken("second")
 		require.NotSame(t, before, after)
-		caSecret.Annotations = map[string]string{"trust-version": "2"}
+		_, _, rotatedCA := generateTestCACert(t)
+		caSecret.Data["ca.crt"] = rotatedCA
 		require.NoError(t, live.Update(ctx, caSecret))
 		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
-		require.NotSame(t, after, checkToken("second"))
+		rotated, err := provider.GetRESTConfig(ctx, cc.Name)
+		require.NoError(t, err)
+		require.NotSame(t, after, rotated)
+		require.Equal(t, rotatedCA, rotated.CAData)
+		httpClient, err := rest.HTTPClientFor(rotated)
+		require.NoError(t, err)
+		response, err := httpClient.Get(server.URL + "/spoke")
+		if response != nil {
+			require.NoError(t, response.Body.Close())
+		}
+		require.ErrorContains(t, err, "certificate signed by unknown authority")
+		caSecret.Data["ca.crt"] = ca
+		require.NoError(t, live.Update(ctx, caSecret))
+		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
+		require.Equal(t, ca, checkToken("second").CAData)
 		require.NoError(t, live.Delete(ctx, secret))
 		waitEvicted(t, cc.Name, cacheKey(ns, cc.Name))
 		cfg, err := provider.GetRESTConfig(ctx, cc.Name)
 		require.NoError(t, err, "OIDC token errors are deferred to the transport")
-		httpClient, err := rest.HTTPClientFor(cfg)
+		httpClient, err = rest.HTTPClientFor(cfg)
 		require.NoError(t, err)
-		response, err := httpClient.Get(server.URL + "/spoke")
+		response, err = httpClient.Get(server.URL + "/spoke")
 		if response != nil {
 			require.NoError(t, response.Body.Close())
 		}
