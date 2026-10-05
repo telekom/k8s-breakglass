@@ -58,7 +58,9 @@ exact imports, current migration candidates, and the status of open PRs #1410
 and #1411 in [`AGENTS.md`](../AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
 The library guide is at
 [`docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md);
-that repository is currently private and is planned to become public.
+that repository is public and tagged `v0.1.0`. See
+[`platform library adoption`](../docs/development-simplification.md#platform-library-adoption)
+for adopted packages and documented consumer-policy mismatches.
 
 1. **CRD Changes**: Edit `api/v1alpha1/*_types.go`, run `make generate && make manifests`, commit generated files (`zz_generated.deepcopy.go`, `config/crd/bases/*.yaml`).
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-policy-agent/cert-controller/pkg/rotator"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/t-caas-go-library/pkg/certrotation"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,6 +18,7 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
 
@@ -63,7 +65,6 @@ func NewManager(restConfig *rest.Config, name, namespace, path, validatingWebhoo
 		certsReady:                         certsReady,
 		leaderElected:                      leaderElected,
 		log:                                log.With("component", "CertControllerManager"),
-		rotatorAdder:                       rotator.AddRotator,
 	}
 }
 
@@ -160,7 +161,32 @@ func (m *Manager) getRotatorAdder() func(ctrl.Manager, *rotator.CertRotator) err
 		return m.rotatorAdder
 	}
 
-	return rotator.AddRotator
+	return func(mgr ctrl.Manager, cr *rotator.CertRotator) error {
+		ready, err := certrotation.AddRotator(context.Background(), mgr, certrotation.Config{
+			Namespace:              cr.SecretKey.Namespace,
+			SecretName:             cr.SecretKey.Name,
+			ControllerName:         "breakglass-cert-" + cr.SecretKey.Namespace + "-" + cr.SecretKey.Name,
+			CertDir:                cr.CertDir,
+			CAName:                 cr.CAName,
+			CAOrganization:         cr.CAOrganization,
+			DNSName:                cr.DNSName,
+			ExtraDNSNames:          cr.ExtraDNSNames,
+			ValidatingWebhooks:     []string{m.validatingWebhookConfigurationName},
+			RequireLeaderElection:  cr.RequireLeaderElection,
+			RestartOnSecretRefresh: cr.RestartOnSecretRefresh,
+		})
+		if err != nil {
+			return err
+		}
+		return mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			select {
+			case <-ctx.Done():
+			case <-ready:
+				close(cr.IsReady)
+			}
+			return nil
+		}))
+	}
 }
 
 func Ensure(path string, name string, certsReady chan struct{}, certMgrErr chan error, log *zap.SugaredLogger) error {

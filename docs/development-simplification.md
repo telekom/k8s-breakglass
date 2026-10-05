@@ -65,6 +65,56 @@ Rate-limit tests preserve per-IP/per-identity isolation, denial responses,
 retry reservation cancellation and idle eviction. General Gin middleware does
 not set Retry-After; session creation does, using rounded-up seconds.
 
+### Platform library adoption
+
+The public [`t-caas-go-library` guide](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md)
+documents the upstream-first policy. This repository pins library `v0.1.0`.
+
+Certificate registration now uses `pkg/certrotation`. The local adapter keeps
+the dedicated manager, external leadership gate, empty-Secret bootstrap,
+service SANs, CA identity, no-restart policy and the existing readiness channel.
+It does not enable the library's leader-only mounted-pair readiness mode:
+`Ensure` still checks PEM presence, as characterized before migration.
+`TestLibraryCertificateBootstrapEnvtest` exercises the real library path,
+including leaf and CA rotation, without the original test's injectable
+cert-controller hook. Controller names are scoped by namespace/Secret to avoid
+process-wide registration collisions.
+
+Audit URL diagnostics use `pkg/redact.URL`, preserving the `<invalid-url>`
+marker. Opaque URLs are now hidden rather than leaking their contents; adoption
+tests cover this deliberate diagnostic improvement and preserved encoded-fragment
+redaction.
+The constant transport-error wrapper stays local: `redact.Wrap` only removes
+known URL components and cannot hide arbitrary nested transport details while
+preserving the original `errors.Is`/`errors.As` chain.
+
+Generic readiness already delegates to `kstatus/status.Compute`, and CRD
+condition setters already use apimachinery. Polling now uses
+`wait.PollUntilContextTimeout`; domain terminal states, not-found errors and
+timeout/cancellation response shapes stay local. The polling deadline now
+also bounds polled API requests, retaining the last completed resource state
+if a request reaches that deadline. Name trimming uses `strings.TrimFunc`, while
+normalization keeps apimachinery's existing length constants and exact goldens.
+
+The following helpers deliberately remain local after inspecting the tagged
+APIs; replacing them would break unchanged Phase 1 contracts:
+
+* The keyed limiter's periodic, strictly-older-than idle cleanup and unbounded
+  key retention differ from library `pkg/ratelimit`'s mandatory bounded LRU
+  storage, lazy expiry and restricted rate/burst validation. Eviction resets
+  budgets. Adding a cardinality bound or changing stop/idle semantics requires
+  an explicit configuration and policy decision; the existing buckets already
+  use upstream `golang.org/x/time/rate`.
+* Leader election already uses client-go. The local callbacks and retry loop
+  preserve reacquisition and cancellation of per-epoch background work;
+  controller-runtime's one-shot manager lifecycle is not a replacement.
+* Apimachinery validates names but does not normalize identity-derived values.
+  Replacing the remaining normalization with validation would change names,
+  fallbacks and persisted labels.
+* Upstream provides no reload wrapper with this repository's last-known-good,
+  mtime and check-interval policy. Keep the existing YAML-tagged decoder;
+  switching to strict or JSON-tagged decoding would change accepted config.
+
 Import frontend date and duration utilities by their named exports rather than
 constructing a stateless composable object. Pending-request withdrawals remain
 in the view's confirmation/action flow, including busy state, error handling,

@@ -123,11 +123,11 @@ custom code. This rule applies even while an adoption PR is open or unmerged.
 
 The detailed guide is
 [`telekom/t-caas-go-library/docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md);
-the library repository is currently private and is planned to become public,
-so use the package paths and recommendations here without relying on that link.
-Relevant merged packages include `pkg/patch`, `pkg/remoteclient`, and
-`pkg/netutil`. The guide's `pkg/ssa` and `pkg/certrotation` proposals are
-pending, not available dependencies.
+the library repository is public and tagged `v0.1.0`. Available packages include
+`pkg/patch`, `pkg/remoteclient`, `pkg/netutil`, `pkg/ssa`, `pkg/certrotation`,
+`pkg/ratelimit`, and `pkg/redact`. Check the tagged APIs and preserve the
+consumer contracts documented in
+[`docs/development-simplification.md`](docs/development-simplification.md#platform-library-adoption).
 
 Convenience wrappers are appropriate only when the same glue demonstrably
 repeats across multiple repositories; contribute that shared glue to

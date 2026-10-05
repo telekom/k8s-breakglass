@@ -23,10 +23,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
+	"github.com/telekom/t-caas-go-library/pkg/redact"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -66,15 +66,11 @@ func redactHTTPError(err error) error {
 }
 
 func redactURL(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil {
+	safe := redact.URL(raw)
+	if safe == "[redacted invalid URL]" {
 		return "<invalid-url>"
 	}
-	u.User = nil
-	u.RawQuery = ""
-	u.ForceQuery = false
-	u.Fragment = ""
-	return u.String()
+	return safe
 }
 
 // NewLogSink creates a new LogSink.
