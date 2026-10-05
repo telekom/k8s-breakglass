@@ -218,6 +218,30 @@ expect_fail env CHECK_RUNS_JSON="[${release_run}]" "${gate[@]}" "${root}/hack/ve
 expect_fail env CHECK_RUNS_JSON="[${success_run/\"success\"/\"failure\"},${release_run}]" "${gate[@]}" "${root}/hack/verify-commit-check-runs.sh"
 expect_fail env CHECK_RUNS_JSON="[${success_run/\"completed\"/\"in_progress\"},${release_run}]" "${gate[@]}" "${root}/hack/verify-commit-check-runs.sh"
 expect_fail env CHECK_RUNS_JSON="${check_runs}" GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee REQUIRED_CHECKS_JSON='["Essential CI"]' IGNORE_RELEASE_WORKFLOW_RUNS=true CHECK_RUN_IGNORED_RUN_IDS_JSON='[]' "${root}/hack/verify-commit-check-runs.sh"
+
+cat >"${tmp}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *"/actions/runs?head_sha="*)
+    jq -c '.workflow_runs[]' <<<"${MOCK_ACTION_RUNS_JSON:?}"
+    ;;
+  *"/check-runs?per_page="*)
+    jq -c '.check_runs[]' <<<"${MOCK_CHECK_RUNS_JSON:?}"
+    ;;
+  *)
+    echo "unexpected gh invocation: $*" >&2
+    exit 2
+    ;;
+esac
+EOF
+chmod +x "${tmp}/bin/gh"
+# The release tag also starts REUSE, whose "test" check must not shadow main CI.
+tag_action_runs='{"workflow_runs":[{"id":100,"event":"push","head_branch":"main","path":".github/workflows/ci.yml"},{"id":200,"event":"push","head_branch":"v1.2.3","path":".github/workflows/reuse-compliance.yml"},{"id":300,"event":"push","head_branch":"v1.2.3","path":".github/workflows/release.yml"},{"id":400,"event":"push","head_branch":"v1.2.3","path":".github/workflows/utility-release.yml"}]}'
+tag_check_runs='{"check_runs":[{"id":1,"app":{"slug":"github-actions"},"name":"Essential CI","status":"completed","conclusion":"success","details_url":"https://github.com/o/r/actions/runs/100/job/1"},{"id":2,"app":{"slug":"github-actions"},"name":"test","status":"in_progress","conclusion":null,"details_url":"https://github.com/o/r/actions/runs/200/job/2"},{"id":3,"app":{"slug":"github-actions"},"name":"validate-tag","status":"in_progress","conclusion":null,"details_url":"https://github.com/o/r/actions/runs/300/job/3"}]}'
+tag_gate=(env GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/tags/v1.2.3 GITHUB_REF_NAME=v1.2.3 REQUIRED_CHECKS_JSON='["Essential CI"]' IGNORE_RELEASE_WORKFLOW_RUNS=true MOCK_ACTION_RUNS_JSON="${tag_action_runs}" MOCK_CHECK_RUNS_JSON="${tag_check_runs}")
+"${tag_gate[@]}" "${root}/hack/verify-commit-check-runs.sh" >/dev/null
+expect_fail env GITHUB_REPOSITORY=o/r GITHUB_SHA=eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee GITHUB_REF=refs/heads/main REQUIRED_CHECKS_JSON='["Essential CI"]' IGNORE_RELEASE_WORKFLOW_RUNS=true MOCK_ACTION_RUNS_JSON="${tag_action_runs}" MOCK_CHECK_RUNS_JSON="${tag_check_runs}" "${root}/hack/verify-commit-check-runs.sh"
+
 elapsed=$((SECONDS - start_time))
 [ "$elapsed" -le 60 ] || { echo "utility publication behavioral tests exceeded 60 seconds: ${elapsed}s" >&2; exit 1; }
 printf 'utility publication behavioral tests passed in %ss\n' "$elapsed"

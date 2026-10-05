@@ -11,9 +11,18 @@ if [ "${IGNORE_RELEASE_WORKFLOW_RUNS:-false}" = true ]; then
   if [ -n "${CHECK_RUNS_JSON:-}" ]; then
     ignored_run_ids="${CHECK_RUN_IGNORED_RUN_IDS_JSON:-[]}"
   else
+    release_tag=''
+    if [[ "${GITHUB_REF:-}" == refs/tags/* ]]; then
+      release_tag="${GITHUB_REF_NAME:-${GITHUB_REF#refs/tags/}}"
+    fi
     ignored_run_ids="$(
       gh api --paginate "repos/${repo}/actions/runs?head_sha=${sha}&per_page=100" --jq '.workflow_runs[]' |
-        jq -s -c '[.[] | select(.path == ".github/workflows/release.yml" or (.path == ".github/workflows/utility-release.yml" and .head_branch != "main")) | (.id | tostring)] | unique'
+        jq -s -c --arg release_tag "${release_tag}" \
+          '[.[] | select(
+            .path == ".github/workflows/release.yml" or
+            (.path == ".github/workflows/utility-release.yml" and .head_branch != "main") or
+            ($release_tag != "" and .event == "push" and .head_branch == $release_tag)
+          ) | (.id | tostring)] | unique'
     )"
   fi
 fi
