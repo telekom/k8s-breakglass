@@ -8073,14 +8073,15 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 	t.Run("renew retry revalidates live session", func(t *testing.T) {
 		maxRenewals := int32(1)
 		tests := []struct {
-			name             string
-			username         string
-			constraints      *breakglassv1alpha1.DebugSessionConstraints
-			initialExpiry    time.Time
-			wantExpiry       time.Time
-			wantRenewalCount int32
-			deleted          bool
-			mutateOnConflict func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error
+			name                 string
+			username             string
+			constraints          *breakglassv1alpha1.DebugSessionConstraints
+			initialExpiry        time.Time
+			wantExpiry           time.Time
+			wantRenewalCount     int32
+			deleted              bool
+			deleteAfterRetryRead bool
+			mutateOnConflict     func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error
 		}{
 			{
 				name:             "last renewal slot consumed",
@@ -8135,12 +8136,25 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					return cl.Delete(ctx, live)
 				},
 			},
+			{
+				name:                 "session deleted before patch helper read",
+				username:             "alice@example.com",
+				initialExpiry:        expiresAt.Time.Truncate(time.Second),
+				wantExpiry:           expiresAt.Time.Truncate(time.Second),
+				deleted:              true,
+				deleteAfterRetryRead: true,
+				mutateOnConflict: func(context.Context, client.Client, *breakglassv1alpha1.DebugSession) error {
+					return nil
+				},
+			},
 		}
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				expiry := metav1.NewTime(tt.initialExpiry)
 				deletionStarted := false
+				retryReadAfterConflict := false
+				deletedAfterRetryRead := false
 				session := breakglassv1alpha1.DebugSession{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-session",
@@ -8176,6 +8190,19 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 						Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 							if err := cl.Get(ctx, key, obj, opts...); err != nil {
 								return err
+							}
+							if tt.deleteAfterRetryRead && patchAttempts > 0 && key.Name == "test-session" {
+								if !retryReadAfterConflict {
+									retryReadAfterConflict = true
+								} else if !deletedAfterRetryRead {
+									if err := cl.Delete(ctx, obj); err != nil {
+										return err
+									}
+									deletedAfterRetryRead = true
+									return apierrors.NewNotFound(schema.GroupResource{
+										Group: breakglassv1alpha1.GroupVersion.Group, Resource: "debugsessions",
+									}, key.Name)
+								}
 							}
 							if deletionStarted && key.Name == "test-session" {
 								live := obj.(*breakglassv1alpha1.DebugSession)
