@@ -8079,6 +8079,8 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 			initialExpiry        time.Time
 			wantExpiry           time.Time
 			wantRenewalCount     int32
+			wantState            breakglassv1alpha1.DebugSessionState
+			wantUID              string
 			deleted              bool
 			deleteAfterRetryRead bool
 			expireAfterRetryRead bool
@@ -8158,6 +8160,34 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					return nil
 				},
 			},
+			{
+				name:          "session replaced before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				wantState:     breakglassv1alpha1.DebugSessionStateActive,
+				wantUID:       "replacement-session-uid",
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					if err := cl.Delete(ctx, live); err != nil {
+						return err
+					}
+					replacement := live.DeepCopy()
+					replacement.UID = "replacement-session-uid"
+					replacement.ResourceVersion = ""
+					return cl.Create(ctx, replacement)
+				},
+			},
+			{
+				name:          "session becomes terminal before retry read",
+				username:      "alice@example.com",
+				initialExpiry: expiresAt.Time.Truncate(time.Second),
+				wantExpiry:    expiresAt.Time.Truncate(time.Second),
+				wantState:     breakglassv1alpha1.DebugSessionStateTerminated,
+				mutateOnConflict: func(ctx context.Context, cl client.Client, live *breakglassv1alpha1.DebugSession) error {
+					live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+					return cl.Status().Update(ctx, live)
+				},
+			},
 		}
 
 		for _, tt := range tests {
@@ -8171,6 +8201,7 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 					ObjectMeta: metav1.ObjectMeta{
 						Name:      "test-session",
 						Namespace: "default",
+						UID:       "session-uid",
 						Labels:    map[string]string{DebugSessionLabelKey: "test-session"},
 					},
 					Spec: breakglassv1alpha1.DebugSessionSpec{
@@ -8282,6 +8313,14 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 				}
 				require.NoError(t, err)
 				require.Equal(t, tt.wantRenewalCount, updated.Status.RenewalCount)
+				if tt.wantUID != "" {
+					require.Equal(t, tt.wantUID, string(updated.UID))
+				} else {
+					require.Equal(t, "session-uid", string(updated.UID))
+				}
+				if tt.wantState != "" {
+					require.Equal(t, tt.wantState, updated.Status.State)
+				}
 				require.True(t, updated.Status.ExpiresAt.Equal(&metav1.Time{Time: tt.wantExpiry}),
 					"got expiry %s, want %s", updated.Status.ExpiresAt.Time, tt.wantExpiry)
 			})
