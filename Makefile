@@ -149,6 +149,10 @@ test-validator-integration: ## Build and run the validator against a disposable 
 test-controller: vet ## Run controller unit tests (excludes bgctl and e2e) without mutating generated or formatted files.
 	go test $(GO_TEST_FLAGS) $$(go list ./... | $(E2E_EXCLUDE) | grep -v bgctl) -coverprofile cover-controller.out
 
+.PHONY: test-ssa-envtest
+test-ssa-envtest: setup-envtest ## Characterize SSA and optimistic status patches against a real API server.
+	assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(abspath $(LOCALBIN)) -p path)" && test -n "$$assets" && CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$assets" go test $(GO_TEST_FLAGS) ./pkg/utils ./api/v1alpha1/applyconfiguration/ssa ./pkg/config ./pkg/cluster ./pkg/breakglass ./pkg/breakglass/escalation ./pkg/breakglass/debug ./pkg/webhook -run '^TestSSAEnvtest' -v
+
 .PHONY: test-hard-expiry-unit
 test-hard-expiry-unit: vet ## Run the focused unit boundary tests for regular-session hard expiry.
 	go test $(GO_TEST_FLAGS) ./pkg/utils -run 'TestClampBreakglassSessionExpiry'

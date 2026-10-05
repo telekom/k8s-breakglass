@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve buffered session activity counts and the newest activity timestamp
+  when concurrent webhook replicas flush status updates.
+
 - Retry concurrent DebugSession renewal status conflicts from live state while
   revalidating expiry, deletion, authorization, and renewal limits.
 
