@@ -5,6 +5,7 @@ package cluster
 
 import (
 	"context"
+	"net/http"
 	"testing"
 	"time"
 
@@ -49,6 +50,34 @@ func TestKubeconfigRegistryReusesFreshPrivilegedClient(t *testing.T) {
 	p.Invalidate("registry", "target")
 	_, ok = p.remoteClients.Get(types.NamespacedName{Namespace: "registry", Name: "target"})
 	require.False(t, ok)
+}
+
+func TestKubeconfigFactoryDoesNotRetainConfigArgument(t *testing.T) {
+	p, _ := registryTestProvider(t, mustBuildKubeconfigYAML("https://target.example"))
+	original, err := clientcmd.RESTConfigFromKubeConfig(mustBuildKubeconfigYAML("https://target.example"))
+	require.NoError(t, err)
+	originalWrapped, copiedWrapped := false, false
+	original.WrapTransport = func(transport http.RoundTripper) http.RoundTripper {
+		originalWrapped = true
+		return transport
+	}
+	build := &kubeconfigClientBuild{cluster: &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Namespace: "registry", Name: "target"},
+	}}
+	ctx := context.WithValue(context.Background(), kubeconfigClientBuildKey{}, build)
+	remote, err := p.newKubeconfigClient(ctx, original, &http.Client{Transport: http.DefaultTransport})
+	require.NoError(t, err)
+	require.NotNil(t, remote)
+	require.NotSame(t, original, build.config, "the registry adapter stores a provider-owned copy")
+	build.config.Host = "https://different.example"
+	build.config.WrapTransport = func(transport http.RoundTripper) http.RoundTripper {
+		copiedWrapped = true
+		return transport
+	}
+	require.Equal(t, "https://target.example", original.Host)
+	original.WrapTransport(http.DefaultTransport)
+	require.True(t, originalWrapped)
+	require.False(t, copiedWrapped, "later provider mutations do not alter the factory argument")
 }
 
 func TestKubeconfigRegistryPreservesLazyTransportErrors(t *testing.T) {

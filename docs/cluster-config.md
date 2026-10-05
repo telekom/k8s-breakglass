@@ -1295,8 +1295,10 @@ kubectl describe secret <secret-name> -n <namespace>
 **Diagnosis:**
 ```bash
 # Test kubeconfig connectivity
+# Use spec.kubeconfigSecretRef.key, or value when it is omitted.
 umask 077
-kubectl get secret <secret-name> -n <namespace> -o jsonpath='{.data.value}' | base64 -d > test.kubeconfig
+key=value  # Replace with the configured Secret data key, including any dots.
+kubectl get secret <secret-name> -n <namespace> -o go-template="{{index .data \"$key\"}}" | base64 -d > test.kubeconfig
 kubectl --kubeconfig=test.kubeconfig cluster-info
 rm test.kubeconfig
 ```
