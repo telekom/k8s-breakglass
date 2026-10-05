@@ -759,6 +759,12 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ${{ env.REGISTRY }} \
             --username "${{ github.actor }}" \
             --password-stdin
+      - name: Login to GHCR for Cosign
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Publish charts
         env:
           CHART_REPO: oci://ghcr.io/${{ github.repository }}/charts
