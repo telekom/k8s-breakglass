@@ -107,8 +107,8 @@ custom code. This rule applies even while an adoption PR is open or unmerged.
 | Conditions and condition slices | `github.com/fluxcd/pkg/runtime/conditions`; `k8s.io/apimachinery/pkg/api/meta` |
 | Generic resource readiness | `sigs.k8s.io/cli-utils/pkg/kstatus/status` |
 | Snapshot patching | `github.com/fluxcd/pkg/runtime/patch` |
-| Optimistic-lock retry | `sigs.k8s.io/controller-runtime/pkg/client`; `k8s.io/client-go/util/retry` |
-| Server-side apply | `github.com/fluxcd/pkg/ssa`; `sigs.k8s.io/controller-runtime/pkg/client` |
+| Optimistic-lock status patches | `github.com/telekom/t-caas-go-library/pkg/patch`; `k8s.io/client-go/util/retry` |
+| Server-side apply | `github.com/telekom/t-caas-go-library/pkg/ssa`; `github.com/fluxcd/pkg/ssa`; `sigs.k8s.io/controller-runtime/pkg/client` |
 | Test API server and assertions | `sigs.k8s.io/controller-runtime/pkg/envtest`; `sigs.k8s.io/controller-runtime/pkg/envtest/komega` |
 | E2E waits and manifest decoding | `sigs.k8s.io/e2e-framework/klient/wait`; `sigs.k8s.io/e2e-framework/klient/decoder` |
 | Kubernetes port forwarding | `k8s.io/client-go/tools/portforward`; `k8s.io/client-go/transport/spdy` |
@@ -132,21 +132,27 @@ consumer contracts documented in
 Convenience wrappers are appropriate only when the same glue demonstrably
 repeats across multiple repositories; contribute that shared glue to
 `telekom/t-caas-go-library` instead of duplicating it. Keep domain policy local.
-Migration candidates (no code changes in this guidance update) include
+Remaining migration candidates include
 `api/v1alpha1/condition_helpers.go`, `pkg/telemetry/telemetry.go`,
 `e2e/helpers/{wait,retry,client,portforward}.go`,
 `pkg/leaderelection/leaderelection.go`,
-`pkg/cluster/{cache.go,watchers.go,circuitbreaker.go}`,
-`pkg/audit/circuit_breaker.go`, `pkg/utils/patchhelper.go`, and
-`pkg/cert/cert.go`. Preserve local readiness, authorization, OIDC/TTL,
+`pkg/cluster/{watchers.go,circuitbreaker.go}`,
+`pkg/audit/circuit_breaker.go`, and `pkg/utils/patchhelper.go`.
+Preserve local readiness, authorization, OIDC/TTL,
 reacquisition, error-classification, and cleanup semantics when evaluating
 these candidates.
 
-As of 2026-10-04, open [PR #1410](https://github.com/telekom/k8s-breakglass/pull/1410)
-and [PR #1411](https://github.com/telekom/k8s-breakglass/pull/1411) provide
-context for ongoing SSA helper consolidation and shared-applier adoption. Their
-open status does not settle the final API or justify duplicating upstream
-behavior.
+Shared-library adoption is merged in [PR #1411](https://github.com/telekom/k8s-breakglass/pull/1411)
+(status SSA and optimistic patches), [PR #1427](https://github.com/telekom/k8s-breakglass/pull/1427)
+(remote clients), and [PR #1428](https://github.com/telekom/k8s-breakglass/pull/1428)
+(certificates and URL redaction). [PR #1410](https://github.com/telekom/k8s-breakglass/pull/1410)
+is closed as superseded.
+Use `pkg/utils.ApplyObject`/`ApplyUnstructured` for existing main-resource
+integration and the CRD-specific builders in `api/v1alpha1/applyconfiguration/ssa`
+for status. Retry status mutations through shared `pkg/patch`; do not recreate
+the removed `pkg/utils` retry helpers or generic status/typed-object apply shims.
+Keep call-site and real-API ownership/concurrency tests, not duplicate tests of
+shared-library aliases. See [post-adoption cleanup](docs/development-simplification.md#post-adoption-ssa-cleanup).
 
 ## Standalone cluster-validator image (TCAAS-1619)
 

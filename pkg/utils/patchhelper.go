@@ -167,7 +167,7 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 
 // applyConfigsEqual compares two ApplyConfigurations by marshaling both to JSON
 // and comparing the bytes. Since both ACs are built using the same
-// [ToApplyConfiguration] function (which uses jsonDecodeInto), the resulting JSON
+// [ToApplyConfiguration] function, the resulting JSON
 // is deterministic and comparable: struct field order is fixed by the Go type
 // definitions, and map key order is sorted by encoding/json.
 //
@@ -250,8 +250,8 @@ func desiredCoversOwnedFields(desired, current *unstructured.Unstructured) bool 
 //   - Operation == Apply: Update entries describe imperative writes, whose field
 //     set carries no SSA pruning semantics.
 //   - Subresource == "": this is the load-bearing filter. This operator applies to
-//     the status subresource with the SAME field manager (see [ApplyStatus] and
-//     UpdateStatusWithRetry), so an object routinely carries TWO Apply entries for
+//     the status subresource with the SAME field manager through the CRD status
+//     builders, so an object routinely carries TWO Apply entries for
 //     [FieldOwnerController] — one for the main resource and one with
 //     Subresource: "status". The status entry's field set describes status fields
 //     only, which [unstructuredSpecEqual] never compares. Accepting it would make

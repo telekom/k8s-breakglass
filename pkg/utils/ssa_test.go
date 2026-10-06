@@ -79,42 +79,6 @@ func TestToApplyConfiguration_ConsolidatedConverters(t *testing.T) {
 	}
 }
 
-func TestToStatusApplyConfiguration_ConsolidatedConverters(t *testing.T) {
-	for _, tc := range []struct {
-		kind string
-		obj  client.Object
-	}{
-		{"BreakglassSession", &breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{ObservedGeneration: 7}}},
-		{"ClusterConfig", &breakglassv1alpha1.ClusterConfig{Status: breakglassv1alpha1.ClusterConfigStatus{ObservedGeneration: 7}}},
-		{"DebugSession", &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{ObservedGeneration: 7}}},
-		{"BreakglassEscalation", &breakglassv1alpha1.BreakglassEscalation{Status: breakglassv1alpha1.BreakglassEscalationStatus{ObservedGeneration: 7}}},
-		{"IdentityProvider", &breakglassv1alpha1.IdentityProvider{Status: breakglassv1alpha1.IdentityProviderStatus{ObservedGeneration: 7}}},
-		{"MailProvider", &breakglassv1alpha1.MailProvider{Status: breakglassv1alpha1.MailProviderStatus{ObservedGeneration: 7}}},
-	} {
-		t.Run(tc.kind, func(t *testing.T) {
-			tc.obj.SetName("status-converted")
-			tc.obj.SetNamespace("default")
-			tc.obj.SetResourceVersion("19")
-			config, err := ToStatusApplyConfiguration(tc.obj)
-			require.NoError(t, err)
-			data, err := json.Marshal(config)
-			require.NoError(t, err)
-			var fields map[string]any
-			require.NoError(t, json.Unmarshal(data, &fields))
-			require.Equal(t, tc.kind, fields["kind"])
-			require.NotContains(t, fields, "spec")
-			require.EqualValues(t, 7, fields["status"].(map[string]any)["observedGeneration"])
-			metadata := fields["metadata"].(map[string]any)
-			require.Equal(t, "19", metadata["resourceVersion"])
-			if tc.kind == "IdentityProvider" || tc.kind == "MailProvider" {
-				require.NotContains(t, metadata, "namespace")
-			} else {
-				require.Equal(t, "default", metadata["namespace"])
-			}
-		})
-	}
-}
-
 func TestApplyConfigurationFrom_PreservesIntegerPrecisionAndStatusIsolation(t *testing.T) {
 	grace := int64(1<<63 - 1)
 	pod := &corev1.Pod{
@@ -267,49 +231,6 @@ func TestApplyObject_Update(t *testing.T) {
 	assert.Equal(t, "new@example.com", result.Spec.User)
 }
 
-func TestApplyStatus_BreakglassSession(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	// Pre-create an object (status updates require existing object)
-	existing := &breakglassv1alpha1.BreakglassSession{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-session",
-			Namespace: "default",
-		},
-		Spec: breakglassv1alpha1.BreakglassSessionSpec{
-			Cluster:      "test-cluster",
-			User:         "test@example.com",
-			GrantedGroup: "test-group",
-		},
-		Status: breakglassv1alpha1.BreakglassSessionStatus{
-			State: breakglassv1alpha1.SessionStatePending,
-		},
-	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(existing).
-		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
-		Build()
-
-	// Update status
-	updated := existing.DeepCopy()
-	updated.TypeMeta = metav1.TypeMeta{
-		APIVersion: breakglassv1alpha1.GroupVersion.String(),
-		Kind:       "BreakglassSession",
-	}
-	updated.Status.State = breakglassv1alpha1.SessionStateApproved
-
-	err := ApplyStatus(ctx, fakeClient, updated)
-	require.NoError(t, err)
-
-	var result breakglassv1alpha1.BreakglassSession
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-session", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, breakglassv1alpha1.SessionStateApproved, result.Status.State)
-}
-
 func TestToApplyConfiguration_UnsupportedType(t *testing.T) {
 	// Test with an unsupported type
 	unsupported := &corev1.ConfigMap{
@@ -331,20 +252,6 @@ func TestToApplyConfiguration_Job(t *testing.T) {
 	data, err := json.Marshal(cfg)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"apiVersion":"batch/v1","kind":"Job","metadata":{"name":"debug-job","namespace":"default"},"spec":{"template":{"metadata":{},"spec":{}}}}`, string(data))
-}
-
-func TestToStatusApplyConfiguration_UnsupportedType(t *testing.T) {
-	// Test with an unsupported type for status
-	unsupported := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test",
-			Namespace: "default",
-		},
-	}
-
-	_, err := ToStatusApplyConfiguration(unsupported)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unsupported type")
 }
 
 func TestApplyObject_ClusterConfig(t *testing.T) {
@@ -566,122 +473,4 @@ func TestApplyUnstructured_Deployment(t *testing.T) {
 
 	labels := result.GetLabels()
 	assert.Equal(t, "debug-session", labels["app"])
-}
-
-func TestApplyTypedObject_WithTypeMeta(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	// ConfigMap with TypeMeta explicitly set
-	cm := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "typed-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "value"},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
-	require.NoError(t, err)
-
-	// Verify the ConfigMap was created
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "typed-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "typed-cm", result.Name)
-	assert.Equal(t, "value", result.Data["key"])
-}
-
-func TestApplyTypedObject_GVKFromScheme(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		Build()
-
-	// ConfigMap WITHOUT TypeMeta — GVK should be resolved from the scheme
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "schemeless-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"foo": "bar"},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, scheme)
-	require.NoError(t, err)
-
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "schemeless-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "bar", result.Data["foo"])
-}
-
-func TestApplyTypedObject_NoGVK_ReturnsError(t *testing.T) {
-	ctx := context.Background()
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(runtime.NewScheme()). // empty scheme — no GVK resolution
-		Build()
-
-	// ConfigMap with no TypeMeta and no scheme registration → cannot determine GVK
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "unknown-cm",
-			Namespace: "default",
-		},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, cm, nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cannot apply object without GVK")
-}
-
-func TestApplyTypedObject_Update(t *testing.T) {
-	ctx := context.Background()
-	scheme := newSSATestScheme()
-
-	// Pre-create a ConfigMap
-	existing := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "update-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "old"},
-	}
-
-	fakeClient := fake.NewClientBuilder().
-		WithScheme(scheme).
-		WithObjects(existing).
-		Build()
-
-	// Apply an update via ApplyTypedObject
-	updated := &corev1.ConfigMap{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "v1",
-			Kind:       "ConfigMap",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "update-cm",
-			Namespace: "default",
-		},
-		Data: map[string]string{"key": "new"},
-	}
-
-	err := ApplyTypedObject(ctx, fakeClient, updated, scheme)
-	require.NoError(t, err)
-
-	var result corev1.ConfigMap
-	err = fakeClient.Get(ctx, types.NamespacedName{Name: "update-cm", Namespace: "default"}, &result)
-	require.NoError(t, err)
-	assert.Equal(t, "new", result.Data["key"])
 }

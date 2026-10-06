@@ -113,6 +113,40 @@ APIs; replacing them would break unchanged Phase 1 contracts:
 * Apimachinery validates names but does not normalize identity-derived values.
   Replacing the remaining normalization with validation would change names,
   fallbacks and persisted labels.
+
+### Post-adoption SSA cleanup
+
+The merged status-SSA and optimistic-patch adoption left several unused
+compatibility APIs in `pkg/utils`: `RetryConfig`, `DefaultRetryConfig`,
+`StatusUpdateWithRetry`, `UpdateWithRetry`, `ApplyTypedObject`, `ApplyStatus`,
+and `ToStatusApplyConfiguration`. They had no production callers and are now
+removed with their helper-only unit and envtest cases. The unused
+`ssa.PatchApplyResultCreated` status alias is also removed: status writes require
+an existing object, while the main-resource `utils` alias remains in use. The unrelated
+`api/v1alpha1.RetryConfig` mail-provider field and `e2e/helpers.UpdateWithRetry`
+remain unchanged.
+
+Main-resource consumers still use `ApplyObject` and `ApplyUnstructured`.
+Status consumers use the CRD-specific builders in
+`api/v1alpha1/applyconfiguration/ssa`, backed by shared `pkg/ssa`; concurrent
+status mutations use shared `pkg/patch`. Both SSA adapter packages use the same
+field-manager constant. The remaining main-resource converter always excludes
+status, preserving scope, GVK and integer precision.
+
+Retained real-API tests exercise every status builder, competing/custom field
+managers, explicit empty lists, auxiliary-resource reclaim, session lifecycle
+fences and concurrent activity writers. Removing tests of the dead retry engine
+does not remove the live conflict/recompute tests in the controllers and
+webhook. Two `PatchApplyResult.String` tests were also removed because both
+types are aliases of the shared library's already-tested enum.
+
+The remaining main-resource comparison glue is deliberate: the typed gate
+compares full converted metadata, while the unstructured gate ignores status
+and compares only labels/annotations within metadata, preserving its own
+managed-field pruning checks. Shared `pkg/ssa.Applier` instead uses extracted
+ownership and never skips UID/resourceVersion preconditions. Harmonizing these
+policies with auth-operator requires a separate behavior decision, not another
+generic compatibility wrapper.
 * Upstream provides no reload wrapper with this repository's last-known-good,
   mtime and check-interval policy. Keep the existing YAML-tagged decoder;
   switching to strict or JSON-tagged decoding would change accepted config.
