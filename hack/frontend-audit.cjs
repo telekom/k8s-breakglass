@@ -30,7 +30,8 @@ function summary(text) {
     lines.push(`- ${escaped}: **${issue.severity}**, fix ${issue.fixAvailable ? "available" : "not reported"}`);
     if (!Array.isArray(issue.via)) throw new Error("Invalid vulnerability advisories");
     for (const advisory of issue.via.slice(0, 3)) {
-      if (typeof advisory === "object" && /^https:\/\/github\.com\/advisories\/GHSA-[a-z0-9-]+$/.test(advisory.url)) {
+      if (advisory && typeof advisory === "object" &&
+          /^https:\/\/github\.com\/advisories\/GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4}$/.test(advisory.url)) {
         lines.push(`  ${advisory.url}`);
       }
     }

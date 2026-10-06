@@ -19,6 +19,15 @@ const disguised = { ...report, vulnerabilities: {
 } };
 assert.match(summary(JSON.stringify(disguised)).body, /- pkg: \*\*high\*\*/);
 assert.doesNotMatch(summary(JSON.stringify(disguised)).body, /[\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u);
+const oversized = { ...report, vulnerabilities: {
+  package: { severity: "high", fixAvailable: true, via: [
+    { url: `https://github.com/advisories/GHSA-${"a".repeat(70000)}` },
+    { url: "https://github.com/advisories/GHSA-abcd-1234-efgh" },
+  ] },
+} };
+const bounded = summary(JSON.stringify(oversized)).body;
+assert.ok(bounded.length < 1000);
+assert.match(bounded, /https:\/\/github.com\/advisories\/GHSA-abcd-1234-efgh/);
 assert.throws(() => summary('{"error":{"code":"ENOTFOUND"}}'), /npm audit error/);
 assert.throws(() => summary("{}"), /Invalid npm audit report/);
 assert.throws(() => summary("not JSON"));
