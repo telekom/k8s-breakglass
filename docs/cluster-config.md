@@ -1267,7 +1267,7 @@ kubectl get clusterconfig <name> -o yaml
 
 ### Common Issues
 
-#### Ready Condition: False (KubeconfigValidationFailed)
+#### Ready Condition: False (KubeconfigParseFailed)
 
 **Cause:** The referenced kubeconfig secret doesn't exist, contains invalid data,
 or includes forbidden file/plugin credential references.
