@@ -184,6 +184,9 @@ async function fetchSessions() {
   loading.value = true;
   error.value = "";
   const statesToQuery = filters.states.length ? filters.states : [undefined];
+  // The sessions API has no name filter, so results are narrowed client-side
+  // with the name submitted together with the other filters.
+  const nameQuery = filters.name.trim().toLowerCase();
   try {
     const all = await Promise.all(statesToQuery.map((state) => breakglassService.searchSessions(buildParams(state))));
     const merged = all.flat();
@@ -195,8 +198,6 @@ async function fetchSessions() {
         `${session.spec?.grantedGroup}-${session.spec?.cluster}-${session.status?.expiresAt || ""}`;
       dedup.set(key, session);
     });
-    // The sessions API has no name filter, so narrow the results client-side.
-    const nameQuery = filters.name.trim().toLowerCase();
     sessions.value = Array.from(dedup.values()).filter(
       (session) => !nameQuery || sessionName(session).toLowerCase().includes(nameQuery),
     );

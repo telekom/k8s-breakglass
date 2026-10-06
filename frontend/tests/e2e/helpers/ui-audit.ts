@@ -179,17 +179,20 @@ export async function findLayoutProblems(page: Page, scopeSelector = "body"): Pr
         const clips = [style.overflowX, style.overflowY].some((o) => o !== "visible");
         if (!clips) continue;
         const a = anc.getBoundingClientRect();
-        if (rect.left < a.left - 1 || rect.right > a.right + 1 || rect.top < a.top - 1 || rect.bottom > a.bottom + 1) {
-          // Content inside a scroll container is fine if the container itself can scroll it into view.
-          const scrollable =
-            ["auto", "scroll"].includes(style.overflowY) &&
-            anc.scrollHeight > anc.clientHeight &&
-            rect.height <= a.height;
-          if (!scrollable) {
-            problems.push(`${name} is clipped by ${anc.tagName.toLowerCase()}.${(anc as HTMLElement).className || ""}`);
-            clipped = true;
-            break;
-          }
+        // Each axis is judged separately: overflow on an axis is fine only if the
+        // container scrolls on that axis and the control fits its size there.
+        const outX = rect.left < a.left - 1 || rect.right > a.right + 1;
+        const outY = rect.top < a.top - 1 || rect.bottom > a.bottom + 1;
+        const scrollsX =
+          ["auto", "scroll"].includes(style.overflowX) && anc.scrollWidth > anc.clientWidth && rect.width <= a.width;
+        const scrollsY =
+          ["auto", "scroll"].includes(style.overflowY) &&
+          anc.scrollHeight > anc.clientHeight &&
+          rect.height <= a.height;
+        if ((outX && !scrollsX) || (outY && !scrollsY)) {
+          problems.push(`${name} is clipped by ${anc.tagName.toLowerCase()}.${(anc as HTMLElement).className || ""}`);
+          clipped = true;
+          break;
         }
       }
       if (clipped) continue;

@@ -171,6 +171,9 @@ const THEME_MODES: Array<{
  */
 const SCALE_DISABLED_RULES = ["aria-required-children"];
 
+/** Rules reported even when the offending node lives in a Scale shadow root. */
+const SHADOW_ENFORCED_RULES = ["button-name", "aria-prohibited-attr"];
+
 /**
  * Telekom brand colours that are exempt from the AAA enhanced contrast rule
  * (color-contrast-enhanced, WCAG 2.1 SC 1.4.6, 7:1 ratio).
@@ -268,18 +271,20 @@ function isBrandColorContrastNode(node: {
  * Run axe-core analysis and assert no critical/serious violations.
  * Shared by page, error page, and modal tests.
  */
-async function assertNoA11yViolations(page: Page, context: string, mode: string) {
+async function findSignificantViolations(page: Page, mode: string) {
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag2aaa", "wcag22aaa"])
     .disableRules(SCALE_DISABLED_RULES)
     .analyze();
 
-  const significantViolations = results.violations
+  return results.violations
     .filter((v) => v.impact === "critical" || v.impact === "serious")
     .map((v) => ({
       ...v,
       nodes: v.nodes.filter((n) => {
-        if (isScaleShadowDomNode(n)) return false;
+        // Unnamed shadow buttons are app bugs (missing inner-aria-label), so
+        // these rules are never suppressed for Scale shadow-DOM nodes.
+        if (!SHADOW_ENFORCED_RULES.includes(v.id) && isScaleShadowDomNode(n)) return false;
         // Exempt Telekom brand colours ONLY from the enhanced contrast rule (AAA)
         // in standard light/dark themes. High-contrast mode must not leak brand
         // magenta because users opted into maximum contrast.
@@ -290,6 +295,10 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
       }),
     }))
     .filter((v) => v.nodes.length > 0);
+}
+
+async function assertNoA11yViolations(page: Page, context: string, mode: string) {
+  const significantViolations = await findSignificantViolations(page, mode);
 
   if (significantViolations.length > 0) {
     const details = significantViolations
@@ -307,6 +316,22 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
 }
 
 test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
+  test("audit reports an icon-only Scale button without inner-aria-label", async ({ page }) => {
+    await performMockLogin(page);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => {
+      const button = document.createElement("scale-button");
+      button.setAttribute("icon-only", "");
+      button.setAttribute("data-testid", "unnamed-icon-button");
+      button.innerHTML = '<scale-icon-action-search decorative=""></scale-icon-action-search>';
+      document.querySelector("#main")!.prepend(button);
+    });
+    await expect(page.locator('[data-testid="unnamed-icon-button"]')).toHaveClass(/hydrated/);
+
+    const violations = await findSignificantViolations(page, "light");
+    expect(violations.map((v) => v.id)).toContain("button-name");
+  });
+
   for (const mode of THEME_MODES) {
     test.describe(`${mode.name} mode`, () => {
       // ── Primary authenticated pages ──────────────────────────────

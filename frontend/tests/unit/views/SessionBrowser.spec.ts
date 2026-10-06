@@ -214,6 +214,61 @@ describe("SessionBrowser", () => {
     });
   });
 
+  describe("Session name filter", () => {
+    const renderedNames = (wrapper: Awaited<ReturnType<typeof createWrapper>>) =>
+      wrapper.findAll(".session-name").map((el) => el.text());
+
+    const setNameFilter = async (wrapper: Awaited<ReturnType<typeof createWrapper>>, value: string) => {
+      const field = wrapper.find('[data-testid="name-filter"]');
+      (field.element as HTMLInputElement).value = value;
+      await field.trigger("scale-change");
+    };
+
+    const applyFilters = async (wrapper: Awaited<ReturnType<typeof createWrapper>>) => {
+      await wrapper.find('[data-testid="apply-filters-button"]').trigger("click");
+      await flushPromises();
+    };
+
+    it("keeps only sessions whose name matches, ignoring case and surrounding whitespace", async () => {
+      const wrapper = await createWrapper();
+      expect(renderedNames(wrapper).sort()).toEqual(["session-1", "session-2"]);
+
+      await setNameFilter(wrapper, "  SESSION-2 ");
+      await applyFilters(wrapper);
+
+      expect(renderedNames(wrapper)).toEqual(["session-2"]);
+      expect(wrapper.find("h2").text()).toBe("Results (1)");
+    });
+
+    it("shows every session again once the name filter is cleared", async () => {
+      const wrapper = await createWrapper();
+      await setNameFilter(wrapper, "session-1");
+      await applyFilters(wrapper);
+      expect(renderedNames(wrapper)).toEqual(["session-1"]);
+
+      await setNameFilter(wrapper, "");
+      await applyFilters(wrapper);
+
+      expect(renderedNames(wrapper).sort()).toEqual(["session-1", "session-2"]);
+    });
+
+    it("filters by the submitted name even if the input changes while loading", async () => {
+      const wrapper = await createWrapper();
+      const sessions = await mockSearchSessions.mock.results[0]!.value;
+      const pending: Array<(value: unknown) => void> = [];
+      mockSearchSessions.mockImplementation(() => new Promise((r) => pending.push(r)));
+
+      await setNameFilter(wrapper, "session-1");
+      await wrapper.find('[data-testid="apply-filters-button"]').trigger("click");
+      await setNameFilter(wrapper, "session-2");
+      expect(pending.length).toBeGreaterThan(0);
+      pending.forEach((resolve) => resolve(sessions));
+      await flushPromises();
+
+      expect(renderedNames(wrapper)).toEqual(["session-1"]);
+    });
+  });
+
   describe("Component Lifecycle", () => {
     it("unmounts cleanly", async () => {
       const wrapper = await createWrapper();
