@@ -234,6 +234,8 @@ describe("useModalBehavior", () => {
   it("anchors focus on the page heading when a refresh replaces the trigger", async () => {
     const main = document.createElement("div");
     main.id = "main";
+    // The app shell's screen-reader-only brand heading comes first in #main.
+    main.appendChild(Object.assign(document.createElement("h1"), { className: "sr-only" }));
     const heading = document.createElement("h1");
     heading.textContent = "Request access";
     const trigger = document.createElement("button");
@@ -266,6 +268,8 @@ describe("useModalBehavior", () => {
   it("anchors focus on the heading when a slow request replaces the trigger much later", async () => {
     const main = document.createElement("div");
     main.id = "main";
+    // The app shell's screen-reader-only brand heading comes first in #main.
+    main.appendChild(Object.assign(document.createElement("h1"), { className: "sr-only" }));
     const heading = document.createElement("h1");
     const trigger = document.createElement("button");
     main.append(heading, trigger);
@@ -297,6 +301,8 @@ describe("useModalBehavior", () => {
   it("does not move focus once the user has focused something else", async () => {
     const main = document.createElement("div");
     main.id = "main";
+    // The app shell's screen-reader-only brand heading comes first in #main.
+    main.appendChild(Object.assign(document.createElement("h1"), { className: "sr-only" }));
     const heading = document.createElement("h1");
     const trigger = document.createElement("button");
     const other = document.createElement("button");
@@ -357,6 +363,8 @@ describe("useModalBehavior", () => {
   it("moves focus to the heading when the trigger is removed before a persistent dialog closes", async () => {
     const main = document.createElement("div");
     main.id = "main";
+    // The app shell's screen-reader-only brand heading comes first in #main.
+    main.appendChild(Object.assign(document.createElement("h1"), { className: "sr-only" }));
     const heading = document.createElement("h1");
     const trigger = document.createElement("button");
     main.append(heading, trigger);
@@ -419,6 +427,8 @@ describe("useModalBehavior", () => {
   it("ends on the page heading when both stacked dialogs close and their triggers are gone", async () => {
     const main = document.createElement("div");
     main.id = "main";
+    // The app shell's screen-reader-only brand heading comes first in #main.
+    main.appendChild(Object.assign(document.createElement("h1"), { className: "sr-only" }));
     const heading = document.createElement("h1");
     const trigger = document.createElement("button");
     main.append(heading, trigger);

@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading.
 - Bump packaged Helm chart versions so the next controller release preserves
   the immutable chart packages already published for `v0.3.0-rc.4`.
 

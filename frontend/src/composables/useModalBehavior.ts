@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { nextTick, onBeforeUnmount, watch, type Ref } from "vue";
+import { PAGE_HEADING_SELECTOR } from "@/utils/pageHeading";
 
 type ModalBehaviorOptions = {
   lockScroll?: boolean;
@@ -138,7 +139,7 @@ async function focusOpenModal(token: symbol, isStillOpen: () => boolean, already
 /** Focuses the page heading (or main region) like route changes do. */
 function focusMainHeading() {
   const target =
-    document.querySelector<HTMLElement>("#main h1, #main h2") ?? document.getElementById("main") ?? undefined;
+    document.querySelector<HTMLElement>(PAGE_HEADING_SELECTOR) ?? document.getElementById("main") ?? undefined;
   if (!target) return;
   if (!target.hasAttribute("tabindex")) {
     target.setAttribute("tabindex", "-1");

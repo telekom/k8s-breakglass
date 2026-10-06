@@ -17,6 +17,7 @@ const DebugSessionBrowser = () => import("@/views/DebugSessionBrowser.vue");
 const DebugSessionCreate = () => import("@/views/DebugSessionCreate.vue");
 const DebugSessionDetails = () => import("@/views/DebugSessionDetails.vue");
 import logger from "@/services/logger";
+import { PAGE_HEADING_SELECTOR } from "@/utils/pageHeading";
 
 const isDev = import.meta.env.DEV;
 
@@ -152,7 +153,7 @@ router.afterEach((to, from, failure) => {
       if (mainEl && mainEl.contains(document.activeElement)) {
         return; // User or component already focused something inside main
       }
-      const heading = document.querySelector("#main h1, #main h2") as HTMLElement | null;
+      const heading = document.querySelector<HTMLElement>(PAGE_HEADING_SELECTOR);
       if (heading) {
         const previousTabIndex = heading.getAttribute("tabindex");
         heading.setAttribute("tabindex", "-1");

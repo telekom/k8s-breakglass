@@ -171,7 +171,14 @@ test.describe.serial("UI accessibility: dialogs and keyboard flows", () => {
     await expect(card.locator('[data-testid="withdraw-button"]')).toBeVisible();
     // The list refresh replaces the trigger; keyboard focus must stay anchored in the page.
     await expect
-      .poll(() => page.evaluate(() => document.getElementById("main")?.contains(document.activeElement) ?? false))
+      .poll(() =>
+        page.evaluate(() => {
+          const active = document.activeElement;
+          return (
+            !!active && !active.classList.contains("sr-only") && !!document.getElementById("main")?.contains(active)
+          );
+        }),
+      )
       .toBe(true);
 
     await page.goto("/requests/mine");
@@ -237,7 +244,12 @@ test.describe.serial("UI accessibility: dialogs and keyboard flows", () => {
       .poll(() =>
         page.evaluate(() => {
           const active = document.activeElement;
-          return !!active && !active.closest("scale-modal") && !!document.getElementById("main")?.contains(active);
+          return (
+            !!active &&
+            !active.closest("scale-modal") &&
+            !active.classList.contains("sr-only") &&
+            !!document.getElementById("main")?.contains(active)
+          );
         }),
       )
       .toBe(true);
