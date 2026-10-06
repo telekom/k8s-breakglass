@@ -25,8 +25,8 @@ function summary(text) {
   ];
   for (const [name, issue] of Object.entries(audit.vulnerabilities).slice(0, 40)) {
     if (!severities.includes(issue.severity)) throw new Error("Invalid vulnerability severity");
-    const escaped = name.slice(0, 160).replace(/[&<>"'`*_[\]\\|@]/g, character => `&#${character.charCodeAt(0)};`)
-      .replace(/[\r\n]/g, " ");
+    const escaped = name.replace(/[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/gu, "").slice(0, 160)
+      .replace(/[&<>"'`*_[\]\\|@]/g, character => `&#${character.charCodeAt(0)};`);
     lines.push(`- ${escaped}: **${issue.severity}**, fix ${issue.fixAvailable ? "available" : "not reported"}`);
     if (!Array.isArray(issue.via)) throw new Error("Invalid vulnerability advisories");
     for (const advisory of issue.via.slice(0, 3)) {

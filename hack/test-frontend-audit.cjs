@@ -14,6 +14,11 @@ const report = {
 };
 assert.match(summary(JSON.stringify(report)).body, /\| high \| 1 \|/);
 assert.ok(!summary(JSON.stringify(report)).body.includes("<script>"));
+const disguised = { ...report, vulnerabilities: {
+  ["pkg\u202e\u2066\u0000\u2028\u2029\ud800"]: { severity: "high", fixAvailable: true, via: [] },
+} };
+assert.match(summary(JSON.stringify(disguised)).body, /- pkg: \*\*high\*\*/);
+assert.doesNotMatch(summary(JSON.stringify(disguised)).body, /[\p{Cf}\p{Cs}\p{Zl}\p{Zp}]/u);
 assert.throws(() => summary('{"error":{"code":"ENOTFOUND"}}'), /npm audit error/);
 assert.throws(() => summary("{}"), /Invalid npm audit report/);
 assert.throws(() => summary("not JSON"));
