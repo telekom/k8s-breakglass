@@ -18,7 +18,6 @@ const breakglassService = new BreakglassService(auth);
 const time = useCurrentTime();
 
 type BreakglassWithSession = Breakglass & {
-  escalationIdentities?: string[];
   requestingGroups?: string[];
   approvalGroups?: string[];
   sessionActive?: SessionCR | null;

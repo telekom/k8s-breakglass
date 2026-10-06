@@ -55,6 +55,12 @@ identifier, authorization, or cluster-wide resource-name uniqueness checks.
 `bgctl escalation list` keeps the resource identifier in `NAME` and shows the
 resolved label in `DISPLAY_NAME`; use the resource name for `bgctl escalation get`.
 
+UI cards keep the granted group separate from the display-name heading. The
+existing `escalation-name` lookup selector continues to identify the granted
+group; the card exposes its resource name through `data-escalation-name` and all
+deduplicated resource names/display labels through `data-escalation-identities`.
+Changing a display label does not change the cluster/group request target.
+
 ## Required Fields
 
 ### escalatedGroup

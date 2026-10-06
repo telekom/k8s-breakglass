@@ -79,9 +79,32 @@ describe("BreakglassCard request reason validation", () => {
       props: { breakglass: makeBreakglass({ displayName, escalationName }), time: Date.now() },
       global: { stubs: { ...SCALE_STUBS, SessionSummaryCard: false } },
     });
-    expect(wrapper.get('[data-testid="escalation-name"]').text()).toBe(expected);
+    expect(wrapper.get('[data-testid="summary-card-title"]').text()).toBe(expected);
+    expect(wrapper.findAll('[data-testid="escalation-name"]')).toHaveLength(1);
+    expect(wrapper.get('[data-testid="escalation-name"]').text()).toBe("admin-group");
+    expect(wrapper.get('[data-testid="escalation-card"]').attributes("data-escalation-name")).toBe(escalationName);
     expect(wrapper.text()).toContain("Granted group");
     expect(wrapper.text()).toContain("admin-group");
+  });
+
+  it("exposes every deduplicated identity without replacing the legacy granted-group selector", () => {
+    const identities = ["admin-a1b2c3d4", "Production admin", "admin-e5f6a7b8", "Secondary admin"];
+    const wrapper = mount(BreakglassCard, {
+      props: {
+        breakglass: makeBreakglass({
+          escalationName: identities[0],
+          displayName: identities[1],
+          escalationIdentities: identities,
+        }),
+        time: Date.now(),
+      },
+      global: { stubs: { ...SCALE_STUBS, SessionSummaryCard: false } },
+    });
+    expect(
+      JSON.parse(wrapper.get('[data-testid="escalation-card"]').attributes("data-escalation-identities")!),
+    ).toEqual(identities);
+    expect(wrapper.get('[data-testid="summary-card-title"]').text()).toBe("Production admin");
+    expect(wrapper.get('[data-testid="escalation-name"]').text()).toBe("admin-group");
   });
 
   it("shows a visible required reason error until the requester enters text", async () => {

@@ -445,6 +445,10 @@ function drop() {
   <SessionSummaryCard
     class="breakglass-card"
     data-testid="escalation-card"
+    :data-escalation-name="breakglass.escalationName"
+    :data-escalation-identities="
+      JSON.stringify(breakglass.escalationIdentities || [breakglass.escalationName].filter(Boolean))
+    "
     eyebrow="Escalation target"
     :title="breakglass.displayName || breakglass.escalationName || breakglass.to"
     :subtitle="sessionSubtitle"
@@ -464,7 +468,9 @@ function drop() {
     <template #body>
       <div class="session-section">
         <span class="label">Granted group</span>
-        <scale-tag size="small" variant="neutral">{{ breakglass.to }}</scale-tag>
+        <scale-tag size="small" variant="neutral"
+          ><span data-testid="escalation-name">{{ breakglass.to }}</span></scale-tag
+        >
       </div>
       <div v-if="requesterGroups.length" class="session-section">
         <div class="session-section__header">

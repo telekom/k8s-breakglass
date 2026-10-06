@@ -35,6 +35,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   for human-readable UI and CLI labels, defaulting to `metadata.name`.
   The escalation-config chart preserves the original long name as the label
   when hashing, unless an explicit display name is provided.
+  UI cards retain granted-group lookup selectors and expose resource identities
+  separately from their display-name headings.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
