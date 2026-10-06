@@ -87,11 +87,5 @@ func isAlnum(r rune) bool {
 
 // trimNonAlnum removes leading and trailing non-alphanumeric characters from a string.
 func trimNonAlnum(s string) string {
-	for len(s) > 0 && !isAlnum(rune(s[0])) {
-		s = s[1:]
-	}
-	for len(s) > 0 && !isAlnum(rune(s[len(s)-1])) {
-		s = s[:len(s)-1]
-	}
-	return s
+	return strings.TrimFunc(s, func(r rune) bool { return !isAlnum(r) })
 }
