@@ -153,6 +153,32 @@ describe("BreakglassView", () => {
   });
 
   describe("Query Parameters", () => {
+    it.each(["First admin", "first-id", "SECOND ADMIN", "second-id"])(
+      "searches all identities of a deduplicated cluster/group card: %s",
+      async (search) => {
+        mockGetBreakglasses.mockResolvedValueOnce([
+          { escalationName: "first-id", displayName: "First admin", cluster: "prod", to: "admin", from: "ops" },
+          { escalationName: "second-id", displayName: "Second admin", cluster: "prod", to: "admin", from: "dev" },
+          { escalationName: "unrelated", displayName: "Other access", cluster: "staging", to: "view", from: "dev" },
+        ]);
+        const wrapper = await createWrapper({ search });
+        const cards = wrapper.findAllComponents({ name: "BreakglassCard" });
+        expect(cards).toHaveLength(1);
+        const breakglass = cards[0]!.props("breakglass");
+        expect(breakglass).toMatchObject({
+          escalationName: "first-id",
+          displayName: "First admin",
+          cluster: "prod",
+          to: "admin",
+          requestingGroups: ["ops", "dev"],
+          escalationIdentities: ["first-id", "First admin", "second-id", "Second admin"],
+        });
+        await cards[0]!.vm.$emit("request", "Incident repair", 3600);
+        await flushPromises();
+        expect(mockRequestBreakglass).toHaveBeenCalledWith(breakglass, "Incident repair", 3600, undefined);
+      },
+    );
+
     it.each(["Production admin", "a1b2c3d4"])(
       "finds escalations by display name or resource name: %s",
       async (search) => {

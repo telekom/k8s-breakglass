@@ -30,6 +30,7 @@ describe("BreakglassService", () => {
   const mockAuth = {
     user: { email: "test@example.com" },
     getAccessToken: vi.fn().mockResolvedValue("test-token"),
+    getUserEmail: vi.fn().mockResolvedValue("test@example.com"),
   } as unknown as ConstructorParameters<typeof BreakglassService>[0];
 
   beforeEach(() => {
@@ -128,6 +129,32 @@ describe("BreakglassService", () => {
       mockGet.mockRejectedValueOnce(new Error("Request failed"));
 
       await expect(service.fetchMyOutstandingRequests()).rejects.toThrow("Request failed");
+    });
+
+    it("requests only cluster/group even when the card aggregates escalation identities", async () => {
+      mockPost.mockResolvedValueOnce({ status: 201 });
+      const transition = {
+        cluster: "prod",
+        to: "admin",
+        escalationName: "first-id",
+        displayName: "First admin",
+        escalationIdentities: ["first-id", "First admin", "second-id", "Second admin"],
+        from: "ops",
+        duration: 3600,
+        selfApproval: false,
+        approvalGroups: ["approvers"],
+        group: "admin",
+        expiry: 0,
+        state: "Available",
+      };
+      await service.requestBreakglass(transition, "Incident repair", 3600);
+      expect(mockPost).toHaveBeenCalledWith("/breakglassSessions", {
+        cluster: "prod",
+        group: "admin",
+        user: "test@example.com",
+        reason: "Incident repair",
+        duration: 3600,
+      });
     });
 
     it("returns empty array for non-array response", async () => {

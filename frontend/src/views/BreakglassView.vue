@@ -18,6 +18,7 @@ const breakglassService = new BreakglassService(auth);
 const time = useCurrentTime();
 
 type BreakglassWithSession = Breakglass & {
+  escalationIdentities?: string[];
   requestingGroups?: string[];
   approvalGroups?: string[];
   sessionActive?: SessionCR | null;
@@ -103,12 +104,14 @@ const dedupedBreakglasses = computed(() => {
   };
 
   state.breakglasses.forEach((bg) => {
+    const identities = [bg.escalationName, bg.displayName].filter((value): value is string => Boolean(value));
     const key = `${bg.cluster || "global"}::${bg.to}`;
     const existing = map.get(key);
     if (!existing) {
       const groups = collectRequesterGroups(bg);
       const clone: BreakglassWithSession = {
         ...bg,
+        escalationIdentities: identities,
         requestingGroups: groups,
         from: groups[0] ?? bg.from,
       };
@@ -121,6 +124,7 @@ const dedupedBreakglasses = computed(() => {
 
     const next: BreakglassWithSession = {
       ...existing,
+      escalationIdentities: Array.from(new Set([...(existing.escalationIdentities || []), ...identities])),
       requestingGroups: mergedGroupsArray,
       from: mergedGroupsArray[0] ?? existing.from,
     };
@@ -160,8 +164,7 @@ const filteredBreakglasses = computed(() => {
     const s = state.search.toLowerCase();
     bgs = bgs.filter((bg) => {
       return (
-        (bg.displayName && bg.displayName.toLowerCase().includes(s)) ||
-        (bg.escalationName && bg.escalationName.toLowerCase().includes(s)) ||
+        bg.escalationIdentities?.some((identity) => identity.toLowerCase().includes(s)) ||
         (bg.to && bg.to.toLowerCase().includes(s)) ||
         (bg.from && bg.from.toLowerCase().includes(s)) ||
         (bg.cluster && bg.cluster.toLowerCase().includes(s)) ||
