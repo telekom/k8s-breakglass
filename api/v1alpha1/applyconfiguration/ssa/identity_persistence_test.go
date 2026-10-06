@@ -13,6 +13,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -28,10 +29,13 @@ func TestIdentityProvenanceSurvivesStatusApply(t *testing.T) {
 	require.NoError(t, base.Get(ctx, client.ObjectKeyFromObject(original), desired))
 	desired.Status = breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, Approver: "a", ApproverIdentityProvider: "provider-a", Approvers: []string{"legacy", "a"}, ApproverIdentityProviders: []string{"", "provider-a"}}
 	called := false
-	wrapped := interceptor.NewClient(base, interceptor.Funcs{SubResourcePatch: func(ctx context.Context, c client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+	wrapped := interceptor.NewClient(base, interceptor.Funcs{SubResourceApply: func(ctx context.Context, c client.Client, sub string, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
 		called = true
 		require.Equal(t, "status", sub)
-		u := obj.(*unstructured.Unstructured)
+		data, err := json.Marshal(obj)
+		require.NoError(t, err)
+		u := &unstructured.Unstructured{}
+		require.NoError(t, json.Unmarshal(data, u))
 		raw, err := json.Marshal(u.Object["status"])
 		require.NoError(t, err)
 		stored := &breakglassv1alpha1.BreakglassSession{}
@@ -66,8 +70,9 @@ func TestSessionStatusApplyPreservesOriginalVersionAcrossCompetingWriter(t *test
 			stale.ResourceVersion = "10"
 			stale.Status.State = breakglassv1alpha1.SessionStateApproved
 			called := false
-			wrapped := interceptor.NewClient(base, interceptor.Funcs{SubResourcePatch: func(_ context.Context, _ client.Client, _ string, obj client.Object, _ client.Patch, _ ...client.SubResourcePatchOption) error {
+			wrapped := interceptor.NewClient(base, interceptor.Funcs{SubResourceApply: func(_ context.Context, _ client.Client, _ string, config runtime.ApplyConfiguration, _ ...client.SubResourceApplyOption) error {
 				called = true
+				obj := config.(client.Object)
 				require.Equal(t, "10", obj.GetResourceVersion(), "later read must not replace original predecessor version")
 				return apierrors.NewConflict(breakglassv1alpha1.GroupVersion.WithResource("breakglasssessions").GroupResource(), obj.GetName(), nil)
 			}})

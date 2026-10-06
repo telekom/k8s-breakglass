@@ -27,6 +27,7 @@ import (
 	ssa "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/ssa"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -143,11 +144,10 @@ func (r *ClusterConfigReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				if !controllerutil.ContainsFinalizer(latest, ClusterConfigFinalizer) {
 					return nil
 				}
-				controllerutil.RemoveFinalizer(latest, ClusterConfigFinalizer)
-				// Server-side apply cannot express an empty finalizers list because the
-				// generated apply configuration uses omitempty. Use an ordinary update
-				// so the API server receives finalizers: [] and can complete deletion.
-				return r.Update(ctx, latest)
+				// Generated SSA omits an empty finalizers list. An optimistic merge
+				// patch explicitly removes the finalizer so deletion can complete.
+				_, err := sharedpatch.RemoveFinalizer(ctx, r.Client, latest, ClusterConfigFinalizer)
+				return err
 			}); err != nil {
 				log.Errorw("Failed to remove finalizer from ClusterConfig", "cluster", clusterName, "error", err)
 				return ctrl.Result{}, err
@@ -298,38 +298,30 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 			"session", session.Name, "namespace", session.Namespace, "cluster", clusterName,
 			"previousState", session.Status.State)
 
-		if err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-			live := &breakglassv1alpha1.DebugSession{}
-			if err := r.Get(ctx, client.ObjectKeyFromObject(session), live); err != nil {
-				return err
-			}
-			if live.UID != session.UID || live.Spec.Cluster != clusterName {
-				return fmt.Errorf("DebugSession %s/%s identity changed during cluster cleanup", session.Namespace, session.Name)
-			}
-
-			if isDebugSessionTerminal(live.Status.State) {
-				if debugSessionHasTrackedSpokeResources(live) {
-					return debugSessionCleanupPendingError(live)
+		live, err := sharedpatch.Status(ctx, r.Client, nil, retry.DefaultRetry, client.ObjectKeyFromObject(session),
+			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+			func(live *breakglassv1alpha1.DebugSession) (bool, error) {
+				if live.UID != session.UID || live.Spec.Cluster != clusterName {
+					return false, fmt.Errorf("DebugSession %s/%s identity changed during cluster cleanup", session.Namespace, session.Name)
 				}
-				return nil
-			}
-			base := live.DeepCopy()
-			live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
-			if err := r.stampDebugSessionTerminationRetention(ctx, live); err != nil {
-				return err
-			}
-			live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
-			if live.Generation > 0 {
-				live.Status.ObservedGeneration = live.Generation
-			}
-			if err := r.Status().Patch(ctx, live, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
-				return err
-			}
-			if debugSessionHasTrackedSpokeResources(live) {
-				return debugSessionCleanupPendingError(live)
-			}
-			return nil
-		}); err != nil {
+
+				if isDebugSessionTerminal(live.Status.State) {
+					return false, nil
+				}
+				live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+				if err := r.stampDebugSessionTerminationRetention(ctx, live); err != nil {
+					return false, err
+				}
+				live.Status.Message = fmt.Sprintf("Session terminated: ClusterConfig %q was deleted", clusterName)
+				if live.Generation > 0 {
+					live.Status.ObservedGeneration = live.Generation
+				}
+				return true, nil
+			})
+		if err == nil && debugSessionHasTrackedSpokeResources(live) {
+			err = debugSessionCleanupPendingError(live)
+		}
+		if err != nil {
 			log.Warnw("Failed to terminate DebugSession", "session", session.Name, "error", err)
 			terminateErrs = append(terminateErrs, fmt.Errorf("terminate DebugSession %s/%s: %w", session.Namespace, session.Name, err))
 			continue

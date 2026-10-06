@@ -211,7 +211,7 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 		},
 	}
 
-	updateCalls := 0
+	patchCalls := 0
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(clusterConfig).
@@ -235,10 +235,14 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 			return nil
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			Update: func(ctx context.Context, client client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
-				updateCalls++
+			Patch: func(ctx context.Context, cl client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				patchCalls++
 				require.NotContains(t, obj.GetFinalizers(), ClusterConfigFinalizer)
-				return client.Update(ctx, obj, opts...)
+				require.Equal(t, types.MergePatchType, patch.Type())
+				data, err := patch.Data(obj)
+				require.NoError(t, err)
+				require.Contains(t, string(data), `"resourceVersion"`)
+				return cl.Patch(ctx, obj, patch, opts...)
 			},
 		}).
 		Build()
@@ -262,7 +266,7 @@ func TestClusterConfigReconciler_DeleteWithoutSessions(t *testing.T) {
 	var updated breakglassv1alpha1.ClusterConfig
 	err = fakeClient.Get(ctx, types.NamespacedName{Name: "test-cluster", Namespace: "default"}, &updated)
 	assert.True(t, apierrors.IsNotFound(err), "ClusterConfig should be deleted after finalizer removal")
-	assert.Equal(t, 1, updateCalls, "finalizer removal must use a regular update")
+	assert.Equal(t, 1, patchCalls, "finalizer removal must explicitly send an optimistic merge patch")
 }
 
 func TestClusterConfigReconciler_DeleteTerminatesBreakglassSessions(t *testing.T) {
@@ -1102,11 +1106,11 @@ func TestClusterConfigReconciler_BreakglassStatusPatchFailureBlocksDeletion(t *t
 			return nil
 		}).
 		WithInterceptorFuncs(interceptor.Funcs{
-			SubResourcePatch: func(ctx context.Context, client client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-				if subResource == "status" && obj.GetName() == "failing-session" {
+			SubResourceApply: func(ctx context.Context, cl client.Client, subResource string, obj runtime.ApplyConfiguration, opts ...client.SubResourceApplyOption) error {
+				if subResource == "status" && obj.(client.Object).GetName() == "failing-session" {
 					return statusPatchError
 				}
-				return client.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+				return cl.SubResource(subResource).Apply(ctx, obj, opts...)
 			},
 		}).
 		Build()

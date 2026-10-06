@@ -29,42 +29,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	ac "github.com/telekom/k8s-breakglass/api/v1alpha1/applyconfiguration/api/v1alpha1"
+	sharedssa "github.com/telekom/t-caas-go-library/pkg/ssa"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // PatchApplyResult indicates the outcome of a patch-or-skip operation.
-type PatchApplyResult int
+type PatchApplyResult = sharedssa.PatchApplyResult
 
 const (
 	// PatchApplyResultSkipped means the status was already up-to-date (no API call made).
-	PatchApplyResultSkipped PatchApplyResult = iota
+	PatchApplyResultSkipped = sharedssa.PatchApplyResultSkipped
 	// PatchApplyResultCreated is unused for status (objects must already exist) but
 	// kept for API compatibility with the spec-side patchHelper.
-	PatchApplyResultCreated
+	PatchApplyResultCreated = sharedssa.PatchApplyResultCreated
 	// PatchApplyResultPatched means the status differed and was patched via SSA.
-	PatchApplyResultPatched
+	PatchApplyResultPatched = sharedssa.PatchApplyResultPatched
 )
-
-// String returns a human-readable label for the result.
-func (r PatchApplyResult) String() string {
-	switch r {
-	case PatchApplyResultSkipped:
-		return "skipped"
-	case PatchApplyResultCreated:
-		return "created"
-	case PatchApplyResultPatched:
-		return "patched"
-	default:
-		return "unknown"
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Core infrastructure
@@ -81,8 +66,6 @@ func patchApplyStatusViaUnstructured(ctx context.Context, c client.Client, apply
 // informer cache, compares it with the desired status, and skips the SSA Patch
 // if there is no diff. Returns the result (skipped/patched) and any error.
 func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Client, applyConfig runtime.ApplyConfiguration, fieldOwner string) (PatchApplyResult, error) {
-	logger := log.FromContext(ctx)
-
 	// Marshal to JSON and unmarshal to unstructured.
 	data, err := json.Marshal(applyConfig)
 	if err != nil {
@@ -111,40 +94,29 @@ func patchApplyStatusViaUnstructuredWithOwner(ctx context.Context, c client.Clie
 		u.SetResourceVersion(current.GetResourceVersion())
 	}
 
-	// ---- PatchHelper: compare status before applying ----
 	desiredStatus, _ := u.Object["status"].(map[string]interface{})
-	currentStatus, _ := current.Object["status"].(map[string]interface{})
-
-	if statusSubsetMatch(currentStatus, desiredStatus) {
-		logger.V(3).Info("Status unchanged, skipping SSA apply",
-			"kind", u.GetObjectKind().GroupVersionKind().Kind,
-			"name", u.GetName(),
-			"namespace", u.GetNamespace(),
-		)
-		return PatchApplyResultSkipped, nil
+	applier := sharedssa.StatusApplier[*unstructured.Unstructured, runtime.ApplyConfiguration]{
+		Kind: u.GetKind(), FieldOwner: fieldOwner,
+		New: func() *unstructured.Unstructured {
+			obj := &unstructured.Unstructured{}
+			obj.SetGroupVersionKind(u.GroupVersionKind())
+			return obj
+		},
+		Equal: func(cached, _ *unstructured.Unstructured) bool {
+			currentStatus, _ := cached.Object["status"].(map[string]interface{})
+			return statusSubsetMatch(currentStatus, desiredStatus)
+		},
+		ApplyConfiguration: func(desired *unstructured.Unstructured) runtime.ApplyConfiguration {
+			return client.ApplyConfigurationFromUnstructured(desired)
+		},
 	}
+	result, err := applier.PatchApply(ctx, c, u)
 
-	// Apply the status via SSA.
-	//nolint:staticcheck // SA1019: client.Apply patch type works reliably with fake client
-	err = c.SubResource("status").Patch(ctx, u, client.Apply, client.FieldOwner(fieldOwner), client.ForceOwnership)
-
-	// Fallback: MergeFrom patch for fake client compatibility.
-	if err != nil && strings.Contains(err.Error(), "metadata.managedFields must be nil") {
-		original := current.DeepCopy()
-		current.Object["status"] = u.Object["status"]
-		if metaMap, ok := current.Object["metadata"].(map[string]interface{}); ok {
-			delete(metaMap, "managedFields")
-		}
-		if patchErr := c.SubResource("status").Patch(ctx, current, client.MergeFrom(original)); patchErr != nil {
-			return 0, patchErr
-		}
-		return PatchApplyResultPatched, nil
-	}
 	if err != nil {
 		return 0, err
 	}
 
-	return PatchApplyResultPatched, nil
+	return result, nil
 }
 
 func ensureExplicitEmptyStatusLists(applyConfig runtime.ApplyConfiguration, u *unstructured.Unstructured) {

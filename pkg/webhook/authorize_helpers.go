@@ -29,6 +29,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
 	"github.com/telekom/k8s-breakglass/pkg/system"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
 
 // authorizeState holds mutable state accumulated across the phases of handleAuthorize.
@@ -1198,30 +1199,29 @@ func (wc *WebhookController) recordDebugSessionActivity(ctx context.Context, nam
 	if wc.sesManager == nil || uid == "" {
 		return fmt.Errorf("debug session activity writer is unavailable")
 	}
-	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var session breakglassv1alpha1.DebugSession
-		if err := wc.sesManager.Reader().Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, &session); err != nil {
-			return err
-		}
-		if session.UID != uid {
-			return fmt.Errorf("debug session UID changed")
-		}
-		now := time.Now()
-		if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) {
-			return fmt.Errorf("debug session is no longer active")
-		}
-		if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Constraints == nil || session.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
-			return nil
-		}
-		if breakglass.DebugSessionIdleExpired(&session, now) {
-			return fmt.Errorf("debug session is no longer active")
-		}
-		base := session.DeepCopy()
-		session.Status.ActivityCount++
-		nowMeta := metav1.NewTime(now)
-		if session.Status.LastActivity == nil || session.Status.LastActivity.Before(&nowMeta) {
-			session.Status.LastActivity = &nowMeta
-		}
-		return wc.sesManager.Status().Patch(ctx, &session, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
+	_, err := sharedpatch.Status(ctx, wc.sesManager, wc.sesManager.Reader(), retry.DefaultRetry,
+		client.ObjectKey{Namespace: namespace, Name: name},
+		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+		func(session *breakglassv1alpha1.DebugSession) (bool, error) {
+			if session.UID != uid {
+				return false, fmt.Errorf("debug session UID changed")
+			}
+			now := time.Now()
+			if !session.DeletionTimestamp.IsZero() || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || !now.Before(session.Status.ExpiresAt.Time) {
+				return false, fmt.Errorf("debug session is no longer active")
+			}
+			if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Constraints == nil || session.Status.ResolvedTemplate.Constraints.IdleTimeout == "" {
+				return false, nil
+			}
+			if breakglass.DebugSessionIdleExpired(session, now) {
+				return false, fmt.Errorf("debug session is no longer active")
+			}
+			session.Status.ActivityCount++
+			nowMeta := metav1.NewTime(now)
+			if session.Status.LastActivity == nil || session.Status.LastActivity.Before(&nowMeta) {
+				session.Status.LastActivity = &nowMeta
+			}
+			return true, nil
+		})
+	return err
 }

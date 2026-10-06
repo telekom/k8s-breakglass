@@ -10,6 +10,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/util/retry"
@@ -203,29 +204,26 @@ func (wc *BreakglassSessionController) acknowledgeExpiryNotification(
 	reason string,
 	message string,
 ) error {
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		var current breakglassv1alpha1.BreakglassSession
-		if err := wc.sessionManager.Reader().Get(ctx, client.ObjectKeyFromObject(&session), &current); err != nil {
-			return err
-		}
-		currentCondition := current.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
-		if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
-			return nil
-		}
-		if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
-			return errors.New("expiry notification enqueue intent changed before acknowledgement")
-		}
-		base := current.DeepCopy()
-		current.SetCondition(metav1.Condition{
-			Type:               string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent),
-			Status:             metav1.ConditionTrue,
-			Reason:             reason,
-			Message:            message,
-			LastTransitionTime: condition.LastTransitionTime,
+	_, err := sharedpatch.Status(ctx, wc.sessionManager.Client, wc.sessionManager.Reader(), retry.DefaultRetry,
+		client.ObjectKeyFromObject(&session),
+		func() *breakglassv1alpha1.BreakglassSession { return &breakglassv1alpha1.BreakglassSession{} },
+		func(current *breakglassv1alpha1.BreakglassSession) (bool, error) {
+			currentCondition := current.GetCondition(string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent))
+			if currentCondition == nil || currentCondition.Status == metav1.ConditionTrue {
+				return false, nil
+			}
+			if currentCondition.Reason != condition.Reason || !currentCondition.LastTransitionTime.Equal(&condition.LastTransitionTime) {
+				return false, errors.New("expiry notification enqueue intent changed before acknowledgement")
+			}
+			current.SetCondition(metav1.Condition{
+				Type:               string(breakglassv1alpha1.SessionConditionTypeExpiryNotificationIntent),
+				Status:             metav1.ConditionTrue,
+				Reason:             reason,
+				Message:            message,
+				LastTransitionTime: condition.LastTransitionTime,
+			})
+			return true, nil
 		})
-		return wc.sessionManager.Client.Status().Patch(ctx, &current,
-			client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
-	})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}

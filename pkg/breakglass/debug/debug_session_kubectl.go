@@ -30,12 +30,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -285,26 +287,27 @@ func (h *KubectlDebugHandler) patchDebugSessionStatusWithRetryGuarded(
 				return err
 			}
 		}
-		current := &breakglassv1alpha1.DebugSession{}
-		if err := h.readerClient().Get(ctx, ctrlclient.ObjectKey{Name: ds.Name, Namespace: ds.Namespace}, current); err != nil {
-			return err
-		}
-		if ds.UID != "" && current.UID != ds.UID {
-			return fmt.Errorf("debug session UID changed while patching status: expected %q, got %q", ds.UID, current.UID)
-		}
-		if guard != nil {
-			if err := guard(); err != nil {
-				return err
-			}
-		}
+		current, err := sharedpatch.Status(ctx, h.client, h.readerClient(), wait.Backoff{Steps: 1},
+			ctrlclient.ObjectKeyFromObject(ds),
+			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+				if ds.UID != "" && current.UID != ds.UID {
+					return false, fmt.Errorf("debug session UID changed while patching status: expected %q, got %q", ds.UID, current.UID)
+				}
+				if guard != nil {
+					if err := guard(); err != nil {
+						return false, err
+					}
+				}
 
-		base := current.DeepCopy()
-		mutate(&current.Status)
-		if current.Generation > 0 {
-			current.Status.ObservedGeneration = current.Generation
-		}
+				mutate(&current.Status)
+				if current.Generation > 0 {
+					current.Status.ObservedGeneration = current.Generation
+				}
 
-		if err := h.client.Status().Patch(ctx, current, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+				return true, nil
+			})
+		if err != nil {
 			return err
 		}
 		patchedStatus = current.Status
