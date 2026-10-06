@@ -14,6 +14,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/t-caas-go-library/pkg/remoteclient"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -81,10 +82,7 @@ type ClientProvider struct {
 	// bareToCanonical maps bare-name cache keys to their canonical namespace/name keys.
 	// This allows evictClusterLocked to clean up bare-name aliases when the canonical entry is evicted.
 	bareToCanonical map[string]string
-	// clusterToSecret tracks which kubeconfig secret each ClusterConfig uses (keyed by namespace/name)
-	clusterToSecret map[string]string
-	// secretToClusters tracks all clusters backed by a given secret (keyed by namespace/name)
-	secretToClusters map[string]map[string]struct{}
+	remoteClients   *remoteclient.Registry
 	// clusterToOIDCSecrets tracks which OIDC-related secrets each ClusterConfig uses
 	// (refresh token, client secret, subject token, CA). Maps cluster key to set of secret keys.
 	clusterToOIDCSecrets map[string]map[string]struct{}
@@ -120,14 +118,12 @@ func NewClientProvider(c ctrlclient.Client, log *zap.SugaredLogger) *ClientProvi
 
 // NewClientProviderWithCircuitBreaker creates a ClientProvider with explicit circuit breaker configuration.
 func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLogger, cbCfg ClusterCircuitBreakerConfig) *ClientProvider {
-	return &ClientProvider{
+	p := &ClientProvider{
 		k8s:                     c,
 		log:                     log,
 		data:                    map[string]*breakglassv1alpha1.ClusterConfig{},
 		rest:                    map[string]*cachedRESTConfig{},
 		bareToCanonical:         map[string]string{},
-		clusterToSecret:         map[string]string{},
-		secretToClusters:        map[string]map[string]struct{}{},
 		clusterToOIDCSecrets:    map[string]map[string]struct{}{},
 		oidcSecretToClusters:    map[string]map[string]struct{}{},
 		oidcProvider:            NewOIDCTokenProvider(c, log),
@@ -135,6 +131,16 @@ func NewClientProviderWithCircuitBreaker(c ctrlclient.Client, log *zap.SugaredLo
 		clientsets:              map[string]*cachedClientset{},
 		privilegedInputVersions: map[*breakglassv1alpha1.ClusterConfig]map[string]string{},
 	}
+	var err error
+	p.remoteClients, err = remoteclient.New(remoteclient.Options{
+		Factory: p.newKubeconfigClient,
+		// Every registry mutation is made while holding p.mu; callbacks must not re-lock it.
+		OnInvalidate: func(key types.NamespacedName) { p.clearClusterLocked(cacheKey(key.Namespace, key.Name)) },
+	})
+	if err != nil {
+		panic(fmt.Errorf("initialize remote client registry: %w", err))
+	}
+	return p
 }
 
 // cacheKey generates a namespaced cache key for ClusterConfig or Secret lookups.
@@ -579,6 +585,14 @@ func (p *ClientProvider) GetClientForPrivilegedOperation(ctx context.Context, na
 	if err != nil {
 		return nil, nil, err
 	}
+	p.mu.RLock()
+	key := ctrlclient.ObjectKeyFromObject(configured)
+	remote, found := p.remoteClients.Get(key)
+	if found && remote.(*kubeconfigClientBuild).config == restConfig {
+		p.mu.RUnlock()
+		return remote, configured, nil
+	}
+	p.mu.RUnlock()
 	client, err := ctrlclient.New(restConfig, ctrlclient.Options{})
 	if err != nil {
 		p.ReleasePrivilegedOperationClusterConfig(configured)
@@ -874,8 +888,7 @@ func (p *ClientProvider) GetClientset(ctx context.Context, name string) (*kubern
 }
 
 // getRESTConfigFromKubeconfig builds a rest.Config from a kubeconfig stored in a secret.
-// Caller MUST hold p.mu as a write lock (Lock, not RLock) before calling this method,
-// as this function may modify p.clusterToSecret and p.secretToClusters when tracking secret references.
+// Caller MUST hold p.mu as a write lock before mutating the registry.
 func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (*rest.Config, error) {
 	if cc.Spec.KubeconfigSecretRef == nil {
 		return nil, fmt.Errorf("kubeconfigSecretRef is required for kubeconfig auth")
@@ -886,21 +899,92 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *br
 		// default to 'value' for Cluster API compatibility
 		secretDataKey = "value"
 	}
-	secret := corev1.Secret{}
-	if err := p.k8s.Get(ctx, types.NamespacedName{Name: cc.Spec.KubeconfigSecretRef.Name, Namespace: cc.Spec.KubeconfigSecretRef.Namespace}, &secret); err != nil {
-		metrics.ClusterRESTConfigErrors.WithLabelValues(cc.Name, "secret_fetch_failed").Inc()
-		return nil, fmt.Errorf("fetch kubeconfig secret: %w", err)
-	}
-	raw, ok := secret.Data[secretDataKey]
-	if !ok {
-		metrics.ClusterRESTConfigErrors.WithLabelValues(cc.Name, "secret_key_missing").Inc()
-		return nil, fmt.Errorf("secret %s/%s missing key %s", cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name, secretDataKey)
-	}
-	cfg, err := clientcmd.RESTConfigFromKubeConfig(raw)
+	build := &kubeconfigClientBuild{cluster: cc}
+	ctx = context.WithValue(ctx, kubeconfigClientBuildKey{}, build)
+	err := p.remoteClients.RefreshSecret(ctx, ctrlclient.ObjectKeyFromObject(cc),
+		kubeconfigSecretReader{Reader: p.k8s, build: build, dataKey: secretDataKey},
+		remoteclient.ResolverFunc(func(context.Context, types.NamespacedName) (remoteclient.SecretReference, error) {
+			return remoteclient.SecretReference{
+				Secret:  types.NamespacedName{Namespace: cc.Spec.KubeconfigSecretRef.Namespace, Name: cc.Spec.KubeconfigSecretRef.Name},
+				DataKey: secretDataKey,
+			}, nil
+		}))
 	if err != nil {
-		metrics.ClusterRESTConfigErrors.WithLabelValues(cc.Name, "kubeconfig_parse_failed").Inc()
-		return nil, fmt.Errorf("parse kubeconfig: %w", err)
+		if errors.Is(err, remoteclient.ErrInvalidKubeconfig) {
+			metrics.ClusterRESTConfigErrors.WithLabelValues(cc.Name, "kubeconfig_parse_failed").Inc()
+			return nil, fmt.Errorf("parse kubeconfig: %w", err)
+		}
+		if len(build.data) == 0 || ctx.Err() != nil || errors.Is(err, remoteclient.ErrSuperseded) {
+			return nil, err
+		}
+		// Preserve lazy TLS/client validation: a parseable config can be returned
+		// even when the registry cannot construct a client. Its pending dependency
+		// still receives Secret invalidation; it must not reuse an older client.
+		cfg, parseErr := clientcmd.RESTConfigFromKubeConfig(build.data)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse kubeconfig: %w", parseErr)
+		}
+		p.configureKubeconfig(cfg, cc)
+		build.config = cfg
 	}
+	build.data = nil
+	metrics.ClusterRESTConfigLoaded.WithLabelValues(cc.Name).Inc()
+	return build.config, nil
+}
+
+type kubeconfigClientBuildKey struct{}
+
+type kubeconfigClientBuild struct {
+	ctrlclient.Client
+	cluster *breakglassv1alpha1.ClusterConfig
+	config  *rest.Config
+	data    []byte
+}
+
+type kubeconfigSecretReader struct {
+	ctrlclient.Reader
+	build   *kubeconfigClientBuild
+	dataKey string
+}
+
+func (r kubeconfigSecretReader) Get(ctx context.Context, key ctrlclient.ObjectKey, obj ctrlclient.Object, opts ...ctrlclient.GetOption) error {
+	if err := r.Reader.Get(ctx, key, obj, opts...); err != nil {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(r.build.cluster.Name, "secret_fetch_failed").Inc()
+		return fmt.Errorf("fetch kubeconfig secret: %w", err)
+	}
+	data, ok := obj.(*corev1.Secret).Data[r.dataKey]
+	if !ok {
+		metrics.ClusterRESTConfigErrors.WithLabelValues(r.build.cluster.Name, "secret_key_missing").Inc()
+		return fmt.Errorf("secret %s/%s missing key %s", key.Namespace, key.Name, r.dataKey)
+	}
+	r.build.data = data
+	return nil
+}
+
+func (p *ClientProvider) newKubeconfigClient(ctx context.Context, original *rest.Config, httpClient *http.Client) (ctrlclient.Client, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	build, ok := ctx.Value(kubeconfigClientBuildKey{}).(*kubeconfigClientBuild)
+	if !ok {
+		return nil, fmt.Errorf("cluster configuration missing from remote client construction")
+	}
+	cc := build.cluster
+	cfg := rest.CopyConfig(original)
+	cfg.WrapTransport = nil
+	p.configureKubeconfig(cfg, cc)
+	if p.circuitBreakers != nil && p.circuitBreakers.IsEnabled() {
+		httpClient.Transport = &circuitBreakerTransport{
+			inner: httpClient.Transport, clusterName: cacheKey(cc.Namespace, cc.Name), breakers: p.circuitBreakers,
+		}
+	}
+	build.config = cfg
+	var err error
+	build.Client, err = ctrlclient.New(cfg, ctrlclient.Options{HTTPClient: httpClient})
+	return build, err
+}
+
+func (p *ClientProvider) configureKubeconfig(cfg *rest.Config, cc *breakglassv1alpha1.ClusterConfig) {
 	// If the kubeconfig references a loopback endpoint (kind default), rewrite to in-cluster service DNS
 	if strings.Contains(cfg.Host, "127.0.0.1") || strings.Contains(cfg.Host, "localhost") {
 		if disableRewrite, _ := strconv.ParseBool(os.Getenv("BREAKGLASS_DISABLE_LOOPBACK_REWRITE")); disableRewrite {
@@ -916,20 +1000,6 @@ func (p *ClientProvider) getRESTConfigFromKubeconfig(ctx context.Context, cc *br
 	if cc.Spec.Burst != nil {
 		cfg.Burst = int(*cc.Spec.Burst)
 	}
-
-	// Track secret reference for cache invalidation
-	// Note: Caller (GetRESTConfig) already holds p.mu write lock
-	secretRefKey := cacheKey(cc.Spec.KubeconfigSecretRef.Namespace, cc.Spec.KubeconfigSecretRef.Name)
-	clusterKey := cacheKey(cc.Namespace, cc.Name)
-
-	p.clusterToSecret[clusterKey] = secretRefKey
-	if _, ok := p.secretToClusters[secretRefKey]; !ok {
-		p.secretToClusters[secretRefKey] = map[string]struct{}{}
-	}
-	p.secretToClusters[secretRefKey][clusterKey] = struct{}{}
-
-	metrics.ClusterRESTConfigLoaded.WithLabelValues(cc.Name).Inc()
-	return cfg, nil
 }
 
 // getRESTConfigFromOIDC builds a rest.Config using OIDC token authentication.
@@ -964,15 +1034,11 @@ func (p *ClientProvider) InvalidateSecret(namespace, name string) {
 	key := cacheKey(namespace, name)
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	clusters, ok := p.secretToClusters[key]
-	if !ok {
+	if !p.isSecretTrackedLocked(key) {
 		return
 	}
 	metrics.ClusterCacheInvalidations.WithLabelValues("secret_update").Inc()
-	for cluster := range clusters {
-		p.evictClusterLocked(cluster)
-	}
-	delete(p.secretToClusters, key)
+	p.remoteClients.InvalidateSecret(types.NamespacedName{Namespace: namespace, Name: name})
 }
 
 // IsSecretTracked reports whether the provider currently caches any cluster configs referencing the secret.
@@ -980,8 +1046,21 @@ func (p *ClientProvider) IsSecretTracked(namespace, name string) bool {
 	key := cacheKey(namespace, name)
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	_, ok := p.secretToClusters[key]
-	return ok
+	return p.isSecretTrackedLocked(key)
+}
+
+func (p *ClientProvider) isSecretTrackedLocked(key string) bool {
+	// The registry scans dependencies too; retain no second credential index.
+	for _, entry := range p.rest {
+		if entry.clusterConfig == nil || entry.authType != breakglassv1alpha1.ClusterAuthTypeKubeconfig {
+			continue
+		}
+		ref := entry.clusterConfig.Spec.KubeconfigSecretRef
+		if ref != nil && cacheKey(ref.Namespace, ref.Name) == key {
+			return true
+		}
+	}
+	return false
 }
 
 // trackOIDCSecretsLocked records all OIDC-related secret references from a ClusterConfig
@@ -1101,6 +1180,13 @@ func (p *ClientProvider) InvalidateOIDCSecrets(namespace, name string) {
 }
 
 func (p *ClientProvider) evictClusterLocked(clusterKey string) {
+	namespace, name, ok := splitNamespacedName(clusterKey)
+	if ok {
+		p.remoteClients.Remove(types.NamespacedName{Namespace: namespace, Name: name})
+	}
+}
+
+func (p *ClientProvider) clearClusterLocked(clusterKey string) {
 	delete(p.data, clusterKey)
 	delete(p.rest, clusterKey)
 	delete(p.clientsets, clusterKey)
@@ -1120,15 +1206,6 @@ func (p *ClientProvider) evictClusterLocked(clusterKey string) {
 	}
 	if p.circuitBreakers != nil {
 		p.circuitBreakers.Remove(clusterKey)
-	}
-	if secretKey, ok := p.clusterToSecret[clusterKey]; ok {
-		if clusters, found := p.secretToClusters[secretKey]; found {
-			delete(clusters, clusterKey)
-			if len(clusters) == 0 {
-				delete(p.secretToClusters, secretKey)
-			}
-		}
-		delete(p.clusterToSecret, clusterKey)
 	}
 	// Clean up OIDC secret tracking
 	if oidcSecrets, ok := p.clusterToOIDCSecrets[clusterKey]; ok {

@@ -135,7 +135,7 @@ test: vet ## Run all unit tests (controller + CLI) without mutating generated or
 test-cluster-clients: setup-envtest ## Characterize remote client invalidation and freshness against a real API server.
 	@assets="$$($(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" && \
 		assets="$$(cd "$$assets" && pwd)" && \
-		CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$assets" go test $(GO_TEST_FLAGS) ./pkg/cluster ./pkg/audit -run 'Test(ClientProviderRealAPI|ClusterBreakerLifecycleMetricsAndGeneration|AuditBreakerLifecycleMetrics)$$' -count=1
+		CGO_ENABLED=1 KUBEBUILDER_ASSETS="$$assets" go test $(GO_TEST_FLAGS) ./pkg/cluster ./pkg/audit ./pkg/breakglass/clusterconfig -run 'Test(ClientProviderRealAPI|ClusterBreakerLifecycleMetricsAndGeneration|AuditBreakerLifecycleMetrics|ClusterConfigReadinessEmbeddedKubeconfig)$$' -count=1
 
 .PHONY: test-validator
 test-validator: ## Run the standalone cluster-validator unit tests.

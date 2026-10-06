@@ -12,14 +12,15 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	"github.com/telekom/t-caas-go-library/pkg/remoteclient"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/events"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -898,7 +899,19 @@ func determineClusterConfigFailureType(message string) string {
 }
 
 // overridable function variables for unit testing
-var RestConfigFromKubeConfig = clientcmd.RESTConfigFromKubeConfig
+var RestConfigFromKubeConfig = embeddedRESTConfigFromKubeConfig
 var CheckClusterReachable = func(ctx context.Context, cfg *rest.Config) error { return checkClusterReachable(ctx, cfg) }
 
-// Fallback: attempt to build rest.Config via clientcmd
+func embeddedRESTConfigFromKubeConfig(data []byte) (*rest.Config, error) {
+	registry, err := remoteclient.New(remoteclient.Options{})
+	if err != nil {
+		return nil, err
+	}
+	key := types.NamespacedName{Namespace: "readiness", Name: "kubeconfig"}
+	defer registry.Remove(key)
+	if err := registry.Refresh(context.Background(), key, data); err != nil {
+		return nil, err
+	}
+	config, _ := registry.Config(key)
+	return config, nil
+}
