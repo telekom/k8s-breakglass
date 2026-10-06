@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Frontend Audit Comment
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    if: github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted reporting code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Update PR audit report
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const { execFileSync } = require('node:child_process');
+            const fs = require('node:fs');
+            const os = require('node:os');
+            const path = require('node:path');
+            const { summary } = require('./hack/frontend-audit.cjs');
+            const run = context.payload.workflow_run;
+            if (run.path !== '.github/workflows/ci.yml') throw new Error('Unexpected CI workflow');
+            const prs = await github.paginate(github.rest.repos.listPullRequestsAssociatedWithCommit, {
+              ...context.repo, commit_sha: run.head_sha,
+            });
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {
+              ...context.repo, run_id: run.id,
+            });
+            const artifact = artifacts.find(item => item.name === 'npm-audit' && !item.expired);
+            let body = 'Audit report unavailable. Check the CI logs for installation or scanner errors.';
+            if (artifact) {
+              if (artifact.size_in_bytes > 2 * 1024 * 1024) throw new Error('Audit artifact exceeds size limit');
+              const archive = await github.rest.actions.downloadArtifact({
+                ...context.repo, artifact_id: artifact.id, archive_format: 'zip',
+              });
+              const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'npm-audit-'));
+              try {
+                const zip = path.join(dir, 'audit.zip');
+                fs.writeFileSync(zip, Buffer.from(archive.data));
+                const text = execFileSync('unzip', ['-p', zip, 'npm-audit.json'], {
+                  encoding: 'utf8', maxBuffer: 2 * 1024 * 1024,
+                });
+                body = summary(text).body;
+              } finally {
+                fs.rmSync(dir, { recursive: true });
+              }
+            }
+            const marker = '<!-- frontend-security-audit -->';
+            body = `${marker}\n## Frontend Security Audit\n\nCommit: \`${run.head_sha}\`\n\n${body}\n\n[Full audit report and CI logs](${run.html_url})`;
+            for (const pr of prs) {
+              if (pr.state !== 'open' || pr.head.sha !== run.head_sha ||
+                  pr.base.repo.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
+                core.notice(`Skipping stale or unrelated PR #${pr.number}`);
+                continue;
+              }
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo, issue_number: pr.number,
+              });
+              const existing = comments.find(item =>
+                item.user.login === 'github-actions[bot]' && item.body?.startsWith(marker));
+              if (existing) {
+                await github.rest.issues.updateComment({
+                  ...context.repo, comment_id: existing.id, body,
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  ...context.repo, issue_number: pr.number, body,
+                });
+              }
+            }

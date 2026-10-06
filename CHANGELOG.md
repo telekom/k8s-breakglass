@@ -16,6 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   [ClusterConfig migration guide](docs/cluster-config.md#migrating-fileplugin-based-kubeconfigs).
   Client construction and credential eviction use `t-caas-go-library/pkg/remoteclient`,
   preserving TTLs, OIDC and live privileged-operation freshness checks.
+- Report frontend npm vulnerability findings in CI summaries and PR comments
+  without blocking merges; installation and scanner errors remain blocking.
+
 - Adopt the tagged `t-caas-go-library` status SSA and optimistic patch helpers,
   preserving conflict retries, field ownership and session lifecycle fences.
 - Consolidate main-resource and status ApplyConfiguration conversion without
@@ -41,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and cluster-validation diagnostics.
 
 ### Fixed
+
+- Bump packaged Helm chart versions so the next controller release preserves
+  the immutable chart packages already published for `v0.3.0-rc.4`.
 
 - Preserve buffered session activity counts and the newest activity timestamp
   when concurrent webhook replicas flush status updates.

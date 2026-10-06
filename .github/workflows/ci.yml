@@ -159,15 +159,17 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Frontend security audit (npm)
         run: |
+          node hack/test-frontend-audit.cjs
           cd frontend
           npm ci
-          npm audit --audit-level=high --json > ../npm-audit.json
+          node ../hack/frontend-audit.cjs --run
       - name: Upload npm audit results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: npm-audit
           path: npm-audit.json
+          if-no-files-found: error
 
   manifest-validation:
     name: Manifest Validation & Comparison
