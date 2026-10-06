@@ -41,6 +41,7 @@ cases = [
     ("EmptyDisplayNameFallback", {"name": long_name, "displayName": ""}, shortened(long_name), long_name),
     ("QuotedDisplayName", {"name": "short", "displayName": 'Admin "on call"'}, "short", 'Admin "on call"'),
     ("UnicodeDisplayNameBoundary", {"name": "short", "displayName": "界" * 253}, "short", "界" * 253),
+    ("FallbackDisplayNameAt253Characters", {"name": "a" * 253}, shortened("a" * 253), "a" * 253),
     ("ExplicitDisplayNameFor254CharacterName", {"name": "a" * 254, "displayName": "Long-name admin"}, shortened("a" * 254), "Long-name admin"),
 ]
 for punctuation in (".", "_", "-", ".-_"):

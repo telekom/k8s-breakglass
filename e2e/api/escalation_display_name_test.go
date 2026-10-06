@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -30,6 +31,7 @@ func TestEscalationDisplayNameRoundTrip(t *testing.T) {
 	}{
 		{name: "ExplicitDisplayName", displayName: "Emergency Admin Display Name E2E"},
 		{name: "MetadataNameFallback"},
+		{name: "UnicodeDisplayNameBoundary", displayName: strings.Repeat("界", 253)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-display-name"), s.Namespace).
@@ -79,4 +81,15 @@ func TestEscalationDisplayNameRoundTrip(t *testing.T) {
 			require.Equal(t, tc.displayName, persisted.Spec.DisplayName, "response fallback must not be persisted")
 		})
 	}
+
+	t.Run("RejectOverlongDisplayName", func(t *testing.T) {
+		escalation := helpers.NewEscalationBuilder(s.GenerateName("e2e-display-name-invalid"), s.Namespace).
+			WithAllowedClusters(s.Cluster).
+			WithEscalatedGroup("e2e-display-name-group").
+			Build()
+		escalation.Spec.DisplayName = strings.Repeat("界", 254)
+		err := s.CreateResource(escalation)
+		require.True(t, apierrors.IsInvalid(err), "API server must reject 254-character labels: %v", err)
+		require.ErrorContains(t, err, "displayName")
+	})
 }

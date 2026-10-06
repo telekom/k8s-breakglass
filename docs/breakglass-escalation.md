@@ -69,6 +69,8 @@ are applied by the single-cluster setup, and pass `make validate-fixtures`.
 `TestEscalationDisplayNameRoundTrip` in the Single-Cluster E2E suite creates
 resources through the Kubernetes API server, then checks REST list responses and
 real `bgctl escalation list` output for explicit labels and metadata-name fallback.
+It also verifies that 253-character Unicode labels round-trip and that the API
+server rejects a 254-character label.
 The Helm Chart Lint job runs `charts/escalation-config/ci/test-escalation-names.sh`,
 including `Hashed64CharacterName`, `HashedLongProviderName`, and
 `DistinctHashesBeyondTruncationBoundary`.
