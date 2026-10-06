@@ -139,6 +139,13 @@ and Vitest configuration with TypeScript 7.
 UI E2E tests (`frontend/tests/e2e/`) run against a shared kind cluster (Keycloak, MailHog, backend API).
 To avoid cross-test interference from shared users/escalations, they are configured to run serially (single worker).
 
+`ui-accessibility.spec.ts` and `ui-layout.spec.ts` audit the production build served by the
+cluster at desktop (1440x900) and mobile (390x844) viewports in light and dark theme. They fail
+on serious/critical axe-core violations (`@axe-core/playwright`), check keyboard-only flows
+(skip link, request/withdraw dialogs, approval), and assert that every interactive control is
+visible, unclipped, uncovered and working. They use the dedicated `ui-e2e-a11y-user` and the
+`ui-e2e-a11y-test` escalation so they do not interfere with other specs.
+
 ```sh
 npm run build
 ```

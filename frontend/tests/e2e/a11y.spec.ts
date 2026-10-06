@@ -24,7 +24,7 @@ import AxeBuilder from "@axe-core/playwright";
  * Known Scale component issues (in shadow DOM, outside our control) are handled
  * with a two-pronged approach:
  *   1. `disableRules()` — suppress specific axe rules triggered by Scale's
- *      internal shadow-DOM rendering patterns (e.g. button-name, aria-prohibited-attr).
+ *      internal shadow-DOM rendering patterns (aria-required-children).
  *   2. `isScaleShadowDomNode()` — filter out shadow-DOM violation nodes at
  *      result-processing time so app light-DOM content in the header remains audited.
  */
@@ -164,12 +164,12 @@ const THEME_MODES: Array<{
  * Specific components triggering false positives:
  * - aria-required-children: scale-telekom-nav-list[role="menu"] contains
  *   [role="button"] triggers from Scale's profile-menu, which we cannot fix.
- * - button-name: scale-button[icon-only] renders a shadow-DOM <button>
- *   without propagating the host's aria-label, an upstream Scale limitation.
- * - aria-prohibited-attr: scale-button renders aria-label on elements whose
- *   implicit role forbids it — another Scale internal issue.
+ *
+ * `button-name` and `aria-prohibited-attr` are intentionally enforced: icon-only
+ * scale-buttons must set `inner-aria-label` (which names the shadow <button>)
+ * instead of a host `aria-label`.
  */
-const SCALE_DISABLED_RULES = ["aria-required-children", "button-name", "aria-prohibited-attr"];
+const SCALE_DISABLED_RULES = ["aria-required-children"];
 
 /**
  * Telekom brand colours that are exempt from the AAA enhanced contrast rule

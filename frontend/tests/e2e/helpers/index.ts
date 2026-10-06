@@ -30,3 +30,15 @@ export {
   diagnosticScreenshot,
   logApiResponse,
 } from "./debug";
+export {
+  AUDIT_VIEWPORTS,
+  AUDIT_THEMES,
+  useAuditTheme,
+  waitForRouteSettled,
+  expectNoSeriousA11yViolations,
+  findLayoutProblems,
+  expectCleanLayout,
+  focusedElementInfo,
+  type AuditViewport,
+  type AuditTheme,
+} from "./ui-audit";
