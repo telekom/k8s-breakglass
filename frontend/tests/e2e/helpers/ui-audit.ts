@@ -175,9 +175,13 @@ export async function findLayoutProblems(page: Page, scopeSelector = "body"): Pr
       let clipped = false;
       for (let anc = parentOf(el); anc && anc !== document.documentElement; anc = parentOf(anc)) {
         const style = getComputedStyle(anc);
-        if (style.position === "fixed") break;
+        // A fixed container still clips its own content; only its ancestors don't.
+        const isFixed = style.position === "fixed";
         const clips = [style.overflowX, style.overflowY].some((o) => o !== "visible");
-        if (!clips) continue;
+        if (!clips) {
+          if (isFixed) break;
+          continue;
+        }
         const a = anc.getBoundingClientRect();
         // Each axis is judged separately: overflow on an axis is fine only if the
         // container scrolls on that axis and the control fits its size there.
@@ -194,6 +198,7 @@ export async function findLayoutProblems(page: Page, scopeSelector = "body"): Pr
           clipped = true;
           break;
         }
+        if (isFixed) break;
       }
       if (clipped) continue;
 

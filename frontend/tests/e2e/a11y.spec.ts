@@ -463,6 +463,52 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
     });
   });
 
+  test.describe("Focus Management", () => {
+    test("focus fallback after a withdrawn card is removed scrolls the heading into view", async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      // Answer the withdraw locally so shared mock state stays intact for other tests.
+      await page.route("**/api/breakglassSessions/*/withdraw", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: '{"message":"session withdrawn"}' }),
+      );
+      await performMockLogin(page);
+      await navigateTo(page, "/requests/mine");
+
+      const trigger = page.locator('[data-testid="withdraw-button"]').last();
+      await trigger.waitFor({ state: "visible", timeout: 5000 });
+      // Guarantee the page scrolls far enough for the heading to leave the viewport.
+      await page.evaluate(() => {
+        const spacer = document.createElement("div");
+        spacer.style.height = "2000px";
+        document.getElementById("main")?.after(spacer);
+      });
+      await trigger.evaluate((el) => el.scrollIntoView({ block: "start", behavior: "instant" }));
+      const heading = page.locator("#main h1:not(.sr-only), #main h2:not(.sr-only)").first();
+      const box = await heading.boundingBox();
+      expect(box!.y + box!.height).toBeLessThan(0);
+
+      await trigger.locator("button").focus();
+      await page.keyboard.press("Enter");
+      await page.locator('[data-testid="withdraw-confirm-modal"][opened]').waitFor({ state: "attached" });
+      // Let the dialog finish opening (Scale moves focus at the end of its transition).
+      await page.waitForTimeout(500);
+      await page.locator('[data-testid="withdraw-confirm-btn"] button').focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator('[data-testid="withdraw-confirm-modal"][opened]')).toHaveCount(0);
+
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const active = document.activeElement as HTMLElement | null;
+            if (!active || !/^H[12]$/.test(active.tagName) || active.classList.contains("sr-only"))
+              return "not heading";
+            const r = active.getBoundingClientRect();
+            return r.bottom > 0 && r.top < window.innerHeight ? "visible" : "off-screen";
+          }),
+        )
+        .toBe("visible");
+    });
+  });
+
   test.describe("Heading Semantics", () => {
     test("Debug session details uses ordered heading levels", async ({ page }) => {
       await performMockLogin(page);

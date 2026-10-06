@@ -9,6 +9,7 @@ import {
   AUDIT_VIEWPORTS,
   expectCleanLayout,
   fillScaleTextarea,
+  findLayoutProblems,
   findEscalationCardByName,
   useAuditTheme,
   waitForRouteSettled,
@@ -57,6 +58,16 @@ async function navLink(page: Page, viewportName: string, label: string) {
     viewportName === "mobile" ? page.locator(await mobileNavSelector(page)) : page.locator("scale-telekom-header");
   return scope.getByRole("link", { name: label, exact: true }).locator("visible=true").first();
 }
+
+test("layout audit reports a control clipped by a fixed overflow-hidden panel", async ({ page }) => {
+  await page.setViewportSize(AUDIT_VIEWPORTS.desktop);
+  await page.setContent(`
+    <div style="position: fixed; top: 100px; left: 100px; width: 160px; overflow: hidden">
+      <button data-testid="cropped" style="width: 200px">Partly clipped action</button>
+    </div>`);
+  const problems = await findLayoutProblems(page);
+  expect(problems.some((p) => p.includes("clipped by div"))).toBe(true);
+});
 
 for (const [viewportName, viewport] of Object.entries(AUDIT_VIEWPORTS)) {
   test.describe(`UI layout and controls [${viewportName}]`, () => {

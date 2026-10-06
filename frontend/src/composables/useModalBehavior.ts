@@ -145,7 +145,8 @@ function focusMainHeading() {
     target.setAttribute("tabindex", "-1");
     target.addEventListener("blur", () => target.removeAttribute("tabindex"), { once: true });
   }
-  target.focus({ preventScroll: true });
+  // Let the browser scroll it into view: a removed trigger may have been far down a list.
+  target.focus();
 }
 
 /**
