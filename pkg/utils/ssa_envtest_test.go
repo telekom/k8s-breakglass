@@ -4,19 +4,14 @@
 package utils
 
 import (
-	"context"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/internal/ssatest"
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	corev1ac "k8s.io/client-go/applyconfigurations/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -153,7 +148,7 @@ func TestSSAEnvtestCompetingFieldManager(t *testing.T) {
 	require.EqualValues(t, 3, c.Applies.Load())
 }
 
-func TestSSAEnvtestUnstructuredAndTypedAuxiliary(t *testing.T) {
+func TestSSAEnvtestUnstructuredAuxiliary(t *testing.T) {
 	apiClient := ssatest.Start(t)
 	c := &ssatest.CountingClient{Client: apiClient}
 	obj := &unstructured.Unstructured{Object: map[string]interface{}{
@@ -178,81 +173,5 @@ func TestSSAEnvtestUnstructuredAndTypedAuxiliary(t *testing.T) {
 	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKey{Name: "auxiliary", Namespace: "default"}, live))
 	require.Equal(t, "first", live.Data["owned"])
 	require.Equal(t, "preserve", live.Data["external"])
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-	typed := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "typed-auxiliary", Namespace: "default"}, Data: map[string]string{"key": "value"}}
-	require.NoError(t, ApplyTypedObject(t.Context(), c, typed, scheme))
-	require.NoError(t, ApplyTypedObject(t.Context(), c, typed, scheme))
-	require.EqualValues(t, 3, c.Applies.Load())
-}
-
-func TestSSAEnvtestRetryWrappersRecomputeFromLiveStatus(t *testing.T) {
-	apiClient := ssatest.Start(t)
-	for _, status := range []bool{true, false} {
-		name := "object"
-		if status {
-			name = "status"
-		}
-		t.Run(name, func(t *testing.T) {
-			session := ssatest.Session(t, apiClient, "retry-"+name)
-			now := metav1.NewTime(time.Now().UTC().Truncate(time.Second))
-			for _, timestamp := range []*metav1.Time{
-				&session.Status.ActualStartTime, &session.Status.TimeoutAt, &session.Status.ApprovedAt,
-				&session.Status.RetainedUntil, &session.Status.ExpiresAt, &session.Status.RejectedAt, &session.Status.WithdrawnAt,
-			} {
-				*timestamp = now
-			}
-			require.NoError(t, apiClient.Status().Update(t.Context(), session))
-			session.TypeMeta = metav1.TypeMeta{APIVersion: breakglassv1alpha1.GroupVersion.String(), Kind: "BreakglassSession"}
-			c := &ssatest.CountingClient{Client: apiClient}
-			var once sync.Once
-			race := func(ctx context.Context) {
-				once.Do(func() {
-					live := session.DeepCopy()
-					require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(session), live))
-					live.Status.ActivityCount = 10
-					require.NoError(t, apiClient.Status().Update(ctx, live))
-				})
-			}
-			config := RetryConfig{MaxRetries: 2, InitialBackoff: time.Millisecond, MaxBackoff: time.Millisecond, BackoffMultiplier: 1}
-			if status {
-				c.BeforeStatusPatch = func(ctx context.Context, _ client.Object) { race(ctx) }
-				require.NoError(t, StatusUpdateWithRetry(t.Context(), c, session,
-					func(s *breakglassv1alpha1.BreakglassSession) error { s.Status.ActivityCount++; return nil }, config))
-				require.EqualValues(t, 2, c.StatusPatches.Load())
-			} else {
-				c.BeforeApply = race
-				require.NoError(t, UpdateWithRetry(t.Context(), c, session,
-					func(s *breakglassv1alpha1.BreakglassSession) error {
-						s.ManagedFields = nil
-						s.Spec.RequestReason = "updated"
-						return nil
-					}, config))
-				require.EqualValues(t, 2, c.Applies.Load())
-			}
-			require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
-			expected := int64(10)
-			if status {
-				expected++
-			}
-			require.Equal(t, expected, session.Status.ActivityCount)
-		})
-	}
-}
-
-func TestSSAEnvtestNativeStatusApplyOwnershipAndNotFound(t *testing.T) {
-	apiClient := ssatest.Start(t)
-	session := ssatest.Session(t, apiClient, "native-status")
-	session.Status.ActivityCount = 2
-	// Status-only converter retains metadata; generated write must not contain
-	// server-populated managedFields.
-	session.ManagedFields = nil
-	c := &ssatest.CountingClient{Client: apiClient}
-	require.NoError(t, ApplyStatus(t.Context(), c, session))
-	require.EqualValues(t, 1, c.Applies.Load())
-	require.NoError(t, apiClient.Get(t.Context(), client.ObjectKeyFromObject(session), session))
-	require.EqualValues(t, 2, session.Status.ActivityCount)
-	require.NoError(t, apiClient.Delete(t.Context(), session))
-	session.ManagedFields = nil
-	require.True(t, apierrors.IsNotFound(ApplyStatus(t.Context(), c, session)))
+	require.EqualValues(t, 2, c.Applies.Load())
 }

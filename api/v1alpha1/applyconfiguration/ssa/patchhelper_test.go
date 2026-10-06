@@ -297,14 +297,3 @@ func TestStatusSubsetMatch_NestedMapDiffers(t *testing.T) {
 	}
 	assert.False(t, statusSubsetMatch(current, desired))
 }
-
-// ---------------------------------------------------------------------------
-// PatchApplyResult.String()
-// ---------------------------------------------------------------------------
-
-func TestPatchApplyResult_String(t *testing.T) {
-	assert.Equal(t, "skipped", PatchApplyResultSkipped.String())
-	assert.Equal(t, "created", PatchApplyResultCreated.String())
-	assert.Equal(t, "patched", PatchApplyResultPatched.String())
-	assert.Equal(t, "unknown", PatchApplyResult(99).String())
-}

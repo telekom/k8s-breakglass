@@ -54,13 +54,18 @@ well-known libraries, and then merged `telekom/t-caas-go-library` packages.
 Use custom code last and explain why upstream semantics do not fit. Convenience
 wrappers belong in the shared library only when the same glue repeats across
 multiple repositories; keep domain policy local. See the full decision table,
-exact imports, current migration candidates, and the status of open PRs #1410
-and #1411 in [`AGENTS.md`](../AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
+exact imports, remaining migration candidates, and merged adoption PRs in
+[`AGENTS.md`](../AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
 The library guide is at
 [`docs/upstream-libraries.md`](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md);
 that repository is public and tagged `v0.1.0`. See
 [`platform library adoption`](../docs/development-simplification.md#platform-library-adoption)
 for adopted packages and documented consumer-policy mismatches.
+Status SSA uses the CRD-specific builders backed by shared `pkg/ssa`;
+optimistic-lock mutations use shared `pkg/patch`. The unused `pkg/utils`
+retry engine and generic status/typed-object apply shims were removed.
+Preserve observable call-site and real-API tests; do not duplicate coverage of
+upstream aliases such as `PatchApplyResult.String`.
 
 1. **CRD Changes**: Edit `api/v1alpha1/*_types.go`, run `make generate && make manifests`, commit generated files (`zz_generated.deepcopy.go`, `config/crd/bases/*.yaml`).
 
