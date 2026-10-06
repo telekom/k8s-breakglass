@@ -111,6 +111,7 @@ func setupMockEscalationServer(t *testing.T) *httptest.Server {
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "test-escalation-1"},
 			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				DisplayName:    "Production Admin",
 				EscalatedGroup: "admin",
 				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
 					Clusters: []string{"cluster-a", "cluster-b"},
@@ -172,6 +173,19 @@ func TestEscalationListCommand_WithMockServer(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &result))
 	assert.Len(t, result, 2)
 	assert.Equal(t, "test-escalation-1", result[0].Name)
+}
+
+func TestEscalationListCommand_DisplayNames(t *testing.T) {
+	server := setupMockEscalationServer(t)
+	defer server.Close()
+
+	var output bytes.Buffer
+	root := NewRootCommand(Config{OutputWriter: &output})
+	root.SetArgs([]string{"--server", server.URL, "--token", "test-token", "escalation", "list", "-o", "table"})
+	require.NoError(t, root.Execute())
+	assert.Contains(t, output.String(), "DISPLAY_NAME")
+	assert.Regexp(t, `(?m)^test-escalation-1\s+Production Admin\s+cluster-a,cluster-b\s+`, output.String())
+	assert.Regexp(t, `(?m)^test-escalation-2\s+test-escalation-2\s+cluster-b,cluster-c\s+`, output.String())
 }
 
 func TestEscalationListClustersCommand_WithMockServer(t *testing.T) {

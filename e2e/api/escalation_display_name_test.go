@@ -63,7 +63,7 @@ func TestEscalationDisplayNameRoundTrip(t *testing.T) {
 			var output bytes.Buffer
 			root := bgctlcmd.NewRootCommand(bgctlcmd.Config{OutputWriter: &output})
 			root.SetArgs([]string{"--server", helpers.GetAPIBaseURL(), "--token", token, "escalation", "list", "-o", "table"})
-			require.NoError(t, root.ExecuteContext(s.Ctx))
+			require.NoError(t, root.Execute())
 			require.Contains(t, output.String(), "DISPLAY_NAME")
 			var row string
 			for _, line := range strings.Split(output.String(), "\n") {
