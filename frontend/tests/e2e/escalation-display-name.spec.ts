@@ -67,6 +67,7 @@ test.describe.serial("Escalation display names", () => {
   test("an escalation without displayName shows and searches metadata.name", async ({ page }) => {
     const card = page.locator(`[data-escalation-name="${FALLBACK_NAME}"]`);
     await expect(card.locator('[data-testid="summary-card-title"]')).toHaveText(FALLBACK_NAME);
+    await expect(card).toHaveAttribute("data-escalation-identities", JSON.stringify([FALLBACK_NAME]));
     await fillScaleTextField(page, '[data-testid="escalation-search"]', FALLBACK_NAME);
     await expect(page.locator('[data-testid="escalation-card"]')).toHaveCount(1);
     await expect(card).toBeVisible();

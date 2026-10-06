@@ -153,6 +153,22 @@ describe("BreakglassView", () => {
   });
 
   describe("Query Parameters", () => {
+    it("deduplicates resource-name fallback identities without merging cards", async () => {
+      mockGetBreakglasses.mockResolvedValueOnce([
+        { escalationName: "fallback-id", displayName: "fallback-id", cluster: "prod", to: "admin", from: "ops" },
+      ]);
+      const wrapper = await createWrapper({ search: "fallback-id" });
+      const cards = wrapper.findAllComponents({ name: "BreakglassCard" });
+      expect(cards).toHaveLength(1);
+      expect(cards[0]!.props("breakglass")).toMatchObject({
+        escalationName: "fallback-id",
+        displayName: "fallback-id",
+        escalationIdentities: ["fallback-id"],
+        cluster: "prod",
+        to: "admin",
+      });
+    });
+
     it.each(["First admin", "first-id", "SECOND ADMIN", "second-id"])(
       "searches all identities of a deduplicated cluster/group card: %s",
       async (search) => {

@@ -103,7 +103,9 @@ const dedupedBreakglasses = computed(() => {
   };
 
   state.breakglasses.forEach((bg) => {
-    const identities = [bg.escalationName, bg.displayName].filter((value): value is string => Boolean(value));
+    const identities = Array.from(
+      new Set([bg.escalationName, bg.displayName].filter((value): value is string => Boolean(value))),
+    );
     const key = `${bg.cluster || "global"}::${bg.to}`;
     const existing = map.get(key);
     if (!existing) {

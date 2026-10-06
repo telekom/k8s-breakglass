@@ -59,6 +59,7 @@ UI cards keep the granted group separate from the display-name heading. The
 existing `escalation-name` lookup selector continues to identify the granted
 group; the card exposes its resource name through `data-escalation-name` and all
 deduplicated resource names/display labels through `data-escalation-identities`.
+When the display label falls back to the resource name, that identity appears only once.
 Changing a display label does not change the cluster/group request target.
 
 CI exercises this contract against the real kind/Keycloak environment:
