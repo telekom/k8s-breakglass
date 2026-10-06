@@ -61,6 +61,18 @@ group; the card exposes its resource name through `data-escalation-name` and all
 deduplicated resource names/display labels through `data-escalation-identities`.
 Changing a display label does not change the cluster/group request target.
 
+CI exercises this contract against the real kind/Keycloak environment:
+`frontend/tests/e2e/escalation-display-name.spec.ts` checks card titles, searches
+by display and resource name, and creates a pending access request through the UI.
+Its optional-label fixtures live in `e2e/fixtures/escalations/display-name.yaml`,
+are applied by the single-cluster setup, and pass `make validate-fixtures`.
+`TestEscalationDisplayNameRoundTrip` in the Single-Cluster E2E suite creates
+resources through the Kubernetes API server, then checks REST list responses and
+real `bgctl escalation list` output for explicit labels and metadata-name fallback.
+The Helm Chart Lint job runs `charts/escalation-config/ci/test-escalation-names.sh`,
+including `Hashed64CharacterName`, `HashedLongProviderName`, and
+`DistinctHashesBeyondTruncationBoundary`.
+
 ## Required Fields
 
 ### escalatedGroup

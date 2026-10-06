@@ -37,6 +37,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when hashing, unless an explicit display name is provided.
   UI cards retain granted-group lookup selectors and expose resource identities
   separately from their display-name headings.
+  Real-backend UI and Single-Cluster E2E coverage verifies label/resource-name
+  search, access requests, Kubernetes/REST round-trips, and CLI display fallback.
+  The chart rejects overlong fallback labels during rendering.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.

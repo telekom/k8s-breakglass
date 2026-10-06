@@ -179,7 +179,8 @@ by `-` and the first 8 hexadecimal characters of the full name's SHA-256 hash.
 This preserves distinguishing suffixes in the hash and avoids trailing punctuation.
 The chart defaults `spec.displayName` to the original long name; an explicit
 `displayName` takes precedence. If the original name exceeds 253 characters,
-provide a shorter explicit display name.
+provide a shorter explicit display name; rendering fails if that label is missing
+or empty.
 
 **Upgrade impact:** Escalations with names longer than 63 characters are renamed
 compared with earlier chart versions. Review references to those resources and

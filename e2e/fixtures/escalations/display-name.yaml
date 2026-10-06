@@ -1,0 +1,45 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-display-name-test
+  labels:
+    e2e-test: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  displayName: Production Admin Display Name E2E
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-req-session-requester
+  escalatedGroup: ui-e2e-display-name-group
+  approvers:
+    users:
+      - ui-e2e-approver@example.com
+  requestReason:
+    mandatory: true
+  maxValidFor: 1h
+  retainFor: 24h
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-display-fallback-test
+  labels:
+    e2e-test: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-req-session-requester
+  escalatedGroup: ui-e2e-display-fallback-group
+  approvers:
+    users:
+      - ui-e2e-approver@example.com
+  maxValidFor: 1h
+  retainFor: 24h
