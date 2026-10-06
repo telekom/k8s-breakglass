@@ -28,6 +28,7 @@ def shortened(name):
     return prefix + "-" + hashlib.sha256(name.encode()).hexdigest()[:8]
 
 long_name = "admin-escalation-" + "a" * 50 + "-dev-0.1.0"
+unicode_fallback = "a" * 54 + "界" * 199
 cases = [
     ("DefaultName", {}, "escalation-0", None),
     ("ShortDottedName", {"name": "short.name"}, "short.name", None),
@@ -42,6 +43,7 @@ cases = [
     ("QuotedDisplayName", {"name": "short", "displayName": 'Admin "on call"'}, "short", 'Admin "on call"'),
     ("UnicodeDisplayNameBoundary", {"name": "short", "displayName": "界" * 253}, "short", "界" * 253),
     ("FallbackDisplayNameAt253Characters", {"name": "a" * 253}, shortened("a" * 253), "a" * 253),
+    ("UnicodeFallbackDisplayNameBoundary", {"name": unicode_fallback}, shortened(unicode_fallback), unicode_fallback),
     ("ExplicitDisplayNameFor254CharacterName", {"name": "a" * 254, "displayName": "Long-name admin"}, shortened("a" * 254), "Long-name admin"),
 ]
 for punctuation in (".", "_", "-", ".-_"):
@@ -77,13 +79,14 @@ result = render([{"name": "short", "displayName": "x" * 254}])
 assert result.returncode != 0, "displayName exceeding 253 characters must fail schema validation"
 assert "displayName" in result.stderr, result.stderr
 print("PASS RejectOverlongDisplayName", flush=True)
-for display in (None, ""):
-    esc = {"name": "a" * 254}
-    if display is not None:
-        esc["displayName"] = display
-    result = render([esc])
-    assert result.returncode != 0, "overlong name requires an explicit shorter displayName"
-    assert "displayName is required" in result.stderr, result.stderr
+for name in ("a" * 254, unicode_fallback + "界"):
+    for display in (None, ""):
+        esc = {"name": name}
+        if display is not None:
+            esc["displayName"] = display
+        result = render([esc])
+        assert result.returncode != 0, "overlong name requires an explicit shorter displayName"
+        assert "displayName is required" in result.stderr, result.stderr
 print("PASS RejectOverlongFallbackDisplayName", flush=True)
 print(f"Escalation name rendering passed: {len(cases)} cases, distinct suffixes, display-name length rejection")
 PY

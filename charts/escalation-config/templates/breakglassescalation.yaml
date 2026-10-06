@@ -4,7 +4,7 @@
 {{- $name := trimSuffix "-" $originalName }}
 {{- $displayName := default "" $esc.displayName }}
 {{- if gt (len $originalName) 63 }}
-{{- if and (not $displayName) (gt (len $originalName) 253) }}
+{{- if and (not $displayName) (gt (len (regexFindAll "(?s)." $originalName -1)) 253) }}
 {{- fail (printf "escalations[%d].displayName is required when the original name exceeds 253 characters" $i) }}
 {{- end }}
 {{- $prefix := regexReplaceAll "[^a-z0-9]+$" (trunc 54 $originalName) "" }}
