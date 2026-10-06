@@ -195,7 +195,11 @@ async function fetchSessions() {
         `${session.spec?.grantedGroup}-${session.spec?.cluster}-${session.status?.expiresAt || ""}`;
       dedup.set(key, session);
     });
-    sessions.value = Array.from(dedup.values());
+    // The sessions API has no name filter, so narrow the results client-side.
+    const nameQuery = filters.name.trim().toLowerCase();
+    sessions.value = Array.from(dedup.values()).filter(
+      (session) => !nameQuery || sessionName(session).toLowerCase().includes(nameQuery),
+    );
     lastQuery.value = describeQuery(statesToQuery);
   } catch (err: unknown) {
     error.value = (err instanceof Error ? err.message : undefined) || "Failed to load sessions";
@@ -516,7 +520,7 @@ onMounted(() => {
                   size="small"
                   variant="ghost"
                   :disabled="!(session.spec?.cluster || session.cluster)"
-                  aria-label="Filter by cluster"
+                  :inner-aria-label="`Filter by cluster ${session.spec?.cluster || session.cluster || ''}`.trim()"
                   @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
                 >
                   {{ session.spec?.cluster || session.cluster || "-" }}
@@ -525,7 +529,7 @@ onMounted(() => {
                   size="small"
                   variant="ghost"
                   :disabled="!(session.spec?.grantedGroup || session.group)"
-                  aria-label="Filter by group"
+                  :inner-aria-label="`Filter by group ${session.spec?.grantedGroup || session.group || ''}`.trim()"
                   @click="setFilter('group', session.spec?.grantedGroup || session.group)"
                 >
                   {{ session.spec?.grantedGroup || session.group || "-" }}

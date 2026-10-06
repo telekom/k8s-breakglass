@@ -685,7 +685,6 @@ select:focus {
 .skip-link {
   position: absolute;
   left: 50%;
-  transform: translateX(-50%);
   top: var(--space-md);
   background-color: var(--surface-card);
   color: var(--telekom-color-text-and-icon-standard);
@@ -698,12 +697,14 @@ select:focus {
   box-shadow: var(--shadow-card);
   text-decoration: none;
   z-index: var(--z-skip-link);
-  translate: 0 -150%;
+  /* Only `translate` (no `transform`): the production CSS minifier merges both into one
+     transform, after which the :focus rule could no longer reveal the link. */
+  translate: -50% -150%;
   transition: translate var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 .skip-link:focus {
-  translate: 0;
+  translate: -50% 0;
 }
 
 .sr-only {

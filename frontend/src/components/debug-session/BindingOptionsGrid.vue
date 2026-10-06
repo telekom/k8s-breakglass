@@ -190,7 +190,7 @@ const emit = defineEmits<{
 .binding-option-card.selected {
   border-color: var(--telekom-color-primary-standard);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
-  background: var(--telekom-color-background-surface-highlight);
+  background: var(--surface-card-subtle);
 }
 
 .binding-header {
@@ -249,13 +249,13 @@ const emit = defineEmits<{
 }
 
 .binding-key-constraints .key-constraint.approval-req {
-  background: var(--telekom-color-functional-warning-subtle);
-  color: var(--telekom-color-functional-warning-standard);
+  background: var(--tone-chip-warning-bg);
+  color: var(--tone-chip-warning-text);
 }
 
 .binding-key-constraints .key-constraint.auto-approve {
-  background: var(--telekom-color-functional-success-subtle);
-  color: var(--telekom-color-functional-success-standard);
+  background: var(--tone-chip-success-bg);
+  color: var(--tone-chip-success-text);
 }
 
 .binding-features {

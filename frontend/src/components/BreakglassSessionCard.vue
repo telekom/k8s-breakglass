@@ -239,7 +239,7 @@ const timelineStatusText = computed(() => {
 
     <template v-if="requestReasonText" #body>
       <div class="session-card__reason">
-        <h4>Request reason</h4>
+        <h3>Request reason</h3>
         <p>{{ requestReasonText }}</p>
       </div>
     </template>
@@ -301,7 +301,7 @@ const timelineStatusText = computed(() => {
   background-color: var(--surface-card-subtle);
 }
 
-.session-card__reason h4 {
+.session-card__reason h3 {
   margin: 0 0 var(--space-2xs);
   font: var(--telekom-text-style-caption);
   text-transform: uppercase;

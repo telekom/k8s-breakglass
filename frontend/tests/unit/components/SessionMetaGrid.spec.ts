@@ -131,7 +131,7 @@ describe("SessionMetaGrid", () => {
     it("hint button has accessible aria-label", () => {
       const wrapper = mountGrid([{ id: "field", label: "My Field", value: "val", hint: "More info" }]);
       const btn = wrapper.find(".meta-label__hint");
-      expect(btn.attributes("aria-label")).toBe("More info about My Field");
+      expect(btn.attributes("inner-aria-label")).toBe("More info about My Field");
     });
   });
 

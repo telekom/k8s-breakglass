@@ -112,7 +112,9 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
             >
               <scale-icon-content-link size="12" aria-hidden="true"></scale-icon-content-link>
               via Binding:
-              <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
+              <strong class="binding-name" :title="cluster.bindingRef.displayName || cluster.bindingRef.name">{{
+                cluster.bindingRef.displayName || cluster.bindingRef.name
+              }}</strong>
             </span>
             <span v-else class="source-badge direct">
               <scale-icon-action-success size="12" aria-hidden="true"></scale-icon-action-success>
@@ -133,9 +135,12 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
           <!-- Multiple Access Options Indicator -->
           <div v-if="cluster.bindingOptions && cluster.bindingOptions.length > 1" class="multiple-bindings-indicator">
-            <scale-icon-navigation-double-right size="12"></scale-icon-navigation-double-right>
+            <scale-icon-navigation-double-right size="12" aria-hidden="true"></scale-icon-navigation-double-right>
             <strong>{{ cluster.bindingOptions.length }} access configurations</strong>
-            <span class="bindings-preview">
+            <span
+              class="bindings-preview"
+              :title="cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(', ')"
+            >
               {{ cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(", ") }}
             </span>
           </div>
@@ -187,7 +192,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .warning-text {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--telekom-color-text-and-icon-functional-warning);
   font: var(--telekom-text-style-caption);
   margin: 0;
 }
@@ -289,14 +294,14 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .source-badge.direct {
-  background: var(--telekom-color-functional-success-subtle);
-  color: var(--telekom-color-functional-success-standard);
-  border: 1px solid var(--telekom-color-functional-success-standard);
+  background: var(--tone-chip-success-bg);
+  color: var(--tone-chip-success-text);
+  border: 1px solid var(--tone-chip-success-border);
 }
 
 .source-badge.binding {
-  background: var(--telekom-color-background-surface-highlight);
-  color: var(--telekom-color-primary-standard);
+  background: var(--tone-chip-neutral-bg);
+  color: var(--tone-chip-neutral-text);
   border: 1px solid var(--telekom-color-primary-standard);
 }
 
@@ -341,7 +346,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   gap: var(--space-xs);
   padding: var(--space-sm);
   margin-top: var(--space-sm);
-  background: var(--telekom-color-background-surface-highlight);
+  background: var(--surface-card-subtle);
   border-radius: var(--radius-sm);
   border-left: 3px solid var(--telekom-color-primary-standard);
 }

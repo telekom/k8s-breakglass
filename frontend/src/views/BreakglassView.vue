@@ -320,7 +320,7 @@ async function onDrop(bg: Breakglass) {
             icon-only="true"
             icon-position="before"
             variant="secondary"
-            aria-label="Refresh escalations"
+            inner-aria-label="Refresh escalations"
             @click="refresh()"
           >
             <scale-icon-action-refresh></scale-icon-action-refresh>

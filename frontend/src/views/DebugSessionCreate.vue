@@ -1050,7 +1050,7 @@ function handleTemplateChange(ev: Event) {
 }
 
 .warning-text {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--telekom-color-text-and-icon-functional-warning);
   font: var(--telekom-text-style-caption);
   margin: 0;
 }

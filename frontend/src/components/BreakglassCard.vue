@@ -911,6 +911,12 @@ function drop() {
 }
 
 @media (max-width: 640px) {
+  /* The card footer stacks vertically on narrow screens; a 320px flex-basis
+     would then become a 320px tall blank gap above the action button. */
+  .breakglass-card__cta {
+    flex: 0 1 auto;
+  }
+
   .actions-row {
     justify-content: flex-start;
   }

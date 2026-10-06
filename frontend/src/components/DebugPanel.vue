@@ -282,7 +282,7 @@ const debugToggleTitle = computed(() =>
           <scale-button
             variant="ghost"
             size="small"
-            aria-label="Close debug panel"
+            inner-aria-label="Close debug panel"
             data-testid="debug-close-button"
             @click="showDebug = false"
           >

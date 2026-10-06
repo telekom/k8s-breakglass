@@ -33,7 +33,7 @@ function formatValue(value?: string | number | null) {
                 variant="ghost"
                 icon-only
                 class="meta-label__hint"
-                :aria-label="`More info about ${item.label}`"
+                :inner-aria-label="`More info about ${item.label}`"
               >
                 <scale-icon-action-info decorative></scale-icon-action-info>
               </scale-button>

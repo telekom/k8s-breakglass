@@ -2,9 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { defineComponent, ref, toRef } from "vue";
+import { defineComponent, nextTick, ref, toRef } from "vue";
 import { mount } from "@vue/test-utils";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useModalBehavior } from "@/composables/useModalBehavior";
 
 const mountedWrappers: Array<{ unmount: () => void }> = [];
@@ -148,6 +148,63 @@ describe("useModalBehavior", () => {
 
     expect(wrapper.emitted("child-escape")).toHaveLength(1);
     expect(wrapper.emitted("close")).toBeUndefined();
+  });
+
+  it("moves focus into the opened dialog and returns it to the trigger on close", async () => {
+    const trigger = document.createElement("button");
+    trigger.textContent = "Open";
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    // Minimal stand-in for an opened scale-modal with its shadow close button.
+    const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
+    modal.opened = true;
+    const closeButton = document.createElement("button");
+    closeButton.className = "modal__close-button";
+    modal.attachShadow({ mode: "open" }).appendChild(closeButton);
+    document.body.appendChild(modal);
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      await nextTick();
+      await Promise.resolve();
+
+      expect(modal.shadowRoot?.activeElement).toBe(closeButton);
+
+      modal.opened = false;
+      await wrapper.setProps({ opened: false });
+      expect(document.activeElement).toBe(trigger);
+    } finally {
+      modal.remove();
+      trigger.remove();
+    }
+  });
+
+  it("focuses a dialog that is inserted a few frames after opening", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+
+    const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
+    modal.opened = true;
+    const closeButton = document.createElement("button");
+    closeButton.className = "modal__close-button";
+    modal.attachShadow({ mode: "open" }).appendChild(closeButton);
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      await nextTick();
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      expect(document.activeElement).toBe(trigger);
+
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(modal.shadowRoot?.activeElement).toBe(closeButton));
+    } finally {
+      modal.remove();
+      trigger.remove();
+    }
   });
 
   it("locks background scrolling while any modal is open", async () => {

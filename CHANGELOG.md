@@ -40,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Real-backend UI and Single-Cluster E2E coverage verifies label/resource-name
   search, access requests, Kubernetes/REST round-trips, and CLI display fallback.
   The chart rejects overlong fallback labels during rendering.
+- UI E2E `ui-accessibility` and `ui-layout` Playwright specs run axe-core
+  (serious/critical), keyboard-only, visibility and control checks against the
+  deployed UI at desktop and mobile viewports in light and dark theme.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
@@ -62,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bump packaged Helm chart versions so the next controller release preserves
   the immutable chart packages already published for `v0.3.0-rc.4`.
+
+- Frontend accessibility and usability pass: icon-only and Scale buttons get
+  accessible names, heading order and landmarks are corrected, low-contrast
+  status text uses text-safe tokens, dialogs move focus in and return it on
+  close (also when the dialog renders a few frames late), the skip link is
+  visible on focus in production builds, the mobile escalation card no longer
+  clips its call to action, empty error toasts no longer render a dead link,
+  and the Session Browser name filter now narrows results.
+- The kind e2e setup waits for escalations by their `breakglass-` prefixed
+  names, removing repeated timeouts that slowed every UI E2E run.
 
 - Preserve buffered session activity counts and the newest activity timestamp
   when concurrent webhook replicas flush status updates.

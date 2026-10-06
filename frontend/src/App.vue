@@ -527,7 +527,7 @@ watch(
               type="button"
               :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
               :title="themeToggleTitle"
-              :aria-label="themeToggleAriaLabel"
+              :inner-aria-label="themeToggleAriaLabel"
               :aria-pressed="isDarkThemePreference"
               @click="toggleTheme"
             >
@@ -539,7 +539,7 @@ watch(
               type="button"
               :class="['hc-toggle-button', { 'hc-active': highContrast }]"
               :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
-              :aria-label="
+              :inner-aria-label="
                 highContrast
                   ? 'High contrast mode enabled. Click to disable.'
                   : 'High contrast mode disabled. Click to enable.'
@@ -584,7 +584,7 @@ watch(
                 variant="ghost"
                 type="button"
                 class="mobile-nav-trigger"
-                :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+                :inner-aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
                 :aria-controls="mobileNavControls"
                 :aria-expanded="mobileNavOpen"
                 @click="toggleMobileNav"

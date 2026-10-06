@@ -731,7 +731,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .required-marker {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--telekom-color-text-and-icon-functional-danger);
 }
 
 .multi-select-description {
@@ -752,7 +752,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 
 .multi-select-error {
   font: var(--telekom-text-style-small);
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin: 0;
 }
 

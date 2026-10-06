@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
@@ -110,6 +111,12 @@ const renewDurationOptions = [
 
 // Rejection dialog state
 const rejectDialogOpen = ref(false);
+useModalBehavior(renewDialogOpen, () => {
+  renewDialogOpen.value = false;
+});
+useModalBehavior(rejectDialogOpen, () => {
+  rejectDialogOpen.value = false;
+});
 const rejectReason = ref("");
 
 async function fetchSession() {
@@ -714,7 +721,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                     size="small"
                     variant="secondary"
                     :title="isCopied(pod) ? 'Copied!' : 'Copy to clipboard'"
-                    :aria-label="isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
+                    :inner-aria-label="
+                      isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'
+                    "
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >

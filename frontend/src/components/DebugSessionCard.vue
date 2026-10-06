@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import type { DebugSessionSummary } from "@/model/debugSession";
 import { formatDateTime, formatRelativeTime } from "@/composables/useDateFormatting";
 
@@ -21,6 +22,12 @@ const emit = defineEmits<{
 const rejectReason = ref("");
 const showRejectModal = ref(false);
 const showRenewModal = ref(false);
+useModalBehavior(showRejectModal, () => {
+  showRejectModal.value = false;
+});
+useModalBehavior(showRenewModal, () => {
+  showRenewModal.value = false;
+});
 const defaultRenewDuration = "1h";
 const renewDuration = ref(defaultRenewDuration);
 const sessionDomId = computed(() => toDomIdPart(props.session.name));
@@ -372,8 +379,8 @@ function openRenewModal() {
 }
 
 .status-message.error {
-  background: var(--telekom-color-functional-danger-subtle);
-  color: var(--telekom-color-functional-danger-standard);
+  background: var(--tone-chip-danger-bg);
+  color: var(--tone-chip-danger-text);
 }
 
 .status-message span {
