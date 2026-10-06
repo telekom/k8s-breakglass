@@ -120,7 +120,9 @@ The merged status-SSA and optimistic-patch adoption left several unused
 compatibility APIs in `pkg/utils`: `RetryConfig`, `DefaultRetryConfig`,
 `StatusUpdateWithRetry`, `UpdateWithRetry`, `ApplyTypedObject`, `ApplyStatus`,
 and `ToStatusApplyConfiguration`. They had no production callers and are now
-removed with their helper-only unit and envtest cases. The unrelated
+removed with their helper-only unit and envtest cases. The unused
+`ssa.PatchApplyResultCreated` status alias is also removed: status writes require
+an existing object, while the main-resource `utils` alias remains in use. The unrelated
 `api/v1alpha1.RetryConfig` mail-provider field and `e2e/helpers.UpdateWithRetry`
 remain unchanged.
 

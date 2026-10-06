@@ -44,9 +44,6 @@ type PatchApplyResult = sharedssa.PatchApplyResult
 const (
 	// PatchApplyResultSkipped means the status was already up-to-date (no API call made).
 	PatchApplyResultSkipped = sharedssa.PatchApplyResultSkipped
-	// PatchApplyResultCreated is unused for status (objects must already exist) but
-	// kept for API compatibility with the spec-side patchHelper.
-	PatchApplyResultCreated = sharedssa.PatchApplyResultCreated
 	// PatchApplyResultPatched means the status differed and was patched via SSA.
 	PatchApplyResultPatched = sharedssa.PatchApplyResultPatched
 )
