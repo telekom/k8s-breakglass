@@ -264,6 +264,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Raise the frontend `shell-quote` override to 1.11.0 or later to fix command
+  injection via line terminators after comment tokens (GHSA-pqg4-j6r4-53mv),
+  without downgrading `concurrently`.
+
 - Update frontend transitive dependencies `postcss-selector-parser` to 7.1.6,
   `proxy-addr` to 2.0.8, and `source-map-js` to 1.2.2 to fix selector parsing
   CPU exhaustion (GHSA-rj75-hqrm-r3gf), IPv4-mapped IPv6 trust subnet IP spoofing
