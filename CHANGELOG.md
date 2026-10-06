@@ -250,6 +250,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Refresh frontend transitive dependencies to `proxy-addr` 2.0.8,
+  `source-map-js` 1.2.2, and `postcss-selector-parser` 7.1.6 to fix IP
+  spoofing and denial-of-service advisories without weakening audit gates.
 - Bound retained terminal kubectl-debug operation evidence while preserving all
   Prepared intents, so terminal history cannot block ClusterConfig deletion.
 - Preserve serialized debug template variable values exactly, including
