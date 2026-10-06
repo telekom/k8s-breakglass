@@ -28,7 +28,8 @@ can succeed after deletion; the OIDC transport reports the credential error.
 
 Circuit-breaker lifecycle tests assert open/half-open/closed metrics, rejection
 counters, per-cluster isolation, transient-error classification and stale
-generation completion fencing. No production code or dependencies change.
+generation completion fencing. These characterization tests remain unchanged
+during the registry migration.
 
 The repository uses Go `testing` selectors, not Ginkgo labels, for these E2Es.
 The existing `multi-cluster-e2e` CI lane runs `go test -tags=multicluster
@@ -39,3 +40,42 @@ The existing `multi-cluster-e2e` CI lane runs `go test -tags=multicluster
 `TestClusterConfigOIDCStatusConditions`, `TestClusterConfigOIDCWithEscalation`,
 inherited IdentityProvider credentials and comprehensive token-renewal/fallback
 flows. Keep these selectors and environment gates enabled during migration.
+
+### Registry adoption and compatibility
+
+Kubeconfig-backed clients now use
+[`t-caas-go-library/pkg/remoteclient`](https://github.com/telekom/t-caas-go-library/tree/v0.1.0/pkg/remoteclient)
+at `v0.1.0` for construction, credential dependencies and eviction. The provider
+retains REST-config/clientset TTLs, aliases, OIDC token/Secret tracking, metrics
+and live privileged-input fences. Registry callbacks run synchronously under
+the provider lock; they clear the local caches without taking that lock again.
+Privileged operations still rebuild between live snapshots and reuse only the
+registry client associated with that exact rebuilt REST config.
+
+The library validates transports eagerly. To preserve the previous REST-config
+API, parseable configs with invalid TLS material can still be returned without a
+client; native `clientcmd` parsing remains the compatibility fallback. The
+registry retains their pending Secret dependency, and privileged calls cannot
+fall back to an older valid client after a failed refresh. Returned clients are
+not revoked by invalidation: callers must retain their final live fences.
+
+**Security tightening:** Secret kubeconfigs must be self-contained. Embed CA,
+client certificate/key or bearer-token data. Exec/auth-provider plugins, token
+files and filesystem certificate/key/CA references are rejected, including
+unused entries in the kubeconfig. Errors do not include credential/parser
+details. `TestKubeconfigRegistryRequiresEmbeddedCredentials` pins this contract;
+the other registry tests pin client association and lazy TLS-error behavior.
+The periodic ClusterConfig readiness checker uses the same upstream registry
+validation, so rejected credentials cannot remain `Ready=True`. The focused
+target also runs `TestClusterConfigReadinessEmbeddedKubeconfig` against the real
+API: allowed embedded credentials reach discovery, while each forbidden active
+or unused-entry form clears a previously true Ready condition without exposing
+credential details.
+
+The [upstream-first guide](https://github.com/telekom/t-caas-go-library/blob/main/docs/upstream-libraries.md)
+still applies to circuit breakers. Audit already uses `sony/gobreaker/v2`.
+The cluster breaker's shared epoch-based completion contract and independent
+half-open concurrency/success thresholds do not map directly to gobreaker's
+per-admission completion callbacks and `MaxRequests`; replacing it would require
+additional local admission bookkeeping. It remains unchanged rather than
+introducing a second breaker engine or changing the characterized semantics.
