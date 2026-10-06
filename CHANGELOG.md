@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bump packaged Helm chart versions so the next controller release preserves
+  the immutable chart packages already published for `v0.3.0-rc.4`.
+
 - Preserve buffered session activity counts and the newest activity timestamp
   when concurrent webhook replicas flush status updates.
 
