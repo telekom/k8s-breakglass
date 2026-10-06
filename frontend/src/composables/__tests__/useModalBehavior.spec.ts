@@ -72,6 +72,15 @@ const SelfClosingModalHarness = defineComponent({
   template: "<div />",
 });
 
+function createScaleModal() {
+  const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
+  modal.opened = true;
+  const closeButton = document.createElement("button");
+  closeButton.className = "modal__close-button";
+  modal.attachShadow({ mode: "open" }).appendChild(closeButton);
+  return { modal, closeButton };
+}
+
 describe("useModalBehavior", () => {
   afterEach(() => {
     for (const wrapper of mountedWrappers.splice(0)) {
@@ -156,17 +165,14 @@ describe("useModalBehavior", () => {
     document.body.appendChild(trigger);
     trigger.focus();
 
-    // Minimal stand-in for an opened scale-modal with its shadow close button.
-    const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
-    modal.opened = true;
-    const closeButton = document.createElement("button");
-    closeButton.className = "modal__close-button";
-    modal.attachShadow({ mode: "open" }).appendChild(closeButton);
-    document.body.appendChild(modal);
+    // Minimal stand-in for an opened scale-modal with its shadow close button,
+    // rendered (as in the app) once the dialog's opened state is true.
+    const { modal, closeButton } = createScaleModal();
 
     try {
       const wrapper = mount(ModalHarness, { props: { opened: true } });
       mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
       await nextTick();
       await Promise.resolve();
 
@@ -186,11 +192,7 @@ describe("useModalBehavior", () => {
     document.body.appendChild(trigger);
     trigger.focus();
 
-    const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
-    modal.opened = true;
-    const closeButton = document.createElement("button");
-    closeButton.className = "modal__close-button";
-    modal.attachShadow({ mode: "open" }).appendChild(closeButton);
+    const { modal, closeButton } = createScaleModal();
 
     try {
       const wrapper = mount(ModalHarness, { props: { opened: true } });
@@ -203,6 +205,82 @@ describe("useModalBehavior", () => {
       await vi.waitFor(() => expect(modal.shadowRoot?.activeElement).toBe(closeButton));
     } finally {
       modal.remove();
+      trigger.remove();
+    }
+  });
+
+  it("focuses the most recently opened dialog even when it precedes the other in DOM order", async () => {
+    const older = createScaleModal();
+    const newer = createScaleModal();
+
+    try {
+      const first = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(first);
+      document.body.appendChild(older.modal);
+      await vi.waitFor(() => expect(older.modal.shadowRoot?.activeElement).toBe(older.closeButton));
+
+      const second = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(second);
+      document.body.insertBefore(newer.modal, older.modal);
+
+      await vi.waitFor(() => expect(newer.modal.shadowRoot?.activeElement).toBe(newer.closeButton));
+      expect(document.activeElement).toBe(newer.modal);
+    } finally {
+      older.modal.remove();
+      newer.modal.remove();
+    }
+  });
+
+  it("anchors focus on the page heading when a refresh replaces the trigger", async () => {
+    const main = document.createElement("div");
+    main.id = "main";
+    const heading = document.createElement("h1");
+    heading.textContent = "Request access";
+    const trigger = document.createElement("button");
+    main.append(heading, trigger);
+    document.body.appendChild(main);
+    trigger.focus();
+    const { modal } = createScaleModal();
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(modal));
+
+      modal.remove();
+      await wrapper.setProps({ opened: false });
+      expect(document.activeElement).toBe(trigger);
+
+      // The successful action refreshes the list and the trigger is replaced.
+      trigger.remove();
+      const replacement = document.createElement("button");
+      main.appendChild(replacement);
+
+      await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+    } finally {
+      main.remove();
+    }
+  });
+
+  it("keeps focus on the trigger when it survives closing", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const { modal } = createScaleModal();
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(modal));
+
+      modal.remove();
+      await wrapper.setProps({ opened: false });
+      await new Promise((resolve) => setTimeout(resolve, 250));
+
+      expect(document.activeElement).toBe(trigger);
+    } finally {
       trigger.remove();
     }
   });

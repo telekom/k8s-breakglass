@@ -169,6 +169,10 @@ test.describe.serial("UI accessibility: dialogs and keyboard flows", () => {
     await waitForScaleToast(page, "success-toast");
     await expectNoSeriousA11yViolations(page, "request success toast");
     await expect(card.locator('[data-testid="withdraw-button"]')).toBeVisible();
+    // The list refresh replaces the trigger; keyboard focus must stay anchored in the page.
+    await expect
+      .poll(() => page.evaluate(() => document.getElementById("main")?.contains(document.activeElement) ?? false))
+      .toBe(true);
 
     await page.goto("/requests/mine");
     await waitForRouteSettled(page);

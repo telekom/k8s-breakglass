@@ -438,6 +438,31 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
     });
   });
 
+  test.describe("Toast Semantics", () => {
+    test("error toast without a link has no dead tab stop", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+      await page.route("**/api/breakglassEscalations**", (route) =>
+        route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"boom"}' }),
+      );
+      await navigateTo(page, "/");
+
+      const toast = page.locator('[data-testid="error-toast"]').first();
+      await expect(toast.locator(".notification-toast__button-close")).toBeVisible();
+      await expect(toast.locator(".notification-toast__link")).toBeHidden();
+
+      // From the toast body, the next tab stop must be its close button.
+      await toast.locator('[role="alert"]').focus();
+      await page.keyboard.press("Tab");
+      const focused = await page.evaluate(() => {
+        let el = document.activeElement;
+        while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
+        return el?.className ?? "";
+      });
+      expect(focused).toContain("notification-toast__button-close");
+    });
+  });
+
   test.describe("Heading Semantics", () => {
     test("Debug session details uses ordered heading levels", async ({ page }) => {
       await performMockLogin(page);

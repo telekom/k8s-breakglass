@@ -9,6 +9,8 @@ type ModalBehaviorOptions = {
 };
 
 const MODAL_FOCUS_ATTEMPTS = 60;
+const FOCUS_RESTORE_WINDOW_MS = 5000;
+const FOCUS_RESTORE_POLL_MS = 100;
 
 type ScaleModalElement = HTMLElement & { opened?: boolean; componentOnReady?: () => Promise<unknown> };
 
@@ -37,6 +39,14 @@ function activateModal(token: symbol, onClose: () => void) {
   if (modalStack.length === 1) {
     document.addEventListener("keydown", handleDocumentKeydown);
   }
+}
+
+function isTopModal(token: symbol) {
+  return modalStack[modalStack.length - 1]?.token === token;
+}
+
+function openScaleModals(): ScaleModalElement[] {
+  return Array.from(document.querySelectorAll<ScaleModalElement>("scale-modal")).filter((m) => m.opened);
 }
 
 function deactivateModal(token: symbol) {
@@ -88,13 +98,17 @@ function deepActiveElement(): HTMLElement | null {
  * (v-if), so keyboard and screen reader users would stay on the trigger behind
  * the backdrop. Move focus to the dialog's close button unless focus is already
  * inside the dialog.
+ *
+ * The dialog belonging to this activation is the one that opens after it, so
+ * dialogs that were already open (e.g. the one underneath) are ignored
+ * regardless of their DOM order.
  */
-async function focusOpenModal(isStillOpen: () => boolean) {
+async function focusOpenModal(isStillOpen: () => boolean, alreadyOpen: Set<Element>) {
   await nextTick();
   // The dialog may be inserted a few frames later (async components, lazy Scale
   // loading) and is not focusable until its open transition makes it visible.
   for (let attempt = 0; attempt < MODAL_FOCUS_ATTEMPTS && isStillOpen(); attempt++) {
-    const modals = Array.from(document.querySelectorAll<ScaleModalElement>("scale-modal")).filter((m) => m.opened);
+    const modals = openScaleModals().filter((m) => !alreadyOpen.has(m));
     const modal = modals[modals.length - 1];
     if (modal) {
       await modal.componentOnReady?.();
@@ -106,6 +120,38 @@ async function focusOpenModal(isStillOpen: () => boolean) {
     }
     await new Promise((resolve) => requestAnimationFrame(resolve));
   }
+}
+
+/** Focuses the page heading (or main region) like route changes do. */
+function focusMainHeading() {
+  const target =
+    document.querySelector<HTMLElement>("#main h1, #main h2") ?? document.getElementById("main") ?? undefined;
+  if (!target) return;
+  if (!target.hasAttribute("tabindex")) {
+    target.setAttribute("tabindex", "-1");
+    target.addEventListener("blur", () => target.removeAttribute("tabindex"), { once: true });
+  }
+  target.focus({ preventScroll: true });
+}
+
+/**
+ * Returns focus to the control that opened the dialog (WCAG 2.4.3). A
+ * successful action often refreshes the view and replaces that control, which
+ * drops focus to <body>; in that case keyboard users are anchored on the page
+ * heading instead. Watching stops once focus moves anywhere else.
+ */
+function restoreFocus(trigger: HTMLElement | null) {
+  if (trigger?.isConnected) trigger.focus();
+  const startedAt = Date.now();
+  const timer = setInterval(() => {
+    const active = deepActiveElement();
+    if (!active && !trigger?.isConnected) {
+      clearInterval(timer);
+      focusMainHeading();
+    } else if ((active && active !== trigger) || Date.now() - startedAt > FOCUS_RESTORE_WINDOW_MS) {
+      clearInterval(timer);
+    }
+  }, FOCUS_RESTORE_POLL_MS);
 }
 
 export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, options: ModalBehaviorOptions = {}) {
@@ -121,7 +167,8 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
     if (active) {
       if (!isActive) {
         returnFocusTo = deepActiveElement();
-        void focusOpenModal(() => isActive);
+        // Only the top-most dialog may take focus (it also receives Escape).
+        void focusOpenModal(() => isActive && isTopModal(modalToken), new Set(openScaleModals()));
       }
       isActive = true;
       activateModal(modalToken, onClose);
@@ -133,12 +180,9 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
     if (lockScroll) unlockDocumentScroll(scrollLockToken);
     if (isActive) {
       isActive = false;
-      // Return focus to the control that opened the dialog (WCAG 2.4.3).
       const target = returnFocusTo;
       returnFocusTo = null;
-      if (target?.isConnected) {
-        target.focus();
-      }
+      restoreFocus(target);
     }
   }
 
