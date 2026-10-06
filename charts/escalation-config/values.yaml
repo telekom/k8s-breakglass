@@ -178,7 +178,13 @@ cluster:
   allowedApproverDomains: []
 
 escalations: []
+  # Names up to 63 characters are unchanged. Longer names use a trimmed 54-character
+  # prefix plus "-" and 8 hex characters of SHA-256 of the full original name.
+  # This changes resource names on upgrade from chart versions before 0.4.0.
   # - name: sample-escalation
+  #   # Optional UI/CLI label (max 253 characters); defaults to the original name
+  #   # when shortened, otherwise to metadata.name.
+  #   displayName: Sample escalation
   #   allowed:
   #     clusters:
   #       - breakglass-hub

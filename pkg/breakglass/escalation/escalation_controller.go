@@ -38,6 +38,7 @@ func dropK8sInternalFieldsEscalation(e *breakglassv1alpha1.BreakglassEscalation)
 	}
 	e.Status.ApproverGroupMembers = nil
 	e.Status.IDPGroupMemberships = nil
+	e.Spec.DisplayName = e.GetDisplayName()
 }
 
 func dropK8sInternalFieldsEscalationList(list []breakglassv1alpha1.BreakglassEscalation) []breakglassv1alpha1.BreakglassEscalation {

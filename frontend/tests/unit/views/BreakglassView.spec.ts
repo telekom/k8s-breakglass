@@ -153,6 +153,30 @@ describe("BreakglassView", () => {
   });
 
   describe("Query Parameters", () => {
+    it.each(["Production admin", "a1b2c3d4"])(
+      "finds escalations by display name or resource name: %s",
+      async (search) => {
+        mockGetBreakglasses.mockResolvedValueOnce([
+          {
+            escalationName: "admin-a1b2c3d4",
+            displayName: "Production admin",
+            cluster: "cluster-a",
+            to: "admin",
+            from: "dev",
+          },
+          { escalationName: "other", displayName: "Staging access", cluster: "cluster-b", to: "view", from: "dev" },
+        ]);
+        const wrapper = await createWrapper({ search });
+        const cards = wrapper.findAllComponents({ name: "BreakglassCard" });
+        expect(cards).toHaveLength(1);
+        expect(cards[0]!.props("breakglass")).toMatchObject({
+          escalationName: "admin-a1b2c3d4",
+          displayName: "Production admin",
+          to: "admin",
+        });
+      },
+    );
+
     it("handles query parameter on mount", async () => {
       const wrapper = await createWrapper({ search: "test-cluster" });
       expect(wrapper.exists()).toBe(true);

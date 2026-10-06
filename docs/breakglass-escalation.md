@@ -20,6 +20,8 @@ kind: BreakglassEscalation
 metadata:
   name: <escalation-name>
 spec:
+  # Optional: Human-readable UI/CLI label (max 253 characters)
+  displayName: "Production cluster admin"
   # Required: Target group for escalation
   escalatedGroup: "cluster-admin"
   
@@ -44,6 +46,14 @@ spec:
   # Optional: Default deny policies for sessions
   denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
 ```
+
+## Display name
+
+The optional `spec.displayName` labels the escalation in the UI and CLI and
+defaults to `metadata.name` when empty or omitted. It does not change the resource
+identifier, authorization, or cluster-wide resource-name uniqueness checks.
+`bgctl escalation list` keeps the resource identifier in `NAME` and shows the
+resolved label in `DISPLAY_NAME`; use the resource name for `bgctl escalation get`.
 
 ## Required Fields
 

@@ -147,7 +147,8 @@ escalations:
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
-| `name` | Unique escalation name | Required |
+| `name` | Unique escalation name; names over 63 characters are hashed as described below | `escalation-<index>` |
+| `displayName` | Human-readable UI/CLI label (maximum 253 characters) | Original name when shortened, otherwise `metadata.name` |
 | `allowed.clusters` | Clusters this escalation applies to | - |
 | `allowed.groups` | Groups allowed to request | Required |
 | `escalatedGroup` | Target group for elevated privileges | Required |
@@ -167,6 +168,27 @@ escalations:
 | `sessionLimitsOverride.unlimited` | Disable all session limits for this escalation | `false` |
 | `sessionLimitsOverride.maxActiveSessionsPerUser` | Override per-user session limit | - |
 | `sessionLimitsOverride.maxActiveSessionsTotal` | Max total active sessions for this escalation | - |
+
+### Resource names and upgrading to 0.4.0
+
+Escalation names up to 63 characters are preserved unchanged. Longer names use
+the first 54 characters, with trailing non-`[a-z0-9]` characters removed, followed
+by `-` and the first 8 hexadecimal characters of the full name's SHA-256 hash.
+This preserves distinguishing suffixes in the hash and avoids trailing punctuation.
+The chart defaults `spec.displayName` to the original long name; an explicit
+`displayName` takes precedence. If the original name exceeds 253 characters,
+provide a shorter explicit display name.
+
+**Upgrade impact:** Escalations with names longer than 63 characters are renamed
+compared with earlier chart versions. Review references to those resources and
+plan removal of old truncated escalations so duplicate policies are not left
+behind. Resource-name uniqueness remains cluster-wide. Existing names of
+63 characters or less and authorization settings are unchanged.
+Install the updated BreakglassEscalation CRD before enabling
+display names.
+
+Run `bash charts/escalation-config/ci/test-escalation-names.sh` from the repository
+root for the name and display-name rendering checks.
 
 ### Multi-IDP Configuration
 

@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -9,6 +10,59 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestBreakglassEscalationDisplayName(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		displayName string
+		want        string
+		valid       bool
+	}{
+		{name: "omitted", want: "esc-1", valid: true},
+		{name: "human readable", displayName: "Production admin — on call", want: "Production admin — on call", valid: true},
+		{name: "max characters", displayName: strings.Repeat("界", 253), want: strings.Repeat("界", 253), valid: true},
+		{name: "too long", displayName: strings.Repeat("界", 254), want: strings.Repeat("界", 254)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			esc := &BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "esc-1"},
+				Spec: BreakglassEscalationSpec{
+					DisplayName:    tc.displayName,
+					EscalatedGroup: "admin",
+					Allowed:        BreakglassEscalationAllowed{Clusters: []string{"cluster-a"}},
+					Approvers:      BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+				},
+			}
+			if got := esc.GetDisplayName(); got != tc.want {
+				t.Fatalf("display name = %q, want %q", got, tc.want)
+			}
+			_, createErr := esc.ValidateCreate(context.Background(), esc)
+			_, updateErr := esc.ValidateUpdate(context.Background(), esc.DeepCopy(), esc)
+			for _, err := range []error{createErr, updateErr} {
+				if (err == nil) != tc.valid {
+					t.Fatalf("valid = %t, validation error = %v", tc.valid, err)
+				}
+				if err != nil && !strings.Contains(err.Error(), "spec.displayName") {
+					t.Fatalf("expected displayName validation error, got %v", err)
+				}
+			}
+			data, err := json.Marshal(esc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded BreakglassEscalation
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			if decoded.Spec.DisplayName != tc.displayName || decoded.Name != esc.Name {
+				t.Fatalf("display name or identifier changed on JSON round-trip: %s", data)
+			}
+			if tc.displayName == "" && strings.Contains(string(data), `"displayName"`) {
+				t.Fatalf("empty displayName must be omitted: %s", data)
+			}
+		})
+	}
+}
 
 func TestBreakglassEscalation_ValidateCreate_MissingFields(t *testing.T) {
 	be := &BreakglassEscalation{}

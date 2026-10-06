@@ -13,6 +13,8 @@ package v1alpha1
 //
 // BreakglassEscalationSpec defines the desired state of BreakglassEscalation.
 type BreakglassEscalationSpecApplyConfiguration struct {
+	// displayName is the human-readable name shown in the UI and CLI; defaults to metadata.name.
+	DisplayName *string `json:"displayName,omitempty"`
 	// allowed specifies who is allowed to use this escalation.
 	Allowed *BreakglassEscalationAllowedApplyConfiguration `json:"allowed,omitempty"`
 	// approvers specifies who is allowed to approve this escalation.
@@ -92,6 +94,14 @@ type BreakglassEscalationSpecApplyConfiguration struct {
 // apply.
 func BreakglassEscalationSpec() *BreakglassEscalationSpecApplyConfiguration {
 	return &BreakglassEscalationSpecApplyConfiguration{}
+}
+
+// WithDisplayName sets the DisplayName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DisplayName field is set to the value of the last call.
+func (b *BreakglassEscalationSpecApplyConfiguration) WithDisplayName(value string) *BreakglassEscalationSpecApplyConfiguration {
+	b.DisplayName = &value
+	return b
 }
 
 // WithAllowed sets the Allowed field in the declarative configuration to the given value

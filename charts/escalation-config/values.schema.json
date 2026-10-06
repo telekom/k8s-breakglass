@@ -779,6 +779,11 @@
       "description": "List of BreakglassEscalation resources to create.",
       "items": {
         "properties": {
+          "displayName": {
+            "description": "Human-readable UI/CLI name. Defaults to the original name when shortened, otherwise metadata.name.",
+            "maxLength": 253,
+            "type": "string"
+          },
           "allowed": {
             "properties": {
               "clusters": {
@@ -898,7 +903,7 @@
             "type": "string"
           },
           "name": {
-            "description": "Escalation resource name. Defaults to escalation-\u003cindex\u003e if omitted.",
+            "description": "Escalation resource name. Defaults to escalation-\u003cindex\u003e if omitted. Names over 63 characters use a trimmed 54-character prefix and an 8-character SHA-256 suffix.",
             "type": "string"
           },
           "notificationExclusions": {

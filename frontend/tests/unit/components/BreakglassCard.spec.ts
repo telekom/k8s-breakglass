@@ -69,6 +69,21 @@ function makeBreakglass(overrides: Partial<Breakglass> = {}): Breakglass {
 }
 
 describe("BreakglassCard request reason validation", () => {
+  it.each([
+    { displayName: "Production admin", escalationName: "admin-a1b2c3d4", expected: "Production admin" },
+    { displayName: "", escalationName: "admin-a1b2c3d4", expected: "admin-a1b2c3d4" },
+    { displayName: undefined, escalationName: "admin-a1b2c3d4", expected: "admin-a1b2c3d4" },
+    { displayName: undefined, escalationName: undefined, expected: "admin-group" },
+  ])("renders the escalation title with fallback: $expected", ({ displayName, escalationName, expected }) => {
+    const wrapper = mount(BreakglassCard, {
+      props: { breakglass: makeBreakglass({ displayName, escalationName }), time: Date.now() },
+      global: { stubs: { ...SCALE_STUBS, SessionSummaryCard: false } },
+    });
+    expect(wrapper.get('[data-testid="escalation-name"]').text()).toBe(expected);
+    expect(wrapper.text()).toContain("Granted group");
+    expect(wrapper.text()).toContain("admin-group");
+  });
+
   it("shows a visible required reason error until the requester enters text", async () => {
     const wrapper = mount(BreakglassCard, {
       props: {

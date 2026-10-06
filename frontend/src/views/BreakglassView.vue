@@ -160,6 +160,8 @@ const filteredBreakglasses = computed(() => {
     const s = state.search.toLowerCase();
     bgs = bgs.filter((bg) => {
       return (
+        (bg.displayName && bg.displayName.toLowerCase().includes(s)) ||
+        (bg.escalationName && bg.escalationName.toLowerCase().includes(s)) ||
         (bg.to && bg.to.toLowerCase().includes(s)) ||
         (bg.from && bg.from.toLowerCase().includes(s)) ||
         (bg.cluster && bg.cluster.toLowerCase().includes(s)) ||

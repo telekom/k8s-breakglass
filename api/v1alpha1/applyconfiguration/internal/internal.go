@@ -663,6 +663,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: disableNotifications
       type:
         scalar: boolean
+    - name: displayName
+      type:
+        scalar: string
     - name: escalatedGroup
       type:
         scalar: string

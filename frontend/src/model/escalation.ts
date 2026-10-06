@@ -1,4 +1,5 @@
 export interface BreakglassEscalationSpec {
+  displayName?: string;
   cluster: string;
   username: string;
   escalatedGroup: string;

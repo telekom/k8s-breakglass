@@ -446,7 +446,7 @@ function drop() {
     class="breakglass-card"
     data-testid="escalation-card"
     eyebrow="Escalation target"
-    :title="breakglass.to"
+    :title="breakglass.displayName || breakglass.escalationName || breakglass.to"
     :subtitle="sessionSubtitle"
     :status-tone="statusTone"
   >
@@ -462,6 +462,10 @@ function drop() {
     </template>
 
     <template #body>
+      <div class="session-section">
+        <span class="label">Granted group</span>
+        <scale-tag size="small" variant="neutral">{{ breakglass.to }}</scale-tag>
+      </div>
       <div v-if="requesterGroups.length" class="session-section">
         <div class="session-section__header">
           <span class="label">Available via</span>

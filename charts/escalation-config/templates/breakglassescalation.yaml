@@ -1,13 +1,24 @@
 {{- $root := .Values -}}
 {{- range $i, $esc := .Values.escalations }}
+{{- $originalName := default (printf "escalation-%d" $i) $esc.name }}
+{{- $name := $originalName }}
+{{- $displayName := default "" $esc.displayName }}
+{{- if gt (len $originalName) 63 }}
+{{- $prefix := regexReplaceAll "[^a-z0-9]+$" (trunc 54 $originalName) "" }}
+{{- $name = printf "%s-%s" $prefix (sha256sum $originalName | trunc 8) }}
+{{- $displayName = default $originalName $displayName }}
+{{- end }}
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   labels:
     {{- include "escalation-config.labels" $ | nindent 4 }}
-  name: {{ default (printf "escalation-%d" $i) $esc.name | trunc 63 | trimSuffix "-" }}
+  name: {{ $name | quote }}
   namespace: {{ $.Release.Namespace }}
 spec:
+  {{- if $displayName }}
+  displayName: {{ $displayName | quote }}
+  {{- end }}
   {{- $allowed := required "escalations[].allowed is required" $esc.allowed }}
   {{- $allowedGroups := required "escalations[].allowed.groups is required" $allowed.groups }}
   allowed:

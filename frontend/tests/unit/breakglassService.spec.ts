@@ -38,6 +38,46 @@ describe("BreakglassService", () => {
   });
 
   describe("fetchAvailableEscalations (via getBreakglasses)", () => {
+    it.each([["Production admin"], [""], [undefined]])(
+      "preserves escalation identity and resolves displayName %s for every cluster",
+      async (displayName) => {
+        mockGet.mockImplementation((url: string) =>
+          Promise.resolve({
+            data:
+              url === "/breakglassEscalations"
+                ? {
+                    items: [
+                      {
+                        metadata: { name: "admin-a1b2c3d4" },
+                        spec: {
+                          displayName,
+                          escalatedGroup: "admin",
+                          allowed: { clusters: ["prod", "staging"], groups: ["dev"] },
+                        },
+                      },
+                    ],
+                  }
+                : [],
+          }),
+        );
+        const result = await service.getBreakglasses();
+        expect(result).toEqual([
+          expect.objectContaining({
+            escalationName: "admin-a1b2c3d4",
+            displayName: displayName || "admin-a1b2c3d4",
+            to: "admin",
+            cluster: "prod",
+          }),
+          expect.objectContaining({
+            escalationName: "admin-a1b2c3d4",
+            displayName: displayName || "admin-a1b2c3d4",
+            to: "admin",
+            cluster: "staging",
+          }),
+        ]);
+      },
+    );
+
     it("rethrows when escalations API fails", async () => {
       // fetchAvailableEscalations is private, but it's called by getBreakglasses
       // Simulate a network error on the escalations endpoint
