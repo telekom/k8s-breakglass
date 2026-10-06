@@ -13,7 +13,7 @@ const MODAL_FOCUS_ATTEMPTS = 60;
 type ScaleModalElement = HTMLElement & { opened?: boolean; componentOnReady?: () => Promise<unknown> };
 
 const scrollLockTokens = new Set<symbol>();
-const modalStack: Array<{ token: symbol; close: () => void }> = [];
+const modalStack: Array<{ token: symbol; close: () => void; element?: ScaleModalElement }> = [];
 let previousBodyOverflow = "";
 let previousDocumentOverflow = "";
 
@@ -32,8 +32,9 @@ function handleDocumentKeydown(event: KeyboardEvent) {
 function activateModal(token: symbol, onClose: () => void) {
   if (typeof document === "undefined") return;
 
+  const element = modalElementFor(token);
   deactivateModal(token);
-  modalStack.push({ token, close: onClose });
+  modalStack.push({ token, close: onClose, element });
   if (modalStack.length === 1) {
     document.addEventListener("keydown", handleDocumentKeydown);
   }
@@ -41,6 +42,15 @@ function activateModal(token: symbol, onClose: () => void) {
 
 function isTopModal(token: symbol) {
   return modalStack[modalStack.length - 1]?.token === token;
+}
+
+function setModalElement(token: symbol, element: ScaleModalElement) {
+  const entry = modalStack.find((candidate) => candidate.token === token);
+  if (entry) entry.element = element;
+}
+
+function modalElementFor(token: symbol): ScaleModalElement | undefined {
+  return modalStack.find((candidate) => candidate.token === token)?.element;
 }
 
 function openScaleModals(): ScaleModalElement[] {
@@ -101,7 +111,14 @@ function deepActiveElement(): HTMLElement | null {
  * dialogs that were already open (e.g. the one underneath) are ignored
  * regardless of their DOM order.
  */
-async function focusOpenModal(isStillOpen: () => boolean, alreadyOpen: Set<Element>) {
+function focusModal(modal: ScaleModalElement): boolean {
+  if (document.activeElement && modal.contains(document.activeElement)) return true;
+  const closeButton = modal.shadowRoot?.querySelector<HTMLElement>(".modal__close-button");
+  closeButton?.focus();
+  return !!closeButton && modal.shadowRoot?.activeElement === closeButton;
+}
+
+async function focusOpenModal(token: symbol, isStillOpen: () => boolean, alreadyOpen: Set<Element>) {
   await nextTick();
   // The dialog may be inserted a few frames later (async components, lazy Scale
   // loading) and is not focusable until its open transition makes it visible.
@@ -111,10 +128,8 @@ async function focusOpenModal(isStillOpen: () => boolean, alreadyOpen: Set<Eleme
     if (modal) {
       await modal.componentOnReady?.();
       if (!modal.isConnected || !modal.opened || !isStillOpen()) return;
-      if (document.activeElement && modal.contains(document.activeElement)) return;
-      const closeButton = modal.shadowRoot?.querySelector<HTMLElement>(".modal__close-button");
-      closeButton?.focus();
-      if (closeButton && modal.shadowRoot?.activeElement === closeButton) return;
+      setModalElement(token, modal);
+      if (focusModal(modal)) return;
     }
     await new Promise((resolve) => requestAnimationFrame(resolve));
   }
@@ -133,16 +148,35 @@ function focusMainHeading() {
 }
 
 /**
- * Returns focus to the control that opened the dialog (WCAG 2.4.3). A
- * successful action often refreshes the view later (after its API call) and
- * replaces that control, which drops focus to <body>; in that case keyboard
- * users are anchored on the page heading instead. Watching ends as soon as
- * focus moves anywhere else, so it never overrides a later user choice.
+ * Focus can be moved without overriding a user choice when nothing is focused
+ * or focus is still inside the closing dialog (or another dialog that is no
+ * longer open).
  */
-function restoreFocus(trigger: HTMLElement | null) {
+function focusIsReleasable(closing: ScaleModalElement | undefined): boolean {
+  if (!deepActiveElement()) return true;
+  const host = document.activeElement?.closest<ScaleModalElement>("scale-modal");
+  return !!host && (host === closing || !host.opened);
+}
+
+/** Moves focus to the dialog still open underneath, or to the page heading. */
+function focusFallback() {
+  const remaining = modalStack[modalStack.length - 1]?.element;
+  if (remaining?.isConnected && remaining.opened && focusModal(remaining)) return;
+  focusMainHeading();
+}
+
+/**
+ * Returns focus to the control that opened the dialog (WCAG 2.4.3). If that
+ * control is gone (e.g. the list item was removed before the dialog closed)
+ * focus moves to the remaining dialog or the page heading. A successful action
+ * may also refresh the view later and replace the control; that drops focus to
+ * <body>, so the same fallback applies then. Watching ends as soon as focus
+ * moves anywhere else, so it never overrides a later user choice.
+ */
+function restoreFocus(trigger: HTMLElement | null, closing: ScaleModalElement | undefined) {
   if (trigger?.isConnected) trigger.focus();
   if (!trigger?.isConnected || deepActiveElement() !== trigger) {
-    if (!deepActiveElement()) focusMainHeading();
+    if (focusIsReleasable(closing)) focusFallback();
     return;
   }
 
@@ -156,7 +190,7 @@ function restoreFocus(trigger: HTMLElement | null) {
   const observer = new MutationObserver(() => {
     if (trigger.isConnected) return;
     stop();
-    if (!deepActiveElement()) focusMainHeading();
+    if (!deepActiveElement()) focusFallback();
   });
   observer.observe(document.body, { childList: true, subtree: true });
   document.addEventListener("focusin", onFocusIn, true);
@@ -176,7 +210,7 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
       if (!isActive) {
         returnFocusTo = deepActiveElement();
         // Only the top-most dialog may take focus (it also receives Escape).
-        void focusOpenModal(() => isActive && isTopModal(modalToken), new Set(openScaleModals()));
+        void focusOpenModal(modalToken, () => isActive && isTopModal(modalToken), new Set(openScaleModals()));
       }
       isActive = true;
       activateModal(modalToken, onClose);
@@ -186,13 +220,14 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
 
     // Closing a dialog underneath another must not pull focus behind the top one.
     const wasTopModal = isTopModal(modalToken);
+    const closingElement = modalElementFor(modalToken);
     deactivateModal(modalToken);
     if (lockScroll) unlockDocumentScroll(scrollLockToken);
     if (isActive) {
       isActive = false;
       const target = returnFocusTo;
       returnFocusTo = null;
-      if (wasTopModal) restoreFocus(target);
+      if (wasTopModal) restoreFocus(target, closingElement);
     }
   }
 

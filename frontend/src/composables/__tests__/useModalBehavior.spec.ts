@@ -354,6 +354,110 @@ describe("useModalBehavior", () => {
     }
   });
 
+  it("moves focus to the heading when the trigger is removed before a persistent dialog closes", async () => {
+    const main = document.createElement("div");
+    main.id = "main";
+    const heading = document.createElement("h1");
+    const trigger = document.createElement("button");
+    main.append(heading, trigger);
+    document.body.appendChild(main);
+    trigger.focus();
+    const { modal, closeButton } = createScaleModal();
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(modal.shadowRoot?.activeElement).toBe(closeButton));
+
+      // e.g. withdrawing removes the request card before the dialog closes;
+      // the dialog element itself stays mounted and only becomes hidden.
+      trigger.remove();
+      await wrapper.setProps({ opened: false });
+      modal.opened = false;
+
+      expect(document.activeElement).toBe(heading);
+    } finally {
+      modal.remove();
+      main.remove();
+    }
+  });
+
+  it("moves focus to the remaining dialog when the saved trigger inside it was removed", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const lower = createScaleModal();
+    const upper = createScaleModal();
+    const innerTrigger = document.createElement("button");
+    lower.modal.appendChild(innerTrigger);
+
+    try {
+      const first = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(first);
+      document.body.appendChild(lower.modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(lower.modal));
+
+      innerTrigger.focus();
+      const second = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(second);
+      document.body.appendChild(upper.modal);
+      await vi.waitFor(() => expect(upper.modal.shadowRoot?.activeElement).toBe(upper.closeButton));
+
+      innerTrigger.remove();
+      await second.setProps({ opened: false });
+      upper.modal.remove();
+
+      expect(lower.modal.shadowRoot?.activeElement).toBe(lower.closeButton);
+    } finally {
+      lower.modal.remove();
+      upper.modal.remove();
+      trigger.remove();
+    }
+  });
+
+  it("ends on the page heading when both stacked dialogs close and their triggers are gone", async () => {
+    const main = document.createElement("div");
+    main.id = "main";
+    const heading = document.createElement("h1");
+    const trigger = document.createElement("button");
+    main.append(heading, trigger);
+    document.body.appendChild(main);
+    trigger.focus();
+    const lower = createScaleModal();
+    const upper = createScaleModal();
+    const innerTrigger = document.createElement("button");
+    lower.modal.appendChild(innerTrigger);
+
+    try {
+      const first = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(first);
+      document.body.appendChild(lower.modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(lower.modal));
+      innerTrigger.focus();
+      const second = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(second);
+      document.body.appendChild(upper.modal);
+      await vi.waitFor(() => expect(upper.modal.shadowRoot?.activeElement).toBe(upper.closeButton));
+
+      // The lower dialog (holding the upper dialog's trigger) closes first,
+      // then the action completes and removes the original trigger too.
+      trigger.remove();
+      await first.setProps({ opened: false });
+      lower.modal.remove();
+      expect(upper.modal.shadowRoot?.activeElement).toBe(upper.closeButton);
+
+      await second.setProps({ opened: false });
+      upper.modal.remove();
+
+      expect(document.activeElement).toBe(heading);
+    } finally {
+      lower.modal.remove();
+      upper.modal.remove();
+      main.remove();
+    }
+  });
+
   it("keeps focus on the trigger when it survives closing", async () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger);

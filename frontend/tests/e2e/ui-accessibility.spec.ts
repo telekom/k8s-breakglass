@@ -232,5 +232,14 @@ test.describe.serial("UI accessibility: dialogs and keyboard flows", () => {
     await tabTo(page, "withdraw-confirm-btn");
     await page.keyboard.press("Enter");
     await expect(card).toHaveCount(0, { timeout: 15000 });
+    // The card holding the trigger is gone; focus must not be left in the hidden dialog.
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const active = document.activeElement;
+          return !!active && !active.closest("scale-modal") && !!document.getElementById("main")?.contains(active);
+        }),
+      )
+      .toBe(true);
   });
 });
