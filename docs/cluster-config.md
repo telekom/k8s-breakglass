@@ -1267,10 +1267,9 @@ kubectl get clusterconfig <name> -o yaml
 
 ### Common Issues
 
-#### Ready Condition: False (KubeconfigParseFailed)
+#### Ready Condition: False (SecretMissing)
 
-**Cause:** The referenced kubeconfig secret doesn't exist, contains invalid data,
-or includes forbidden file/plugin credential references.
+**Cause:** The referenced kubeconfig Secret does not exist or cannot be read.
 
 **Diagnosis:**
 ```bash
@@ -1283,7 +1282,22 @@ kubectl describe secret <secret-name> -n <namespace>
 
 **Solution:**
 - Ensure the Secret exists in the specified namespace
-- Verify the kubeconfig key name (defaults to `value`)
+- Check that the controller can read the Secret
+
+#### Ready Condition: False (SecretKeyMissing)
+
+**Cause:** The referenced Secret exists but lacks the configured kubeconfig data key.
+
+**Solution:**
+- Verify `spec.kubeconfigSecretRef.key` (defaults to `value`)
+- Inspect the Secret's data-key names with `kubectl describe secret`
+
+#### Ready Condition: False (KubeconfigParseFailed)
+
+**Cause:** The referenced Secret contains invalid kubeconfig data or forbidden
+file/plugin credential references, including unused entries.
+
+**Solution:**
 - Validate kubeconfig syntax with `kubectl config view`; native parsing alone
   does not verify the self-contained requirement
 - Follow the [kubeconfig migration guidance](#migrating-fileplugin-based-kubeconfigs)

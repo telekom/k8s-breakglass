@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Secret-backed remote kubeconfigs must embed credentials and trust data.
+  Exec/auth-provider plugins, token files and CA/client certificate/key file
+  references are rejected, including unused cluster or user entries. Replace
+  them with embedded CA/certificate/key/token data before upgrading; see the
+  [ClusterConfig migration guide](docs/cluster-config.md#migrating-fileplugin-based-kubeconfigs).
+  Client construction and credential eviction use `t-caas-go-library/pkg/remoteclient`,
+  preserving TTLs, OIDC and live privileged-operation freshness checks.
 - Adopt the tagged `t-caas-go-library` status SSA and optimistic patch helpers,
   preserving conflict retries, field ownership and session lifecycle fences.
 - Consolidate main-resource and status ApplyConfiguration conversion without
