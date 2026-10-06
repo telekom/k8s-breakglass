@@ -171,7 +171,9 @@ escalations:
 
 ### Resource names and upgrading to 0.4.0
 
-Escalation names up to 63 characters are preserved unchanged. Longer names use
+Valid escalation names up to 63 characters are preserved unchanged. Short names
+retain the previous trailing-hyphen trimming for compatibility (for example,
+`short-` still renders as `short`). Longer names use
 the first 54 characters, with trailing non-`[a-z0-9]` characters removed, followed
 by `-` and the first 8 hexadecimal characters of the full name's SHA-256 hash.
 This preserves distinguishing suffixes in the hash and avoids trailing punctuation.

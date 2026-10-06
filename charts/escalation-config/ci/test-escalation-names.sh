@@ -31,6 +31,8 @@ long_name = "admin-escalation-" + "a" * 50 + "-dev-0.1.0"
 cases = [
     ({}, "escalation-0", None),
     ({"name": "short.name"}, "short.name", None),
+    ({"name": "short-"}, "short", None),
+    ({"name": "a" * 62 + "-"}, "a" * 62, None),
     ({"name": "a" * 63}, "a" * 63, None),
     ({"name": "a" * 64}, shortened("a" * 64), "a" * 64),
     ({"name": long_name}, shortened(long_name), long_name),
@@ -45,7 +47,6 @@ for punctuation in (".", "_", "-", ".-_"):
     name = "a" * (54 - len(punctuation)) + punctuation + "b" * 20
     cases.append(({"name": name}, shortened(name), name))
 
-names = []
 for esc, expected_name, expected_display in cases:
     result = render([esc])
     assert result.returncode == 0, result.stderr
@@ -58,7 +59,6 @@ for esc, expected_name, expected_display in cases:
     assert actual_display == expected_display, (actual_display, expected_display)
     assert len(actual_name) <= 63, actual_name
     assert re.fullmatch(r"[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", actual_name), actual_name
-    names.append(actual_name)
 
 # Names differing only beyond the old truncation boundary stay distinct in one release.
 result = render([{"name": long_name}, {"name": long_name + "-other"}])
@@ -67,8 +67,8 @@ rendered_names = [
     re.search(r'^  name: (".*")$', doc, re.M).group(1)
     for doc in result.stdout.split("---") if "kind: BreakglassEscalation\n" in doc
 ]
-assert [json.loads(name) for name in rendered_names] == names[4:6]
-assert names[4] != names[5]
+assert [json.loads(name) for name in rendered_names] == [shortened(long_name), shortened(long_name + "-other")]
+assert shortened(long_name) != shortened(long_name + "-other")
 
 result = render([{"name": "short", "displayName": "x" * 254}])
 assert result.returncode != 0, "displayName exceeding 253 characters must fail schema validation"

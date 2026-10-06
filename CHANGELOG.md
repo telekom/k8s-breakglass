@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Escalation-config chart 0.4.0 hashes names longer than 63 characters instead
   of silently truncating them. These escalations are renamed on upgrade; review
   references and remove old truncated resources before creating replacements.
+  Short names retain the previous trailing-hyphen normalization.
 
 - Secret-backed remote kubeconfigs must embed credentials and trust data.
   Exec/auth-provider plugins, token files and CA/client certificate/key file

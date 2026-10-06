@@ -1,7 +1,7 @@
 {{- $root := .Values -}}
 {{- range $i, $esc := .Values.escalations }}
 {{- $originalName := default (printf "escalation-%d" $i) $esc.name }}
-{{- $name := $originalName }}
+{{- $name := trimSuffix "-" $originalName }}
 {{- $displayName := default "" $esc.displayName }}
 {{- if gt (len $originalName) 63 }}
 {{- $prefix := regexReplaceAll "[^a-z0-9]+$" (trunc 54 $originalName) "" }}
