@@ -513,7 +513,7 @@ func TestUnstructuredSpecEqual_ExtraLabelsInCurrent(t *testing.T) {
 
 // statusEntry is an Apply managedFields entry for FieldOwnerController scoped to
 // the status subresource. This operator really does apply to status with the same
-// field manager (utils.ApplyStatus, UpdateStatusWithRetry), so real objects carry
+// field manager through the CRD-specific status builders, so real objects carry
 // one of these alongside the main-resource entry.
 func statusEntry() metav1.ManagedFieldsEntry {
 	return metav1.ManagedFieldsEntry{

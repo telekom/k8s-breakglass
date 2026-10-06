@@ -167,7 +167,7 @@ func PatchApplyUnstructured(ctx context.Context, c client.Client, obj *unstructu
 
 // applyConfigsEqual compares two ApplyConfigurations by marshaling both to JSON
 // and comparing the bytes. Since both ACs are built using the same
-// [ToApplyConfiguration] function (which uses jsonDecodeInto), the resulting JSON
+// [ToApplyConfiguration] function, the resulting JSON
 // is deterministic and comparable: struct field order is fixed by the Go type
 // definitions, and map key order is sorted by encoding/json.
 //
