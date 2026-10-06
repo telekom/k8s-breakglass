@@ -9,8 +9,6 @@ type ModalBehaviorOptions = {
 };
 
 const MODAL_FOCUS_ATTEMPTS = 60;
-const FOCUS_RESTORE_WINDOW_MS = 5000;
-const FOCUS_RESTORE_POLL_MS = 100;
 
 type ScaleModalElement = HTMLElement & { opened?: boolean; componentOnReady?: () => Promise<unknown> };
 
@@ -136,22 +134,32 @@ function focusMainHeading() {
 
 /**
  * Returns focus to the control that opened the dialog (WCAG 2.4.3). A
- * successful action often refreshes the view and replaces that control, which
- * drops focus to <body>; in that case keyboard users are anchored on the page
- * heading instead. Watching stops once focus moves anywhere else.
+ * successful action often refreshes the view later (after its API call) and
+ * replaces that control, which drops focus to <body>; in that case keyboard
+ * users are anchored on the page heading instead. Watching ends as soon as
+ * focus moves anywhere else, so it never overrides a later user choice.
  */
 function restoreFocus(trigger: HTMLElement | null) {
   if (trigger?.isConnected) trigger.focus();
-  const startedAt = Date.now();
-  const timer = setInterval(() => {
-    const active = deepActiveElement();
-    if (!active && !trigger?.isConnected) {
-      clearInterval(timer);
-      focusMainHeading();
-    } else if ((active && active !== trigger) || Date.now() - startedAt > FOCUS_RESTORE_WINDOW_MS) {
-      clearInterval(timer);
-    }
-  }, FOCUS_RESTORE_POLL_MS);
+  if (!trigger?.isConnected || deepActiveElement() !== trigger) {
+    if (!deepActiveElement()) focusMainHeading();
+    return;
+  }
+
+  const stop = () => {
+    observer.disconnect();
+    document.removeEventListener("focusin", onFocusIn, true);
+  };
+  const onFocusIn = (event: FocusEvent) => {
+    if (event.composedPath()[0] !== trigger) stop();
+  };
+  const observer = new MutationObserver(() => {
+    if (trigger.isConnected) return;
+    stop();
+    if (!deepActiveElement()) focusMainHeading();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  document.addEventListener("focusin", onFocusIn, true);
 }
 
 export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, options: ModalBehaviorOptions = {}) {
@@ -176,13 +184,15 @@ export function useModalBehavior(opened: Ref<boolean>, onClose: () => void, opti
       return;
     }
 
+    // Closing a dialog underneath another must not pull focus behind the top one.
+    const wasTopModal = isTopModal(modalToken);
     deactivateModal(modalToken);
     if (lockScroll) unlockDocumentScroll(scrollLockToken);
     if (isActive) {
       isActive = false;
       const target = returnFocusTo;
       returnFocusTo = null;
-      restoreFocus(target);
+      if (wasTopModal) restoreFocus(target);
     }
   }
 

@@ -263,6 +263,97 @@ describe("useModalBehavior", () => {
     }
   });
 
+  it("anchors focus on the heading when a slow request replaces the trigger much later", async () => {
+    const main = document.createElement("div");
+    main.id = "main";
+    const heading = document.createElement("h1");
+    const trigger = document.createElement("button");
+    main.append(heading, trigger);
+    document.body.appendChild(main);
+    trigger.focus();
+    const { modal } = createScaleModal();
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(modal));
+      modal.remove();
+      await wrapper.setProps({ opened: false });
+      expect(document.activeElement).toBe(trigger);
+
+      vi.useFakeTimers();
+      vi.advanceTimersByTime(30_000);
+      vi.useRealTimers();
+      trigger.remove();
+
+      await vi.waitFor(() => expect(document.activeElement).toBe(heading));
+    } finally {
+      vi.useRealTimers();
+      main.remove();
+    }
+  });
+
+  it("does not move focus once the user has focused something else", async () => {
+    const main = document.createElement("div");
+    main.id = "main";
+    const heading = document.createElement("h1");
+    const trigger = document.createElement("button");
+    const other = document.createElement("button");
+    main.append(heading, trigger, other);
+    document.body.appendChild(main);
+    trigger.focus();
+    const { modal } = createScaleModal();
+
+    try {
+      const wrapper = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(wrapper);
+      document.body.appendChild(modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(modal));
+      modal.remove();
+      await wrapper.setProps({ opened: false });
+
+      other.focus();
+      trigger.remove();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(document.activeElement).toBe(other);
+    } finally {
+      main.remove();
+    }
+  });
+
+  it("keeps focus in the top dialog when the dialog underneath closes", async () => {
+    const trigger = document.createElement("button");
+    document.body.appendChild(trigger);
+    trigger.focus();
+    const lower = createScaleModal();
+    const upper = createScaleModal();
+
+    try {
+      const first = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(first);
+      document.body.appendChild(lower.modal);
+      await vi.waitFor(() => expect(document.activeElement).toBe(lower.modal));
+
+      const second = mount(ModalHarness, { props: { opened: true } });
+      mountedWrappers.push(second);
+      document.body.appendChild(upper.modal);
+      await vi.waitFor(() => expect(upper.modal.shadowRoot?.activeElement).toBe(upper.closeButton));
+
+      lower.modal.remove();
+      await first.setProps({ opened: false });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      expect(document.activeElement).toBe(upper.modal);
+      expect(upper.modal.shadowRoot?.activeElement).toBe(upper.closeButton);
+    } finally {
+      lower.modal.remove();
+      upper.modal.remove();
+      trigger.remove();
+    }
+  });
+
   it("keeps focus on the trigger when it survives closing", async () => {
     const trigger = document.createElement("button");
     document.body.appendChild(trigger);
