@@ -547,7 +547,7 @@ watch(
               :aria-pressed="highContrast"
               @click="toggleHighContrast"
             >
-              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
+              <scale-icon-action-show-password :decorative="true"></scale-icon-action-show-password>
             </scale-button>
           </div>
 
@@ -633,7 +633,7 @@ watch(
                         :aria-pressed="highContrast"
                         @click="toggleHighContrast"
                       >
-                        <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                        <scale-icon-action-show-password size="24" :decorative="true"></scale-icon-action-show-password>
                         <span>High Contrast</span>
                       </scale-button>
                     </div>
@@ -674,7 +674,7 @@ watch(
                     :aria-pressed="highContrast"
                     @click="toggleHighContrast"
                   >
-                    <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                    <scale-icon-action-show-password size="24" :decorative="true"></scale-icon-action-show-password>
                     <span>High Contrast</span>
                   </scale-button>
                 </div>

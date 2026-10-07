@@ -17,7 +17,7 @@ const scaleStubs = {
     template: '<button @click="$emit(\'click\')"><slot /><slot name="icon-before" /></button>',
     props: ["variant"],
   },
-  "scale-icon-home": { template: "<span></span>" },
+  "scale-icon-home-home": { template: "<span></span>" },
 };
 
 describe("SessionErrorView", () => {

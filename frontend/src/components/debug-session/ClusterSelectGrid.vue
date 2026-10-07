@@ -110,7 +110,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
               class="source-badge binding"
               :aria-label="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
             >
-              <scale-icon-content-link size="12" aria-hidden="true"></scale-icon-content-link>
+              <scale-icon-action-link size="12" aria-hidden="true"></scale-icon-action-link>
               via Binding:
               <strong class="binding-name" :title="cluster.bindingRef.displayName || cluster.bindingRef.name">{{
                 cluster.bindingRef.displayName || cluster.bindingRef.name

@@ -58,7 +58,7 @@ const handleViewSessions = () => {
 
       <div class="action-buttons">
         <scale-button variant="primary" @click="handleGoHome">
-          <scale-icon-home slot="icon-before" decorative></scale-icon-home>
+          <scale-icon-home-home slot="icon-before" decorative></scale-icon-home-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="handleViewSessions"> View All Sessions </scale-button>

@@ -628,9 +628,9 @@ function drop() {
             style="flex: 1"
             @scale-change="scheduleHourPart = $event.target.value"
           >
-            <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{
+            <scale-dropdown-select-item v-for="hour in hourOptions" :key="hour" :value="hour">{{
               hour
-            }}</scale-dropdown-select-option>
+            }}</scale-dropdown-select-item>
           </scale-dropdown-select>
           <scale-dropdown-select
             :id="'scheduled-minute-' + breakglass.to"
@@ -640,9 +640,9 @@ function drop() {
             style="flex: 1"
             @scale-change="scheduleMinutePart = $event.target.value"
           >
-            <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{
+            <scale-dropdown-select-item v-for="minute in minuteOptions" :key="minute" :value="minute">{{
               minute
-            }}</scale-dropdown-select-option>
+            }}</scale-dropdown-select-item>
           </scale-dropdown-select>
         </div>
         <div v-if="scheduleDatePart" class="schedule-picker-actions">
@@ -692,7 +692,8 @@ function drop() {
         Reason is required.
       </p>
       <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning" aria-live="polite">
-        ⚠ Character limit approaching
+        <scale-icon-alert-warning size="16" decorative></scale-icon-alert-warning>
+        Character limit approaching
         <span aria-hidden="true"> ({{ reasonCharLimit - reasonCharCount }} characters remaining) </span>
       </p>
     </div>
@@ -835,6 +836,10 @@ function drop() {
 }
 
 .helper.warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
   color: var(--tone-chip-warning-text);
 }
 

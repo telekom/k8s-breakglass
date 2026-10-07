@@ -35,7 +35,7 @@ function formatValue(value?: string | number | null) {
                 class="meta-label__hint"
                 :inner-aria-label="`More info about ${item.label}`"
               >
-                <scale-icon-action-info decorative></scale-icon-action-info>
+                <scale-icon-alert-information decorative></scale-icon-alert-information>
               </scale-button>
             </scale-tooltip>
           </div>

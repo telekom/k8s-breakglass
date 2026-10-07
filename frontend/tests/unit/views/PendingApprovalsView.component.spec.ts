@@ -139,7 +139,7 @@ describe("PendingApprovalsView (component)", () => {
           SessionMetaGrid: true,
           ApprovalModalContent: ApprovalModalContentStub,
           "scale-dropdown-select": true,
-          "scale-dropdown-select-option": true,
+          "scale-dropdown-select-item": true,
           "scale-modal": ScaleModalStub,
           "scale-tag": true,
           "scale-icon-alert-warning": true,

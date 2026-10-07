@@ -749,28 +749,52 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           <div class="operations-grid" data-testid="operations-grid">
             <div class="operation-item" data-testid="operation-exec">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('exec'))">
-                {{ isOperationAllowed("exec") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('exec')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("exec") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Exec</span>
               <span class="operation-desc">kubectl exec</span>
             </div>
             <div class="operation-item" data-testid="operation-attach">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('attach'))">
-                {{ isOperationAllowed("attach") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('attach')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("attach") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Attach</span>
               <span class="operation-desc">kubectl attach</span>
             </div>
             <div class="operation-item" data-testid="operation-logs">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('logs'))">
-                {{ isOperationAllowed("logs") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('logs')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("logs") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Logs</span>
               <span class="operation-desc">kubectl logs</span>
             </div>
             <div class="operation-item" data-testid="operation-portforward">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('portForward'))">
-                {{ isOperationAllowed("portForward") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('portForward')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("portForward") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Port Forward</span>
               <span class="operation-desc">kubectl port-forward</span>

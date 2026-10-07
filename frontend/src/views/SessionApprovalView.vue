@@ -385,7 +385,7 @@ onUnmounted(() => {
     <div v-else-if="error" class="error-container">
       <div class="error-icon" :class="{ 'self-approval-icon': isSelfApprovalBlocked }">
         <scale-icon-action-circle-close v-if="!isSelfApprovalBlocked" size="48"></scale-icon-action-circle-close>
-        <scale-icon-user-file-forbidden v-else size="48"></scale-icon-user-file-forbidden>
+        <scale-icon-content-lock v-else size="48"></scale-icon-content-lock>
       </div>
 
       <h2 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
@@ -427,7 +427,7 @@ onUnmounted(() => {
 
       <div class="action-buttons">
         <scale-button variant="primary" @click="() => $router.push('/')">
-          <scale-icon-home slot="icon-before"></scale-icon-home>
+          <scale-icon-home-home slot="icon-before"></scale-icon-home-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="() => $router.push('/approvals/pending')">

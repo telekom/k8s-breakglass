@@ -170,9 +170,9 @@ if (!customElements.get("scale-dropdown-select")) {
   );
 }
 
-if (!customElements.get("scale-dropdown-select-option")) {
+if (!customElements.get("scale-dropdown-select-item")) {
   customElements.define(
-    "scale-dropdown-select-option",
+    "scale-dropdown-select-item",
     class extends HTMLElement {
       connectedCallback() {
         if (!this.shadowRoot) this.attachShadow({ mode: "open" });
@@ -248,7 +248,7 @@ if (!customElements.get("scale-loading-spinner")) {
 }
 
 // Scale tooltip and icon stubs used by SessionMetaGrid
-for (const tag of ["scale-tooltip", "scale-icon-action-info"]) {
+for (const tag of ["scale-tooltip", "scale-icon-alert-information"]) {
   if (!customElements.get(tag)) {
     customElements.define(
       tag,

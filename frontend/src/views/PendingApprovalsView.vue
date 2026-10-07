@@ -17,9 +17,9 @@
           :value="sortBy"
           @scale-change="handleSortChange"
         >
-          <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
+          <scale-dropdown-select-item value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="recent">Most Recent</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="groups">By Group</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
 
@@ -31,10 +31,10 @@
           :value="urgencyFilter"
           @scale-change="handleUrgencyChange"
         >
-          <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="high">High (&lt; 6 hours)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="normal">Normal (≥ 6 hours)</scale-dropdown-select-option>
+          <scale-dropdown-select-item value="all">All</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="high">High (&lt; 6 hours)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="normal">Normal (≥ 6 hours)</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
 

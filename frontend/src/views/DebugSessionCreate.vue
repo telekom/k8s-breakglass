@@ -808,7 +808,8 @@ function handleTemplateChange(ev: Event) {
       <div class="modal-actions">
         <scale-button variant="secondary" data-testid="cancel-button" @click="handleCancel"> Cancel </scale-button>
         <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
-          Next: Select Cluster →
+          Next: Select Cluster
+          <scale-icon-navigation-right size="16" decorative></scale-icon-navigation-right>
         </scale-button>
       </div>
     </div>
@@ -893,7 +894,10 @@ function handleTemplateChange(ev: Event) {
       />
 
       <div class="modal-actions">
-        <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1"> ← Back </scale-button>
+        <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1">
+          <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
+          Back
+        </scale-button>
         <scale-button
           variant="primary"
           :disabled="!isValid || submitting"

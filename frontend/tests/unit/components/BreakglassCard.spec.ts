@@ -47,7 +47,7 @@ const SCALE_STUBS = {
     template: '<input v-bind="$attrs" :value="value" />',
   },
   "scale-dropdown-select": true,
-  "scale-dropdown-select-option": true,
+  "scale-dropdown-select-item": true,
   "scale-tag": true,
 };
 

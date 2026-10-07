@@ -143,7 +143,7 @@ describe("SessionBrowser", () => {
           "scale-checkbox": true,
           "scale-button": true,
           "scale-dropdown-select": true,
-          "scale-dropdown-select-option": true,
+          "scale-dropdown-select-item": true,
           "scale-tag": true,
           "scale-card": true,
           "scale-divider": true,

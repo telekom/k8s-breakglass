@@ -109,7 +109,7 @@ describe("DebugSessionBrowser", () => {
           "scale-checkbox": true,
           "scale-button": true,
           "scale-dropdown-select": true,
-          "scale-dropdown-select-option": true,
+          "scale-dropdown-select-item": true,
         },
         provide: {
           [AuthKey as symbol]: mockAuth,

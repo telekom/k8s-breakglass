@@ -36,7 +36,7 @@ function factory(props: Partial<InstanceType<typeof ClusterSelectGrid>["$props"]
     global: {
       stubs: {
         "scale-text-field": true,
-        "scale-icon-content-link": true,
+        "scale-icon-action-link": true,
         "scale-icon-action-success": true,
         "scale-icon-action-random": true,
         "scale-icon-device-server": true,

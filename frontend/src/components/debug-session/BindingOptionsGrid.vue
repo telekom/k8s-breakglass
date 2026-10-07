@@ -55,7 +55,7 @@ const emit = defineEmits<{
         <!-- Key Constraints Row -->
         <div class="binding-key-constraints">
           <span v-if="option.constraints?.maxDuration" class="key-constraint duration">
-            <scale-icon-action-clock size="16"></scale-icon-action-clock>
+            <scale-icon-content-clock size="16"></scale-icon-content-clock>
             <span class="value">{{ option.constraints.maxDuration }}</span>
             <span class="label">max duration</span>
           </span>
@@ -92,7 +92,7 @@ const emit = defineEmits<{
           </span>
 
           <span v-if="option.requiredAuxiliaryResourceCategories?.length" class="feature-tag auxiliary">
-            <scale-icon-action-add-circle size="12"></scale-icon-action-add-circle>
+            <scale-icon-action-circle-add size="12"></scale-icon-action-circle-add>
             {{ option.requiredAuxiliaryResourceCategories.join(", ") }}
           </span>
 
@@ -131,7 +131,7 @@ const emit = defineEmits<{
 
         <!-- Binding Source Reference -->
         <div class="binding-source-ref" data-testid="binding-source-ref">
-          <scale-icon-content-link size="10"></scale-icon-content-link>
+          <scale-icon-action-link size="10"></scale-icon-action-link>
           <span class="ref-value">{{ option.bindingRef.namespace }}/{{ option.bindingRef.name }}</span>
         </div>
       </div>

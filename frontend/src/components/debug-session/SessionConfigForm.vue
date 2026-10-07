@@ -200,7 +200,7 @@ function handleDurationChange(ev: Event) {
       </div>
 
       <div v-if="requiredAuxiliaryResources.length > 0" class="info-item auxiliary-info">
-        <scale-icon-action-add-circle size="16"></scale-icon-action-add-circle>
+        <scale-icon-action-circle-add size="16"></scale-icon-action-circle-add>
         <span>Auxiliary resources:</span>
         <span class="aux-categories">
           {{ requiredAuxiliaryResources.join(", ") }}
@@ -415,7 +415,7 @@ function handleDurationChange(ev: Event) {
 
 .info-item scale-icon-alert-information,
 .info-item scale-icon-user-file-user,
-.info-item scale-icon-action-add-circle {
+.info-item scale-icon-action-circle-add {
   flex-shrink: 0;
   color: var(--telekom-color-text-and-icon-functional-informational);
 }

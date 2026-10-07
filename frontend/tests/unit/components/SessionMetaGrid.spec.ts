@@ -15,7 +15,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 
-// Note: Scale web components (scale-tooltip, scale-icon-action-info)
+// Note: Scale web components (scale-tooltip, scale-icon-alert-information)
 // are registered globally in tests/setup.ts
 
 type MetaItem = {
