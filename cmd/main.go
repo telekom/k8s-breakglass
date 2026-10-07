@@ -549,10 +549,6 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		artifactControllers = components.APIControllers
 	}
 
-	// Note: ClusterBindingAPIController is not exposed as a public API endpoint.
-	// Cluster bindings are aggregated internally through the template/clusters endpoint
-	// (GET /api/debugSessions/templates/:name/clusters) for a unified user experience.
-
 	// Register API controllers based on component flags
 	apiControllers, webhookCtrl := api.Setup(sessionController, escalationManager, sessionManager,
 		cliConfig.EnableFrontend, cliConfig.EnableAPI, cliConfig.ConfigPath, auth,

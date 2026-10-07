@@ -157,6 +157,26 @@ in the view's confirmation/action flow, including busy state, error handling,
 and pruning the completed request. Vite handles the literal dynamic imports used
 by lazy routes and both UI flavours without an extra Rollup plugin.
 
+## Unregistered APIs and obsolete filtering
+
+The standalone `ClusterBindingAPIController` and its response DTOs were removed.
+Production deliberately never registered those routes: debug-session bindings
+are resolved through `GET /api/debugSessions/templates/:name/clusters`.
+Only the deleted controller's tests and benchmark constructed it. Its local
+`IsBindingActive` duplicate also had no consumers outside that controller.
+The live binding predicates, CRD reconciler, authorization and discovery paths
+are unchanged. `TestDebugSessionAPITemplateClusters`,
+`TestDebugSessionAPIClusterSelectorMatching` and
+`TestDebugSessionClusterBindingAuthorization` retain E2E coverage;
+`TestHandleGetTemplateClusters` exercises the live handler.
+
+The unused `EscalationFiltering` adapter was also removed with its two tests.
+Only those tests invoked its group-extractor-based filtering. Production uses
+the escalation controller and session controller's identity-aware authorization,
+not this legacy adapter. `TestEscalationAPIList`, `TestEscalationAPICombinedFilters`
+and `TestGroupBasedApproverCanApprove` still exercise the public API flows.
+No registered endpoint or supported CRD field was removed.
+
 ## E2E helpers
 
 Resource builders assign optional scalars and pointers directly. Defaults,
