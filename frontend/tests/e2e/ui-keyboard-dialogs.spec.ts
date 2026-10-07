@@ -188,6 +188,10 @@ test.describe.serial("Keyboard verification: breakglass dialogs", () => {
     await page.keyboard.press("Enter");
     await waitForScaleToast(page, "success-toast");
     await expect(modal).toHaveCount(0);
+    // The toast's empty built-in link is hidden through Scale's `styles` prop.
+    const toast = page.locator('[data-testid="success-toast"]').first();
+    await expect(toast.getByRole("alert")).toBeVisible();
+    await expect(toast.getByRole("link")).toHaveCount(0);
 
     await page.goto("/requests/mine");
     await waitForRouteSettled(page);

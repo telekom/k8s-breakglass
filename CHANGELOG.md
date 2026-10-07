@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status text uses text-safe tokens, dialogs move focus in and return it on
   close (also when the dialog renders a few frames late), the skip link is
   visible on focus in production builds, the mobile escalation card no longer
-  clips its call to action, empty error toasts no longer render a dead link,
+  clips its call to action, empty error toasts no longer render a dead link (hidden via the Scale toast `styles` prop),
   and the Session Browser name filter now narrows results.
 - The kind e2e setup waits for escalations by their `breakglass-` prefixed
   names, removing repeated timeouts that slowed every UI E2E run.

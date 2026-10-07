@@ -49,26 +49,14 @@ function handleToastClosed(id: string) {
   dismissError(id);
 }
 
-type ToastElement = HTMLElement & { componentOnReady?: () => Promise<unknown> };
-
 /**
  * scale-notification-toast always renders an empty `<scale-link role="link">`
  * in its shadow DOM, even without a link slot. Screen readers announce it as
- * an unnamed link (axe: aria-command-name) and it can be a dead tab stop, so
- * remove it from rendering when no link is given. Scale exposes no prop or
- * CSS part for that link, so this is the only way to hide it.
+ * an unnamed link (axe: aria-command-name) and it can be a dead tab stop. None
+ * of our toasts has a link, so hide it through the toast's `styles` prop
+ * (Scale's API for CSS injected into the component's shadow root).
  */
-async function hideEmptyToastLink(el: unknown) {
-  if (!(el instanceof HTMLElement)) {
-    return;
-  }
-  const toast = el as ToastElement;
-  await toast.componentOnReady?.();
-  const link = toast.shadowRoot?.querySelector(".notification-toast__link");
-  if (link && !toast.querySelector('[slot="link"]')) {
-    (link as HTMLElement).style.display = "none";
-  }
-}
+const TOAST_STYLES = ".notification-toast__link { display: none; }";
 
 function verticalOffset(index: number) {
   return BASE_VERTICAL_OFFSET + index * stackSpacing();
@@ -79,7 +67,7 @@ function verticalOffset(index: number) {
   <div class="toast-region" aria-live="polite" aria-atomic="true">
     <div v-for="(e, index) in errors" :key="e.id" class="toast-wrapper">
       <scale-notification-toast
-        :ref="hideEmptyToastLink"
+        :styles="TOAST_STYLES"
         alignment="top-right"
         :opened="e.opened !== false"
         :variant="variantFor(e)"
