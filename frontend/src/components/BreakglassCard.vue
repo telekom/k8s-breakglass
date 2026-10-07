@@ -339,7 +339,11 @@ const metaBadges = computed<MetaBadge[]>(() => {
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
     badges.push({ label: "Needs approval", variant: "warning", hint: "An approver must approve your request" });
   } else if (props.breakglass?.selfApproval) {
-    badges.push({ label: "Self approval", variant: "success", hint: "You can approve your own request" });
+    badges.push({
+      label: "Self approval",
+      variant: "success",
+      hint: "No approvers are configured; the request does not need approval",
+    });
   }
   // Note: Cluster, requester groups, and reason info are shown in the meta grid to avoid duplication
   return badges;

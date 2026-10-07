@@ -543,7 +543,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
         <div class="detail-card status-card" data-testid="status-card">
           <h2>Status</h2>
           <div class="status-header">
-            <HintTooltip :hint="statusDescriptionFor(session.status?.state)">
+            <HintTooltip :hint="statusDescriptionFor(session.status?.state, 'debug')">
               <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
                 {{ session.status?.state || "Unknown" }}
               </scale-tag>

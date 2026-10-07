@@ -54,8 +54,20 @@ const STATE_DESCRIPTION_MAP: Record<string, string> = {
   failed: "The debug workload could not be started",
 };
 
+// DebugSession states that mean something different from BreakglassSession states
+// (api/v1alpha1/debug_session_types.go): "Pending" is workload setup, not approval.
+const DEBUG_STATE_DESCRIPTION_MAP: Record<string, string> = {
+  pending: "The debug workload is being set up",
+  active: "The debug pods are running and the session is usable",
+};
+
+export type SessionKind = "breakglass" | "debug";
+
 /** Short explanation of a backend session state, for status tag tooltips. */
-export function statusDescriptionFor(state?: string | null): string {
+export function statusDescriptionFor(state?: string | null, kind: SessionKind = "breakglass"): string {
   if (!state) return "";
-  return STATE_DESCRIPTION_MAP[state.toString().toLowerCase().replace(/\s+/g, "")] ?? "";
+  const normalized = state.toString().toLowerCase().replace(/\s+/g, "");
+  return (
+    (kind === "debug" ? DEBUG_STATE_DESCRIPTION_MAP[normalized] : undefined) ?? STATE_DESCRIPTION_MAP[normalized] ?? ""
+  );
 }

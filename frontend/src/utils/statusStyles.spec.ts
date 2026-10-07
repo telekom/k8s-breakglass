@@ -2,7 +2,7 @@
  * Tests for statusStyles utility
  */
 import { describe, it, expect } from "vitest";
-import { statusToneFor } from "./statusStyles";
+import { statusDescriptionFor, statusToneFor } from "./statusStyles";
 
 describe("statusStyles", () => {
   describe("statusToneFor", () => {
@@ -68,6 +68,17 @@ describe("statusStyles", () => {
     it("handles mixed case and whitespace", () => {
       expect(statusToneFor("Waiting For Scheduled Time")).toBe("warning");
       expect(statusToneFor("APPROVAL TIMEOUT")).toBe("danger");
+    });
+  });
+
+  describe("statusDescriptionFor", () => {
+    it("describes Pending as waiting for approval on breakglass sessions", () => {
+      expect(statusDescriptionFor("Pending")).toBe("Waiting for an approver to decide");
+    });
+
+    it("describes Pending as workload setup on debug sessions", () => {
+      expect(statusDescriptionFor("Pending", "debug")).toBe("The debug workload is being set up");
+      expect(statusDescriptionFor("PendingApproval", "debug")).toBe("Waiting for an approver to decide");
     });
   });
 });
