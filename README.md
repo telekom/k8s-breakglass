@@ -30,8 +30,9 @@ This repository also contains a provider-neutral, read-only
 `cluster-validator` image definition for one-time and post-upgrade Kubernetes
 readiness reports. It uses only public Kubernetes APIs, has no T-CaaS-specific
 checks or assumptions, and supports `linux/amd64` and `linux/arm64`. This tree
-builds the image and local OCI archive but does not publish a release image;
-follow the deployment pipeline's signing and registry instructions before use.
+builds a local OCI archive without pushing it. The release workflow publishes
+`ghcr.io/telekom/k8s-breakglass/utils/cluster-validator:<release-tag>` with
+keyless signatures, an SPDX SBOM, and provenance attestations.
 See the
 [cluster-validator contract and image guide](./docs/cluster-validator.md) and
 the [post-upgrade runbook](./docs/runbooks/cluster-validator.md). The image's
@@ -130,6 +131,13 @@ Complete documentation is available in the [docs/](./docs/) directory:
 ## 🤝 Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for contribution requirements, testing policy, and review expectations.
+
+Before writing helpers, prefer the Go standard library and maintained upstream
+packages; see the [upstream-first guidance](AGENTS.md#reuse-upstream-libraries-before-writing-helpers).
+The backend uses tagged `t-caas-go-library` packages `pkg/ssa`, `pkg/patch`,
+`pkg/remoteclient`, `pkg/certrotation`, and `pkg/redact`.
+[Adoption notes](docs/development-simplification.md#platform-library-adoption)
+document the local policies that are deliberately preserved.
 
 ## 📦 Example Assets
 
