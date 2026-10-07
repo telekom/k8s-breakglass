@@ -9,7 +9,7 @@ and the god-function decomposition ([#417](https://github.com/telekom/k8s-breakg
 ```
 pkg/breakglass/              Root — session controller, group checking, identity, scheme
 │   session_request_helpers.go   Extracted helpers for handleRequestBreakglassSession
-├── clusterconfig/           Cluster config checker & binding API
+├── clusterconfig/           Cluster config readiness checker
 ├── debug/                   Debug session API, reconciler, kubectl exec
 ├── escalation/              Escalation controller, manager, status updater
 └── eventrecorder/           Kubernetes event recorder wrapper
@@ -50,7 +50,10 @@ sub-package that itself imports root.  The `EscalationLookup` interface in
 |------|-------------|
 | `doc.go` | Package documentation |
 | `checker.go` | `ClusterConfigChecker` — periodic reconciliation of `ClusterConfig` resources |
-| `binding_api.go` | REST handlers for cluster-binding operations |
+
+Binding discovery is part of `debug/` through
+`GET /api/debugSessions/templates/:name/clusters`; this package does not expose
+standalone binding REST routes.
 
 ### `debug/`
 
