@@ -376,6 +376,8 @@ jobs:
       - name: Lint
         # Note: warnings are tolerated; only errors fail the build
         run: npx eslint .
+      - name: Lint styles (Scale tokens only)
+        run: npm run lint:styles
       - name: Unit tests
         run: npm run test:coverage
       - name: Install Playwright browsers
