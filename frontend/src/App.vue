@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { inject, computed, ref, onMounted, onBeforeUnmount, watch } from "vue";
 import { decodeJwt } from "jose";
 import { useRoute, useRouter } from "vue-router";
@@ -198,39 +199,46 @@ const brandingTitle = computed(() => brandingFromBackend ?? "Breakglass");
 type PrimaryNavItem = {
   id: string;
   label: string;
+  /** Compact label for the desktop header, where six full labels do not fit on one line below 1680px. */
+  navLabel: string;
   to: RouteLocationRaw;
   matches: string[];
 };
 
 const primaryNavItems: PrimaryNavItem[] = [
-  { id: "home", label: "Request Access", to: { name: "home" }, matches: ["home"] },
+  { id: "home", label: "Request Access", navLabel: "Request", to: { name: "home" }, matches: ["home"] },
   {
     id: "pending",
     label: "Pending Approvals",
+    navLabel: "Approvals",
     to: { name: "pendingApprovals" },
     matches: ["pendingApprovals"],
   },
   {
     id: "review",
     label: "Review Sessions",
+    navLabel: "Reviews",
     to: { name: "breakglassSessionReview" },
     matches: ["breakglassSessionReview"],
   },
   {
     id: "requests",
     label: "My Requests",
+    navLabel: "My Requests",
     to: { name: "myPendingRequests" },
     matches: ["myPendingRequests"],
   },
   {
     id: "sessions",
     label: "Session Browser",
+    navLabel: "Sessions",
     to: { name: "sessionBrowser" },
     matches: ["sessionBrowser"],
   },
   {
     id: "debugSessions",
     label: "Debug Sessions",
+    navLabel: "Debug",
     to: { name: "debugSessionBrowser" },
     matches: ["debugSessionBrowser", "debugSessionCreate", "debugSessionDetails"],
   },
@@ -515,40 +523,47 @@ watch(
             :aria-current="activeNavId === item.id ? 'page' : undefined"
           >
             <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
-              {{ item.label }}
+              {{ item.navLabel }}
             </a>
           </scale-telekom-nav-item>
         </scale-telekom-nav-list>
 
         <div slot="functions" class="header-functions-container">
           <div class="theme-utilities">
-            <scale-button
-              variant="ghost"
-              type="button"
-              :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
-              :title="themeToggleTitle"
-              :inner-aria-label="themeToggleAriaLabel"
-              :aria-pressed="isDarkThemePreference"
-              @click="toggleTheme"
-            >
-              <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
-            </scale-button>
+            <scale-tooltip :content="themeToggleTitle" placement="bottom">
+              <scale-button
+                variant="ghost"
+                type="button"
+                icon-only
+                :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
+                :inner-aria-label="themeToggleAriaLabel"
+                :aria-pressed="isDarkThemePreference"
+                @click="toggleTheme"
+              >
+                <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
+              </scale-button>
+            </scale-tooltip>
 
-            <scale-button
-              variant="ghost"
-              type="button"
-              :class="['hc-toggle-button', { 'hc-active': highContrast }]"
-              :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
-              :inner-aria-label="
-                highContrast
-                  ? 'High contrast mode enabled. Click to disable.'
-                  : 'High contrast mode disabled. Click to enable.'
-              "
-              :aria-pressed="highContrast"
-              @click="toggleHighContrast"
+            <scale-tooltip
+              :content="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
+              placement="bottom"
             >
-              <scale-icon-action-show-password :decorative="true"></scale-icon-action-show-password>
-            </scale-button>
+              <scale-button
+                variant="ghost"
+                type="button"
+                icon-only
+                :class="['hc-toggle-button', { 'hc-active': highContrast }]"
+                :inner-aria-label="
+                  highContrast
+                    ? 'High contrast mode enabled. Click to disable.'
+                    : 'High contrast mode disabled. Click to enable.'
+                "
+                :aria-pressed="highContrast"
+                @click="toggleHighContrast"
+              >
+                <scale-icon-action-show-password :decorative="true"></scale-icon-action-show-password>
+              </scale-button>
+            </scale-tooltip>
           </div>
 
           <scale-telekom-nav-list
@@ -579,18 +594,24 @@ watch(
             </scale-telekom-nav-item>
 
             <scale-telekom-nav-item v-if="authenticated" class="mobile-nav-item">
-              <scale-button
-                id="mobile-nav-trigger"
-                variant="ghost"
-                type="button"
-                class="mobile-nav-trigger"
-                :inner-aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
-                :aria-controls="mobileNavControls"
-                :aria-expanded="mobileNavOpen"
-                @click="toggleMobileNav"
+              <scale-tooltip
+                :content="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+                placement="bottom-end"
               >
-                <scale-icon-action-menu decorative></scale-icon-action-menu>
-              </scale-button>
+                <scale-button
+                  id="mobile-nav-trigger"
+                  variant="ghost"
+                  type="button"
+                  icon-only
+                  class="mobile-nav-trigger"
+                  :inner-aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+                  :aria-controls="mobileNavControls"
+                  :aria-expanded="mobileNavOpen"
+                  @click="toggleMobileNav"
+                >
+                  <scale-icon-action-menu decorative></scale-icon-action-menu>
+                </scale-button>
+              </scale-tooltip>
               <scale-telekom-nav-flyout
                 id="mobile-nav-flyout"
                 ref="mobileNavFlyoutRef"
@@ -691,7 +712,9 @@ watch(
           <div v-if="hasMultipleIDPs" class="idp-login-section">
             <IDPSelector v-model="selectedIDPName" escalation-name="default" required />
             <div class="idp-login-actions">
-              <scale-button :disabled="!selectedIDPName" @click="login"> Log In </scale-button>
+              <DisabledReason :reason="selectedIDPName ? '' : 'Select an identity provider first.'">
+                <scale-button :disabled="!selectedIDPName" @click="login"> Log In </scale-button>
+              </DisabledReason>
             </div>
           </div>
 
@@ -712,6 +735,7 @@ watch(
 </template>
 
 <style>
+@import "@/assets/tokens.css";
 @import "@/assets/base.css";
 </style>
 
@@ -811,23 +835,6 @@ scale-telekom-header::part(app-name-text) {
 .mobile-nav-item {
   display: none;
   position: relative;
-}
-
-.mobile-nav-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-xs);
-  border: 1px solid transparent;
-  background: transparent;
-  width: 60px;
-  min-height: 44px;
-  color: var(--telekom-color-text-and-icon-standard);
-  cursor: pointer;
-}
-
-.mobile-nav-trigger:hover {
-  background-color: var(--surface-card-subtle);
 }
 
 .mobile-nav-fallback {

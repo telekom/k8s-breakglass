@@ -189,7 +189,7 @@ const emit = defineEmits<{
 
 .binding-option-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
+  box-shadow: var(--shadow-selected);
   background: var(--surface-card-subtle);
 }
 
@@ -209,7 +209,7 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-primary-standard);
-  color: var(--telekom-color-text-and-icon-inverted-standard, #ffffff);
+  color: var(--telekom-color-text-and-icon-inverted-standard);
   border-radius: var(--radius-full);
 }
 

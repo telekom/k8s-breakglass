@@ -61,7 +61,7 @@ function handleRetry() {
       <p v-if="details" class="error-banner__details">{{ details }}</p>
       <slot></slot>
 
-      <div v-if="hasActions" class="error-banner__actions">
+      <div v-if="hasActions" class="error-banner__actions ui-actions ui-actions--start">
         <scale-button v-if="showRetry" variant="secondary" size="small" @click="handleRetry">
           {{ retryLabel }}
         </scale-button>
@@ -73,18 +73,15 @@ function handleRetry() {
 
 <style scoped>
 .error-banner {
-  margin-bottom: 1rem;
+  margin-bottom: var(--space-lg);
 }
 
 .error-banner__details {
-  margin: 0.5rem 0 0;
+  margin: var(--space-sm) 0 0;
   font: var(--telekom-text-style-caption);
 }
 
 .error-banner__actions {
   margin-top: var(--space-sm);
-  display: flex;
-  gap: var(--scl-spacing-8, 0.5rem);
-  flex-wrap: wrap;
 }
 </style>

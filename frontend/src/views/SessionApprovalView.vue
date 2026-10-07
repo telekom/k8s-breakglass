@@ -5,6 +5,7 @@ import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
 import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
+import LoadingState from "@/components/common/LoadingState.vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { handleAxiosError, debug } from "@/services/logger";
@@ -377,10 +378,7 @@ onUnmounted(() => {
 
 <template>
   <div class="session-approval-view">
-    <div v-if="loading" class="loading-container" role="status" aria-busy="true" aria-live="polite">
-      <scale-loading-spinner></scale-loading-spinner>
-      <p>Loading session...</p>
-    </div>
+    <LoadingState v-if="loading" size="large" message="Loading session..." aria-busy="true" />
 
     <div v-else-if="error" class="error-container">
       <div class="error-icon" :class="{ 'self-approval-icon': isSelfApprovalBlocked }">
@@ -460,15 +458,6 @@ onUnmounted(() => {
   padding: var(--space-2xl);
 }
 
-.loading-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-  gap: var(--space-lg);
-}
-
 .error-container {
   display: flex;
   flex-direction: column;
@@ -514,15 +503,6 @@ onUnmounted(() => {
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
-.error-content {
-  text-align: left;
-}
-
-.error-message {
-  font: var(--telekom-text-style-body);
-  margin-bottom: var(--space-sm);
-}
-
 .error-meta {
   margin-top: var(--space-lg);
   padding-top: var(--space-sm);
@@ -535,25 +515,12 @@ onUnmounted(() => {
   margin: var(--space-2xs) 0;
 }
 
-.error-reasons {
-  margin-top: var(--space-sm);
-  padding-left: var(--space-xl);
-}
-
-.error-reasons li {
-  margin-bottom: var(--space-sm);
-}
-
 .action-buttons {
   display: flex;
   gap: var(--space-lg);
   justify-content: center;
   margin-top: var(--space-2xl);
   flex-wrap: wrap;
-}
-
-.mt-3 {
-  margin-top: var(--space-lg);
 }
 
 .approval-container {

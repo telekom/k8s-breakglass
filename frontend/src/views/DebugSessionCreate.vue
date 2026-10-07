@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { computed, inject, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
@@ -807,10 +808,12 @@ function handleTemplateChange(ev: Event) {
 
       <div class="modal-actions">
         <scale-button variant="secondary" data-testid="cancel-button" @click="handleCancel"> Cancel </scale-button>
-        <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
-          Next: Select Cluster
-          <scale-icon-navigation-right size="16" decorative></scale-icon-navigation-right>
-        </scale-button>
+        <DisabledReason :reason="form.templateRef ? '' : 'Select a template to continue.'">
+          <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
+            Next: Select Cluster
+            <scale-icon-navigation-right size="16" decorative></scale-icon-navigation-right>
+          </scale-button>
+        </DisabledReason>
       </div>
     </div>
 
@@ -898,15 +901,19 @@ function handleTemplateChange(ev: Event) {
           <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
           Back
         </scale-button>
-        <scale-button
-          variant="primary"
-          :disabled="!isValid || submitting"
-          data-testid="create-session-button"
-          @click="handleSubmit"
+        <DisabledReason
+          :reason="!isValid && !submitting ? 'Select a cluster, enter a reason and fill in all required fields.' : ''"
         >
-          <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
-          {{ submitting ? "Creating..." : "Create Session" }}
-        </scale-button>
+          <scale-button
+            variant="primary"
+            :disabled="!isValid || submitting"
+            data-testid="create-session-button"
+            @click="handleSubmit"
+          >
+            <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
+            {{ submitting ? "Creating..." : "Create Session" }}
+          </scale-button>
+        </DisabledReason>
       </div>
     </div>
   </div>
@@ -1051,12 +1058,6 @@ function handleTemplateChange(ev: Event) {
 
 .template-details .detail strong {
   color: var(--telekom-color-text-and-icon-standard);
-}
-
-.warning-text {
-  color: var(--telekom-color-text-and-icon-functional-warning);
-  font: var(--telekom-text-style-caption);
-  margin: 0;
 }
 
 .no-templates-message {

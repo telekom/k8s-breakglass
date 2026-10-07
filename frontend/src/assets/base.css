@@ -1,14 +1,9 @@
 /**
- * Breakglass UI - Design Tokens and Base Styles
- * 
- * Uses Scale Design System tokens where available:
- * - Spacing: --scl-spacing-* (1, 2, 4, 8, 12, 16, 24, 32, 40, 48, 64, 80)
- * - Typography: --scl-font-* and --telekom-text-style-*
- * - Colors: --telekom-color-* (functional, additional, text-and-icon)
- * - Radius: --telekom-radius-* (none, extra-small, small, medium-small, standard, large, pill, circle)
- * - Shadows: --telekom-shadow-*
- * 
- * @see https://telekom.github.io/scale/?path=/docs/guidelines-spacing--page
+ * Breakglass UI - base styles, Scale component overrides and shared layout
+ * primitives. Design tokens (colours, spacing, radius, z-index, surfaces)
+ * live in tokens.css; this file only references them.
+ *
+ * @see https://telekom.github.io/scale/
  */
 
 :root {
@@ -19,288 +14,6 @@
   color: var(--telekom-color-text-and-icon-standard);
   background-color: var(--surface-primary);
   color-scheme: light;
-
-  /* AAA-compliant overrides for Telekom tokens that miss 7:1 on subtle backgrounds.
-   * Scale sets this to hsla(0,0%,0%,0.65) ≈ #595959 on :root in its own stylesheet,
-   * which loads after ours. !important is required to ensure our solid override wins. */
-  --telekom-color-text-and-icon-additional: #4a4a4a !important;
-
-  /* ============================================
-   * SEMANTIC SPACING ALIASES
-   * Maps Scale spacing tokens to semantic names
-   * ============================================ */
-
-  /* Component internal spacing */
-  --space-2xs: var(--scl-spacing-2, 0.125rem); /* 2px - hairline gaps */
-  --space-xs: var(--scl-spacing-4, 0.25rem); /* 4px - tight internal padding */
-  --space-sm: var(--scl-spacing-8, 0.5rem); /* 8px - small gaps, chip padding */
-  --space-md: var(--scl-spacing-12, 0.75rem); /* 12px - default internal gaps */
-  --space-lg: var(--scl-spacing-16, 1rem); /* 16px - section gaps */
-  --space-xl: var(--scl-spacing-24, 1.5rem); /* 24px - large gaps, card padding */
-  --space-2xl: var(--scl-spacing-32, 2rem); /* 32px - section separation */
-  --space-3xl: var(--scl-spacing-48, 3rem); /* 48px - page-level gaps */
-
-  /* Card & Container padding */
-  --card-padding: var(--scl-spacing-24, 1.5rem);
-  --card-padding-sm: var(--scl-spacing-16, 1rem);
-  --card-gap: var(--scl-spacing-16, 1rem);
-
-  /* Stack & flow gaps — @deprecated Use --space-* instead (same values, one scale to learn) */
-  --stack-gap-xs: var(--scl-spacing-4, 0.25rem);
-  --stack-gap-sm: var(--scl-spacing-8, 0.5rem);
-  --stack-gap-md: var(--scl-spacing-12, 0.75rem);
-  --stack-gap-lg: var(--scl-spacing-16, 1rem);
-  --stack-gap-xl: var(--scl-spacing-24, 1.5rem);
-
-  /* Grid gaps */
-  --grid-gap: var(--scl-spacing-16, 1rem);
-  --grid-gap-lg: var(--scl-spacing-24, 1.5rem);
-
-  /* Border radius (using Telekom tokens) */
-  --radius-xs: var(--telekom-radius-extra-small, 0.125rem);
-  --radius-sm: var(--telekom-radius-small, 0.25rem);
-  --radius-md: var(--telekom-radius-standard, 0.5rem);
-  --radius-lg: var(--telekom-radius-large, 0.75rem);
-  --radius-pill: var(--telekom-radius-pill, 62.4375rem);
-
-  /* ============================================
-   * SURFACE & COLOR TOKENS
-   * ============================================ */
-  --surface-primary: var(--telekom-color-background-canvas, #ffffff);
-  --surface-elevated: var(--telekom-color-background-surface-subtle, #efeff0);
-  --surface-card: var(--telekom-color-background-surface, #ffffff);
-  --surface-card-subtle: color-mix(in srgb, var(--telekom-color-ui-subtle, #efeff0) 50%, transparent);
-  --surface-card-translucent: color-mix(in srgb, var(--surface-card) 80%, transparent);
-  --surface-toolbar: var(--telekom-color-background-surface, #ffffff);
-  --border-strong: var(--telekom-color-ui-border-standard);
-  --shadow-card: var(
-    --telekom-shadow-raised-standard,
-    0px 8px 32px 0px hsla(0, 0%, 0%, 0.1),
-    0px 4px 8px 0px hsla(0, 0%, 0%, 0.1)
-  );
-
-  --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
-
-  /* Z-index scale */
-  --z-header: 10;
-  --z-skip-link: 99;
-  --z-auto-logout: 3000;
-  --z-toast: 5000;
-  --z-modal: 7000;
-  --z-debug-panel: 9999;
-
-  /* Accent colors using Telekom functional colors */
-  --accent-telekom: var(--telekom-color-primary-standard, #e20074);
-  --accent-primary-aaa: color-mix(in srgb, var(--accent-telekom) 55%, black);
-  --accent-primary-aaa-hover: color-mix(in srgb, var(--accent-telekom) 45%, black);
-  --accent-on-primary-aaa: #ffffff;
-  --accent-warning: var(--telekom-color-functional-warning-standard, #f97012);
-  --accent-success: var(--telekom-color-functional-success-standard, #00b367);
-  --accent-info: var(--telekom-color-functional-informational-standard, #2238df);
-  --accent-critical: var(--telekom-color-functional-danger-standard, #e82010);
-
-  /* Chip/Tag colors - using Telekom-derived colors
-   * Original Telekom magenta (#e20074) achieves 4.68:1 contrast on white.
-   * We target AA (4.5:1) rather than AAA for magenta-colored elements
-   * to strictly preserve the Telekom brand identity per product decision. */
-  --chip-bg: color-mix(in srgb, var(--telekom-color-primary-standard) 7%, transparent);
-  --chip-border: color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
-  --chip-text: #8e004a;
-
-  /* Semantic tone chips — text colors darkened from Telekom defaults to meet AAA 7:1 */
-  --tone-chip-info-bg: var(--telekom-color-functional-informational-subtle, #d3d7f9);
-  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-functional-informational-standard) 35%, transparent);
-  --tone-chip-info-text: #0d1570;
-
-  --tone-chip-success-bg: var(--telekom-color-functional-success-subtle, #ccf0e1);
-  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-functional-success-standard) 40%, transparent);
-  --tone-chip-success-text: #004d30;
-
-  --tone-chip-warning-bg: var(--telekom-color-functional-warning-subtle, #fee2d0);
-  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-functional-warning-standard) 50%, transparent);
-  --tone-chip-warning-text: #6b3300;
-
-  --tone-chip-danger-bg: var(--telekom-color-functional-danger-subtle, #fad2cf);
-  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-functional-danger-standard) 55%, transparent);
-  --tone-chip-danger-text: #8a0700;
-
-  --tone-chip-neutral-bg: var(--telekom-color-ui-subtle, #efeff0);
-  --tone-chip-neutral-border: var(--telekom-color-ui-border-standard);
-  --tone-chip-neutral-text: var(--telekom-color-text-and-icon-standard);
-
-  /* Brand tone chips — AAA compliant magenta for info/brand callouts */
-  --tone-chip-brand-bg: #ffd9e5;
-  --tone-chip-brand-border: #e20074;
-  --tone-chip-brand-text: #8e004a;
-}
-
-/* ============================================
- * DARK MODE OVERRIDES
- * Scale automatically handles [data-mode="dark"]
- * We use data-theme for app-level control
- * ============================================ */
-:root[data-theme="dark"] {
-  color-scheme: dark;
-
-  --telekom-color-text-and-icon-additional: #c0c0c0 !important;
-
-  /* Strengthen borders for dark mode — Scale default is rgba(255,255,255,0.4)
-   * which is barely visible on dark backgrounds. Use 55% white for clearer boundaries. */
-  --telekom-color-ui-border-standard: rgba(255, 255, 255, 0.55);
-
-  /* Surface colors for dark mode */
-  --surface-primary: var(--telekom-color-background-canvas, #000000);
-  --surface-elevated: var(--telekom-color-background-surface-subtle, #242426);
-  --surface-card: var(--telekom-color-background-surface, #1c1c1e);
-  --surface-card-translucent: color-mix(in srgb, var(--surface-card) 80%, transparent);
-  --surface-toolbar: var(--telekom-color-background-surface, #1c1c1e);
-  --border-strong: var(--telekom-color-ui-border-standard);
-  --shadow-card: var(--telekom-shadow-raised-standard);
-
-  /* Chip/primary tag colors for dark mode — solid dark magenta bg for AAA on dark bg
-   * #3d0026 on #1c1c1e card bg: visible dark magenta tint.
-   * #ff8cc8 text on #3d0026 bg = 8.36:1 contrast (AAA). */
-  --chip-bg: #3d0026;
-  --chip-border: color-mix(in srgb, var(--telekom-color-primary-standard) 35%, transparent);
-  --chip-text: #ff8cc8;
-
-  /* Semantic tone chips - dark mode uses subtle backgrounds
-   * Text colors are lightened vs Scale defaults to meet WCAG AAA (7:1)
-   * contrast on dark-toned backgrounds. */
-  --tone-chip-info-bg: var(--telekom-color-functional-informational-subtle, #131f7b);
-  --tone-chip-info-border: color-mix(in srgb, var(--telekom-color-functional-informational-standard) 55%, transparent);
-  --tone-chip-info-text: #c5d0fc;
-
-  --tone-chip-success-bg: var(--telekom-color-functional-success-subtle, #004829);
-  --tone-chip-success-border: color-mix(in srgb, var(--telekom-color-functional-success-standard) 60%, transparent);
-  --tone-chip-success-text: #7aedb8;
-
-  --tone-chip-warning-bg: var(--telekom-color-functional-warning-subtle, #642d07);
-  --tone-chip-warning-border: color-mix(in srgb, var(--telekom-color-functional-warning-standard) 65%, transparent);
-  --tone-chip-warning-text: #ffd4a8;
-
-  --tone-chip-danger-bg: var(--telekom-color-functional-danger-subtle, #5d0d06);
-  --tone-chip-danger-border: color-mix(in srgb, var(--telekom-color-functional-danger-standard) 65%, transparent);
-  --tone-chip-danger-text: #ffc4bd;
-
-  --tone-chip-neutral-bg: var(--telekom-color-ui-subtle, #1c1c1e);
-  --tone-chip-neutral-border: var(--telekom-color-ui-border-standard);
-  /* Expired/neutral chip text in dark mode needs AAA contrast. */
-  --tone-chip-neutral-text: #e0e0e0;
-
-  /* Surface helpers for dark mode sections */
-  --surface-card-subtle: #242426;
-
-  --tone-chip-brand-bg: #3d0026;
-  --tone-chip-brand-border: #e20074;
-  --tone-chip-brand-text: #ff8cc8;
-}
-
-/* ============================================
- * HIGH CONTRAST MODE
- * Custom high-contrast theme for enhanced readability.
- * Activated via data-high-contrast="true" on <html>.
- * ============================================ */
-:root[data-high-contrast="true"] {
-  /* Force maximum text contrast */
-  --telekom-color-text-and-icon-standard: #000000;
-  --telekom-color-text-and-icon-additional: #1a1a1a !important;
-  --telekom-color-text-and-icon-disabled: #595959;
-
-  /* Solid surfaces — no translucency */
-  --surface-card-subtle: var(--telekom-color-background-surface-subtle, #efeff0);
-  --surface-card-translucent: var(--surface-card);
-
-  /* Stronger borders */
-  --border-strong: #000000;
-  --telekom-color-ui-border-standard: #595959;
-
-  /* Enhanced tone chip text — strictly black for maximum contrast on light backgrounds */
-  --tone-chip-info-text: #000000;
-  --tone-chip-success-text: #000000;
-  --tone-chip-warning-text: #000000;
-  --tone-chip-danger-text: #000000;
-  --tone-chip-neutral-text: #000000;
-
-  /* Force solid bright backgrounds in HC mode to avoid "color-on-color" confusion */
-  --tone-chip-info-bg: #dce1ff;
-  --tone-chip-success-bg: #b6fcc8;
-  --tone-chip-warning-bg: #ffe4cc;
-  --tone-chip-danger-bg: #ffdad6;
-
-  --chip-text: #000000;
-  --chip-bg: #ffd9e5; /* Solid light magenta for HC */
-
-  --tone-chip-brand-bg: #ffd9e5;
-  --tone-chip-brand-text: #000000;
-  --tone-chip-brand-border: #000000;
-
-  /* Stronger focus indicator */
-  --focus-outline: #000000;
-
-  /* Use a darker blue for HC light to ensure readability on subtle gray backgrounds. */
-  --telekom-color-text-and-icon-link-standard: #0055cc;
-  --telekom-color-primary-standard: #000000;
-  --telekom-color-primary-hover: #1a1a1a;
-  --telekom-color-primary-hovered: #1a1a1a;
-  --telekom-color-primary-pressed: #333333;
-
-  /* Strictly high-contrast buttons for HC mode */
-  --cta-bg: #000000;
-  --cta-bg-hover: #1a1a1a;
-  --telekom-color-text-and-icon-white: #ffffff;
-}
-
-/* High contrast + dark mode combination */
-:root[data-high-contrast="true"][data-theme="dark"] {
-  --telekom-color-text-and-icon-standard: #ffffff;
-  --telekom-color-text-and-icon-additional: #e0e0e0 !important;
-  --telekom-color-text-and-icon-disabled: #a0a0a0;
-
-  --surface-card-subtle: var(--telekom-color-background-surface-subtle, #242426);
-  --surface-card-translucent: var(--surface-card);
-
-  --border-strong: #ffffff;
-  --telekom-color-ui-border-standard: #a0a0a0;
-
-  /* AAA 7:1 minimum — values are slightly lighter than dark-mode defaults
-   * to guarantee enhanced contrast on the same dark tone backgrounds.
-   * info #ccd8ff on #131f7b = 9.8:1, success #80f0c0 on #004829 = 7.7:1,
-   * warning #ffd9b3 on #642d07 = 8.2:1, danger #ffcec7 on #5d0d06 = 9.8:1 */
-  /* AAA 7:1 minimum — strictly white for maximum contrast on dark backgrounds */
-  --tone-chip-info-text: #ffffff;
-  --tone-chip-success-text: #ffffff;
-  --tone-chip-warning-text: #ffffff;
-  --tone-chip-danger-text: #ffffff;
-  --tone-chip-neutral-text: #ffffff;
-
-  --chip-text: #ffffff;
-  --chip-bg: #5c003c;
-
-  /* Force solid opaque backgrounds in HC dark so axe-core can compute contrast.
-   * Darker solid versions of the dark-mode defaults to ensure white text passes. */
-  --tone-chip-info-bg: #0d1570;
-  --tone-chip-success-bg: #003d21;
-  --tone-chip-warning-bg: #4d2200;
-  --tone-chip-danger-bg: #4a0a04;
-
-  --tone-chip-brand-bg: #5c003c;
-  --tone-chip-brand-text: #ffffff;
-  --tone-chip-brand-border: #ffffff;
-
-  --focus-outline: #ffffff;
-
-  /* Fix: Blue links in dark HC mode - use lighter blue for AAA on dark bg */
-  --telekom-color-text-and-icon-link-standard: #93c5ff;
-  --telekom-color-primary-standard: #ffffff;
-  --telekom-color-primary-hover: #e0e0e0;
-  --telekom-color-primary-hovered: #e0e0e0;
-  --telekom-color-primary-pressed: #c7c7c7;
-
-  /* Strictly high-contrast buttons for Dark HC mode */
-  --cta-bg: #ffffff;
-  --cta-bg-hover: #e0e0e0;
-  --telekom-color-text-and-icon-white: #000000;
 }
 
 /* ============================================
@@ -308,6 +21,7 @@
  * Ensure consistent card styling with visible borders
  * ============================================ */
 scale-card {
+  display: block;
   --background: var(--surface-card);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
@@ -319,16 +33,9 @@ scale-card::part(base) {
   border-radius: var(--radius-lg);
 }
 
-/* Consistent button styling across all variants - use pill radius */
-scale-button {
-  --radius: var(--radius-pill);
-  --button-radius: var(--radius-pill);
-}
-
-/* Fallback for shadow DOM button parts */
-scale-button::part(button),
-scale-button::part(base) {
-  border-radius: var(--radius-pill) !important;
+/* Keep each main-nav label on one line so the header bar keeps a single baseline. */
+scale-telekom-nav-list[variant="main-nav"] > scale-telekom-nav-item > a {
+  white-space: nowrap;
 }
 
 /* Light mode (branded only): darken active nav link for AAA (7:1) contrast.
@@ -336,7 +43,7 @@ scale-button::part(base) {
  * #8e004a achieves 9.34:1 on white / 8.13:1 on #efeff0 (AAA all variants). */
 :root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) scale-telekom-nav-item[aria-current="page"] a,
 :root:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"]) [role="menuitem"][aria-current="page"] {
-  color: #8e004a !important;
+  color: var(--nav-link-active-branded) !important;
 }
 
 /* Dark mode: use standard text color for AAA nav contrast in every UI flavour. */
@@ -356,7 +63,7 @@ scale-button::part(base) {
   [role="menuitem"][aria-current="true"],
 :root[data-theme="dark"]:not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
   [role="menuitem"][aria-current="page"] {
-  color: #ffffff !important;
+  color: var(--nav-link-on-dark) !important;
 }
 
 /* AAA contrast: Scale combobox label inside subtle surface */
@@ -373,61 +80,35 @@ scale-dropdown::part(combobox-label) {
   scale-button::part(variant-primary),
 :root[data-theme="dark"]:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
   scale-button::part(variant-primary) {
-  background-color: #e20074 !important;
+  background-color: var(--button-primary-bg-branded) !important;
 }
 
-:root[data-high-contrast="true"] scale-button::part(variant-primary) {
-  background-color: #000000 !important;
-  color: #ffffff !important;
-  border: 2px solid #000000 !important;
-}
-
+/* High contrast (light and dark): solid black/white primary buttons from the
+   --cta-* tokens, including custom slotted labels and icons. */
+:root[data-high-contrast="true"] scale-button::part(variant-primary),
 :root[data-high-contrast="true"] scale-button[variant="primary"]::part(button),
 :root[data-high-contrast="true"] scale-button[variant="primary"]::part(base),
 :root[data-high-contrast="true"] scale-button:not([variant])::part(button),
 :root[data-high-contrast="true"] scale-button:not([variant])::part(base) {
-  background-color: #000000 !important;
-  color: #ffffff !important;
-  border-color: #000000 !important;
-}
-
-:root[data-high-contrast="true"][data-theme="dark"] scale-button::part(variant-primary) {
-  background-color: #ffffff !important;
-  color: #000000 !important;
-  border: 2px solid #ffffff !important;
-}
-
-:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"]::part(button),
-:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"]::part(base),
-:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant])::part(button),
-:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant])::part(base) {
-  background-color: #ffffff !important;
-  color: #000000 !important;
-  border-color: #ffffff !important;
+  background-color: var(--cta-bg) !important;
+  color: var(--cta-fg) !important;
+  border: 2px solid var(--cta-bg) !important;
 }
 
 :root[data-high-contrast="true"][data-theme="dark"] scale-telekom-header::part(app-name-text) {
-  color: #ffffff !important;
+  color: var(--telekom-color-text-and-icon-standard) !important;
 }
 
-/* Keep custom slotted button labels aligned with the high-contrast primary foreground. */
 :root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__label,
 :root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__icon,
 :root[data-high-contrast="true"] scale-button[variant="primary"] > *,
 :root[data-high-contrast="true"] scale-button:not([variant]) > * {
-  color: #ffffff !important;
-}
-
-:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] .action-button__label,
-:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] .action-button__icon,
-:root[data-high-contrast="true"][data-theme="dark"] scale-button[variant="primary"] > *,
-:root[data-high-contrast="true"][data-theme="dark"] scale-button:not([variant]) > * {
-  color: #000000 !important;
+  color: var(--cta-fg) !important;
 }
 
 /* AAA contrast: lighten ghost button text in dark mode for 7:1 on dark bg */
 :root[data-theme="dark"] scale-button::part(variant-ghost) {
-  color: #93a8ff !important;
+  color: var(--button-ghost-text-dark) !important;
 }
 
 /* ============================================
@@ -648,6 +329,12 @@ button:focus-visible,
   outline-offset: 3px;
 }
 
+/* Route changes move focus to the page heading/main landmark programmatically
+   for screen readers; these are not interactive, so no focus ring. */
+:is(h1, h2, main, #main)[tabindex="-1"]:focus-visible {
+  outline: none;
+}
+
 img {
   display: block;
   max-width: 100%;
@@ -788,8 +475,12 @@ select:focus {
   min-width: 0;
 }
 
-.ui-toolbar-actions > * {
-  min-width: min(100%, 140px);
+.ui-toolbar-actions--end {
+  margin-left: auto;
+}
+
+.ui-toolbar-actions > scale-button:not([icon-only]) {
+  --min-width: 8rem;
 }
 
 .ui-toolbar-actions > .ui-toolbar-icon-control {
@@ -836,38 +527,6 @@ select:focus {
 .ui-info-item .value {
   color: var(--telekom-color-text-and-icon-standard);
   font-weight: 500;
-}
-
-/* ============================================
- * PILL & TAG UTILITIES
- * ============================================ */
-.ui-pill-stack {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-}
-
-.ui-pill-stack span {
-  padding: var(--stack-gap-xs) var(--space-sm);
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  background-color: var(--surface-card-subtle);
-  color: var(--telekom-color-text-and-icon-additional);
-  font: var(--telekom-text-style-small);
-}
-
-/* Semantic tone chips for status indicators */
-.tone-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--stack-gap-xs);
-  padding: var(--stack-gap-xs) var(--space-sm);
-  border-radius: var(--radius-pill);
-  font: var(--telekom-text-style-small-bold);
-  letter-spacing: 0.02em;
-  border: 1px solid var(--tone-chip-border, var(--telekom-color-ui-border-standard));
-  background-color: var(--tone-chip-bg, var(--surface-card-subtle));
-  color: var(--tone-chip-text, var(--telekom-color-text-and-icon-standard));
 }
 
 .tone-chip--info {
@@ -917,61 +576,6 @@ select:focus {
 }
 
 /* ============================================
- * SECTION & LAYOUT UTILITIES
- * ============================================ */
-.ui-matching-summary {
-  display: flex;
-  flex-direction: column;
-  gap: var(--stack-gap-sm);
-  padding: var(--space-md);
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  background-color: var(--surface-card-subtle);
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.ui-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--stack-gap-sm);
-}
-
-.ui-section h4 {
-  font: var(--telekom-text-style-heading-6);
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.ui-section p {
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.ui-link-button {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--stack-gap-xs);
-  color: var(--telekom-color-text-and-icon-link-standard);
-  text-decoration: none;
-  font-weight: 500;
-}
-
-.ui-link-button:hover {
-  text-decoration: underline;
-}
-
-.ui-link-button.small {
-  font: var(--telekom-text-style-small);
-}
-
-.ui-muted {
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.center {
-  text-align: center;
-  width: 100%;
-}
-
-/* ============================================
  * LOADING & EMPTY STATES
  * ============================================ */
 .loading-state,
@@ -1004,12 +608,17 @@ select:focus {
 
   .ui-toolbar-actions {
     width: 100%;
-    margin-left: 0 !important;
+    margin-left: 0;
   }
 
-  .ui-toolbar-field,
-  .ui-toolbar-actions > * {
+  .ui-toolbar-field {
     width: 100%;
+  }
+
+  /* Text buttons share the remaining width next to icon-only controls. */
+  .ui-toolbar-actions > scale-button:not([icon-only]) {
+    flex: 1 1 auto;
+    --width: 100%;
   }
 }
 
@@ -1105,163 +714,6 @@ select:focus {
 }
 
 /* ============================================
- * DEV DEBUG PANELS (native <details> elements)
- * Reusable debug/troubleshooting panels for forms
- * ============================================ */
-.dev-debug-panel {
-  margin-top: var(--space-md);
-  padding: var(--space-md);
-  background: var(--telekom-color-background-surface-subtle, #1a1a1a);
-  border: 1px solid var(--telekom-color-ui-border-standard, #444);
-  border-radius: var(--radius-sm, 4px);
-  font: var(--telekom-text-style-small);
-  max-height: 400px;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-
-.dev-debug-panel[open] {
-  overflow-y: auto;
-}
-
-.dev-debug-panel summary {
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-additional, #888);
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-sm, 8px);
-  user-select: none;
-}
-
-/* Remove default browser disclosure icon */
-.dev-debug-panel summary::-webkit-details-marker {
-  display: none;
-}
-
-.dev-debug-panel summary::marker {
-  display: none;
-  content: "";
-}
-
-/* Custom arrow indicator */
-.dev-debug-panel summary::before {
-  content: "▶";
-  font: var(--telekom-text-style-badge);
-  transition: transform var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard, ease);
-  flex-shrink: 0;
-}
-
-.dev-debug-panel[open] summary::before {
-  transform: rotate(90deg);
-}
-
-.dev-debug-panel .debug-content {
-  margin-top: var(--space-md);
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.dev-debug-panel .debug-table {
-  width: 100%;
-  border-collapse: collapse;
-  font: var(--telekom-text-style-small);
-}
-
-.dev-debug-panel .debug-table th,
-.dev-debug-panel .debug-table td {
-  padding: var(--space-xs) var(--space-sm);
-  text-align: left;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
-}
-
-.dev-debug-panel .debug-table th {
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.dev-debug-panel .debug-table code {
-  background: var(--telekom-color-background-canvas);
-  padding: 0.125em 0.25em;
-  border-radius: var(--radius-xs);
-  font-family: monospace;
-  word-break: break-all;
-}
-
-.dev-debug-panel .debug-invalid {
-  background: var(
-    --telekom-color-functional-danger-subtle,
-    color-mix(in srgb, var(--telekom-color-functional-danger-standard) 10%, transparent)
-  );
-}
-
-.dev-debug-panel .debug-summary {
-  margin: var(--space-md) 0 0;
-  padding-top: var(--space-sm);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
-}
-
-/* Event Log Styles */
-.dev-debug-panel .debug-hint {
-  margin: 0 0 var(--space-sm);
-  font: var(--telekom-text-style-small);
-  color: var(--telekom-color-text-and-icon-additional);
-  font-style: italic;
-}
-
-.dev-debug-panel .debug-event-log {
-  font: var(--telekom-text-style-badge);
-  font-family: monospace;
-  background: var(--telekom-color-background-canvas, #0a0a0a);
-  border-radius: var(--radius-sm);
-  padding: var(--space-sm);
-  border: 1px solid var(--telekom-color-ui-border-subtle, #333);
-}
-
-.dev-debug-panel .debug-no-events {
-  color: var(--telekom-color-text-and-icon-additional);
-  font-style: italic;
-}
-
-.dev-debug-panel .debug-event {
-  display: flex;
-  gap: var(--space-sm);
-  padding: var(--space-2xs) 0;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
-  flex-wrap: wrap;
-}
-
-.dev-debug-panel .debug-event-warning {
-  background: var(
-    --telekom-color-functional-warning-subtle,
-    color-mix(in srgb, var(--telekom-color-functional-warning-standard) 20%, transparent)
-  );
-  padding: var(--space-2xs) var(--space-xs);
-  border-radius: var(--radius-xs);
-}
-
-.dev-debug-panel .debug-event-time {
-  color: var(--telekom-color-text-and-icon-additional);
-  flex-shrink: 0;
-}
-
-.dev-debug-panel .debug-event-name {
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-functional-informational);
-  flex-shrink: 0;
-  min-width: 140px;
-}
-
-.dev-debug-panel .debug-event-details {
-  color: var(--telekom-color-text-and-icon-standard);
-  word-break: break-all;
-  flex: 1;
-}
-
-/* ============================================
  * HIGH CONTRAST / FORCED COLORS
  * ============================================ */
 
@@ -1321,43 +773,82 @@ select:focus {
   scale-card,
   .ui-toolbar,
   .ui-info-item,
-  .tone-chip,
   .tone-callout {
     border-color: CanvasText !important;
   }
 }
 
+/* scale-tooltip renders as display: contents, so its inline trigger wrapper
+   becomes the flex item of action rows. Make it a flex box so wrapped
+   controls keep the row's centre line instead of sitting on a text baseline. */
+scale-tooltip::part(trigger) {
+  display: inline-flex;
+  max-width: 100%;
+}
+
 /* ============================================
- * MODAL & FORM ACTIONS
- * Standardized action bar for consistent alignment
+ * ACTION ROWS
+ * One primitive for every button row (card footers, toolbars, dialog and
+ * form footers, empty/error states): buttons share a vertical centre and a
+ * single gap token, and are end-aligned with the primary action last.
  * ============================================ */
+.ui-actions,
 .modal-actions,
 .dialog-actions,
 .form-actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: var(--space-md);
+  min-width: 0;
+}
+
+.ui-actions--start {
+  justify-content: flex-start;
+}
+
+.ui-actions--center {
+  justify-content: center;
+}
+
+.modal-actions,
+.dialog-actions,
+.form-actions {
   margin-top: var(--space-lg);
   padding-top: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
-.modal-actions scale-button,
-.dialog-actions scale-button,
-.form-actions scale-button {
-  min-width: 8rem;
+/* Scale's own --min-width/--width hooks size the inner button, so labels stay
+   centred instead of floating inside a wider host element. Dialog and form
+   footers get a minimum width; card rows keep natural widths so they fit. */
+.modal-actions scale-button:not([icon-only]),
+.dialog-actions scale-button:not([icon-only]),
+.form-actions scale-button:not([icon-only]) {
+  --min-width: 8rem;
 }
 
 @media (max-width: 640px) {
+  .ui-actions,
   .modal-actions,
   .dialog-actions,
   .form-actions {
     flex-direction: column;
+    align-items: stretch;
   }
+
+  .ui-actions > *,
+  .ui-actions scale-button,
   .modal-actions scale-button,
   .dialog-actions scale-button,
   .form-actions scale-button {
+    --width: 100%;
+    width: 100%;
+  }
+
+  :is(.ui-actions, .modal-actions, .dialog-actions, .form-actions) .disabled-reason__trigger {
+    display: flex;
     width: 100%;
   }
 }

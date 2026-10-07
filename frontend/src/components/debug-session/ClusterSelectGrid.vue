@@ -112,9 +112,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
             >
               <scale-icon-action-link size="12" aria-hidden="true"></scale-icon-action-link>
               via Binding:
-              <strong class="binding-name" :title="cluster.bindingRef.displayName || cluster.bindingRef.name">{{
-                cluster.bindingRef.displayName || cluster.bindingRef.name
-              }}</strong>
+              <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
             </span>
             <span v-else class="source-badge direct">
               <scale-icon-action-success size="12" aria-hidden="true"></scale-icon-action-success>
@@ -137,10 +135,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
           <div v-if="cluster.bindingOptions && cluster.bindingOptions.length > 1" class="multiple-bindings-indicator">
             <scale-icon-navigation-double-right size="12" aria-hidden="true"></scale-icon-navigation-double-right>
             <strong>{{ cluster.bindingOptions.length }} access configurations</strong>
-            <span
-              class="bindings-preview"
-              :title="cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(', ')"
-            >
+            <span class="bindings-preview">
               {{ cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(", ") }}
             </span>
           </div>
@@ -239,7 +234,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .cluster-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
+  box-shadow: var(--shadow-selected);
 }
 
 .cluster-header {
@@ -307,10 +302,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .source-badge .binding-name {
   font-weight: 600;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .cluster-constraints {
@@ -361,9 +353,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: var(--space-2xs);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .cluster-extra-info {

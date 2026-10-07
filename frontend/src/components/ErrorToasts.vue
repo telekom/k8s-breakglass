@@ -106,6 +106,6 @@ function verticalOffset(index: number) {
   display: inline-block;
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-left: 0.35rem;
+  margin-left: var(--space-xs);
 }
 </style>

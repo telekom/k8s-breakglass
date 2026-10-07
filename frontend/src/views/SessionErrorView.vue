@@ -99,7 +99,7 @@ const handleViewSessions = () => {
 }
 
 .error-content code {
-  background-color: var(--surface-card-subtle, rgba(0, 0, 0, 0.1));
+  background-color: var(--surface-card-subtle);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   font: var(--telekom-text-style-caption);
