@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading.
+- **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading, and falls back to the main content while an asynchronously loaded page has not rendered its heading yet.
 - **Frontend**: Session detail info buttons now show their tooltip text; the
   tooltip was rendered empty because it used unsupported `label`/`position`
   attributes instead of Scale's `content`/`placement`.

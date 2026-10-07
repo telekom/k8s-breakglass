@@ -507,6 +507,24 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
         )
         .toBe("visible");
     });
+
+    test("route focus falls back to the main content while a page is still loading", async ({ page }) => {
+      await performMockLogin(page);
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      await page.route("**/api/breakglassSessions/slow-session", async (route) => {
+        await released;
+        await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not found"}' });
+      });
+
+      await page.evaluate(() => {
+        const router = (window as unknown as Record<string, { push: (p: string) => void }>).__VUE_ROUTER__;
+        router.push("/session/slow-session/approve");
+      });
+      await expect(page).toHaveURL(/\/session\/slow-session\/approve/);
+      await expect.poll(() => page.evaluate(() => document.activeElement?.id), { timeout: 3000 }).toBe("main");
+      release();
+    });
   });
 
   test.describe("Heading Semantics", () => {

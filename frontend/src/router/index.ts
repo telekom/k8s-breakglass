@@ -153,7 +153,8 @@ router.afterEach((to, from, failure) => {
       if (mainEl && mainEl.contains(document.activeElement)) {
         return; // User or component already focused something inside main
       }
-      const heading = document.querySelector<HTMLElement>(PAGE_HEADING_SELECTOR);
+      // Async pages render their heading only after loading; fall back to #main.
+      const heading = document.querySelector<HTMLElement>(PAGE_HEADING_SELECTOR) ?? mainEl;
       if (heading) {
         const previousTabIndex = heading.getAttribute("tabindex");
         heading.setAttribute("tabindex", "-1");
