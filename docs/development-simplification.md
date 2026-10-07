@@ -159,6 +159,24 @@ by lazy routes and both UI flavours without an extra Rollup plugin.
 
 ## E2E helpers
 
+Unused fixture-loading/customization wrappers, resource-condition waits, status
+approval/rejection helpers, API forwarding functions and bulk cleanup helpers
+were removed after reachability analysis with every E2E build tag enabled
+(`e2e,e2e_bootstrap,multicluster`). No live test invoked them. Fixture validation,
+authenticated `APIClient` actions, scoped cleanup and workload-specific readiness
+waits remain. E2E resource quantities now call `resource.MustParse` directly;
+booleans use `ptr.To`. Unused pointer/time/duration wrappers are gone.
+
+`TestNotificationIntegration` only logged descriptions; it never checked delivery.
+`TestEscalationNotificationConfig` only asserted manually constructed struct
+fields. Both were removed. The real MailHog request/approval/rejection tests in
+`e2e/api/notification_test.go` and provider resilience tests remain. The retained
+`TestDisableNotificationsFeature` now reads resources back from the API server
+before checking true/false/omitted persistence.
+The old `TestFixturesDir`, `TestLoadFixture` and `TestLoadFixtureCustomized`
+cases only asserted a nonempty path, upstream decoding or direct struct mutation;
+real fixture decoding and validation remain in `TestFixturesAreValid`.
+
 Resource builders assign optional scalars and pointers directly. Defaults,
 explicit `false`/zero pointers, and empty-slice normalization are unchanged.
 `UpdateWithRetry` retries only update conflicts, re-fetches before reapplying

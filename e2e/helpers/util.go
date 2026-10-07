@@ -22,26 +22,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"k8s.io/apimachinery/pkg/api/resource"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// ParseQuantity parses a resource quantity string and returns the quantity.
-// Panics if the string is invalid (suitable for test code).
-func ParseQuantity(s string) resource.Quantity {
-	q := resource.MustParse(s)
-	return q
-}
-
-// ParseDuration parses a duration string and returns the parsed duration.
-// Panics if the string is invalid (suitable for test code).
-func ParseDuration(s string) time.Duration {
-	d, err := time.ParseDuration(s)
-	if err != nil {
-		panic(fmt.Sprintf("invalid duration: %s", s))
-	}
-	return d
-}
 
 // WaitForCondition waits for a condition function to return true.
 // This is an overload that takes a simple boolean function.
@@ -63,47 +44,6 @@ func WaitForConditionSimple(ctx context.Context, condition func() bool, timeout,
 			}
 		}
 	}
-}
-
-// StringPtr returns a pointer to a string value
-func StringPtr(s string) *string {
-	return &s
-}
-
-// Int32Ptr returns a pointer to an int32 value
-func Int32Ptr(i int32) *int32 {
-	return &i
-}
-
-// Int64Ptr returns a pointer to an int64 value
-func Int64Ptr(i int64) *int64 {
-	return &i
-}
-
-// BoolPtr returns a pointer to a bool value
-func BoolPtr(b bool) *bool {
-	return &b
-}
-
-// TimePtr returns a pointer to a metav1.Time value
-func TimePtr(t metav1.Time) *metav1.Time {
-	return &t
-}
-
-// NowPtr returns a pointer to the current time as metav1.Time
-func NowPtr() *metav1.Time {
-	now := metav1.Now()
-	return &now
-}
-
-// FutureTime returns a metav1.Time in the future by the given duration
-func FutureTime(d time.Duration) metav1.Time {
-	return metav1.NewTime(time.Now().Add(d))
-}
-
-// PastTime returns a metav1.Time in the past by the given duration
-func PastTime(d time.Duration) metav1.Time {
-	return metav1.NewTime(time.Now().Add(-d))
 }
 
 // GenerateUniqueName generates a unique name for test resources

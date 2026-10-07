@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	eventsv1 "k8s.io/api/events/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -238,12 +239,12 @@ func TestDebugSessionWorkloadDeployment(t *testing.T) {
 							},
 							Resources: corev1.ResourceRequirements{
 								Limits: corev1.ResourceList{
-									corev1.ResourceCPU:    helpers.ParseQuantity("100m"),
-									corev1.ResourceMemory: helpers.ParseQuantity("64Mi"),
+									corev1.ResourceCPU:    resource.MustParse("100m"),
+									corev1.ResourceMemory: resource.MustParse("64Mi"),
 								},
 								Requests: corev1.ResourceList{
-									corev1.ResourceCPU:    helpers.ParseQuantity("50m"),
-									corev1.ResourceMemory: helpers.ParseQuantity("32Mi"),
+									corev1.ResourceCPU:    resource.MustParse("50m"),
+									corev1.ResourceMemory: resource.MustParse("32Mi"),
 								},
 							},
 						},
