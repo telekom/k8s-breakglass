@@ -114,7 +114,8 @@ function deepActiveElement(): HTMLElement | null {
  */
 function focusModal(modal: ScaleModalElement): boolean {
   if (document.activeElement && modal.contains(document.activeElement)) return true;
-  const closeButton = modal.shadowRoot?.querySelector<HTMLElement>(".modal__close-button");
+  // `close-button` is the part name Scale documents for styling the dialog's close button.
+  const closeButton = modal.shadowRoot?.querySelector<HTMLElement>('[part~="close-button"]');
   closeButton?.focus();
   return !!closeButton && modal.shadowRoot?.activeElement === closeButton;
 }

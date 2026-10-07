@@ -76,7 +76,7 @@ function createScaleModal() {
   const modal = document.createElement("scale-modal") as HTMLElement & { opened?: boolean };
   modal.opened = true;
   const closeButton = document.createElement("button");
-  closeButton.className = "modal__close-button";
+  closeButton.setAttribute("part", "close-button");
   modal.attachShadow({ mode: "open" }).appendChild(closeButton);
   return { modal, closeButton };
 }

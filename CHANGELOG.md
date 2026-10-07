@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - UI E2E `ui-accessibility` and `ui-layout` Playwright specs run axe-core
   (serious/critical), keyboard-only, visibility and control checks against the
   deployed UI at desktop and mobile viewports in light and dark theme.
+- UI E2E `ui-keyboard-dialogs` Playwright spec verifies keyboard-only focus
+  handling for every dialog (focus moves in, Tab/Shift+Tab stay trapped
+  through shadow-DOM controls, Escape returns focus to the opener or the page
+  heading) and the accessible names and keyboard activation of icon buttons
+  and the skip link on the deployed UI.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
@@ -64,6 +69,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading.
+- **Frontend**: Session detail info buttons now show their tooltip text; the
+  tooltip was rendered empty because it used unsupported `label`/`position`
+  attributes instead of Scale's `content`/`placement`.
 - Bump packaged Helm chart versions so the next controller release preserves
   the immutable chart packages already published for `v0.3.0-rc.4`.
 

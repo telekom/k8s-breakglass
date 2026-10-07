@@ -933,7 +933,13 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
     </template>
 
     <!-- Renew Duration Dialog -->
-    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scale-close="renewDialogOpen = false">
+    <scale-modal
+      :opened="renewDialogOpen"
+      heading="Renew Session"
+      size="small"
+      data-testid="renew-session-modal"
+      @scale-close="renewDialogOpen = false"
+    >
       <p>Select how long to extend the session:</p>
       <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
         <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
@@ -951,6 +957,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       :opened="rejectDialogOpen"
       heading="Reject Session"
       size="small"
+      data-testid="reject-session-modal"
       @scale-close="rejectDialogOpen = false"
     >
       <p>Provide a reason for rejecting this session (optional):</p>

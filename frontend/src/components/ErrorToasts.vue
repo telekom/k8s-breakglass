@@ -55,7 +55,8 @@ type ToastElement = HTMLElement & { componentOnReady?: () => Promise<unknown> };
  * scale-notification-toast always renders an empty `<scale-link role="link">`
  * in its shadow DOM, even without a link slot. Screen readers announce it as
  * an unnamed link (axe: aria-command-name) and it can be a dead tab stop, so
- * remove it from rendering when no link is given.
+ * remove it from rendering when no link is given. Scale exposes no prop or
+ * CSS part for that link, so this is the only way to hide it.
  */
 async function hideEmptyToastLink(el: unknown) {
   if (!(el instanceof HTMLElement)) {

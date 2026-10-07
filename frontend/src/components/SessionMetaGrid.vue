@@ -28,7 +28,7 @@ function formatValue(value?: string | number | null) {
         <div class="meta-grid__label" role="rowheader">
           <div class="meta-label">
             <span class="meta-label__text">{{ item.label }}</span>
-            <scale-tooltip v-if="item.hint" :label="item.hint" position="top">
+            <scale-tooltip v-if="item.hint" :content="item.hint" placement="top">
               <scale-button
                 variant="ghost"
                 icon-only

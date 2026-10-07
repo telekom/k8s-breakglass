@@ -146,6 +146,14 @@ on serious/critical axe-core violations (`@axe-core/playwright`), check keyboard
 visible, unclipped, uncovered and working. They use the dedicated `ui-e2e-a11y-user` and the
 `ui-e2e-a11y-test` escalation so they do not interfere with other specs.
 
+`ui-keyboard-dialogs.spec.ts` drives every dialog that uses the shared modal behaviour with the
+keyboard only: focus moves into the dialog, Tab and Shift+Tab stay trapped (including the
+dialog's shadow-DOM close button and Scale buttons), Escape closes it and focus returns to the
+opener, or to the visible page heading for deep-linked dialogs and removed openers. It also
+checks the accessible names (from the accessibility tree) and keyboard activation of
+`inner-aria-label` icon buttons and the skip link. Debug-session responses are mocked with
+`page.route()` because the kind fixtures cannot produce pending or running debug sessions.
+
 ```sh
 npm run build
 ```
