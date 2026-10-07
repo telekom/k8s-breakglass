@@ -107,7 +107,6 @@ watch(
 .countdown {
   font-weight: bold;
   color: var(--telekom-color-text-and-icon-standard);
-  margin-left: var(--space-sm);
   transition:
     color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard),
     background var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
