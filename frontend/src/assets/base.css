@@ -786,6 +786,14 @@ scale-tooltip::part(trigger) {
   max-width: 100%;
 }
 
+/* Scale keeps closed bubbles absolutely positioned at their last coordinates.
+   After a list re-renders those stale positions extend the page's scroll
+   height, so closed bubbles leave the document flow until they open again. */
+scale-tooltip:not([opened])::part(tooltip) {
+  position: fixed;
+  visibility: hidden;
+}
+
 /* ============================================
  * ACTION ROWS
  * One primitive for every button row (card footers, toolbars, dialog and
