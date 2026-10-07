@@ -19,7 +19,7 @@ spec:
   allowedApproverDomains:
     - example.org
     - example.com
-    - example.com
+    - example.net
   # Main hub cluster - accessible via the same kubeconfig as tenant-a
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -39,7 +39,7 @@ spec:
   blockSelfApproval: false # Set to true to block self-approval
   allowedApproverDomains:
     - example.com
-    - t-systems.com
+    - example.org
   # This cluster exists as a kind cluster
 ---
 # ClusterConfig for breakglass-hub-2 (virtual second cluster for multi-cluster tests)
@@ -61,7 +61,7 @@ spec:
   blockSelfApproval: false
   allowedApproverDomains:
     - example.com
-    - t-systems.com
+    - example.org
   # Virtual second cluster for multi-cluster tests
 ---
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
@@ -81,5 +81,5 @@ spec:
   blockSelfApproval: false
   allowedApproverDomains:
     - example.com
-    - t-systems.com
+    - example.org
   # This references the virtual breakglass-hub-2 cluster

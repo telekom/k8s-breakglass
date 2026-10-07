@@ -86,8 +86,10 @@ optional Artifactory mirror:
 | `AF_TOKEN` | Registry access token |
 
 The mirror push is skipped unless all four secrets are set. GHCR publication
-and release signing do not depend on the mirror. Deployments previously using
-the built-in mirror must configure `AF_REGISTRY` and `AF_REPOSITORY` to retain it.
+and release signing do not depend on the mirror. The derived repository key
+used by storage-API diagnostics is also explicitly masked in workflow logs.
+Deployments previously using the built-in mirror must configure `AF_REGISTRY`
+and `AF_REPOSITORY` to retain it.
 
 ## Utility image releases
 

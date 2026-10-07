@@ -611,6 +611,7 @@ jobs:
 
           # Diagnose Artifactory repo accessibility
           REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
+          echo "::add-mask::${REPO_KEY}"
           echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
           echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"

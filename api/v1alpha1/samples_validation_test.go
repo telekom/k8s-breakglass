@@ -33,8 +33,8 @@ import (
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// TestSamplesAreValid validates all YAML samples in config/samples can be parsed
-// and conform to the CRD schema. This ensures samples are always up-to-date
+// TestSamplesAreValid validates deployment samples and shared dev ClusterConfig examples
+// can be parsed and conform to the CRD schema. This ensures samples are always up-to-date
 // with the API types and don't have typos or missing required fields.
 func TestSamplesAreValid(t *testing.T) {
 	// Build the scheme with all our types
@@ -60,7 +60,8 @@ func TestSamplesAreValid(t *testing.T) {
 		t.Fatalf("No sample files found in %s", samplesDir)
 	}
 
-	t.Logf("Found %d sample files in %s", len(files), samplesDir)
+	files = append(files, filepath.Join(samplesDir, "..", "dev", "resources", "crs", "cluster-configs-test.yaml"))
+	t.Logf("Found %d sample/config fixtures", len(files))
 
 	// Track validated resources by kind for coverage reporting
 	validatedKinds := make(map[string]int)
