@@ -114,31 +114,38 @@ function formatValue(value: string | Date | number | null | undefined): string {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: var(--space-md);
-  padding: var(--scl-spacing-8, 0.5rem) 0;
+  padding: var(--space-sm) 0;
 }
 
 .timeline-grid--compact {
   gap: var(--space-sm);
 }
 
+/* Icon and label share one line; the value spans the full item width. */
 .timeline-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2xs);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--space-xs);
+  row-gap: var(--space-2xs);
+}
+
+.timeline-item__label:first-child,
+.timeline-item__value {
+  grid-column: 1 / -1;
 }
 
 .timeline-item--highlight {
   background: var(--tone-chip-info-bg);
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
-  padding: 0.5rem;
+  padding: var(--space-sm);
   border-radius: var(--radius-md);
-  margin: -0.5rem;
+  margin: calc(-1 * var(--space-sm));
 }
 
 .timeline-item__icon {
-  font: var(--telekom-text-style-body);
-  line-height: 1;
+  display: inline-flex;
 }
 
 .timeline-item__label {
@@ -152,7 +159,6 @@ function formatValue(value: string | Date | number | null | undefined): string {
 .timeline-item__value {
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
-  font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
 .timeline-grid--compact .timeline-item__label {

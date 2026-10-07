@@ -31,6 +31,7 @@ function formatValue(value?: string | number | null) {
             <scale-tooltip v-if="item.hint" :content="item.hint" placement="top">
               <scale-button
                 variant="ghost"
+                size="small"
                 icon-only
                 class="meta-label__hint"
                 :inner-aria-label="`More info about ${item.label}`"
@@ -57,22 +58,17 @@ function formatValue(value?: string | number | null) {
   gap: var(--space-md);
 }
 
+/* Label and value sit on a shared text baseline even though they use
+   different type styles; the hint button must not change the row height. */
 .meta-grid__row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 2fr;
   gap: var(--space-sm) var(--space-md);
-  align-items: flex-start;
-}
-
-.meta-grid__label,
-.meta-grid__value {
-  display: flex;
-  align-items: center;
+  align-items: baseline;
 }
 
 .meta-grid__value {
-  align-items: flex-start;
-  word-break: break-word;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
@@ -100,29 +96,12 @@ function formatValue(value?: string | number | null) {
   line-height: 1.2;
 }
 
+/* Keeps the 44px WCAG 2.5.5 hit target via Scale's size hooks while the
+   negative block margin stops it from stretching the row. */
 .meta-label__hint {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* 44px minimum hit target for WCAG 2.5.5 (AAA) */
-  width: 2.75rem;
-  height: 2.75rem;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: inherit;
-  padding: 0;
-  cursor: pointer;
-  transition: background-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
-}
-
-.meta-label__hint:hover {
-  background-color: var(--telekom-color-ui-state-fill-hovered);
-}
-
-.meta-label__hint:focus-visible {
-  outline: 2px solid var(--telekom-color-functional-focus-standard);
-  outline-offset: 2px;
+  --min-height: 2.75rem;
+  --min-width: 2.75rem;
+  margin-block: calc(-1 * var(--space-md));
 }
 
 .mono {

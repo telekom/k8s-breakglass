@@ -72,22 +72,11 @@ function handleClick(event: Event) {
 </template>
 
 <style scoped>
-.action-button {
-  min-width: 8rem;
-  --radius: var(--radius-pill);
-}
-
 @media (max-width: 640px) {
   .action-button {
+    --width: 100%;
     width: 100%;
-    min-width: unset;
   }
-}
-
-/* Ensure pill shape for all button variants */
-.action-button::part(button),
-.action-button::part(base) {
-  border-radius: var(--radius-pill) !important;
 }
 
 .action-button--loading {

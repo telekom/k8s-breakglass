@@ -252,24 +252,25 @@ function onStateToggle(state: string, event: Event) {
         ></scale-checkbox>
       </div>
 
-      <div class="ui-toolbar-actions" style="margin-left: auto">
+      <div class="ui-toolbar-actions ui-toolbar-actions--end">
         <scale-loading-spinner
           v-if="refreshing"
           class="ui-toolbar-icon-control"
           size="small"
           aria-label="Refreshing..."
         ></scale-loading-spinner>
-        <scale-button
-          v-else
-          class="ui-toolbar-icon-control"
-          icon-only="true"
-          variant="secondary"
-          inner-aria-label="Refresh debug sessions"
-          data-testid="refresh-button"
-          @click="refresh()"
-        >
-          <scale-icon-action-refresh></scale-icon-action-refresh>
-        </scale-button>
+        <scale-tooltip v-else content="Refresh debug sessions" placement="top">
+          <scale-button
+            class="ui-toolbar-icon-control"
+            icon-only="true"
+            variant="secondary"
+            inner-aria-label="Refresh debug sessions"
+            data-testid="refresh-button"
+            @click="refresh()"
+          >
+            <scale-icon-action-refresh decorative></scale-icon-action-refresh>
+          </scale-button>
+        </scale-tooltip>
 
         <scale-button variant="primary" data-testid="create-debug-session-button" @click="navigateToCreate">
           <scale-icon-action-add slot="icon"></scale-icon-action-add>

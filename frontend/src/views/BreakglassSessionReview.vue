@@ -348,8 +348,18 @@ async function onCancel(bg: SessionCR) {
         >
       </div>
 
-      <div class="ui-toolbar-actions review-toolbar__actions">
-        <scale-button variant="secondary" @click="getActiveBreakglasses">Refresh</scale-button>
+      <div class="ui-toolbar-actions ui-toolbar-actions--end">
+        <scale-tooltip content="Refresh sessions" placement="top">
+          <scale-button
+            data-testid="refresh-sessions-button"
+            icon-only="true"
+            variant="secondary"
+            inner-aria-label="Refresh sessions"
+            @click="getActiveBreakglasses"
+          >
+            <scale-icon-action-refresh decorative></scale-icon-action-refresh>
+          </scale-button>
+        </scale-tooltip>
       </div>
 
       <div
@@ -418,31 +428,12 @@ async function onCancel(bg: SessionCR) {
   gap: var(--space-lg);
 }
 
-.review-toolbar {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-  gap: var(--space-md);
-  align-items: center;
-}
-
-.review-toolbar__field {
-  grid-column: span 2;
-  min-width: 240px;
-}
-
-.review-toolbar__field > * {
-  width: 100%;
-}
-
 .review-toolbar__toggle {
   white-space: nowrap;
 }
 
-.review-toolbar__actions {
-  justify-self: start;
-}
-
 .toolbar-info {
+  flex-basis: 100%;
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-standard);
 }
@@ -456,15 +447,4 @@ async function onCancel(bg: SessionCR) {
 }
 
 /* Using global .masonry-layout class from base.css */
-
-@media (max-width: 768px) {
-  .review-toolbar {
-    grid-template-columns: 1fr;
-  }
-
-  .review-toolbar__field {
-    grid-column: 1;
-    width: 100%;
-  }
-}
 </style>

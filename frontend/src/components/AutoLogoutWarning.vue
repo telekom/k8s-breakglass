@@ -17,7 +17,7 @@
         <p class="warning-copy">
           Your session will expire shortly. Re-authenticate to continue, or log out if you are finished.
         </p>
-        <div class="warning-actions">
+        <div class="warning-actions ui-actions">
           <scale-button
             variant="primary"
             size="small"
@@ -241,13 +241,6 @@ export default {
 
 .warning-copy {
   margin-bottom: var(--space-md);
-}
-
-.warning-actions {
-  display: flex;
-  gap: var(--space-xs);
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .fade-slide-enter-active,

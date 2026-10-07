@@ -28,63 +28,70 @@ const cardClasses = computed(() => ({
 
 <template>
   <scale-card class="session-summary-card" :class="cardClasses">
-    <div class="session-summary-card__header">
-      <div>
-        <p v-if="eyebrow" class="session-summary-card__eyebrow">{{ eyebrow }}</p>
-        <h2 class="session-summary-card__title" data-testid="summary-card-title">{{ title }}</h2>
-        <p v-if="subtitle" class="session-summary-card__subtitle">{{ subtitle }}</p>
+    <div class="session-summary-card__content">
+      <div class="session-summary-card__header">
+        <div>
+          <p v-if="eyebrow" class="session-summary-card__eyebrow">{{ eyebrow }}</p>
+          <h2 class="session-summary-card__title" data-testid="summary-card-title">{{ title }}</h2>
+          <p v-if="subtitle" class="session-summary-card__subtitle">{{ subtitle }}</p>
+        </div>
+        <div class="session-summary-card__status" :data-tone="statusTone">
+          <slot name="status"></slot>
+        </div>
       </div>
-      <div class="session-summary-card__status" :data-tone="statusTone">
-        <slot name="status"></slot>
-      </div>
+
+      <template v-if="hasSlot('chips')">
+        <div class="session-summary-card__separator" role="presentation"></div>
+        <div class="session-summary-card__chips">
+          <slot name="chips"></slot>
+        </div>
+      </template>
+
+      <template v-if="hasSlot('meta')">
+        <div class="session-summary-card__separator" role="presentation"></div>
+        <div class="session-summary-card__meta">
+          <slot name="meta"></slot>
+        </div>
+      </template>
+
+      <template v-if="hasSlot('body')">
+        <div class="session-summary-card__separator" role="presentation"></div>
+        <div class="session-summary-card__body">
+          <slot name="body"></slot>
+        </div>
+      </template>
+
+      <template v-if="hasSlot('timeline')">
+        <div class="session-summary-card__separator" role="presentation"></div>
+        <div class="session-summary-card__timeline">
+          <slot name="timeline"></slot>
+        </div>
+      </template>
+
+      <template v-if="hasSlot('footer')">
+        <div class="session-summary-card__separator" role="presentation"></div>
+        <footer class="session-summary-card__footer">
+          <slot name="footer"></slot>
+        </footer>
+      </template>
     </div>
-
-    <template v-if="hasSlot('chips')">
-      <div class="session-summary-card__separator" role="presentation"></div>
-      <div class="session-summary-card__chips">
-        <slot name="chips"></slot>
-      </div>
-    </template>
-
-    <template v-if="hasSlot('meta')">
-      <div class="session-summary-card__separator" role="presentation"></div>
-      <div class="session-summary-card__meta">
-        <slot name="meta"></slot>
-      </div>
-    </template>
-
-    <template v-if="hasSlot('body')">
-      <div class="session-summary-card__separator" role="presentation"></div>
-      <div class="session-summary-card__body">
-        <slot name="body"></slot>
-      </div>
-    </template>
-
-    <template v-if="hasSlot('timeline')">
-      <div class="session-summary-card__separator" role="presentation"></div>
-      <div class="session-summary-card__timeline">
-        <slot name="timeline"></slot>
-      </div>
-    </template>
-
-    <template v-if="hasSlot('footer')">
-      <div class="session-summary-card__separator" role="presentation"></div>
-      <footer class="session-summary-card__footer">
-        <slot name="footer"></slot>
-      </footer>
-    </template>
   </scale-card>
 </template>
 
 <style scoped>
 .session-summary-card {
   width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xl);
 }
 
-.session-summary-card--dense {
+/* scale-card projects children into its shadow body, so the flex stack lives
+   on an inner wrapper where the gap actually applies. */
+.session-summary-card__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-lg);
+}
+
+.session-summary-card--dense .session-summary-card__content {
   gap: var(--space-md);
 }
 
@@ -197,7 +204,16 @@ const cardClasses = computed(() => ({
   gap: var(--space-md);
 }
 
+/* Action rows fill the footer so end-alignment matches across all cards. */
+.session-summary-card__footer > :slotted(.ui-actions) {
+  flex: 1 1 auto;
+}
+
 @media (max-width: 640px) {
+  .session-summary-card__footer > :slotted(.ui-actions) {
+    align-self: stretch;
+  }
+
   .session-summary-card__header,
   .session-summary-card__footer {
     flex-direction: column;

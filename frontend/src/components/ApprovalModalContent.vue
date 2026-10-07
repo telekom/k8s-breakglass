@@ -62,28 +62,31 @@
 
     <div class="modal-actions">
       <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
-      <scale-button
-        v-if="canReview"
-        data-testid="reject-button"
-        variant="secondary"
-        :disabled="isApproving || isRequiredNoteMissing"
-        @click="$emit('reject')"
-      >
-        Reject
-      </scale-button>
-      <scale-button
-        v-if="canReview"
-        data-testid="approve-button"
-        :disabled="isApproving || isRequiredNoteMissing"
-        @click="$emit('approve')"
-      >
-        Confirm Approve
-      </scale-button>
+      <DisabledReason v-if="canReview" :reason="disabledReason">
+        <scale-button
+          data-testid="reject-button"
+          variant="secondary"
+          :disabled="isApproving || isRequiredNoteMissing"
+          @click="$emit('reject')"
+        >
+          Reject
+        </scale-button>
+      </DisabledReason>
+      <DisabledReason v-if="canReview" :reason="disabledReason">
+        <scale-button
+          data-testid="approve-button"
+          :disabled="isApproving || isRequiredNoteMissing"
+          @click="$emit('approve')"
+        >
+          Confirm Approve
+        </scale-button>
+      </DisabledReason>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { computed, useId } from "vue";
 import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composables";
 import { getSessionState, normalizeState } from "@/composables/useSessionList";
@@ -131,6 +134,9 @@ const approvalReason = computed(() => {
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
 const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
+const disabledReason = computed(() =>
+  !props.isApproving && isRequiredNoteMissing.value ? "Enter the required note before approving or rejecting." : "",
+);
 const normalizedSessionState = computed(() => normalizeState(getSessionState(props.session)));
 const isAwaitingScheduledStart = computed(
   () => normalizedSessionState.value === "waitingforscheduledtime" || normalizedSessionState.value === "scheduled",
@@ -243,45 +249,8 @@ function handleNoteChange(ev: Event) {
   font: var(--telekom-text-style-caption);
 }
 
-.modal-actions {
-  margin-top: var(--space-xl);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
-/* min-width delegated to ActionButton or scale-button defaults for consistency */
-
-.modal-actions :deep(scale-button) {
-  min-width: 8rem;
-}
-
 .approval-note-required {
   color: var(--tone-chip-danger-text);
   margin: 0;
-}
-
-@media (max-width: 640px) {
-  .modal-actions {
-    justify-content: stretch;
-    padding: var(--space-md) 0;
-  }
-
-  .modal-actions > * {
-    width: 100%;
-  }
 }
 </style>

@@ -314,17 +314,18 @@ async function onDrop(bg: Breakglass) {
         </div>
         <div class="toolbar-refresh">
           <scale-loading-spinner v-if="state.refreshing" aria-label="Refreshing escalations"></scale-loading-spinner>
-          <scale-button
-            v-else
-            data-testid="refresh-escalations-button"
-            icon-only="true"
-            icon-position="before"
-            variant="secondary"
-            inner-aria-label="Refresh escalations"
-            @click="refresh()"
-          >
-            <scale-icon-action-refresh></scale-icon-action-refresh>
-          </scale-button>
+          <scale-tooltip v-else content="Refresh escalations" placement="top">
+            <scale-button
+              data-testid="refresh-escalations-button"
+              icon-only="true"
+              icon-position="before"
+              variant="secondary"
+              inner-aria-label="Refresh escalations"
+              @click="refresh()"
+            >
+              <scale-icon-action-refresh decorative></scale-icon-action-refresh>
+            </scale-button>
+          </scale-tooltip>
         </div>
         <div class="toolbar-info" data-testid="toolbar-info">
           Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
