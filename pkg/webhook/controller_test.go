@@ -528,11 +528,11 @@ func TestHandleAuthorize_DeniedWithEscalations(t *testing.T) {
 // any user without a session always got the misleading "no breakglass path" denial message.
 // After the fix, the SAR groups (user's JWT groups) are also included in the escalation lookup.
 func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
-	// Escalation requires the group "schiff-canary_poweruser" — the user's Keycloak group.
+	// Escalation requires the group "platform-canary_poweruser" — the user's Keycloak group.
 	esc := &breakglassv1alpha1.BreakglassEscalation{
 		ObjectMeta: metav1.ObjectMeta{Name: "canary"},
 		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
-			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"schiff-canary_poweruser"}, Clusters: []string{"schiff-canary"}},
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"platform-canary_poweruser"}, Clusters: []string{"platform-canary"}},
 			EscalatedGroup: "cluster-admin",
 		},
 	}
@@ -563,8 +563,8 @@ func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
 	sar := authorizationv1.SubjectAccessReview{
 		TypeMeta: metav1.TypeMeta{APIVersion: "authorization.k8s.io/v1", Kind: "SubjectAccessReview"},
 		Spec: authorizationv1.SubjectAccessReviewSpec{
-			User:               "test.user.schiff@telekom.de",
-			Groups:             []string{"schiff-canary_poweruser"},
+			User:               "test.user@example.com",
+			Groups:             []string{"platform-canary_poweruser"},
 			ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: "default", Verb: "get", Resource: "pods"},
 		},
 	}
@@ -573,7 +573,7 @@ func TestHandleAuthorize_EscalationDiscoveryUsesSARGroups(t *testing.T) {
 	engine := gin.New()
 	_ = wc.Register(engine.Group("/" + wc.BasePath()))
 
-	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/schiff-canary", bytes.NewReader(body))
+	req, _ := http.NewRequest(http.MethodPost, "/breakglass/webhook/authorize/platform-canary", bytes.NewReader(body))
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 

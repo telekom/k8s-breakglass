@@ -221,7 +221,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 			},
 			EscalatedGroup: "breakglass-create-all",
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{"approver@telekom.de", "rejector@telekom.de"},
+				Users: []string{"approver@example.com", "rejector@example.com"},
 			},
 		},
 	})
@@ -245,19 +245,19 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 
 			switch c.Request.Method {
 			case http.MethodGet:
-				c.Set("email", "approver@telekom.de")
+				c.Set("email", "approver@example.com")
 				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
 				c.Set("legacy_identity_allowed", true)
 			case http.MethodPost:
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
-					c.Set("email", "tester@telekom.de")
+					c.Set("email", "tester@example.com")
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Tester")
 					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/approve") || strings.Contains(url, "/reject") {
-					c.Set("email", "approver@telekom.de")
+					c.Set("email", "approver@example.com")
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Approver")
 					c.Set("legacy_identity_allowed", true)
@@ -277,7 +277,7 @@ func TestRequestApproveRejectGetSession(t *testing.T) {
 	// create request
 	reqData := BreakglassSessionRequest{
 		Clustername: "test",
-		Username:    "tester@telekom.de",
+		Username:    "tester@example.com",
 		GroupName:   "breakglass-create-all",
 	}
 	b, _ := json.Marshal(reqData)
@@ -517,7 +517,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 			},
 			EscalatedGroup: "breakglass-create-all",
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{"approver@telekom.de", "rejector@telekom.de"},
+				Users: []string{"approver@example.com", "rejector@example.com"},
 			},
 		},
 	})
@@ -537,7 +537,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 			switch c.Request.Method {
 			case http.MethodGet:
 				// default to approver for GET
-				c.Set("email", "approver@telekom.de")
+				c.Set("email", "approver@example.com")
 				c.Set("legacy_identity_allowed", true)
 				c.Set("username", "Approver")
 				c.Set("legacy_identity_allowed", true)
@@ -545,17 +545,17 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 				url := c.Request.URL.String()
 				if url == "/breakglassSessions" {
 					// session creation uses requester identity
-					c.Set("email", "requester@telekom.de")
+					c.Set("email", "requester@example.com")
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Requester")
 					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/approve") {
-					c.Set("email", "approver@telekom.de")
+					c.Set("email", "approver@example.com")
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Approver")
 					c.Set("legacy_identity_allowed", true)
 				} else if strings.Contains(url, "/reject") {
-					c.Set("email", "rejector@telekom.de")
+					c.Set("email", "rejector@example.com")
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", "Rejector")
 					c.Set("legacy_identity_allowed", true)
@@ -574,7 +574,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	// create request
 	reqData := BreakglassSessionRequest{
 		Clustername: "test",
-		Username:    "requester@telekom.de",
+		Username:    "requester@example.com",
 		GroupName:   "breakglass-create-all",
 	}
 	b, _ := json.Marshal(reqData)
@@ -600,7 +600,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 	}
 	ses := respSessions[0]
 
-	// approve session (approver@telekom.de)
+	// approve session (approver@example.com)
 	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/approve", ses.Name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
@@ -622,21 +622,21 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 		t.Fatalf("Expected one session after approve, got %#v", respSessions)
 	}
 	ses = respSessions[0]
-	if ses.Status.Approver != "approver@telekom.de" {
-		t.Fatalf("Expected Status.Approver to be approver@telekom.de, got %q", ses.Status.Approver)
+	if ses.Status.Approver != "approver@example.com" {
+		t.Fatalf("Expected Status.Approver to be approver@example.com, got %q", ses.Status.Approver)
 	}
 	found := false
 	for _, a := range ses.Status.Approvers {
-		if a == "approver@telekom.de" {
+		if a == "approver@example.com" {
 			found = true
 			break
 		}
 	}
 	if !found {
-		t.Fatalf("Expected approver@telekom.de to be present in Status.Approvers, got %#v", ses.Status.Approvers)
+		t.Fatalf("Expected approver@example.com to be present in Status.Approvers, got %#v", ses.Status.Approvers)
 	}
 
-	// reject session as a different user (rejector@telekom.de) -> should be invalid because session is terminal (approved)
+	// reject session as a different user (rejector@example.com) -> should be invalid because session is terminal (approved)
 	req, _ = http.NewRequest(http.MethodPost, fmt.Sprintf("/breakglassSessions/%s/reject", ses.Name), nil)
 	w = httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
@@ -658,8 +658,8 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 		t.Fatalf("Expected one session after invalid reject attempt, got %#v", respSessions)
 	}
 	ses = respSessions[0]
-	if ses.Status.Approver != "approver@telekom.de" {
-		t.Fatalf("Expected Status.Approver to remain approver@telekom.de after invalid reject, got %q", ses.Status.Approver)
+	if ses.Status.Approver != "approver@example.com" {
+		t.Fatalf("Expected Status.Approver to remain approver@example.com after invalid reject, got %q", ses.Status.Approver)
 	}
 }
 
@@ -7490,14 +7490,14 @@ func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
 	}{
 		{
 			name:                          "single_group_to_show",
-			approverGroupsToShow:          []string{"dttcaas-first-line_fixed-core"},
-			expectedApproverGroupsInEmail: []string{"dttcaas-first-line_fixed-core"},
+			approverGroupsToShow:          []string{"support-primary"},
+			expectedApproverGroupsInEmail: []string{"support-primary"},
 			description:                   "Email shows single specified approver group",
 		},
 		{
 			name:                          "multiple_groups_to_show",
-			approverGroupsToShow:          []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
-			expectedApproverGroupsInEmail: []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
+			approverGroupsToShow:          []string{"support-primary", "support-secondary"},
+			expectedApproverGroupsInEmail: []string{"support-primary", "support-secondary"},
 			description:                   "Email shows multiple specified approver groups",
 		},
 		{
@@ -7546,7 +7546,7 @@ func TestSendOnRequestEmail_ApproverGroupsToShow(t *testing.T) {
 				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
 					EscalatedGroup: "admin",
 					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-						Groups: []string{"dttcaas-first-line_fixed-core", "dttcaas-first-line_mobile-core"},
+						Groups: []string{"support-primary", "support-secondary"},
 						Users:  []string{},
 					},
 				},
@@ -10855,7 +10855,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 			},
 			EscalatedGroup: "breakglass-admin",
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{"approver@telekom.de"},
+				Users: []string{"approver@example.com"},
 			},
 		},
 	})
@@ -10867,7 +10867,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
-			c.Set("email", "tester@telekom.de")
+			c.Set("email", "tester@example.com")
 			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Tester")
 			c.Set("legacy_identity_allowed", true)
@@ -10885,12 +10885,12 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
 
 	// Pre-populated guard test (simple regression check)
-	createKey := clusterName + "/tester@telekom.de/breakglass-admin"
+	createKey := clusterName + "/tester@example.com/breakglass-admin"
 	ctrl.inFlightCreates.Store(createKey, true)
 
 	reqData := BreakglassSessionRequest{
 		Clustername: clusterName,
-		Username:    "tester@telekom.de",
+		Username:    "tester@example.com",
 		GroupName:   "breakglass-admin",
 		Reason:      "TOCTOU race test",
 	}
@@ -10946,7 +10946,7 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 			},
 			EscalatedGroup: "breakglass-admin",
 			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-				Users: []string{"approver@telekom.de"},
+				Users: []string{"approver@example.com"},
 			},
 		},
 	})
@@ -10958,7 +10958,7 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{},
 		&sesmanager, &escmanager,
 		func(c *gin.Context) {
-			c.Set("email", "tester@telekom.de")
+			c.Set("email", "tester@example.com")
 			c.Set("legacy_identity_allowed", true)
 			c.Set("username", "Tester")
 			c.Set("legacy_identity_allowed", true)
@@ -10989,7 +10989,7 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 
 	reqData := BreakglassSessionRequest{
 		Clustername: clusterName,
-		Username:    "tester@telekom.de",
+		Username:    "tester@example.com",
 		GroupName:   "breakglass-admin",
 		Reason:      "concurrent race test",
 	}

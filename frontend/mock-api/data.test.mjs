@@ -1,6 +1,35 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createDebugSession, findDebugSession, listSessions, rejectDebugSession } from "./data.mjs";
+import {
+  breakglassEscalations,
+  createDebugSession,
+  createSessionFromRequest,
+  findDebugSession,
+  identityProviderConfig,
+  listSessions,
+  MOCK_APPROVER_GROUPS,
+  rejectDebugSession,
+  runtimeConfig,
+} from "./data.mjs";
+
+test("generic mock identities and clusters stay consistent across request flows", () => {
+  const session = createSessionFromRequest();
+  const debugSession = createDebugSession();
+
+  assert.equal(session.spec.cluster, "production-eu");
+  assert.equal(session.spec.grantedGroup, "platform-emergency");
+  assert.equal(debugSession.spec.cluster, session.spec.cluster);
+  assert.ok(MOCK_APPROVER_GROUPS.includes(session.spec.grantedGroup));
+  assert.ok(
+    breakglassEscalations.some(
+      (escalation) =>
+        escalation.spec.allowed.clusters.includes(session.spec.cluster) &&
+        escalation.spec.allowed.groups.includes(session.spec.grantedGroup),
+    ),
+  );
+  assert.equal(new URL(runtimeConfig.frontend.oidcAuthority).hostname, "keycloak.example.com");
+  assert.equal(identityProviderConfig.keycloak.realm, "platform");
+});
 
 test("bounds mock scale allocation", () => {
   assert.equal(listSessions({ mockScale: "999999999" }).length, 1000);

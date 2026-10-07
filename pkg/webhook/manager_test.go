@@ -61,9 +61,9 @@ func TestBuildWebhookServerOptions(t *testing.T) {
 			CertName: "tls.crt",
 			CertKey:  "tls.key",
 		}
-		opts, err := buildWebhookServerOptions(wc, false, "1.2.3.4", 9445, log)
+		opts, err := buildWebhookServerOptions(wc, false, "192.0.2.4", 9445, log)
 		require.NoError(t, err)
-		assert.Equal(t, "1.2.3.4", opts.Host)
+		assert.Equal(t, "192.0.2.4", opts.Host)
 		assert.Equal(t, 9445, opts.Port)
 		assert.Equal(t, "/certs", opts.CertDir)
 		assert.Equal(t, "tls.crt", opts.CertName)

@@ -43,7 +43,7 @@ import (
 
 var testGroupData = breakglass.ClusterUserGroup{
 	Clustername: "telekom.tenant1",
-	Username:    "anon@deutsche.telekom.de",
+	Username:    "anon@example.com",
 	GroupName:   "breakglass-create-all",
 }
 
@@ -143,7 +143,7 @@ func SetupController(interceptFuncs *interceptor.Funcs) *WebhookController {
 				},
 				EscalatedGroup: "breakglass-create-all",
 				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
-					Users: []string{"approver@telekom.de"},
+					Users: []string{"approver@example.com"},
 				},
 			},
 		},

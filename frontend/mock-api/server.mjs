@@ -140,7 +140,7 @@ app.get("/api/breakglassSessions/:name", (req, res) => {
     // Mock scenario: domain not allowed
     approvalMeta.isApprover = false;
     approvalMeta.denialReason =
-      "Your email domain is not in the list of allowed approver domains: [internal.telekom.de]";
+      "Your email domain is not in the list of allowed approver domains: [internal.example.com]";
   } else if (session.metadata?.name?.includes("not-approver")) {
     // Mock scenario: not in approver group
     approvalMeta.isApprover = false;

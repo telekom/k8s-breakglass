@@ -11,8 +11,8 @@ func TestToRFC1123Subdomain(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"t-sec-1.tst.dtmd11", "t-sec-1.tst.dtmd11"},
-		{"DTTCAAS-PLATFORM_EMERGENCY", "dttcaas-platform-emergency"},
+		{"example-1.tst.region", "example-1.tst.region"},
+		{"EXAMPLE-PLATFORM_EMERGENCY", "example-platform-emergency"},
 		{"..leading..dots..", "leading.dots"},
 		{"___underscores___", "underscores"},
 		{"UPPER_and.Mix-123", "upper-and.mix-123"},

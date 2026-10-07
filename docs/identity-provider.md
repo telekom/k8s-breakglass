@@ -737,7 +737,7 @@ Create multiple IdentityProvider resources with different issuers:
 ```yaml
 ---
 # Corporate OIDC Provider
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: corporate-oidc
@@ -752,7 +752,7 @@ spec:
 
 ---
 # External Keycloak Instance
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: IdentityProvider
 metadata:
   name: external-keycloak
@@ -771,7 +771,7 @@ spec:
 Optionally restrict escalations to specific IDPs:
 
 ```yaml
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: prod-access
@@ -785,7 +785,7 @@ spec:
 
 ---
 # Escalation accessible by any IDP (or empty list = all IDPs)
-apiVersion: breakglass.telekom.de/v1alpha1
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: BreakglassEscalation
 metadata:
   name: dev-access
@@ -820,7 +820,7 @@ If you currently have a single IdentityProvider and want to add another:
 1. **Existing Single IDP** (continues working):
 
    ```yaml
-   apiVersion: breakglass.telekom.de/v1alpha1
+   apiVersion: breakglass.t-caas.telekom.com/v1alpha1
    kind: IdentityProvider
    metadata:
      name: primary-idp
@@ -832,7 +832,7 @@ If you currently have a single IdentityProvider and want to add another:
 2. **Add New IDP** (users can now choose):
 
    ```yaml
-   apiVersion: breakglass.telekom.de/v1alpha1
+   apiVersion: breakglass.t-caas.telekom.com/v1alpha1
    kind: IdentityProvider
    metadata:
      name: new-idp

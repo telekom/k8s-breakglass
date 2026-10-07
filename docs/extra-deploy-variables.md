@@ -140,7 +140,7 @@ Single selection from predefined options.
       displayName: "Host Network (elevated)"
       allowedGroups:  # Restrict this option
         - platform_poweruser
-        - schiff-admin
+        - infrastructure-admin
 ```
 
 **Usage in templates:**
@@ -162,7 +162,7 @@ Multiple selections from predefined options.
     - value: "NET_ADMIN"
     - value: "NET_RAW"
     - value: "SYS_ADMIN"
-      allowedGroups: ["schiff-admin"]
+      allowedGroups: ["infrastructure-admin"]
   validation:
     minItems: 1
     maxItems: 5
@@ -191,7 +191,7 @@ Restrict who can use an entire variable:
   inputType: boolean
   allowedGroups:  # Only these groups can set this variable
     - platform_poweruser
-    - schiff-admin
+    - infrastructure-admin
 ```
 
 ### Option-Level Restrictions
@@ -211,7 +211,7 @@ Restrict specific options within select/multiSelect:
     - value: "privileged"
       displayName: "Full Privileged"
       allowedGroups:
-        - schiff-admin
+        - infrastructure-admin
         - platform_emergency
 ```
 
@@ -229,7 +229,7 @@ The API error response includes the required groups:
 {
   "error": "extraDeployValues validation failed",
   "code": "BAD_REQUEST",
-  "details": "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser schiff-admin]"
+  "details": "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser infrastructure-admin]"
 }
 ```
 
@@ -309,7 +309,7 @@ session templates when different users need different duration limits.
 2. **Use `allowedGroups` for sensitive options:**
    ```yaml
    - value: "privileged"
-     allowedGroups: ["schiff-admin"]
+     allowedGroups: ["infrastructure-admin"]
    ```
 
 3. **Validate input with patterns:**

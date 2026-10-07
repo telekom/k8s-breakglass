@@ -44,7 +44,7 @@ server:
 
 frontend:
   baseURL: https://breakglass.example.com
-  brandingName: "Das SCHIFF Breakglass"
+  brandingName: "Platform Breakglass"
   uiFlavour: "oss"  # optional: "oss", "telekom", or "neutral"
 
 kubernetes:

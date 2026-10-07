@@ -17,7 +17,7 @@ type SenderConfigApplyConfiguration struct {
 	// Example: noreply@example.com
 	Address *string `json:"address,omitempty"`
 	// Name is the display name used in the From header
-	// Example: "Platform Breakglass", "Das SCHIFF Breakglass"
+	// Example: "Platform Breakglass", "Example Breakglass"
 	Name *string `json:"name,omitempty"`
 }
 

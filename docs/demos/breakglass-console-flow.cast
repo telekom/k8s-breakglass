@@ -1,4 +1,4 @@
-{"version":3,"term":{"cols":90,"rows":32},"timestamp":1786963680,"idle_time_limit":3.0,"command":"/Users/A92615428/git/GitHub/telekom/k8s-breakglass/e2e/record-breakglass-sync-console.sh --play","title":"Synchronized Breakglass console verification","env":{"SHELL":"/bin/zsh"}}
+{"version":3,"term":{"cols":90,"rows":32},"timestamp":1786963680,"idle_time_limit":3.0,"command":"./e2e/record-breakglass-sync-console.sh --play","title":"Synchronized Breakglass console verification","env":{"SHELL":"/bin/zsh"}}
 [0.954, "o", "Synchronized console verification track\r\nThe four chapters align with the four browser chapters on the left.\r\nThis console uses real bgctl and kubectl calls against the E2E cluster.\r\n"]
 [0.030, "o", "\r\nChapter 1/4 - Requester pending\r\nBefore approval: identify the user, inspect the API server, and show no temporary grant.\r\n"]
 [0.000, "o", "$ kubectl auth whoami --as=ops-gamma@example.com --as-group=ops\r\n"]

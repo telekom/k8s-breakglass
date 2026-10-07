@@ -46,7 +46,7 @@ the ordinary controller CI suite.
 6. **Artifact signing**
    - Release images are signed using keyless Sigstore Cosign (OIDC-based, no static keys).
    - An SPDX-JSON SBOM attestation is attached to each signed image via `cosign attest`.
-   - Cosign signatures and attestations are mirrored to Artifactory on a best-effort basis via `cosign copy`.
+   - When an optional Artifactory OCI mirror is configured, Cosign signatures and attestations are copied on a best-effort basis via `cosign copy`.
 
 7. **Helm chart publication**
    - `charts/escalation-config` and `charts/debug-session-catalogue` are packaged during release preparation.
@@ -65,13 +65,29 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 1. **Prepare** — generates Kustomize manifests, packages both Helm charts, cross-compiles `bgctl` binaries for all OS/arch combinations, and uploads them as artifacts.
 2. **Build** (matrix: `amd64`, `arm64`) — builds and pushes a single-platform image by digest on a native runner for each architecture.
 3. **Assemble** — downloads all per-arch digests and creates a unified multi-arch manifest tagged with the release version. Stable `vX.Y.Z` tags also update `latest`; prerelease tags such as `vX.Y.Z-rc.1` keep only their explicit version tag. Tags with SemVer build metadata (`+build`) are rejected because Docker image tags cannot contain `+`. Generates SLSA provenance attestation, signs the image with keyless Cosign, and attaches an SBOM attestation.
-4. **Artifactory** — mirrors the multi-arch image and cosign artifacts (signatures + attestations) to the internal Artifactory OCI registry (best-effort).
+4. **Artifactory** — optionally mirrors the multi-arch image and cosign artifacts (signatures + attestations) to an operator-configured Artifactory OCI registry (best-effort).
 5. **Publish charts** — pushes both charts to GHCR Helm OCI (`oci://ghcr.io/telekom/k8s-breakglass/charts`).
 6. **Release** — creates a GitHub Release with manifests, Helm chart packages, `bgctl` binaries, release-wide checksums, CLI archive checksums, and SBOM (SPDX-JSON format via Syft).
 
 > **Note:** Buildx layer caching (`cache-from`/`cache-to`) is intentionally omitted in
 > release builds to ensure clean, reproducible images without layer reuse from prior
 > development iterations.
+
+### Optional OCI mirror configuration
+
+CI and release workflows use repository or organization Actions secrets for the
+optional Artifactory mirror:
+
+| Secret | Value |
+| --- | --- |
+| `AF_REGISTRY` | Registry hostname, without a scheme (for example, `registry.example.com`) |
+| `AF_REPOSITORY` | OCI repository path (for example, `images/platform`) |
+| `AF_USER` | Registry username |
+| `AF_TOKEN` | Registry access token |
+
+The mirror push is skipped unless all four secrets are set. GHCR publication
+and release signing do not depend on the mirror. Deployments previously using
+the built-in mirror must configure `AF_REGISTRY` and `AF_REPOSITORY` to retain it.
 
 ## Utility image releases
 

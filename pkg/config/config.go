@@ -151,7 +151,7 @@ type KeycloakRuntimeConfig struct {
 type Frontend struct {
 	BaseURL string `yaml:"baseURL"`
 	// BrandingName optionally overrides the UI product name shown in the frontend
-	// e.g. "Das SCHIFF Breakglass". If empty, the frontend may use a hardcoded
+	// e.g. "Platform Breakglass". If empty, the frontend may use a hardcoded
 	// default or its own placeholder.
 	BrandingName string `yaml:"brandingName"`
 	// UIFlavour optionally specifies the UI theme/flavour at runtime (e.g. "telekom", "oss", "neutral").

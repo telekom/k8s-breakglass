@@ -55,7 +55,7 @@ type ClusterConfigSpecApplyConfiguration struct {
 	IdentityProviderRefs []string `json:"identityProviderRefs,omitempty"`
 	// blockSelfApproval, if true, prevents users from self-approving their own breakglass sessions for this cluster.
 	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
-	// allowedApproverDomains restricts approvers to users whose email matches one of the listed domains (e.g. ["telekom.de", "t-systems.com"])
+	// allowedApproverDomains restricts approvers to users whose email matches one of the listed domains (e.g. ["example.com", "example.org"])
 	// If set, an approver must have an email address ending with one of these domains.
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`
 	// mailProvider specifies which MailProvider to use for email notifications for this cluster.

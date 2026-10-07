@@ -112,7 +112,7 @@ spec:
                   name:
                     description: |-
                       Name is the display name used in the From header
-                      Example: "Platform Breakglass", "Das SCHIFF Breakglass"
+                      Example: "Platform Breakglass", "Example Breakglass"
                     maxLength: 100
                     type: string
                 required:

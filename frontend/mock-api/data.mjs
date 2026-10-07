@@ -2,7 +2,7 @@ import { randomUUID } from "crypto";
 
 export const CURRENT_USER_EMAIL = "mock.user@breakglass.dev";
 export const PARTNER_USER_EMAIL = "partner.user@breakglass.dev";
-export const MOCK_APPROVER_GROUPS = ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"];
+export const MOCK_APPROVER_GROUPS = ["platform-emergency", "platform-oncall", "prod-approvers"];
 export const MOCK_CURRENT_USER_GROUPS = MOCK_APPROVER_GROUPS;
 
 // ============================================================================
@@ -125,18 +125,18 @@ const mockDebugSessionTemplates = [
       },
       // Resolved cluster names (no globs)
       allowedClusters: [
-        "t-sec-1st.dtmd11",
+        "production-eu",
         "global-platform-eu",
         "global-platform-us",
         "global-platform-apac",
         "staging-eu-west",
         "staging-us-east",
-        "dev-cluster-bn",
-        "ref-cluster-bn",
+        "dev-cluster",
+        "reference-cluster",
         "canary-eu",
         "dr-cluster-us",
       ],
-      allowedGroups: ["sre-team", "platform-oncall", "dtcaas-platform_emergency"],
+      allowedGroups: ["sre-team", "platform-oncall", "platform-emergency"],
       // Extra deploy variables for runtime customization
       extraDeployVariables: [
         {
@@ -265,14 +265,14 @@ const mockDebugSessionTemplates = [
       },
       // Wildcard resolved to all clusters
       allowedClusters: [
-        "t-sec-1st.dtmd11",
+        "production-eu",
         "lab-cluster",
         "global-platform-eu",
         "global-platform-us",
         "global-platform-apac",
         "edge-hub",
         "ops-lab",
-        "dev-cluster-bn",
+        "dev-cluster",
         "dev-cluster-ba",
         "test-edge-hub",
         "staging-eu-west",
@@ -359,7 +359,7 @@ const mockDebugSessionTemplates = [
         portForward: false,
       },
       // Only production clusters
-      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu"],
+      allowedClusters: ["production-eu", "global-platform-eu"],
       allowedGroups: ["sre-team"],
       requiresApproval: true,
       approverGroups: ["security-leads"],
@@ -519,7 +519,7 @@ const mockDebugSessionTemplates = [
         logs: true,
         portForward: false,
       },
-      allowedClusters: ["t-sec-1st.dtmd11", "global-platform-eu", "global-platform-us"],
+      allowedClusters: ["production-eu", "global-platform-eu", "global-platform-us"],
       allowedGroups: ["support-team", "audit-team", "developers"],
       requiresApproval: false,
     },
@@ -550,7 +550,7 @@ const mockDebugSessionTemplates = [
         logs: false,
         portForward: false,
       },
-      allowedClusters: ["lab-cluster", "ops-lab", "t-sec-1st.dtmd11"],
+      allowedClusters: ["lab-cluster", "ops-lab", "production-eu"],
       allowedGroups: ["sre-team", "storage-team"],
       requiresApproval: true,
       approverGroups: ["sre-leads"],
@@ -582,7 +582,7 @@ function currentUserCanActOnDebugApproval(templateRef, requestedByEmail) {
 function baseDebugSession({
   name,
   templateRef = "standard-debug",
-  cluster = "t-sec-1st.dtmd11",
+  cluster = "production-eu",
   requestedBy = CURRENT_USER_EMAIL,
   requestedByDisplayName = "Mock User",
   requestedByEmail = CURRENT_USER_EMAIL,
@@ -661,7 +661,7 @@ const mockDebugSessions = [
   baseDebugSession({
     name: "debug-network-001",
     templateRef: "standard-debug",
-    cluster: "t-sec-1st.dtmd11",
+    cluster: "production-eu",
     state: "Active",
     reason: "Investigating pod network connectivity issues in production",
     expiresInMinutes: 45,
@@ -721,7 +721,7 @@ const mockDebugSessions = [
   baseDebugSession({
     name: "debug-expired-001",
     templateRef: "standard-debug",
-    cluster: "t-sec-1st.dtmd11",
+    cluster: "production-eu",
     state: "Expired",
     requestedBy: PARTNER_USER_EMAIL,
     requestedByDisplayName: "Partner User",
@@ -764,7 +764,7 @@ const mockDebugSessions = [
   baseDebugSession({
     name: "debug-logs-only-001",
     templateRef: "logs-only",
-    cluster: "t-sec-1st.dtmd11",
+    cluster: "production-eu",
     state: "Active",
     reason: "Reviewing application logs for support ticket #12345",
     expiresInMinutes: 180,
@@ -838,7 +838,7 @@ export function createDebugSession(body = {}) {
   const session = baseDebugSession({
     name,
     templateRef: body.templateRef || "standard-debug",
-    cluster: body.cluster || "t-sec-1st.dtmd11",
+    cluster: body.cluster || "production-eu",
     requestedBy: CURRENT_USER_EMAIL,
     reason: body.reason || "Debug session created via UI",
     requestedDuration: body.requestedDuration || "1h",
@@ -963,7 +963,7 @@ export function findDebugSessionTemplate(name) {
 
 // Mock cluster metadata for more realistic responses
 const mockClusterMetadata = {
-  "t-sec-1st.dtmd11": { displayName: "Production EU", environment: "production", location: "Frankfurt" },
+  "production-eu": { displayName: "Production EU", environment: "production", location: "Region A" },
   "global-platform-eu": { displayName: "Global Platform EU", environment: "production", location: "Amsterdam" },
   "global-platform-us": { displayName: "Global Platform US", environment: "production", location: "Virginia" },
   "global-platform-apac": { displayName: "Global Platform APAC", environment: "production", location: "Singapore" },
@@ -972,9 +972,9 @@ const mockClusterMetadata = {
   "edge-hub": { displayName: "Edge Hub", environment: "edge", location: "Multi-Region" },
   "staging-eu-west": { displayName: "Staging EU West", environment: "staging", location: "Dublin" },
   "staging-us-east": { displayName: "Staging US East", environment: "staging", location: "Virginia" },
-  "dev-cluster-bn": { displayName: "Dev Cluster BN", environment: "development", location: "Bonn" },
+  "dev-cluster": { displayName: "Dev Cluster", environment: "development", location: "Region A" },
   "dev-cluster-ba": { displayName: "Dev Cluster BA", environment: "development", location: "Bad Aibling" },
-  "ref-cluster-bn": { displayName: "Reference Cluster BN", environment: "reference", location: "Bonn" },
+  "reference-cluster": { displayName: "Reference Cluster", environment: "reference", location: "Region A" },
   "test-edge-hub": { displayName: "Test Edge Hub", environment: "test", location: "Berlin" },
   "prod-sa2-ba": { displayName: "Production SA2 BA", environment: "production", location: "Bad Aibling" },
   "canary-eu": { displayName: "Canary EU", environment: "canary", location: "Frankfurt" },
@@ -985,7 +985,7 @@ const mockClusterMetadata = {
 const mockClusterBindings = {
   "standard-debug": [
     {
-      cluster: "t-sec-1st.dtmd11",
+      cluster: "production-eu",
       bindingRef: { name: "sre-prod-binding", namespace: "breakglass", displayName: "SRE Production Access" },
       constraints: { maxDuration: "2h", defaultDuration: "30m" },
       schedulingOptions: {
@@ -1022,7 +1022,7 @@ const mockClusterBindings = {
     },
     // Second binding for the same cluster - demonstrates multiple binding options
     {
-      cluster: "t-sec-1st.dtmd11",
+      cluster: "production-eu",
       bindingRef: { name: "oncall-emergency", namespace: "breakglass", displayName: "On-Call Emergency Access" },
       constraints: { maxDuration: "4h", defaultDuration: "1h" },
       schedulingOptions: {
@@ -1064,7 +1064,7 @@ const mockClusterBindings = {
   ],
   "node-debug": [
     {
-      cluster: "t-sec-1st.dtmd11",
+      cluster: "production-eu",
       bindingRef: { name: "node-debug-prod", namespace: "breakglass", displayName: "Node Debug Production" },
       constraints: { maxDuration: "1h", defaultDuration: "30m" },
       impersonation: { enabled: true, serviceAccountRef: "breakglass/node-debugger" },
@@ -1161,11 +1161,11 @@ const now = () => new Date();
 const minutesFromNow = (minutes) => new Date(now().getTime() + minutes * 60 * 1000).toISOString();
 
 const azureIssuer = "https://login.microsoftonline.com/partners-tenant/v2.0";
-const sandboxKeycloakIssuer = "https://keycloak.sandbox.telekom.de/auth/realms/dev";
+const sandboxKeycloakIssuer = "https://keycloak.sandbox.example.com/auth/realms/dev";
 
 export const runtimeConfig = {
   frontend: {
-    oidcAuthority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+    oidcAuthority: "https://keycloak.example.com/auth/realms/platform",
     oidcClientID: "breakglass-ui",
     brandingName: "Breakglass Dev Preview",
     uiFlavour: "telekom",
@@ -1180,8 +1180,8 @@ export const identityProviderConfig = {
   type: "Keycloak",
   clientID: "breakglass-ui",
   keycloak: {
-    baseURL: "https://keycloak.das-schiff.telekom.de/auth",
-    realm: "schiff",
+    baseURL: "https://keycloak.example.com/auth",
+    realm: "platform",
   },
 };
 
@@ -1190,7 +1190,7 @@ export const multiIDPConfig = {
     {
       name: "production-keycloak",
       displayName: "Production Keycloak",
-      issuer: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+      issuer: "https://keycloak.example.com/auth/realms/platform",
       enabled: true,
     },
     {
@@ -1208,13 +1208,13 @@ export const multiIDPConfig = {
     {
       name: "legacy-ldap",
       displayName: "Legacy LDAP",
-      issuer: "ldaps://ldap.telekom.de:636",
+      issuer: "ldaps://ldap.example.com:636",
       enabled: false,
     },
   ],
   escalationIDPMapping: {
-    "t-sec-1st.dtmd11::dtcaas-platform_emergency": ["production-keycloak"],
-    "lab-cluster::dtcaas-lab": ["production-keycloak", "partners-azuread"],
+    "production-eu::platform-emergency": ["production-keycloak"],
+    "lab-cluster::platform-lab": ["production-keycloak", "partners-azuread"],
     "global-platform::platform-superuser": [],
     "edge-hub::edge-hotfix": ["sandbox-keycloak", "partners-azuread"],
     "ops-lab::legacy-ops": ["legacy-ldap"],
@@ -1224,13 +1224,13 @@ export const multiIDPConfig = {
 export const breakglassEscalations = [
   {
     metadata: {
-      name: "t-sec-1st.dtmd11",
+      name: "production-eu",
       creationTimestamp: minutesFromNow(-90),
     },
     spec: {
       allowed: {
-        clusters: ["t-sec-1st.dtmd11"],
-        groups: ["dtcaas-platform_emergency"],
+        clusters: ["production-eu"],
+        groups: ["platform-emergency"],
       },
       approvers: {
         groups: ["platform-oncall", "prod-approvers"],
@@ -1256,7 +1256,7 @@ export const breakglassEscalations = [
     spec: {
       allowed: {
         clusters: ["lab-cluster"],
-        groups: ["dtcaas-lab"],
+        groups: ["platform-lab"],
       },
       approvers: {
         groups: ["lab-approvers"],
@@ -1374,9 +1374,7 @@ function baseSession({
   const resolvedIdentityProviderName =
     identityProviderName === undefined ? "production-keycloak" : identityProviderName;
   const resolvedIdentityProviderIssuer =
-    identityProviderIssuer === undefined
-      ? "https://keycloak.das-schiff.telekom.de/auth/realms/schiff"
-      : identityProviderIssuer;
+    identityProviderIssuer === undefined ? "https://keycloak.example.com/auth/realms/platform" : identityProviderIssuer;
 
   const creationTimestamp = minutesFromNow(-45);
   const expiresAt = minutesFromNow(expiresInMinutes);
@@ -1437,17 +1435,17 @@ function baseSession({
 
 const permutationSessions = [
   baseSession({
-    name: "req-t-sec-1st-001",
-    cluster: "t-sec-1st.dtmd11",
-    group: "dtcaas-platform_emergency",
+    name: "req-production-eu-001",
+    cluster: "production-eu",
+    group: "platform-emergency",
     state: "Pending",
     requestReason: "Emergency fix for stuck job",
     approvalReason: { description: "High-impact change" },
   }),
   baseSession({
-    name: "req-t-sec-1st-approval",
-    cluster: "t-sec-1st.dtmd11",
-    group: "dtcaas-platform_emergency",
+    name: "req-production-eu-approval",
+    cluster: "production-eu",
+    group: "platform-emergency",
     state: "Approved",
     expiresInMinutes: 30,
     requestReason: "Investigate CPU spikes",
@@ -1461,7 +1459,7 @@ const permutationSessions = [
   baseSession({
     name: "req-lab-001",
     cluster: "lab-cluster",
-    group: "dtcaas-lab",
+    group: "platform-lab",
     state: "Rejected",
     requestReason: "Test scenario that was rejected",
     approverGroups: ["lab-approvers"],
@@ -1473,7 +1471,7 @@ const permutationSessions = [
   baseSession({
     name: "req-lab-timeout",
     cluster: "lab-cluster",
-    group: "dtcaas-lab",
+    group: "platform-lab",
     state: "Timeout",
     requestReason: "Expired session",
     approverGroups: ["lab-approvers"],
@@ -1515,8 +1513,8 @@ const permutationSessions = [
   }),
   baseSession({
     name: "req-withdrawn-user",
-    cluster: "t-sec-1st.dtmd11",
-    group: "dtcaas-platform_emergency",
+    cluster: "production-eu",
+    group: "platform-emergency",
     state: "Withdrawn",
     requestReason: "Duplicate submission",
     statusOverrides: {
@@ -1546,7 +1544,7 @@ const permutationSessions = [
   baseSession({
     name: "req-dropped-audit",
     cluster: "lab-cluster",
-    group: "dtcaas-lab",
+    group: "platform-lab",
     state: "Dropped",
     statusOverrides: {
       reason: "Session dropped by security",
@@ -1558,13 +1556,13 @@ const permutationSessions = [
     group: "legacy-ops",
     state: "Pending",
     identityProviderName: "legacy-ldap",
-    identityProviderIssuer: "ldaps://ldap.telekom.de:636",
+    identityProviderIssuer: "ldaps://ldap.example.com:636",
     requestReason: "Legacy maintenance",
   }),
   baseSession({
     name: "req-azure-idp",
     cluster: "lab-cluster",
-    group: "dtcaas-lab",
+    group: "platform-lab",
     state: "Pending",
     identityProviderName: "partners-azuread",
     identityProviderIssuer: azureIssuer,
@@ -1623,8 +1621,8 @@ const permutationSessions = [
   // =========================================================================
   baseSession({
     name: "self-approval-blocked-session",
-    cluster: "t-sec-1st.dtmd11",
-    group: "dtcaas-platform_emergency",
+    cluster: "production-eu",
+    group: "platform-emergency",
     state: "Pending",
     requestReason: "Testing self-approval block UI",
     // Current user is the requester, so self-approval should be blocked
@@ -1817,8 +1815,8 @@ export function createSessionFromRequest(body = {}) {
   const session = baseSession({
     name,
     user: body.user || CURRENT_USER_EMAIL,
-    cluster: body.cluster || "t-sec-1st.dtmd11",
-    group: body.group || "dtcaas-platform_emergency",
+    cluster: body.cluster || "production-eu",
+    group: body.group || "platform-emergency",
     requestReason: body.reason || "Local mock request",
     duration: secondsToDuration(durationSeconds),
     approverGroups: body.approverGroups || MOCK_APPROVER_GROUPS,

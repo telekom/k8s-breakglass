@@ -577,12 +577,12 @@ Updated on: 2025-01-03 (Comprehensive kitchen-sink coverage)
 - Priority: High
 
 [AW-004] AllowedApproverDomains restriction
-- Steps: Create escalation with `allowedApproverDomains: ["telekom.de"]`. User with @example.com email tries to approve.
+- Steps: Create escalation with `allowedApproverDomains: ["example.org"]`. User with @example.com email tries to approve.
 - Expected: Approval rejected due to domain restriction.
 - Priority: High
 
 [AW-005] AllowedApproverDomains allows valid domain
-- Steps: Same escalation as AW-004. User with @telekom.de email approves.
+- Steps: Same escalation as AW-004. User with @example.org email approves.
 - Expected: Approval succeeds.
 - Priority: High
 

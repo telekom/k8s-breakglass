@@ -27,7 +27,7 @@ server:
 
 frontend:
   baseURL: https://breakglass.example.com
-  brandingName: "Das SCHIFF Breakglass"  # optional
+  brandingName: "Platform Breakglass"  # optional
   uiFlavour: "oss"  # optional
 
 kubernetes:
@@ -443,11 +443,11 @@ Custom product name displayed in UI header and page title.
 |----------|-------|
 | **Type** | `string` |
 | **Default** | `` (neutral placeholder) |
-| **Example** | `Das SCHIFF Breakglass`, `Platform Breakglass` |
+| **Example** | `Example Breakglass`, `Platform Breakglass` |
 
 ```yaml
 frontend:
-  brandingName: "Das SCHIFF Breakglass"
+  brandingName: "Platform Breakglass"
 ```
 
 When set, displayed in:
@@ -641,7 +641,7 @@ server:
 # Frontend UI configuration
 frontend:
   baseURL: https://breakglass.example.com
-  brandingName: "Das SCHIFF Breakglass"
+  brandingName: "Platform Breakglass"
   uiFlavour: "telekom"
 
 # Kubernetes cluster settings

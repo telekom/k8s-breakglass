@@ -16,9 +16,9 @@ func TestToRFC1123Subdomain(t *testing.T) {
 	}{
 		{"empty string returns x", "", "x"},
 		{"already valid", "valid-name", "valid-name"},
-		{"preserves dots", "t-sec-1.tst.dtmd11", "t-sec-1.tst.dtmd11"},
+		{"preserves dots", "example-1.tst.region", "example-1.tst.region"},
 		{"uppercase to lowercase", "UPPERCASE", "uppercase"},
-		{"platform emergency", "DTTCAAS-PLATFORM_EMERGENCY", "dttcaas-platform-emergency"},
+		{"platform emergency", "EXAMPLE-PLATFORM_EMERGENCY", "example-platform-emergency"},
 		{"leading dots removed", "..leading..dots..", "leading.dots"},
 		{"underscores replaced", "___underscores___", "underscores"},
 		{"mixed case with special", "UPPER_and.Mix-123", "upper-and.mix-123"},

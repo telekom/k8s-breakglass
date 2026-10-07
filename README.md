@@ -85,6 +85,17 @@ asciinema play docs/demos/breakglass-api-flow.cast
 
 **Design:** Hub-and-spoke topology where a central breakglass service manages temporary access for multiple Kubernetes clusters.
 
+```mermaid
+flowchart LR
+    User[User or approver] --> UI[Web UI or bgctl]
+    UI -->|OIDC login| IdP[Identity provider]
+    UI -->|Authenticated requests| API[Breakglass API]
+    API --> CRs[Escalations and sessions]
+    User -->|kubectl| Cluster[Managed cluster API]
+    Cluster -->|SubjectAccessReview| Webhook[Authorization webhook]
+    CRs --> Webhook
+```
+
 ## 📚 Documentation
 
 Complete documentation is available in the [docs/](./docs/) directory:

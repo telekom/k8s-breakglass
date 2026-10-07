@@ -624,6 +624,8 @@ jobs:
   publish-image:
     name: Publish Image
     runs-on: ubuntu-latest
+    env:
+      ARTIFACTORY_CONFIGURED: ${{ secrets.AF_REGISTRY != '' && secrets.AF_REPOSITORY != '' && secrets.AF_USER != '' && secrets.AF_TOKEN != '' }}
     needs:
       - build-image
       - lint
@@ -799,10 +801,10 @@ jobs:
           path: sbom.json
       - name: Push image to Artifactory (OCI)
         # Skip for Dependabot PRs (no access to secrets) and fork PRs
-        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' }}
+        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' && env.ARTIFACTORY_CONFIGURED == 'true' }}
         env:
-          ARTIFACTORY_URL: artifactory.devops.telekom.de
-          ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
+          ARTIFACTORY_URL: ${{ secrets.AF_REGISTRY }}
+          ARTIFACTORY_REPO: ${{ secrets.AF_REPOSITORY }}
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE: ${{ env.IMAGE_NAME }}
         run: |

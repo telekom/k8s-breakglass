@@ -12,7 +12,7 @@ frontend:
   oidcClientID: breakglass-ui
   baseURL: https://breakglass.example.com
   # Optional branding shown in the UI
-  brandingName: "Das SCHIFF Breakglass"
+  brandingName: "Platform Breakglass"
 ```
 
 Behavior:
@@ -74,7 +74,7 @@ spec:
       key: password
   sender:
     address: noreply@example.com
-    name: "Das SCHIFF Breakglass"  # Optional: Falls back to frontend.brandingName
+    name: "Platform Breakglass"  # Optional: Falls back to frontend.brandingName
 ```
 
 **Behavior:**

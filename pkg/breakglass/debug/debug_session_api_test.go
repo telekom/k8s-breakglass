@@ -9179,7 +9179,7 @@ func TestMatchPattern_MiddleWildcards(t *testing.T) {
 	}{
 		// Middle wildcard patterns (*.xxx.*)
 		{"middle wildcard exact segment match", "*.tst.*", "cluster.tst.region", true},
-		{"middle wildcard tst no match", "*.tst.*", "schiff-canary-1.tsttmdc.bn", false}, // tsttmdc is not .tst.
+		{"middle wildcard tst no match", "*.tst.*", "example-canary-1.tst-region.example", false}, // tst-region is not .tst.
 		{"middle wildcard dev matches", "*.dev.*", "my.dev.cluster", true},
 		{"middle wildcard dev no match", "*.dev.*", "mydevcluster", false},
 		{"middle wildcard ref matches", "*.ref.*", "app.ref.east", true},
@@ -9199,8 +9199,8 @@ func TestMatchPattern_MiddleWildcards(t *testing.T) {
 
 // TestMatchPattern_RealClusterPatterns tests real-world cluster patterns from DebugSessionTemplates
 func TestMatchPattern_RealClusterPatterns(t *testing.T) {
-	// Real cluster name from the error
-	clusterName := "schiff-canary-1.tsttmdc.bn"
+	// Example cluster name with a test-like segment but no standalone .tst. segment.
+	clusterName := "example-canary-1.tst-region.example"
 
 	tests := []struct {
 		pattern  string
@@ -9208,12 +9208,12 @@ func TestMatchPattern_RealClusterPatterns(t *testing.T) {
 		reason   string
 	}{
 		{"*", true, "wildcard should match any cluster"},
-		{"schiff-*", true, "prefix should match schiff clusters"},
-		{"*.bn", true, "suffix should match .bn clusters"},
-		{"dev-*", false, "dev prefix should not match schiff cluster"},
-		{"*.tst.*", false, "tsttmdc does not have .tst. segment"},
-		{"*tsttmdc*", true, "should match substring tsttmdc"},
-		{"schiff-canary-*", true, "should match schiff-canary prefix"},
+		{"example-*", true, "prefix should match example clusters"},
+		{"*.example", true, "suffix should match .example clusters"},
+		{"dev-*", false, "dev prefix should not match example cluster"},
+		{"*.tst.*", false, "tst-region does not have .tst. segment"},
+		{"*tst-region*", true, "should match substring tst-region"},
+		{"example-canary-*", true, "should match example-canary prefix"},
 	}
 
 	for _, tt := range tests {
@@ -9401,15 +9401,15 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 				},
 				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 					Allowed: &breakglassv1alpha1.DebugSessionAllowed{
-						// Template patterns do NOT match "schiff-canary-1.tsttmdc.bn"
+						// Template patterns do NOT match "example-canary-1.tst-region.example"
 						Clusters: []string{"dev-*", "staging-*", "test-*", "ref-*", "lab-*"},
 					},
 				},
 			},
-			clusterName: "schiff-canary-1.tsttmdc.bn", // Doesn't match template patterns!
+			clusterName: "example-canary-1.tst-region.example", // Doesn't match template patterns!
 			bindings: []breakglassv1alpha1.DebugSessionClusterBinding{
 				{
-					ObjectMeta: metav1.ObjectMeta{Name: "schiff-canary-1.tsttmdc.bn-developer-workload", Namespace: "vsphere-tsttmdc-bn"},
+					ObjectMeta: metav1.ObjectMeta{Name: "example-canary-1.tst-region.example-developer-workload", Namespace: "example-test-region"},
 					Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 						// Uses templateSelector instead of templateRef
 						TemplateSelector: &metav1.LabelSelector{
@@ -9422,23 +9422,23 @@ func TestIsClusterAllowedByTemplateOrBinding(t *testing.T) {
 						// Uses clusterSelector instead of explicit Clusters list
 						ClusterSelector: &metav1.LabelSelector{
 							MatchLabels: map[string]string{
-								"breakglass.t-caas.telekom.com/cluster": "schiff-canary-1.tsttmdc.bn",
+								"breakglass.t-caas.telekom.com/cluster": "example-canary-1.tst-region.example",
 							},
 						},
 					},
 				},
 			},
 			expectAllowed: true,
-			expectSource:  "binding:vsphere-tsttmdc-bn/schiff-canary-1.tsttmdc.bn-developer-workload",
+			expectSource:  "binding:example-test-region/example-canary-1.tst-region.example-developer-workload",
 		},
 	}
 
 	// Add cluster config that matches the binding's clusterSelector for the new test case
-	clusterConfigs["schiff-canary-1.tsttmdc.bn"] = &breakglassv1alpha1.ClusterConfig{
+	clusterConfigs["example-canary-1.tst-region.example"] = &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: "schiff-canary-1.tsttmdc.bn",
+			Name: "example-canary-1.tst-region.example",
 			Labels: map[string]string{
-				"breakglass.t-caas.telekom.com/cluster": "schiff-canary-1.tsttmdc.bn",
+				"breakglass.t-caas.telekom.com/cluster": "example-canary-1.tst-region.example",
 			},
 		},
 	}

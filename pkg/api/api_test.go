@@ -92,7 +92,7 @@ func TestServer_getConfig(t *testing.T) {
 	cfg := config.Config{
 		Frontend: config.Frontend{
 			BaseURL:      "https://example.com",
-			BrandingName: "Das SCHIFF Breakglass",
+			BrandingName: "Platform Breakglass",
 		},
 	}
 
@@ -624,8 +624,8 @@ func TestSetIdentityProvider_OIDCOnly(t *testing.T) {
 
 func TestSetIdentityProvider_KeycloakWithAuthPath(t *testing.T) {
 	// Test case with /auth in the baseURL (like the actual Keycloak deployment)
-	// Config: baseURL="https://keycloak.das-schiff.telekom.de/auth", realm="schiff"
-	// Expected authority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff"
+	// Config: baseURL="https://keycloak.example.com/auth", realm="platform"
+	// Expected authority: "https://keycloak.example.com/auth/realms/platform"
 	logger := zaptest.NewLogger(t)
 	server := &Server{
 		log: logger,
@@ -633,11 +633,11 @@ func TestSetIdentityProvider_KeycloakWithAuthPath(t *testing.T) {
 
 	idpConfig := &config.IdentityProviderConfig{
 		Type:      "Keycloak",
-		Authority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+		Authority: "https://keycloak.example.com/auth/realms/platform",
 		ClientID:  "breakglass-ui",
 		Keycloak: &config.KeycloakRuntimeConfig{
-			BaseURL:  "https://keycloak.das-schiff.telekom.de/auth",
-			Realm:    "schiff",
+			BaseURL:  "https://keycloak.example.com/auth",
+			Realm:    "platform",
 			ClientID: "breakglass-controller",
 		},
 	}
@@ -648,11 +648,11 @@ func TestSetIdentityProvider_KeycloakWithAuthPath(t *testing.T) {
 	assert.Equal(t, "Keycloak", server.idpConfig.Type)
 	assert.NotNil(t, server.oidcAuthority)
 	// Verify the constructed URL matches the expected Keycloak realm authority
-	expectedURL := "https://keycloak.das-schiff.telekom.de/auth/realms/schiff"
+	expectedURL := "https://keycloak.example.com/auth/realms/platform"
 	assert.Equal(t, expectedURL, server.oidcAuthority.String())
 	assert.Equal(t, "https", server.oidcAuthority.Scheme)
-	assert.Equal(t, "keycloak.das-schiff.telekom.de", server.oidcAuthority.Host)
-	assert.Equal(t, "/auth/realms/schiff", server.oidcAuthority.Path)
+	assert.Equal(t, "keycloak.example.com", server.oidcAuthority.Host)
+	assert.Equal(t, "/auth/realms/platform", server.oidcAuthority.Path)
 }
 
 func TestSetIdentityProvider_KeycloakWithoutAuthPath(t *testing.T) {
