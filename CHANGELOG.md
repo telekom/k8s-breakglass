@@ -82,6 +82,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   footers share heights and vertical centres at every viewport.
   Icon-only buttons, disabled buttons (with the reason), status tags,
   urgency chips and countdowns get Scale tooltips on hover and keyboard focus.
+  Button icons that used non-existent Scale slots (`slot="icon"`) now render.
   Loading states use the shared `LoadingState` component, and dead custom CSS
   and the unused `ChipRow` component are removed. `npm run lint:styles`
   (stylelint, run in CI) rejects raw colours, px font sizes and shadows
