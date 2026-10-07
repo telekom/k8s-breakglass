@@ -3,16 +3,7 @@
  */
 
 import { vi } from "vitest";
-import {
-  formatDateTime,
-  formatDateOnly,
-  formatTimeOnly,
-  formatTimeCompact,
-  formatRelativeTime,
-  formatWithTimezone,
-  isValidDate,
-  nowISO,
-} from "@/composables/useDateFormatting";
+import { formatDateTime, formatRelativeTime } from "@/composables/useDateFormatting";
 
 describe("date formatting utilities", () => {
   describe("formatDateTime", () => {
@@ -38,58 +29,6 @@ describe("date formatting utilities", () => {
     it("returns dash for null/undefined", () => {
       expect(formatDateTime(null)).toBe("—");
       expect(formatDateTime(undefined)).toBe("—");
-    });
-  });
-
-  describe("formatDateOnly", () => {
-    it("formats date without time", () => {
-      const result = formatDateOnly("2025-12-01T14:30:45Z");
-      expect(result).not.toBe("—");
-      // Should not contain seconds
-      expect(result).not.toMatch(/:\d{2}:\d{2}/);
-    });
-
-    it("returns dash for null", () => {
-      expect(formatDateOnly(null)).toBe("—");
-    });
-  });
-
-  describe("formatTimeOnly", () => {
-    it("formats time with seconds", () => {
-      const result = formatTimeOnly("2025-12-01T14:30:45Z");
-      expect(result).not.toBe("—");
-      // Should contain time with seconds
-      expect(result).toMatch(/\d{1,2}:\d{2}:\d{2}/);
-    });
-
-    it("returns dash for null", () => {
-      expect(formatTimeOnly(null)).toBe("—");
-    });
-  });
-
-  describe("formatTimeCompact", () => {
-    it("formats time without seconds", () => {
-      const result = formatTimeCompact("2025-12-01T14:30:45Z");
-      expect(result).not.toBe("—");
-      // Should contain HH:mm format
-      expect(result).toMatch(/\d{1,2}:\d{2}/);
-    });
-
-    it("returns dash for null", () => {
-      expect(formatTimeCompact(null)).toBe("—");
-    });
-  });
-
-  describe("formatWithTimezone", () => {
-    it.each(["2025-12-01T14:30:45Z", "2025-06-01T14:30:45Z"])("includes the local timezone for %s", (date) => {
-      const timezone = new Intl.DateTimeFormat(navigator.language || "en-US", {
-        timeZoneName: "short",
-      })
-        .formatToParts(new Date(date))
-        .find((part) => part.type === "timeZoneName");
-
-      expect(timezone).toBeDefined();
-      expect(formatWithTimezone(date)).toContain(timezone?.value);
     });
   });
 
@@ -132,34 +71,6 @@ describe("date formatting utilities", () => {
 
     it("returns dash for null", () => {
       expect(formatRelativeTime(null)).toBe("—");
-    });
-  });
-
-  describe("isValidDate", () => {
-    it("returns true for valid ISO strings", () => {
-      expect(isValidDate("2025-12-01T14:30:45Z")).toBe(true);
-      expect(isValidDate("2025-12-01")).toBe(true);
-    });
-
-    it("returns true for Date objects", () => {
-      expect(isValidDate(new Date())).toBe(true);
-    });
-
-    it("returns true for timestamps", () => {
-      expect(isValidDate(Date.now())).toBe(true);
-    });
-
-    it("returns false for invalid values", () => {
-      expect(isValidDate(null)).toBe(false);
-      expect(isValidDate(undefined)).toBe(false);
-      expect(isValidDate("not a date")).toBe(false);
-    });
-  });
-
-  describe("nowISO", () => {
-    it("returns current time as ISO string", () => {
-      const result = nowISO();
-      expect(result).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
     });
   });
 });

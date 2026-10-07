@@ -25,3 +25,8 @@ This document provides conventions specifically for AI coding agents working in 
 - `src/services/` contains API wrappers (e.g. `breakglass.ts`). Ensure error handling uses the `handleAxiosError` utility.
 - `src/components/` contains reusable UI pieces.
 - `src/views/` contains route-level pages.
+
+Date/time display uses native `Date`/`Intl`; verbose duration display uses the
+installed `humanize-duration` package. Keep compact domain formatting local when
+upstream output differs. A barrel re-export is not evidence of a real consumer:
+check component/view call sites before adding or retaining utility APIs.

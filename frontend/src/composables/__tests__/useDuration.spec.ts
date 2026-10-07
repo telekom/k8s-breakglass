@@ -4,10 +4,7 @@
 
 import {
   parseDurationString,
-  formatDuration,
-  formatDurationFromSeconds,
   formatDurationRounded,
-  formatDurationFromSecondsRounded,
   formatRoundedSeconds,
   computeEndTime,
   formatEndTime,
@@ -99,56 +96,6 @@ describe("duration utilities", () => {
       expect(parseDurationString("")).toBeNull();
       expect(parseDurationString("invalid")).toBeNull();
       expect(parseDurationString("1x2y3z")).toBeNull();
-    });
-  });
-
-  describe("formatDuration", () => {
-    it("formats hours", () => {
-      expect(formatDuration("1h0m0s")).toBe("1h");
-      expect(formatDuration("2h0m0s")).toBe("2h");
-    });
-
-    it("formats minutes", () => {
-      expect(formatDuration("0h30m0s")).toBe("30m");
-    });
-
-    it("formats seconds", () => {
-      expect(formatDuration("0h0m45s")).toBe("45s");
-    });
-
-    it("formats combined", () => {
-      expect(formatDuration("1h30m0s")).toBe("1h 30m");
-      expect(formatDuration("1h30m45s")).toBe("1h 30m 45s");
-      expect(formatDuration("0h30m45s")).toBe("30m 45s");
-    });
-
-    it("handles zero duration", () => {
-      expect(formatDuration("0h0m0s")).toBe("0s");
-    });
-
-    it("returns 'Not specified' for undefined", () => {
-      expect(formatDuration(undefined)).toBe("Not specified");
-      expect(formatDuration(null)).toBe("Not specified");
-    });
-
-    it("returns original for invalid format", () => {
-      expect(formatDuration("invalid")).toBe("invalid");
-    });
-  });
-
-  describe("formatDurationFromSeconds", () => {
-    it("formats seconds to readable string", () => {
-      expect(formatDurationFromSeconds(3600)).toBe("1h");
-      expect(formatDurationFromSeconds(1800)).toBe("30m");
-      expect(formatDurationFromSeconds(45)).toBe("45s");
-      expect(formatDurationFromSeconds(5445)).toBe("1h 30m 45s");
-    });
-
-    it("handles zero and negative", () => {
-      expect(formatDurationFromSeconds(0)).toBe("0s");
-      expect(formatDurationFromSeconds(-100)).toBe("0s");
-      expect(formatDurationFromSeconds(null)).toBe("0s");
-      expect(formatDurationFromSeconds(undefined)).toBe("0s");
     });
   });
 
@@ -248,20 +195,6 @@ describe("duration utilities", () => {
 
     it("returns original for unparseable", () => {
       expect(formatDurationRounded("invalid")).toBe("invalid");
-    });
-  });
-
-  describe("formatDurationFromSecondsRounded", () => {
-    it("rounds seconds to nearest sensible unit", () => {
-      expect(formatDurationFromSecondsRounded(7140)).toBe("2h"); // 1h 59m
-      expect(formatDurationFromSecondsRounded(90)).toBe("2m"); // 1.5m
-      expect(formatDurationFromSecondsRounded(45)).toBe("45s");
-    });
-
-    it("handles zero and null", () => {
-      expect(formatDurationFromSecondsRounded(0)).toBe("0s");
-      expect(formatDurationFromSecondsRounded(null)).toBe("0s");
-      expect(formatDurationFromSecondsRounded(undefined)).toBe("0s");
     });
   });
 });

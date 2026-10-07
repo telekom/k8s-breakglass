@@ -22,6 +22,19 @@ behavior, and modifying a copied map must not modify its input. Both exported
 RFC 1123 name normalizers retain their fallback, trimming, and 63/253-character
 limits while sharing the normalization pipeline.
 
+The frontend date/time audit follows consumers beyond barrel re-exports.
+Unused date-only/time-only wrappers, `isValidDate`, `nowISO`, locale-info access
+and the exact/seconds duration formatters were removed with only their own tests.
+In particular, the deleted seconds formatter duplicated the live
+`utils/breakglassSession.formatDurationSeconds`; that consumer is unchanged.
+Live date formatting still uses native `Date` and `Intl`/`toLocaleString`, and
+verbose duration text still uses the installed `humanize-duration` package.
+Compact relative-time strings and five-minute cosmetic rounding remain local
+because substituting upstream defaults changes their user-visible output.
+No replacement dependency is needed for APIs with no callers. Keep tests of
+active parsing, rounding, end-time calculation and relative/date-time formatting,
+alongside the component and browser E2E suites.
+
 ### Platform characterization before shared-library adoption
 
 Run `make test-platform` for race-enabled tests of rate limiting, certificates,

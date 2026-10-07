@@ -8,10 +8,7 @@ export { usePendingRequests } from "./usePendingRequests";
 // Duration utilities
 export {
   parseDurationString,
-  formatDuration,
   formatDurationRounded,
-  formatDurationFromSeconds,
-  formatDurationFromSecondsRounded,
   formatRoundedSeconds,
   computeEndTime,
   formatEndTime,
@@ -35,17 +32,7 @@ export {
 } from "./useUrgency";
 
 // Date formatting utilities
-export {
-  formatDateTime,
-  formatDateOnly,
-  formatTimeOnly,
-  formatTimeCompact,
-  formatWithTimezone,
-  formatRelativeTime,
-  isValidDate,
-  nowISO,
-  type DateValue,
-} from "./useDateFormatting";
+export { formatDateTime, formatRelativeTime, type DateValue } from "./useDateFormatting";
 
 // Session list management
 export {
