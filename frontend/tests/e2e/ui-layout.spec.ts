@@ -69,6 +69,28 @@ test("layout audit reports a control clipped by a fixed overflow-hidden panel", 
   expect(problems.some((p) => p.includes("clipped by div"))).toBe(true);
 });
 
+test("layout audit only reports clipping on axes that do not allow visible overflow", async ({ page }) => {
+  await page.setViewportSize(AUDIT_VIEWPORTS.desktop);
+  await page.setContent(`
+    <div style="margin: 100px; width: 300px; height: 20px; overflow-x: clip; overflow-y: visible">
+      <button style="height: 60px">Taller than clip-x box</button>
+    </div>
+    <div style="margin: 100px; width: 100px; height: 200px; overflow-x: visible; overflow-y: clip">
+      <button style="width: 160px">Wider than clip-y box</button>
+    </div>`);
+  expect(await findLayoutProblems(page)).toEqual([]);
+
+  await page.setContent(`
+    <div style="margin: 100px; width: 100px; height: 200px; overflow-x: clip; overflow-y: visible">
+      <button style="width: 160px">Cut off horizontally</button>
+    </div>
+    <div style="margin: 100px; width: 300px; height: 20px; overflow-x: visible; overflow-y: clip">
+      <button style="height: 60px">Cut off vertically</button>
+    </div>`);
+  const problems = await findLayoutProblems(page);
+  expect(problems.filter((p) => p.includes("clipped by div"))).toHaveLength(2);
+});
+
 for (const [viewportName, viewport] of Object.entries(AUDIT_VIEWPORTS)) {
   test.describe(`UI layout and controls [${viewportName}]`, () => {
     test.beforeEach(async ({ page }) => {

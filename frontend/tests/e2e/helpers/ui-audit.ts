@@ -183,10 +183,10 @@ export async function findLayoutProblems(page: Page, scopeSelector = "body"): Pr
           continue;
         }
         const a = anc.getBoundingClientRect();
-        // Each axis is judged separately: overflow on an axis is fine only if the
-        // container scrolls on that axis and the control fits its size there.
-        const outX = rect.left < a.left - 1 || rect.right > a.right + 1;
-        const outY = rect.top < a.top - 1 || rect.bottom > a.bottom + 1;
+        // Each axis is judged separately: overflow on an axis is fine if that axis
+        // is visible, or if the container scrolls there and the control fits.
+        const outX = style.overflowX !== "visible" && (rect.left < a.left - 1 || rect.right > a.right + 1);
+        const outY = style.overflowY !== "visible" && (rect.top < a.top - 1 || rect.bottom > a.bottom + 1);
         const scrollsX =
           ["auto", "scroll"].includes(style.overflowX) && anc.scrollWidth > anc.clientWidth && rect.width <= a.width;
         const scrollsY =
