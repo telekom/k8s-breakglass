@@ -423,9 +423,9 @@ onUnmounted(() => {
         </div>
       </scale-notification>
 
-      <div class="action-buttons">
+      <div class="action-buttons ui-actions ui-actions--center">
         <scale-button variant="primary" @click="() => $router.push('/')">
-          <scale-icon-home-home slot="icon-before"></scale-icon-home-home>
+          <scale-icon-home-home size="20" decorative></scale-icon-home-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="() => $router.push('/approvals/pending')">
@@ -516,11 +516,7 @@ onUnmounted(() => {
 }
 
 .action-buttons {
-  display: flex;
-  gap: var(--space-lg);
-  justify-content: center;
   margin-top: var(--space-2xl);
-  flex-wrap: wrap;
 }
 
 .approval-container {

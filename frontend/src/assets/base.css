@@ -828,6 +828,14 @@ scale-tooltip:not([opened])::part(tooltip) {
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
+/* Scale gives a button's icon a vertical margin equal to the icon gap, which
+   makes small buttons with an icon taller than small text buttons (36px vs
+   32px). Document styles override ::slotted, so icons keep only their
+   horizontal spacing; the button's min-height still sets its height. */
+scale-button > * {
+  margin-block: 0;
+}
+
 /* Scale's own --min-width/--width hooks size the inner button, so labels stay
    centred instead of floating inside a wider host element. Dialog and form
    footers get a minimum width; card rows keep natural widths so they fit. */

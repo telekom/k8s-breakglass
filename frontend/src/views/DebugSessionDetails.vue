@@ -515,7 +515,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   <div class="ui-page debug-session-details" data-testid="debug-session-details">
     <div class="back-link">
       <scale-button variant="secondary" size="small" data-testid="back-to-sessions-button" @click="goBack">
-        <scale-icon-navigation-left slot="icon"></scale-icon-navigation-left>
+        <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
         Back to Sessions
       </scale-button>
     </div>

@@ -273,7 +273,7 @@ function onStateToggle(state: string, event: Event) {
         </scale-tooltip>
 
         <scale-button variant="primary" data-testid="create-debug-session-button" @click="navigateToCreate">
-          <scale-icon-action-add slot="icon"></scale-icon-action-add>
+          <scale-icon-action-add size="20" decorative></scale-icon-action-add>
           New Session
         </scale-button>
       </div>

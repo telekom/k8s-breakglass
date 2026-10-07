@@ -828,7 +828,7 @@ function handleTemplateChange(ev: Event) {
         <span class="summary-label">Template:</span>
         <span class="summary-value">{{ selectedTemplate?.displayName || form.templateRef }}</span>
         <scale-button variant="secondary" size="small" @click="goBackToStep1">
-          <scale-icon-navigation-left slot="icon" size="16"></scale-icon-navigation-left>
+          <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
           Change
         </scale-button>
       </div>
@@ -898,7 +898,7 @@ function handleTemplateChange(ev: Event) {
 
       <div class="modal-actions">
         <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1">
-          <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
+          <scale-icon-navigation-left size="20" decorative></scale-icon-navigation-left>
           Back
         </scale-button>
         <DisabledReason
@@ -910,7 +910,7 @@ function handleTemplateChange(ev: Event) {
             data-testid="create-session-button"
             @click="handleSubmit"
           >
-            <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
+            <scale-loading-spinner v-if="submitting" size="small"></scale-loading-spinner>
             {{ submitting ? "Creating..." : "Create Session" }}
           </scale-button>
         </DisabledReason>
