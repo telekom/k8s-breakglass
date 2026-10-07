@@ -458,7 +458,7 @@ extraDeployVariables:
     inputType: boolean
     allowedGroups:  # Only these groups can set this variable
       - platform_poweruser
-      - schiff-admin
+      - infrastructure-admin
 ```
 
 Users not in allowed groups will receive a `403 Forbidden` error when trying to use this variable.
@@ -477,7 +477,7 @@ extraDeployVariables:
       - value: "privileged"
         displayName: "Privileged Access"
         allowedGroups:  # Only available to admins
-          - schiff-admin
+          - infrastructure-admin
           - platform_emergency
 ```
 

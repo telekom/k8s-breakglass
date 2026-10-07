@@ -1,4 +1,4 @@
-{"version":3,"term":{"cols":110,"rows":34},"timestamp":1786963587,"idle_time_limit":3.0,"command":"/Users/A92615428/git/GitHub/telekom/k8s-breakglass/e2e/record-breakglass-cli-demo.sh --play","title":"Breakglass CLI user journey","env":{"SHELL":"/bin/zsh"}}
+{"version":3,"term":{"cols":110,"rows":34},"timestamp":1786963587,"idle_time_limit":3.0,"command":"./e2e/record-breakglass-cli-demo.sh --play","title":"Breakglass CLI user journey","env":{"SHELL":"/bin/zsh"}}
 [0.312, "o", "Breakglass CLI user journey\r\nCLI: bgctl | API: http://localhost:8080 | Cluster: breakglass-hub\r\nCredentials are held in memory and are not printed.\r\n"]
 [2.006, "o", "\r\n1. CLI rejects an unauthorized escalation request\r\nWhat this proves: The API refuses a group that this requester is not allowed to request.\r\n"]
 [2.005, "o", "$ bgctl session request --cluster breakglass-hub --group cluster-admin-access\r\n"]

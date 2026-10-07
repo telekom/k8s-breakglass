@@ -154,7 +154,7 @@ the removed `pkg/utils` retry helpers or generic status/typed-object apply shims
 Keep call-site and real-API ownership/concurrency tests, not duplicate tests of
 shared-library aliases. See [post-adoption cleanup](docs/development-simplification.md#post-adoption-ssa-cleanup).
 
-## Standalone cluster-validator image (TCAAS-1619)
+## Standalone cluster-validator image
 
 The provider-neutral validator is intentionally isolated in `pkg/clustervalidator`
 and `cmd/cluster-validator`; its canonical image definition is

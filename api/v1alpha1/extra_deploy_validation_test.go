@@ -843,7 +843,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 					Options: []SelectOption{
 						{Value: "development"},
 						{Value: "staging"},
-						{Value: "production", AllowedGroups: []string{"platform_poweruser", "schiff-admin"}},
+						{Value: "production", AllowedGroups: []string{"platform_poweruser", "infrastructure-admin"}},
 					},
 				},
 			},
@@ -858,7 +858,7 @@ func TestValidateExtraDeployValuesWithGroups(t *testing.T) {
 				{
 					Name:          "hostNetwork",
 					InputType:     InputTypeBoolean,
-					AllowedGroups: []string{"platform_poweruser", "schiff-admin"},
+					AllowedGroups: []string{"platform_poweruser", "infrastructure-admin"},
 				},
 			},
 			userGroups: []string{"platform_collaborator"},

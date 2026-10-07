@@ -104,7 +104,7 @@ type SenderConfig struct {
 	Address string `json:"address"`
 
 	// Name is the display name used in the From header
-	// Example: "Platform Breakglass", "Das SCHIFF Breakglass"
+	// Example: "Platform Breakglass", "Example Breakglass"
 	// +optional
 	// +kubebuilder:validation:MaxLength=100
 	Name string `json:"name,omitempty"`

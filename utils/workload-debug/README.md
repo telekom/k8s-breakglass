@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Workload-debug image
 
-This is the restricted generic diagnostics image for TCAAS-1617. It is
+This is the restricted generic workload diagnostics image. It is
 standalone: it works in a Breakglass `DebugSession`, a Docker or Podman
 container, and a Kubernetes Pod without relying on controller metadata.
 

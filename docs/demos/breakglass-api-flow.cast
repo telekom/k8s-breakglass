@@ -1,4 +1,4 @@
-{"version":3,"term":{"cols":110,"rows":34},"timestamp":1786963537,"idle_time_limit":3.0,"command":"/Users/A92615428/git/GitHub/telekom/k8s-breakglass/e2e/record-breakglass-demo.sh --play","title":"Breakglass user journey: deny, approve, API access, DebugSession","env":{"SHELL":"/bin/zsh"}}
+{"version":3,"term":{"cols":110,"rows":34},"timestamp":1786963537,"idle_time_limit":3.0,"command":"./e2e/record-breakglass-demo.sh --play","title":"Breakglass user journey: deny, approve, API access, DebugSession","env":{"SHELL":"/bin/zsh"}}
 [0.309, "o", "Breakglass user journey\r\nE2E cluster: tenant-a | API: http://localhost:8080\r\nCredentials are held in memory and are not printed.\r\n"]
 [2.008, "o", "\r\n1. A protected request is denied before approval\r\nWhat this proves: The authorization webhook fails closed until the requester has an approved session.\r\n"]
 [2.008, "o", "$ POST /api/breakglass/webhook/authorize/tenant-a (get configmaps)\r\n"]

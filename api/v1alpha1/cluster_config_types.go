@@ -434,7 +434,7 @@ type ClusterConfigSpec struct {
 	// +optional
 	BlockSelfApproval bool `json:"blockSelfApproval,omitempty"`
 
-	// allowedApproverDomains restricts approvers to users whose email matches one of the listed domains (e.g. ["telekom.de", "t-systems.com"])
+	// allowedApproverDomains restricts approvers to users whose email matches one of the listed domains (e.g. ["example.com", "example.org"])
 	// If set, an approver must have an email address ending with one of these domains.
 	// +optional
 	AllowedApproverDomains []string `json:"allowedApproverDomains,omitempty"`

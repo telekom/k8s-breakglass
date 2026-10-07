@@ -24,14 +24,14 @@ type MockProfile = {
 const DEFAULT_MOCK_PROFILE: MockProfile = {
   email: "mock.ops@breakglass.dev",
   displayName: "Mock Platform Engineer",
-  groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
+  groups: ["platform-emergency", "platform-oncall", "prod-approvers"],
 };
 
 const MOCK_IDP_PROFILES: Record<string, MockProfile> = {
   "production-keycloak": {
     email: "mock.user@breakglass.dev",
     displayName: "Production Keycloak (Mock)",
-    groups: ["dtcaas-platform_emergency", "platform-oncall", "prod-approvers"],
+    groups: ["platform-emergency", "platform-oncall", "prod-approvers"],
   },
   "partners-azuread": {
     email: "contractor@partner.example.com",

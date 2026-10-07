@@ -61,7 +61,7 @@ spec:
   # Optional: Approved domains for session approvers
   allowedApproverDomains:
     - example.com
-    - telekom.de
+    - example.org
   
   # Optional: QPS and burst settings for API server requests
   qps: 50

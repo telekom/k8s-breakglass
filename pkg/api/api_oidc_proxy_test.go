@@ -592,22 +592,22 @@ func TestOIDCProxyLocalhostBinding(t *testing.T) {
 }
 
 // TestOIDCProxyMultiIDPWithRealmPath tests that X-OIDC-Authority with realm path is correctly resolved
-// This covers the scenario where frontend sends: X-OIDC-Authority: https://keycloak.das-schiff.telekom.de/auth/realms/schiff
+// This covers the scenario where frontend sends: X-OIDC-Authority: https://keycloak.example.com/auth/realms/platform
 // and we need to correctly resolve /.well-known/openid-configuration to:
-// https://keycloak.das-schiff.telekom.de/auth/realms/schiff/.well-known/openid-configuration
+// https://keycloak.example.com/auth/realms/platform/.well-known/openid-configuration
 func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 	logger := zaptest.NewLogger(t)
 
 	// Create a mock Keycloak server that expects the full realm path
 	mockKeycloak := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// The request should come in with the full realm path
-		expectedPath := "/auth/realms/schiff/.well-known/openid-configuration"
+		expectedPath := "/auth/realms/platform/.well-known/openid-configuration"
 		if r.URL.Path == expectedPath {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = fmt.Fprintf(w, `{
-				"issuer":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
-				"authorization_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/auth",
-				"token_endpoint":"https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/token"
+				"issuer":"https://keycloak.example.com/auth/realms/platform",
+				"authorization_endpoint":"https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/auth",
+				"token_endpoint":"https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/token"
 			}`)
 			return
 		}
@@ -623,7 +623,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 	defer mockKeycloak.Close()
 
 	// Set up a server with authority that includes realm path
-	authorityWithRealm, err := url.Parse(mockKeycloak.URL + "/auth/realms/schiff")
+	authorityWithRealm, err := url.Parse(mockKeycloak.URL + "/auth/realms/platform")
 	require.NoError(t, err)
 
 	cfg := config.Config{
@@ -643,7 +643,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 		log:           logger,
 		auth:          auth,
 		idpConfig: &config.IdentityProviderConfig{
-			Authority: mockKeycloak.URL + "/auth/realms/schiff",
+			Authority: mockKeycloak.URL + "/auth/realms/platform",
 		},
 	}
 
@@ -659,7 +659,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 			proxyPath:           "/.well-known/openid-configuration",
 			expectedStatus:      http.StatusOK,
 			shouldContainIssuer: true,
-			description:         "When oidcAuthority includes /auth/realms/schiff, the proxy request should go to /auth/realms/schiff/.well-known/openid-configuration",
+			description:         "When oidcAuthority includes /auth/realms/platform, the proxy request should go to /auth/realms/platform/.well-known/openid-configuration",
 		},
 	}
 
@@ -680,7 +680,7 @@ func TestOIDCProxyMultiIDPWithRealmPath(t *testing.T) {
 
 			if tt.shouldContainIssuer {
 				bodyStr := w.Body.String()
-				assert.Contains(t, bodyStr, "das-schiff.telekom.de/auth/realms/schiff",
+				assert.Contains(t, bodyStr, "keycloak.example.com/auth/realms/platform",
 					"response should contain the issuer with realm path, got: %s", bodyStr)
 			}
 		})

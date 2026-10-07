@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Debug session catalogue interface report
 
-This report records the file and value interfaces introduced by TCAAS-1620 so
+This report records the debug-session catalogue's file and value interfaces so
 the catalogue can be coordinated with image, controller, and release work.
 
 ## Resources

@@ -923,7 +923,7 @@ spec:
   cluster: prod-cluster-01
   templateRef: storage-test-advanced
   reason: "Customer XYZ onboarding - storage performance validation"
-  requestedBy: user@telekom.de
+  requestedBy: user@example.com
   validFor: 2h
 
   # User-provided values

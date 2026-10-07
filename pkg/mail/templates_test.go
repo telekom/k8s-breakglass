@@ -12,7 +12,7 @@ func TestRenderRequest(t *testing.T) {
 		SubjectEmail:    "john.doe@example.com",
 		RequestedRole:   "admin",
 		URL:             "https://example.com/approve",
-		BrandingName:    "Das SCHIFF Breakglass",
+		BrandingName:    "Platform Breakglass",
 	}
 
 	result, err := RenderRequest(params)
@@ -32,7 +32,7 @@ func TestRenderApproved(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 	}
 
 	result, err := RenderApproved(params)
@@ -53,7 +53,7 @@ func TestRenderRejected(t *testing.T) {
 		RequestedRole:    "admin",
 		RejectorFullName: "Jane Smith",
 		RejectorEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		RejectedAt:       "2025-11-18 10:30:00",
 		RejectionReason:  "Insufficient justification provided",
 		SessionID:        "rejected-session-123",
@@ -86,7 +86,7 @@ func TestRenderRejectedWithoutReason(t *testing.T) {
 		RequestedRole:    "admin",
 		RejectorFullName: "Jane Smith",
 		RejectorEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		RejectedAt:       "2025-11-18 10:30:00",
 		RejectionReason:  "", // No reason provided
 		SessionID:        "rejected-session-456",
@@ -110,7 +110,7 @@ func TestRenderApprovedWithCompleteInfo(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -152,7 +152,7 @@ func TestRenderApprovedScheduled(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 14:00:00", // Future activation
 		ExpirationTime:   "2025-11-18 16:00:00",
@@ -181,7 +181,7 @@ func TestRenderApprovedImmediate(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00", // Immediate activation
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -207,7 +207,7 @@ func TestRenderBreakglassSessionRequest(t *testing.T) {
 		RequestedUsername: "testuser",
 		RequestedGroup:    "admin",
 		URL:               "https://example.com/session",
-		BrandingName:      "Das SCHIFF Breakglass",
+		BrandingName:      "Platform Breakglass",
 	}
 
 	result, err := RenderBreakglassSessionRequest(params)
@@ -230,7 +230,7 @@ func TestRenderBreakglassSessionNotification(t *testing.T) {
 		RequestedUsername: "testuser",
 		RequestedGroup:    "admin",
 		URL:               "https://example.com/session",
-		BrandingName:      "Das SCHIFF Breakglass",
+		BrandingName:      "Platform Breakglass",
 	}
 
 	result, err := RenderBreakglassSessionNotification(params)
@@ -364,7 +364,7 @@ func TestApprovedEmailAuditAndCompliance(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -392,7 +392,7 @@ func TestApprovedEmailDisclaimers(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -422,7 +422,7 @@ func TestApprovedEmailSessionTracking(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -452,7 +452,7 @@ func TestApprovedEmailApproverInfo(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -498,7 +498,7 @@ func TestApprovedEmailSchedulingHandling(t *testing.T) {
 				RequestedRole:    "admin",
 				ApproverFullName: "Jane Smith",
 				ApproverEmail:    "jane.smith@example.com",
-				BrandingName:     "Das SCHIFF Breakglass",
+				BrandingName:     "Platform Breakglass",
 				ApprovedAt:       "2025-11-18 10:30:00",
 				ActivationTime:   "2025-11-18 10:30:00",
 				ExpirationTime:   "2025-11-18 12:30:00",
@@ -523,7 +523,7 @@ func TestApprovedEmailWithIDPInfo(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -552,7 +552,7 @@ func TestApprovedEmailWithoutIDPInfo(t *testing.T) {
 		RequestedRole:    "admin",
 		ApproverFullName: "Jane Smith",
 		ApproverEmail:    "jane.smith@example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 		ApprovedAt:       "2025-11-18 10:30:00",
 		ActivationTime:   "2025-11-18 10:30:00",
 		ExpirationTime:   "2025-11-18 12:30:00",
@@ -583,7 +583,7 @@ func TestRenderDebugSessionRequest(t *testing.T) {
 		Namespace:         "production",
 		RequestedDuration: "2 hours",
 		Reason:            "Investigate memory leak in production pods",
-		BrandingName:      "Das SCHIFF Breakglass",
+		BrandingName:      "Platform Breakglass",
 		URL:               "https://example.com/approve/debug-session-123",
 	}
 
@@ -617,7 +617,7 @@ func TestRenderDebugSessionApproved(t *testing.T) {
 		ApprovedAt:     "2025-11-18 10:30:00",
 		Duration:       "2 hours",
 		ExpiresAt:      "2025-11-18 12:30:00",
-		BrandingName:   "Das SCHIFF Breakglass",
+		BrandingName:   "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionApproved(params)
@@ -650,7 +650,7 @@ func TestRenderDebugSessionRejected(t *testing.T) {
 		RejectorEmail:   "jane.smith@example.com",
 		RejectedAt:      "2025-11-18 10:30:00",
 		RejectionReason: "Insufficient justification for debug access",
-		BrandingName:    "Das SCHIFF Breakglass",
+		BrandingName:    "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionRejected(params)
@@ -683,7 +683,7 @@ func TestRenderDebugSessionRejectedWithoutReason(t *testing.T) {
 		RejectorEmail:   "jane.smith@example.com",
 		RejectedAt:      "2025-11-18 10:30:00",
 		RejectionReason: "", // No reason provided
-		BrandingName:    "Das SCHIFF Breakglass",
+		BrandingName:    "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionRejected(params)
@@ -707,7 +707,7 @@ func TestRenderSessionExpired(t *testing.T) {
 		StartedAt:        "2025-11-18 10:30:00 UTC",
 		ExpiredAt:        "2025-11-18 12:30:00 UTC",
 		ExpirationReason: "Session validity period has ended",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 	}
 
 	result, err := RenderSessionExpired(params)
@@ -733,7 +733,7 @@ func TestRenderSessionExpiredWithApprovalTimeout(t *testing.T) {
 		StartedAt:        "",
 		ExpiredAt:        "2025-11-18 10:30:00 UTC",
 		ExpirationReason: "Session approval timed out before being approved",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 	}
 
 	result, err := RenderSessionExpired(params)
@@ -758,7 +758,7 @@ func TestRenderSessionActivated(t *testing.T) {
 		ApproverEmail:    "jane.smith@example.com",
 		IDPName:          "corporate-idp",
 		IDPIssuer:        "https://idp.example.com",
-		BrandingName:     "Das SCHIFF Breakglass",
+		BrandingName:     "Platform Breakglass",
 	}
 
 	result, err := RenderSessionActivated(params)
@@ -785,7 +785,7 @@ func TestRenderSessionActivatedWithIDP(t *testing.T) {
 		ExpirationTime: "2025-11-18 12:30:00 UTC",
 		IDPName:        "enterprise-sso",
 		IDPIssuer:      "https://sso.enterprise.com",
-		BrandingName:   "Das SCHIFF Breakglass",
+		BrandingName:   "Platform Breakglass",
 	}
 
 	result, err := RenderSessionActivated(params)
@@ -807,7 +807,7 @@ func TestRenderDebugSessionExpired(t *testing.T) {
 		StartedAt:      "2025-11-18 10:00:00 UTC",
 		ExpiredAt:      "2025-11-18 12:00:00 UTC",
 		Duration:       "2h0m0s",
-		BrandingName:   "Das SCHIFF Breakglass",
+		BrandingName:   "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionExpired(params)
@@ -835,7 +835,7 @@ func TestRenderDebugSessionExpiredWithoutDuration(t *testing.T) {
 		Namespace:      "production",
 		ExpiredAt:      "2025-11-18 12:00:00 UTC",
 		Duration:       "", // Duration not available
-		BrandingName:   "Das SCHIFF Breakglass",
+		BrandingName:   "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionExpired(params)
@@ -859,7 +859,7 @@ func TestRenderDebugSessionCreated(t *testing.T) {
 		RequestedAt:       "2025-01-15 10:30:00 UTC",
 		RequiresApproval:  true,
 		URL:               "https://breakglass.example.com/sessions/debug-session-789",
-		BrandingName:      "Das SCHIFF Breakglass",
+		BrandingName:      "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionCreated(params)
@@ -908,7 +908,7 @@ func TestRenderDebugSessionFailed(t *testing.T) {
 		FailedAt:       "2025-01-15 12:30:00 UTC",
 		FailureReason:  "Pod creation failed: quota exceeded",
 		URL:            "https://breakglass.example.com/sessions/debug-session-fail",
-		BrandingName:   "Das SCHIFF Breakglass",
+		BrandingName:   "Platform Breakglass",
 	}
 
 	result, err := RenderDebugSessionFailed(params)

@@ -579,6 +579,8 @@ jobs:
   artifactory:
     needs: [assemble]
     continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
+    env:
+      ARTIFACTORY_CONFIGURED: ${{ secrets.AF_REGISTRY != '' && secrets.AF_REPOSITORY != '' && secrets.AF_USER != '' && secrets.AF_TOKEN != '' }}
     permissions:
       packages: read
       id-token: write  # Required for cosign keyless signing/copy
@@ -595,9 +597,10 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - name: Tag and push image to Artifactory OCI
+        if: ${{ env.ARTIFACTORY_CONFIGURED == 'true' }}
         env:
-          ARTIFACTORY_URL: artifactory.devops.telekom.de
-          ARTIFACTORY_REPO: cit-t-caas-oci/images/t-caas
+          ARTIFACTORY_URL: ${{ secrets.AF_REGISTRY }}
+          ARTIFACTORY_REPO: ${{ secrets.AF_REPOSITORY }}
           REGISTRY: ${{ env.REGISTRY }}
           IMAGE_NAME: ${{ env.IMAGE_NAME }}
         run: |
@@ -608,6 +611,7 @@ jobs:
 
           # Diagnose Artifactory repo accessibility
           REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
+          echo "::add-mask::${REPO_KEY}"
           echo "Checking Artifactory storage API for repo key: ${REPO_KEY}"
           HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
           echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"

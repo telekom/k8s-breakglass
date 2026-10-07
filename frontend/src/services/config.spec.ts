@@ -30,10 +30,10 @@ describe("Config service", () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
-      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "platform" },
     } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
-      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcAuthority: "https://keycloak.example.com/realms/platform",
       oidcClientID: "ui",
     });
 
@@ -53,7 +53,7 @@ describe("Config service", () => {
 
     const config = await getConfig();
 
-    expect(config.oidcAuthority).toBe("https://keycloak.example.com/realms/schiff");
+    expect(config.oidcAuthority).toBe("https://keycloak.example.com/realms/platform");
     expect(config.oidcClientID).toBe("ui");
     expect(config.brandingName).toBe("Breakglass Dev Preview");
     expect(config.uiFlavour).toBe("telekom");
@@ -64,10 +64,10 @@ describe("Config service", () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
-      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "platform" },
     } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
-      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcAuthority: "https://keycloak.example.com/realms/platform",
       oidcClientID: "ui",
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { brandingName: "Breakglass", uiFlavour: "telekom" } } });
@@ -88,10 +88,10 @@ describe("Config service", () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
-      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "platform" },
     } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
-      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcAuthority: "https://keycloak.example.com/realms/platform",
       oidcClientID: "ui",
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { brandingName: "Breakglass", uiFlavour: "telekom" } } });
@@ -111,10 +111,10 @@ describe("Config service", () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
-      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "platform" },
     } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
-      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcAuthority: "https://keycloak.example.com/realms/platform",
       oidcClientID: "ui",
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });
@@ -135,10 +135,10 @@ describe("Config service", () => {
     mockedGetIdentityProvider.mockResolvedValue({
       type: "Keycloak",
       clientID: "ui",
-      keycloak: { baseURL: "https://keycloak.example.com", realm: "schiff" },
+      keycloak: { baseURL: "https://keycloak.example.com", realm: "platform" },
     } as IdentityProviderConfig);
     mockedExtractOIDC.mockReturnValue({
-      oidcAuthority: "https://keycloak.example.com/realms/schiff",
+      oidcAuthority: "https://keycloak.example.com/realms/platform",
       oidcClientID: "ui",
     });
     mockedAxios.get.mockResolvedValue({ data: { frontend: { uiFlavour: "telekom" } } });

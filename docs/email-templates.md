@@ -127,7 +127,7 @@ Create your custom email template with HTML content. Use Go template syntax for 
         </div>
         
         <div class="footer">
-            <p>&copy; 2024 Das SCHIFF Breakglass System</p>
+            <p>&copy; 2024 Example Breakglass System</p>
         </div>
     </div>
 </body>
@@ -485,7 +485,7 @@ BREAKGLASS_LOG_LEVEL=debug kubectl logs -n breakglass-system <pod-name>
         </div>
         
         <div class="footer">
-            <p>Das SCHIFF Breakglass System</p>
+            <p>Example Breakglass System</p>
             <p style="margin-top: 8px;">© 2024 Deutsche Telekom. All rights reserved.</p>
         </div>
     </div>

@@ -47,9 +47,9 @@ server:
 frontend:
   baseURL: http://localhost:5173
   # Optional: brandingName controls the product name shown in the UI header and
-  # page title. Example: "Das SCHIFF Breakglass". If omitted, the frontend will
+  # page title. Example: "Platform Breakglass". If omitted, the frontend will
   # display a neutral placeholder title.
-  # brandingName: "Das SCHIFF Breakglass"
+  # brandingName: "Platform Breakglass"
   # Optional: uiFlavour controls the UI theme/appearance at runtime.
   # Supported values: "oss" (default, neutral), "telekom" (branded), or "neutral".
   # This allows the UI look-and-feel to be configured server-side without requiring a rebuild.

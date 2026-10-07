@@ -19,14 +19,14 @@ func TestKeycloakJWKSEndpointConstruction(t *testing.T) {
 			name: "Keycloak IDP - uses Keycloak-specific endpoint",
 			idpConfig: &config.IdentityProviderConfig{
 				Name:      "production-keycloak",
-				Issuer:    "https://keycloak.example.com/auth/realms/schiff",
-				Authority: "https://keycloak.example.com/auth/realms/schiff",
+				Issuer:    "https://keycloak.example.com/auth/realms/platform",
+				Authority: "https://keycloak.example.com/auth/realms/platform",
 				Keycloak: &config.KeycloakRuntimeConfig{
 					BaseURL: "https://keycloak.example.com/auth",
-					Realm:   "schiff",
+					Realm:   "platform",
 				},
 			},
-			expectedURL: "https://keycloak.example.com/auth/realms/schiff/protocol/openid-connect/certs",
+			expectedURL: "https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/certs",
 			description: "Keycloak endpoint should be {baseURL}/realms/{realm}/protocol/openid-connect/certs",
 		},
 		{
@@ -99,11 +99,11 @@ func TestGetJWKSForIssuerUsesCorrectEndpoint(t *testing.T) {
 		// This tests the URL construction logic without hitting the network
 		idpConfig := &config.IdentityProviderConfig{
 			Name:      "production-keycloak",
-			Issuer:    "https://keycloak.example.com/auth/realms/schiff",
-			Authority: "https://keycloak.example.com/auth/realms/schiff",
+			Issuer:    "https://keycloak.example.com/auth/realms/platform",
+			Authority: "https://keycloak.example.com/auth/realms/platform",
 			Keycloak: &config.KeycloakRuntimeConfig{
 				BaseURL: "https://keycloak.example.com/auth",
-				Realm:   "schiff",
+				Realm:   "platform",
 			},
 		}
 
@@ -118,7 +118,7 @@ func TestGetJWKSForIssuerUsesCorrectEndpoint(t *testing.T) {
 			jwksURL = baseURL + "/realms/" + idpConfig.Keycloak.Realm + "/protocol/openid-connect/certs"
 		}
 
-		expectedURL := "https://keycloak.example.com/auth/realms/schiff/protocol/openid-connect/certs"
+		expectedURL := "https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/certs"
 		assert.Equal(t, expectedURL, jwksURL)
 		t.Logf("✅ Keycloak JWKS URL constructed correctly: %s", jwksURL)
 	})
@@ -164,14 +164,14 @@ func TestMultiIDPJWKSEndpointResolution(t *testing.T) {
 			shouldUseKeycloak: true,
 			idpConfig: &config.IdentityProviderConfig{
 				Name:      "reference-keycloak",
-				Issuer:    "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff",
-				Authority: "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff",
+				Issuer:    "https://keycloak.reference.example.com/auth/realms/platform",
+				Authority: "https://keycloak.reference.example.com/auth/realms/platform",
 				Keycloak: &config.KeycloakRuntimeConfig{
-					BaseURL: "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth",
-					Realm:   "schiff",
+					BaseURL: "https://keycloak.reference.example.com/auth",
+					Realm:   "platform",
 				},
 			},
-			expectedURLPattern: "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/certs",
+			expectedURLPattern: "https://keycloak.reference.example.com/auth/realms/platform/protocol/openid-connect/certs",
 		},
 		{
 			name:              "Production Keycloak",
@@ -179,14 +179,14 @@ func TestMultiIDPJWKSEndpointResolution(t *testing.T) {
 			shouldUseKeycloak: true,
 			idpConfig: &config.IdentityProviderConfig{
 				Name:      "production-keycloak",
-				Issuer:    "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
-				Authority: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff",
+				Issuer:    "https://keycloak.example.com/auth/realms/platform",
+				Authority: "https://keycloak.example.com/auth/realms/platform",
 				Keycloak: &config.KeycloakRuntimeConfig{
-					BaseURL: "https://keycloak.das-schiff.telekom.de/auth",
-					Realm:   "schiff",
+					BaseURL: "https://keycloak.example.com/auth",
+					Realm:   "platform",
 				},
 			},
-			expectedURLPattern: "https://keycloak.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/certs",
+			expectedURLPattern: "https://keycloak.example.com/auth/realms/platform/protocol/openid-connect/certs",
 		},
 		{
 			name:              "Generic OIDC Provider",
@@ -234,14 +234,14 @@ func TestIncorrectJWKSEndpointDetection(t *testing.T) {
 	// This test demonstrates what the OLD code was doing (incorrectly)
 	// and verifies the NEW code does it correctly
 
-	keycloakAuthority := "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff"
-	keycloakBaseURL := "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth"
-	keycloakRealm := "schiff"
+	keycloakAuthority := "https://keycloak.reference.example.com/auth/realms/platform"
+	keycloakBaseURL := "https://keycloak.reference.example.com/auth"
+	keycloakRealm := "platform"
 
 	t.Run("OLD_APPROACH_WRONG", func(t *testing.T) {
 		// The OLD code was doing this (WRONG):
 		oldJwksURL := keycloakAuthority + "/.well-known/jwks.json"
-		expectedOldURL := "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff/.well-known/jwks.json"
+		expectedOldURL := "https://keycloak.reference.example.com/auth/realms/platform/.well-known/jwks.json"
 		assert.Equal(t, expectedOldURL, oldJwksURL)
 		t.Logf("❌ OLD (Wrong): %s", oldJwksURL)
 	})
@@ -249,7 +249,7 @@ func TestIncorrectJWKSEndpointDetection(t *testing.T) {
 	t.Run("NEW_APPROACH_CORRECT", func(t *testing.T) {
 		// The NEW code does this (CORRECT):
 		newJwksURL := keycloakBaseURL + "/realms/" + keycloakRealm + "/protocol/openid-connect/certs"
-		expectedNewURL := "https://keycloak.reftmdc.bn.das-schiff.telekom.de/auth/realms/schiff/protocol/openid-connect/certs"
+		expectedNewURL := "https://keycloak.reference.example.com/auth/realms/platform/protocol/openid-connect/certs"
 		assert.Equal(t, expectedNewURL, newJwksURL)
 		t.Logf("✅ NEW (Correct): %s", newJwksURL)
 	})
