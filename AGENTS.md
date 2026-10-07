@@ -37,7 +37,7 @@ This project uses hierarchical `AGENTS.md` files to provide context-specific ins
 cmd/main.go                    Entry point (5 deployment patterns)
 api/v1alpha1/                  CRD types, webhooks, fuzz tests
 pkg/breakglass/                Session lifecycle, group checking, identity
-  clusterconfig/               Cluster config checker & binding API
+  clusterconfig/               Cluster config readiness checker
   debug/                       Debug session API, reconciler, kubectl exec
   escalation/                  Escalation controller, manager, status updater
   eventrecorder/               Kubernetes event recorder wrapper

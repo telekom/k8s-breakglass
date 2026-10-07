@@ -157,6 +157,52 @@ in the view's confirmation/action flow, including busy state, error handling,
 and pruning the completed request. Vite handles the literal dynamic imports used
 by lazy routes and both UI flavours without an extra Rollup plugin.
 
+## Unregistered APIs and obsolete filtering
+
+The standalone `ClusterBindingAPIController` and its response DTOs were removed.
+Production deliberately never registered those routes: debug-session bindings
+are resolved through `GET /api/debugSessions/templates/:name/clusters`.
+Only the deleted controller's tests and benchmark constructed it. Its local
+`IsBindingActive` duplicate also had no consumers outside that controller.
+The live binding predicates, CRD reconciler, authorization and discovery paths
+are unchanged. `TestDebugSessionAPITemplateClusters`,
+`TestDebugSessionAPIClusterSelectorMatching` and
+`TestDebugSessionClusterBindingAuthorization` retain E2E coverage;
+`TestHandleGetTemplateClusters` exercises the live handler.
+
+The unused `EscalationFiltering` adapter was also removed with its two tests.
+Only those tests invoked its group-extractor-based filtering. Production uses
+the escalation controller and session controller's identity-aware authorization,
+not this legacy adapter. `TestEscalationAPIList`, `TestEscalationAPICombinedFilters`
+and `TestGroupBasedApproverCanApprove` still exercise the public API flows.
+No registered endpoint or supported CRD field was removed.
+
+The unused `MockKafkaBroker` fixture was removed as well: no test constructed it.
+It did not implement the Kafka protocol and supplied no live audit coverage.
+Kafka sink/manager tests and real Kafka delivery E2E tests remain unchanged.
+
+### Whole-repository follow-up boundaries
+
+The follow-up ranked tracked Go, TypeScript, Vue, shell and workflow files by
+size, analyzed Go reachability with tests and all E2E build tags, and checked
+frontend consumers beyond barrel exports. Generated API/schema code is not
+hand-edited to manufacture a LOC reduction.
+
+| Area | Replacement or reason to retain |
+| --- | --- |
+| `pkg/` and `cmd/` | Delete the unregistered binding controller and legacy filter; keep the actual controller wiring and identity-aware authorization. |
+| `api/` | Existing condition setters already use apimachinery. Keep CR-specific status builders and validation; they express domain policy, not generic library behavior. |
+| E2E Go helpers | Remove unreachable scaffolding; call Kubernetes pointer/quantity helpers directly. Keep actual workload predicates, authenticated API actions and scoped cleanup. |
+| Frontend | Delete unused date/duration APIs and duplicate formatters. Native `Date`/`Intl` and installed `humanize-duration` already cover general formatting; preserve compact relative-time and rounding output. |
+| Utility images | The downloader already uses stdlib HTTP/SHA-256, and the coredump copier uses `os.OpenRoot`. Retain redirect/digest bounds, fixed roots, symlink/identity checks, approval tuples and non-root/image contracts. Generic copy/exec replacements would lose safety policy. |
+| `hack/` | Retain UID-precondition deletion, release publication verification, provenance and digest/signature checks. Their tests protect executable security contracts, not merely formatting. |
+| Workflows and setup shell | The kind setups already share `e2e/lib/common.sh`; utility image jobs are driven by the shared image matrix. Further setup extraction needs shell behavioral coverage for image-load fallbacks, timeouts and cleanup. Repeated pinned setup-action calls alone do not justify another wrapper layer. |
+
+No additional cross-repository library helper is demonstrated by these
+removals. In particular, keep local last-known-good configuration reload,
+leader reacquisition, remote-client authorization freshness and SSA ownership
+policies rather than replacing them with incompatible upstream defaults.
+
 ## E2E helpers
 
 Resource builders assign optional scalars and pointers directly. Defaults,

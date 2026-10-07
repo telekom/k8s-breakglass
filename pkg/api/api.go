@@ -1430,9 +1430,6 @@ func Setup(sessionController *breakglass.BreakglassSessionController, escalation
 				apiControllers = append(apiControllers, controller)
 			}
 		}
-		// Note: ClusterBindingAPIController is NOT registered as a public API.
-		// Cluster bindings are internal resources aggregated through the unified
-		// template/clusters endpoint (GET /templates/:name/clusters).
 		log.Infow("API controllers enabled", "components", "BreakglassSession, BreakglassEscalation")
 	}
 

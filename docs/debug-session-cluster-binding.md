@@ -869,7 +869,7 @@ Understanding the difference between cluster name matching and `ClusterConfig` l
 | Prerequisite | ClusterConfig must exist and its name must be globally unique | ClusterConfig labels must match the selector; duplicate names remain ambiguous for API resolution |
 | Glob patterns | Not supported | Use label expressions |
 
-**Important:** `clusterSelector` membership is based on `ClusterConfig` labels. Readiness controls whether a matched cluster is offered and accepted as a debug target; it does not change selector semantics. Explicit `clusters` entries are resolved by `ClusterConfig` name across namespaces; duplicate names are ambiguous and prevent API resolution until the names are made unique. Debug session creation and the cluster-binding API return `409 Conflict` for a cluster lookup whose `ClusterConfig` name is duplicated.
+**Important:** `clusterSelector` membership is based on `ClusterConfig` labels. Readiness controls whether a matched cluster is offered and accepted as a debug target; it does not change selector semantics. Explicit `clusters` entries are resolved by `ClusterConfig` name across namespaces; duplicate names are ambiguous and prevent API resolution until the names are made unique. Debug session creation returns `409 Conflict` for a cluster lookup whose `ClusterConfig` name is duplicated. Template/clusters discovery omits ambiguous cluster targets; there is no standalone cluster-binding REST API.
 
 ### Configuration Merge Rules
 
