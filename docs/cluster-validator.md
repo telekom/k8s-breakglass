@@ -197,16 +197,16 @@ make docker-build-validator-multiarch \
 ```
 
 The local multi-architecture target writes `cluster-validator-multiarch.tar`
-as an OCI archive and does not push it. This repository currently includes no
-image-publication workflow and does not publish or sign a release image. A
-downstream deployment pipeline must build from the reviewed
-source, publish a digest-addressed manifest, attach BuildKit provenance and an
-SPDX SBOM, and sign the resulting digest before deployment. Verify the exact
-downstream digest with that pipeline's documented identity and issuer:
+as an OCI archive and does not push it. The repository's
+[release workflow](../.github/workflows/release.yml) publishes
+`ghcr.io/telekom/k8s-breakglass/utils/cluster-validator:<release-tag>` for both
+architectures, attaches BuildKit provenance, an SPDX SBOM and SLSA provenance
+attestations, and keylessly signs the immutable image digest. Verify that digest
+with the exact release workflow identity and issuer:
 
 ```bash
-cosign verify ghcr.io/example/cluster-validator@sha256:<64-hex-digest> \
-  --certificate-identity-regexp='<downstream-pipeline-identity>' \
+cosign verify ghcr.io/telekom/k8s-breakglass/utils/cluster-validator@sha256:<64-hex-digest> \
+  --certificate-identity='https://github.com/telekom/k8s-breakglass/.github/workflows/release.yml@refs/tags/<release-tag>' \
   --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```
 
