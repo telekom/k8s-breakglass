@@ -83,6 +83,10 @@ export default class BreakglassService {
           spec.escalated_group ||
           "") as string;
         const basePartial = {
+          escalationName: ((item.metadata as Record<string, unknown> | undefined)?.name || "") as string,
+          displayName: (spec.displayName ||
+            (item.metadata as Record<string, unknown> | undefined)?.name ||
+            "") as string,
           from: allowedGroups[0] || "",
           to: escalatedGroup,
           duration: parseDuration(spec.maxValidFor as string | undefined) || 3600,

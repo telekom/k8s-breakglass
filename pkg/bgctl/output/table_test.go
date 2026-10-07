@@ -154,6 +154,25 @@ func TestWriteEscalationTable(t *testing.T) {
 	assert.Contains(t, output, "security-team")
 }
 
+func TestWriteEscalationTable_DisplayName(t *testing.T) {
+	for _, displayName := range []string{"", "Production admin", "Admin\n\x1b[31maccess"} {
+		t.Run(displayName, func(t *testing.T) {
+			esc := breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "admin-a1b2c3d4"},
+				Spec:       breakglassv1alpha1.BreakglassEscalationSpec{DisplayName: displayName},
+			}
+			var buf bytes.Buffer
+			WriteEscalationTable(&buf, []breakglassv1alpha1.BreakglassEscalation{esc})
+			lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+			require.Len(t, lines, 2)
+			assert.Contains(t, lines[0], "DISPLAY_NAME")
+			assert.True(t, strings.HasPrefix(lines[1], esc.Name+" "), "keep the resource identifier in NAME")
+			assert.Contains(t, lines[1], SafeText(esc.GetDisplayName()))
+			assert.NotContains(t, lines[1], "\x1b")
+		})
+	}
+}
+
 func TestWriteDebugSessionTable(t *testing.T) {
 	now := time.Now()
 	startsAt := metav1.NewTime(now)

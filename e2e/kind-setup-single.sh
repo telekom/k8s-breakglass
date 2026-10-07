@@ -551,6 +551,7 @@ apply_e2e_test_crs() {
     "config/dev/resources/crs/deny-policies-test.yaml"
     "config/dev/resources/crs/escalations-test.yaml"
     "config/dev/resources/crs/ui-e2e-escalations.yaml"
+    "e2e/fixtures/escalations/display-name.yaml"
   )
   
   for cr_file in "${cr_files[@]}"; do
@@ -1742,6 +1743,8 @@ ESCALATION_NAMES=(
   "ui-e2e-reject-session-test"
   "ui-e2e-my-requests-test"
   "ui-e2e-pending-approvals-test"
+  "breakglass-ui-e2e-display-name-test"
+  "breakglass-ui-e2e-display-fallback-test"
 )
 escalation_failures=0
 for esc_name in "${ESCALATION_NAMES[@]}"; do

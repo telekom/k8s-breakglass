@@ -29,6 +29,52 @@ func decodeEscalationListEnvelope(t *testing.T, w *httptest.ResponseRecorder) []
 	return envelope.Items
 }
 
+func TestHandleGetEscalations_DisplayName(t *testing.T) {
+	for _, displayName := range []string{"", "Production admin access"} {
+		t.Run(displayName, func(t *testing.T) {
+			esc := &breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "admin-a1b2c3d4", Namespace: "default"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					DisplayName:    displayName,
+					Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"dev"}},
+					EscalatedGroup: "admin",
+				},
+			}
+			cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(esc).Build()
+			controller := &BreakglassEscalationController{
+				manager: &EscalationManager{Client: cli},
+				log:     zap.NewNop().Sugar(),
+				middleware: func(c *gin.Context) {
+					c.Set("email", "user@example.com")
+					c.Set("groups", []string{"dev"})
+					c.Next()
+				},
+				identityProvider: breakglass.NewKeycloakIdentityProvider(nil),
+			}
+			engine := gin.New()
+			if err := controller.Register(engine.Group("/"+controller.BasePath(), controller.Handlers()...)); err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			engine.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/breakglassEscalations", nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("unexpected status %d: %s", w.Code, w.Body)
+			}
+			items := decodeEscalationListEnvelope(t, w)
+			if len(items) != 1 || items[0].Name != esc.Name || items[0].Spec.DisplayName != esc.GetDisplayName() {
+				t.Fatalf("unexpected response: %s", w.Body)
+			}
+			var stored breakglassv1alpha1.BreakglassEscalation
+			if err := cli.Get(t.Context(), client.ObjectKeyFromObject(esc), &stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.Spec.DisplayName != displayName {
+				t.Fatal("response fallback must not modify the stored resource")
+			}
+		})
+	}
+}
+
 // TestHandleGetEscalations_ReturnsEscalationsForTokenGroups
 //
 // Purpose:

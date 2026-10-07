@@ -27,6 +27,7 @@ import (
 	"strings"
 	"text/template"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Masterminds/sprig/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -99,6 +100,10 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 	}
 
 	specPath := field.NewPath("spec")
+
+	if utf8.RuneCountInString(escalation.Spec.DisplayName) > 253 {
+		result.Errors = append(result.Errors, field.TooLong(specPath.Child("displayName"), escalation.Spec.DisplayName, 253))
+	}
 
 	// Validate required fields
 	if escalation.Spec.EscalatedGroup == "" {

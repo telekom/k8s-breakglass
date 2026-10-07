@@ -42,12 +42,12 @@ func WriteSessionTableWide(w io.Writer, sessions []breakglassv1alpha1.Breakglass
 
 func WriteEscalationTable(w io.Writer, escs []breakglassv1alpha1.BreakglassEscalation) {
 	tw := tabwriter.NewWriter(w, 2, 4, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "NAME\tCLUSTERS\tALLOWED_GROUPS\tESCALATED_GROUP\tAPPROVERS")
+	_, _ = fmt.Fprintln(tw, "NAME\tDISPLAY_NAME\tCLUSTERS\tALLOWED_GROUPS\tESCALATED_GROUP\tAPPROVERS")
 	for _, e := range escs {
 		clusters := strings.Join(e.Spec.Allowed.Clusters, ",")
 		allowedGroups := strings.Join(e.Spec.Allowed.Groups, ",")
 		approvers := strings.Join(append(e.Spec.Approvers.Groups, e.Spec.Approvers.Users...), ",")
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", SafeText(e.Name), SafeText(clusters), SafeText(allowedGroups), SafeText(e.Spec.EscalatedGroup), SafeText(approvers))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", SafeText(e.Name), SafeText(e.GetDisplayName()), SafeText(clusters), SafeText(allowedGroups), SafeText(e.Spec.EscalatedGroup), SafeText(approvers))
 	}
 	_ = tw.Flush()
 }

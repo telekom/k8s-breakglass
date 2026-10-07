@@ -198,6 +198,11 @@ spec:
                   Approvers will not receive emails when sessions are requested, approved, or rejected.
                   Default: false (notifications are enabled by default)
                 type: boolean
+              displayName:
+                description: displayName is the human-readable name shown in the UI
+                  and CLI; defaults to metadata.name.
+                maxLength: 253
+                type: string
               escalatedGroup:
                 description: escalatedGroup is the group to be granted by this escalation.
                 minLength: 1

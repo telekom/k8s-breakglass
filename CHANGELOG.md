@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Escalation-config chart 0.4.0 hashes names longer than 63 characters instead
+  of silently truncating them. These escalations are renamed on upgrade; review
+  references and remove old truncated resources before creating replacements.
+  Short names retain the previous trailing-hyphen normalization.
+
 - Secret-backed remote kubeconfigs must embed credentials and trust data.
   Exec/auth-provider plugins, token files and CA/client certificate/key file
   references are rejected, including unused cluster or user entries. Replace
@@ -25,6 +30,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changing resource scope, integer precision or metadata/precondition semantics.
 
 ### Added
+
+- Optional `BreakglassEscalation.spec.displayName` (maximum 253 characters)
+  for human-readable UI and CLI labels, defaulting to `metadata.name`.
+  The escalation-config chart preserves the original long name as the label
+  when hashing, unless an explicit display name is provided.
+  UI cards retain granted-group lookup selectors and expose resource identities
+  separately from their display-name headings.
+  Real-backend UI and Single-Cluster E2E coverage verifies label/resource-name
+  search, access requests, Kubernetes/REST round-trips, and CLI display fallback.
+  The chart rejects overlong fallback labels during rendering.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.

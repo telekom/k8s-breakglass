@@ -57,6 +57,11 @@ const (
 // +kubebuilder:validation:XValidation:rule="!has(self.allowedIdentityProviders) || size(self.allowedIdentityProviders) == 0 || ((!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) && (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0))",message="allowedIdentityProviders is mutually exclusive with allowedIdentityProvidersForRequests/allowedIdentityProvidersForApprovers"
 // +kubebuilder:validation:XValidation:rule="(!has(self.allowedIdentityProvidersForRequests) || size(self.allowedIdentityProvidersForRequests) == 0) == (!has(self.allowedIdentityProvidersForApprovers) || size(self.allowedIdentityProvidersForApprovers) == 0)",message="allowedIdentityProvidersForRequests and allowedIdentityProvidersForApprovers must both be set or both be empty"
 type BreakglassEscalationSpec struct {
+	// displayName is the human-readable name shown in the UI and CLI; defaults to metadata.name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	DisplayName string `json:"displayName,omitempty"`
+
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
 	// approvers specifies who is allowed to approve this escalation.
@@ -373,6 +378,14 @@ type BreakglassEscalation struct {
 // SetCondition updates or adds a condition in the BreakglassEscalation status
 func (be *BreakglassEscalation) SetCondition(condition metav1.Condition) {
 	apimeta.SetStatusCondition(&be.Status.Conditions, condition)
+}
+
+// GetDisplayName returns the human-readable name, falling back to the resource name.
+func (be *BreakglassEscalation) GetDisplayName() string {
+	if be.Spec.DisplayName != "" {
+		return be.Spec.DisplayName
+	}
+	return be.Name
 }
 
 // GetCondition retrieves a condition by type from the BreakglassEscalation status

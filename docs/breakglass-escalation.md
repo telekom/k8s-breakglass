@@ -20,6 +20,8 @@ kind: BreakglassEscalation
 metadata:
   name: <escalation-name>
 spec:
+  # Optional: Human-readable UI/CLI label (max 253 characters)
+  displayName: "Production cluster admin"
   # Required: Target group for escalation
   escalatedGroup: "cluster-admin"
   
@@ -44,6 +46,35 @@ spec:
   # Optional: Default deny policies for sessions
   denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
 ```
+
+## Display name
+
+The optional `spec.displayName` labels the escalation in the UI and CLI and
+defaults to `metadata.name` when empty or omitted. It does not change the resource
+identifier, authorization, or cluster-wide resource-name uniqueness checks.
+`bgctl escalation list` keeps the resource identifier in `NAME` and shows the
+resolved label in `DISPLAY_NAME`; use the resource name for `bgctl escalation get`.
+
+UI cards keep the granted group separate from the display-name heading. The
+existing `escalation-name` lookup selector continues to identify the granted
+group; the card exposes its resource name through `data-escalation-name` and all
+deduplicated resource names/display labels through `data-escalation-identities`.
+When the display label falls back to the resource name, that identity appears only once.
+Changing a display label does not change the cluster/group request target.
+
+CI exercises this contract against the real kind/Keycloak environment:
+`frontend/tests/e2e/escalation-display-name.spec.ts` checks card titles, searches
+by display and resource name, and creates a pending access request through the UI.
+Its optional-label fixtures live in `e2e/fixtures/escalations/display-name.yaml`,
+are applied by the single-cluster setup, and pass `make validate-fixtures`.
+`TestEscalationDisplayNameRoundTrip` in the Single-Cluster E2E suite creates
+resources through the Kubernetes API server, then checks REST list responses and
+real `bgctl escalation list` output for explicit labels and metadata-name fallback.
+It also verifies that 253-character Unicode labels round-trip and that the API
+server rejects a 254-character label.
+The Helm Chart Lint job runs `charts/escalation-config/ci/test-escalation-names.sh`,
+including `Hashed64CharacterName`, `HashedLongProviderName`, and
+`DistinctHashesBeyondTruncationBoundary`.
 
 ## Required Fields
 

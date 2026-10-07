@@ -1,6 +1,9 @@
 export interface Breakglass extends AvailableBreakglass, ActiveBreakglass {}
 
 export interface AvailableBreakglass {
+  escalationName?: string; // resource identifier, separate from session names
+  displayName?: string; // human-readable escalation name
+  escalationIdentities?: string[]; // resource names and display labels represented by a cluster/group card
   from: string; // source role/group user has (base role for escalation)
   cluster: string; // cluster name escalation applies to
   to: string; // escalated (granted) group

@@ -661,6 +661,11 @@ group bindings.
 
 **Response:** Array of `BreakglassEscalation` resources filtered by user's groups and readiness:
 
+Each resource includes `spec.displayName`, the human-readable UI/CLI label
+(maximum 253 characters). When the stored field is empty or omitted, the list
+response resolves it to `metadata.name`. Resource identifiers and existing
+JSON fields are unchanged.
+
 ```json
 [
   {
