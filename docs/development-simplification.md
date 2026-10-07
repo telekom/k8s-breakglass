@@ -177,6 +177,10 @@ not this legacy adapter. `TestEscalationAPIList`, `TestEscalationAPICombinedFilt
 and `TestGroupBasedApproverCanApprove` still exercise the public API flows.
 No registered endpoint or supported CRD field was removed.
 
+The unused `MockKafkaBroker` fixture was removed as well: no test constructed it.
+It did not implement the Kafka protocol and supplied no live audit coverage.
+Kafka sink/manager tests and real Kafka delivery E2E tests remain unchanged.
+
 ## E2E helpers
 
 Resource builders assign optional scalars and pointers directly. Defaults,
