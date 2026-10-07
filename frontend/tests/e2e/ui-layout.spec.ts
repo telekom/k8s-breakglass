@@ -116,20 +116,21 @@ for (const [viewportName, viewport] of Object.entries(AUDIT_VIEWPORTS)) {
     });
 
     test("primary navigation reaches every view", async ({ page }) => {
-      const targets: Array<[string, RegExp]> = [
-        ["Pending Approvals", /\/approvals\/pending$/],
-        ["Review Sessions", /\/sessions\/review$/],
-        ["My Requests", /\/requests\/mine$/],
-        ["Session Browser", /\/sessions$/],
-        ["Debug Sessions", /\/debug-sessions$/],
-        ["Request Access", /\/$/],
+      // [mobile flyout label, compact desktop header label, expected URL]
+      const targets: Array<[string, string, RegExp]> = [
+        ["Pending Approvals", "Approvals", /\/approvals\/pending$/],
+        ["Review Sessions", "Reviews", /\/sessions\/review$/],
+        ["My Requests", "My Requests", /\/requests\/mine$/],
+        ["Session Browser", "Sessions", /\/sessions$/],
+        ["Debug Sessions", "Debug", /\/debug-sessions$/],
+        ["Request Access", "Request", /\/$/],
       ];
       await page.goto("/");
       await waitForRouteSettled(page);
 
-      for (const [label, url] of targets) {
+      for (const [mobileLabel, desktopLabel, url] of targets) {
         await openNavigation(page, viewportName);
-        const link = await navLink(page, viewportName, label);
+        const link = await navLink(page, viewportName, viewportName === "mobile" ? mobileLabel : desktopLabel);
         await expect(link).toBeVisible();
         await link.click();
         await expect(page).toHaveURL(url);

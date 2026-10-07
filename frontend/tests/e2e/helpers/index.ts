@@ -39,6 +39,11 @@ export {
   findLayoutProblems,
   expectCleanLayout,
   focusedElementInfo,
+  LAYOUT_VIEWPORTS,
+  findAlignmentProblems,
+  expectAlignedActionRows,
+  expectTooltipsOnHoverAndFocus,
   type AuditViewport,
   type AuditTheme,
 } from "./ui-audit";
+export { DEBUG_ACTIVE, DEBUG_PENDING, mockDebugSessions } from "./debug-session-mocks";

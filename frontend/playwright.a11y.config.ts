@@ -19,7 +19,7 @@ const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "tr
 
 export default defineConfig({
   testDir: "./tests/e2e",
-  testMatch: "a11y.spec.ts",
+  testMatch: ["a11y.spec.ts", "*.a11y.spec.ts"],
 
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
