@@ -173,6 +173,12 @@ mutable image tag during teardown.
 - Ensure the changelog is up to date.
 - Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
 - Bump the applicable chart's `version` before cutting a release whose chart `appVersion` has not already been published under that chart version. The catalogue's map-to-list migration is a breaking values-interface change recorded by its `0.2.0` chart version.
+  Release packaging keeps `version` from `Chart.yaml` and overrides its source
+  `appVersion` with the controller tag (`helm package --app-version`). Check both
+  chart versions in GHCR before tagging, even if their templates are unchanged:
+  a version published for an earlier controller tag cannot be reused. A chart
+  version already bumped since the previous release needs no additional bump
+  if it is still unpublished.
 - Generate artifacts via the release workflow.
 - Verify both chart publications in GHCR (`.../charts/escalation-config` and `.../charts/debug-session-catalogue`).
 - For a catalogue release, verify every rendered utility image is a
