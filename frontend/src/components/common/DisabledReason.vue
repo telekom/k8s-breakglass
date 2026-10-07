@@ -2,9 +2,10 @@
 /**
  * DisabledReason - explains why the wrapped control is disabled.
  *
- * Disabled buttons are neither focusable nor reliably hoverable, so while a
- * reason is set the wrapper becomes the Scale tooltip trigger: it is
- * keyboard-focusable and carries the reason as its accessible description.
+ * Disabled buttons are not focusable, so while a reason is set the wrapper
+ * becomes the Scale tooltip trigger: it is keyboard-focusable and carries the
+ * reason as its accessible description. Pointer hover over the disabled
+ * button still bubbles to the wrapper, and the button stays the hit target.
  * Without a reason the wrapper is inert and the control behaves normally.
  */
 import { useId } from "vue";
@@ -46,10 +47,5 @@ const descriptionId = `disabled-reason-${useId()}`;
 .disabled-reason__trigger--active:focus-visible {
   outline: var(--telekom-line-weight-highlight) solid var(--telekom-color-functional-focus-standard);
   outline-offset: 2px;
-}
-
-/* Let hover land on the focusable wrapper instead of the inert control. */
-.disabled-reason__trigger--active > :deep(*) {
-  pointer-events: none;
 }
 </style>
