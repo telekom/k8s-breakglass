@@ -19,12 +19,10 @@ package helpers
 import (
 	"os"
 	"path/filepath"
-	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -93,96 +91,4 @@ func FixturesDir() string {
 
 	// Default to fixtures in current directory
 	return "fixtures"
-}
-
-// LoadFixture loads a YAML fixture file and returns the decoded object.
-// The fixture path is relative to the fixtures directory.
-//
-// Example:
-//
-//	escalation := helpers.LoadFixture[*breakglassv1alpha1.BreakglassEscalation](t, "escalations/pod-debug.yaml")
-func LoadFixture[T client.Object](t *testing.T, relativePath string) T {
-	t.Helper()
-
-	fullPath := filepath.Join(FixturesDir(), relativePath)
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		t.Fatalf("Failed to read fixture %s: %v", fullPath, err)
-	}
-
-	obj, _, err := fixtureDecoder.Decode(data, nil, nil)
-	if err != nil {
-		t.Fatalf("Failed to decode fixture %s: %v", fullPath, err)
-	}
-
-	result, ok := obj.(T)
-	if !ok {
-		t.Fatalf("Fixture %s is not of expected type, got %T", fullPath, obj)
-	}
-
-	return result
-}
-
-// LoadFixtureWithName loads a fixture and sets a custom name.
-// Useful for creating unique resources from a template fixture.
-//
-// Example:
-//
-//	escalation := helpers.LoadFixtureWithName[*breakglassv1alpha1.BreakglassEscalation](
-//	    t, "escalations/pod-debug.yaml", helpers.GenerateUniqueName("test"))
-func LoadFixtureWithName[T client.Object](t *testing.T, relativePath, name string) T {
-	t.Helper()
-
-	obj := LoadFixture[T](t, relativePath)
-	obj.SetName(name)
-	return obj
-}
-
-// LoadFixtureWithNamespace loads a fixture and sets a custom namespace.
-func LoadFixtureWithNamespace[T client.Object](t *testing.T, relativePath, namespace string) T {
-	t.Helper()
-
-	obj := LoadFixture[T](t, relativePath)
-	obj.SetNamespace(namespace)
-	return obj
-}
-
-// LoadFixtureCustomized loads a fixture and applies a customization function.
-// This is the most flexible option for modifying loaded fixtures.
-//
-// Example:
-//
-//	escalation := helpers.LoadFixtureCustomized(t, "escalations/pod-debug.yaml",
-//	    func(e *breakglassv1alpha1.BreakglassEscalation) {
-//	        e.Name = helpers.GenerateUniqueName("test")
-//	        e.Spec.Allowed.Clusters = []string{"my-cluster"}
-//	    })
-func LoadFixtureCustomized[T client.Object](t *testing.T, relativePath string, customize func(T)) T {
-	t.Helper()
-
-	obj := LoadFixture[T](t, relativePath)
-	customize(obj)
-	return obj
-}
-
-// MustLoadFixture is like LoadFixture but returns the object directly.
-// Panics if loading fails (suitable for init or package-level vars).
-func MustLoadFixture[T client.Object](relativePath string) T {
-	fullPath := filepath.Join(FixturesDir(), relativePath)
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		panic("Failed to read fixture " + fullPath + ": " + err.Error())
-	}
-
-	obj, _, err := fixtureDecoder.Decode(data, nil, nil)
-	if err != nil {
-		panic("Failed to decode fixture " + fullPath + ": " + err.Error())
-	}
-
-	result, ok := obj.(T)
-	if !ok {
-		panic("Fixture " + fullPath + " is not of expected type")
-	}
-
-	return result
 }

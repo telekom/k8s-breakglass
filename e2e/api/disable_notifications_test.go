@@ -20,8 +20,10 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
 
@@ -34,9 +36,10 @@ func TestDisableNotificationsFeature(t *testing.T) {
 			WithEscalatedGroup(s.GenerateName("disable-notify-group")).
 			WithAllowedClusters(s.Cluster).
 			Build()
-		escalation.Spec.DisableNotifications = helpers.BoolPtr(true)
+		escalation.Spec.DisableNotifications = ptr.To(true)
 
 		s.MustCreateResource(escalation)
+		require.NoError(t, s.Client.Get(s.Ctx, client.ObjectKeyFromObject(escalation), escalation))
 
 		assert.NotNil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-001: DisableNotifications should be set")
@@ -50,9 +53,10 @@ func TestDisableNotificationsFeature(t *testing.T) {
 			WithEscalatedGroup(s.GenerateName("notify-enabled-group")).
 			WithAllowedClusters(s.Cluster).
 			Build()
-		escalation.Spec.DisableNotifications = helpers.BoolPtr(false)
+		escalation.Spec.DisableNotifications = ptr.To(false)
 
 		s.MustCreateResource(escalation)
+		require.NoError(t, s.Client.Get(s.Ctx, client.ObjectKeyFromObject(escalation), escalation))
 
 		assert.NotNil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-002: DisableNotifications should be set")
@@ -68,58 +72,10 @@ func TestDisableNotificationsFeature(t *testing.T) {
 			Build()
 
 		s.MustCreateResource(escalation)
+		require.NoError(t, s.Client.Get(s.Ctx, client.ObjectKeyFromObject(escalation), escalation))
 
 		assert.Nil(t, escalation.Spec.DisableNotifications,
 			"NOTIFY-003: DisableNotifications should be nil when omitted")
 		t.Logf("NOTIFY-003: Created escalation %s without DisableNotifications field - defaults to false", escalation.Name)
-	})
-}
-
-// TestNotificationIntegration tests notification behavior for sessions.
-func TestNotificationIntegration(t *testing.T) {
-	_ = helpers.SetupTest(t)
-
-	t.Run("NotificationScenarios", func(t *testing.T) {
-		t.Log("NOTIFY-004: Notifications sent when DisableNotifications=false")
-		t.Log("NOTIFY-005: No notifications sent when DisableNotifications=true")
-		t.Log("NOTIFY-006: Notification includes session details (user, cluster, reason)")
-		t.Log("NOTIFY-007: Approval notifications go to session requester")
-		t.Log("NOTIFY-008: Request notifications go to configured approvers")
-	})
-
-	t.Run("MailProviderRequirements", func(t *testing.T) {
-		t.Log("NOTIFY-009: Valid MailProvider required for notifications")
-		t.Log("NOTIFY-010: Escalation condition reflects MailProvider validity")
-		t.Log("NOTIFY-011: Sessions can proceed even if MailProvider is invalid")
-	})
-}
-
-// TestEscalationNotificationConfig tests notification configuration on escalations.
-func TestEscalationNotificationConfig(t *testing.T) {
-	_ = helpers.SetupTest(t)
-
-	t.Run("EscalationMailProviderField", func(t *testing.T) {
-		spec := breakglassv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:       "test-group",
-			MaxValidFor:          "1h",
-			ApprovalTimeout:      "30m",
-			MailProvider:         "custom-mail-provider",
-			DisableNotifications: helpers.BoolPtr(false),
-		}
-		assert.Equal(t, "custom-mail-provider", spec.MailProvider)
-		assert.False(t, *spec.DisableNotifications)
-		t.Logf("NOTIFY-012: MailProvider can override default MailProvider")
-	})
-
-	t.Run("EscalationWithoutMailProvider", func(t *testing.T) {
-		spec := breakglassv1alpha1.BreakglassEscalationSpec{
-			EscalatedGroup:       "test-group",
-			MaxValidFor:          "1h",
-			ApprovalTimeout:      "30m",
-			DisableNotifications: helpers.BoolPtr(true),
-		}
-		assert.Empty(t, spec.MailProvider)
-		assert.True(t, *spec.DisableNotifications)
-		t.Logf("NOTIFY-013: Escalation can omit MailProvider when notifications disabled")
 	})
 }

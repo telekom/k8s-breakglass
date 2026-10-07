@@ -99,19 +99,6 @@ func WaitForDebugSessionStateAny(t *testing.T, ctx context.Context, cli client.C
 	return &session
 }
 
-// WaitForResourceExists waits for a resource to exist
-func WaitForResourceExists[T client.Object](t *testing.T, ctx context.Context, cli client.Client, key types.NamespacedName, obj T, timeout time.Duration) T {
-	err := WaitForCondition(ctx, func() (bool, error) {
-		if err := cli.Get(ctx, key, obj); err != nil {
-			return false, nil
-		}
-		return true, nil
-	}, timeout, DefaultInterval)
-
-	require.NoError(t, err, "Timeout waiting for resource %s to exist", key)
-	return obj
-}
-
 // WaitForResourceDeleted waits for a resource to be deleted
 func WaitForResourceDeleted[T client.Object](ctx context.Context, cli client.Client, key types.NamespacedName, obj T, timeout time.Duration) error {
 	return WaitForCondition(ctx, func() (bool, error) {
@@ -190,28 +177,6 @@ func WaitForEscalationReady(t *testing.T, ctx context.Context, cli client.Client
 	return &esc
 }
 
-// WaitForClusterConfigCondition waits for a ClusterConfig to have a specific condition status
-func WaitForClusterConfigCondition(t *testing.T, ctx context.Context, cli client.Client, name, namespace string, conditionType breakglassv1alpha1.ClusterConfigConditionType, expectedStatus metav1.ConditionStatus, timeout time.Duration) *breakglassv1alpha1.ClusterConfig {
-	var cfg breakglassv1alpha1.ClusterConfig
-
-	err := WaitForCondition(ctx, func() (bool, error) {
-		if err := cli.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, &cfg); err != nil {
-			return false, nil
-		}
-		for _, c := range cfg.Status.Conditions {
-			if breakglassv1alpha1.ClusterConfigConditionType(c.Type) == conditionType {
-				return c.Status == expectedStatus, nil
-			}
-		}
-		return false, nil
-	}, timeout, DefaultInterval)
-
-	if t != nil {
-		require.NoError(t, err, "Timeout waiting for ClusterConfig %s condition %s to be %s", name, conditionType, expectedStatus)
-	}
-	return &cfg
-}
-
 // WaitForAuditConfigReady waits for an AuditConfig to have Ready=True condition.
 // This is important to ensure the audit system is fully configured before running tests
 // that expect audit events to be captured.
@@ -280,52 +245,6 @@ func RetryWithBackoff(ctx context.Context, maxRetries int, initialDelay time.Dur
 	return fmt.Errorf("operation failed after %d retries: %w", maxRetries, lastErr)
 }
 
-// ApproveSession approves a BreakglassSession by updating its status
-func ApproveSession(ctx context.Context, cli client.Client, name, namespace, approverEmail string) error {
-	var session breakglassv1alpha1.BreakglassSession
-	key := types.NamespacedName{Name: name, Namespace: namespace}
-	if err := cli.Get(ctx, key, &session); err != nil {
-		return fmt.Errorf("failed to get session %s: %w", name, err)
-	}
-
-	session.Status.Approver = approverEmail
-	session.Status.ApprovedAt = metav1.Now()
-	session.Status.State = breakglassv1alpha1.SessionStateApproved
-	// CRITICAL: Set ExpiresAt - the webhook requires this to recognize active sessions
-	// Parse MaxValidFor from spec or default to 1h
-	maxValidFor := time.Hour
-	if session.Spec.MaxValidFor != "" {
-		if d, err := time.ParseDuration(session.Spec.MaxValidFor); err == nil && d > 0 {
-			maxValidFor = d
-		}
-	}
-	session.Status.ExpiresAt = metav1.NewTime(time.Now().Add(maxValidFor))
-
-	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
-		return fmt.Errorf("failed to approve session %s: %w", name, err)
-	}
-	return nil
-}
-
-// RejectSession rejects a BreakglassSession by updating its status
-func RejectSession(ctx context.Context, cli client.Client, name, namespace, approverEmail, reason string) error {
-	var session breakglassv1alpha1.BreakglassSession
-	key := types.NamespacedName{Name: name, Namespace: namespace}
-	if err := cli.Get(ctx, key, &session); err != nil {
-		return fmt.Errorf("failed to get session %s: %w", name, err)
-	}
-
-	session.Status.Approver = approverEmail
-	session.Status.RejectedAt = metav1.Now()
-	session.Status.State = breakglassv1alpha1.SessionStateRejected
-	session.Status.ApprovalReason = reason
-
-	if err := ApplySessionStatus(ctx, cli, &session); err != nil {
-		return fmt.Errorf("failed to reject session %s: %w", name, err)
-	}
-	return nil
-}
-
 // WithdrawSession withdraws a BreakglassSession by updating its status
 func WithdrawSession(ctx context.Context, cli client.Client, name, namespace string) error {
 	var session breakglassv1alpha1.BreakglassSession
@@ -340,36 +259,6 @@ func WithdrawSession(ctx context.Context, cli client.Client, name, namespace str
 		return fmt.Errorf("failed to withdraw session %s: %w", name, err)
 	}
 	return nil
-}
-
-// ApproveSessionViaAPI approves a BreakglassSession via the REST API using an authenticated API client.
-// This is the preferred method as it goes through the proper authorization flow.
-func ApproveSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace string) error {
-	return apiClient.ApproveSessionViaAPI(ctx, t, name, namespace)
-}
-
-// RejectSessionViaAPI rejects a BreakglassSession via the REST API using an authenticated API client.
-// This is the preferred method as it goes through the proper authorization flow.
-func RejectSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace, reason string) error {
-	return apiClient.RejectSessionViaAPI(ctx, t, name, namespace, reason)
-}
-
-// WithdrawSessionViaAPI withdraws a BreakglassSession via the REST API using an authenticated API client.
-// The requester can withdraw their own pending session.
-func WithdrawSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace string) error {
-	return apiClient.WithdrawSessionViaAPI(ctx, t, name, namespace)
-}
-
-// DropSessionViaAPI drops a BreakglassSession via the REST API using an authenticated API client.
-// The session owner can drop an active or pending session.
-func DropSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace string) error {
-	return apiClient.DropSessionViaAPI(ctx, t, name, namespace)
-}
-
-// CancelSessionViaAPI cancels a BreakglassSession via the REST API using an authenticated API client.
-// An approver can cancel an active/approved session.
-func CancelSessionViaAPI(ctx context.Context, t *testing.T, apiClient *APIClient, name, namespace string) error {
-	return apiClient.CancelSessionViaAPI(ctx, t, name, namespace)
 }
 
 // CachePropagationDelay is the time to wait for controller cache propagation.
@@ -401,19 +290,11 @@ func getCachePropagationDelay() time.Duration {
 
 // WaitForCachePropagation waits for controller cache to propagate changes.
 // Use this instead of bare time.Sleep() when waiting for cache updates.
-// If a verification function is provided, it will poll until the function returns true.
 //
 // Example:
 //
 //	// Simple cache wait
 //	helpers.WaitForCachePropagation(ctx)
-//
-//	// Wait with verification
-//	helpers.WaitForCachePropagationWithVerify(ctx, t, func() bool {
-//	    var esc breakglassv1alpha1.BreakglassEscalation
-//	    err := cli.Get(ctx, key, &esc)
-//	    return err == nil && esc.Status.Ready
-//	})
 func WaitForCachePropagation(ctx context.Context) {
 	select {
 	case <-ctx.Done():
@@ -421,40 +302,4 @@ func WaitForCachePropagation(ctx context.Context) {
 	case <-time.After(CachePropagationDelay):
 		return
 	}
-}
-
-// WaitForCachePropagationWithVerify waits for cache propagation with verification.
-// It polls the verify function until it returns true or times out.
-func WaitForCachePropagationWithVerify(ctx context.Context, t *testing.T, verify func() bool) {
-	t.Helper()
-
-	timeout := 10 * time.Second
-	interval := 500 * time.Millisecond
-
-	err := WaitForCondition(ctx, func() (bool, error) {
-		return verify(), nil
-	}, timeout, interval)
-
-	if err != nil && ctx.Err() == nil {
-		t.Logf("Warning: cache propagation verification timed out")
-	}
-}
-
-// WaitForResourceUpdate waits for a resource to be updated by the controller.
-// It checks that the resource's generation has been observed.
-func WaitForResourceUpdate[T interface {
-	client.Object
-	GetGeneration() int64
-}](ctx context.Context, t *testing.T, cli client.Client, key types.NamespacedName, obj T, timeout time.Duration) error {
-	t.Helper()
-
-	expectedGen := obj.GetGeneration()
-	return WaitForCondition(ctx, func() (bool, error) {
-		if err := cli.Get(ctx, key, obj); err != nil {
-			return false, nil
-		}
-		// Check if controller has observed this generation
-		// Most status structs have ObservedGeneration
-		return obj.GetGeneration() >= expectedGen, nil
-	}, timeout, DefaultInterval)
 }
