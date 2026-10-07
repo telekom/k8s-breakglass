@@ -65,7 +65,7 @@
       <scale-button
         v-if="canReview"
         data-testid="reject-button"
-        variant="danger"
+        variant="secondary"
         :disabled="isApproving || isRequiredNoteMissing"
         @click="$emit('reject')"
       >

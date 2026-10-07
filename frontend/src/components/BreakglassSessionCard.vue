@@ -274,7 +274,7 @@ const timelineStatusText = computed(() => {
         <scale-button v-if="isPending" data-testid="review-button" @click="openReview">Review</scale-button>
         <scale-button
           v-if="isActive"
-          variant="danger"
+          variant="secondary"
           :data-testid="ownerAction === 'withdraw' ? 'drop-button' : 'cancel-button'"
           @click="handleActiveAction"
           >{{ ownerActionLabel }}</scale-button
