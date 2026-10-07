@@ -11,5 +11,5 @@ export { default as StatusTag } from "./StatusTag.vue";
 export { default as ReasonPanel } from "./ReasonPanel.vue";
 export { default as TimelineGrid } from "./TimelineGrid.vue";
 export { default as ActionButton } from "./ActionButton.vue";
-export { default as ChipRow } from "./ChipRow.vue";
-export type { ChipItem } from "./ChipRow.vue";
+export { default as DisabledReason } from "./DisabledReason.vue";
+export { default as HintTooltip } from "./HintTooltip.vue";

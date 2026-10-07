@@ -58,6 +58,7 @@ vi.mock("@/utils/sessionActions", () => ({
 
 vi.mock("@/utils/statusStyles", () => ({
   statusToneFor: vi.fn().mockReturnValue("success"),
+  statusDescriptionFor: vi.fn().mockReturnValue(""),
 }));
 
 vi.mock("@/composables", async (importOriginal) => {

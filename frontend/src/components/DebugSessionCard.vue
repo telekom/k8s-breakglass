@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
+import HintTooltip from "@/components/common/HintTooltip.vue";
+import { statusDescriptionFor } from "@/utils/statusStyles";
 import { computed, ref } from "vue";
 import { useModalBehavior } from "@/composables/useModalBehavior";
 import type { DebugSessionSummary } from "@/model/debugSession";
@@ -134,7 +137,9 @@ function openRenewModal() {
         <h2 class="session-name" data-testid="session-name">{{ session.name }}</h2>
         <div class="session-meta">
           <span class="cluster" data-testid="session-cluster">{{ session.cluster }}</span>
-          <scale-tag :variant="stateVariant" size="small" data-testid="session-state">{{ stateLabel }}</scale-tag>
+          <HintTooltip :hint="statusDescriptionFor(session.state)">
+            <scale-tag :variant="stateVariant" size="small" data-testid="session-state">{{ stateLabel }}</scale-tag>
+          </HintTooltip>
         </div>
       </div>
     </div>
@@ -178,63 +183,33 @@ function openRenewModal() {
       </div>
     </div>
 
-    <div class="card-actions" data-testid="card-actions">
-      <scale-button variant="secondary" size="small" data-testid="view-details-button" @click="emit('viewDetails')">
+    <div class="card-actions ui-actions" data-testid="card-actions">
+      <scale-button variant="secondary" data-testid="view-details-button" @click="emit('viewDetails')">
         Details
       </scale-button>
 
       <div class="action-group">
-        <scale-button v-if="canJoin" variant="primary" size="small" data-testid="join-button" @click="emit('join')">
+        <scale-button v-if="canJoin" variant="primary" data-testid="join-button" @click="emit('join')">
           Join
         </scale-button>
 
-        <scale-button
-          v-if="canLeave"
-          variant="secondary"
-          size="small"
-          data-testid="leave-button"
-          @click="emit('leave')"
-        >
+        <scale-button v-if="canLeave" variant="secondary" data-testid="leave-button" @click="emit('leave')">
           Leave
         </scale-button>
 
-        <scale-button
-          v-if="canRenew"
-          variant="secondary"
-          size="small"
-          data-testid="renew-button"
-          @click="openRenewModal"
-        >
+        <scale-button v-if="canRenew" variant="secondary" data-testid="renew-button" @click="openRenewModal">
           Renew
         </scale-button>
 
-        <scale-button
-          v-if="canTerminate"
-          variant="secondary"
-          size="small"
-          data-testid="terminate-button"
-          @click="emit('terminate')"
-        >
+        <scale-button v-if="canTerminate" variant="secondary" data-testid="terminate-button" @click="emit('terminate')">
           Terminate
         </scale-button>
 
-        <scale-button
-          v-if="canApprove"
-          variant="primary"
-          size="small"
-          data-testid="approve-button"
-          @click="emit('approve')"
-        >
+        <scale-button v-if="canApprove" variant="primary" data-testid="approve-button" @click="emit('approve')">
           Approve
         </scale-button>
 
-        <scale-button
-          v-if="canReject"
-          variant="secondary"
-          size="small"
-          data-testid="reject-button"
-          @click="openRejectModal"
-        >
+        <scale-button v-if="canReject" variant="secondary" data-testid="reject-button" @click="openRejectModal">
           Reject
         </scale-button>
       </div>
@@ -264,14 +239,16 @@ function openRenewModal() {
         <scale-button variant="secondary" data-testid="reject-cancel-button" @click="showRejectModal = false"
           >Cancel</scale-button
         >
-        <scale-button
-          variant="primary"
-          :disabled="!rejectReason.trim()"
-          data-testid="reject-confirm-button"
-          @click="handleReject"
-        >
-          Reject
-        </scale-button>
+        <DisabledReason :reason="rejectReason.trim() ? '' : 'Enter a reason to reject the session.'">
+          <scale-button
+            variant="primary"
+            :disabled="!rejectReason.trim()"
+            data-testid="reject-confirm-button"
+            @click="handleReject"
+          >
+            Reject
+          </scale-button>
+        </DisabledReason>
       </div>
     </scale-modal>
 
@@ -395,19 +372,11 @@ function openRenewModal() {
 .card-actions {
   padding: var(--space-md);
   border-top: 1px solid var(--telekom-color-ui-border-subtle);
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: var(--space-sm);
 }
 
+/* Keep one flat action row so every button shares the row's centre line. */
 .action-group {
-  display: flex;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  min-width: 0;
+  display: contents;
 }
 
 .modal-content {

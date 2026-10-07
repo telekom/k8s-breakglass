@@ -111,19 +111,22 @@
             </small>
             <div class="timer-panel__separator" role="presentation"></div>
             <div class="timer-panel__tags">
-              <span
-                class="tone-chip"
-                :class="`tone-chip--${session.urgency}`"
-                :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
-              >
-                <scale-icon-alert-warning
-                  v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
-                  size="14"
-                  decorative
-                />
-                <scale-icon-content-clock v-else size="14" decorative />
-                {{ getUrgencyLabel(session.urgency).text }}
-              </span>
+              <HintTooltip :hint="getUrgencyDescription(session.urgency)">
+                <scale-tag
+                  :variant="urgencyTagVariant[session.urgency]"
+                  :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
+                  data-testid="urgency-tag"
+                >
+                  <scale-icon-alert-warning
+                    v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
+                    size="14"
+                    decorative
+                    class="tag-icon"
+                  />
+                  <scale-icon-content-clock v-else size="14" decorative class="tag-icon" />
+                  {{ getUrgencyLabel(session.urgency).text }}
+                </scale-tag>
+              </HintTooltip>
               <StatusTag :status="getSessionState(session)" />
             </div>
           </div>
@@ -133,14 +136,24 @@
           <scale-tag v-if="session.metadata?.name" variant="neutral" class="mono-tag">
             {{ session.metadata.name }}
           </scale-tag>
-          <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">
-            <scale-icon-content-calendar size="14" decorative class="tag-icon" />
-            Scheduled
-          </scale-tag>
-          <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">
-            <scale-icon-action-edit size="14" decorative class="tag-icon" />
-            Note required
-          </scale-tag>
+          <HintTooltip
+            v-if="session.spec?.scheduledStartTime"
+            :hint="`Access starts at ${formatDateTime(String(session.spec.scheduledStartTime))}`"
+          >
+            <scale-tag variant="warning">
+              <scale-icon-content-calendar size="14" decorative class="tag-icon" />
+              Scheduled
+            </scale-tag>
+          </HintTooltip>
+          <HintTooltip
+            v-if="session.approvalReason?.mandatory"
+            hint="You must enter a note to approve or reject this request"
+          >
+            <scale-tag variant="danger">
+              <scale-icon-action-edit size="14" decorative class="tag-icon" />
+              Note required
+            </scale-tag>
+          </HintTooltip>
         </template>
 
         <template #meta>
@@ -207,17 +220,15 @@
         </template>
 
         <template #footer>
-          <div class="approval-footer">
-            <div class="action-row">
-              <ActionButton
-                label="Review"
-                data-testid="review-button"
-                :loading="approving === session.metadata?.name"
-                loading-label="Processing..."
-                :disabled="isSessionBusy(session)"
-                @click="openApproveModal(session)"
-              />
-            </div>
+          <div class="approval-footer ui-actions">
+            <ActionButton
+              label="Review"
+              data-testid="review-button"
+              :loading="approving === session.metadata?.name"
+              loading-label="Processing..."
+              :disabled="isSessionBusy(session)"
+              @click="openApproveModal(session)"
+            />
           </div>
         </template>
       </SessionSummaryCard>
@@ -250,7 +261,15 @@ import { inject, ref, onMounted, reactive, computed } from "vue";
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
-import { PageHeader, EmptyState, LoadingState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
+import {
+  PageHeader,
+  EmptyState,
+  LoadingState,
+  StatusTag,
+  ReasonPanel,
+  ActionButton,
+  HintTooltip,
+} from "@/components/common";
 import { useModalBehavior } from "@/composables/useModalBehavior";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
@@ -264,6 +283,7 @@ import {
   getUrgency,
   getTimeRemaining,
   getUrgencyLabel,
+  getUrgencyDescription,
   getSessionKey,
   getSessionState,
   getSessionCluster,
@@ -318,6 +338,8 @@ function getHiddenApproverGroupCount(session: { matchingApproverGroups?: string[
 
 // Filter and sort controls
 const sortBy = ref<"urgent" | "recent" | "groups">("urgent");
+const urgencyTagVariant = { critical: "danger", high: "warning", normal: "neutral" } as const;
+
 const urgencyFilter = ref<"all" | "critical" | "high" | "normal">("all");
 
 // Event handlers for scale components
@@ -691,38 +713,9 @@ onMounted(fetchPendingApprovals);
   font-family: var(--telekom-typography-font-family-mono, monospace);
 }
 
-.approval-footer {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  align-items: center;
-  padding-top: var(--space-lg);
-}
-
-.action-row {
-  display: flex;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-/* min-width delegated to ActionButton.vue for consistency */
-
 @media (max-width: 640px) {
-  .timer-panel,
-  .approval-footer,
-  .action-row {
+  .timer-panel {
     width: 100%;
-  }
-
-  .action-row {
-    flex-direction: column;
-  }
-
-  .action-row > * {
-    width: 100%;
-    min-width: unset;
   }
 }
 </style>

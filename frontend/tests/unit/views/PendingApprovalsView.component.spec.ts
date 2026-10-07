@@ -44,6 +44,7 @@ vi.mock("@/composables", () => ({
   getUrgency: vi.fn(() => "normal"),
   getTimeRemaining: vi.fn(() => 1000),
   getUrgencyLabel: vi.fn(() => ({ text: "Normal", icon: "content-clock", ariaLabel: "Normal urgency" })),
+  getUrgencyDescription: vi.fn(() => "More than 6 hours remaining"),
   getSessionKey: vi.fn((session) => session?.metadata?.name || "session"),
   getSessionState: vi.fn((session) => session?.status?.state || "Pending"),
   getSessionCluster: vi.fn((session) => session?.spec?.cluster || "cluster-a"),

@@ -33,7 +33,12 @@
         >
           <template #status>
             <StatusTag :status="getSessionState(req)" />
-            <StatusTag v-if="getSessionState(req) === 'WaitingForScheduledTime'" status="Scheduled" tone="warning" />
+            <StatusTag
+              v-if="getSessionState(req) === 'WaitingForScheduledTime'"
+              status="Scheduled"
+              tone="warning"
+              hint="Access starts at the scheduled start time"
+            />
           </template>
 
           <template #chips>
@@ -73,7 +78,7 @@
           </template>
 
           <template #footer>
-            <div class="request-card__footer">
+            <div class="request-card__footer ui-actions">
               <ActionButton
                 :data-testid="isScheduled(req) ? 'drop-button' : 'withdraw-button'"
                 :label="isScheduled(req) ? 'Drop' : 'Withdraw'"
@@ -299,21 +304,5 @@ onMounted(() => {
 
 .mono {
   font-family: "IBM Plex Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.request-card__footer {
-  width: 100%;
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-@media (max-width: 600px) {
-  .request-card__footer {
-    flex-direction: column;
-    align-items: flex-start;
-  }
 }
 </style>

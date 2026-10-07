@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
+import HintTooltip from "@/components/common/HintTooltip.vue";
 import { computed, ref, useId, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
@@ -321,23 +323,23 @@ const ctaCopy = computed(() => {
   return "Request access instantly or schedule a window.";
 });
 
-type MetaBadge = { label: string; variant: TagVariant };
+type MetaBadge = { label: string; variant: TagVariant; hint: string };
 
 const metaBadges = computed<MetaBadge[]>(() => {
   const badges: MetaBadge[] = [];
   // Status badge - only one at a time
   if (sessionActive.value) {
-    badges.push({ label: "Active", variant: "success" });
+    badges.push({ label: "Active", variant: "success", hint: "You have an active session for this escalation" });
   } else if (sessionPending.value) {
-    badges.push({ label: "Pending", variant: "warning" });
+    badges.push({ label: "Pending", variant: "warning", hint: "Your request is waiting for an approver" });
   } else {
-    badges.push({ label: "Available", variant: "info" });
+    badges.push({ label: "Available", variant: "info", hint: "You can request this escalation" });
   }
   // Approval type badge
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
-    badges.push({ label: "Needs approval", variant: "warning" });
+    badges.push({ label: "Needs approval", variant: "warning", hint: "An approver must approve your request" });
   } else if (props.breakglass?.selfApproval) {
-    badges.push({ label: "Self approval", variant: "success" });
+    badges.push({ label: "Self approval", variant: "success", hint: "You can approve your own request" });
   }
   // Note: Cluster, requester groups, and reason info are shown in the meta grid to avoid duplication
   return badges;
@@ -460,9 +462,11 @@ function drop() {
     </template>
 
     <template v-if="metaBadges.length" #chips>
-      <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
-        {{ badge.label }}
-      </scale-tag>
+      <HintTooltip v-for="badge in metaBadges" :key="badge.label" :hint="badge.hint">
+        <scale-tag size="small" :variant="badge.variant">
+          {{ badge.label }}
+        </scale-tag>
+      </HintTooltip>
     </template>
 
     <template #body>
@@ -542,8 +546,8 @@ function drop() {
       <div class="breakglass-card__cta">
         <p>{{ ctaCopy }}</p>
       </div>
-      <div class="actions-row">
-        <scale-button v-if="sessionPending" variant="primary" data-testid="withdraw-button" @click="withdraw"
+      <div class="actions-row ui-actions">
+        <scale-button v-if="sessionPending" variant="secondary" data-testid="withdraw-button" @click="withdraw"
           >Withdraw</scale-button
         >
         <scale-button v-else-if="sessionActive" variant="secondary" data-testid="drop-button" @click="drop"
@@ -603,8 +607,7 @@ function drop() {
         data-testid="schedule-toggle"
         @click="toggleScheduleOptions"
       >
-        <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
-        <span v-else>Hide schedule options</span>
+        {{ showScheduleOptions ? "Hide schedule options" : "Schedule for future date (optional)" }}
       </scale-button>
 
       <div v-if="showScheduleOptions" class="schedule-details" data-testid="schedule-details">
@@ -699,9 +702,11 @@ function drop() {
     </div>
 
     <div class="modal-actions">
-      <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
-        Confirm Request
-      </scale-button>
+      <DisabledReason :reason="isReasonMissing ? 'Enter a reason to submit the request.' : ''">
+        <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
+          Confirm Request
+        </scale-button>
+      </DisabledReason>
       <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"
         >Cancel</scale-button
       >
@@ -740,20 +745,6 @@ function drop() {
   font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.session-section--reason h4 {
-  margin: 0;
-  font: var(--telekom-text-style-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.session-section--reason p {
-  margin: 0;
-  line-height: 1.45;
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -808,13 +799,6 @@ function drop() {
 
 .breakglass-card__cta p {
   margin: 0;
-}
-
-.actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  justify-content: flex-end;
 }
 
 .breakglass-card__requirement {
@@ -889,26 +873,6 @@ function drop() {
   font: var(--telekom-text-style-caption);
 }
 
-.modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: center;
-  margin-top: var(--space-xl);
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
 :deep(input::placeholder),
 :deep(textarea::placeholder) {
   color: var(--telekom-color-text-placeholder);
@@ -920,10 +884,6 @@ function drop() {
      would then become a 320px tall blank gap above the action button. */
   .breakglass-card__cta {
     flex: 0 1 auto;
-  }
-
-  .actions-row {
-    justify-content: flex-start;
   }
 }
 </style>

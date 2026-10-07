@@ -19,7 +19,8 @@ import { computed } from "vue";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import humanizeDuration from "humanize-duration";
 import { format24Hour, debugLogDateTime } from "@/utils/dateTime";
-import { statusToneFor } from "@/utils/statusStyles";
+import { statusDescriptionFor, statusToneFor } from "@/utils/statusStyles";
+import HintTooltip from "@/components/common/HintTooltip.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import type { SessionCR } from "@/model/breakglass";
 
@@ -223,9 +224,11 @@ const timelineStatusText = computed(() => {
     dense
   >
     <template #status>
-      <scale-tag :variant="chipVariant" data-testid="session-status">{{
-        breakglass.status?.state || "Unknown"
-      }}</scale-tag>
+      <HintTooltip :hint="statusDescriptionFor(breakglass.status?.state)">
+        <scale-tag :variant="chipVariant" data-testid="session-status">{{
+          breakglass.status?.state || "Unknown"
+        }}</scale-tag>
+      </HintTooltip>
     </template>
 
     <template #chips>
@@ -270,7 +273,7 @@ const timelineStatusText = computed(() => {
     </template>
 
     <template v-if="hasActions" #footer>
-      <div class="session-card__actions" data-testid="session-actions">
+      <div class="session-card__actions ui-actions" data-testid="session-actions">
         <scale-button v-if="isPending" data-testid="review-button" @click="openReview">Review</scale-button>
         <scale-button
           v-if="isActive"
@@ -374,22 +377,5 @@ const timelineStatusText = computed(() => {
   font-weight: 500;
   color: var(--telekom-color-text-and-icon-standard);
   word-break: break-word;
-}
-
-.session-card__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-@media (max-width: 480px) {
-  .session-card__actions {
-    width: 100%;
-  }
-
-  .session-card__actions > * {
-    flex: 1;
-  }
 }
 </style>
