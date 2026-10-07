@@ -14,7 +14,7 @@ const scaleStubs = {
   "scale-icon-action-circle-close": { template: "<span></span>" },
   "scale-notification": { template: "<div><slot /></div>", props: ["variant", "opened"] },
   "scale-button": {
-    template: '<button @click="$emit(\'click\')"><slot /></button>',
+    template: "<button @click=\"$emit('click')\"><slot /></button>",
     props: ["variant"],
   },
   "scale-icon-home-home": { template: "<span></span>" },
