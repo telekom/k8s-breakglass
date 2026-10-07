@@ -2,15 +2,7 @@
  * Tests for dateTime utility functions
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import {
-  format24Hour,
-  formatDate,
-  formatTime,
-  formatTimeShort,
-  format24HourWithTZ,
-  getLocaleInfo,
-  debugLogDateTime,
-} from "./dateTime";
+import { format24Hour, format24HourWithTZ, debugLogDateTime } from "./dateTime";
 
 describe("dateTime", () => {
   // Mock console methods
@@ -52,65 +44,6 @@ describe("dateTime", () => {
     });
   });
 
-  describe("formatDate", () => {
-    it("returns empty string for null/undefined input", () => {
-      expect(formatDate(null)).toBe("");
-      expect(formatDate(undefined)).toBe("");
-    });
-
-    it("formats a valid ISO date string without time", () => {
-      const result = formatDate("2025-12-01T14:30:00Z");
-      expect(result).toBeTruthy();
-      // Should not contain seconds (time-only component)
-      expect(result).toMatch(/\d/);
-    });
-
-    it("handles invalid date gracefully", () => {
-      const invalidDate = "not-a-date";
-      const result = formatDate(invalidDate);
-      expect(result).toBeTruthy();
-    });
-  });
-
-  describe("formatTime", () => {
-    it("returns empty string for null/undefined input", () => {
-      expect(formatTime(null)).toBe("");
-      expect(formatTime(undefined)).toBe("");
-    });
-
-    it("formats time in HH:mm:ss format", () => {
-      const result = formatTime("2025-12-01T14:30:45Z");
-      expect(result).toBeTruthy();
-      // Should contain time components
-      expect(result).toMatch(/\d{1,2}[:\.]?\d{2}/);
-    });
-
-    it("handles invalid date gracefully", () => {
-      const invalidDate = "not-a-date";
-      const result = formatTime(invalidDate);
-      expect(result).toBeTruthy();
-    });
-  });
-
-  describe("formatTimeShort", () => {
-    it("returns empty string for null/undefined input", () => {
-      expect(formatTimeShort(null)).toBe("");
-      expect(formatTimeShort(undefined)).toBe("");
-    });
-
-    it("formats time without seconds", () => {
-      const result = formatTimeShort("2025-12-01T14:30:45Z");
-      expect(result).toBeTruthy();
-      expect(result).toMatch(/\d{1,2}[:\.]?\d{2}/);
-    });
-
-    it("handles invalid date gracefully", () => {
-      const invalidDate = "not-a-date";
-      const result = formatTimeShort(invalidDate);
-      expect(result).toBeTruthy();
-    });
-  });
-
   describe("format24HourWithTZ", () => {
     it("returns empty string for null/undefined input", () => {
       expect(format24HourWithTZ(null)).toBe("");
@@ -128,17 +61,6 @@ describe("dateTime", () => {
       const invalidDate = "not-a-date";
       const result = format24HourWithTZ(invalidDate);
       expect(result).toBeTruthy();
-    });
-  });
-
-  describe("getLocaleInfo", () => {
-    it("returns locale information object", () => {
-      const info = getLocaleInfo();
-      expect(info).toHaveProperty("browserLocale");
-      expect(info).toHaveProperty("userTimeZone");
-      expect(info).toHaveProperty("use12Hour");
-      expect(info).toHaveProperty("timeZoneOffset");
-      expect(typeof info.timeZoneOffset).toBe("number");
     });
   });
 

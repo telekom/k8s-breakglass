@@ -44,42 +44,6 @@ export function parseDurationString(durationStr: string | undefined | null): Par
 }
 
 /**
- * Format a duration string to human-readable format
- * e.g., "1h30m45s" -> "1h 30m 45s"
- */
-export function formatDuration(durationStr: string | undefined | null): string {
-  if (!durationStr) return "Not specified";
-
-  const parsed = parseDurationString(durationStr);
-  if (!parsed) return durationStr; // Return original if unparseable
-
-  const parts: string[] = [];
-  if (parsed.hours > 0) parts.push(`${parsed.hours}h`);
-  if (parsed.minutes > 0) parts.push(`${parsed.minutes}m`);
-  if (parsed.seconds > 0) parts.push(`${parsed.seconds}s`);
-
-  return parts.length > 0 ? parts.join(" ") : "0s";
-}
-
-/**
- * Format duration from seconds to human-readable
- */
-export function formatDurationFromSeconds(seconds: number | undefined | null): string {
-  if (!seconds || seconds <= 0) return "0s";
-
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  const parts: string[] = [];
-  if (hours > 0) parts.push(`${hours}h`);
-  if (minutes > 0) parts.push(`${minutes}m`);
-  if (secs > 0) parts.push(`${secs}s`);
-
-  return parts.length > 0 ? parts.join(" ") : "0s";
-}
-
-/**
  * Round total seconds to the nearest sensible display unit.
  *
  * Rounding rules (applied in order):
@@ -135,16 +99,6 @@ export function formatDurationRounded(durationStr: string | undefined | null): s
   if (!parsed) return durationStr;
 
   return formatRoundedSeconds(parsed.totalSeconds);
-}
-
-/**
- * Format duration from seconds with cosmetic rounding for display.
- *
- * @see formatRoundedSeconds for rounding rules
- */
-export function formatDurationFromSecondsRounded(seconds: number | undefined | null): string {
-  if (!seconds || seconds <= 0) return "0s";
-  return formatRoundedSeconds(seconds);
 }
 
 /**

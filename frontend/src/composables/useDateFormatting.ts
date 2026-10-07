@@ -3,7 +3,7 @@
  * Wraps utils/dateTime.ts functions for use in Vue components
  */
 
-import { format24Hour, formatDate, formatTime, formatTimeShort, format24HourWithTZ } from "@/utils/dateTime";
+import { format24Hour } from "@/utils/dateTime";
 
 export type DateValue = string | Date | number | undefined | null;
 
@@ -39,38 +39,6 @@ export function formatDateTime(value: DateValue): string {
 }
 
 /**
- * Format date only (no time)
- */
-export function formatDateOnly(value: DateValue): string {
-  const iso = toISOString(value);
-  return iso ? formatDate(iso) : "—";
-}
-
-/**
- * Format time only (HH:mm:ss)
- */
-export function formatTimeOnly(value: DateValue): string {
-  const iso = toISOString(value);
-  return iso ? formatTime(iso) : "—";
-}
-
-/**
- * Format time short (HH:mm)
- */
-export function formatTimeCompact(value: DateValue): string {
-  const iso = toISOString(value);
-  return iso ? formatTimeShort(iso) : "—";
-}
-
-/**
- * Format with timezone info
- */
-export function formatWithTimezone(value: DateValue): string {
-  const iso = toISOString(value);
-  return iso ? format24HourWithTZ(iso) : "—";
-}
-
-/**
  * Format relative time (e.g., "5 minutes ago")
  */
 export function formatRelativeTime(value: DateValue): string {
@@ -101,26 +69,4 @@ export function formatRelativeTime(value: DateValue): string {
     // Date arithmetic failed (e.g. invalid ISO string) — return placeholder
     return "—";
   }
-}
-
-/**
- * Check if a date value is valid
- */
-export function isValidDate(value: DateValue): boolean {
-  if (!value) return false;
-
-  try {
-    const date = typeof value === "string" || typeof value === "number" ? new Date(value) : value;
-    return !isNaN(date.getTime());
-  } catch {
-    // Date construction failed — treat as invalid
-    return false;
-  }
-}
-
-/**
- * Get current timestamp as ISO string
- */
-export function nowISO(): string {
-  return new Date().toISOString();
 }
