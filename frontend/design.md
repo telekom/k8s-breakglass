@@ -5,7 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 
 # Breakglass Frontend — Design System
 
-> Audit date: 2026-05-17 · Scale version: `@telekom/scale-components ^3.0.0-beta.160`
+> Audit date: 2026-10-07 · Scale version: `@telekom/scale-components 3.0.0-beta.162`
 
 This document describes the design system used in the Breakglass frontend: its token layer, theming model, Scale integration, utility classes, and component catalogue. It also records the audit findings from a review of the codebase against Telekom Scale conventions.
 
@@ -17,19 +17,28 @@ This document describes the design system used in the Breakglass frontend: its t
 |-------|-----------|
 | Framework | Vue 3 + TypeScript (Composition API) |
 | Build | Vite |
-| Design system | [Telekom Scale](https://telekom.github.io/scale/) `^3.0.0-beta.160` |
-| Neutral theme | `@telekom/scale-components-neutral ^3.0.0-beta.160` |
+| Design system | [Telekom Scale](https://telekom.github.io/scale/) `3.0.0-beta.162` (pinned) |
+| Neutral theme | `@telekom/scale-components-neutral 3.0.0-beta.162` |
 | State | Pinia |
 | Testing | Playwright (E2E + a11y axe-core), Vitest (unit) |
-| Lint/format | ESLint + Prettier |
+| Lint/format | ESLint + Prettier; Stylelint token guard (`npm run lint:styles`) |
 
-Scale is consumed as web components (`<scale-button>`, `<scale-card>`, `<scale-tag>`, etc.). All token overrides and theme variants live in [`src/assets/base.css`](src/assets/base.css). Every intentional deviation from Scale defaults is documented in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS.md).
+Scale is consumed as web components (`<scale-button>`, `<scale-card>`, `<scale-tag>`, etc.). Design tokens and theme variants (light, dark, high-contrast, forced-colours) live in [`src/assets/tokens.css`](src/assets/tokens.css); global styles, Scale part overrides and layout primitives live in [`src/assets/base.css`](src/assets/base.css). Every intentional deviation from Scale defaults is documented in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS.md).
 
 ---
 
 ## 2. Design Tokens
 
 All tokens are CSS custom properties. Custom tokens either alias Scale tokens directly or compute from them; hardcoded values are a last resort and require a comment justifying the exception.
+
+`tokens.css` is the only file allowed to contain raw colour values. [`stylelint.config.mjs`](stylelint.config.mjs) enforces this in `src/**/*.{css,vue}`:
+
+- no hex colours, named colours or `rgb()`/`hsl()`-style colour functions;
+- no px `font`/`font-size` (use `--telekom-text-style-*`);
+- `box-shadow` must be `var(--shadow-*)`, `var(--telekom-shadow-*)` or `none`;
+- `z-index` must be `var(--z-*)` or a trivial stacking value (`-1`, `0`, `1`, `auto`).
+
+CI runs it in the Frontend Tests job.
 
 ### 2.1 Spacing
 
@@ -146,6 +155,7 @@ The neutral Scale package (`scale-components-neutral`) uses purple `#5300ff` as 
 | Token | Value | Notes |
 |-------|-------|-------|
 | `--shadow-card` | `--telekom-shadow-raised-standard` | with fallback values |
+| `--shadow-selected` | 3 px primary ring (`color-mix`) | selected option cards and presets |
 | `--border-strong` | `--telekom-color-ui-border-standard` | strengthened in dark mode |
 | `--focus-outline` | `--telekom-color-functional-focus-standard` (#2238df) | black/white in high-contrast |
 
@@ -180,7 +190,7 @@ Full details and contrast ratios are in [`SCALE_DEVIATIONS.md`](SCALE_DEVIATIONS
 | 6 | Dropdown label forced via `!important` | Inherited opacity-based colour can fall below 7 : 1 on subtle surfaces |
 | 7 | `scale-tag` variants overridden via `--background`/`--color` + `::part(base)` | Double approach needed for Scale shadow DOM version compatibility |
 | 8 | `scale-card` gets explicit border + `border-radius: var(--radius-lg)` | Card boundary needed for low-vision users; shadow alone insufficient in light mode |
-| 9 | `scale-button` uses `--radius-pill` | Design decision: all buttons are fully rounded |
+| 9 | *(removed)* `scale-button` keeps Scale's own radius and variants | — |
 | 10 | `scale-modal` body/header spacing and modal/form action bars are standardized | Consistent internal spacing and action alignment without margin hacks |
 | 11 | Forced-colors layer | Scale does not handle `forced-colors` explicitly |
 | 12 | 44 × 44 px touch targets in `[data-high-contrast]` | WCAG SC 2.5.5 AAA; Scale does not enforce this |
@@ -210,7 +220,8 @@ Defined in `base.css`. Do not add component-specific styles here; use scoped sty
 |-------|-------------|
 | `.ui-toolbar` | Flex container: bordered + shadowed + card bg |
 | `.ui-toolbar-field` | Flex-grow field slot (min 220 px) |
-| `.ui-toolbar-actions` | Action button cluster |
+| `.ui-toolbar-actions` | Action button cluster; text buttons share the row on ≤ 768 px |
+| `.ui-toolbar-actions--end` | Pushes the cluster to the end of the toolbar |
 | `.ui-toolbar-info` | Caption-size informational text |
 
 ### Info grid
@@ -220,15 +231,15 @@ Defined in `base.css`. Do not add component-specific styles here; use scoped sty
 | `.ui-info-grid` | `auto-fit` grid of key-value cells (min 200 px) |
 | `.ui-info-item` | Individual cell: label (uppercase, `--telekom-text-style-small`) + value (bold) |
 
-### Pill / tag stack
+### Action rows
 
 | Class | Description |
 |-------|-------------|
-| `.ui-pill-stack` | Wrapping flex row of neutral tags |
-| `.tone-chip` | Base semantic chip (pill shape, bordered) |
-| `.tone-chip--{tone}` | Tone variant: `info` `success` `warning` `danger` `neutral` `muted` |
+| `.ui-actions` | Wrapping, end-aligned button row with one `--space-md` gap and a shared vertical centre; stacks full-width on ≤ 640 px |
+| `.ui-actions--start` / `--center` | Alignment modifiers |
+| `.modal-actions`, `.dialog-actions`, `.form-actions` | Same row plus a top border; text buttons get `--min-width: 8rem` |
 
-Tone chips also support session state aliases: `.tone-chip--active` = success, `.tone-chip--pending` = warning, `.tone-chip--rejected` = danger, `.tone-chip--expired` = neutral.
+Tags use `scale-tag` variants; the `--tone-chip-*` colour tokens back the tag overrides and constraint labels.
 
 ### Callout / inline banner
 
@@ -241,16 +252,9 @@ Tone chips also support session state aliases: `.tone-chip--active` = success, `
 
 | Class | Description |
 |-------|-------------|
-| `.ui-section` | Flex column with `--stack-gap-sm` |
-| `.ui-matching-summary` | Bordered summary box |
-| `.ui-link-button` | Inline-flex text link that looks like a link-button |
-| `.ui-link-button.small` | Smaller variant |
-| `.ui-muted` | Additional text colour |
-| `.center` | `text-align: center; width: 100%` |
 | `.loading-state`, `.empty-state` | Bordered placeholder areas |
 | `.skip-link` | Accessible skip-to-content link (visible on focus) |
 | `.sr-only` | Visually hidden, screen-reader accessible |
-| `.dev-debug-panel` | Collapsible debug panel (`<details>` element) — dev/test use only |
 
 ---
 
@@ -282,25 +286,6 @@ Renders a `scale-tag` with automatic tone detection from a backend state string.
 
 ---
 
-#### ChipRow
-
-Wrapping flex row of `scale-tag` chips with built-in truncation and tooltip.
-
-| Prop | Type | Default | Description |
-|------|------|---------|-------------|
-| `items` | `ChipItem[]` | `[]` | Array of chip definitions |
-| `defaultVariant` | `ChipItem["variant"]` | `"neutral"` | Fallback variant when item has none |
-| `maxWidth` | `string` | `"300px"` | Max chip width before text truncates |
-| `compact` | `boolean` | `false` | Reduces gap from `--space-sm` to `--stack-gap-xs` |
-
-`ChipItem` shape: `{ id, label, value?, variant?, prefix?, truncate? }`
-
-Supports a default slot for fully custom content (bypasses items prop).
-
-On mobile (≤ 640 px), `maxWidth` resets to `100%` so chips fill the viewport.
-
----
-
 #### PageHeader
 
 Consistent page-level header: title, optional subtitle, optional badge, optional actions, optional breadcrumbs.
@@ -320,21 +305,41 @@ On mobile (≤ 640 px) the title/subtitle stack and the aside fills full width.
 
 #### ActionButton
 
-`scale-button` wrapper with loading state, loading label, and pill radius enforcement.
+`scale-button` wrapper with loading state and loading label.
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
 | `label` | `string` | required | Button text |
 | `loadingLabel` | `string` | `""` | Replaces label while loading |
-| `variant` | `"primary" \| "secondary" \| "danger"` | `"primary"` | Scale button variant |
+| `variant` | `"primary" \| "secondary" \| "ghost"` | `"primary"` | Scale button variant |
 | `loading` | `boolean` | `false` | Shows spinner, sets `aria-busy`, disables interaction |
 | `disabled` | `boolean` | `false` | Disabled state |
-| `size` | `"small" \| "medium" \| "large"` | `"medium"` | Scale size prop |
-| `icon` | `string` | `""` | Prefix icon character/emoji (not for Scale icons) |
+| `size` | `"small" \| "large"` | `"large"` | Scale size prop |
 
 **Event:** `click(event: Event)` — only emitted when not loading or disabled.
 
-Min-width is 8 rem; on mobile (≤ 640 px) it stretches to full width.
+Place it inside an action row (`.ui-actions` or a dialog footer); the row owns width and wrapping.
+
+---
+
+#### DisabledReason
+
+Wrap every control that can be disabled. While `reason` is set, the wrapper becomes a focusable `scale-tooltip` trigger with the reason as its accessible description. It also takes hover, because the inert control below it cannot. With no reason the wrapper is transparent.
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `reason` | `string` | `""` | Why the control is disabled; empty when enabled |
+
+---
+
+#### HintTooltip
+
+Explains non-obvious, non-interactive content (status tags, badges, urgency, "Note required") in a `scale-tooltip`. With a non-empty `hint`, the wrapper is focusable and `aria-describedby` points at the hint. Session state hints come from `statusDescriptionFor()` in `src/utils/statusStyles.ts`; `StatusTag` applies them automatically.
+
+| Prop | Type | Default | Description |
+|------|------|---------|-------------|
+| `hint` | `string` | `""` | Tooltip text; empty renders the content unchanged |
+| `placement` | `string` | `"top"` | Scale tooltip placement |
 
 ---
 
@@ -413,10 +418,10 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 | `ApprovalModalContent` | Modal body for approve/reject flows |
 | `WithdrawConfirmDialog` | Confirmation dialog for session withdrawal |
 | `AutoLogoutWarning` | Banner + timer warning before auto-logout |
-| `CountdownTimer` | Countdown display widget |
+| `CountdownTimer` | Focusable countdown (`role="timer"`) with the absolute expiry in a Scale tooltip |
 | `IDPSelector` | Identity provider selection step |
 | `ErrorToasts` | Global toast notification layer |
-| `DebugPanel` | Collapsible developer debug panel |
+| `DebugPanel` | Developer debug panel behind a Scale icon-only toggle (dev builds only) |
 
 ### 6.3 Form components (`src/components/debug-session/`)
 
@@ -428,6 +433,35 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 | `VariableForm` | Dynamic variable input form |
 
 ---
+
+### 6.4 UI rules
+
+**Component mapping.** Buttons → `scale-button`, tags/chips → `scale-tag`, tooltips → `scale-tooltip` (directly, or via `DisabledReason`/`HintTooltip`), dialogs → `scale-modal`, toasts → `scale-notification-toast`, banners → `scale-notification`, selects → `scale-dropdown-select`, inputs → `scale-text-field`/`scale-textarea`, cards → `scale-card`, app shell → `scale-telekom-header`, icons → `scale-icon-*` with `decorative` when there is a visible label. Do not build custom equivalents.
+
+**Button variants.** Use one `primary` for the main action of a card, dialog or page. Use `secondary` for every other action, including Cancel, Back, Reject, Withdraw and Drop; the label states the risk. Use `ghost` only for low-emphasis inline actions such as info buttons in metadata grids. Use `size="small"` for inline toggles inside content, such as "Show all groups" and schedule toggles; action rows use the default large size. Icon-only buttons use `icon-only`, an `inner-aria-label`, and a `scale-tooltip` with the same text. Refresh buttons are icon-only secondary buttons with the label "Refresh …".
+
+**Alignment.** Put every button group in `.ui-actions`, a dialog/form footer class, or `.ui-toolbar-actions`. Never set `width` on a `scale-button` host without also setting Scale's `--width`/`--min-width` hooks; otherwise the label floats inside a wider host. Buttons in a row must share a vertical centre (±1 px). Text buttons of the same size must share one height across the page. `ui-audit.a11y.spec.ts` checks both at 390 × 844, 768 × 1024, 1280 × 800 and 1920 × 1080, in light and dark themes.
+
+**Tooltips.** Required on:
+
+- every icon-only button;
+- every disabled button, through `DisabledReason`, saying why it is disabled;
+- session status tags and other non-obvious badges, through `HintTooltip`;
+- countdowns;
+- any text clipped with an ellipsis. Prefer wrapping (`overflow-wrap: anywhere`) to clipping.
+
+Tooltips must open on hover and on keyboard focus. Do not add tooltips to buttons whose visible label already says everything.
+
+**States.** Use `LoadingState` for loading, `EmptyState` for empty lists (with a clear next step), and `ErrorBanner`/`scale-notification` for errors. Do not hand-roll placeholders.
+
+**Adding new UI.**
+
+1. Compose Scale components and tokens.
+2. Put new tokens in `tokens.css`, with a dark/high-contrast value when the colour differs.
+3. Use the action-row primitives for buttons.
+4. Add tooltips per the rules above.
+5. Add the route or dialog to `tests/e2e/ui-audit.a11y.spec.ts`.
+6. Run `npm run lint`, `npm run lint:styles`, `npm run typecheck` and `npm run test:a11y`.
 
 ## 7. Status Tone Mapping
 
@@ -541,7 +575,6 @@ CSS `:not(:defined)` rules provide a functional header, app shell layout, and de
 | Issue | Detail | Recommendation |
 |-------|--------|----------------|
 | Dual spacing scales | `--space-*` and `--stack-gap-*` have overlapping values (both include 4, 8, 12, 16, 24 px) | Adopt `--space-*` as the primary scale; deprecate `--stack-gap-*` in a future cleanup pass |
-| `ui-link-button.small` modifier | Uses a plain `.small` class rather than a BEM modifier `--small` | Rename to `.ui-link-button--small` for consistency |
 
 ---
 
@@ -550,17 +583,14 @@ CSS `:not(:defined)` rules provide a functional header, app shell layout, and de
 | Category | Detail | Priority |
 |----------|--------|----------|
 | Breakpoints | Hardcoded `640px`, `768px`, `1440px` in media queries | Low — CSS custom properties cannot be used in `@media`; document as constants |
-| Scale version lock | Package uses `^` (caret) on a beta release | Medium — pin to exact version to prevent silent breaking changes |
 | Spacing scale overlap | `--space-*` and `--stack-gap-*` should be unified | Low — both work; clean up in a future pass |
 
 ---
 
 ## 9. Priority Actions
 
-1. **Pin Scale to an exact beta version** — swap `^3.0.0-beta.160` → `3.0.0-beta.160` in `package.json` to prevent silent breaking changes.
+1. **Unify spacing scale** — collapse `--stack-gap-*` into `--space-*` across all components.
 
-2. **Unify spacing scale** — collapse `--stack-gap-*` into `--space-*` across all components.
+2. **Document breakpoint constants** — add JS/TS constants for `640`, `768`, `1440` px breakpoints used in media queries.
 
-3. **Document breakpoint constants** — add JS/TS constants for `640`, `768`, `1440` px breakpoints used in media queries.
-
-6. **Deprecate `--stack-gap-*` aliases** — they duplicate `--space-*` values and add cognitive overhead. Mark deprecated in a comment, replace usages, then remove in a clean-up PR.
+3. **Deprecate `--stack-gap-*` aliases** — they duplicate `--space-*` values and add cognitive overhead. Mark deprecated in a comment, replace usages, then remove in a clean-up PR.

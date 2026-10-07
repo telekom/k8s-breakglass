@@ -142,11 +142,11 @@ propagated.
 
 ---
 
-## 9. `scale-button` Pill Radius
+## 9. `scale-button` Pill Radius (removed)
 
-| Property | Scale Default | Our Override | Reason |
-|----------|---------------|--------------|--------|
-| `border-radius` | Scale standard radius | `var(--radius-pill)` = `62.4375rem` | Design decision for Breakglass — fully rounded buttons match the Telekom brand aesthetic. Applied via `::part(button)` and `::part(base)` with `!important` to penetrate shadow DOM. |
+Removed. Buttons use Scale's standard radius again so every `scale-button`
+variant, size and icon placement matches the Scale styleguide. Only the
+skip link and pill-style filter checkboxes still use `var(--radius-pill)`.
 
 ---
 

@@ -18,7 +18,10 @@ This document provides conventions specifically for AI coding agents working in 
 1. **Component Design**: Always use `scale-` components when available (e.g., `scale-button`, `scale-tag`, `scale-card`) rather than building custom UI from scratch.
 2. **State Management**: Prefer the native Vue 3 Reactivity API (`ref`, `computed`, `watch`) over Pinia unless complex global state warrants it.
 3. **Typing**: Use strict TypeScript. Avoid `any` types. Provide explicit types for all component props and emits.
-4. **Styling**: Use existing CSS custom properties (tokens) in `frontend/src/assets/base.css` (e.g. `var(--space-md)`) rather than hardcoding px or rem values.
+4. **Styling**: Use the CSS custom properties in `frontend/src/assets/tokens.css` (e.g. `var(--space-md)`, `var(--shadow-card)`) rather than hardcoded values. Raw hex/rgb colours, px font sizes and raw shadows are only allowed in `tokens.css`; `npm run lint:styles` (stylelint, run in CI) enforces this.
+   - Buttons: only Scale variants (`primary`, `secondary`, `ghost`); group them in `.ui-actions` rows instead of ad-hoc flex/margins.
+   - Tooltips: icon-only buttons, disabled buttons (via `DisabledReason`, explaining why), status tags and non-obvious chips (via `HintTooltip`/`StatusTag`) need a `scale-tooltip` reachable on hover and keyboard focus. Do not add tooltips to labelled buttons or use native `title`.
+   - Run the mock audit (`npm run test:a11y`, `ui-audit.a11y.spec.ts`) after layout changes.
 5. **Testing**: All new services and components must have accompanying unit tests in `frontend/tests/unit`. We use Vitest for testing. Run tests via `npm test`.
 
 ## Architecture Notes

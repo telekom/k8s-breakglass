@@ -75,6 +75,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bump packaged Helm chart versions so the next controller release preserves
   the immutable chart packages already published for `v0.3.0-rc.4`.
 
+- **Frontend**: Adopt the Telekom Scale styleguide throughout: Scale
+  `primary`/`secondary`/`ghost` button variants and Scale icons only, one
+  token layer (`tokens.css`) for colours, shadows, spacing and typography,
+  and shared `.ui-actions` rows so buttons in toolbars, card and dialog
+  footers share heights and vertical centres at every viewport.
+  Icon-only buttons, disabled buttons (with the reason), status tags,
+  urgency chips and countdowns get Scale tooltips on hover and keyboard focus.
+  Loading states use the shared `LoadingState` component, and dead custom CSS
+  and the unused `ChipRow` component are removed. `npm run lint:styles`
+  (stylelint, run in CI) rejects raw colours, px font sizes and shadows
+  outside the token layer, and the `ui-audit` mock Playwright spec plus the
+  `ui-alignment-tooltips` UI E2E spec check button alignment and tooltips.
 - Frontend accessibility and usability pass: icon-only and Scale buttons get
   accessible names, heading order and landmarks are corrected, low-contrast
   status text uses text-safe tokens, dialogs move focus in and return it on
