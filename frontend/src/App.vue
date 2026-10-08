@@ -706,7 +706,8 @@ watch(
       </scale-telekom-header>
 
       <div id="main" class="app-container" :role="mainLandmarkRole" tabindex="-1">
-        <h1 class="sr-only">{{ brandingTitle }}</h1>
+        <!-- Signed-in views render their own h1; this one only names the login gate. -->
+        <h1 v-if="!authenticated" class="sr-only">{{ brandingTitle }}</h1>
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">

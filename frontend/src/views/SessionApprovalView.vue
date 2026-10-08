@@ -386,9 +386,9 @@ onUnmounted(() => {
         <scale-icon-content-lock v-else size="48"></scale-icon-content-lock>
       </div>
 
-      <h2 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
+      <h1 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
         {{ error }}
-      </h2>
+      </h1>
 
       <!-- Special UI for self-approval blocked -->
       <scale-notification

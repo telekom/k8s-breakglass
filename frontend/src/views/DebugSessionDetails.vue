@@ -520,6 +520,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       </scale-button>
     </div>
 
+    <PageHeader :title="sessionName" :subtitle="session ? `Debug session on ${session.spec.cluster}` : undefined" />
+
     <LoadingState v-if="loading" message="Loading session details..." />
 
     <EmptyState
@@ -536,8 +538,6 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
     </EmptyState>
 
     <template v-else-if="session">
-      <PageHeader :title="session.metadata.name" :subtitle="`Debug session on ${session.spec.cluster}`" />
-
       <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
         <div class="detail-card status-card" data-testid="status-card">
