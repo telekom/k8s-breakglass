@@ -278,16 +278,33 @@ scale-modal {
   --spacing-y: var(--space-lg);
 }
 
+/* Scale insets the header with margins, so its scroll separator stopped
+   short of the window edges. Pad instead so the rule spans the window. */
+scale-modal::part(header) {
+  margin-inline: 0;
+  padding-inline: var(--spacing-x-header);
+}
+
 scale-modal::part(body) {
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
 }
 
-scale-modal::part(header) {
-  border-bottom: 1px solid var(--telekom-color-ui-border-standard);
-  margin-bottom: var(--space-md);
-  padding-bottom: var(--space-md);
+/* Scale modals have no header/footer rules; Scale draws its own separator
+   and footer background only while the body scrolls. Footer rows inside a
+   modal therefore drop the page-level divider used by .modal-actions. */
+scale-modal .modal-actions {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
+
+/* Scale offsets each slotted footer child; the shared row fills the footer
+   instead so it stays right-aligned and stretches on mobile. */
+scale-modal > .modal-actions[slot="action"] {
+  flex: 1 1 auto;
+  margin-left: 0;
 }
 
 /* ============================================

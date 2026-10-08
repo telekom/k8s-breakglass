@@ -55,8 +55,8 @@ const DIALOGS: DialogCase[] = [
         - button "Schedule for future date (optional)"
         - textbox "Reason" [invalid]
         - paragraph: Reason is required.
-        - button "Confirm Request" [disabled]
         - button "Cancel"
+        - button "Confirm Request" [disabled]
     `,
     disabled: [{ button: "Confirm Request", reason: "Enter a reason to submit the request." }],
   },
@@ -273,7 +273,7 @@ test.describe("Screen reader semantics (mock)", () => {
     // The region must exist before the toast is inserted, or screen readers ignore it.
     const region = page.locator('.toast-region[aria-live="polite"]');
     await expect(region).toHaveCount(1);
-    await expect(region.locator("scale-notification-toast")).toHaveCount(0);
+    await expect(region.locator("scale-notification")).toHaveCount(0);
 
     // Keep the shared mock server state intact so the withdraw dialog test stays repeatable.
     await page.route("**/api/breakglassSessions/*/withdraw", (route) =>

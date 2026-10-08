@@ -4,10 +4,7 @@
     <p><b>Group:</b> {{ session.spec?.grantedGroup }} @ {{ session.spec?.cluster }}</p>
     <p v-if="session.spec?.identityProviderName"><b>IDP:</b> {{ session.spec.identityProviderName }}</p>
 
-    <!-- Duration information -->
-    <div v-if="sessionSpec?.maxValidFor" class="modal-info-block tone-info">
-      <p><strong>Duration:</strong> {{ formatDurationRounded(String(sessionSpec.maxValidFor)) }}</p>
-    </div>
+    <p v-if="sessionSpec?.maxValidFor"><b>Duration:</b> {{ formatDurationRounded(String(sessionSpec.maxValidFor)) }}</p>
 
     <!-- Scheduling information -->
     <div v-if="sessionSpec?.scheduledStartTime" class="modal-info-block tone-warn">
@@ -29,9 +26,9 @@
     </div>
 
     <!-- Immediate session timing -->
-    <div v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime" class="modal-info-row">
-      <strong>Session expires at:</strong> {{ formatDateTime(session.status.expiresAt) }}
-    </div>
+    <p v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime">
+      <b>Session expires at:</b> {{ formatDateTime(session.status.expiresAt) }}
+    </p>
 
     <!-- Request reason -->
     <div v-if="requestReason" class="modal-reason" data-testid="request-reason">
@@ -59,29 +56,30 @@
         This field is required.
       </p>
     </div>
+  </div>
 
-    <div class="modal-actions">
-      <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
-      <DisabledReason v-if="canReview" :reason="disabledReason">
-        <scale-button
-          data-testid="reject-button"
-          variant="secondary"
-          :disabled="isApproving || isRequiredNoteMissing"
-          @click="$emit('reject')"
-        >
-          Reject
-        </scale-button>
-      </DisabledReason>
-      <DisabledReason v-if="canReview" :reason="disabledReason">
-        <scale-button
-          data-testid="approve-button"
-          :disabled="isApproving || isRequiredNoteMissing"
-          @click="$emit('approve')"
-        >
-          Confirm Approve
-        </scale-button>
-      </DisabledReason>
-    </div>
+  <!-- Second root so a parent scale-modal renders it in its footer slot. -->
+  <div slot="action" class="modal-actions">
+    <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
+    <DisabledReason v-if="canReview" :reason="disabledReason">
+      <scale-button
+        data-testid="reject-button"
+        variant="secondary"
+        :disabled="isApproving || isRequiredNoteMissing"
+        @click="$emit('reject')"
+      >
+        Reject
+      </scale-button>
+    </DisabledReason>
+    <DisabledReason v-if="canReview" :reason="disabledReason">
+      <scale-button
+        data-testid="approve-button"
+        :disabled="isApproving || isRequiredNoteMissing"
+        @click="$emit('approve')"
+      >
+        Confirm Approve
+      </scale-button>
+    </DisabledReason>
   </div>
 </template>
 
@@ -182,17 +180,6 @@ function handleNoteChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
-.modal-info-block.tone-info {
-  background: var(--tone-chip-info-bg);
-  border: 1px solid var(--tone-chip-info-border);
-  border-left: 3px solid var(--telekom-color-functional-informational-standard);
-  color: var(--tone-chip-info-text);
-}
-
-.modal-info-block.tone-info p {
-  color: var(--tone-chip-info-text);
-}
-
 .modal-info-block.tone-warn {
   background: var(--tone-chip-warning-bg);
   border: 1px solid var(--tone-chip-warning-border);
@@ -223,16 +210,6 @@ function handleNoteChange(ev: Event) {
   background: var(--tone-chip-info-bg);
   color: var(--tone-chip-info-text);
   border: 1px solid var(--tone-chip-info-border);
-}
-
-.modal-info-row {
-  margin-top: var(--space-sm);
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.modal-info-row strong {
-  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .modal-reason {
