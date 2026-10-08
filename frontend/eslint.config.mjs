@@ -56,6 +56,17 @@ export default defineConfigWithVueTs(
       // radiogroup containers delegate focus to child role="radio" elements
       // via roving tabindex — the container itself must NOT be focusable.
       "vuejs-accessibility/interactive-supports-focus": "off",
+      // Vue rewrites the class attribute when a class binding changes and drops
+      // Stencil's `hydrated` flag, which hides the Scale element.
+      "vue/no-restricted-syntax": [
+        "error",
+        {
+          selector:
+            "VElement[name=/^scale-/] > VStartTag > VAttribute[directive=true][key.name.name='bind'][key.argument.name='class']",
+          message:
+            "Do not bind :class on Scale elements; Vue drops Stencil's hydrated class. Use aria-* or data-* attributes for state.",
+        },
+      ],
     },
   },
   {

@@ -460,7 +460,7 @@ Tooltips must open on hover and on keyboard focus. Do not add tooltips to button
 
 **Mobile menu.** Flyout links and the theme/contrast rows share the standard text colour in every theme. The current page is bold, carries `aria-current="page"`, has a 3 px inset start bar in the primary colour, and uses the brand colour in light mode (dark and high contrast keep the AAA text colour, like the desktop nav, so the bar is the visible cue there). Header function items (`scale-telekom-nav-item` around the profile menu and the menu trigger) use `variant="functions"`: a main-nav item rewrites `aria-current` on the first link it contains.
 
-**Scale elements and classes.** Never bind a dynamic `:class` on a `<scale-*>` element. Vue rewrites the `class` attribute on update and drops Stencil's `hydrated` class, and Stencil then hides the element. Use static classes and express state with `aria-pressed`, `aria-*` or `data-*` attributes. `tests/unit/scaleClassBindings.spec.ts` and the visual audit's hydration check enforce this.
+**Scale elements and classes.** Never bind a dynamic `:class` on a `<scale-*>` element. Vue rewrites the `class` attribute on update and drops Stencil's `hydrated` class, and Stencil then hides the element. Use static classes and express state with `aria-pressed`, `aria-*` or `data-*` attributes. A `vue/no-restricted-syntax` rule in `eslint.config.mjs`, the theme-toggle regression in `ui-visual.a11y.spec.ts` and the visual audit's hydration check enforce this.
 
 **Focus.** After navigation the router moves focus to the page `h1`, unless the user has already focused something else (e.g. opened the profile menu) in the meantime.
 
