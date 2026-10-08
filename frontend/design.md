@@ -218,11 +218,13 @@ Defined in `base.css`. Do not add component-specific styles here; use scoped sty
 
 | Class | Description |
 |-------|-------------|
-| `.ui-toolbar` | Flex container: bordered + shadowed + card bg |
-| `.ui-toolbar-field` | Flex-grow field slot (min 220 px) |
+| `.ui-toolbar` | The one filter panel per list page: a wrapping flex row with a `--space-md` gap, bordered, shadowed, card background. The same wrapping rules apply at every width, so mobile gets stacked full-width fields with no empty space and no separate column layout |
+| `.ui-toolbar-field` | Flex-grow field slot (min `15rem`, full width when narrower) |
+| `.ui-toolbar-toggle` | Checkbox/switch that keeps its natural width on the field row |
+| `.ui-toolbar-group` / `-group-label` | Full-width row inside the panel, e.g. state checkboxes, with a caption label |
 | `.ui-toolbar-actions` | Action button cluster; text buttons share the row on ≤ 768 px |
 | `.ui-toolbar-actions--end` | Pushes the cluster to the end of the toolbar |
-| `.ui-toolbar-info` | Caption-size informational text |
+| `.ui-toolbar-info` | The result count ("Showing 14 of 14 …"): last full-width line of the panel, directly under the controls it describes. Never put it in a separate card |
 
 ### Info grid
 
@@ -237,7 +239,7 @@ Defined in `base.css`. Do not add component-specific styles here; use scoped sty
 |-------|-------------|
 | `.ui-actions` | Wrapping, end-aligned button row with one `--space-md` gap and a shared vertical centre; stacks full-width on ≤ 640 px |
 | `.ui-actions--start` / `--center` | Alignment modifiers |
-| `.modal-actions`, `.dialog-actions`, `.form-actions` | Same row plus a top border; text buttons get `--min-width: 8rem` |
+| `.modal-actions`, `.dialog-actions`, `.form-actions` | Same row plus a top border; text buttons get `--min-width: 8rem`. Inside `scale-modal` the row drops its border and fills Scale's footer: Scale draws the full-width header/footer separators itself, only while the body scrolls. Order is Cancel/secondary first, primary last |
 
 Tags use `scale-tag` variants; the `--tone-chip-*` colour tokens back the tag overrides and constraint labels.
 
@@ -421,7 +423,7 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 | `CountdownTimer` | Focusable countdown (`role="timer"`) with the absolute expiry in a Scale tooltip |
 | `IDPSelector` | Identity provider selection step |
 | `ErrorToasts` | Global toast notification layer |
-| `DebugPanel` | Developer debug panel behind a Scale icon-only toggle (dev builds only) |
+| `DebugPanel` | Developer debug panel behind a Scale icon-only toggle (dev builds only). The toggle sits in the page flow after the content, so it never covers page actions; only the opened panel floats |
 
 ### 6.3 Form components (`src/components/debug-session/`)
 
@@ -436,7 +438,7 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 
 ### 6.4 UI rules
 
-**Component mapping.** Buttons → `scale-button`, tags/chips → `scale-tag`, tooltips → `scale-tooltip` (directly, or via `DisabledReason`/`HintTooltip`), dialogs → `scale-modal`, toasts → `scale-notification-toast`, banners → `scale-notification`, selects → `scale-dropdown-select`, inputs → `scale-text-field`/`scale-textarea`, cards → `scale-card`, app shell → `scale-telekom-header`, icons → `scale-icon-*` with `decorative` when there is a visible label. Do not build custom equivalents.
+**Component mapping.** Buttons → `scale-button`, tags/chips → `scale-tag`, tooltips → `scale-tooltip` (directly, or via `DisabledReason`/`HintTooltip`), dialogs → `scale-modal`, toasts → `scale-notification type="toast"` (rendered only by `ErrorToasts.vue`), banners → `scale-notification`, selects → `scale-dropdown-select`, inputs → `scale-text-field`/`scale-textarea`, cards → `scale-card`, app shell → `scale-telekom-header`, icons → `scale-icon-*` with `decorative` when there is a visible label. Do not build custom equivalents.
 
 **Button variants.** Use one `primary` for the main action of a card, dialog or page. Use `secondary` for every other action, including Cancel, Back, Reject, Withdraw and Drop; the label states the risk. Use `ghost` only for low-emphasis inline actions such as info buttons in metadata grids. Use `size="small"` for inline toggles inside content, such as "Show all groups" and schedule toggles; action rows use the default large size. Put an icon before the label as a plain child of `scale-button`, with no `slot` attribute (Scale has no named icon slots, so slotted icons are not rendered). Size it `16` in small buttons and `20` in large ones, and add `decorative`. Icon-only buttons use `icon-only`, an `inner-aria-label`, and a `scale-tooltip` with the same text. Refresh buttons are icon-only secondary buttons with the label "Refresh …".
 
@@ -452,6 +454,12 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 
 Tooltips must open on hover and on keyboard focus. Do not add tooltips to buttons whose visible label already says everything.
 
+**Header.** Nav labels are one or two short words (Request, Approvals, Reviews, My Requests, Sessions, Debug) and must never truncate; put the descriptive wording in the accessible name. The logo, app name, nav items and the theme/contrast/profile controls share one vertical centre (±1 px) at every width.
+
+**Toasts.** `ErrorToasts.vue` renders one fixed stack of Scale `scale-notification type="toast"` elements, `--space-lg` below the measured bottom of the header bar, with a `--space-md` gap between toasts, Scale's own internal padding, and a width capped to the viewport minus the page gutter on mobile. Report caught errors with `reportError(err, fallback)` from `@/services/toast`, never `pushError(err.message)`: the HTTP layer already toasts backend errors, and `reportError` skips errors it has already reported. Identical concurrent messages are merged.
+
+**Focus.** After navigation the router moves focus to the page `h1`, unless the user has already focused something else (e.g. opened the profile menu) in the meantime.
+
 **States.** Use `LoadingState` for loading, `EmptyState` for empty lists (with a clear next step), and `ErrorBanner`/`scale-notification` for errors. Do not hand-roll placeholders.
 
 **Adding new UI.**
@@ -460,7 +468,7 @@ Tooltips must open on hover and on keyboard focus. Do not add tooltips to button
 2. Put new tokens in `tokens.css`, with a dark/high-contrast value when the colour differs.
 3. Use the action-row primitives for buttons.
 4. Add tooltips per the rules above.
-5. Add the route or dialog to `tests/e2e/ui-audit.a11y.spec.ts`.
+5. Add the route, dialog or menu to `tests/e2e/ui-audit.a11y.spec.ts` and `tests/e2e/ui-visual-audit.a11y.spec.ts`. The visual audit (`helpers/ui-visual-audit.ts`) checks every route, dialog, menu, and empty/error/stress list state at 4 viewports in light, dark and high contrast. It flags overlaps, clipped text without a tooltip, horizontal scroll, off-viewport content, uneven row centres and heights, gaps off the token scale, separators that stop short, boxes with empty space, mixed icon sizes, and inconsistent card radii and paddings. It also checks that menus close on Escape and return focus. `ui-visual.a11y.spec.ts` holds the dedicated header, toast, dialog and filter regressions.
 6. Run `npm run lint`, `npm run lint:styles`, `npm run typecheck` and `npm run test:a11y`.
 
 ## 7. Status Tone Mapping

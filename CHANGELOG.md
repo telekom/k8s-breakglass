@@ -101,8 +101,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   status text uses text-safe tokens, dialogs move focus in and return it on
   close (also when the dialog renders a few frames late), the skip link is
   visible on focus in production builds, the mobile escalation card no longer
-  clips its call to action, empty error toasts no longer render a dead link (hidden via the Scale toast `styles` prop),
+  clips its call to action, toasts no longer render a dead, unnamed link,
   and the Session Browser name filter now narrows results.
+- **Frontend**: Visual polish pass at 390, 768, 1280 and 1920 px in light,
+  dark and high contrast. Header: the logo, app name, nav and the
+  theme/contrast/profile controls share one vertical centre, and nav labels
+  are shortened (Request, Approvals, Reviews, My Requests, Sessions, Debug) so
+  they never truncate. Toasts: they stack below the header with token gaps and
+  Scale padding, fit the mobile width, and a failed request shows one error
+  toast instead of two. Dialogs: Scale's header/footer separators span the
+  full window, footers put Cancel first, and close buttons align. Filters:
+  every list page uses one compact filter panel with the result count as its
+  last line, with no empty space on mobile. The dev-only diagnostics toggle no
+  longer covers page actions. High contrast: the brand logo, checkbox marks and
+  disabled primary buttons are visible. Focus is no longer pulled back to the
+  page heading when a header menu is opened right after navigation. The new
+  `ui-visual` and `ui-visual-audit` mock Playwright specs guard these issues,
+  plus overlaps, clipping, horizontal scroll, off-scale gaps, short separators
+  and empty boxes, on every route, dialog, menu and list state.
 - The kind e2e setup waits for escalations by their `breakglass-` prefixed
   names, removing repeated timeouts that slowed every UI E2E run.
 

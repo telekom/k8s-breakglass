@@ -21,11 +21,12 @@ This document provides conventions specifically for AI coding agents working in 
 4. **Styling**: Use the CSS custom properties in `frontend/src/assets/tokens.css` (e.g. `var(--space-md)`, `var(--shadow-card)`) rather than hardcoded values. Raw hex/rgb colours, px font sizes and raw shadows are only allowed in `tokens.css`; `npm run lint:styles` (stylelint, run in CI) enforces this.
    - Buttons: only Scale variants (`primary`, `secondary`, `ghost`); group them in `.ui-actions` rows instead of ad-hoc flex/margins.
    - Tooltips: icon-only buttons, disabled buttons (via `DisabledReason`, explaining why), status tags and non-obvious chips (via `HintTooltip`/`StatusTag`) need a `scale-tooltip` reachable on hover and keyboard focus. Do not add tooltips to labelled buttons or use native `title`.
-   - Run the mock audit (`npm run test:a11y`, `ui-audit.a11y.spec.ts`) after layout changes.
+   - Filters: one `.ui-toolbar` panel per list page, with the result count as its `.ui-toolbar-info` last line; no separate mobile layout.
+   - Run the mock audits (`npm run test:a11y`: `ui-audit`, `ui-visual` and `ui-visual-audit` specs) after layout changes. Add new routes, dialogs and menus to `ui-visual-audit.a11y.spec.ts`.
 5. **Testing**: All new services and components must have accompanying unit tests in `frontend/tests/unit`. We use Vitest for testing. Run tests via `npm test`.
 
 ## Architecture Notes
-- `src/services/` contains API wrappers (e.g. `breakglass.ts`). Ensure error handling uses the `handleAxiosError` utility.
+- `src/services/` contains API wrappers (e.g. `breakglass.ts`). Ensure error handling uses the `handleAxiosError` utility. In views, report caught errors with `reportError(err, fallback)` from `@/services/toast`, not `pushError`, so an error the HTTP layer already toasted is not shown twice.
 - `src/components/` contains reusable UI pieces.
 - `src/views/` contains route-level pages.
 
