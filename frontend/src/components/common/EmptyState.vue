@@ -73,7 +73,7 @@ const scaleIconName = computed(() => {
     <p class="empty-state__title">{{ title }}</p>
     <p v-if="description" class="empty-state__description">{{ description }}</p>
     <slot name="description"></slot>
-    <div v-if="hasActions" class="empty-state__actions">
+    <div v-if="hasActions" class="empty-state__actions ui-actions ui-actions--center">
       <slot name="actions"></slot>
     </div>
   </div>
@@ -126,10 +126,6 @@ const scaleIconName = computed(() => {
 
 .empty-state__actions {
   margin-top: var(--space-lg);
-  display: flex;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  justify-content: center;
 }
 
 .empty-state[data-variant="error"] {

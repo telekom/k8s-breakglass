@@ -17,6 +17,7 @@ const DebugSessionBrowser = () => import("@/views/DebugSessionBrowser.vue");
 const DebugSessionCreate = () => import("@/views/DebugSessionCreate.vue");
 const DebugSessionDetails = () => import("@/views/DebugSessionDetails.vue");
 import logger from "@/services/logger";
+import { PAGE_HEADING_SELECTOR } from "@/utils/pageHeading";
 
 const isDev = import.meta.env.DEV;
 
@@ -145,14 +146,21 @@ router.afterEach((to, from, failure) => {
 
     // Move focus to the main heading after navigation for screen readers.
     // Guarded: skip if the user (or a component) has already placed focus
-    // inside #main so we don't override intentional focus targets.
+    // inside #main, or moved it anywhere else since the navigation (e.g. into
+    // a header menu), so we don't override intentional focus targets.
+    const focusAtNavigation = document.activeElement;
     focusTimerId = setTimeout(() => {
       focusTimerId = null;
       const mainEl = document.getElementById("main");
-      if (mainEl && mainEl.contains(document.activeElement)) {
+      const active = document.activeElement;
+      if (mainEl && mainEl.contains(active)) {
         return; // User or component already focused something inside main
       }
-      const heading = document.querySelector("#main h1, #main h2") as HTMLElement | null;
+      if (active && active !== document.body && active !== focusAtNavigation) {
+        return; // Focus moved elsewhere after navigating
+      }
+      // Async pages render their heading only after loading; fall back to #main.
+      const heading = document.querySelector<HTMLElement>(PAGE_HEADING_SELECTOR) ?? mainEl;
       if (heading) {
         const previousTabIndex = heading.getAttribute("tabindex");
         heading.setAttribute("tabindex", "-1");

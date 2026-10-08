@@ -541,10 +541,10 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
       >
         <scale-icon-navigation-collapse-down
           v-if="!showAdvancedInternal"
-          slot="icon"
           size="16"
+          decorative
         ></scale-icon-navigation-collapse-down>
-        <scale-icon-navigation-collapse-up v-else slot="icon" size="16"></scale-icon-navigation-collapse-up>
+        <scale-icon-navigation-collapse-up v-else size="16" decorative></scale-icon-navigation-collapse-up>
         {{ showAdvancedInternal ? "Hide Advanced Options" : "Show Advanced Options" }}
       </scale-button>
     </div>
@@ -731,7 +731,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 }
 
 .required-marker {
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--telekom-color-text-and-icon-functional-danger);
 }
 
 .multi-select-description {
@@ -752,7 +752,7 @@ function isMultiSelectChecked(variable: ExtraDeployVariable, optionValue: string
 
 .multi-select-error {
   font: var(--telekom-text-style-small);
-  color: var(--telekom-color-functional-danger-standard);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin: 0;
 }
 

@@ -37,8 +37,8 @@ function retry() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--space-md, 16px);
-  padding: var(--space-xl, 32px);
+  gap: var(--space-md);
+  padding: var(--space-xl);
   text-align: center;
   color: var(--telekom-color-text-and-icon-standard);
 }

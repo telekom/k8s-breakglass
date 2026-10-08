@@ -48,6 +48,7 @@ vi.mock("@/services/debugSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+  reportError: vi.fn(),
 }));
 
 vi.mock("@/services/auth", () => ({
@@ -109,7 +110,7 @@ describe("DebugSessionBrowser", () => {
           "scale-checkbox": true,
           "scale-button": true,
           "scale-dropdown-select": true,
-          "scale-dropdown-select-option": true,
+          "scale-dropdown-select-item": true,
         },
         provide: {
           [AuthKey as symbol]: mockAuth,

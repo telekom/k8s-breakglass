@@ -3,7 +3,8 @@
  * StatusTag - Consistent status badge with semantic styling
  */
 import { computed } from "vue";
-import { statusToneFor, type StatusTone } from "@/utils/statusStyles";
+import { statusDescriptionFor, statusToneFor, type StatusTone } from "@/utils/statusStyles";
+import HintTooltip from "./HintTooltip.vue";
 
 const props = withDefaults(
   defineProps<{
@@ -17,6 +18,8 @@ const props = withDefaults(
     showIcon?: boolean;
     /** Make uppercase */
     uppercase?: boolean;
+    /** Tooltip text; defaults to the explanation of the status */
+    hint?: string;
   }>(),
   {
     status: "",
@@ -24,6 +27,7 @@ const props = withDefaults(
     size: "medium",
     showIcon: false,
     uppercase: true,
+    hint: undefined,
   },
 );
 
@@ -39,6 +43,8 @@ const statusIcons: Record<string, string> = {
   scheduled: "content-calendar",
   waitingforscheduledtime: "content-calendar",
 };
+
+const resolvedHint = computed(() => props.hint ?? statusDescriptionFor(props.status));
 
 const computedTone = computed(() => {
   if (props.tone) return props.tone;
@@ -82,16 +88,18 @@ const tagVariant = computed(() => {
 </script>
 
 <template>
-  <scale-tag class="status-tag" :class="[`status-tag--${size}`, `status-tag--${computedTone}`]" :variant="tagVariant">
-    <span v-if="icon" class="status-tag__icon" aria-hidden="true">
-      <scale-icon-action-success v-if="icon === 'action-success'" size="14" decorative />
-      <scale-icon-content-hour-glass v-else-if="icon === 'content-hour-glass'" size="14" decorative />
-      <scale-icon-action-circle-close v-else-if="icon === 'action-circle-close'" size="14" decorative />
-      <scale-icon-content-clock v-else-if="icon === 'content-clock'" size="14" decorative />
-      <scale-icon-content-calendar v-else-if="icon === 'content-calendar'" size="14" decorative />
-    </span>
-    <span class="status-tag__label">{{ displayLabel }}</span>
-  </scale-tag>
+  <HintTooltip :hint="resolvedHint">
+    <scale-tag class="status-tag" :data-size="size" :data-tone="computedTone" :variant="tagVariant">
+      <span v-if="icon" class="status-tag__icon" aria-hidden="true">
+        <scale-icon-action-success v-if="icon === 'action-success'" size="14" decorative />
+        <scale-icon-content-hour-glass v-else-if="icon === 'content-hour-glass'" size="14" decorative />
+        <scale-icon-action-circle-close v-else-if="icon === 'action-circle-close'" size="14" decorative />
+        <scale-icon-content-clock v-else-if="icon === 'content-clock'" size="14" decorative />
+        <scale-icon-content-calendar v-else-if="icon === 'content-calendar'" size="14" decorative />
+      </span>
+      <span class="status-tag__label">{{ displayLabel }}</span>
+    </scale-tag>
+  </HintTooltip>
 </template>
 
 <style scoped>
@@ -100,7 +108,7 @@ const tagVariant = computed(() => {
   letter-spacing: 0.04em;
 }
 
-.status-tag--small {
+.status-tag[data-size="small"] {
   font: var(--telekom-text-style-badge);
   padding: var(--space-xs) var(--space-sm);
 }

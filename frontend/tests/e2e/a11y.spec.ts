@@ -4,6 +4,7 @@
 
 import { test, expect, Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { expectSingleH1 } from "./helpers";
 
 /**
  * Accessibility E2E tests using axe-core.
@@ -24,7 +25,7 @@ import AxeBuilder from "@axe-core/playwright";
  * Known Scale component issues (in shadow DOM, outside our control) are handled
  * with a two-pronged approach:
  *   1. `disableRules()` — suppress specific axe rules triggered by Scale's
- *      internal shadow-DOM rendering patterns (e.g. button-name, aria-prohibited-attr).
+ *      internal shadow-DOM rendering patterns (aria-required-children).
  *   2. `isScaleShadowDomNode()` — filter out shadow-DOM violation nodes at
  *      result-processing time so app light-DOM content in the header remains audited.
  */
@@ -164,12 +165,15 @@ const THEME_MODES: Array<{
  * Specific components triggering false positives:
  * - aria-required-children: scale-telekom-nav-list[role="menu"] contains
  *   [role="button"] triggers from Scale's profile-menu, which we cannot fix.
- * - button-name: scale-button[icon-only] renders a shadow-DOM <button>
- *   without propagating the host's aria-label, an upstream Scale limitation.
- * - aria-prohibited-attr: scale-button renders aria-label on elements whose
- *   implicit role forbids it — another Scale internal issue.
+ *
+ * `button-name` and `aria-prohibited-attr` are intentionally enforced: icon-only
+ * scale-buttons must set `inner-aria-label` (which names the shadow <button>)
+ * instead of a host `aria-label`.
  */
-const SCALE_DISABLED_RULES = ["aria-required-children", "button-name", "aria-prohibited-attr"];
+const SCALE_DISABLED_RULES = ["aria-required-children"];
+
+/** Rules reported even when the offending node lives in a Scale shadow root. */
+const SHADOW_ENFORCED_RULES = ["button-name", "aria-prohibited-attr"];
 
 /**
  * Telekom brand colours that are exempt from the AAA enhanced contrast rule
@@ -268,18 +272,20 @@ function isBrandColorContrastNode(node: {
  * Run axe-core analysis and assert no critical/serious violations.
  * Shared by page, error page, and modal tests.
  */
-async function assertNoA11yViolations(page: Page, context: string, mode: string) {
+async function findSignificantViolations(page: Page, mode: string) {
   const results = await new AxeBuilder({ page })
     .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag2aaa", "wcag22aaa"])
     .disableRules(SCALE_DISABLED_RULES)
     .analyze();
 
-  const significantViolations = results.violations
+  return results.violations
     .filter((v) => v.impact === "critical" || v.impact === "serious")
     .map((v) => ({
       ...v,
       nodes: v.nodes.filter((n) => {
-        if (isScaleShadowDomNode(n)) return false;
+        // Unnamed shadow buttons are app bugs (missing inner-aria-label), so
+        // these rules are never suppressed for Scale shadow-DOM nodes.
+        if (!SHADOW_ENFORCED_RULES.includes(v.id) && isScaleShadowDomNode(n)) return false;
         // Exempt Telekom brand colours ONLY from the enhanced contrast rule (AAA)
         // in standard light/dark themes. High-contrast mode must not leak brand
         // magenta because users opted into maximum contrast.
@@ -290,6 +296,10 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
       }),
     }))
     .filter((v) => v.nodes.length > 0);
+}
+
+async function assertNoA11yViolations(page: Page, context: string, mode: string) {
+  const significantViolations = await findSignificantViolations(page, mode);
 
   if (significantViolations.length > 0) {
     const details = significantViolations
@@ -307,6 +317,22 @@ async function assertNoA11yViolations(page: Page, context: string, mode: string)
 }
 
 test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
+  test("audit reports an icon-only Scale button without inner-aria-label", async ({ page }) => {
+    await performMockLogin(page);
+    await page.waitForLoadState("networkidle");
+    await page.evaluate(() => {
+      const button = document.createElement("scale-button");
+      button.setAttribute("icon-only", "");
+      button.setAttribute("data-testid", "unnamed-icon-button");
+      button.innerHTML = '<scale-icon-action-search decorative=""></scale-icon-action-search>';
+      document.querySelector("#main")!.prepend(button);
+    });
+    await expect(page.locator('[data-testid="unnamed-icon-button"]')).toHaveClass(/hydrated/);
+
+    const violations = await findSignificantViolations(page, "light");
+    expect(violations.map((v) => v.id)).toContain("button-name");
+  });
+
   for (const mode of THEME_MODES) {
     test.describe(`${mode.name} mode`, () => {
       // ── Primary authenticated pages ──────────────────────────────
@@ -413,7 +439,110 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
     });
   });
 
+  test.describe("Toast Semantics", () => {
+    test("error toast has no dead tab stop and closes from the keyboard", async ({ page }) => {
+      await performMockLogin(page);
+      await navigateTo(page, "/debug-sessions");
+      await page.route("**/api/breakglassEscalations**", (route) =>
+        route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"boom"}' }),
+      );
+      await navigateTo(page, "/");
+
+      const toast = page.locator('[data-testid="error-toast"]').first();
+      await expect(toast.getByRole("alert")).toBeVisible();
+      await expect(toast.getByRole("link")).toHaveCount(0);
+      // The heading speaks the visible title only, not Scale's default "Information" prefix.
+      await expect(toast.getByRole("heading")).toHaveAccessibleName(/^Error\b/);
+
+      const close = toast.getByRole("button", { name: "Close" });
+      await close.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator('[data-testid="error-toast"]')).toHaveCount(0);
+    });
+  });
+
+  test.describe("Focus Management", () => {
+    test("focus fallback after a withdrawn card is removed scrolls the heading into view", async ({ page }) => {
+      await page.setViewportSize({ width: 390, height: 844 });
+      // Answer the withdraw locally so shared mock state stays intact for other tests.
+      await page.route("**/api/breakglassSessions/*/withdraw", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: '{"message":"session withdrawn"}' }),
+      );
+      await performMockLogin(page);
+      await navigateTo(page, "/requests/mine");
+
+      const trigger = page.locator('[data-testid="withdraw-button"]').last();
+      await trigger.waitFor({ state: "visible", timeout: 5000 });
+      // Guarantee the page scrolls far enough for the heading to leave the viewport.
+      await page.evaluate(() => {
+        const spacer = document.createElement("div");
+        spacer.style.height = "2000px";
+        document.getElementById("main")?.after(spacer);
+      });
+      await trigger.evaluate((el) => el.scrollIntoView({ block: "start", behavior: "instant" }));
+      const heading = page.locator("#main h1:not(.sr-only), #main h2:not(.sr-only)").first();
+      const box = await heading.boundingBox();
+      expect(box!.y + box!.height).toBeLessThan(0);
+
+      await trigger.locator("button").focus();
+      await page.keyboard.press("Enter");
+      await page.locator('[data-testid="withdraw-confirm-modal"][opened]').waitFor({ state: "attached" });
+      // Let the dialog finish opening (Scale moves focus at the end of its transition).
+      await page.waitForTimeout(500);
+      await page.locator('[data-testid="withdraw-confirm-btn"] button').focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator('[data-testid="withdraw-confirm-modal"][opened]')).toHaveCount(0);
+
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const active = document.activeElement as HTMLElement | null;
+            if (!active || !/^H[12]$/.test(active.tagName) || active.classList.contains("sr-only"))
+              return "not heading";
+            const r = active.getBoundingClientRect();
+            return r.bottom > 0 && r.top < window.innerHeight ? "visible" : "off-screen";
+          }),
+        )
+        .toBe("visible");
+    });
+
+    test("route focus falls back to the main content while a page is still loading", async ({ page }) => {
+      await performMockLogin(page);
+      let release: () => void = () => {};
+      const released = new Promise<void>((resolve) => (release = resolve));
+      await page.route("**/api/breakglassSessions/slow-session", async (route) => {
+        await released;
+        await route.fulfill({ status: 404, contentType: "application/json", body: '{"error":"not found"}' });
+      });
+
+      await page.evaluate(() => {
+        const router = (window as unknown as Record<string, { push: (p: string) => void }>).__VUE_ROUTER__;
+        router.push("/session/slow-session/approve");
+      });
+      await expect(page).toHaveURL(/\/session\/slow-session\/approve/);
+      await expect.poll(() => page.evaluate(() => document.activeElement?.id), { timeout: 3000 }).toBe("main");
+      release();
+    });
+  });
+
   test.describe("Heading Semantics", () => {
+    test("every route exposes exactly one h1", async ({ page }) => {
+      await page.goto("/");
+      await expectSingleH1(page, "login gate");
+      await performMockLogin(page);
+      const routes = [
+        ...PAGES_TO_AUDIT.map((p) => p.path),
+        "/sessions/review",
+        "/debug-sessions/kbd-debug-missing",
+        "/session/req-t-sec-1st-001/approve",
+        ...ERROR_PAGES_TO_AUDIT.map((p) => p.path),
+      ];
+      for (const path of routes) {
+        await navigateTo(page, path);
+        await expectSingleH1(page, path);
+      }
+    });
+
     test("Debug session details uses ordered heading levels", async ({ page }) => {
       await performMockLogin(page);
       await page.route("**/api/debugSessions/debug-heading-kubectl", async (route) => {

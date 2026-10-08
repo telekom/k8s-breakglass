@@ -55,10 +55,14 @@ Represents an active or pending request for privilege escalation.
 
 ### Frontend
 - Built with Vue 3, Vite, and strict TypeScript.
-- Uses Telekom's `scale-components` library for UI elements.
-- **Design Guidelines**: All UI components must strictly adhere to the [Telekom Scale Design System](https://telekom.github.io/scale/). Custom CSS overrides of Scale tokens (especially for colors and contrast) should be avoided to ensure perfect inheritance of accessibility features and dark mode.
-- Implements strict WCAG 2.1 AA accessibility standards.
+- **Design system**: the UI is built from [Telekom Scale](https://telekom.github.io/scale/) web components (`@telekom/scale-components`, plus the neutral flavour for OSS builds). Use a `scale-*` component whenever one exists (buttons, tags, tooltips, modals, notifications, dropdowns, text fields, cards, icons) instead of custom markup. Use `scale-icon-*` for icons; do not use emoji or inline SVG.
+- **Tokens**: all colours, shadows and z-indexes come from Scale `--telekom-*` tokens or the app aliases in `frontend/src/assets/tokens.css`, which is the only file allowed to contain raw colour values. Spacing uses the `--space-*` scale; type uses `--telekom-text-style-*`. `npm run lint:styles` (stylelint, also run in CI) rejects hex, `rgb()`/`hsl()`, named colours and px font sizes elsewhere. It also requires `var(--shadow-*)` for box shadows and `var(--z-*)` for z-indexes.
+- **Buttons**: use one `primary` button for the main action of a view, card or dialog. Use `secondary` for other actions and `ghost` for low-emphasis inline actions. Destructive actions use `secondary` with explicit wording. Put button rows in the shared `.ui-actions` / `.ui-toolbar-actions` primitives so buttons share one height and vertical centre and wrap evenly. Never size buttons with one-off pixel rules.
+- **Tooltips**: every icon-only button has an accessible name and a matching `scale-tooltip`. A disabled button is wrapped in `DisabledReason`, which explains why it is disabled. Non-obvious status tags and badges use `HintTooltip`. All of these open on hover and on keyboard focus. Do not add tooltips that just repeat a visible label.
+- **Themes and accessibility**: light, dark and high-contrast modes are mirrored to Scale's `data-mode`. Forced-colours is supported. The UI targets WCAG 2.1 AA. Playwright audits enforce axe, layout, keyboard, alignment and tooltip rules (`frontend/tests/e2e/ui-audit.a11y.spec.ts` on the mock API, `ui-alignment-tooltips.spec.ts` on kind). `ui-visual-audit.a11y.spec.ts` runs generic visual detectors on every route, dialog, menu and list state at 390, 768, 1280 and 1920 px in light, dark and high contrast: overlaps, clipped text, horizontal scroll, misaligned rows, off-scale gaps, short separators, empty boxes, icon sizes and card consistency.
+- **Shell and overlays**: header items share one vertical centre and nav labels stay short so they never truncate. Toasts stack below the header with token gaps, and an error is toasted once (`reportError`). Dialog separators span the full window. List filters live in one compact `.ui-toolbar` panel with the result count as its last line.
 - Designed to gracefully degrade or hide invalid actions (e.g., filtering out clusters that are not `Ready`).
+- Detailed tokens, component mapping and deviations: `frontend/design.md` and `frontend/SCALE_DEVIATIONS.md`.
 
 ## Directory Structure Overview
 Refer to `AGENTS.md` for specific rules for each folder, but the general layout is:

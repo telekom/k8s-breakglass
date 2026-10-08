@@ -59,7 +59,7 @@ describe("View auth provider guards", () => {
             SessionMetaGrid: true,
             ApprovalModalContent: true,
             "scale-dropdown-select": true,
-            "scale-dropdown-select-option": true,
+            "scale-dropdown-select-item": true,
             "scale-modal": true,
             "scale-tag": true,
           },

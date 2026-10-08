@@ -1743,12 +1743,14 @@ ESCALATION_NAMES=(
   "ui-e2e-reject-session-test"
   "ui-e2e-my-requests-test"
   "ui-e2e-pending-approvals-test"
-  "breakglass-ui-e2e-display-name-test"
-  "breakglass-ui-e2e-display-fallback-test"
+  "ui-e2e-display-name-test"
+  "ui-e2e-display-fallback-test"
+  "ui-e2e-a11y-test"
 )
 escalation_failures=0
 for esc_name in "${ESCALATION_NAMES[@]}"; do
-  wait_for_escalation_ready "$esc_name" "breakglass-system" 90 || escalation_failures=$((escalation_failures + 1))
+  # apply_e2e_test_crs prefixes metadata.name with "breakglass-".
+  wait_for_escalation_ready "breakglass-${esc_name}" "breakglass-system" 90 || escalation_failures=$((escalation_failures + 1))
 done
 if [ "$escalation_failures" -gt 0 ]; then
   log "Warning: $escalation_failures escalation(s) did not become Ready - some tests may fail"

@@ -110,13 +110,13 @@ describe("CountdownTimer", () => {
     });
   });
 
-  describe("title attribute", () => {
-    it("shows full formatted time as title", async () => {
+  describe("expiry tooltip", () => {
+    it("shows the absolute expiry time in a focusable Scale tooltip", async () => {
       const now = new Date("2030-06-15T12:00:00Z");
       const expiresAt = new Date(now.getTime() + 5 * 60_000).toISOString();
       const w = await mountAt(now, expiresAt);
-      const el = w.find("[data-testid='countdown-timer']");
-      expect(el.attributes("title")).toBeTruthy();
+      expect(w.find("scale-tooltip").attributes("content")).toMatch(/^Expires at \S/);
+      expect(w.find("[data-testid='countdown-timer']").attributes("tabindex")).toBe("0");
     });
   });
 

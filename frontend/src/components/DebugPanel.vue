@@ -13,6 +13,7 @@ import { decodeJwt } from "jose";
 import { AuthKey } from "@/keys";
 import { useUser, currentIDPName } from "@/services/auth";
 import { debug, warn, error } from "@/services/logger";
+import DisabledReason from "@/components/common/DisabledReason.vue";
 
 const auth = inject(AuthKey);
 const user = useUser();
@@ -255,25 +256,28 @@ const groupsDisplay = computed(() => {
   return debugInfo.value.groups.join(", ");
 });
 
-const debugToggleTitle = computed(() =>
-  appModalOpen.value ? "Close the open dialog before using the debug panel" : "Toggle debug panel",
+const debugToggleDisabledReason = computed(() =>
+  appModalOpen.value ? "Close the open dialog before using the debug panel" : "",
 );
 </script>
 
 <template>
   <div class="debug-panel-container" data-testid="debug-panel-container">
-    <button
-      type="button"
-      class="debug-toggle"
-      :title="debugToggleTitle"
-      aria-label="Toggle debug panel"
-      :aria-disabled="appModalOpen"
-      :disabled="appModalOpen"
-      data-testid="debug-toggle-button"
-      @click="toggleDebugPanel"
-    >
-      <scale-icon-service-settings size="20" decorative />
-    </button>
+    <DisabledReason :reason="debugToggleDisabledReason">
+      <scale-tooltip content="Toggle debug panel" placement="left" :disabled="appModalOpen">
+        <scale-button
+          variant="secondary"
+          icon-only
+          inner-aria-label="Toggle debug panel"
+          :aria-disabled="appModalOpen"
+          :disabled="appModalOpen"
+          data-testid="debug-toggle-button"
+          @click="toggleDebugPanel"
+        >
+          <scale-icon-service-settings decorative></scale-icon-service-settings>
+        </scale-button>
+      </scale-tooltip>
+    </DisabledReason>
 
     <div v-if="showDebug" class="debug-panel-wrapper" data-testid="debug-panel">
       <scale-card class="debug-panel">
@@ -282,7 +286,7 @@ const debugToggleTitle = computed(() =>
           <scale-button
             variant="ghost"
             size="small"
-            aria-label="Close debug panel"
+            inner-aria-label="Close debug panel"
             data-testid="debug-close-button"
             @click="showDebug = false"
           >
@@ -371,59 +375,22 @@ const debugToggleTitle = computed(() =>
 </template>
 
 <style scoped>
+/*
+ * Dev-only. The toggle sits in the page flow after the content, so it can
+ * never cover page actions; only the panel it opens floats over the page.
+ */
 .debug-panel-container {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-lg) var(--space-lg);
+  font-family: monospace;
+}
+
+.debug-panel-wrapper {
   position: fixed;
   bottom: var(--space-lg);
   right: var(--space-lg);
   z-index: var(--z-debug-panel);
-  font-family: monospace;
-}
-
-.debug-toggle {
-  /* Native button styled as circular toggle */
-  width: 48px;
-  height: 48px;
-  padding: 0;
-  margin: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  border: 1px solid var(--telekom-color-ui-border-standard, #555);
-  background-color: var(--surface-card, #1a1a1a);
-  box-shadow: var(--shadow-card, 0 4px 12px rgba(0, 0, 0, 0.3));
-  cursor: pointer;
-  transition:
-    background-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
-    transform var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
-}
-
-.debug-toggle:hover {
-  background-color: var(--telekom-color-ui-subtle, #2a2a2a);
-}
-
-.debug-toggle:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
-
-.debug-toggle:disabled:hover {
-  background-color: var(--surface-card, #1a1a1a);
-}
-
-.debug-toggle:active {
-  transform: scale(0.95);
-}
-
-.debug-toggle:focus-visible {
-  outline: 2px solid var(--focus-outline, #2238df);
-  outline-offset: 2px;
-}
-
-.debug-panel-wrapper {
-  position: absolute;
-  bottom: 60px;
-  right: 0;
   width: clamp(280px, 40vw, 500px);
   max-height: calc(100vh - 120px);
   display: flex;
@@ -507,81 +474,6 @@ const debugToggleTitle = computed(() =>
   font-style: italic;
 }
 
-.token-details {
-  margin-top: var(--space-xs);
-  cursor: pointer;
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.token-details summary {
-  padding: var(--space-xs) var(--space-sm);
-  background-color: var(--telekom-color-ui-background-surface);
-  border-radius: var(--radius-xs, 4px);
-  user-select: none;
-  list-style: none;
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs, 4px);
-}
-
-/* Remove default browser disclosure icon */
-.token-details summary::-webkit-details-marker {
-  display: none;
-}
-
-.token-details summary::marker {
-  display: none;
-  content: "";
-}
-
-/* Custom arrow indicator */
-.token-details summary::before {
-  content: "▶";
-  font: var(--telekom-text-style-badge);
-  transition: transform var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
-  flex-shrink: 0;
-}
-
-.token-details[open] summary::before {
-  transform: rotate(90deg);
-}
-
-.token-details summary:hover {
-  background-color: var(--telekom-color-ui-subtle);
-}
-
-.token-details pre {
-  margin: var(--space-xs) 0 0 0;
-  padding: var(--space-xs);
-  background-color: var(--telekom-color-ui-background-surface);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--radius-sm);
-  overflow: auto;
-  max-height: 300px;
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-/* Scrollbar styling for token details pre */
-.token-details pre::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-
-.token-details pre::-webkit-scrollbar-track {
-  background: var(--telekom-color-ui-subtle);
-  border-radius: var(--radius-sm);
-}
-
-.token-details pre::-webkit-scrollbar-thumb {
-  background: var(--telekom-color-primary-standard);
-  border-radius: var(--radius-sm);
-}
-
-.token-details pre::-webkit-scrollbar-thumb:hover {
-  background: var(--telekom-color-primary-hover);
-}
-
 .debug-section.error {
   border-left-color: var(--accent-critical);
   background-color: var(--tone-chip-danger-bg);
@@ -591,7 +483,7 @@ const debugToggleTitle = computed(() =>
 .error-message {
   color: var(--tone-chip-danger-text);
   padding: var(--space-xs);
-  background-color: var(--telekom-color-ui-background-surface);
+  background-color: var(--telekom-color-background-surface);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-xs);
   word-break: break-all;
@@ -624,7 +516,7 @@ const debugToggleTitle = computed(() =>
 }
 
 .debug-content::-webkit-scrollbar-thumb:hover {
-  background: var(--telekom-color-primary-hover);
+  background: var(--telekom-color-primary-hovered);
 }
 
 @media (max-width: 768px) {

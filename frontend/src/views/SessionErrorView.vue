@@ -40,12 +40,9 @@ const handleViewSessions = () => {
 
       <h1 class="error-title">Invalid Session Link</h1>
 
-      <scale-notification variant="danger" opened>
-        <div class="error-content">
+      <scale-notification variant="danger" :heading="errorMessage" opened data-testid="session-error-details">
+        <div slot="text" class="error-content">
           <p>
-            <strong>{{ errorMessage }}</strong>
-          </p>
-          <p class="mt-3">
             Session approval links should look like:<br />
             <code>/session/[session-name]/approve</code>
           </p>
@@ -56,9 +53,9 @@ const handleViewSessions = () => {
         </div>
       </scale-notification>
 
-      <div class="action-buttons">
+      <div class="action-buttons ui-actions ui-actions--center">
         <scale-button variant="primary" @click="handleGoHome">
-          <scale-icon-home slot="icon-before" decorative></scale-icon-home>
+          <scale-icon-home-home size="20" decorative></scale-icon-home-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="handleViewSessions"> View All Sessions </scale-button>
@@ -82,8 +79,14 @@ const handleViewSessions = () => {
   text-align: center;
 }
 
+/* The icon and title are centred; the notification keeps Scale's start alignment. */
+.error-container scale-notification {
+  display: block;
+  text-align: start;
+}
+
 .error-icon {
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin-bottom: var(--space-xl);
 }
 
@@ -91,7 +94,7 @@ const handleViewSessions = () => {
   font: var(--telekom-text-style-heading-3);
   font-weight: 600;
   margin-bottom: var(--space-xl);
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .error-content {
@@ -99,7 +102,7 @@ const handleViewSessions = () => {
 }
 
 .error-content code {
-  background-color: var(--surface-card-subtle, rgba(0, 0, 0, 0.1));
+  background-color: var(--surface-card-subtle);
   padding: var(--space-xs) var(--space-sm);
   border-radius: var(--radius-sm);
   font: var(--telekom-text-style-caption);
@@ -107,9 +110,6 @@ const handleViewSessions = () => {
 }
 
 .action-buttons {
-  display: flex;
-  gap: var(--space-lg);
-  justify-content: center;
   margin-top: var(--space-2xl);
 }
 

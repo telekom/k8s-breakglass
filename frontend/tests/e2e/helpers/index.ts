@@ -30,3 +30,32 @@ export {
   diagnosticScreenshot,
   logApiResponse,
 } from "./debug";
+export {
+  AUDIT_VIEWPORTS,
+  AUDIT_THEMES,
+  useAuditTheme,
+  waitForRouteSettled,
+  expectNoSeriousA11yViolations,
+  findLayoutProblems,
+  expectCleanLayout,
+  focusedElementInfo,
+  LAYOUT_VIEWPORTS,
+  findAlignmentProblems,
+  expectAlignedActionRows,
+  expectTooltipsOnHoverAndFocus,
+  type AuditViewport,
+  type AuditTheme,
+} from "./ui-audit";
+export { findVisualProblems, expectNoVisualProblems } from "./ui-visual-audit";
+export { DEBUG_ACTIVE, DEBUG_PENDING, mockDebugSessions } from "./debug-session-mocks";
+export {
+  focusedStop,
+  expectTabOrderFollowsReadingOrder,
+  expectSingleH1,
+  expectFocusOnPageHeading,
+  expectModalDialog,
+  expectDisabledWithReason,
+  expectToastAnnounced,
+  type FocusStop,
+} from "./screen-reader";
+export { settleMockRoute, mockLogin, mockNavigate } from "./mock-app";

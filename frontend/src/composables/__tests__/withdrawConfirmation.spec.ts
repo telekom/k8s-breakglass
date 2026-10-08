@@ -23,10 +23,16 @@ import { useWithdrawConfirmation } from "@/composables/useWithdrawConfirmation";
 import type { SessionCR } from "@/model/breakglass";
 
 // Mock toast service
-vi.mock("@/services/toast", () => ({
-  pushError: vi.fn(),
-  pushSuccess: vi.fn(),
-}));
+vi.mock("@/services/toast", () => {
+  const pushError = vi.fn();
+  return {
+    pushError,
+    pushSuccess: vi.fn(),
+    reportError: vi.fn((err: unknown, fallback: string) =>
+      pushError((err instanceof Error ? err.message : undefined) || fallback),
+    ),
+  };
+});
 
 // Mock logger
 vi.mock("@/services/logger", () => ({

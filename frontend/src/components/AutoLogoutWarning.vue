@@ -14,23 +14,27 @@
         class="logout-notification"
         @scale-close="dismiss"
       >
-        <p class="warning-copy">
-          Your session will expire shortly. Re-authenticate to continue, or log out if you are finished.
-        </p>
-        <div class="warning-actions">
-          <scale-button
-            variant="primary"
-            size="small"
-            :loading="renewing"
-            data-testid="reauthenticate-button"
-            @click="reauthenticate"
-          >
-            Re-authenticate
-          </scale-button>
-          <scale-button variant="secondary" size="small" data-testid="dismiss-button" @click="dismiss"
-            >Dismiss</scale-button
-          >
-          <scale-button variant="ghost" size="small" data-testid="logout-button" @click="logout">Log out</scale-button>
+        <div slot="text" class="warning-body">
+          <p class="warning-copy">
+            Your session will expire shortly. Re-authenticate to continue, or log out if you are finished.
+          </p>
+          <div class="warning-actions ui-actions">
+            <scale-button
+              variant="primary"
+              size="small"
+              :loading="renewing"
+              data-testid="reauthenticate-button"
+              @click="reauthenticate"
+            >
+              Re-authenticate
+            </scale-button>
+            <scale-button variant="secondary" size="small" data-testid="dismiss-button" @click="dismiss"
+              >Dismiss</scale-button
+            >
+            <scale-button variant="ghost" size="small" data-testid="logout-button" @click="logout"
+              >Log out</scale-button
+            >
+          </div>
         </div>
       </scale-notification>
     </div>
@@ -241,13 +245,6 @@ export default {
 
 .warning-copy {
   margin-bottom: var(--space-md);
-}
-
-.warning-actions {
-  display: flex;
-  gap: var(--space-xs);
-  justify-content: flex-end;
-  flex-wrap: wrap;
 }
 
 .fade-slide-enter-active,

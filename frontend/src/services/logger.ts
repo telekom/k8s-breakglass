@@ -1,4 +1,4 @@
-import { pushError } from "@/services/errors";
+import { markErrorReported, pushError } from "@/services/toast";
 
 const DEBUG_STORAGE_KEY = "breakglass:debugLogs";
 const DEBUG_QUERY_PARAM = "debugLogs";
@@ -165,6 +165,7 @@ export function handleAxiosError(
   if (pushToUI) {
     try {
       pushError(String(msg), r?.status, cid);
+      markErrorReported(err);
     } catch (e) {
       console.error(ts(), "[logger.handleAxiosError] pushError failed", e);
     }

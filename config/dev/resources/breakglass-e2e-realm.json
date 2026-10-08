@@ -1790,6 +1790,33 @@
       "lastName": "E2e pending approvals user"
     },
     {
+      "username": "ui-e2e-a11y-user",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "ui-e2e-a11y@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "ui-e2e-a11y-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "ui-e2e-a11y-requester"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "ui-e2e-a11y-user"
+        ]
+      },
+      "firstName": "Ui",
+      "lastName": "E2e a11y user"
+    },
+    {
       "username": "ui-e2e-approver",
       "enabled": true,
       "emailVerified": true,
@@ -2126,6 +2153,9 @@
     },
     {
       "name": "ui-e2e-pending-approvals-requester"
+    },
+    {
+      "name": "ui-e2e-a11y-requester"
     },
     {
       "name": "ui-e2e-approver-group"

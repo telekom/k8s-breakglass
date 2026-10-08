@@ -7,7 +7,7 @@
  *
  * Covers:
  * - Theme/high-contrast toggle buttons expose aria labels and pressed states
- * - Theme toggle button aria-label, persistence, and high-contrast interaction
+ * - Theme toggle button accessible name (inner-aria-label), persistence, and high-contrast interaction
  *
  * @vitest-environment jsdom
  */
@@ -36,8 +36,7 @@ const BASE_SCALE_STUBS = {
   "scale-telekom-mobile-menu": true,
   "scale-telekom-mobile-menu-item": true,
   "scale-icon-action-light-dark-mode": true,
-  "scale-icon-action-visibility": true,
-  "scale-icon-action-eye": true,
+  "scale-icon-action-show-password": true,
   "scale-icon-action-menu": true,
   "scale-button": true,
   ErrorToasts: true,
@@ -133,49 +132,49 @@ describe("App — high-contrast and theme toggles", () => {
     });
   }
 
-  it("shows disabled aria-label and no hc-active class when high contrast is off", () => {
+  it("shows disabled aria-label and a static class when high contrast is off", () => {
     localStorage.setItem("breakglass-high-contrast", "false");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
     expect(btn.exists()).toBe(true);
-    expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("inner-aria-label")).toBe("High contrast mode disabled. Click to enable.");
     expect(btn.attributes("aria-pressed")).toBe("false");
-    expect(btn.classes()).not.toContain("hc-active");
+    expect(btn.classes()).toEqual(["hc-toggle-button"]);
   });
 
-  it("shows enabled aria-label and hc-active class when high contrast is on", () => {
+  it("shows enabled aria-label and a static class when high contrast is on", () => {
     localStorage.setItem("breakglass-theme", "light");
     localStorage.setItem("breakglass-high-contrast", "true");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
-    expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("inner-aria-label")).toBe("High contrast mode enabled. Click to disable.");
     expect(btn.attributes("aria-pressed")).toBe("true");
-    expect(btn.classes()).toContain("hc-active");
+    expect(btn.classes()).toEqual(["hc-toggle-button"]);
 
     const themeBtn = wrapper.find(".theme-toggle-button");
-    expect(themeBtn.attributes("aria-label")).toBe(
+    expect(themeBtn.attributes("inner-aria-label")).toBe(
       "High contrast mode is enabled and uses a dark canvas. Click to select dark theme preference for standard mode.",
     );
     expect(themeBtn.attributes("aria-pressed")).toBe("false");
-    expect(themeBtn.classes()).not.toContain("theme-dark");
+    expect(themeBtn.classes()).toEqual(["theme-toggle-button"]);
   });
 
-  it("toggles aria-label and hc-active class when the hc-toggle button is clicked", async () => {
+  it("toggles aria-label but keeps the class list when the hc-toggle button is clicked", async () => {
     localStorage.setItem("breakglass-high-contrast", "false");
     wrapper = mountApp();
 
     const btn = wrapper.find(".hc-toggle-button");
-    expect(btn.attributes("aria-label")).toBe("High contrast mode disabled. Click to enable.");
+    expect(btn.attributes("inner-aria-label")).toBe("High contrast mode disabled. Click to enable.");
     expect(btn.attributes("aria-pressed")).toBe("false");
-    expect(btn.classes()).not.toContain("hc-active");
+    expect(btn.classes()).toEqual(["hc-toggle-button"]);
 
     await btn.trigger("click");
 
-    expect(btn.attributes("aria-label")).toBe("High contrast mode enabled. Click to disable.");
+    expect(btn.attributes("inner-aria-label")).toBe("High contrast mode enabled. Click to disable.");
     expect(btn.attributes("aria-pressed")).toBe("true");
-    expect(btn.classes()).toContain("hc-active");
+    expect(btn.classes()).toEqual(["hc-toggle-button"]);
   });
 
   it("shows the selected theme and persists manual theme changes", async () => {
@@ -184,16 +183,16 @@ describe("App — high-contrast and theme toggles", () => {
 
     const btn = wrapper.find(".theme-toggle-button");
     expect(btn.exists()).toBe(true);
-    expect(btn.attributes("aria-label")).toBe("Light theme selected. Click to select dark theme.");
+    expect(btn.attributes("inner-aria-label")).toBe("Light theme selected. Click to select dark theme.");
     expect(btn.attributes("aria-pressed")).toBe("false");
-    expect(btn.classes()).not.toContain("theme-dark");
+    expect(btn.classes()).toEqual(["theme-toggle-button"]);
     expect(document.documentElement.getAttribute("data-theme")).toBe("light");
 
     await btn.trigger("click");
 
-    expect(btn.attributes("aria-label")).toBe("Dark theme selected. Click to select light theme.");
+    expect(btn.attributes("inner-aria-label")).toBe("Dark theme selected. Click to select light theme.");
     expect(btn.attributes("aria-pressed")).toBe("true");
-    expect(btn.classes()).toContain("theme-dark");
+    expect(btn.classes()).toEqual(["theme-toggle-button"]);
     expect(localStorage.getItem("breakglass-theme")).toBe("dark");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
   });
@@ -205,7 +204,7 @@ describe("App — high-contrast and theme toggles", () => {
 
     expect(document.documentElement.getAttribute("data-high-contrast")).toBe("true");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
+    expect(wrapper.find(".theme-toggle-button").attributes("inner-aria-label")).toBe(
       "High contrast mode is enabled and uses a dark canvas. Click to select light theme preference for standard mode.",
     );
     expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("true");
@@ -214,11 +213,11 @@ describe("App — high-contrast and theme toggles", () => {
 
     expect(localStorage.getItem("breakglass-theme")).toBe("light");
     expect(document.documentElement.getAttribute("data-theme")).toBe("dark");
-    expect(wrapper.find(".theme-toggle-button").attributes("aria-label")).toBe(
+    expect(wrapper.find(".theme-toggle-button").attributes("inner-aria-label")).toBe(
       "High contrast mode is enabled and uses a dark canvas. Click to select dark theme preference for standard mode.",
     );
     expect(wrapper.find(".theme-toggle-button").attributes("aria-pressed")).toBe("false");
-    expect(wrapper.find(".theme-toggle-button").classes()).not.toContain("theme-dark");
+    expect(wrapper.find(".theme-toggle-button").classes()).toEqual(["theme-toggle-button"]);
 
     await wrapper.find(".hc-toggle-button").trigger("click");
 
@@ -237,7 +236,7 @@ describe("App — high-contrast and theme toggles", () => {
 
     const trigger = wrapper.find(".mobile-nav-trigger");
     expect(trigger.exists()).toBe(true);
-    expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
+    expect(trigger.attributes("inner-aria-label")).toBe("Open navigation menu");
     expect(trigger.attributes("aria-controls")).toBe("mobile-nav-fallback");
     expect(trigger.attributes("aria-expanded")).toBe("false");
     const fallbackNav = wrapper.find(".mobile-nav-fallback");
@@ -247,7 +246,7 @@ describe("App — high-contrast and theme toggles", () => {
 
     await trigger.trigger("click");
 
-    expect(trigger.attributes("aria-label")).toBe("Close navigation menu");
+    expect(trigger.attributes("inner-aria-label")).toBe("Close navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("true");
     expect(fallbackNav.classes()).toContain("mobile-nav-fallback--open");
     const fallbackLinks = fallbackNav.findAll(".mobile-nav-fallback__link");
@@ -256,7 +255,7 @@ describe("App — high-contrast and theme toggles", () => {
 
     await fallbackLinks[1].trigger("click");
 
-    expect(trigger.attributes("aria-label")).toBe("Open navigation menu");
+    expect(trigger.attributes("inner-aria-label")).toBe("Open navigation menu");
     expect(trigger.attributes("aria-expanded")).toBe("false");
     expect(wrapper.find(".mobile-nav-fallback").classes()).not.toContain("mobile-nav-fallback--open");
   });

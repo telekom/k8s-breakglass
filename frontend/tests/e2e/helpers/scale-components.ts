@@ -126,10 +126,8 @@ export async function fillScaleTextField(page: Page, selector: string, value: st
 }
 
 /**
- * Wait for a Scale notification toast to appear.
- * Scale's notification toast uses an internal 'opened' state to control visibility.
- * In Stencil 4 (Scale beta.159+) the 'opened' @State() no longer reflects as
- * an HTML attribute, so we check the property value via JS evaluation instead.
+ * Wait for a Scale notification toast (`scale-notification type="toast"`) to appear.
+ * `opened` is a property set by Vue, so check the property value via JS evaluation.
  * @param page - Playwright page
  * @param testId - The data-testid of the toast (e.g., 'success-toast' or 'error-toast')
  * @param timeout - Maximum time to wait in milliseconds (default: 20000)
@@ -388,7 +386,7 @@ export async function openScaleDropdown(page: Page, selector: string, waitMs = 5
     throw new Error(`Failed to expand dropdown ${selector} after ${maxRetries} attempts`);
   }
 
-  // Scale dropdown renders options in a listbox. The original scale-dropdown-select-option
+  // Scale dropdown renders options in a listbox. The original scale-dropdown-select-item
   // elements are slotted and may not be directly visible. Instead, Scale creates a listbox
   // with [role="option"] elements that are the actual visible options.
   // We should wait for the listbox to have visible option elements.
@@ -424,7 +422,7 @@ export async function openScaleDropdown(page: Page, selector: string, waitMs = 5
 
 /**
  * Assert that a Scale dropdown option with the given value exists and is available.
- * Scale Components render slotted scale-dropdown-select-option elements as hidden,
+ * Scale Components render slotted scale-dropdown-select-item elements as hidden,
  * while creating visible [role="option"] elements in the listbox. This function
  * checks that either the slotted element exists OR the corresponding role="option"
  * element is visible in the listbox.
@@ -442,7 +440,7 @@ export async function assertScaleDropdownOptionAvailable(
 ): Promise<void> {
   // Check that the option is available in the dropdown
   // Scale renders options in two places:
-  // 1. The slotted scale-dropdown-select-option (may be visibility:hidden)
+  // 1. The slotted scale-dropdown-select-item (may be visibility:hidden)
   // 2. The [role="option"] elements in the listbox (actually visible)
   await page.waitForFunction(
     ({ sel, val }) => {
@@ -450,7 +448,7 @@ export async function assertScaleDropdownOptionAvailable(
       if (!dropdown) return false;
 
       // Method 1: Check if slotted option exists
-      const slottedOption = dropdown.querySelector(`scale-dropdown-select-option[value="${val}"]`);
+      const slottedOption = dropdown.querySelector(`scale-dropdown-select-item[value="${val}"]`);
       if (slottedOption) {
         // The option element exists - that's enough to prove the option is available
         return true;
@@ -530,12 +528,12 @@ export async function waitForScaleModal(page: Page, selector: string, timeout = 
 /**
  * Select an option from a Scale dropdown.
  * Opens the dropdown, waits for options, and clicks the specified option.
- * Scale Components render slotted scale-dropdown-select-option as visibility:hidden.
+ * Scale Components render slotted scale-dropdown-select-item as visibility:hidden.
  * The actual visible options are [role="option"] elements in the listbox.
  *
  * @param page - Playwright page
  * @param dropdownSelector - Selector for the scale-dropdown-select element
- * @param optionValue - The value attribute of the option to select (matches scale-dropdown-select-option value)
+ * @param optionValue - The value attribute of the option to select (matches scale-dropdown-select-item value)
  */
 export async function selectScaleDropdownOption(
   page: Page,
@@ -549,7 +547,7 @@ export async function selectScaleDropdownOption(
   // First, get the text content of the slotted option with the matching value.
   // Scale renders slotted options as visibility:hidden, but we can still read their text.
   // Use .first() because Scale may render duplicate option elements during hydration.
-  const slottedOption = dropdown.locator(`scale-dropdown-select-option[value="${optionValue}"]`).first();
+  const slottedOption = dropdown.locator(`scale-dropdown-select-item[value="${optionValue}"]`).first();
 
   // Wait briefly for slotted option to exist
   await slottedOption.waitFor({ state: "attached", timeout: 3000 });

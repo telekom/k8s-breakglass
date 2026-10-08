@@ -110,7 +110,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
               class="source-badge binding"
               :aria-label="`Via binding: ${cluster.bindingRef.namespace}/${cluster.bindingRef.name}`"
             >
-              <scale-icon-content-link size="12" aria-hidden="true"></scale-icon-content-link>
+              <scale-icon-action-link size="12" aria-hidden="true"></scale-icon-action-link>
               via Binding:
               <strong class="binding-name">{{ cluster.bindingRef.displayName || cluster.bindingRef.name }}</strong>
             </span>
@@ -133,7 +133,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
           <!-- Multiple Access Options Indicator -->
           <div v-if="cluster.bindingOptions && cluster.bindingOptions.length > 1" class="multiple-bindings-indicator">
-            <scale-icon-navigation-double-right size="12"></scale-icon-navigation-double-right>
+            <scale-icon-navigation-double-right size="12" aria-hidden="true"></scale-icon-navigation-double-right>
             <strong>{{ cluster.bindingOptions.length }} access configurations</strong>
             <span class="bindings-preview">
               {{ cluster.bindingOptions.map((b) => b.displayName || b.bindingRef.name).join(", ") }}
@@ -187,7 +187,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .warning-text {
-  color: var(--telekom-color-functional-warning-standard);
+  color: var(--telekom-color-text-and-icon-functional-warning);
   font: var(--telekom-text-style-caption);
   margin: 0;
 }
@@ -234,7 +234,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 
 .cluster-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
+  box-shadow: var(--shadow-selected);
 }
 
 .cluster-header {
@@ -289,23 +289,20 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
 }
 
 .source-badge.direct {
-  background: var(--telekom-color-functional-success-subtle);
-  color: var(--telekom-color-functional-success-standard);
-  border: 1px solid var(--telekom-color-functional-success-standard);
+  background: var(--tone-chip-success-bg);
+  color: var(--tone-chip-success-text);
+  border: 1px solid var(--tone-chip-success-border);
 }
 
 .source-badge.binding {
-  background: var(--telekom-color-background-surface-highlight);
-  color: var(--telekom-color-primary-standard);
+  background: var(--tone-chip-neutral-bg);
+  color: var(--tone-chip-neutral-text);
   border: 1px solid var(--telekom-color-primary-standard);
 }
 
 .source-badge .binding-name {
   font-weight: 600;
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .cluster-constraints {
@@ -341,7 +338,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   gap: var(--space-xs);
   padding: var(--space-sm);
   margin-top: var(--space-sm);
-  background: var(--telekom-color-background-surface-highlight);
+  background: var(--surface-card-subtle);
   border-radius: var(--radius-sm);
   border-left: 3px solid var(--telekom-color-primary-standard);
 }
@@ -356,9 +353,7 @@ const selectedClusterVisible = computed(() => filteredClusters.value.some((c) =>
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   margin-top: var(--space-2xs);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
 }
 
 .cluster-extra-info {

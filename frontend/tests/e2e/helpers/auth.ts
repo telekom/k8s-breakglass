@@ -102,6 +102,8 @@ export interface TestUsers {
   uiE2eMyRequests: TestUser;
   /** Isolated user for pending-approvals.spec.ts */
   uiE2ePendingApprovals: TestUser;
+  /** Isolated user for ui-accessibility.spec.ts and ui-layout.spec.ts */
+  uiE2eA11y: TestUser;
   /** Shared approver for all UI E2E tests */
   uiE2eApprover: TestUser;
 }
@@ -237,6 +239,13 @@ export const TEST_USERS: TestUsers = {
     displayName: "UI E2E Pending Approvals User",
     email: "ui-e2e-pending-approvals@example.com",
     groups: ["ui-e2e-pending-approvals-requester"],
+  },
+  uiE2eA11y: {
+    username: "ui-e2e-a11y-user",
+    password: "ui-e2e-a11y-password",
+    displayName: "UI E2E A11y User",
+    email: "ui-e2e-a11y@example.com",
+    groups: ["ui-e2e-a11y-requester"],
   },
   uiE2eApprover: {
     username: "ui-e2e-approver",

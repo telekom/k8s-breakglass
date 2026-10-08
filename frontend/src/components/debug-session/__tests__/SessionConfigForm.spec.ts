@@ -42,7 +42,7 @@ function factory(overrides: Record<string, unknown> = {}) {
         "scale-checkbox": true,
         "scale-icon-alert-information": true,
         "scale-icon-user-file-user": true,
-        "scale-icon-action-add-circle": true,
+        "scale-icon-action-circle-add": true,
         VariableForm: true,
       },
     },

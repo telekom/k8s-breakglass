@@ -4,7 +4,7 @@
 
 import { ref, reactive } from "vue";
 import type { SessionCR } from "@/model/breakglass";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushSuccess, reportError } from "@/services/toast";
 import { debug, warn } from "@/services/logger";
 import { getSessionKey, getSessionUser, getSessionGroup, getSessionState, normalizeState } from "./useSessionList";
 
@@ -16,7 +16,7 @@ export interface SessionActionConfig {
   /** Display label for the action */
   label: string;
   /** Button variant */
-  variant: "primary" | "secondary" | "danger";
+  variant: "primary" | "secondary";
   /** Loading label */
   loadingLabel: string;
   /** Success message template (use {user} and {group} placeholders) */
@@ -37,7 +37,7 @@ const ACTION_CONFIGS: Record<SessionActionType, SessionActionConfig> = {
   },
   reject: {
     label: "Reject",
-    variant: "danger",
+    variant: "secondary",
     loadingLabel: "Rejecting...",
     successMessage: "Rejected request for {user} ({group})",
     errorMessage: "Failed to reject request",
@@ -61,7 +61,7 @@ const ACTION_CONFIGS: Record<SessionActionType, SessionActionConfig> = {
   },
   cancel: {
     label: "Cancel",
-    variant: "danger",
+    variant: "secondary",
     loadingLabel: "Cancelling...",
     successMessage: "Cancelled session {name}",
     errorMessage: "Failed to cancel session",
@@ -264,7 +264,7 @@ export function useSessionActions(handlers: ActionHandlers, permissions?: Action
     } catch (err: unknown) {
       const errorMsg = (err instanceof Error ? err.message : undefined) || config.errorMessage;
       lastError.value = errorMsg;
-      pushError(errorMsg);
+      reportError(err, errorMsg);
       options.onError?.(errorMsg);
 
       warn(`${TAG}.executeAction`, `Action failed: ${action}`, {

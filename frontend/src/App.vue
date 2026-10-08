@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { inject, computed, ref, onMounted, onBeforeUnmount, watch } from "vue";
 import { decodeJwt } from "jose";
 import { useRoute, useRouter } from "vue-router";
@@ -198,39 +199,46 @@ const brandingTitle = computed(() => brandingFromBackend ?? "Breakglass");
 type PrimaryNavItem = {
   id: string;
   label: string;
+  /** Compact label for the desktop header, where six full labels do not fit on one line below 1680px. */
+  navLabel: string;
   to: RouteLocationRaw;
   matches: string[];
 };
 
 const primaryNavItems: PrimaryNavItem[] = [
-  { id: "home", label: "Request Access", to: { name: "home" }, matches: ["home"] },
+  { id: "home", label: "Request Access", navLabel: "Request", to: { name: "home" }, matches: ["home"] },
   {
     id: "pending",
     label: "Pending Approvals",
+    navLabel: "Approvals",
     to: { name: "pendingApprovals" },
-    matches: ["pendingApprovals"],
+    matches: ["pendingApprovals", "sessionApproval", "sessionIncomplete", "sessionMissing"],
   },
   {
     id: "review",
     label: "Review Sessions",
+    navLabel: "Reviews",
     to: { name: "breakglassSessionReview" },
     matches: ["breakglassSessionReview"],
   },
   {
     id: "requests",
     label: "My Requests",
+    navLabel: "My Requests",
     to: { name: "myPendingRequests" },
     matches: ["myPendingRequests"],
   },
   {
     id: "sessions",
     label: "Session Browser",
+    navLabel: "Sessions",
     to: { name: "sessionBrowser" },
     matches: ["sessionBrowser"],
   },
   {
     id: "debugSessions",
     label: "Debug Sessions",
+    navLabel: "Debug",
     to: { name: "debugSessionBrowser" },
     matches: ["debugSessionBrowser", "debugSessionCreate", "debugSessionDetails"],
   },
@@ -240,7 +248,8 @@ const homeHref = computed(() => router.resolve({ name: "home" }).href);
 
 const activeNavId = computed(() => {
   const currentName = (route.name as string) ?? "";
-  return primaryNavItems.find((item) => item.matches.includes(currentName))?.id ?? "home";
+  // Unknown routes (404) highlight no section rather than falling back to Request.
+  return primaryNavItems.find((item) => item.matches.includes(currentName))?.id ?? "";
 });
 
 const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
@@ -500,7 +509,7 @@ watch(
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
-        type="slim"
+        :type.attr="'slim'"
         :app-name="brandingTitle"
         :app-name-link="homeHref"
         :logo-title="brandingTitle"
@@ -515,40 +524,47 @@ watch(
             :aria-current="activeNavId === item.id ? 'page' : undefined"
           >
             <a :href="navHref(item)" @click="handlePrimaryNavClick($event, item)">
-              {{ item.label }}
+              {{ item.navLabel }}
             </a>
           </scale-telekom-nav-item>
         </scale-telekom-nav-list>
 
         <div slot="functions" class="header-functions-container">
           <div class="theme-utilities">
-            <scale-button
-              variant="ghost"
-              type="button"
-              :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
-              :title="themeToggleTitle"
-              :aria-label="themeToggleAriaLabel"
-              :aria-pressed="isDarkThemePreference"
-              @click="toggleTheme"
-            >
-              <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
-            </scale-button>
+            <scale-tooltip :content="themeToggleTitle" placement="bottom">
+              <scale-button
+                variant="ghost"
+                type="button"
+                icon-only
+                class="theme-toggle-button"
+                :inner-aria-label="themeToggleAriaLabel"
+                :aria-pressed="isDarkThemePreference"
+                @click="toggleTheme"
+              >
+                <scale-icon-action-light-dark-mode size="20" :decorative="true"></scale-icon-action-light-dark-mode>
+              </scale-button>
+            </scale-tooltip>
 
-            <scale-button
-              variant="ghost"
-              type="button"
-              :class="['hc-toggle-button', { 'hc-active': highContrast }]"
-              :title="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
-              :aria-label="
-                highContrast
-                  ? 'High contrast mode enabled. Click to disable.'
-                  : 'High contrast mode disabled. Click to enable.'
-              "
-              :aria-pressed="highContrast"
-              @click="toggleHighContrast"
+            <scale-tooltip
+              :content="highContrast ? 'Disable high contrast' : 'Enable high contrast'"
+              placement="bottom"
             >
-              <scale-icon-action-eye :decorative="true"></scale-icon-action-eye>
-            </scale-button>
+              <scale-button
+                variant="ghost"
+                type="button"
+                icon-only
+                class="hc-toggle-button"
+                :inner-aria-label="
+                  highContrast
+                    ? 'High contrast mode enabled. Click to disable.'
+                    : 'High contrast mode disabled. Click to enable.'
+                "
+                :aria-pressed="highContrast"
+                @click="toggleHighContrast"
+              >
+                <scale-icon-action-show-password size="20" :decorative="true"></scale-icon-action-show-password>
+              </scale-button>
+            </scale-tooltip>
           </div>
 
           <scale-telekom-nav-list
@@ -558,7 +574,7 @@ watch(
             role="group"
             aria-label="Header actions"
           >
-            <scale-telekom-nav-item v-if="authenticated" class="profile-nav-item">
+            <scale-telekom-nav-item v-if="authenticated" variant="functions" class="profile-nav-item">
               <scale-telekom-profile-menu
                 ref="profileMenuRef"
                 class="profile-menu"
@@ -578,19 +594,27 @@ watch(
               ></scale-telekom-profile-menu>
             </scale-telekom-nav-item>
 
-            <scale-telekom-nav-item v-if="authenticated" class="mobile-nav-item">
-              <scale-button
-                id="mobile-nav-trigger"
-                variant="ghost"
-                type="button"
-                class="mobile-nav-trigger"
-                :aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
-                :aria-controls="mobileNavControls"
-                :aria-expanded="mobileNavOpen"
-                @click="toggleMobileNav"
+            <!-- variant="functions": a main-nav item rewrites aria-current on the first link inside it,
+                 which here is the current page in the mobile flyout. -->
+            <scale-telekom-nav-item v-if="authenticated" variant="functions" class="mobile-nav-item">
+              <scale-tooltip
+                :content="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+                placement="bottom-end"
               >
-                <scale-icon-action-menu decorative></scale-icon-action-menu>
-              </scale-button>
+                <scale-button
+                  id="mobile-nav-trigger"
+                  variant="ghost"
+                  type="button"
+                  icon-only
+                  class="mobile-nav-trigger"
+                  :inner-aria-label="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
+                  :aria-controls="mobileNavControls"
+                  :aria-expanded="mobileNavOpen"
+                  @click="toggleMobileNav"
+                >
+                  <scale-icon-action-menu decorative></scale-icon-action-menu>
+                </scale-button>
+              </scale-tooltip>
               <scale-telekom-nav-flyout
                 id="mobile-nav-flyout"
                 ref="mobileNavFlyoutRef"
@@ -629,11 +653,11 @@ watch(
                       <scale-button
                         variant="ghost"
                         type="button"
-                        :class="['mobile-util-btn', { active: highContrast }]"
+                        class="mobile-util-btn mobile-util-btn--contrast"
                         :aria-pressed="highContrast"
                         @click="toggleHighContrast"
                       >
-                        <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                        <scale-icon-action-show-password size="24" :decorative="true"></scale-icon-action-show-password>
                         <span>High Contrast</span>
                       </scale-button>
                     </div>
@@ -670,11 +694,11 @@ watch(
                   <scale-button
                     variant="ghost"
                     type="button"
-                    :class="['mobile-util-btn', { active: highContrast }]"
+                    class="mobile-util-btn mobile-util-btn--contrast"
                     :aria-pressed="highContrast"
                     @click="toggleHighContrast"
                   >
-                    <scale-icon-action-visibility size="24" :decorative="true"></scale-icon-action-visibility>
+                    <scale-icon-action-show-password size="24" :decorative="true"></scale-icon-action-show-password>
                     <span>High Contrast</span>
                   </scale-button>
                 </div>
@@ -685,13 +709,16 @@ watch(
       </scale-telekom-header>
 
       <div id="main" class="app-container" :role="mainLandmarkRole" tabindex="-1">
-        <h1 class="sr-only">{{ brandingTitle }}</h1>
+        <!-- Signed-in views render their own h1; this one only names the login gate. -->
+        <h1 v-if="!authenticated" class="sr-only">{{ brandingTitle }}</h1>
         <div v-if="!authenticated" class="center login-gate">
           <!-- Show IDP selector if multiple IDPs available -->
           <div v-if="hasMultipleIDPs" class="idp-login-section">
             <IDPSelector v-model="selectedIDPName" escalation-name="default" required />
             <div class="idp-login-actions">
-              <scale-button :disabled="!selectedIDPName" @click="login"> Log In </scale-button>
+              <DisabledReason :reason="selectedIDPName ? '' : 'Select an identity provider first.'">
+                <scale-button :disabled="!selectedIDPName" @click="login"> Log In </scale-button>
+              </DisabledReason>
             </div>
           </div>
 
@@ -712,77 +739,158 @@ watch(
 </template>
 
 <style>
+@import "@/assets/tokens.css";
 @import "@/assets/base.css";
 </style>
 
 <style scoped>
 scale-telekom-header::part(app-name-text) {
   font: var(--telekom-text-style-heading-6);
+  white-space: nowrap;
 }
 
+/*
+ * The functions slot spans the full header bar, but Scale pads the slot from
+ * the top (by breakpoint, see scale-telekom-header) so that its nav items can
+ * bottom-align. Pull the cluster back to the top edge and give it the full bar
+ * height so the logo, app name, nav labels and every header control share one
+ * vertical centre.
+ */
 .header-functions-container {
+  --_header-slot-offset: 0px;
   display: flex;
   align-items: center;
   gap: var(--space-md);
+  height: var(--scl-telekom-header-height, 60px);
+  margin-top: calc(-1 * var(--_header-slot-offset));
 }
 
+@media (min-width: 1040px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-06);
+  }
+}
+
+@media (min-width: 1296px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-07);
+  }
+}
+
+@media (min-width: 1680px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-10);
+  }
+
+  scale-telekom-header[scrolled] .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-02);
+  }
+}
+
+.header-functions-container > * {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+/* Scale bottom-aligns nav-item content with a padding; centre it in the bar instead. */
+.profile-nav-item,
+.header-functions-container :deep(scale-telekom-profile-menu),
+.header-functions-container :deep(scale-menu-flyout) {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.header-functions-container :deep(.user-menu-desktop),
+.header-functions-container :deep(.user-menu-mobile) {
+  align-items: center;
+  height: 100%;
+}
+
+/* One-line user label; below 1440px only the icon shows (the accessible name stays). */
+.header-functions-container :deep(.flyout-label) {
+  white-space: nowrap;
+}
+
+@media (max-width: 1439px) {
+  .header-functions-container :deep(.flyout-label > [aria-hidden="true"]) {
+    display: none;
+  }
+}
+
+/* The trigger spans the bar like a nav item, so Scale opens the menu under the
+   header instead of over it. */
+.header-functions-container :deep(.scale-menu-trigger),
+.header-functions-container :deep(.user-menu-mobile > button) {
+  align-items: center;
+  height: auto;
+  min-height: var(--scl-telekom-header-height, 60px);
+  padding-bottom: 0;
+}
+
+/* The gap matches the 24px rhythm of the profile and menu items, so every
+   header icon sits the same distance apart across the divider. */
 .theme-utilities {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  padding: 0 var(--space-md);
+  align-self: center;
+  height: auto;
+  gap: var(--space-xl);
+  padding-right: var(--space-md);
   border-right: 1px solid var(--telekom-color-ui-border-standard);
-  margin-right: var(--space-sm);
 }
 
-.theme-toggle-button,
-.hc-toggle-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--telekom-radius-standard, 0.5rem);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--telekom-color-text-and-icon-standard);
-  cursor: pointer;
-  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
-}
-
-.theme-toggle-button:hover,
-.hc-toggle-button:hover {
-  background-color: var(--surface-card-subtle);
-}
-
-.theme-toggle-button.theme-dark,
-.hc-toggle-button.hc-active {
-  background-color: var(--telekom-color-primary-standard);
-  color: var(--telekom-color-text-and-icon-white);
-}
-
-.mobile-util-btn {
+.theme-utilities > scale-tooltip {
   display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  background: transparent;
-  border: none;
-  color: var(--telekom-color-text-and-icon-standard);
-  font: inherit;
-  padding: var(--space-md);
-  cursor: pointer;
+}
+
+/* Header function icons share the profile icon's colour, as in the Scale
+   header, instead of the ghost button's link blue; hover and the active
+   high-contrast switch use the brand colour. !important beats the global
+   dark-mode ghost colour override in base.css. */
+:root .header-functions-container scale-button:not(.mobile-util-btn)::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root .header-functions-container scale-button:not(.mobile-util-btn)::part(base):hover,
+:root .theme-utilities .hc-toggle-button[aria-pressed="true"]::part(base) {
+  color: var(--telekom-color-text-and-icon-primary-standard) !important;
+}
+
+/* Flyout theme switches read as menu rows: same inset, height and type as the
+   navigation links above them, left-aligned within the full row. */
+.mobile-util-btn {
+  display: block;
   width: 100%;
-  text-align: left;
-  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+  --width: 100%;
 }
 
-.mobile-util-btn:hover {
-  background-color: var(--telekom-color-ui-subtle-hover);
+.mobile-util-btn::part(base) {
+  justify-content: flex-start;
+  gap: var(--space-md);
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  font-weight: 500;
 }
 
-.mobile-util-btn.active {
-  color: var(--telekom-color-text-and-icon-link-standard);
-  font-weight: bold;
+/* Same colours as the links above them in every theme; the selector outranks
+   the global dark-mode ghost colour in base.css. The pressed switch uses the
+   brand colour, like the active link and the header contrast toggle. */
+:root .mobile-nav-fallback__utilities .mobile-util-btn::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root .mobile-nav-fallback__utilities .mobile-util-btn--contrast[aria-pressed="true"]::part(base) {
+  color: var(--telekom-color-text-and-icon-primary-standard) !important;
+  font-weight: 700;
+}
+
+/* High contrast keeps brand magenta out; weight alone marks the active row. */
+:root[data-high-contrast="true"] .mobile-nav-fallback__utilities .mobile-util-btn--contrast::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root[data-high-contrast="true"] .mobile-nav-fallback__link--active {
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .center {
@@ -811,23 +919,6 @@ scale-telekom-header::part(app-name-text) {
 .mobile-nav-item {
   display: none;
   position: relative;
-}
-
-.mobile-nav-trigger {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-xs);
-  border: 1px solid transparent;
-  background: transparent;
-  width: 60px;
-  min-height: 44px;
-  color: var(--telekom-color-text-and-icon-standard);
-  cursor: pointer;
-}
-
-.mobile-nav-trigger:hover {
-  background-color: var(--surface-card-subtle);
 }
 
 .mobile-nav-fallback {
@@ -888,12 +979,17 @@ scale-telekom-header::part(app-name-text) {
     background: var(--surface-card-subtle);
   }
 
+  /* The start bar marks the current page in every theme; dark and high contrast
+     keep the AAA text colour, so colour alone cannot. */
   .mobile-nav-fallback__link--active {
-    color: var(--telekom-color-text-and-icon-link-standard);
+    color: var(--telekom-color-text-and-icon-primary-standard);
     font-weight: 700;
+    box-shadow: var(--shadow-active-start);
   }
 
   .mobile-nav-fallback__utilities {
+    display: flex;
+    flex-direction: column;
     margin-top: var(--space-xs);
     padding-top: var(--space-xs);
     border-top: 1px solid var(--telekom-color-ui-border-standard);

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
+import { useModalBehavior } from "@/composables/useModalBehavior";
 import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
-import { PageHeader, LoadingState, EmptyState } from "@/components/common";
+import { PageHeader, LoadingState, EmptyState, HintTooltip } from "@/components/common";
+import { statusDescriptionFor } from "@/utils/statusStyles";
 import { pushError, pushSuccess } from "@/services/toast";
 import { formatDateTime, formatRelativeTime, useClipboard } from "@/composables";
 import type {
@@ -110,6 +112,12 @@ const renewDurationOptions = [
 
 // Rejection dialog state
 const rejectDialogOpen = ref(false);
+useModalBehavior(renewDialogOpen, () => {
+  renewDialogOpen.value = false;
+});
+useModalBehavior(rejectDialogOpen, () => {
+  rejectDialogOpen.value = false;
+});
 const rejectReason = ref("");
 
 async function fetchSession() {
@@ -507,10 +515,12 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   <div class="ui-page debug-session-details" data-testid="debug-session-details">
     <div class="back-link">
       <scale-button variant="secondary" size="small" data-testid="back-to-sessions-button" @click="goBack">
-        <scale-icon-navigation-left slot="icon"></scale-icon-navigation-left>
+        <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
         Back to Sessions
       </scale-button>
     </div>
+
+    <PageHeader :title="sessionName" :subtitle="session ? `Debug session on ${session.spec.cluster}` : undefined" />
 
     <LoadingState v-if="loading" message="Loading session details..." />
 
@@ -528,16 +538,16 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
     </EmptyState>
 
     <template v-else-if="session">
-      <PageHeader :title="session.metadata.name" :subtitle="`Debug session on ${session.spec.cluster}`" />
-
       <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
         <div class="detail-card status-card" data-testid="status-card">
           <h2>Status</h2>
           <div class="status-header">
-            <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
-              {{ session.status?.state || "Unknown" }}
-            </scale-tag>
+            <HintTooltip :hint="statusDescriptionFor(session.status?.state, 'debug')">
+              <scale-tag :variant="stateVariant" size="large" data-testid="session-state-tag">
+                {{ session.status?.state || "Unknown" }}
+              </scale-tag>
+            </HintTooltip>
           </div>
 
           <div class="status-details">
@@ -574,7 +584,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
           <div
             v-if="canJoin || canTerminate || canRenew || canApprove || canReject"
-            class="actions"
+            class="actions ui-actions"
             data-testid="session-actions"
           >
             <scale-button v-if="canJoin" variant="primary" data-testid="join-session-button" @click="handleJoin">
@@ -713,8 +723,9 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
                   <scale-button
                     size="small"
                     variant="secondary"
-                    :title="isCopied(pod) ? 'Copied!' : 'Copy to clipboard'"
-                    :aria-label="isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'"
+                    :inner-aria-label="
+                      isCopied(pod) ? 'Command copied to clipboard' : 'Copy kubectl command to clipboard'
+                    "
                     data-testid="copy-exec-btn"
                     @click="copyExecCommand(pod)"
                   >
@@ -740,28 +751,52 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
           <div class="operations-grid" data-testid="operations-grid">
             <div class="operation-item" data-testid="operation-exec">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('exec'))">
-                {{ isOperationAllowed("exec") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('exec')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("exec") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Exec</span>
               <span class="operation-desc">kubectl exec</span>
             </div>
             <div class="operation-item" data-testid="operation-attach">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('attach'))">
-                {{ isOperationAllowed("attach") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('attach')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("attach") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Attach</span>
               <span class="operation-desc">kubectl attach</span>
             </div>
             <div class="operation-item" data-testid="operation-logs">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('logs'))">
-                {{ isOperationAllowed("logs") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('logs')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("logs") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Logs</span>
               <span class="operation-desc">kubectl logs</span>
             </div>
             <div class="operation-item" data-testid="operation-portforward">
               <scale-tag :variant="operationStatusVariant(isOperationAllowed('portForward'))">
-                {{ isOperationAllowed("portForward") ? "✓" : "✗" }}
+                <scale-icon-action-checkmark
+                  v-if="isOperationAllowed('portForward')"
+                  size="12"
+                  decorative
+                ></scale-icon-action-checkmark>
+                <scale-icon-action-close v-else size="12" decorative></scale-icon-action-close>
+                <span class="sr-only">{{ isOperationAllowed("portForward") ? "Allowed" : "Not allowed" }}</span>
               </scale-tag>
               <span class="operation-name">Port Forward</span>
               <span class="operation-desc">kubectl port-forward</span>
@@ -847,15 +882,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               helper-text="Command to run in the container (space-separated)"
             />
             <div class="modal-actions">
-              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
-                Cancel
-              </scale-button>
-              <scale-button
-                variant="primary"
-                size="small"
-                :disabled="kubectlDebugLoading"
-                @click="handleInjectEphemeralContainer"
-              >
+              <scale-button variant="secondary" @click="showKubectlDebugForm = false"> Cancel </scale-button>
+              <scale-button variant="primary" :disabled="kubectlDebugLoading" @click="handleInjectEphemeralContainer">
                 {{ kubectlDebugLoading ? "Injecting..." : "Inject Container" }}
               </scale-button>
             </div>
@@ -886,10 +914,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               helper-text="Replace container image with a debug image"
             />
             <div class="modal-actions">
-              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
-                Cancel
-              </scale-button>
-              <scale-button variant="primary" size="small" :disabled="kubectlDebugLoading" @click="handleCreatePodCopy">
+              <scale-button variant="secondary" @click="showKubectlDebugForm = false"> Cancel </scale-button>
+              <scale-button variant="primary" :disabled="kubectlDebugLoading" @click="handleCreatePodCopy">
                 {{ kubectlDebugLoading ? "Creating..." : "Create Copy" }}
               </scale-button>
             </div>
@@ -906,15 +932,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
               helper-text="The name of the node to debug"
             />
             <div class="modal-actions">
-              <scale-button variant="secondary" size="small" @click="showKubectlDebugForm = false">
-                Cancel
-              </scale-button>
-              <scale-button
-                variant="primary"
-                size="small"
-                :disabled="kubectlDebugLoading"
-                @click="handleCreateNodeDebugPod"
-              >
+              <scale-button variant="secondary" @click="showKubectlDebugForm = false"> Cancel </scale-button>
+              <scale-button variant="primary" :disabled="kubectlDebugLoading" @click="handleCreateNodeDebugPod">
                 {{ kubectlDebugLoading ? "Creating..." : "Create Debug Pod" }}
               </scale-button>
             </div>
@@ -924,7 +943,13 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
     </template>
 
     <!-- Renew Duration Dialog -->
-    <scale-modal :opened="renewDialogOpen" heading="Renew Session" size="small" @scale-close="renewDialogOpen = false">
+    <scale-modal
+      :opened="renewDialogOpen"
+      heading="Renew Session"
+      size="small"
+      data-testid="renew-session-modal"
+      @scale-close="renewDialogOpen = false"
+    >
       <p>Select how long to extend the session:</p>
       <scale-dropdown-select v-model="renewDuration" label="Duration" data-testid="renew-duration-select">
         <scale-dropdown-select-item v-for="opt in renewDurationOptions" :key="opt.value" :value="opt.value">
@@ -942,6 +967,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
       :opened="rejectDialogOpen"
       heading="Reject Session"
       size="small"
+      data-testid="reject-session-modal"
       @scale-close="rejectDialogOpen = false"
     >
       <p>Provide a reason for rejecting this session (optional):</p>
@@ -961,7 +987,6 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 <style scoped>
 .debug-session-details {
-  max-width: 1000px;
   min-width: 0;
 }
 
@@ -988,7 +1013,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   margin: 0 0 var(--space-md);
   font: var(--telekom-text-style-body);
   font-weight: 600;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
   padding-bottom: var(--space-sm);
 }
 
@@ -1031,11 +1056,8 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 }
 
 .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
   padding-top: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .info-list {
@@ -1049,7 +1071,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   gap: var(--space-sm);
   min-width: 0;
   padding: var(--space-xs) 0;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .info-item:last-child {
@@ -1091,7 +1113,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .participant-item,
 .pod-item {
   padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .participant-item:last-child,
@@ -1225,11 +1247,13 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   min-width: 0;
 }
 
+/* Tag spans both rows so every tile has the same name/command layout. */
 .operation-item {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
+  column-gap: var(--space-sm);
+  row-gap: var(--space-2xs);
   padding: var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
   border-radius: var(--radius-sm);
@@ -1241,7 +1265,12 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   font-weight: 500;
 }
 
+.operation-item > scale-tag {
+  grid-row: span 2;
+}
+
 .operation-desc {
+  grid-column: 2;
   font: var(--telekom-text-style-small);
   color: var(--telekom-color-text-and-icon-additional);
   font-family: var(--telekom-typography-font-family-mono);
@@ -1287,21 +1316,5 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .kubectl-debug-form scale-text-field {
   display: block;
   margin-bottom: var(--space-sm);
-}
-
-.form-actions {
-  display: flex;
-  gap: var(--space-sm);
-  justify-content: flex-end;
-  margin-top: var(--space-md);
-  padding-top: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
-}
-
-.dialog-actions {
-  display: flex;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  margin-top: var(--space-lg);
 }
 </style>

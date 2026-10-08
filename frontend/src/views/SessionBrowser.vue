@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { computed, inject, onMounted, reactive, ref } from "vue";
 import { AuthKey } from "@/keys";
 import BreakglassService, { type SessionSearchParams } from "@/services/breakglass";
@@ -6,12 +7,12 @@ import BreakglassSessionService from "@/services/breakglassSession";
 import type { SessionCR } from "@/model/breakglass";
 import { useUser } from "@/services/auth";
 import { describeApprover, wasApprovedBy } from "@/utils/sessionFilters";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushError, pushSuccess, reportError } from "@/services/toast";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
-import { statusToneFor } from "@/utils/statusStyles";
+import { statusDescriptionFor, statusToneFor } from "@/utils/statusStyles";
 import { formatRelativeTime } from "@/composables/useDateFormatting";
 import { formatDurationRounded } from "@/composables/useDuration";
-import { EmptyState, ReasonPanel, TimelineGrid } from "@/components/common";
+import { EmptyState, HintTooltip, LoadingState, PageHeader, ReasonPanel, TimelineGrid } from "@/components/common";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import WithdrawConfirmDialog from "@/components/WithdrawConfirmDialog.vue";
 import { useWithdrawConfirmation } from "@/composables";
@@ -184,6 +185,9 @@ async function fetchSessions() {
   loading.value = true;
   error.value = "";
   const statesToQuery = filters.states.length ? filters.states : [undefined];
+  // The sessions API has no name filter, so results are narrowed client-side
+  // with the name submitted together with the other filters.
+  const nameQuery = filters.name.trim().toLowerCase();
   try {
     const all = await Promise.all(statesToQuery.map((state) => breakglassService.searchSessions(buildParams(state))));
     const merged = all.flat();
@@ -195,7 +199,9 @@ async function fetchSessions() {
         `${session.spec?.grantedGroup}-${session.spec?.cluster}-${session.status?.expiresAt || ""}`;
       dedup.set(key, session);
     });
-    sessions.value = Array.from(dedup.values());
+    sessions.value = Array.from(dedup.values()).filter(
+      (session) => !nameQuery || sessionName(session).toLowerCase().includes(nameQuery),
+    );
     lastQuery.value = describeQuery(statesToQuery);
   } catch (err: unknown) {
     error.value = (err instanceof Error ? err.message : undefined) || "Failed to load sessions";
@@ -336,8 +342,7 @@ async function executeSessionAction(session: SessionCR, action: SessionActionKey
     }
     await fetchSessions();
   } catch (err: unknown) {
-    const message = (err instanceof Error ? err.message : undefined) || `Failed to ${action} session`;
-    pushError(message);
+    reportError(err, `Failed to ${action} session`);
   } finally {
     setActionBusy(session);
   }
@@ -378,232 +383,264 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="session-browser" data-testid="session-browser">
-    <section class="filters-card" data-testid="filters-section">
-      <header>
-        <h1>Session Browser</h1>
-        <p>
-          Run ad-hoc queries across <code>/breakglassSessions</code>. Use presets for familiar views or mix any API
-          filters.
-        </p>
-      </header>
-
-      <div class="filters-grid" data-testid="filter-checkboxes">
-        <scale-checkbox
-          data-testid="filter-mine"
-          :checked="filters.mine"
-          @scale-change="filters.mine = $event.target.checked"
-          >Mine</scale-checkbox
-        >
-        <scale-checkbox
-          data-testid="filter-approver"
-          :checked="filters.approver"
-          @scale-change="filters.approver = $event.target.checked"
-          >Approver</scale-checkbox
-        >
-        <scale-checkbox
-          data-testid="filter-approved-by-me"
-          :checked="filters.onlyApprovedByMe"
-          :disabled="!currentUserEmail"
-          title="Requires email in profile"
-          @scale-change="filters.onlyApprovedByMe = $event.target.checked"
-        >
-          Only sessions I approved
-        </scale-checkbox>
-      </div>
-
-      <div class="state-chooser" data-testid="state-filters">
-        <span class="section-label">States</span>
-        <div class="state-options">
-          <scale-checkbox
-            v-for="option in stateOptions"
-            :key="option.value"
-            :data-testid="`state-filter-${option.value}`"
-            :checked="filters.states.includes(option.value)"
-            :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
-            @scale-change="(event: Event) => onStateToggle(option.value, event)"
-          >
-            {{ option.label }}
-          </scale-checkbox>
-        </div>
-      </div>
-
-      <div class="text-filters" data-testid="text-filters">
-        <scale-text-field
-          data-testid="cluster-filter"
-          label="Cluster"
-          :value="filters.cluster"
-          placeholder="cluster name"
-          @scale-change="filters.cluster = $event.target.value"
-        ></scale-text-field>
-        <scale-text-field
-          data-testid="group-filter"
-          label="Group"
-          :value="filters.group"
-          placeholder="group"
-          @scale-change="filters.group = $event.target.value"
-        ></scale-text-field>
-        <scale-text-field
-          data-testid="user-filter"
-          label="User"
-          :value="filters.user"
-          placeholder="user email"
-          @scale-change="filters.user = $event.target.value"
-        ></scale-text-field>
-        <scale-text-field
-          data-testid="name-filter"
-          label="Session Name"
-          :value="filters.name"
-          placeholder="metadata.name"
-          @scale-change="filters.name = $event.target.value"
-        ></scale-text-field>
-      </div>
-
-      <div class="filters-actions" data-testid="filter-actions">
-        <scale-button data-testid="apply-filters-button" :disabled="loading" variant="primary" @click="fetchSessions">
-          <scale-loading-spinner v-if="loading" size="small" class="button-spinner"></scale-loading-spinner>
-          <span v-else>Apply filters</span>
-        </scale-button>
-        <scale-button data-testid="reset-filters-button" variant="secondary" @click="resetFilters">Reset</scale-button>
-      </div>
-
-      <p class="filters-meta">
-        <strong>Active filters:</strong> {{ activeFiltersDescription }}<br />
-        <span v-if="lastQuery"><strong>Last API query:</strong> {{ lastQuery }}</span>
-      </p>
-      <p v-if="approvedFilterDisabled" class="hint">
-        Account email was not found in the ID token, so "Only sessions I approved" is temporarily disabled.
-      </p>
-    </section>
-
-    <section class="results-card" data-testid="results-section">
-      <header>
-        <h2>Results ({{ visibleSessions.length }})</h2>
-        <p
-          v-if="!loading && !error"
-          class="sr-only"
-          role="status"
-          aria-live="polite"
-          aria-atomic="true"
-          data-testid="session-results-status"
-        >
-          Showing {{ visibleSessions.length }} of {{ sessions.length }} {{ sessionCountLabel }}
-        </p>
-        <p v-if="loading" role="status" aria-live="polite" data-testid="loading-indicator">Loading sessions…</p>
-        <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>
-      </header>
-
-      <EmptyState
-        v-if="!loading && !error && !visibleSessions.length"
-        data-testid="empty-state"
-        variant="search"
-        title="No sessions matched the current filters."
-        description="Try adjusting your filters or creating a new session."
-      />
-
-      <div v-if="visibleSessions.length" class="sessions-list" data-testid="session-list">
-        <scale-card
-          v-for="session in visibleSessions"
-          :key="session.metadata?.name || session.name || session.spec?.grantedGroup"
-          class="session-card"
-          data-testid="session-row"
-        >
-          <div class="card-header">
-            <div>
-              <div class="session-name">{{ session.metadata?.name || session.name }}</div>
-              <div class="cluster-group">
-                <scale-button
-                  size="small"
-                  variant="ghost"
-                  :disabled="!(session.spec?.cluster || session.cluster)"
-                  aria-label="Filter by cluster"
-                  @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
-                >
-                  {{ session.spec?.cluster || session.cluster || "-" }}
-                </scale-button>
-                <scale-button
-                  size="small"
-                  variant="ghost"
-                  :disabled="!(session.spec?.grantedGroup || session.group)"
-                  aria-label="Filter by group"
-                  @click="setFilter('group', session.spec?.grantedGroup || session.group)"
-                >
-                  {{ session.spec?.grantedGroup || session.group || "-" }}
-                </scale-button>
-              </div>
-            </div>
-            <scale-tag size="small" :variant="sessionStatusVariant(session)" data-testid="status">
-              {{ sessionState(session) }}
-            </scale-tag>
-          </div>
-
-          <div class="actors">
-            <span><strong>User:</strong> {{ sessionUser(session) }}</span>
-            <span v-if="session.spec?.identityProviderName">
-              <strong>IDP:</strong> {{ session.spec.identityProviderName }}
-            </span>
-            <span><strong>Approved by:</strong> {{ describeApprover(session) }}</span>
-          </div>
-
-          <div v-if="getSessionActions(session).length" class="session-actions" data-testid="session-actions">
-            <scale-button
-              v-for="action in getSessionActions(session)"
-              :key="`${sessionKey(session)}-${action.key}`"
-              :data-testid="`action-${action.key}`"
-              :variant="action.variant || 'secondary'"
-              :disabled="isSessionBusy(session)"
-              @click="() => runSessionAction(session, action.key)"
-            >
-              <span v-if="isActionRunning(session, action.key)">Processing…</span>
-              <span v-else>{{ action.label }}</span>
-            </scale-button>
-          </div>
-
-          <TimelineGrid
-            :scheduled-start="session.spec?.scheduledStartTime || null"
-            :actual-start="startedFor(session)"
-            :ended="endedFor(session)"
-          />
-
-          <div v-if="session.status?.lastActivity || session.spec?.idleTimeout" class="activity-info">
-            <span v-if="session.status?.lastActivity">
-              <strong>Last Activity:</strong> {{ formatRelativeTime(session.status.lastActivity) }}
-              <span v-if="session.status?.activityCount != null"> ({{ session.status.activityCount }} requests)</span>
-            </span>
-            <span v-if="session.spec?.idleTimeout">
-              <strong>Idle Timeout:</strong> {{ formatDurationRounded(session.spec.idleTimeout) }}
-            </span>
-          </div>
-
-          <div v-if="session.spec?.requestReason || session.status?.approvalReason" class="reasons">
-            <ReasonPanel
-              v-if="session.spec?.requestReason"
-              :reason="session.spec.requestReason"
-              label="Request Reason"
-              variant="request"
-            />
-            <ReasonPanel
-              v-if="session.status?.approvalReason"
-              :reason="session.status.approvalReason"
-              label="Approval Reason"
-              variant="approval"
-            />
-          </div>
-
-          <div v-if="reasonEndedLabel(session)" class="end-reason">
-            <strong>Ended:</strong> {{ reasonEndedLabel(session) }}
-          </div>
-        </scale-card>
-      </div>
-    </section>
-
-    <!-- Withdraw Confirmation Dialog -->
-    <WithdrawConfirmDialog
-      :opened="withdrawDialogOpen"
-      :session-name="withdrawTarget ? sessionName(withdrawTarget) : undefined"
-      @confirm="confirmWithdraw"
-      @cancel="cancelWithdraw"
+  <div class="ui-page" data-testid="session-browser-page">
+    <PageHeader
+      title="Session Browser"
+      subtitle="Run ad-hoc queries across all breakglass sessions. Use presets for familiar views or mix any API filters."
     />
+
+    <div class="session-browser" data-testid="session-browser">
+      <section class="filters-card" aria-labelledby="session-filters-heading" data-testid="filters-section">
+        <header>
+          <h2 id="session-filters-heading">Filters</h2>
+        </header>
+
+        <div class="filters-grid" data-testid="filter-checkboxes">
+          <scale-checkbox
+            data-testid="filter-mine"
+            :checked="filters.mine"
+            @scale-change="filters.mine = $event.target.checked"
+            >Mine</scale-checkbox
+          >
+          <scale-checkbox
+            data-testid="filter-approver"
+            :checked="filters.approver"
+            @scale-change="filters.approver = $event.target.checked"
+            >Approver</scale-checkbox
+          >
+          <DisabledReason
+            :reason="currentUserEmail ? '' : 'Your profile has no email address to match approvals against.'"
+          >
+            <scale-checkbox
+              data-testid="filter-approved-by-me"
+              :checked="filters.onlyApprovedByMe"
+              :disabled="!currentUserEmail"
+              @scale-change="filters.onlyApprovedByMe = $event.target.checked"
+            >
+              Approved by me
+            </scale-checkbox>
+          </DisabledReason>
+        </div>
+
+        <div class="state-chooser" data-testid="state-filters">
+          <span class="section-label">States</span>
+          <div class="state-options">
+            <scale-checkbox
+              v-for="option in stateOptions"
+              :key="option.value"
+              :data-testid="`state-filter-${option.value}`"
+              :checked="filters.states.includes(option.value)"
+              :title="option.value === 'active' ? 'Shows only currently active sessions' : undefined"
+              @scale-change="(event: Event) => onStateToggle(option.value, event)"
+            >
+              {{ option.label }}
+            </scale-checkbox>
+          </div>
+        </div>
+
+        <div class="text-filters" data-testid="text-filters">
+          <scale-text-field
+            data-testid="cluster-filter"
+            label="Cluster"
+            :value="filters.cluster"
+            placeholder="cluster name"
+            @scale-change="filters.cluster = $event.target.value"
+          ></scale-text-field>
+          <scale-text-field
+            data-testid="group-filter"
+            label="Group"
+            :value="filters.group"
+            placeholder="group"
+            @scale-change="filters.group = $event.target.value"
+          ></scale-text-field>
+          <scale-text-field
+            data-testid="user-filter"
+            label="User"
+            :value="filters.user"
+            placeholder="user email"
+            @scale-change="filters.user = $event.target.value"
+          ></scale-text-field>
+          <scale-text-field
+            data-testid="name-filter"
+            label="Session Name"
+            :value="filters.name"
+            placeholder="metadata.name"
+            @scale-change="filters.name = $event.target.value"
+          ></scale-text-field>
+        </div>
+
+        <div class="filters-actions ui-actions ui-actions--start" data-testid="filter-actions">
+          <scale-button data-testid="apply-filters-button" :disabled="loading" variant="primary" @click="fetchSessions">
+            <scale-loading-spinner v-if="loading" size="small" class="button-spinner"></scale-loading-spinner>
+            <span v-else>Apply filters</span>
+          </scale-button>
+          <scale-button data-testid="reset-filters-button" variant="secondary" @click="resetFilters"
+            >Reset</scale-button
+          >
+        </div>
+
+        <p class="filters-meta">
+          <strong>Active filters:</strong> {{ activeFiltersDescription }}<br />
+          <span v-if="lastQuery"><strong>Last API query:</strong> {{ lastQuery }}</span>
+        </p>
+        <p v-if="approvedFilterDisabled" class="hint">
+          Account email was not found in the ID token, so "Approved by me" is temporarily disabled.
+        </p>
+      </section>
+
+      <section class="results-card" data-testid="results-section">
+        <header>
+          <h2>{{ loading || error ? "Results" : `Results (${visibleSessions.length})` }}</h2>
+          <p
+            v-if="!loading && !error"
+            class="sr-only"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            data-testid="session-results-status"
+          >
+            Showing {{ visibleSessions.length }} of {{ sessions.length }} {{ sessionCountLabel }}
+          </p>
+          <LoadingState
+            v-if="loading"
+            inline
+            size="small"
+            message="Loading sessions…"
+            data-testid="loading-indicator"
+          />
+          <p v-else-if="error" class="error" role="alert" data-testid="error-message">{{ error }}</p>
+        </header>
+
+        <EmptyState
+          v-if="!loading && !error && !visibleSessions.length"
+          data-testid="empty-state"
+          variant="search"
+          title="No sessions matched the current filters."
+          description="Try adjusting your filters or creating a new session."
+        />
+
+        <div v-if="visibleSessions.length" class="sessions-list" data-testid="session-list">
+          <scale-card
+            v-for="session in visibleSessions"
+            :key="session.metadata?.name || session.name || session.spec?.grantedGroup"
+            class="session-card"
+            data-testid="session-row"
+          >
+            <div class="card-header">
+              <div>
+                <div class="session-name">{{ session.metadata?.name || session.name }}</div>
+                <div class="cluster-group">
+                  <scale-tooltip
+                    v-if="session.spec?.cluster || session.cluster"
+                    :content="`Filter by cluster ${session.spec?.cluster || session.cluster}`"
+                    placement="top"
+                  >
+                    <scale-button
+                      size="small"
+                      variant="ghost"
+                      :inner-aria-label="`Filter by cluster ${session.spec?.cluster || session.cluster}`"
+                      @click="setFilter('cluster', session.spec?.cluster || session.cluster)"
+                    >
+                      {{ session.spec?.cluster || session.cluster }}
+                    </scale-button>
+                  </scale-tooltip>
+                  <span v-else>-</span>
+                  <scale-tooltip
+                    v-if="session.spec?.grantedGroup || session.group"
+                    :content="`Filter by group ${session.spec?.grantedGroup || session.group}`"
+                    placement="top"
+                  >
+                    <scale-button
+                      size="small"
+                      variant="ghost"
+                      :inner-aria-label="`Filter by group ${session.spec?.grantedGroup || session.group}`"
+                      @click="setFilter('group', session.spec?.grantedGroup || session.group)"
+                    >
+                      {{ session.spec?.grantedGroup || session.group }}
+                    </scale-button>
+                  </scale-tooltip>
+                  <span v-else>-</span>
+                </div>
+              </div>
+              <HintTooltip :hint="statusDescriptionFor(sessionState(session))">
+                <scale-tag size="small" :variant="sessionStatusVariant(session)" data-testid="status">
+                  {{ sessionState(session) }}
+                </scale-tag>
+              </HintTooltip>
+            </div>
+
+            <div class="actors">
+              <span><strong>User:</strong> {{ sessionUser(session) }}</span>
+              <span v-if="session.spec?.identityProviderName">
+                <strong>IDP:</strong> {{ session.spec.identityProviderName }}
+              </span>
+              <span><strong>Approved by:</strong> {{ describeApprover(session) }}</span>
+            </div>
+
+            <TimelineGrid
+              :scheduled-start="session.spec?.scheduledStartTime || null"
+              :actual-start="startedFor(session)"
+              :ended="endedFor(session)"
+            />
+
+            <div v-if="session.status?.lastActivity || session.spec?.idleTimeout" class="activity-info">
+              <span v-if="session.status?.lastActivity">
+                <strong>Last Activity:</strong> {{ formatRelativeTime(session.status.lastActivity) }}
+                <span v-if="session.status?.activityCount != null"> ({{ session.status.activityCount }} requests)</span>
+              </span>
+              <span v-if="session.spec?.idleTimeout">
+                <strong>Idle Timeout:</strong> {{ formatDurationRounded(session.spec.idleTimeout) }}
+              </span>
+            </div>
+
+            <div v-if="session.spec?.requestReason || session.status?.approvalReason" class="reasons">
+              <ReasonPanel
+                v-if="session.spec?.requestReason"
+                :reason="session.spec.requestReason"
+                label="Request Reason"
+                variant="request"
+              />
+              <ReasonPanel
+                v-if="session.status?.approvalReason"
+                :reason="session.status.approvalReason"
+                label="Approval Reason"
+                variant="approval"
+              />
+            </div>
+
+            <div v-if="reasonEndedLabel(session)" class="end-reason">
+              <strong>Ended:</strong> {{ reasonEndedLabel(session) }}
+            </div>
+
+            <div
+              v-if="getSessionActions(session).length"
+              class="session-actions ui-actions"
+              data-testid="session-actions"
+            >
+              <scale-button
+                v-for="action in getSessionActions(session)"
+                :key="`${sessionKey(session)}-${action.key}`"
+                :data-testid="`action-${action.key}`"
+                :variant="action.variant || 'secondary'"
+                :disabled="isSessionBusy(session)"
+                @click="() => runSessionAction(session, action.key)"
+              >
+                <span v-if="isActionRunning(session, action.key)">Processing…</span>
+                <span v-else>{{ action.label }}</span>
+              </scale-button>
+            </div>
+          </scale-card>
+        </div>
+      </section>
+
+      <!-- Withdraw Confirmation Dialog -->
+      <WithdrawConfirmDialog
+        :opened="withdrawDialogOpen"
+        :session-name="withdrawTarget ? sessionName(withdrawTarget) : undefined"
+        @confirm="confirmWithdraw"
+        @cancel="cancelWithdraw"
+      />
+    </div>
   </div>
 </template>
 
@@ -619,7 +656,6 @@ onMounted(() => {
   --session-muted: var(--telekom-color-text-and-icon-additional);
   --session-tag-bg: var(--chip-bg);
   --session-tag-text: var(--chip-text);
-  --session-shadow: var(--shadow-card);
 }
 
 @media (max-width: 960px) {
@@ -634,7 +670,7 @@ onMounted(() => {
   border: 1px solid var(--session-border);
   border-radius: var(--radius-lg);
   padding: var(--card-padding);
-  box-shadow: var(--session-shadow);
+  box-shadow: var(--shadow-card);
 }
 
 header h2,
@@ -647,76 +683,21 @@ header p {
   color: var(--session-muted);
 }
 
-.preset-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-sm);
-  margin-bottom: var(--space-md);
-}
-
-.preset-btn {
-  border: 1px solid var(--session-border);
-  border-radius: var(--radius-md);
-  padding: var(--space-sm) var(--space-md);
-  background: var(--surface-card-subtle);
-  text-align: left;
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-strong);
-  transition:
-    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
-    box-shadow var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
-}
-
-.preset-btn small {
-  display: block;
-  font-weight: 400;
-  color: var(--session-muted);
-}
-
-.preset-btn.active {
-  border-color: var(--accent-telekom);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent-telekom) 25%, transparent);
+/* Plain Scale checkboxes in a two-column grid, like the Scale checkbox group. */
+.filters-grid,
+.state-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-xs) var(--space-md);
 }
 
 .filters-grid {
-  display: flex;
-  gap: var(--space-md);
-  flex-wrap: wrap;
   margin-bottom: var(--space-md);
-}
-
-/* Style top-level filter checkboxes as pills for visual consistency with state pills */
-.filters-grid :deep(scale-checkbox) {
-  border: 1px solid var(--session-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2xs) var(--space-sm);
-  background: var(--surface-card-subtle);
-  color: var(--telekom-color-text-and-icon-standard);
-  transition:
-    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
-    background var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
-}
-
-.filters-grid :deep(scale-checkbox:hover) {
-  border-color: var(--accent-telekom);
-  background: var(--surface-elevated);
 }
 
 .filters-grid :deep(scale-checkbox::part(label)),
 .filters-grid :deep(scale-checkbox::part(base)) {
   color: var(--telekom-color-text-and-icon-standard) !important;
-}
-
-.filter-flag {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2xs);
-  font-weight: 600;
-  color: var(--telekom-color-text-and-icon-strong);
-}
-
-.filter-flag.disabled {
-  color: var(--telekom-color-text-and-icon-disabled);
 }
 
 .state-chooser {
@@ -731,45 +712,13 @@ header p {
 }
 
 .state-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-xs);
   margin-top: var(--space-xs);
-}
-
-/* Style state filter checkboxes as pills with background and border */
-.state-options :deep(scale-checkbox) {
-  border: 1px solid var(--session-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2xs) var(--space-sm);
-  background: var(--surface-card-subtle);
-  color: var(--telekom-color-text-and-icon-standard);
-  transition:
-    border-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard),
-    background var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
 /* Override Scale's internal label colour to prevent magenta-on-magenta */
 .state-options :deep(scale-checkbox::part(label)),
 .state-options :deep(scale-checkbox::part(base)) {
   color: var(--telekom-color-text-and-icon-standard) !important;
-}
-
-.state-options :deep(scale-checkbox:hover) {
-  border-color: var(--accent-telekom);
-  background: var(--surface-elevated);
-}
-
-.state-pill {
-  border: 1px solid var(--session-border);
-  border-radius: var(--radius-pill);
-  padding: var(--space-2xs) var(--space-sm);
-  display: inline-flex;
-  gap: var(--space-2xs);
-  align-items: center;
-  font: var(--telekom-text-style-caption);
-  background: var(--surface-card-subtle);
-  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .text-filters {
@@ -783,7 +732,7 @@ header p {
   display: flex;
   flex-direction: column;
   font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-strong);
+  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 600;
 }
 
@@ -798,18 +747,7 @@ header p {
 }
 
 .filters-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-md);
   margin-bottom: var(--space-xs);
-}
-
-.link-reset {
-  border: none;
-  background: none;
-  color: var(--accent-telekom);
-  font-weight: 600;
-  cursor: pointer;
 }
 
 .filters-meta {
@@ -820,7 +758,7 @@ header p {
 
 .hint {
   font: var(--telekom-text-style-small);
-  color: var(--telekom-color-text-warning);
+  color: var(--telekom-color-text-and-icon-functional-warning);
   margin-top: var(--space-2xs);
 }
 
@@ -832,43 +770,48 @@ header p {
 }
 
 .session-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  margin: var(--space-sm) 0 var(--space-xs);
-}
-
-/* min-width delegated to scale-button / ActionButton defaults for consistency */
-
-.session-actions :deep(scale-button) {
-  min-width: 8rem;
+  margin-top: var(--space-md);
+  padding-top: var(--space-md);
+  border-top: 1px solid var(--session-border);
 }
 
 .session-card {
   border: 1px solid var(--session-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--session-shadow);
+  box-shadow: var(--shadow-card);
   background: var(--session-surface);
 }
 
 .card-header {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: flex-start;
+  gap: var(--space-sm);
   margin-bottom: var(--space-md);
+}
+
+.card-header > div {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .session-name {
   font: var(--telekom-text-style-heading-6);
   font-weight: 700;
-  color: var(--telekom-color-text-and-icon-strong);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
+/* Filter shortcuts read as inline links aligned with the session name. */
 .cluster-group {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2xs);
+  gap: var(--space-md);
   margin-top: var(--space-2xs);
+}
+
+.cluster-group scale-button::part(base) {
+  padding-inline: 0;
 }
 
 .actors {
@@ -905,7 +848,7 @@ header p {
 }
 
 .error {
-  color: var(--telekom-color-text-error);
+  color: var(--telekom-color-text-and-icon-functional-danger);
 }
 
 .button-spinner {

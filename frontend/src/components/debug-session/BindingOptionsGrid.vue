@@ -55,7 +55,7 @@ const emit = defineEmits<{
         <!-- Key Constraints Row -->
         <div class="binding-key-constraints">
           <span v-if="option.constraints?.maxDuration" class="key-constraint duration">
-            <scale-icon-action-clock size="16"></scale-icon-action-clock>
+            <scale-icon-content-clock size="16"></scale-icon-content-clock>
             <span class="value">{{ option.constraints.maxDuration }}</span>
             <span class="label">max duration</span>
           </span>
@@ -92,7 +92,7 @@ const emit = defineEmits<{
           </span>
 
           <span v-if="option.requiredAuxiliaryResourceCategories?.length" class="feature-tag auxiliary">
-            <scale-icon-action-add-circle size="12"></scale-icon-action-add-circle>
+            <scale-icon-action-circle-add size="12"></scale-icon-action-circle-add>
             {{ option.requiredAuxiliaryResourceCategories.join(", ") }}
           </span>
 
@@ -131,7 +131,7 @@ const emit = defineEmits<{
 
         <!-- Binding Source Reference -->
         <div class="binding-source-ref" data-testid="binding-source-ref">
-          <scale-icon-content-link size="10"></scale-icon-content-link>
+          <scale-icon-action-link size="10"></scale-icon-action-link>
           <span class="ref-value">{{ option.bindingRef.namespace }}/{{ option.bindingRef.name }}</span>
         </div>
       </div>
@@ -189,8 +189,8 @@ const emit = defineEmits<{
 
 .binding-option-card.selected {
   border-color: var(--telekom-color-primary-standard);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 15%, transparent);
-  background: var(--telekom-color-background-surface-highlight);
+  box-shadow: var(--shadow-selected);
+  background: var(--surface-card-subtle);
 }
 
 .binding-header {
@@ -209,8 +209,8 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-primary-standard);
-  color: var(--telekom-color-text-and-icon-inverted-standard, #ffffff);
-  border-radius: var(--radius-full);
+  color: var(--telekom-color-text-and-icon-inverted-standard);
+  border-radius: var(--radius-pill);
 }
 
 .binding-key-constraints {
@@ -218,7 +218,7 @@ const emit = defineEmits<{
   gap: var(--space-md);
   margin-bottom: var(--space-sm);
   padding-bottom: var(--space-sm);
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-key-constraints .key-constraint {
@@ -249,13 +249,13 @@ const emit = defineEmits<{
 }
 
 .binding-key-constraints .key-constraint.approval-req {
-  background: var(--telekom-color-functional-warning-subtle);
-  color: var(--telekom-color-functional-warning-standard);
+  background: var(--tone-chip-warning-bg);
+  color: var(--tone-chip-warning-text);
 }
 
 .binding-key-constraints .key-constraint.auto-approve {
-  background: var(--telekom-color-functional-success-subtle);
-  color: var(--telekom-color-functional-success-standard);
+  background: var(--tone-chip-success-bg);
+  color: var(--tone-chip-success-text);
 }
 
 .binding-features {
@@ -272,7 +272,7 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-pill);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -312,7 +312,7 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-approvers .approvers-label {
@@ -335,7 +335,7 @@ const emit = defineEmits<{
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
   margin-top: auto;
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-source-ref .ref-value {

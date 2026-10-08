@@ -38,29 +38,32 @@
   color: var(--telekom-color-text-and-icon-additional);
 }
 
+/* A router link styled exactly like Scale's primary button (44px, 8px radius,
+   20px inline padding, bold body type), so it matches every other primary
+   action; high contrast uses the same --cta-* colours as scale-button. */
 .not-found__cta {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   min-height: 2.75rem;
-  margin-top: var(--space-sm);
-  border: 2px solid transparent;
-  border-radius: var(--radius-pill);
-  padding: 0 var(--space-lg);
-  background: var(--cta-bg, var(--accent-primary-aaa));
-  color: var(--telekom-color-text-and-icon-white, var(--accent-on-primary-aaa));
+  border-radius: var(--telekom-radius-standard);
+  padding: 0 1.25rem;
+  background: var(--telekom-color-primary-standard);
+  color: var(--telekom-color-text-and-icon-inverted-standard);
   font: var(--telekom-text-style-body);
   font-weight: 700;
   text-decoration: none;
 }
 
 .not-found__cta:hover {
-  background: var(--cta-bg-hover, var(--accent-primary-aaa-hover));
+  background: var(--telekom-color-primary-hovered);
   text-decoration: none;
 }
 
 :global(:root[data-high-contrast="true"]) .not-found__cta {
-  border-color: var(--cta-bg, currentColor);
+  background: var(--cta-bg);
+  color: var(--cta-fg);
+  border: 2px solid var(--cta-bg);
 }
 
 .not-found__cta:focus-visible {

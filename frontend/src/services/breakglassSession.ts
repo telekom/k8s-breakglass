@@ -78,7 +78,9 @@ export default class BreakglassSessionService {
     try {
       return await this.client.get(`/breakglassSessions/${encodeURIComponent(name)}`);
     } catch (e) {
-      handleAxiosError("BreakglassSessionService.getSessionByName", e, "Failed to fetch session");
+      // The approval view renders a dedicated not-found/forbidden state, so a
+      // generic toast would only duplicate that message.
+      handleAxiosError("BreakglassSessionService.getSessionByName", e, "Failed to fetch session", false);
       throw e;
     }
   }

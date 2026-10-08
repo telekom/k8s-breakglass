@@ -41,7 +41,7 @@ and re-declares the variable on `:root`.
 |---------|---------------|--------------|--------|
 | `scale-button::part(variant-primary)` | `#f61488` (Scale computed) | `#e20074` (design token) | Scale's internal rendering produces a lighter #f61488 which only achieves 3.9:1 contrast against white text (fails AA). Pinning to the design-token value #e20074 yields 4.68:1 (AA compliant) while preserving the Telekom brand colour. |
 | `[data-high-contrast="true"] scale-button::part(variant-primary)` | Brand colour | Black on light high-contrast, white on dark high-contrast | High-contrast mode prioritizes maximum foreground/background contrast over brand colour while preserving the primary-button affordance. |
-| `[data-high-contrast="true"] scale-button[variant="primary"] > *`, plus default-primary `scale-button:not([variant]) > *` | Inherited page text colour | White on light high-contrast, black on dark high-contrast | Custom slotted labels are outside Scale's shadow part styling, so they must explicitly match the high-contrast primary-button foreground. |
+| `scale-button::part(variant-primary disabled)` | Scale disabled fill | Scale disabled fill and text restored (high contrast: transparent with a disabled-colour outline) | The pins above would otherwise paint disabled primaries magenta/black, making them look enabled. Selectors match the rendered part, not `scale-button[variant]`: Vue sets `variant` as a property, so attribute selectors never match. Slotted labels inherit the colour through the flat tree. |
 
 ---
 
@@ -142,11 +142,11 @@ propagated.
 
 ---
 
-## 9. `scale-button` Pill Radius
+## 9. `scale-button` Pill Radius (removed)
 
-| Property | Scale Default | Our Override | Reason |
-|----------|---------------|--------------|--------|
-| `border-radius` | Scale standard radius | `var(--radius-pill)` = `62.4375rem` | Design decision for Breakglass — fully rounded buttons match the Telekom brand aesthetic. Applied via `::part(button)` and `::part(base)` with `!important` to penetrate shadow DOM. |
+Removed. Buttons use Scale's standard radius again so every `scale-button`
+variant, size and icon placement matches the Scale styleguide. Only the
+skip link and pill-style filter checkboxes still use `var(--radius-pill)`.
 
 ---
 
@@ -156,8 +156,8 @@ propagated.
 |----------|---------------|--------------|--------|
 | `--spacing-y` | Scale default | `var(--space-lg)` = `16px` | Consistent internal spacing with the rest of our UI. |
 | `::part(body)` layout | Block | `flex` column with `gap: var(--space-md)` | Ensures body content is evenly spaced without margin hacks. |
-| `::part(header)` separator | No app-level separator | Standard border plus bottom spacing | Keeps modal titles visually connected to the body while matching card and form section boundaries. |
-| `.modal-actions`, `.dialog-actions`, `.form-actions` | Per-component ad hoc alignment | Wrapped right-aligned action bar, stacked on narrow screens | Keeps action placement consistent across modals and forms and prevents button overflow on mobile. |
+| `::part(header)` inset | `margin-inline: var(--spacing-x-header)` | `margin-inline: 0; padding-inline: var(--spacing-x-header)` | Scale's own scroll separator under the header stopped 24 px short of each window edge. Padding keeps the title position and lets the rule span the full window. No extra app-level separators: Scale draws header/footer rules only while the body scrolls. |
+| `.modal-actions`, `.dialog-actions`, `.form-actions` | Per-component ad hoc alignment | Wrapped right-aligned action bar (Cancel first, primary last), stacked on narrow screens. Inside `scale-modal` the row drops its border and fills the footer slot | Keeps action placement consistent across modals and forms and prevents button overflow and half-width footer rules. |
 
 ---
 
@@ -209,6 +209,25 @@ dark mode support, and hidden mobile-only components.
 `scale-card::part(base)` gets `border: none` to prevent double borders.
 The host element `scale-card` carries the visible border + shadow instead,
 ensuring consistent card appearance in both branded and neutral variants.
+
+---
+
+## 16. High-Contrast Header Logo and Form Controls
+
+| Element | Scale Default | Our Override | Reason |
+|---------|---------------|--------------|--------|
+| `scale-telekom-header` logo tile | `--telekom-color-primary-standard` (black/white in high contrast) | Brand magenta | High contrast remaps primary to black/white, which hid the white logo on its tile. Logos are exempt from contrast rules (WCAG 1.4.3). |
+| `scale-checkbox`, `scale-radio-button`, `scale-switch` mark | White on the primary fill | `--cta-fg` | In dark high contrast the primary fill is white, so the white checkmark/dot disappeared. |
+
+---
+
+## 17. Notification Toasts
+
+Toasts use `scale-notification type="toast"` with its own padding, icon and
+close button. Only the placement is ours: one fixed stack below the measured
+header bar with `--space-md` gaps, instead of `scale-notification-toast`'s
+absolute `position-vertical` offsets, which overlapped the header and each
+other. `::part(base)` uses `--shadow-card` so stacked toasts separate evenly.
 
 ---
 

@@ -139,6 +139,21 @@ and Vitest configuration with TypeScript 7.
 UI E2E tests (`frontend/tests/e2e/`) run against a shared kind cluster (Keycloak, MailHog, backend API).
 To avoid cross-test interference from shared users/escalations, they are configured to run serially (single worker).
 
+`ui-accessibility.spec.ts` and `ui-layout.spec.ts` audit the production build served by the
+cluster at desktop (1440x900) and mobile (390x844) viewports in light and dark theme. They fail
+on serious/critical axe-core violations (`@axe-core/playwright`), check keyboard-only flows
+(skip link, request/withdraw dialogs, approval), and assert that every interactive control is
+visible, unclipped, uncovered and working. They use the dedicated `ui-e2e-a11y-user` and the
+`ui-e2e-a11y-test` escalation so they do not interfere with other specs.
+
+`ui-keyboard-dialogs.spec.ts` drives every dialog that uses the shared modal behaviour with the
+keyboard only: focus moves into the dialog, Tab and Shift+Tab stay trapped (including the
+dialog's shadow-DOM close button and Scale buttons), Escape closes it and focus returns to the
+opener, or to the visible page heading for deep-linked dialogs and removed openers. It also
+checks the accessible names (from the accessibility tree) and keyboard activation of
+`inner-aria-label` icon buttons and the skip link. Debug-session responses are mocked with
+`page.route()` because the kind fixtures cannot produce pending or running debug sessions.
+
 ```sh
 npm run build
 ```

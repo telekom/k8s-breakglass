@@ -5,6 +5,7 @@ import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
 import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
+import LoadingState from "@/components/common/LoadingState.vue";
 import type { SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { handleAxiosError, debug } from "@/services/logger";
@@ -377,20 +378,17 @@ onUnmounted(() => {
 
 <template>
   <div class="session-approval-view">
-    <div v-if="loading" class="loading-container" role="status" aria-busy="true" aria-live="polite">
-      <scale-loading-spinner></scale-loading-spinner>
-      <p>Loading session...</p>
-    </div>
+    <LoadingState v-if="loading" size="large" message="Loading session..." aria-busy="true" />
 
     <div v-else-if="error" class="error-container">
       <div class="error-icon" :class="{ 'self-approval-icon': isSelfApprovalBlocked }">
         <scale-icon-action-circle-close v-if="!isSelfApprovalBlocked" size="48"></scale-icon-action-circle-close>
-        <scale-icon-user-file-forbidden v-else size="48"></scale-icon-user-file-forbidden>
+        <scale-icon-content-lock v-else size="48"></scale-icon-content-lock>
       </div>
 
-      <h2 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
+      <h1 class="error-title" :class="{ 'self-approval-title': isSelfApprovalBlocked }" data-testid="error-title">
         {{ error }}
-      </h2>
+      </h1>
 
       <!-- Special UI for self-approval blocked -->
       <scale-notification
@@ -400,7 +398,7 @@ onUnmounted(() => {
         opened
         data-testid="self-approval-warning"
       >
-        <div class="self-approval-content">
+        <div slot="text" class="self-approval-content">
           <p>
             Your organization's security policy requires that breakglass sessions be approved by a different person than
             the requester.
@@ -415,7 +413,7 @@ onUnmounted(() => {
       <!-- Standard notification for other errors -->
       <scale-notification v-else variant="danger" :heading="errorDetails" opened data-testid="error-details">
         <!-- Show additional context based on approval metadata -->
-        <div v-if="approvalMeta" class="error-meta">
+        <div v-if="approvalMeta" slot="text" class="error-meta">
           <p v-if="approvalMeta.isRequester && denialCategory !== 'self-approval'" class="meta-info">
             <strong>Note:</strong> You are the requester of this session.
           </p>
@@ -425,9 +423,9 @@ onUnmounted(() => {
         </div>
       </scale-notification>
 
-      <div class="action-buttons">
+      <div class="action-buttons ui-actions ui-actions--center">
         <scale-button variant="primary" @click="() => $router.push('/')">
-          <scale-icon-home slot="icon-before"></scale-icon-home>
+          <scale-icon-home-home size="20" decorative></scale-icon-home-home>
           Return to Home
         </scale-button>
         <scale-button variant="secondary" @click="() => $router.push('/approvals/pending')">
@@ -460,15 +458,6 @@ onUnmounted(() => {
   padding: var(--space-2xl);
 }
 
-.loading-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 400px;
-  gap: var(--space-lg);
-}
-
 .error-container {
   display: flex;
   flex-direction: column;
@@ -479,25 +468,27 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
+.error-container scale-notification {
+  display: block;
+  width: 100%;
+  text-align: start;
+}
+
 .error-icon {
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin-bottom: var(--space-lg);
 }
 
 .error-title {
-  font: var(--telekom-text-style-heading-4);
+  font: var(--telekom-text-style-heading-3);
   font-weight: 600;
   margin-bottom: var(--space-xl);
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-standard);
   text-align: center;
 }
 
-.error-title.self-approval-title {
-  color: var(--scl-color-warning);
-}
-
 .error-icon.self-approval-icon {
-  color: var(--scl-color-warning);
+  color: var(--telekom-color-text-and-icon-functional-warning);
 }
 
 .self-approval-content {
@@ -514,15 +505,6 @@ onUnmounted(() => {
   border-top: 1px solid var(--telekom-color-ui-border-standard);
 }
 
-.error-content {
-  text-align: left;
-}
-
-.error-message {
-  font: var(--telekom-text-style-body);
-  margin-bottom: var(--space-sm);
-}
-
 .error-meta {
   margin-top: var(--space-lg);
   padding-top: var(--space-sm);
@@ -535,25 +517,8 @@ onUnmounted(() => {
   margin: var(--space-2xs) 0;
 }
 
-.error-reasons {
-  margin-top: var(--space-sm);
-  padding-left: var(--space-xl);
-}
-
-.error-reasons li {
-  margin-bottom: var(--space-sm);
-}
-
 .action-buttons {
-  display: flex;
-  gap: var(--space-lg);
-  justify-content: center;
   margin-top: var(--space-2xl);
-  flex-wrap: wrap;
-}
-
-.mt-3 {
-  margin-top: var(--space-lg);
 }
 
 .approval-container {

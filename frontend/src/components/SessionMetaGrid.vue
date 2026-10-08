@@ -28,14 +28,15 @@ function formatValue(value?: string | number | null) {
         <div class="meta-grid__label" role="rowheader">
           <div class="meta-label">
             <span class="meta-label__text">{{ item.label }}</span>
-            <scale-tooltip v-if="item.hint" :label="item.hint" position="top">
+            <scale-tooltip v-if="item.hint" :content="item.hint" placement="top">
               <scale-button
                 variant="ghost"
+                size="small"
                 icon-only
                 class="meta-label__hint"
-                :aria-label="`More info about ${item.label}`"
+                :inner-aria-label="`More info about ${item.label}`"
               >
-                <scale-icon-action-info decorative></scale-icon-action-info>
+                <scale-icon-alert-information decorative></scale-icon-alert-information>
               </scale-button>
             </scale-tooltip>
           </div>
@@ -51,38 +52,39 @@ function formatValue(value?: string | number | null) {
 
 <style scoped>
 .meta-grid {
-  display: flex;
-  flex-direction: column;
   width: 100%;
-  gap: var(--space-md);
 }
 
+/* Rows are spaced further apart than a label from its value, so each
+   label/value pair reads as one group. */
+.meta-grid > [role="rowgroup"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+/* Label and value sit on a shared text baseline even though they use
+   different type styles; the hint button must not change the row height. */
 .meta-grid__row {
   display: grid;
   grid-template-columns: minmax(120px, 1fr) 2fr;
   gap: var(--space-sm) var(--space-md);
-  align-items: flex-start;
-}
-
-.meta-grid__label,
-.meta-grid__value {
-  display: flex;
-  align-items: center;
+  align-items: baseline;
 }
 
 .meta-grid__value {
-  align-items: flex-start;
-  word-break: break-word;
+  min-width: 0;
   overflow-wrap: anywhere;
 }
 
 @media (max-width: 640px) {
-  .meta-grid__row {
-    grid-template-columns: 1fr;
+  .meta-grid > [role="rowgroup"] {
+    gap: var(--space-md);
   }
 
-  .meta-grid__label {
-    margin-bottom: var(--space-xs);
+  .meta-grid__row {
+    grid-template-columns: 1fr;
+    gap: var(--space-2xs);
   }
 }
 
@@ -100,29 +102,25 @@ function formatValue(value?: string | number | null) {
   line-height: 1.2;
 }
 
+/* Inline hint next to a label: a 24px target (WCAG 2.5.8) sized on the
+   rendered button so host and hit area match. The negative block margin keeps
+   it from stretching the 14px label line; it is exempt from the high-contrast
+   44px rule like other inline targets (SC 2.5.5 inline exception). */
 .meta-label__hint {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  /* 44px minimum hit target for WCAG 2.5.5 (AAA) */
-  width: 2.75rem;
-  height: 2.75rem;
-  border: none;
-  border-radius: 50%;
-  background: transparent;
-  color: inherit;
+  margin-block: -5px;
+}
+
+.meta-label__hint::part(base) {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
   padding: 0;
-  cursor: pointer;
-  transition: background-color var(--telekom-motion-duration-immediate, 100ms) var(--telekom-motion-easing-standard);
 }
 
-.meta-label__hint:hover {
-  background-color: var(--telekom-color-ui-state-fill-hovered);
-}
-
-.meta-label__hint:focus-visible {
-  outline: 2px solid var(--telekom-color-functional-focus-standard);
-  outline-offset: 2px;
+:root[data-high-contrast="true"] .meta-label__hint {
+  min-width: 24px;
+  min-height: 24px;
 }
 
 .mono {

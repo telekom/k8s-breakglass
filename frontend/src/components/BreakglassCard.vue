@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
+import HintTooltip from "@/components/common/HintTooltip.vue";
 import { computed, ref, useId, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
@@ -214,13 +216,6 @@ function clearScheduledSelection() {
 const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
 const isReasonMissing = computed(() => requiresReason.value && !(requestReason.value || "").toString().trim());
 
-const canRequest = computed(() => {
-  if (isReasonMissing.value) {
-    return false;
-  }
-  return true;
-});
-
 const sessionPending = computed(() => props.breakglass.sessionPending);
 const sessionActive = computed(() => props.breakglass.sessionActive);
 
@@ -305,7 +300,8 @@ const statusDetail = computed(() => {
   if (sessionPending.value && timeoutHumanized.value) {
     return `Timeout in ${timeoutHumanized.value}`;
   }
-  return `Up to ${durationHumanized.value}`;
+  // An available escalation's maximum duration is already the card subtitle.
+  return "";
 });
 
 const ctaCopy = computed(() => {
@@ -321,25 +317,21 @@ const ctaCopy = computed(() => {
   return "Request access instantly or schedule a window.";
 });
 
-type MetaBadge = { label: string; variant: TagVariant };
+type MetaBadge = { label: string; variant: TagVariant; hint: string };
 
 const metaBadges = computed<MetaBadge[]>(() => {
   const badges: MetaBadge[] = [];
-  // Status badge - only one at a time
-  if (sessionActive.value) {
-    badges.push({ label: "Active", variant: "success" });
-  } else if (sessionPending.value) {
-    badges.push({ label: "Pending", variant: "warning" });
-  } else {
-    badges.push({ label: "Available", variant: "info" });
-  }
   // Approval type badge
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
-    badges.push({ label: "Needs approval", variant: "warning" });
+    badges.push({ label: "Needs approval", variant: "warning", hint: "An approver must approve your request" });
   } else if (props.breakglass?.selfApproval) {
-    badges.push({ label: "Self approval", variant: "success" });
+    badges.push({
+      label: "Self approval",
+      variant: "success",
+      hint: "No approvers are configured; the request does not need approval",
+    });
   }
-  // Note: Cluster, requester groups, and reason info are shown in the meta grid to avoid duplication
+  // Status, cluster, requester groups and reason are shown elsewhere on the card to avoid duplication
   return badges;
 });
 
@@ -356,8 +348,6 @@ const expiryHumanized = computed(() => {
   }
   return "";
 });
-
-const durationHumanized = computed(() => humanizeDurationShort(props.breakglass.duration * 1000));
 
 const timeoutHumanized = computed(() => {
   if (sessionPending.value && sessionPending.value.status?.timeoutAt) {
@@ -456,18 +446,22 @@ function drop() {
   >
     <template #status>
       <scale-tag size="small" :variant="stateChipVariant">{{ statusLabel }}</scale-tag>
-      <p class="status-detail">{{ statusDetail }}</p>
+      <p v-if="statusDetail" class="status-detail">{{ statusDetail }}</p>
     </template>
 
     <template v-if="metaBadges.length" #chips>
-      <scale-tag v-for="badge in metaBadges" :key="badge.label" size="small" :variant="badge.variant">
-        {{ badge.label }}
-      </scale-tag>
+      <HintTooltip v-for="badge in metaBadges" :key="badge.label" :hint="badge.hint">
+        <scale-tag size="small" :variant="badge.variant">
+          {{ badge.label }}
+        </scale-tag>
+      </HintTooltip>
     </template>
 
     <template #body>
       <div class="session-section">
-        <span class="label">Granted group</span>
+        <div class="session-section__header">
+          <span class="label">Granted group</span>
+        </div>
         <scale-tag size="small" variant="neutral"
           ><span data-testid="escalation-name">{{ breakglass.to }}</span></scale-tag
         >
@@ -517,10 +511,6 @@ function drop() {
           {{ showAllApprovalGroups ? "Show fewer groups" : `Show all ${approvalGroupsList.length} groups` }}
         </scale-button>
       </div>
-
-      <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__requirement">
-        This escalation requires a reason.
-      </p>
     </template>
 
     <template v-if="sessionPending || sessionActive" #timeline>
@@ -542,8 +532,8 @@ function drop() {
       <div class="breakglass-card__cta">
         <p>{{ ctaCopy }}</p>
       </div>
-      <div class="actions-row">
-        <scale-button v-if="sessionPending" variant="primary" data-testid="withdraw-button" @click="withdraw"
+      <div class="actions-row ui-actions">
+        <scale-button v-if="sessionPending" variant="secondary" data-testid="withdraw-button" @click="withdraw"
           >Withdraw</scale-button
         >
         <scale-button v-else-if="sessionActive" variant="secondary" data-testid="drop-button" @click="drop"
@@ -603,8 +593,7 @@ function drop() {
         data-testid="schedule-toggle"
         @click="toggleScheduleOptions"
       >
-        <span v-if="!showScheduleOptions">Schedule for future date (optional)</span>
-        <span v-else>Hide schedule options</span>
+        {{ showScheduleOptions ? "Hide schedule options" : "Schedule for future date (optional)" }}
       </scale-button>
 
       <div v-if="showScheduleOptions" class="schedule-details" data-testid="schedule-details">
@@ -628,9 +617,9 @@ function drop() {
             style="flex: 1"
             @scale-change="scheduleHourPart = $event.target.value"
           >
-            <scale-dropdown-select-option v-for="hour in hourOptions" :key="hour" :value="hour">{{
+            <scale-dropdown-select-item v-for="hour in hourOptions" :key="hour" :value="hour">{{
               hour
-            }}</scale-dropdown-select-option>
+            }}</scale-dropdown-select-item>
           </scale-dropdown-select>
           <scale-dropdown-select
             :id="'scheduled-minute-' + breakglass.to"
@@ -640,9 +629,9 @@ function drop() {
             style="flex: 1"
             @scale-change="scheduleMinutePart = $event.target.value"
           >
-            <scale-dropdown-select-option v-for="minute in minuteOptions" :key="minute" :value="minute">{{
+            <scale-dropdown-select-item v-for="minute in minuteOptions" :key="minute" :value="minute">{{
               minute
-            }}</scale-dropdown-select-option>
+            }}</scale-dropdown-select-item>
           </scale-dropdown-select>
         </div>
         <div v-if="scheduleDatePart" class="schedule-picker-actions">
@@ -692,18 +681,21 @@ function drop() {
         Reason is required.
       </p>
       <p v-if="reasonCharCount >= reasonCharLimit * 0.9" class="helper warning" aria-live="polite">
-        ⚠ Character limit approaching
+        <scale-icon-alert-warning size="16" decorative></scale-icon-alert-warning>
+        Character limit approaching
         <span aria-hidden="true"> ({{ reasonCharLimit - reasonCharCount }} characters remaining) </span>
       </p>
     </div>
 
-    <div class="modal-actions">
-      <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
-        Confirm Request
-      </scale-button>
+    <div slot="action" class="modal-actions">
       <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"
         >Cancel</scale-button
       >
+      <DisabledReason :reason="isReasonMissing ? 'Enter a reason to submit the request.' : ''">
+        <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
+          Confirm Request
+        </scale-button>
+      </DisabledReason>
     </div>
   </scale-modal>
 </template>
@@ -739,20 +731,6 @@ function drop() {
   font: var(--telekom-text-style-caption);
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.session-section--reason h4 {
-  margin: 0;
-  font: var(--telekom-text-style-caption);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
-.session-section--reason p {
-  margin: 0;
-  line-height: 1.45;
   color: var(--telekom-color-text-and-icon-standard);
 }
 
@@ -809,32 +787,26 @@ function drop() {
   margin: 0;
 }
 
-.actions-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-sm);
-  justify-content: flex-end;
-}
-
-.breakglass-card__requirement {
-  color: var(--tone-chip-danger-text);
-  font-weight: 600;
-}
-
 /* Modal internal styles */
 .duration-selector,
 .schedule-section,
 .reason-field {
-  margin-bottom: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
 
 .helper {
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: var(--space-2xs);
+  margin: 0;
 }
 
 .helper.warning {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
   color: var(--tone-chip-warning-text);
 }
 
@@ -850,7 +822,7 @@ function drop() {
   border-radius: var(--radius-sm);
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
-  margin-top: var(--space-xs);
+  margin: 0;
   font: var(--telekom-text-style-caption);
   color: var(--tone-chip-info-text);
 }
@@ -884,35 +856,17 @@ function drop() {
   font: var(--telekom-text-style-caption);
 }
 
-.modal-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: center;
-  margin-top: var(--space-xl);
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
 :deep(input::placeholder),
 :deep(textarea::placeholder) {
-  color: var(--telekom-color-text-placeholder);
+  color: var(--telekom-color-text-and-icon-additional);
   opacity: 1;
 }
 
 @media (max-width: 640px) {
-  .actions-row {
-    justify-content: flex-start;
+  /* The card footer stacks vertically on narrow screens; a 320px flex-basis
+     would then become a 320px tall blank gap above the action button. */
+  .breakglass-card__cta {
+    flex: 0 1 auto;
   }
 }
 </style>

@@ -30,13 +30,13 @@ function factory(props: Partial<InstanceType<typeof BindingOptionsGrid>["$props"
     },
     global: {
       stubs: {
-        "scale-icon-action-clock": true,
+        "scale-icon-content-clock": true,
         "scale-icon-action-success": true,
         "scale-icon-user-file-user": true,
         "scale-icon-action-random": true,
         "scale-icon-device-server": true,
-        "scale-icon-action-add-circle": true,
-        "scale-icon-content-link": true,
+        "scale-icon-action-circle-add": true,
+        "scale-icon-action-link": true,
       },
     },
   });

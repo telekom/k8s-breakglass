@@ -34,6 +34,7 @@ vi.mock("@/services/breakglassSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+  reportError: vi.fn(),
 }));
 
 vi.mock("@/services/auth", () => ({
@@ -58,6 +59,7 @@ vi.mock("@/utils/sessionActions", () => ({
 
 vi.mock("@/utils/statusStyles", () => ({
   statusToneFor: vi.fn().mockReturnValue("success"),
+  statusDescriptionFor: vi.fn().mockReturnValue(""),
 }));
 
 vi.mock("@/composables", async (importOriginal) => {
@@ -143,7 +145,7 @@ describe("SessionBrowser", () => {
           "scale-checkbox": true,
           "scale-button": true,
           "scale-dropdown-select": true,
-          "scale-dropdown-select-option": true,
+          "scale-dropdown-select-item": true,
           "scale-tag": true,
           "scale-card": true,
           "scale-divider": true,
@@ -177,7 +179,7 @@ describe("SessionBrowser", () => {
 
     it("announces result counts without replacing the heading semantics", async () => {
       const wrapper = await createWrapper();
-      const heading = wrapper.find("h2");
+      const heading = wrapper.find('[data-testid="results-section"] h2');
       const status = wrapper.find('[data-testid="session-results-status"]');
 
       expect(heading.text()).toBe("Results (2)");
@@ -211,6 +213,70 @@ describe("SessionBrowser", () => {
       const status = wrapper.find('[data-testid="session-results-status"]');
 
       expect(status.text()).toBe("Showing 1 of 1 session");
+    });
+
+    it("omits the result count when the search failed", async () => {
+      mockSearchSessions.mockRejectedValue(new Error("Request failed with status code 500"));
+
+      const wrapper = await createWrapper();
+
+      expect(wrapper.find('[data-testid="results-section"] h2').text()).toBe("Results");
+      expect(wrapper.find('[data-testid="session-results-status"]').exists()).toBe(false);
+    });
+  });
+
+  describe("Session name filter", () => {
+    const renderedNames = (wrapper: Awaited<ReturnType<typeof createWrapper>>) =>
+      wrapper.findAll(".session-name").map((el) => el.text());
+
+    const setNameFilter = async (wrapper: Awaited<ReturnType<typeof createWrapper>>, value: string) => {
+      const field = wrapper.find('[data-testid="name-filter"]');
+      (field.element as HTMLInputElement).value = value;
+      await field.trigger("scale-change");
+    };
+
+    const applyFilters = async (wrapper: Awaited<ReturnType<typeof createWrapper>>) => {
+      await wrapper.find('[data-testid="apply-filters-button"]').trigger("click");
+      await flushPromises();
+    };
+
+    it("keeps only sessions whose name matches, ignoring case and surrounding whitespace", async () => {
+      const wrapper = await createWrapper();
+      expect(renderedNames(wrapper).sort()).toEqual(["session-1", "session-2"]);
+
+      await setNameFilter(wrapper, "  SESSION-2 ");
+      await applyFilters(wrapper);
+
+      expect(renderedNames(wrapper)).toEqual(["session-2"]);
+      expect(wrapper.find('[data-testid="results-section"] h2').text()).toBe("Results (1)");
+    });
+
+    it("shows every session again once the name filter is cleared", async () => {
+      const wrapper = await createWrapper();
+      await setNameFilter(wrapper, "session-1");
+      await applyFilters(wrapper);
+      expect(renderedNames(wrapper)).toEqual(["session-1"]);
+
+      await setNameFilter(wrapper, "");
+      await applyFilters(wrapper);
+
+      expect(renderedNames(wrapper).sort()).toEqual(["session-1", "session-2"]);
+    });
+
+    it("filters by the submitted name even if the input changes while loading", async () => {
+      const wrapper = await createWrapper();
+      const sessions = await mockSearchSessions.mock.results[0]!.value;
+      const pending: Array<(value: unknown) => void> = [];
+      mockSearchSessions.mockImplementation(() => new Promise((r) => pending.push(r)));
+
+      await setNameFilter(wrapper, "session-1");
+      await wrapper.find('[data-testid="apply-filters-button"]').trigger("click");
+      await setNameFilter(wrapper, "session-2");
+      expect(pending.length).toBeGreaterThan(0);
+      pending.forEach((resolve) => resolve(sessions));
+      await flushPromises();
+
+      expect(renderedNames(wrapper)).toEqual(["session-1"]);
     });
   });
 

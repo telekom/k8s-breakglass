@@ -40,6 +40,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Real-backend UI and Single-Cluster E2E coverage verifies label/resource-name
   search, access requests, Kubernetes/REST round-trips, and CLI display fallback.
   The chart rejects overlong fallback labels during rendering.
+- UI E2E `ui-accessibility` and `ui-layout` Playwright specs run axe-core
+  (serious/critical), keyboard-only, visibility and control checks against the
+  deployed UI at desktop and mobile viewports in light and dark theme.
+- UI E2E `ui-keyboard-dialogs` Playwright spec verifies keyboard-only focus
+  handling for every dialog (focus moves in, Tab/Shift+Tab stay trapped
+  through shadow-DOM controls, Escape returns focus to the opener or the page
+  heading) and the accessible names and keyboard activation of icon buttons
+  and the skip link on the deployed UI.
+- Screen-reader-equivalent Playwright checks (`screen-reader.a11y` mock spec
+  and `ui-screen-reader` UI E2E spec) assert ARIA-tree roles, names and states
+  of every dialog, disabled-button descriptions, Tab order, focus trap/restore,
+  route-change focus, toast live regions and exactly one `h1` per route.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
@@ -60,8 +72,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading, and falls back to the main content while an asynchronously loaded page has not rendered its heading yet.
+- **Frontend**: Every page exposes exactly one `h1`: the app shell's
+  screen-reader brand heading only renders on the login gate, and session
+  approval errors and loading debug-session details render a page `h1`.
+  Scheduled timeline labels on the info highlight meet AAA contrast.
+- **Frontend**: Session detail info buttons now show their tooltip text; the
+  tooltip was rendered empty because it used unsupported `label`/`position`
+  attributes instead of Scale's `content`/`placement`.
 - Bump packaged Helm chart versions so the next controller release preserves
   the immutable chart packages already published for `v0.3.0-rc.4`.
+
+- **Frontend**: Adopt the Telekom Scale styleguide throughout: Scale
+  `primary`/`secondary`/`ghost` button variants and Scale icons only, one
+  token layer (`tokens.css`) for colours, shadows, spacing and typography,
+  and shared `.ui-actions` rows so buttons in toolbars, card and dialog
+  footers share heights and vertical centres at every viewport.
+  Icon-only buttons, disabled buttons (with the reason), status tags,
+  urgency chips and countdowns get Scale tooltips on hover and keyboard focus.
+  Button icons that used non-existent Scale slots (`slot="icon"`) now render.
+  Loading states use the shared `LoadingState` component, and dead custom CSS
+  and the unused `ChipRow` component are removed. `npm run lint:styles`
+  (stylelint, run in CI) rejects raw colours, px font sizes and shadows
+  outside the token layer, and the `ui-audit` mock Playwright spec plus the
+  `ui-alignment-tooltips` UI E2E spec check button alignment and tooltips.
+- Frontend accessibility and usability pass: icon-only and Scale buttons get
+  accessible names, heading order and landmarks are corrected, low-contrast
+  status text uses text-safe tokens, dialogs move focus in and return it on
+  close (also when the dialog renders a few frames late), the skip link is
+  visible on focus in production builds, the mobile escalation card no longer
+  clips its call to action, toasts no longer render a dead, unnamed link,
+  and the Session Browser name filter now narrows results.
+- **Frontend**: Visual polish pass at 390, 768, 1280 and 1920 px in light,
+  dark and high contrast. Header: the logo, app name, nav and the
+  theme/contrast/profile controls share one vertical centre, and nav labels
+  are shortened (Request, Approvals, Reviews, My Requests, Sessions, Debug) so
+  they never truncate. Toasts: they stack below the header with token gaps and
+  Scale padding, fit the mobile width, and a failed request shows one error
+  toast instead of two. Dialogs: Scale's header/footer separators span the
+  full window, footers put Cancel first, and close buttons align. Filters:
+  every list page uses one compact filter panel with the result count as its
+  last line, with no empty space on mobile. The dev-only diagnostics toggle no
+  longer covers page actions. High contrast: the brand logo, checkbox marks and
+  disabled primary buttons are visible. Focus is no longer pulled back to the
+  page heading when a header menu is opened right after navigation. The new
+  `ui-visual` and `ui-visual-audit` mock Playwright specs guard these issues,
+  plus overlaps, clipping, horizontal scroll, off-scale gaps, short separators
+  and empty boxes, on every route, dialog, menu and list state.
+- **Frontend**: Theme and contrast switches no longer disappear after the
+  second toggle: Vue class bindings on Scale elements dropped Stencil's
+  `hydrated` class, so state now uses `aria-pressed`/`data-*` attributes. The
+  mobile menu marks the current page again (`aria-current`, which Scale's
+  main-nav item stripped from the first link), its theme rows use the link
+  colour in dark mode, wrapped filter checkboxes align in columns, the request
+  card no longer repeats the reason hint in red, and the Session Browser hides
+  its result count while loading or failed. Header icons are evenly spaced, and
+  the mobile menu's current page carries a start bar in every theme.
+- The kind e2e setup waits for escalations by their `breakglass-` prefixed
+  names, removing repeated timeouts that slowed every UI E2E run.
 
 - Preserve buffered session activity counts and the newest activity timestamp
   when concurrent webhook replicas flush status updates.

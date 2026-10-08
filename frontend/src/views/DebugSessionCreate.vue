@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { computed, inject, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
@@ -747,7 +748,10 @@ function handleTemplateChange(ev: Event) {
     </div>
 
     <div v-else-if="!hasAvailableTemplates" class="no-templates-message" data-testid="no-available-templates-message">
-      <scale-icon-alert-warning size="48" color="var(--scl-color-warning)"></scale-icon-alert-warning>
+      <scale-icon-alert-warning
+        size="48"
+        color="var(--telekom-color-text-and-icon-functional-warning)"
+      ></scale-icon-alert-warning>
       <h2>No Templates With Available Clusters</h2>
       <p>
         {{ templates.length }} template(s) exist, but none have clusters you can access. This may be due to cluster
@@ -807,9 +811,12 @@ function handleTemplateChange(ev: Event) {
 
       <div class="modal-actions">
         <scale-button variant="secondary" data-testid="cancel-button" @click="handleCancel"> Cancel </scale-button>
-        <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
-          Next: Select Cluster →
-        </scale-button>
+        <DisabledReason :reason="form.templateRef ? '' : 'Select a template to continue.'">
+          <scale-button variant="primary" :disabled="!form.templateRef" data-testid="next-button" @click="goToStep2">
+            Next: Select Cluster
+            <scale-icon-navigation-right size="16" decorative></scale-icon-navigation-right>
+          </scale-button>
+        </DisabledReason>
       </div>
     </div>
 
@@ -824,7 +831,7 @@ function handleTemplateChange(ev: Event) {
         <span class="summary-label">Template:</span>
         <span class="summary-value">{{ selectedTemplate?.displayName || form.templateRef }}</span>
         <scale-button variant="secondary" size="small" @click="goBackToStep1">
-          <scale-icon-navigation-left slot="icon" size="16"></scale-icon-navigation-left>
+          <scale-icon-navigation-left size="16" decorative></scale-icon-navigation-left>
           Change
         </scale-button>
       </div>
@@ -893,16 +900,23 @@ function handleTemplateChange(ev: Event) {
       />
 
       <div class="modal-actions">
-        <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1"> ← Back </scale-button>
-        <scale-button
-          variant="primary"
-          :disabled="!isValid || submitting"
-          data-testid="create-session-button"
-          @click="handleSubmit"
-        >
-          <scale-loading-spinner v-if="submitting" slot="icon" size="small"></scale-loading-spinner>
-          {{ submitting ? "Creating..." : "Create Session" }}
+        <scale-button variant="secondary" data-testid="back-button" @click="goBackToStep1">
+          <scale-icon-navigation-left size="20" decorative></scale-icon-navigation-left>
+          Back
         </scale-button>
+        <DisabledReason
+          :reason="!isValid && !submitting ? 'Select a cluster, enter a reason and fill in all required fields.' : ''"
+        >
+          <scale-button
+            variant="primary"
+            :disabled="!isValid || submitting"
+            data-testid="create-session-button"
+            @click="handleSubmit"
+          >
+            <scale-loading-spinner v-if="submitting" size="small"></scale-loading-spinner>
+            {{ submitting ? "Creating..." : "Create Session" }}
+          </scale-button>
+        </DisabledReason>
       </div>
     </div>
   </div>
@@ -916,13 +930,11 @@ function handleTemplateChange(ev: Event) {
 /* Wizard Stepper */
 .wizard-stepper {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
   gap: var(--space-sm);
-  margin: 0 0 var(--space-xl) 0;
-  padding: var(--space-md);
-  background: var(--telekom-color-background-surface);
-  border-radius: var(--radius-md);
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
@@ -933,33 +945,36 @@ function handleTemplateChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.step.active {
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
+.step.active,
 .step.completed {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
+/* Upcoming steps are outlined so their number stays legible; the current
+   step is filled with the brand colour and finished steps are tinted success. */
 .step-number {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 50%;
-  background: var(--telekom-color-text-and-icon-additional);
-  color: var(--telekom-color-text-and-icon-inverted);
-  font-weight: 600;
   font: var(--telekom-text-style-caption);
+  font-weight: 700;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .step.active .step-number {
   background: var(--accent-telekom);
+  border-color: var(--accent-telekom);
+  color: var(--telekom-color-text-and-icon-inverted-standard);
 }
 
 .step.completed .step-number {
-  background: var(--accent-success);
+  background: var(--telekom-color-functional-success-subtle);
+  border-color: var(--accent-success);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .step-label {
@@ -969,7 +984,7 @@ function handleTemplateChange(ev: Event) {
 
 .step-connector {
   width: 40px;
-  height: 2px;
+  height: 1px;
   background: var(--telekom-color-ui-border-standard);
 }
 
@@ -1047,12 +1062,6 @@ function handleTemplateChange(ev: Event) {
 
 .template-details .detail strong {
   color: var(--telekom-color-text-and-icon-standard);
-}
-
-.warning-text {
-  color: var(--telekom-color-functional-warning-standard);
-  font: var(--telekom-text-style-caption);
-  margin: 0;
 }
 
 .no-templates-message {

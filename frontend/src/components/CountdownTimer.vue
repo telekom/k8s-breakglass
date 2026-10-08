@@ -1,16 +1,19 @@
 <template>
   <span>
-    <span
-      :aria-label="'Time remaining: ' + (remaining > 0 ? formatted : 'Expired')"
-      :class="['countdown', { expired: remaining <= 0 }]"
-      :title="fullTime"
-      data-testid="countdown-timer"
-    >
-      <template v-if="remaining > 0">
-        {{ formatted }}
-      </template>
-      <template v-else> Expired </template>
-    </span>
+    <scale-tooltip :content="`Expires at ${fullTime}`" placement="top">
+      <span
+        role="timer"
+        tabindex="0"
+        :aria-label="'Time remaining: ' + (remaining > 0 ? formatted : 'Expired')"
+        :class="['countdown', { expired: remaining <= 0 }]"
+        data-testid="countdown-timer"
+      >
+        <template v-if="remaining > 0">
+          {{ formatted }}
+        </template>
+        <template v-else> Expired </template>
+      </span>
+    </scale-tooltip>
     <span class="sr-only" aria-live="polite" aria-atomic="true">{{ announcement }}</span>
   </span>
 </template>
@@ -104,7 +107,6 @@ watch(
 .countdown {
   font-weight: bold;
   color: var(--telekom-color-text-and-icon-standard);
-  margin-left: 0.5em;
   transition:
     color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard),
     background var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);

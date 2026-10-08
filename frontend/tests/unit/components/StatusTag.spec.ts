@@ -48,49 +48,49 @@ describe("StatusTag", () => {
   });
 
   describe("tone computation", () => {
-    it("maps 'Approved' to success tone class", () => {
+    it("maps 'Approved' to success tone", () => {
       const wrapper = mountTag({ status: "Approved" });
-      expect(wrapper.find(".status-tag--success").exists()).toBe(true);
+      expect(wrapper.find('[data-tone="success"]').exists()).toBe(true);
     });
 
-    it("maps 'Pending' to warning tone class", () => {
+    it("maps 'Pending' to warning tone", () => {
       const wrapper = mountTag({ status: "Pending" });
-      expect(wrapper.find(".status-tag--warning").exists()).toBe(true);
+      expect(wrapper.find('[data-tone="warning"]').exists()).toBe(true);
     });
 
-    it("maps 'Rejected' to danger tone class", () => {
+    it("maps 'Rejected' to danger tone", () => {
       const wrapper = mountTag({ status: "Rejected" });
-      expect(wrapper.find(".status-tag--danger").exists()).toBe(true);
+      expect(wrapper.find('[data-tone="danger"]').exists()).toBe(true);
     });
 
-    it("maps 'Expired' to muted tone class", () => {
+    it("maps 'Expired' to muted tone", () => {
       const wrapper = mountTag({ status: "Expired" });
-      expect(wrapper.find(".status-tag--muted").exists()).toBe(true);
+      expect(wrapper.find('[data-tone="muted"]').exists()).toBe(true);
     });
 
     it("maps unknown statuses to neutral tone", () => {
       const wrapper = mountTag({ status: "CustomStatus" });
-      expect(wrapper.find(".status-tag--neutral").exists()).toBe(true);
+      expect(wrapper.find('[data-tone="neutral"]').exists()).toBe(true);
     });
   });
 
   describe("tone override", () => {
     it("uses custom tone instead of computed tone", () => {
       const wrapper = mountTag({ status: "Approved", tone: "danger" });
-      expect(wrapper.find(".status-tag--danger").exists()).toBe(true);
-      expect(wrapper.find(".status-tag--success").exists()).toBe(false);
+      expect(wrapper.find('[data-tone="danger"]').exists()).toBe(true);
+      expect(wrapper.find('[data-tone="success"]').exists()).toBe(false);
     });
   });
 
   describe("size variants", () => {
     it("defaults to medium size", () => {
       const wrapper = mountTag({ status: "Active" });
-      expect(wrapper.find(".status-tag--medium").exists()).toBe(true);
+      expect(wrapper.find('[data-size="medium"]').exists()).toBe(true);
     });
 
-    it("applies small size class", () => {
+    it("applies small size", () => {
       const wrapper = mountTag({ status: "Active", size: "small" });
-      expect(wrapper.find(".status-tag--small").exists()).toBe(true);
+      expect(wrapper.find('[data-size="small"]').exists()).toBe(true);
     });
   });
 

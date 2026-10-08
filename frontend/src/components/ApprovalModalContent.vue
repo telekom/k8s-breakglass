@@ -4,10 +4,7 @@
     <p><b>Group:</b> {{ session.spec?.grantedGroup }} @ {{ session.spec?.cluster }}</p>
     <p v-if="session.spec?.identityProviderName"><b>IDP:</b> {{ session.spec.identityProviderName }}</p>
 
-    <!-- Duration information -->
-    <div v-if="sessionSpec?.maxValidFor" class="modal-info-block tone-info">
-      <p><strong>Duration:</strong> {{ formatDurationRounded(String(sessionSpec.maxValidFor)) }}</p>
-    </div>
+    <p v-if="sessionSpec?.maxValidFor"><b>Duration:</b> {{ formatDurationRounded(String(sessionSpec.maxValidFor)) }}</p>
 
     <!-- Scheduling information -->
     <div v-if="sessionSpec?.scheduledStartTime" class="modal-info-block tone-warn">
@@ -29,9 +26,9 @@
     </div>
 
     <!-- Immediate session timing -->
-    <div v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime" class="modal-info-row">
-      <strong>Session expires at:</strong> {{ formatDateTime(session.status.expiresAt) }}
-    </div>
+    <p v-else-if="session.status?.expiresAt && !sessionSpec?.scheduledStartTime">
+      <b>Session expires at:</b> {{ formatDateTime(session.status.expiresAt) }}
+    </p>
 
     <!-- Request reason -->
     <div v-if="requestReason" class="modal-reason" data-testid="request-reason">
@@ -59,31 +56,35 @@
         This field is required.
       </p>
     </div>
+  </div>
 
-    <div class="modal-actions">
-      <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
+  <!-- Second root so a parent scale-modal renders it in its footer slot. -->
+  <div slot="action" class="modal-actions">
+    <scale-button variant="secondary" :disabled="isApproving" @click="$emit('cancel')"> Cancel </scale-button>
+    <DisabledReason v-if="canReview" :reason="disabledReason">
       <scale-button
-        v-if="canReview"
         data-testid="reject-button"
-        variant="danger"
+        variant="secondary"
         :disabled="isApproving || isRequiredNoteMissing"
         @click="$emit('reject')"
       >
         Reject
       </scale-button>
+    </DisabledReason>
+    <DisabledReason v-if="canReview" :reason="disabledReason">
       <scale-button
-        v-if="canReview"
         data-testid="approve-button"
         :disabled="isApproving || isRequiredNoteMissing"
         @click="$emit('approve')"
       >
         Confirm Approve
       </scale-button>
-    </div>
+    </DisabledReason>
   </div>
 </template>
 
 <script setup lang="ts">
+import DisabledReason from "@/components/common/DisabledReason.vue";
 import { computed, useId } from "vue";
 import { formatDateTime, formatDurationRounded, formatEndTime } from "@/composables";
 import { getSessionState, normalizeState } from "@/composables/useSessionList";
@@ -131,6 +132,9 @@ const approvalReason = computed(() => {
 
 const isNoteRequired = computed(() => approvalReason.value?.mandatory ?? false);
 const isRequiredNoteMissing = computed(() => isNoteRequired.value && !props.approverNote.trim());
+const disabledReason = computed(() =>
+  !props.isApproving && isRequiredNoteMissing.value ? "Enter the required note before approving or rejecting." : "",
+);
 const normalizedSessionState = computed(() => normalizeState(getSessionState(props.session)));
 const isAwaitingScheduledStart = computed(
   () => normalizedSessionState.value === "waitingforscheduledtime" || normalizedSessionState.value === "scheduled",
@@ -176,17 +180,6 @@ function handleNoteChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
-.modal-info-block.tone-info {
-  background: var(--tone-chip-info-bg);
-  border: 1px solid var(--tone-chip-info-border);
-  border-left: 3px solid var(--telekom-color-functional-informational-standard);
-  color: var(--tone-chip-info-text);
-}
-
-.modal-info-block.tone-info p {
-  color: var(--tone-chip-info-text);
-}
-
 .modal-info-block.tone-warn {
   background: var(--tone-chip-warning-bg);
   border: 1px solid var(--tone-chip-warning-border);
@@ -219,16 +212,6 @@ function handleNoteChange(ev: Event) {
   border: 1px solid var(--tone-chip-info-border);
 }
 
-.modal-info-row {
-  margin-top: var(--space-sm);
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-additional);
-}
-
-.modal-info-row strong {
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
 .modal-reason {
   margin-top: var(--space-sm);
 }
@@ -243,45 +226,8 @@ function handleNoteChange(ev: Event) {
   font: var(--telekom-text-style-caption);
 }
 
-.modal-actions {
-  margin-top: var(--space-xl);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  justify-content: flex-end;
-  padding: var(--space-lg) 0 var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-standard);
-}
-
-/* Ensure all buttons have pill shape */
-.modal-actions :deep(scale-button) {
-  --radius: var(--radius-pill);
-}
-
-.modal-actions :deep(scale-button)::part(button),
-.modal-actions :deep(scale-button)::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
-/* min-width delegated to ActionButton or scale-button defaults for consistency */
-
-.modal-actions :deep(scale-button) {
-  min-width: 8rem;
-}
-
 .approval-note-required {
   color: var(--tone-chip-danger-text);
   margin: 0;
-}
-
-@media (max-width: 640px) {
-  .modal-actions {
-    justify-content: stretch;
-    padding: var(--space-md) 0;
-  }
-
-  .modal-actions > * {
-    width: 100%;
-  }
 }
 </style>

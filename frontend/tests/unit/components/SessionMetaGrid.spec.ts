@@ -15,7 +15,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
 
-// Note: Scale web components (scale-tooltip, scale-icon-action-info)
+// Note: Scale web components (scale-tooltip, scale-icon-alert-information)
 // are registered globally in tests/setup.ts
 
 type MetaItem = {
@@ -131,7 +131,7 @@ describe("SessionMetaGrid", () => {
     it("hint button has accessible aria-label", () => {
       const wrapper = mountGrid([{ id: "field", label: "My Field", value: "val", hint: "More info" }]);
       const btn = wrapper.find(".meta-label__hint");
-      expect(btn.attributes("aria-label")).toBe("More info about My Field");
+      expect(btn.attributes("inner-aria-label")).toBe("More info about My Field");
     });
   });
 

@@ -4,7 +4,7 @@
  */
 import { computed } from "vue";
 
-type ButtonVariant = "primary" | "secondary" | "danger";
+type ButtonVariant = "primary" | "secondary" | "ghost";
 
 const props = withDefaults(
   defineProps<{
@@ -19,17 +19,14 @@ const props = withDefaults(
     /** Disabled state */
     disabled?: boolean;
     /** Button size */
-    size?: "small" | "medium" | "large";
-    /** Show icon */
-    icon?: string;
+    size?: "small" | "large";
   }>(),
   {
     loadingLabel: "",
     variant: "primary",
     loading: false,
     disabled: false,
-    size: "medium",
-    icon: "",
+    size: "large",
   },
 );
 
@@ -56,7 +53,7 @@ function handleClick(event: Event) {
 <template>
   <scale-button
     class="action-button"
-    :class="{ 'action-button--loading': loading }"
+    :data-loading="loading || undefined"
     :variant="variant"
     :size="size"
     :disabled="isDisabled"
@@ -70,39 +67,23 @@ function handleClick(event: Event) {
       class="action-button__spinner"
       aria-label="Loading"
     />
-    <span v-else-if="icon" class="action-button__icon" aria-hidden="true">{{ icon }}</span>
     <span class="action-button__label">{{ displayLabel }}</span>
   </scale-button>
 </template>
 
 <style scoped>
-.action-button {
-  min-width: 8rem;
-  --radius: var(--radius-pill);
-}
-
 @media (max-width: 640px) {
   .action-button {
+    --width: 100%;
     width: 100%;
-    min-width: unset;
   }
 }
 
-/* Ensure pill shape for all button variants including danger */
-.action-button::part(button),
-.action-button::part(base) {
-  border-radius: var(--radius-pill) !important;
-}
-
-.action-button--loading {
+.action-button[data-loading] {
   cursor: wait;
 }
 
 .action-button__spinner {
   margin-right: var(--space-xs);
-}
-
-.action-button__icon {
-  margin-right: var(--space-2xs);
 }
 </style>

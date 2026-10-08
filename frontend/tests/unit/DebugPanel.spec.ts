@@ -219,7 +219,7 @@ describe("DebugPanel modal guard", () => {
     await flushPromises();
 
     const toggle = wrapper.get('[data-testid="debug-toggle-button"]');
-    expect(toggle.attributes("disabled")).toBeUndefined();
+    expect(toggle.attributes("disabled") ?? "false").toBe("false");
     expect(toggle.attributes("aria-disabled")).toBe("false");
 
     await toggle.trigger("click");
@@ -288,7 +288,7 @@ describe("DebugPanel modal guard", () => {
     await flushMutationObserver();
 
     expect(wrapper.find('[data-testid="debug-panel"]').exists()).toBe(true);
-    expect(wrapper.get('[data-testid="debug-toggle-button"]').attributes("disabled")).toBeUndefined();
+    expect(wrapper.get('[data-testid="debug-toggle-button"]').attributes("disabled") ?? "false").toBe("false");
 
     unrelated.remove();
   });

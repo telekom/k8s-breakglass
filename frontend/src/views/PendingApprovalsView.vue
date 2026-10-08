@@ -1,15 +1,10 @@
 <template>
   <div class="ui-page approvals-page" data-testid="pending-approvals-view">
-    <PageHeader
-      title="Pending Approvals"
-      subtitle="Review and approve access requests from your team members."
-      :badge="`${sortedSessions.length} of ${pendingSessions.length}`"
-      badge-variant="neutral"
-    />
+    <PageHeader title="Pending Approvals" subtitle="Review and approve access requests from your team members." />
 
     <!-- Filter and Sort Controls -->
-    <div class="approvals-toolbar ui-toolbar" data-testid="approvals-toolbar">
-      <div class="approvals-toolbar__control ui-toolbar-field">
+    <div class="ui-toolbar" data-testid="approvals-toolbar">
+      <div class="ui-toolbar-field">
         <scale-dropdown-select
           id="sort-select"
           data-testid="sort-select"
@@ -17,13 +12,13 @@
           :value="sortBy"
           @scale-change="handleSortChange"
         >
-          <scale-dropdown-select-option value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="recent">Most Recent</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="groups">By Group</scale-dropdown-select-option>
+          <scale-dropdown-select-item value="urgent">Most Urgent (expires soonest)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="recent">Most Recent</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="groups">By Group</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
 
-      <div class="approvals-toolbar__control ui-toolbar-field">
+      <div class="ui-toolbar-field">
         <scale-dropdown-select
           id="urgency-filter"
           data-testid="urgency-filter"
@@ -31,16 +26,16 @@
           :value="urgencyFilter"
           @scale-change="handleUrgencyChange"
         >
-          <scale-dropdown-select-option value="all">All</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="high">High (&lt; 6 hours)</scale-dropdown-select-option>
-          <scale-dropdown-select-option value="normal">Normal (≥ 6 hours)</scale-dropdown-select-option>
+          <scale-dropdown-select-item value="all">All</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="critical">Critical (&lt; 1 hour)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="high">High (&lt; 6 hours)</scale-dropdown-select-item>
+          <scale-dropdown-select-item value="normal">Normal (≥ 6 hours)</scale-dropdown-select-item>
         </scale-dropdown-select>
       </div>
 
       <div
         v-if="!loading && !error"
-        class="toolbar-info ui-toolbar-info"
+        class="ui-toolbar-info"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -48,7 +43,7 @@
       >
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
       </div>
-      <div v-else class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
+      <div v-else class="ui-toolbar-info" data-testid="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
       </div>
     </div>
@@ -111,19 +106,22 @@
             </small>
             <div class="timer-panel__separator" role="presentation"></div>
             <div class="timer-panel__tags">
-              <span
-                class="tone-chip"
-                :class="`tone-chip--${session.urgency}`"
-                :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
-              >
-                <scale-icon-alert-warning
-                  v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
-                  size="14"
-                  decorative
-                />
-                <scale-icon-content-clock v-else size="14" decorative />
-                {{ getUrgencyLabel(session.urgency).text }}
-              </span>
+              <HintTooltip :hint="getUrgencyDescription(session.urgency)">
+                <scale-tag
+                  :variant="urgencyTagVariant[session.urgency]"
+                  :aria-label="getUrgencyLabel(session.urgency).ariaLabel"
+                  data-testid="urgency-tag"
+                >
+                  <scale-icon-alert-warning
+                    v-if="getUrgencyLabel(session.urgency).icon === 'alert-warning'"
+                    size="14"
+                    decorative
+                    class="tag-icon"
+                  />
+                  <scale-icon-content-clock v-else size="14" decorative class="tag-icon" />
+                  {{ getUrgencyLabel(session.urgency).text }}
+                </scale-tag>
+              </HintTooltip>
               <StatusTag :status="getSessionState(session)" />
             </div>
           </div>
@@ -133,14 +131,24 @@
           <scale-tag v-if="session.metadata?.name" variant="neutral" class="mono-tag">
             {{ session.metadata.name }}
           </scale-tag>
-          <scale-tag v-if="session.spec?.scheduledStartTime" variant="warning">
-            <scale-icon-content-calendar size="14" decorative class="tag-icon" />
-            Scheduled
-          </scale-tag>
-          <scale-tag v-if="session.approvalReason?.mandatory" variant="danger">
-            <scale-icon-action-edit size="14" decorative class="tag-icon" />
-            Note required
-          </scale-tag>
+          <HintTooltip
+            v-if="session.spec?.scheduledStartTime"
+            :hint="`Access starts at ${formatDateTime(String(session.spec.scheduledStartTime))}`"
+          >
+            <scale-tag variant="warning">
+              <scale-icon-content-calendar size="14" decorative class="tag-icon" />
+              Scheduled
+            </scale-tag>
+          </HintTooltip>
+          <HintTooltip
+            v-if="session.approvalReason?.mandatory"
+            hint="You must enter a note to approve or reject this request"
+          >
+            <scale-tag variant="danger">
+              <scale-icon-action-edit size="14" decorative class="tag-icon" />
+              Note required
+            </scale-tag>
+          </HintTooltip>
         </template>
 
         <template #meta>
@@ -207,17 +215,15 @@
         </template>
 
         <template #footer>
-          <div class="approval-footer">
-            <div class="action-row">
-              <ActionButton
-                label="Review"
-                data-testid="review-button"
-                :loading="approving === session.metadata?.name"
-                loading-label="Processing..."
-                :disabled="isSessionBusy(session)"
-                @click="openApproveModal(session)"
-              />
-            </div>
+          <div class="approval-footer ui-actions">
+            <ActionButton
+              label="Review"
+              data-testid="review-button"
+              :loading="approving === session.metadata?.name"
+              loading-label="Processing..."
+              :disabled="isSessionBusy(session)"
+              @click="openApproveModal(session)"
+            />
           </div>
         </template>
       </SessionSummaryCard>
@@ -250,7 +256,15 @@ import { inject, ref, onMounted, reactive, computed } from "vue";
 import CountdownTimer from "@/components/CountdownTimer.vue";
 import SessionSummaryCard from "@/components/SessionSummaryCard.vue";
 import SessionMetaGrid from "@/components/SessionMetaGrid.vue";
-import { PageHeader, EmptyState, LoadingState, StatusTag, ReasonPanel, ActionButton } from "@/components/common";
+import {
+  PageHeader,
+  EmptyState,
+  LoadingState,
+  StatusTag,
+  ReasonPanel,
+  ActionButton,
+  HintTooltip,
+} from "@/components/common";
 import { useModalBehavior } from "@/composables/useModalBehavior";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
@@ -264,6 +278,7 @@ import {
   getUrgency,
   getTimeRemaining,
   getUrgencyLabel,
+  getUrgencyDescription,
   getSessionKey,
   getSessionState,
   getSessionCluster,
@@ -318,6 +333,8 @@ function getHiddenApproverGroupCount(session: { matchingApproverGroups?: string[
 
 // Filter and sort controls
 const sortBy = ref<"urgent" | "recent" | "groups">("urgent");
+const urgencyTagVariant = { critical: "danger", high: "warning", normal: "neutral" } as const;
+
 const urgencyFilter = ref<"all" | "critical" | "high" | "normal">("all");
 
 // Event handlers for scale components
@@ -537,33 +554,6 @@ onMounted(fetchPendingApprovals);
   padding-bottom: var(--space-2xl);
 }
 
-.approvals-toolbar {
-  margin-bottom: var(--space-lg);
-  background: var(--surface-elevated);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  align-items: center;
-}
-
-.approvals-toolbar__control {
-  flex: 1 1 200px;
-  min-width: 200px;
-}
-
-.approvals-toolbar__control > * {
-  width: 100%;
-}
-
-.toolbar-info {
-  color: var(--telekom-color-text-and-icon-standard);
-  margin-left: auto;
-  font: var(--telekom-text-style-caption);
-}
-
 /* Using global .masonry-layout class from base.css for sessions-list */
 /* Override: approval cards are too content-dense for 3 columns — cap at 2 */
 .masonry-layout {
@@ -691,38 +681,10 @@ onMounted(fetchPendingApprovals);
   font-family: var(--telekom-typography-font-family-mono, monospace);
 }
 
-.approval-footer {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  gap: var(--space-md);
-  flex-wrap: wrap;
-  align-items: center;
-  padding-top: var(--space-lg);
-}
-
-.action-row {
-  display: flex;
-  gap: var(--space-sm);
-  flex-wrap: wrap;
-}
-
-/* min-width delegated to ActionButton.vue for consistency */
-
 @media (max-width: 640px) {
-  .timer-panel,
-  .approval-footer,
-  .action-row {
+  .timer-panel {
     width: 100%;
-  }
-
-  .action-row {
-    flex-direction: column;
-  }
-
-  .action-row > * {
-    width: 100%;
-    min-width: unset;
+    padding: var(--space-lg);
   }
 }
 </style>

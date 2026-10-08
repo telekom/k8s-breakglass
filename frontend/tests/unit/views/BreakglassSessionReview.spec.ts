@@ -47,6 +47,7 @@ vi.mock("@/services/breakglassSession", () => ({
 vi.mock("@/services/toast", () => ({
   pushError: vi.fn(),
   pushSuccess: vi.fn(),
+  reportError: vi.fn(),
 }));
 
 vi.mock("@/services/logger", () => ({

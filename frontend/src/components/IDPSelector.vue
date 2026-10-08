@@ -16,6 +16,8 @@
  * - Optional IDP selection (backward compatible with single-IDP mode)
  */
 
+import DisabledReason from "@/components/common/DisabledReason.vue";
+import LoadingState from "@/components/common/LoadingState.vue";
 import { computed, onMounted, ref, watch } from "vue";
 import type { IDPInfo, MultiIDPConfig } from "@/model/multiIDP";
 import { getMultiIDPConfig, getAllowedIDPsForEscalation } from "@/services/multiIDP";
@@ -172,9 +174,13 @@ function handleIDPButtonClick(idpName: string) {
         </h2>
 
         <!-- Loading state -->
-        <div v-if="loading" class="idp-loading" data-testid="idp-loading">
-          <scale-loading-spinner size="small" /> Loading identity providers...
-        </div>
+        <LoadingState
+          v-if="loading"
+          inline
+          size="small"
+          message="Loading identity providers..."
+          data-testid="idp-loading"
+        />
 
         <!-- Error message if config fetch failed -->
         <scale-notification v-if="error" variant="danger" :heading="error" data-testid="idp-error" />
@@ -182,26 +188,28 @@ function handleIDPButtonClick(idpName: string) {
         <!-- Individual login buttons for each IDP -->
         <div v-if="!loading && !error" class="idp-buttons-container" data-testid="idp-buttons-container">
           <div v-for="idp in allowedIDPs" :key="idp.name" class="idp-button-row">
-            <scale-button
-              class="idp-button"
-              :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
-              :disabled="disabled || !idp.enabled"
-              :data-testid="`idp-button-${idp.name}`"
-              @click="handleIDPButtonClick(idp.name)"
-            >
-              <span class="idp-button-content">
-                <span class="idp-button-text">
-                  <span class="idp-button-label">{{ idp.displayName }}</span>
-                  <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
+            <DisabledReason :reason="!disabled && !idp.enabled ? 'This identity provider is currently disabled.' : ''">
+              <scale-button
+                class="idp-button"
+                :variant="selectedIDPName === idp.name ? 'primary' : 'secondary'"
+                :disabled="disabled || !idp.enabled"
+                :data-testid="`idp-button-${idp.name}`"
+                @click="handleIDPButtonClick(idp.name)"
+              >
+                <span class="idp-button-content">
+                  <span class="idp-button-text">
+                    <span class="idp-button-label">{{ idp.displayName }}</span>
+                    <span v-if="!idp.enabled" class="idp-button-status">(disabled)</span>
+                  </span>
+                  <scale-icon-action-success
+                    v-if="selectedIDPName === idp.name"
+                    class="idp-button-check"
+                    size="16"
+                    decorative
+                  />
                 </span>
-                <scale-icon-action-success
-                  v-if="selectedIDPName === idp.name"
-                  class="idp-button-check"
-                  size="16"
-                  decorative
-                />
-              </span>
-            </scale-button>
+              </scale-button>
+            </DisabledReason>
           </div>
         </div>
 
@@ -268,7 +276,7 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .required {
-  color: var(--telekom-color-text-error);
+  color: var(--telekom-color-text-and-icon-functional-danger);
 }
 
 /* IDP Buttons Container */
@@ -282,6 +290,11 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .idp-button-row {
+  width: 100%;
+}
+
+.idp-button-row :deep(.disabled-reason__trigger) {
+  display: flex;
   width: 100%;
 }
 
@@ -310,7 +323,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-button-status {
   font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-disabled);
+  color: var(--telekom-color-text-and-icon-disabled);
   line-height: 1.1;
 }
 
@@ -340,7 +353,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .warning {
   margin: 0;
-  color: var(--chip-warning-text);
+  color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
 

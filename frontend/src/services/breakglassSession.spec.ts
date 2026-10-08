@@ -2,6 +2,7 @@ import { vi, type Mock } from "vitest";
 import type { AxiosInstance } from "axios";
 import BreakglassSessionService from "./breakglassSession";
 import { createAuthenticatedApiClient } from "@/services/httpClient";
+import { useErrors } from "@/services/toast";
 
 vi.mock("@/services/httpClient");
 
@@ -28,6 +29,21 @@ describe("BreakglassSessionService", () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("does not toast when getSessionByName fails so the approval view owns the error state", async () => {
+    const store = useErrors();
+    store.errors.splice(0, store.errors.length);
+    const notFound = Object.assign(new Error("Request failed with status code 404"), {
+      response: { status: 404, data: {} },
+    });
+    mockClient.get.mockRejectedValueOnce(notFound);
+
+    const service = new BreakglassSessionService(fakeAuth);
+
+    await expect(service.getSessionByName("missing session")).rejects.toBe(notFound);
+    expect(mockClient.get).toHaveBeenCalledWith("/breakglassSessions/missing%20session");
+    expect(store.errors).toHaveLength(0);
   });
 
   it("normalizes malformed session status payloads to an empty list", async () => {

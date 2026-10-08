@@ -146,3 +146,33 @@ spec:
       - ui-e2e-approver@example.com
   maxValidFor: 1h
   retainFor: 24h
+
+# === ui-accessibility.spec.ts / ui-layout.spec.ts Tests ===
+# User: ui-e2e-a11y-user (groups: ui-e2e-a11y-requester)
+# Approver: ui-e2e-approver (groups: ui-e2e-approver-group, senior-ops)
+# Used to open the request, withdraw and approval dialogs for axe/keyboard/layout checks
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: BreakglassEscalation
+metadata:
+  name: ui-e2e-a11y-test
+  labels:
+    breakglass.dev/test-resource: "true"
+    breakglass.dev/ui-e2e: "true"
+spec:
+  allowed:
+    clusters:
+      - breakglass-hub
+    groups:
+      - ui-e2e-a11y-requester  # Only ui-e2e-a11y-user has this
+  escalatedGroup: ui-e2e-a11y-group
+  approvers:
+    groups:
+      - ui-e2e-approver-group
+    users:
+      - ui-e2e-approver@example.com
+  requestReason:
+    mandatory: true
+    description: "Accessibility and layout test escalation"
+  maxValidFor: 1h
+  retainFor: 24h
