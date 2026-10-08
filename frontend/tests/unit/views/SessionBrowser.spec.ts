@@ -178,7 +178,7 @@ describe("SessionBrowser", () => {
 
     it("announces result counts without replacing the heading semantics", async () => {
       const wrapper = await createWrapper();
-      const heading = wrapper.find("h2");
+      const heading = wrapper.find('[data-testid="results-section"] h2');
       const status = wrapper.find('[data-testid="session-results-status"]');
 
       expect(heading.text()).toBe("Results (2)");
@@ -238,7 +238,7 @@ describe("SessionBrowser", () => {
       await applyFilters(wrapper);
 
       expect(renderedNames(wrapper)).toEqual(["session-2"]);
-      expect(wrapper.find("h2").text()).toBe("Results (1)");
+      expect(wrapper.find('[data-testid="results-section"] h2').text()).toBe("Results (1)");
     });
 
     it("shows every session again once the name filter is cleared", async () => {

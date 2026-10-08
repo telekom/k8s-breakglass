@@ -2,7 +2,7 @@
 import BreakglassCard from "@/components/BreakglassCard.vue";
 import { inject, onMounted, reactive, computed } from "vue";
 import { useRoute } from "vue-router";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushError, pushSuccess, reportError } from "@/services/toast";
 import { handleAxiosError } from "@/services/logger";
 import { AuthKey } from "@/keys";
 import BreakglassService from "@/services/breakglass";
@@ -47,7 +47,7 @@ async function fetchAll() {
     state.breakglasses = await breakglassService.getBreakglasses();
   } catch (e: unknown) {
     state.error = (e instanceof Error ? e.message : undefined) || "Failed to load escalations";
-    pushError(state.error);
+    reportError(e, state.error);
     state.breakglasses = [];
   } finally {
     state.loading = false;
@@ -299,9 +299,9 @@ async function onDrop(bg: Breakglass) {
       </template>
     </EmptyState>
 
-    <div v-else-if="state.breakglasses.length > 0">
-      <div class="breakglass-toolbar" data-testid="breakglass-toolbar">
-        <div class="breakglass-toolbar__field">
+    <template v-else-if="state.breakglasses.length > 0">
+      <div class="ui-toolbar" data-testid="breakglass-toolbar">
+        <div class="ui-toolbar-field">
           <scale-text-field
             id="breakglass-search"
             data-testid="escalation-search"
@@ -312,8 +312,13 @@ async function onDrop(bg: Breakglass) {
             @scale-change="updateSearch"
           ></scale-text-field>
         </div>
-        <div class="toolbar-refresh">
-          <scale-loading-spinner v-if="state.refreshing" aria-label="Refreshing escalations"></scale-loading-spinner>
+        <div class="ui-toolbar-actions ui-toolbar-actions--end">
+          <scale-loading-spinner
+            v-if="state.refreshing"
+            class="ui-toolbar-icon-control"
+            size="small"
+            aria-label="Refreshing escalations"
+          ></scale-loading-spinner>
           <scale-tooltip v-else content="Refresh escalations" placement="top">
             <scale-button
               data-testid="refresh-escalations-button"
@@ -327,7 +332,7 @@ async function onDrop(bg: Breakglass) {
             </scale-button>
           </scale-tooltip>
         </div>
-        <div class="toolbar-info" data-testid="toolbar-info">
+        <div class="ui-toolbar-info" data-testid="toolbar-info">
           Showing {{ filteredBreakglasses.length }} of {{ dedupedBreakglasses.length }} escalations
         </div>
       </div>
@@ -360,7 +365,7 @@ async function onDrop(bg: Breakglass) {
         >
         </BreakglassCard>
       </div>
-    </div>
+    </template>
     <EmptyState
       v-else
       icon="content-lock"
@@ -375,42 +380,7 @@ async function onDrop(bg: Breakglass) {
   padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
 }
 
-.breakglass-toolbar {
-  align-items: flex-end;
-  margin-bottom: var(--space-lg);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
-}
-
-.breakglass-toolbar__field {
-  min-width: 280px;
-  flex: 1 1 280px;
-}
-
-.breakglass-toolbar__field > * {
-  width: 100%;
-}
-
-.toolbar-refresh {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 64px;
-}
-
-.toolbar-info {
-  color: var(--telekom-color-text-and-icon-standard);
-  margin-left: auto;
-  font: var(--telekom-text-style-caption);
-  align-self: center;
-}
-
 .breakglass-grid {
-  margin-top: var(--space-md);
   column-width: 360px;
   column-gap: var(--space-lg);
 }
@@ -420,26 +390,5 @@ async function onDrop(bg: Breakglass) {
   width: 100%;
   margin: 0 0 var(--space-lg);
   break-inside: avoid;
-}
-
-@media (max-width: 640px) {
-  .breakglass-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .breakglass-toolbar__field {
-    min-width: 0;
-    flex: 1 1 100%;
-  }
-
-  .toolbar-refresh {
-    align-self: flex-end;
-  }
-
-  .toolbar-info {
-    margin-left: 0;
-    text-align: center;
-  }
 }
 </style>

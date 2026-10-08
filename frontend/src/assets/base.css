@@ -451,11 +451,16 @@ select:focus {
 
 /* ============================================
  * TOOLBAR COMPONENT
+ * One filter panel per list page: fields grow and wrap, toggles and actions
+ * stay on the line they fit on, an optional group row (state checkboxes) and
+ * the result count close the panel. The same wrapping rules hold at every
+ * width, so mobile gets stacked full-width fields with token gaps and no
+ * empty space, without a separate column layout.
  * ============================================ */
 .ui-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-lg);
+  gap: var(--space-md);
   min-width: 0;
   padding: var(--card-padding-sm);
   background-color: var(--surface-toolbar);
@@ -465,30 +470,24 @@ select:focus {
   align-items: center;
 }
 
-.ui-toolbar input,
-.ui-toolbar select {
-  width: 100%;
-  max-width: 280px;
-  background-color: var(--surface-card);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  border-radius: var(--radius-md);
-  color: var(--telekom-color-text-and-icon-standard);
-  padding: var(--space-sm) var(--space-md);
-}
-
 .ui-toolbar-field {
-  flex: 1 1 220px;
-  min-width: min(100%, 220px);
+  flex: 1 1 15rem;
+  min-width: min(100%, 15rem);
 }
 
 .ui-toolbar-field > * {
   width: 100%;
 }
 
+.ui-toolbar-toggle {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .ui-toolbar-actions {
   display: flex;
-  gap: var(--space-md);
-  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
   min-width: 0;
 }
 
@@ -505,7 +504,27 @@ select:focus {
   min-width: auto;
 }
 
+/* Full-width row inside the panel, e.g. a group of state checkboxes. */
+.ui-toolbar-group {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-md);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+
+.ui-toolbar-group-label {
+  font: var(--telekom-text-style-caption);
+  color: var(--telekom-color-text-and-icon-additional);
+}
+
+/* Result count: last line of the panel, directly under the controls it describes. */
 .ui-toolbar-info {
+  flex: 1 1 100%;
   display: flex;
   gap: var(--space-sm);
   font: var(--telekom-text-style-caption);
@@ -611,31 +630,6 @@ select:focus {
 @media (max-width: 768px) {
   .app-container {
     padding: var(--space-xl) var(--space-lg) var(--space-2xl);
-  }
-
-  .ui-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-  }
-
-  .ui-toolbar-field {
-    flex: 0 1 auto;
-    min-width: 0;
-  }
-
-  .ui-toolbar-actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .ui-toolbar-field {
-    width: 100%;
-  }
-
-  /* Text buttons share the remaining width next to icon-only controls. */
-  .ui-toolbar-actions > scale-button:not([icon-only]) {
-    flex: 1 1 auto;
-    --width: 100%;
   }
 }
 

@@ -1,15 +1,10 @@
 <template>
   <div class="ui-page approvals-page" data-testid="pending-approvals-view">
-    <PageHeader
-      title="Pending Approvals"
-      subtitle="Review and approve access requests from your team members."
-      :badge="`${sortedSessions.length} of ${pendingSessions.length}`"
-      badge-variant="neutral"
-    />
+    <PageHeader title="Pending Approvals" subtitle="Review and approve access requests from your team members." />
 
     <!-- Filter and Sort Controls -->
-    <div class="approvals-toolbar ui-toolbar" data-testid="approvals-toolbar">
-      <div class="approvals-toolbar__control ui-toolbar-field">
+    <div class="ui-toolbar" data-testid="approvals-toolbar">
+      <div class="ui-toolbar-field">
         <scale-dropdown-select
           id="sort-select"
           data-testid="sort-select"
@@ -23,7 +18,7 @@
         </scale-dropdown-select>
       </div>
 
-      <div class="approvals-toolbar__control ui-toolbar-field">
+      <div class="ui-toolbar-field">
         <scale-dropdown-select
           id="urgency-filter"
           data-testid="urgency-filter"
@@ -40,7 +35,7 @@
 
       <div
         v-if="!loading && !error"
-        class="toolbar-info ui-toolbar-info"
+        class="ui-toolbar-info"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -48,7 +43,7 @@
       >
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
       </div>
-      <div v-else class="toolbar-info ui-toolbar-info" data-testid="toolbar-info">
+      <div v-else class="ui-toolbar-info" data-testid="toolbar-info">
         Showing {{ sortedSessions.length }} of {{ pendingSessions.length }} {{ pendingRequestCountLabel }}
       </div>
     </div>
@@ -559,33 +554,6 @@ onMounted(fetchPendingApprovals);
   padding-bottom: var(--space-2xl);
 }
 
-.approvals-toolbar {
-  margin-bottom: var(--space-lg);
-  background: var(--surface-elevated);
-  border: 1px solid var(--telekom-color-ui-border-standard);
-  padding: var(--space-md);
-  border-radius: var(--radius-md);
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-  align-items: center;
-}
-
-.approvals-toolbar__control {
-  flex: 1 1 200px;
-  min-width: 200px;
-}
-
-.approvals-toolbar__control > * {
-  width: 100%;
-}
-
-.toolbar-info {
-  color: var(--telekom-color-text-and-icon-standard);
-  margin-left: auto;
-  font: var(--telekom-text-style-caption);
-}
-
 /* Using global .masonry-layout class from base.css for sessions-list */
 /* Override: approval cards are too content-dense for 3 columns — cap at 2 */
 .masonry-layout {
@@ -716,6 +684,7 @@ onMounted(fetchPendingApprovals);
 @media (max-width: 640px) {
   .timer-panel {
     width: 100%;
+    padding: var(--space-lg);
   }
 }
 </style>

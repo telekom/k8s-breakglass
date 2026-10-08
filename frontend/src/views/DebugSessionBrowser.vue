@@ -6,7 +6,7 @@ import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
 import DebugSessionCard from "@/components/DebugSessionCard.vue";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushSuccess, reportError } from "@/services/toast";
 import type { DebugSessionSummary } from "@/model/debugSession";
 
 const auth = inject(AuthKey);
@@ -67,7 +67,7 @@ async function fetchSessions() {
     sessions.value = Array.isArray(result.sessions) ? result.sessions : [];
   } catch (e: unknown) {
     error.value = (e instanceof Error ? e.message : undefined) || "Failed to load debug sessions";
-    pushError(error.value);
+    reportError(e, error.value);
   } finally {
     loading.value = false;
   }
@@ -142,7 +142,7 @@ async function handleJoin(session: DebugSessionSummary) {
     pushSuccess(`Joined debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to join session");
+    reportError(e, "Failed to join session");
   }
 }
 
@@ -152,7 +152,7 @@ async function handleLeave(session: DebugSessionSummary) {
     pushSuccess(`Left debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to leave session");
+    reportError(e, "Failed to leave session");
   }
 }
 
@@ -162,7 +162,7 @@ async function handleTerminate(session: DebugSessionSummary) {
     pushSuccess(`Terminated debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to terminate session");
+    reportError(e, "Failed to terminate session");
   }
 }
 
@@ -172,7 +172,7 @@ async function handleRenew(session: DebugSessionSummary, duration: string) {
     pushSuccess(`Renewed debug session ${session.name} by ${duration}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to renew session");
+    reportError(e, "Failed to renew session");
   }
 }
 
@@ -182,7 +182,7 @@ async function handleApprove(session: DebugSessionSummary) {
     pushSuccess(`Approved debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to approve session");
+    reportError(e, "Failed to approve session");
   }
 }
 
@@ -192,7 +192,7 @@ async function handleReject(session: DebugSessionSummary, reason: string) {
     pushSuccess(`Rejected debug session ${session.name}`);
     await refresh();
   } catch (e: unknown) {
-    pushError((e instanceof Error ? e.message : undefined) || "Failed to reject session");
+    reportError(e, "Failed to reject session");
   }
 }
 
@@ -230,7 +230,7 @@ function onStateToggle(state: string, event: Event) {
   <div class="ui-page debug-session-browser" data-testid="debug-session-browser">
     <PageHeader title="Debug Sessions" subtitle="Browse and manage debug sessions for temporary cluster access." />
 
-    <div class="debug-toolbar ui-toolbar" data-testid="debug-session-toolbar">
+    <div class="ui-toolbar" data-testid="debug-session-toolbar">
       <div class="ui-toolbar-field">
         <scale-text-field
           id="debug-session-search"
@@ -243,7 +243,7 @@ function onStateToggle(state: string, event: Event) {
         ></scale-text-field>
       </div>
 
-      <div class="ui-toolbar-actions">
+      <div class="ui-toolbar-toggle">
         <scale-checkbox
           data-testid="my-sessions-filter"
           :checked="filters.mine"
@@ -277,11 +277,9 @@ function onStateToggle(state: string, event: Event) {
           New Session
         </scale-button>
       </div>
-    </div>
 
-    <div class="state-filters" data-testid="state-filters" role="group" aria-label="State filters">
-      <span id="state-filter-label" class="filter-label">Filter by state:</span>
-      <div class="state-checkbox-group">
+      <div class="ui-toolbar-group" data-testid="state-filters" role="group" aria-labelledby="state-filter-label">
+        <span id="state-filter-label" class="ui-toolbar-group-label">Filter by state:</span>
         <scale-checkbox
           v-for="opt in stateOptions"
           :key="opt.value"
@@ -291,6 +289,17 @@ function onStateToggle(state: string, event: Event) {
         >
           {{ opt.label }}
         </scale-checkbox>
+      </div>
+
+      <div
+        v-if="!loading && !error"
+        class="ui-toolbar-info"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        data-testid="debug-session-results-status"
+      >
+        Showing {{ filteredSessions.length }} of {{ sessions.length }} {{ debugSessionCountLabel }}
       </div>
     </div>
 
@@ -336,17 +345,6 @@ function onStateToggle(state: string, event: Event) {
         <scale-button variant="primary" @click="navigateToCreate"> Create Debug Session </scale-button>
       </template>
     </EmptyState>
-
-    <div
-      v-if="!loading && !error"
-      class="results-info ui-toolbar-info"
-      role="status"
-      aria-live="polite"
-      aria-atomic="true"
-      data-testid="debug-session-results-status"
-    >
-      Showing {{ filteredSessions.length }} of {{ sessions.length }} {{ debugSessionCountLabel }}
-    </div>
   </div>
 </template>
 
@@ -355,45 +353,9 @@ function onStateToggle(state: string, event: Event) {
   padding-bottom: clamp(2.5rem, 5vw, 4.5rem);
 }
 
-.debug-toolbar {
-  margin-bottom: var(--space-md);
-}
-
-.state-filters {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-md);
-  margin-bottom: var(--space-lg);
-  padding: var(--space-sm) var(--space-md);
-  background-color: var(--surface-card-subtle);
-  border-radius: var(--radius-md);
-}
-
-.filter-label {
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-additional);
-  margin-right: var(--space-xs);
-}
-
-.state-checkbox-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-md);
-}
-
 .sessions-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
   gap: var(--space-lg);
-}
-
-.results-info {
-  margin-top: var(--space-lg);
-  text-align: center;
-  color: var(--telekom-color-text-and-icon-additional);
-  font: var(--telekom-text-style-caption);
-  display: flex;
-  justify-content: center;
 }
 </style>
