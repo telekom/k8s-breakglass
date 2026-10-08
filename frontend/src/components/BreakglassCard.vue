@@ -216,13 +216,6 @@ function clearScheduledSelection() {
 const requiresReason = computed(() => Boolean(props.breakglass?.requestReason?.mandatory));
 const isReasonMissing = computed(() => requiresReason.value && !(requestReason.value || "").toString().trim());
 
-const canRequest = computed(() => {
-  if (isReasonMissing.value) {
-    return false;
-  }
-  return true;
-});
-
 const sessionPending = computed(() => props.breakglass.sessionPending);
 const sessionActive = computed(() => props.breakglass.sessionActive);
 
@@ -518,10 +511,6 @@ function drop() {
           {{ showAllApprovalGroups ? "Show fewer groups" : `Show all ${approvalGroupsList.length} groups` }}
         </scale-button>
       </div>
-
-      <p v-if="requiresReason && !sessionPending && !sessionActive && !canRequest" class="breakglass-card__requirement">
-        This escalation requires a reason.
-      </p>
     </template>
 
     <template v-if="sessionPending || sessionActive" #timeline>
@@ -796,11 +785,6 @@ function drop() {
 
 .breakglass-card__cta p {
   margin: 0;
-}
-
-.breakglass-card__requirement {
-  color: var(--tone-chip-danger-text);
-  font-weight: 600;
 }
 
 /* Modal internal styles */
