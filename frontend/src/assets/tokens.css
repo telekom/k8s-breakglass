@@ -71,6 +71,8 @@
   --focus-outline: var(--telekom-color-functional-focus-standard, #2238df);
   /* Ring around a selected option card. */
   --shadow-selected: 0 0 0 3px color-mix(in srgb, var(--telekom-color-primary-standard) 20%, transparent);
+  /* Current-item start bar for vertical menus. */
+  --shadow-active-start: inset 3px 0 0 var(--telekom-color-primary-standard);
 
   /* Scale overrides for AAA/AA contrast (see base.css SCALE COMPONENT OVERRIDES).
    * Scale's #e20074 nav link measures 3.06:1 on its tinted nav background;

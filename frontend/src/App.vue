@@ -979,9 +979,12 @@ scale-telekom-header::part(app-name-text) {
     background: var(--surface-card-subtle);
   }
 
+  /* The start bar marks the current page in every theme; dark and high contrast
+     keep the AAA text colour, so colour alone cannot. */
   .mobile-nav-fallback__link--active {
     color: var(--telekom-color-text-and-icon-primary-standard);
     font-weight: 700;
+    box-shadow: var(--shadow-active-start);
   }
 
   .mobile-nav-fallback__utilities {

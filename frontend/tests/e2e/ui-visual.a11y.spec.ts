@@ -347,6 +347,8 @@ for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {
               link: colour(nav.querySelector("a:not([aria-current])")),
               active: colour(nav.querySelector("a[aria-current='page']")),
               activeWeight: Number(getComputedStyle(nav.querySelector("a[aria-current='page']")!).fontWeight),
+              activeBar: getComputedStyle(nav.querySelector("a[aria-current='page']")!).boxShadow,
+              linkBar: getComputedStyle(nav.querySelector("a:not([aria-current])")!).boxShadow,
               rows: Array.from(nav.querySelectorAll(".mobile-util-btn")).map((b) => ({
                 pressed: b.getAttribute("aria-pressed") === "true" && b.classList.contains("mobile-util-btn--contrast"),
                 colour: colour(b.shadowRoot?.querySelector("button")),
@@ -362,6 +364,9 @@ for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {
           // dark and high contrast keep the AAA text colour (base.css nav policy).
           expect(c.activeWeight, "active mobile link weight").toBeGreaterThanOrEqual(700);
           expect(c.active, "active mobile link colour").toBe(theme === "light" ? c.brand : c.link);
+          // Weight alone is too faint when the colours match, so an inset start bar marks it too.
+          expect(c.activeBar, "active mobile link start bar").toMatch(/3px 0px 0px( 0px)? inset/);
+          expect(c.linkBar, "inactive mobile link has no bar").toBe("none");
         });
       }
     }
