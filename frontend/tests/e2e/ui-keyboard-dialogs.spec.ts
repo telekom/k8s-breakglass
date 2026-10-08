@@ -195,7 +195,7 @@ test.describe.serial("Keyboard verification: breakglass dialogs", () => {
     await waitForScaleToast(page, "success-toast");
     await expectToastAnnounced(page, "success-toast", /\S/);
     await expect(modal).toHaveCount(0);
-    // The toast's empty built-in link is hidden through Scale's `styles` prop.
+    // Scale's notification toast has no built-in link, only the dismiss button.
     const toast = page.locator('[data-testid="success-toast"]').first();
     await expect(toast.getByRole("alert")).toBeVisible();
     await expect(toast.getByRole("link")).toHaveCount(0);

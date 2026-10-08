@@ -214,17 +214,6 @@ if (!customElements.get("scale-checkbox")) {
   );
 }
 
-if (!customElements.get("scale-notification-toast")) {
-  customElements.define(
-    "scale-notification-toast",
-    class extends HTMLElement {
-      connectedCallback() {
-        if (!this.shadowRoot) this.attachShadow({ mode: "open" });
-      }
-    },
-  );
-}
-
 if (!customElements.get("scale-notification")) {
   customElements.define(
     "scale-notification",

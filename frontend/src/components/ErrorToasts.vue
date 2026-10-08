@@ -1,30 +1,24 @@
 <script setup lang="ts">
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import type { AppError } from "@/services/toast";
 import { useErrors, dismissError } from "@/services/toast";
 
 const { errors } = useErrors();
 
-const BASE_VERTICAL_OFFSET = 16;
-const STACK_SPACING_DEFAULT = 108;
-const STACK_SPACING_COMPACT = 72;
-const COMPACT_VIEWPORT_HEIGHT = 600;
-
-function stackSpacing(): number {
-  if (typeof window !== "undefined" && window.innerHeight < COMPACT_VIEWPORT_HEIGHT) {
-    return STACK_SPACING_COMPACT;
-  }
-  return STACK_SPACING_DEFAULT;
-}
-
 function headingFor(error: AppError) {
   if (error.type === "success") {
     return "Success";
+  }
+  if (error.type === "warning") {
+    return "Warning";
   }
   return error.status ? `Error [${error.status}]` : "Error";
 }
 
 function variantFor(error: AppError) {
-  return error.type === "success" ? "success" : "error";
+  if (error.type === "success") return "success";
+  if (error.type === "warning") return "warning";
+  return "danger";
 }
 
 function autoHideDurationFor(error: AppError) {
@@ -34,72 +28,100 @@ function autoHideDurationFor(error: AppError) {
   return error.type === "success" ? 6000 : 10000;
 }
 
-function updateToastState(id: string, opened: boolean) {
-  const toast = errors.find((err) => err.id === id);
-  if (toast) {
-    toast.opened = opened;
-  }
-}
-
-function handleToastClosing(id: string) {
-  updateToastState(id, false);
-}
-
-function handleToastClosed(id: string) {
-  dismissError(id);
-}
-
-/**
- * scale-notification-toast always renders an empty `<scale-link role="link">`
- * in its shadow DOM, even without a link slot. Screen readers announce it as
- * an unnamed link (axe: aria-command-name) and it can be a dead tab stop. None
- * of our toasts has a link, so hide it through the toast's `styles` prop
- * (Scale's API for CSS injected into the component's shadow root).
+/*
+ * The stack sits below the fixed Scale header, whose height changes with the
+ * breakpoint and when the page scrolls. Measure the rendered bar whenever a
+ * toast is shown or the viewport changes instead of mirroring Scale's
+ * breakpoints.
  */
-const TOAST_STYLES = ".notification-toast__link { display: none; }";
+const headerBottom = ref<number | null>(null);
 
-function verticalOffset(index: number) {
-  return BASE_VERTICAL_OFFSET + index * stackSpacing();
+function measureHeader() {
+  const bar = document
+    .querySelector("scale-telekom-header")
+    ?.shadowRoot?.querySelector<HTMLElement>("[part~='fixed-wrapper']");
+  headerBottom.value = bar ? Math.max(0, Math.round(bar.getBoundingClientRect().bottom)) : null;
 }
+
+watch(
+  () => errors.length,
+  (count) => {
+    if (count > 0) void nextTick(measureHeader);
+  },
+  { immediate: true },
+);
+
+onMounted(() => {
+  window.addEventListener("resize", measureHeader, { passive: true });
+  window.addEventListener("scroll", measureHeader, { passive: true });
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("resize", measureHeader);
+  window.removeEventListener("scroll", measureHeader);
+});
 </script>
 
 <template>
-  <div class="toast-region" aria-live="polite" aria-atomic="true">
-    <div v-for="(e, index) in errors" :key="e.id" class="toast-wrapper">
-      <scale-notification-toast
-        :styles="TOAST_STYLES"
-        alignment="top-right"
-        :opened="e.opened !== false"
-        :variant="variantFor(e)"
-        :data-testid="e.type === 'success' ? 'success-toast' : 'error-toast'"
-        :position-vertical="verticalOffset(index)"
-        :auto-hide="true"
-        :auto-hide-duration="autoHideDurationFor(e)"
-        :fade-duration="280"
-        @scale-closing="handleToastClosing(e.id)"
-        @scale-close="handleToastClosed(e.id)"
-      >
-        <span slot="header">{{ headingFor(e) }}</span>
-        <p slot="body" class="toast-body">
-          {{ e.message }}
-          <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
-        </p>
-      </scale-notification-toast>
-    </div>
+  <div
+    class="toast-region"
+    aria-live="polite"
+    aria-atomic="true"
+    :style="headerBottom === null ? undefined : { '--toast-region-top': `${headerBottom}px` }"
+  >
+    <scale-notification
+      v-for="e in errors"
+      :key="e.id"
+      class="toast"
+      type="toast"
+      :heading="headingFor(e)"
+      :ariaHeading.prop="''"
+      :variant="variantFor(e)"
+      :opened="e.opened !== false"
+      dismissible
+      :delay="autoHideDurationFor(e)"
+      :data-testid="e.type === 'success' ? 'success-toast' : 'error-toast'"
+      @scale-close="dismissError(e.id)"
+    >
+      <p slot="text" class="toast-body">
+        {{ e.message }}
+        <span v-if="e.cid" class="cid">(cid: {{ e.cid }})</span>
+      </p>
+    </scale-notification>
   </div>
 </template>
 
 <style scoped>
+/*
+ * Fixed stack below the header: one token gap above, between and to the right
+ * of the toasts, Scale's toast width capped to the viewport on small screens.
+ */
 .toast-region {
+  position: fixed;
+  top: calc(var(--toast-region-top, var(--scl-telekom-header-height, 60px)) + var(--space-lg));
+  right: var(--space-lg);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-md);
+  width: min(25rem, calc(100vw - 2 * var(--space-lg)));
   pointer-events: none;
 }
-.toast-wrapper {
-  pointer-events: all;
+
+.toast {
+  --width-toast: 100%;
+  pointer-events: auto;
+}
+
+.toast::part(base) {
+  /* Scale draws the toast shadow upwards only; use the card shadow so stacked toasts separate evenly. */
+  box-shadow: var(--shadow-card);
 }
 
 .toast-body {
   margin: 0;
-  font: var(--telekom-text-style-caption);
+  overflow-wrap: anywhere;
 }
 
 .cid {

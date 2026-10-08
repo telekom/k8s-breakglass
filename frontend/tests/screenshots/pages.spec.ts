@@ -210,7 +210,7 @@ async function captureDebugTemplateErrorState(
     content: `
       .toast-region,
       .toast-wrapper,
-      scale-notification-toast,
+      scale-notification,
       [data-testid="error-toast"],
       [data-testid="success-toast"] {
         display: none !important;
@@ -251,7 +251,7 @@ async function captureDebugClusterErrorState(
     content: `
       .toast-region,
       .toast-wrapper,
-      scale-notification-toast,
+      scale-notification,
       [data-testid="error-toast"],
       [data-testid="success-toast"] {
         display: none !important;

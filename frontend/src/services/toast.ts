@@ -14,8 +14,10 @@ export interface AppError {
 
 const ERROR_AUTO_HIDE_MS = 10000;
 const SUCCESS_AUTO_HIDE_MS = 6000;
+const WARNING_AUTO_HIDE_MS = 8000;
 
 const state = reactive<{ errors: AppError[] }>({ errors: [] });
+let nextId = 0;
 
 export interface PushErrorOptions {
   status?: number;
@@ -23,9 +25,26 @@ export interface PushErrorOptions {
   source?: string;
 }
 
-export function pushError(message: string, statusOrOptions?: number | PushErrorOptions, cid?: string) {
-  const id = Math.random().toString(36).slice(2);
+/**
+ * Add a toast unless an identical one (same type and message) is already
+ * shown. One failure is often reported twice, e.g. by the HTTP interceptor
+ * with its status code and by the view without it; the visible toast keeps
+ * the most specific status and correlation id instead of stacking a copy.
+ */
+function addToast(entry: Omit<AppError, "id" | "ts" | "opened">): string {
+  const existing = state.errors.find((e) => e.opened !== false && e.type === entry.type && e.message === entry.message);
+  if (existing) {
+    existing.status ??= entry.status;
+    existing.cid ??= entry.cid;
+    return existing.id;
+  }
+  const id = `toast-${++nextId}`;
+  state.errors.push({ ...entry, id, ts: Date.now(), opened: true });
+  setTimeout(() => dismissError(id), (entry.autoHideDuration ?? ERROR_AUTO_HIDE_MS) + 1000);
+  return id;
+}
 
+export function pushError(message: string, statusOrOptions?: number | PushErrorOptions, cid?: string) {
   // Support both old signature (message, status, cid) and new options object
   let status: number | undefined;
   let correlationId: string | undefined;
@@ -41,46 +60,39 @@ export function pushError(message: string, statusOrOptions?: number | PushErrorO
   }
 
   const isSuccessLike = !!status && status >= 200 && status < 300;
-  state.errors.push({
-    id,
+  addToast({
     message,
     status,
     cid: correlationId,
     source,
-    ts: Date.now(),
     type: isSuccessLike ? "success" : "error",
     autoHideDuration: isSuccessLike ? SUCCESS_AUTO_HIDE_MS : ERROR_AUTO_HIDE_MS,
-    opened: true,
   });
-  setTimeout(() => dismissError(id), (isSuccessLike ? SUCCESS_AUTO_HIDE_MS : ERROR_AUTO_HIDE_MS) + 1000);
+}
+
+const reportedErrors = new WeakSet<object>();
+
+/** Remember that a toast has already been shown for this caught error. */
+export function markErrorReported(err: unknown) {
+  if (err && typeof err === "object") reportedErrors.add(err);
+}
+
+/**
+ * Toast a caught error unless the service that threw it already did (via
+ * handleAxiosError), so one failure never shows up as two toasts with
+ * different wording.
+ */
+export function reportError(err: unknown, fallback: string) {
+  if (err && typeof err === "object" && reportedErrors.has(err)) return;
+  pushError((err instanceof Error ? err.message : undefined) || fallback);
 }
 
 export function pushSuccess(message: string) {
-  const id = Math.random().toString(36).slice(2);
-  state.errors.push({
-    id,
-    message,
-    ts: Date.now(),
-    type: "success",
-    autoHideDuration: SUCCESS_AUTO_HIDE_MS,
-    opened: true,
-  });
-  setTimeout(() => dismissError(id), SUCCESS_AUTO_HIDE_MS + 1000);
+  addToast({ message, type: "success", autoHideDuration: SUCCESS_AUTO_HIDE_MS });
 }
 
-const WARNING_AUTO_HIDE_MS = 8000;
-
 export function pushWarning(message: string) {
-  const id = Math.random().toString(36).slice(2);
-  state.errors.push({
-    id,
-    message,
-    ts: Date.now(),
-    type: "warning",
-    autoHideDuration: WARNING_AUTO_HIDE_MS,
-    opened: true,
-  });
-  setTimeout(() => dismissError(id), WARNING_AUTO_HIDE_MS + 1000);
+  addToast({ message, type: "warning", autoHideDuration: WARNING_AUTO_HIDE_MS });
 }
 
 export function dismissError(id: string) {

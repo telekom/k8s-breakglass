@@ -9,7 +9,7 @@ import type { SessionCR } from "@/model/breakglass";
 import useCurrentTime from "@/utils/currentTime";
 import BreakglassSessionCard from "@/components/BreakglassSessionCard.vue";
 import { handleAxiosError } from "@/services/logger";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushSuccess, reportError } from "@/services/toast";
 import type { AxiosLikeError } from "@/model/errors";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import { PageHeader, LoadingState, EmptyState } from "@/components/common";
@@ -298,7 +298,7 @@ async function onDrop(bg: SessionCR) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.onDrop", errResponse, "Failed to drop session");
-    pushError("Failed to drop session");
+    reportError(errResponse, "Failed to drop session");
   }
 }
 
@@ -316,7 +316,7 @@ async function onCancel(bg: SessionCR) {
       state.getBreakglassesMsg = "You are not authorized to display requested resources";
     }
     handleAxiosError("BreakglassSessionReview.onCancel", errResponse, "Failed to cancel session");
-    pushError("Failed to cancel session");
+    reportError(errResponse, "Failed to cancel session");
   }
 }
 </script>
@@ -325,8 +325,8 @@ async function onCancel(bg: SessionCR) {
   <div v-if="authenticated" class="ui-page review-session-page" data-testid="session-review-page">
     <PageHeader title="Review Sessions" subtitle="Inspect active sessions and take action when needed." />
 
-    <section class="review-toolbar ui-toolbar" aria-label="Session filters">
-      <div class="review-toolbar__field ui-toolbar-field">
+    <section class="ui-toolbar" aria-label="Session filters">
+      <div class="ui-toolbar-field">
         <scale-text-field
           label="Search"
           name="session-search"
@@ -337,7 +337,7 @@ async function onCancel(bg: SessionCR) {
         ></scale-text-field>
       </div>
 
-      <div class="review-toolbar__toggle">
+      <div class="ui-toolbar-toggle">
         <scale-checkbox
           :checked="showOnlyActive"
           @scale-change="
@@ -364,7 +364,7 @@ async function onCancel(bg: SessionCR) {
 
       <div
         v-if="!state.loading && !state.getBreakglassesMsg"
-        class="toolbar-info"
+        class="ui-toolbar-info"
         role="status"
         aria-live="polite"
         aria-atomic="true"
@@ -372,7 +372,7 @@ async function onCancel(bg: SessionCR) {
       >
         Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
       </div>
-      <div v-else class="toolbar-info" data-testid="review-results-status">
+      <div v-else class="ui-toolbar-info" data-testid="review-results-status">
         Showing {{ filteredBreakglasses.length }} of {{ state.breakglasses.length }} {{ reviewSessionCountLabel }}
       </div>
     </section>
@@ -424,20 +424,6 @@ async function onCancel(bg: SessionCR) {
 </template>
 
 <style scoped>
-.review-session-page {
-  gap: var(--space-lg);
-}
-
-.review-toolbar__toggle {
-  white-space: nowrap;
-}
-
-.toolbar-info {
-  flex-basis: 100%;
-  font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
 .review-session-message {
   padding: var(--space-sm) var(--space-md);
   border-radius: var(--radius-lg);

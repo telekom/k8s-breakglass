@@ -53,4 +53,24 @@ describe("toast service", () => {
     dismissError(id);
     expect(store.errors).toHaveLength(0);
   });
+
+  it("shows one toast for identical concurrent errors and keeps the most specific status", () => {
+    pushError("Request failed with status code 500");
+    pushError("Request failed with status code 500", 500, "cid-9");
+    pushError("Request failed with status code 500");
+
+    expect(store.errors).toHaveLength(1);
+    expect(store.errors[0]).toMatchObject({ status: 500, cid: "cid-9", type: "error" });
+
+    pushError("A different failure");
+    pushSuccess("Request failed with status code 500");
+    expect(store.errors).toHaveLength(3);
+  });
+
+  it("shows the message again once the previous toast is gone", () => {
+    pushError("flaky");
+    dismissError(store.errors[0]!.id);
+    pushError("flaky");
+    expect(store.errors).toHaveLength(1);
+  });
 });

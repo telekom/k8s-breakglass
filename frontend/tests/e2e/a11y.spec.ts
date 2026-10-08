@@ -440,7 +440,7 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
   });
 
   test.describe("Toast Semantics", () => {
-    test("error toast without a link has no dead tab stop", async ({ page }) => {
+    test("error toast has no dead tab stop and closes from the keyboard", async ({ page }) => {
       await performMockLogin(page);
       await navigateTo(page, "/debug-sessions");
       await page.route("**/api/breakglassEscalations**", (route) =>
@@ -449,18 +449,15 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
       await navigateTo(page, "/");
 
       const toast = page.locator('[data-testid="error-toast"]').first();
-      await expect(toast.locator(".notification-toast__button-close")).toBeVisible();
-      await expect(toast.locator(".notification-toast__link")).toBeHidden();
+      await expect(toast.getByRole("alert")).toBeVisible();
+      await expect(toast.getByRole("link")).toHaveCount(0);
+      // The heading speaks the visible title only, not Scale's default "Information" prefix.
+      await expect(toast.getByRole("heading")).toHaveAccessibleName(/^Error\b/);
 
-      // From the toast body, the next tab stop must be its close button.
-      await toast.locator('[role="alert"]').focus();
-      await page.keyboard.press("Tab");
-      const focused = await page.evaluate(() => {
-        let el = document.activeElement;
-        while (el?.shadowRoot?.activeElement) el = el.shadowRoot.activeElement;
-        return el?.className ?? "";
-      });
-      expect(focused).toContain("notification-toast__button-close");
+      const close = toast.getByRole("button", { name: "Close" });
+      await close.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.locator('[data-testid="error-toast"]')).toHaveCount(0);
     });
   });
 

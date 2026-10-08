@@ -6,14 +6,15 @@
  * - Heading text for error/success variants
  * - Variant mapping (success vs error)
  * - Auto-hide duration logic
- * - Vertical offset stacking calculation
+ * - Deduplication of identical concurrent errors
  * - Toast dismissal via events
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { mount } from "@vue/test-utils";
 import ErrorToasts from "@/components/ErrorToasts.vue";
-import { useErrors, pushError, pushSuccess } from "@/services/toast";
+import { useErrors, pushError, pushSuccess, reportError } from "@/services/toast";
+import { handleAxiosError } from "@/services/logger";
 
 describe("ErrorToasts", () => {
   const store = useErrors();
@@ -34,10 +35,16 @@ describe("ErrorToasts", () => {
     return mount(ErrorToasts);
   }
 
+  // Vue sets Scale props as properties on the real element and as attributes on the test stub.
+  function prop(el: Element | undefined, name: "heading" | "delay") {
+    const value = (el as unknown as Record<string, unknown>)?.[name] ?? el?.getAttribute(name);
+    return name === "delay" ? Number(value) : value;
+  }
+
   describe("rendering", () => {
     it("renders no toasts when error store is empty", () => {
       const wrapper = mountToasts();
-      expect(wrapper.findAll("scale-notification-toast")).toHaveLength(0);
+      expect(wrapper.findAll("scale-notification")).toHaveLength(0);
     });
 
     it("renders a toast for each error in the store", () => {
@@ -45,7 +52,7 @@ describe("ErrorToasts", () => {
       pushError("Error 2");
 
       const wrapper = mountToasts();
-      expect(wrapper.findAll("scale-notification-toast")).toHaveLength(2);
+      expect(wrapper.findAll("scale-notification")).toHaveLength(2);
     });
 
     it("renders error message in toast body", () => {
@@ -75,23 +82,21 @@ describe("ErrorToasts", () => {
       pushSuccess("All good");
 
       const wrapper = mountToasts();
-      expect(wrapper.text()).toContain("Success");
+      expect(prop(wrapper.find("scale-notification").element, "heading")).toBe("Success");
     });
 
     it("shows 'Error [status]' heading when status is present", () => {
       pushError("bad request", 400);
 
       const wrapper = mountToasts();
-      expect(wrapper.text()).toContain("Error [400]");
+      expect(prop(wrapper.find("scale-notification").element, "heading")).toBe("Error [400]");
     });
 
     it("shows 'Error' heading when no status is present", () => {
       pushError("generic fail");
 
       const wrapper = mountToasts();
-      expect(wrapper.text()).toContain("Error");
-      // Should not contain brackets
-      expect(wrapper.text()).not.toMatch(/Error \[\d+\]/);
+      expect(prop(wrapper.find("scale-notification").element, "heading")).toBe("Error");
     });
   });
 
@@ -100,16 +105,16 @@ describe("ErrorToasts", () => {
       pushSuccess("done");
 
       const wrapper = mountToasts();
-      const toast = wrapper.find("scale-notification-toast");
+      const toast = wrapper.find("scale-notification");
       expect(toast.attributes("variant")).toBe("success");
     });
 
-    it("maps error type to error variant", () => {
+    it("maps error type to danger variant", () => {
       pushError("failed");
 
       const wrapper = mountToasts();
-      const toast = wrapper.find("scale-notification-toast");
-      expect(toast.attributes("variant")).toBe("error");
+      const toast = wrapper.find("scale-notification");
+      expect(toast.attributes("variant")).toBe("danger");
     });
   });
 
@@ -150,24 +155,25 @@ describe("ErrorToasts", () => {
       pushError("error msg");
 
       const wrapper = mountToasts();
-      const toast = wrapper.find("scale-notification-toast");
-      expect(toast.attributes("auto-hide-duration")).toBe("10000");
+      const toast = wrapper.find("scale-notification");
+      expect(prop(toast.element, "delay")).toBe(10000);
     });
 
     it("passes default 6000ms auto-hide for success toasts", () => {
       pushSuccess("ok");
 
       const wrapper = mountToasts();
-      const toast = wrapper.find("scale-notification-toast");
-      expect(toast.attributes("auto-hide-duration")).toBe("6000");
+      const toast = wrapper.find("scale-notification");
+      expect(prop(toast.element, "delay")).toBe(6000);
     });
 
-    it("enables auto-hide on all toasts", () => {
+    it("renders Scale toasts that can be dismissed", () => {
       pushError("err");
 
       const wrapper = mountToasts();
-      const toast = wrapper.find("scale-notification-toast");
-      expect(toast.attributes("auto-hide")).toBeTruthy();
+      const toast = wrapper.find("scale-notification");
+      expect(toast.attributes("type")).toBe("toast");
+      expect(toast.attributes("dismissible")).toBeDefined();
     });
   });
 
@@ -177,7 +183,7 @@ describe("ErrorToasts", () => {
       const wrapper = mountToasts();
 
       expect(store.errors).toHaveLength(1);
-      const toast = wrapper.find("scale-notification-toast");
+      const toast = wrapper.find("scale-notification");
       await toast.trigger("scale-close");
 
       // After scale-close, the toast should be removed from the store
@@ -185,35 +191,38 @@ describe("ErrorToasts", () => {
     });
   });
 
-  describe("vertical stacking", () => {
-    it("offsets toasts vertically based on index", () => {
+  describe("stacking", () => {
+    it("renders toasts in one flow region instead of fixed offsets", () => {
       pushError("Error 1");
       pushError("Error 2");
-      pushError("Error 3");
 
       const wrapper = mountToasts();
-      const toasts = wrapper.findAll("scale-notification-toast");
-
-      // BASE_VERTICAL_OFFSET = 16, STACK_SPACING = 108
-      expect(toasts[0]?.attributes("position-vertical")).toBe("16");
-      expect(toasts[1]?.attributes("position-vertical")).toBe("124");
-      expect(toasts[2]?.attributes("position-vertical")).toBe("232");
+      const region = wrapper.find(".toast-region");
+      expect(region.findAll("scale-notification")).toHaveLength(2);
+      expect(region.find("[position-vertical]").exists()).toBe(false);
     });
 
-    it("uses compact stack spacing when viewport height is below 600px", () => {
-      const originalInnerHeight = window.innerHeight;
-      Object.defineProperty(window, "innerHeight", { value: 400, configurable: true });
-
-      pushError("Error 1");
-      pushError("Error 2");
+    it("shows identical concurrent errors once", () => {
+      pushError("Request failed with status code 500");
+      pushError("Request failed with status code 500", 500);
 
       const wrapper = mountToasts();
-      const toasts = wrapper.findAll("scale-notification-toast");
+      const toasts = wrapper.findAll("scale-notification");
+      expect(toasts).toHaveLength(1);
+      expect(prop(toasts[0]?.element, "heading")).toBe("Error [500]");
+    });
 
-      expect(toasts[0]?.attributes("position-vertical")).toBe("16");
-      expect(toasts[1]?.attributes("position-vertical")).toBe("88");
+    it("does not re-toast an error the service already reported", () => {
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      const err = Object.assign(new Error("Request failed with status code 500"), {
+        response: { status: 500, data: { error: "boom" } },
+      });
+      handleAxiosError("Service.load", err, "Failed to load");
+      reportError(err, "Failed to load");
+      reportError(new Error("other failure"), "Failed to load");
 
-      Object.defineProperty(window, "innerHeight", { value: originalInnerHeight, configurable: true });
+      const toasts = mountToasts().findAll(".toast");
+      expect(toasts.map((t) => t.text())).toEqual(["boom", "other failure"]);
     });
   });
 });

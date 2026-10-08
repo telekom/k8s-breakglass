@@ -126,10 +126,8 @@ export async function fillScaleTextField(page: Page, selector: string, value: st
 }
 
 /**
- * Wait for a Scale notification toast to appear.
- * Scale's notification toast uses an internal 'opened' state to control visibility.
- * In Stencil 4 (Scale beta.159+) the 'opened' @State() no longer reflects as
- * an HTML attribute, so we check the property value via JS evaluation instead.
+ * Wait for a Scale notification toast (`scale-notification type="toast"`) to appear.
+ * `opened` is a property set by Vue, so check the property value via JS evaluation.
  * @param page - Playwright page
  * @param testId - The data-testid of the toast (e.g., 'success-toast' or 'error-toast')
  * @param timeout - Maximum time to wait in milliseconds (default: 20000)

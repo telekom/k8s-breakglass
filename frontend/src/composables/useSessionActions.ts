@@ -4,7 +4,7 @@
 
 import { ref, reactive } from "vue";
 import type { SessionCR } from "@/model/breakglass";
-import { pushError, pushSuccess } from "@/services/toast";
+import { pushSuccess, reportError } from "@/services/toast";
 import { debug, warn } from "@/services/logger";
 import { getSessionKey, getSessionUser, getSessionGroup, getSessionState, normalizeState } from "./useSessionList";
 
@@ -264,7 +264,7 @@ export function useSessionActions(handlers: ActionHandlers, permissions?: Action
     } catch (err: unknown) {
       const errorMsg = (err instanceof Error ? err.message : undefined) || config.errorMessage;
       lastError.value = errorMsg;
-      pushError(errorMsg);
+      reportError(err, errorMsg);
       options.onError?.(errorMsg);
 
       warn(`${TAG}.executeAction`, `Action failed: ${action}`, {
