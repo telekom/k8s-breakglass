@@ -57,8 +57,8 @@ test.describe("Screen reader semantics (deployed UI)", () => {
         - button "Close"
         - textbox "Duration"
         - textbox "Reason"
-        - button "Confirm Request" [disabled]
         - button "Cancel"
+        - button "Confirm Request" [disabled]
     `);
     await expectDisabledWithReason(modal, "Confirm Request", "Enter a reason to submit the request.");
 
