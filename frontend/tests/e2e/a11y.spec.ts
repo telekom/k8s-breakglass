@@ -4,6 +4,7 @@
 
 import { test, expect, Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { expectSingleH1 } from "./helpers";
 
 /**
  * Accessibility E2E tests using axe-core.
@@ -528,6 +529,23 @@ test.describe("Accessibility (axe-core WCAG 2.1 AA + AAA)", () => {
   });
 
   test.describe("Heading Semantics", () => {
+    test("every route exposes exactly one h1", async ({ page }) => {
+      await page.goto("/");
+      await expectSingleH1(page, "login gate");
+      await performMockLogin(page);
+      const routes = [
+        ...PAGES_TO_AUDIT.map((p) => p.path),
+        "/sessions/review",
+        "/debug-sessions/kbd-debug-missing",
+        "/session/req-t-sec-1st-001/approve",
+        ...ERROR_PAGES_TO_AUDIT.map((p) => p.path),
+      ];
+      for (const path of routes) {
+        await navigateTo(page, path);
+        await expectSingleH1(page, path);
+      }
+    });
+
     test("Debug session details uses ordered heading levels", async ({ page }) => {
       await performMockLogin(page);
       await page.route("**/api/debugSessions/debug-heading-kubectl", async (route) => {

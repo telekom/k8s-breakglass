@@ -47,3 +47,14 @@ export {
   type AuditTheme,
 } from "./ui-audit";
 export { DEBUG_ACTIVE, DEBUG_PENDING, mockDebugSessions } from "./debug-session-mocks";
+export {
+  focusedStop,
+  expectTabOrderFollowsReadingOrder,
+  expectSingleH1,
+  expectFocusOnPageHeading,
+  expectModalDialog,
+  expectDisabledWithReason,
+  expectToastAnnounced,
+  type FocusStop,
+} from "./screen-reader";
+export { settleMockRoute, mockLogin, mockNavigate } from "./mock-app";

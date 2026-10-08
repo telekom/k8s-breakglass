@@ -10,6 +10,8 @@ import {
   expectAlignedActionRows,
   expectTooltipsOnHoverAndFocus,
   mockDebugSessions,
+  mockLogin,
+  mockNavigate,
   useAuditTheme,
   waitForScaleModal,
   type AuditTheme,
@@ -38,38 +40,6 @@ const ROUTES = [
 
 type Audit = (page: Page, context: string, scope?: string) => Promise<unknown>;
 
-async function settle(page: Page) {
-  await page.waitForLoadState("networkidle");
-  await expect(page.locator('#main .loading-state, #main [aria-busy="true"]')).toHaveCount(0, { timeout: 15000 });
-}
-
-async function login(page: Page) {
-  await page.goto("/");
-  await page.waitForFunction(() => (window as unknown as Record<string, unknown>).__BREAKGLASS_AUTH !== undefined);
-  await page.evaluate(() => {
-    const auth = (window as unknown as { __BREAKGLASS_AUTH: { login: (o: object) => void } }).__BREAKGLASS_AUTH;
-    auth.login({ path: "/", idpName: "production-keycloak" });
-  });
-  await page.waitForSelector("#main > :not(.login-gate)");
-  await settle(page);
-}
-
-async function go(page: Page, path: string) {
-  await page.evaluate((target) => {
-    (window as unknown as { __VUE_ROUTER__: { push: (p: string) => void } }).__VUE_ROUTER__.push(target);
-  }, path);
-  await page.waitForURL((url) => url.pathname === path);
-  // The router moves focus into #main 150ms after a real navigation; let that
-  // happen first so it cannot steal focus from the control under test.
-  // Duplicate navigations (same path) never move focus, hence the catch.
-  await page
-    .waitForFunction(() => document.getElementById("main")?.contains(document.activeElement), null, {
-      timeout: 2000,
-    })
-    .catch(() => undefined);
-  await settle(page);
-}
-
 async function auditDialog(page: Page, opener: string, modal: string, audit: Audit, context: string) {
   await page.locator(opener).locator("visible=true").first().click();
   await waitForScaleModal(page, modal);
@@ -80,11 +50,11 @@ async function auditDialog(page: Page, opener: string, modal: string, audit: Aud
 
 async function auditEverything(page: Page, name: string, audit: Audit) {
   for (const route of ROUTES) {
-    await go(page, route);
+    await mockNavigate(page, route);
     await audit(page, `${route} [${name}]`);
   }
 
-  await go(page, "/");
+  await mockNavigate(page, "/");
   await auditDialog(
     page,
     '[data-testid="request-access-button"]',
@@ -92,7 +62,7 @@ async function auditEverything(page: Page, name: string, audit: Audit) {
     audit,
     `request dialog [${name}]`,
   );
-  await go(page, "/approvals/pending");
+  await mockNavigate(page, "/approvals/pending");
   // A request with a mandatory note: its confirm buttons start disabled with a reason.
   await auditDialog(
     page,
@@ -101,7 +71,7 @@ async function auditEverything(page: Page, name: string, audit: Audit) {
     audit,
     `approval dialog [${name}]`,
   );
-  await go(page, "/requests/mine");
+  await mockNavigate(page, "/requests/mine");
   await auditDialog(
     page,
     '[data-testid="withdraw-button"]',
@@ -109,7 +79,7 @@ async function auditEverything(page: Page, name: string, audit: Audit) {
     audit,
     `withdraw dialog [${name}]`,
   );
-  await go(page, "/debug-sessions");
+  await mockNavigate(page, "/debug-sessions");
   const active = `[data-testid="debug-session-card-${DEBUG_ACTIVE}"]`;
   const pending = `[data-testid="debug-session-card-${DEBUG_PENDING}"]`;
   await auditDialog(
@@ -126,7 +96,7 @@ async function auditEverything(page: Page, name: string, audit: Audit) {
     audit,
     `debug card reject dialog [${name}]`,
   );
-  await go(page, `/debug-sessions/${DEBUG_PENDING}`);
+  await mockNavigate(page, `/debug-sessions/${DEBUG_PENDING}`);
   await auditDialog(
     page,
     '[data-testid="reject-session-button"]',
@@ -139,7 +109,7 @@ async function auditEverything(page: Page, name: string, audit: Audit) {
 async function prepare(page: Page, theme: AuditTheme) {
   await useAuditTheme(page, theme);
   await mockDebugSessions(page, "mock.user@breakglass.dev");
-  await login(page);
+  await mockLogin(page);
 }
 
 for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {

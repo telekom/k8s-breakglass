@@ -13,6 +13,7 @@ import {
   DEBUG_ACTIVE,
   DEBUG_PENDING,
   mockDebugSessions,
+  expectToastAnnounced,
 } from "./helpers";
 
 /**
@@ -188,8 +189,11 @@ test.describe.serial("Keyboard verification: breakglass dialogs", () => {
     await tabTo(page, modal.locator('[data-testid="reason-input"]'));
     await page.keyboard.type(REASON);
     await tabTo(page, modal.locator('[data-testid="submit-request-button"]'));
+    // The live region must exist before the toast is inserted, or screen readers ignore it.
+    await expect(page.locator('.toast-region[aria-live="polite"]')).toHaveCount(1);
     await page.keyboard.press("Enter");
     await waitForScaleToast(page, "success-toast");
+    await expectToastAnnounced(page, "success-toast", /\S/);
     await expect(modal).toHaveCount(0);
     // The toast's empty built-in link is hidden through Scale's `styles` prop.
     const toast = page.locator('[data-testid="success-toast"]').first();

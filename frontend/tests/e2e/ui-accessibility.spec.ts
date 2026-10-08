@@ -9,6 +9,7 @@ import {
   AUDIT_THEMES,
   AUDIT_VIEWPORTS,
   expectNoSeriousA11yViolations,
+  expectSingleH1,
   findEscalationCardByName,
   focusedElementInfo,
   useAuditTheme,
@@ -85,6 +86,7 @@ test.describe("UI accessibility: views", () => {
           await page.goto(route);
           await waitForRouteSettled(page);
           await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+          await expectSingleH1(page, `${route} [${viewportName}/${theme}]`);
           await expectNoSeriousA11yViolations(page, `${route} [${viewportName}/${theme}]`);
         }
 
