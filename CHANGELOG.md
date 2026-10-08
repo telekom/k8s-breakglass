@@ -119,6 +119,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ui-visual` and `ui-visual-audit` mock Playwright specs guard these issues,
   plus overlaps, clipping, horizontal scroll, off-scale gaps, short separators
   and empty boxes, on every route, dialog, menu and list state.
+- **Frontend**: Theme and contrast switches no longer disappear after the
+  second toggle: Vue class bindings on Scale elements dropped Stencil's
+  `hydrated` class, so state now uses `aria-pressed`/`data-*` attributes. The
+  mobile menu marks the current page again (`aria-current`, which Scale's
+  main-nav item stripped from the first link), its theme rows use the link
+  colour in dark mode, wrapped filter checkboxes align in columns, the request
+  card no longer repeats the reason hint in red, and the Session Browser hides
+  its result count while loading or failed.
 - The kind e2e setup waits for escalations by their `breakglass-` prefixed
   names, removing repeated timeouts that slowed every UI E2E run.
 

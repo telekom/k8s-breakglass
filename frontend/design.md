@@ -221,7 +221,7 @@ Defined in `base.css`. Do not add component-specific styles here; use scoped sty
 | `.ui-toolbar` | The one filter panel per list page: a wrapping flex row with a `--space-md` gap, bordered, shadowed, card background. The same wrapping rules apply at every width, so mobile gets stacked full-width fields with no empty space and no separate column layout |
 | `.ui-toolbar-field` | Flex-grow field slot (min `15rem`, full width when narrower) |
 | `.ui-toolbar-toggle` | Checkbox/switch that keeps its natural width on the field row |
-| `.ui-toolbar-group` / `-group-label` | Full-width row inside the panel, e.g. state checkboxes, with a caption label |
+| `.ui-toolbar-group` / `-group-label` | Full-width row inside the panel, e.g. state checkboxes, with a caption label. Below 1040 px the options form an auto-fill grid (min `9rem`) so wrapped rows stay in columns |
 | `.ui-toolbar-actions` | Action button cluster; text buttons share the row on ≤ 768 px |
 | `.ui-toolbar-actions--end` | Pushes the cluster to the end of the toolbar |
 | `.ui-toolbar-info` | The result count ("Showing 14 of 14 …"): last full-width line of the panel, directly under the controls it describes. Never put it in a separate card |
@@ -458,6 +458,10 @@ Tooltips must open on hover and on keyboard focus. Do not add tooltips to button
 
 **Toasts.** `ErrorToasts.vue` renders one fixed stack of Scale `scale-notification type="toast"` elements, `--space-lg` below the measured bottom of the header bar, with a `--space-md` gap between toasts, Scale's own internal padding, and a width capped to the viewport minus the page gutter on mobile. Report caught errors with `reportError(err, fallback)` from `@/services/toast`, never `pushError(err.message)`: the HTTP layer already toasts backend errors, and `reportError` skips errors it has already reported. Identical concurrent messages are merged.
 
+**Mobile menu.** Flyout links and the theme/contrast rows share the standard text colour in every theme. The current page is bold, carries `aria-current="page"`, and uses the brand colour in light mode (dark and high contrast keep the AAA text colour, like the desktop nav). Header function items (`scale-telekom-nav-item` around the profile menu and the menu trigger) use `variant="functions"`: a main-nav item rewrites `aria-current` on the first link it contains.
+
+**Scale elements and classes.** Never bind a dynamic `:class` on a `<scale-*>` element. Vue rewrites the `class` attribute on update and drops Stencil's `hydrated` class, and Stencil then hides the element. Use static classes and express state with `aria-pressed`, `aria-*` or `data-*` attributes. `tests/unit/scaleClassBindings.spec.ts` and the visual audit's hydration check enforce this.
+
 **Focus.** After navigation the router moves focus to the page `h1`, unless the user has already focused something else (e.g. opened the profile menu) in the meantime.
 
 **States.** Use `LoadingState` for loading, `EmptyState` for empty lists (with a clear next step), and `ErrorBanner`/`scale-notification` for errors. Do not hand-roll placeholders.
@@ -468,7 +472,7 @@ Tooltips must open on hover and on keyboard focus. Do not add tooltips to button
 2. Put new tokens in `tokens.css`, with a dark/high-contrast value when the colour differs.
 3. Use the action-row primitives for buttons.
 4. Add tooltips per the rules above.
-5. Add the route, dialog or menu to `tests/e2e/ui-audit.a11y.spec.ts` and `tests/e2e/ui-visual-audit.a11y.spec.ts`. The visual audit (`helpers/ui-visual-audit.ts`) checks every route, dialog, menu, and empty/error/stress list state at 4 viewports in light, dark and high contrast. It flags overlaps, clipped text without a tooltip, horizontal scroll, off-viewport content, uneven row centres and heights, gaps off the token scale, separators that stop short, boxes with empty space, mixed icon sizes, and inconsistent card radii and paddings. It also checks that menus close on Escape and return focus. `ui-visual.a11y.spec.ts` holds the dedicated header, toast, dialog and filter regressions.
+5. Add the route, dialog or menu to `tests/e2e/ui-audit.a11y.spec.ts` and `tests/e2e/ui-visual-audit.a11y.spec.ts`. The visual audit (`helpers/ui-visual-audit.ts`) checks every route, dialog, menu, and empty/error/stress list state at 4 viewports in light, dark and high contrast. It flags overlaps, clipped text without a tooltip, horizontal scroll, off-viewport content, uneven row centres and heights, gaps off the token scale, separators that stop short, boxes with empty space, mixed icon sizes, inconsistent card radii and paddings, wrapped checkbox/radio groups whose rows do not share columns, and Scale elements that lost their `hydrated` flag. It also checks that menus close on Escape and return focus. `ui-visual.a11y.spec.ts` holds the dedicated header, toast, dialog and filter regressions.
 6. Run `npm run lint`, `npm run lint:styles`, `npm run typecheck` and `npm run test:a11y`.
 
 ## 7. Status Tone Mapping

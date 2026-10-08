@@ -22,6 +22,7 @@ This document provides conventions specifically for AI coding agents working in 
    - Buttons: only Scale variants (`primary`, `secondary`, `ghost`); group them in `.ui-actions` rows instead of ad-hoc flex/margins.
    - Tooltips: icon-only buttons, disabled buttons (via `DisabledReason`, explaining why), status tags and non-obvious chips (via `HintTooltip`/`StatusTag`) need a `scale-tooltip` reachable on hover and keyboard focus. Do not add tooltips to labelled buttons or use native `title`.
    - Filters: one `.ui-toolbar` panel per list page, with the result count as its `.ui-toolbar-info` last line; no separate mobile layout.
+   - Scale elements: never bind a dynamic `:class` on a `<scale-*>` element; Vue rewrites `class` and drops Stencil's `hydrated` flag, which hides the element. Express state with `aria-*`/`data-*` attributes (guarded by `tests/unit/scaleClassBindings.spec.ts`).
    - Run the mock audits (`npm run test:a11y`: `ui-audit`, `ui-visual` and `ui-visual-audit` specs) after layout changes. Add new routes, dialogs and menus to `ui-visual-audit.a11y.spec.ts`.
 5. **Testing**: All new services and components must have accompanying unit tests in `frontend/tests/unit`. We use Vitest for testing. Run tests via `npm test`.
 
