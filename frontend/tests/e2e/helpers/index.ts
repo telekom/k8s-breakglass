@@ -46,6 +46,7 @@ export {
   type AuditViewport,
   type AuditTheme,
 } from "./ui-audit";
+export { findVisualProblems, expectNoVisualProblems } from "./ui-visual-audit";
 export { DEBUG_ACTIVE, DEBUG_PENDING, mockDebugSessions } from "./debug-session-mocks";
 export {
   focusedStop,

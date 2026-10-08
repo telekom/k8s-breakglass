@@ -12,20 +12,22 @@ export const AUDIT_VIEWPORTS = {
 } as const;
 
 export type AuditViewport = keyof typeof AUDIT_VIEWPORTS;
-export type AuditTheme = "light" | "dark";
+export type AuditTheme = "light" | "dark" | "hc";
 
 export const AUDIT_THEMES: AuditTheme[] = ["light", "dark"];
 
 /**
  * Persist the theme preference before any app script runs and emulate the
  * matching color scheme, so the first paint already uses the requested theme.
+ * High contrast (`hc`) is the app's own mode, which always uses the dark canvas.
  */
 export async function useAuditTheme(page: Page, theme: AuditTheme): Promise<void> {
   await page.addInitScript((value) => {
-    window.localStorage.setItem("breakglass-theme", value);
-    window.localStorage.removeItem("breakglass-high-contrast");
+    window.localStorage.setItem("breakglass-theme", value === "light" ? "light" : "dark");
+    if (value === "hc") window.localStorage.setItem("breakglass-high-contrast", "true");
+    else window.localStorage.removeItem("breakglass-high-contrast");
   }, theme);
-  await page.emulateMedia({ colorScheme: theme });
+  await page.emulateMedia({ colorScheme: theme === "light" ? "light" : "dark" });
 }
 
 /** Wait until the app shell has rendered the current route and pending requests settled. */
@@ -134,8 +136,10 @@ export async function findLayoutProblems(page: Page, scopeSelector = "body"): Pr
       return `${el.tagName.toLowerCase()}${testId ? `[data-testid=${testId}]` : ""}${label ? ` "${label}"` : ""}`;
     };
 
+    // Flat-tree parent: slotted content belongs to its slot, so fixed shadow
+    // wrappers (e.g. scale-modal's overlay) are seen between it and its host.
     const parentOf = (el: Element): Element | null =>
-      el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
+      el.assignedSlot ?? el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
 
     const isIntentionallyHidden = (el: Element): boolean => {
       for (let node: Element | null = el; node; node = parentOf(node)) {
@@ -316,8 +320,10 @@ export async function findAlignmentProblems(page: Page, scopeSelector = "body"):
     const root = document.querySelector(scope);
     if (!root) return [`scope ${scope} not found`];
 
+    // Flat-tree parent: slotted content belongs to its slot, so fixed shadow
+    // wrappers (e.g. scale-modal's overlay) are seen between it and its host.
     const parentOf = (el: Element): Element | null =>
-      el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
+      el.assignedSlot ?? el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
     const hidden = (el: Element): boolean => {
       for (let node: Element | null = el; node; node = parentOf(node)) {
         const style = getComputedStyle(node);
@@ -495,8 +501,10 @@ export async function expectTooltipsOnHoverAndFocus(page: Page, context: string,
   const targets = await page.evaluate((scope) => {
     const root = document.querySelector(scope);
     if (!root) return [];
+    // Flat-tree parent: slotted content belongs to its slot, so fixed shadow
+    // wrappers (e.g. scale-modal's overlay) are seen between it and its host.
     const parentOf = (el: Element): Element | null =>
-      el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
+      el.assignedSlot ?? el.parentElement ?? ((el.getRootNode() as ShadowRoot).host as Element | undefined) ?? null;
     const hidden = (el: Element): boolean => {
       for (let node: Element | null = el; node; node = parentOf(node)) {
         const style = getComputedStyle(node);
