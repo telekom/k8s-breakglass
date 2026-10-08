@@ -398,7 +398,7 @@ onUnmounted(() => {
         opened
         data-testid="self-approval-warning"
       >
-        <div class="self-approval-content">
+        <div slot="text" class="self-approval-content">
           <p>
             Your organization's security policy requires that breakglass sessions be approved by a different person than
             the requester.
@@ -413,7 +413,7 @@ onUnmounted(() => {
       <!-- Standard notification for other errors -->
       <scale-notification v-else variant="danger" :heading="errorDetails" opened data-testid="error-details">
         <!-- Show additional context based on approval metadata -->
-        <div v-if="approvalMeta" class="error-meta">
+        <div v-if="approvalMeta" slot="text" class="error-meta">
           <p v-if="approvalMeta.isRequester && denialCategory !== 'self-approval'" class="meta-info">
             <strong>Note:</strong> You are the requester of this session.
           </p>
@@ -468,25 +468,27 @@ onUnmounted(() => {
   margin: 0 auto;
 }
 
+.error-container scale-notification {
+  display: block;
+  width: 100%;
+  text-align: start;
+}
+
 .error-icon {
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin-bottom: var(--space-lg);
 }
 
 .error-title {
-  font: var(--telekom-text-style-heading-4);
+  font: var(--telekom-text-style-heading-3);
   font-weight: 600;
   margin-bottom: var(--space-xl);
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-standard);
   text-align: center;
 }
 
-.error-title.self-approval-title {
-  color: var(--scl-color-warning);
-}
-
 .error-icon.self-approval-icon {
-  color: var(--scl-color-warning);
+  color: var(--telekom-color-text-and-icon-functional-warning);
 }
 
 .self-approval-content {

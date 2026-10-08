@@ -307,7 +307,8 @@ const statusDetail = computed(() => {
   if (sessionPending.value && timeoutHumanized.value) {
     return `Timeout in ${timeoutHumanized.value}`;
   }
-  return `Up to ${durationHumanized.value}`;
+  // An available escalation's maximum duration is already the card subtitle.
+  return "";
 });
 
 const ctaCopy = computed(() => {
@@ -327,14 +328,6 @@ type MetaBadge = { label: string; variant: TagVariant; hint: string };
 
 const metaBadges = computed<MetaBadge[]>(() => {
   const badges: MetaBadge[] = [];
-  // Status badge - only one at a time
-  if (sessionActive.value) {
-    badges.push({ label: "Active", variant: "success", hint: "You have an active session for this escalation" });
-  } else if (sessionPending.value) {
-    badges.push({ label: "Pending", variant: "warning", hint: "Your request is waiting for an approver" });
-  } else {
-    badges.push({ label: "Available", variant: "info", hint: "You can request this escalation" });
-  }
   // Approval type badge
   if (!props.breakglass?.selfApproval && props.breakglass?.approvalGroups?.length) {
     badges.push({ label: "Needs approval", variant: "warning", hint: "An approver must approve your request" });
@@ -345,7 +338,7 @@ const metaBadges = computed<MetaBadge[]>(() => {
       hint: "No approvers are configured; the request does not need approval",
     });
   }
-  // Note: Cluster, requester groups, and reason info are shown in the meta grid to avoid duplication
+  // Status, cluster, requester groups and reason are shown elsewhere on the card to avoid duplication
   return badges;
 });
 
@@ -362,8 +355,6 @@ const expiryHumanized = computed(() => {
   }
   return "";
 });
-
-const durationHumanized = computed(() => humanizeDurationShort(props.breakglass.duration * 1000));
 
 const timeoutHumanized = computed(() => {
   if (sessionPending.value && sessionPending.value.status?.timeoutAt) {
@@ -462,7 +453,7 @@ function drop() {
   >
     <template #status>
       <scale-tag size="small" :variant="stateChipVariant">{{ statusLabel }}</scale-tag>
-      <p class="status-detail">{{ statusDetail }}</p>
+      <p v-if="statusDetail" class="status-detail">{{ statusDetail }}</p>
     </template>
 
     <template v-if="metaBadges.length" #chips>
@@ -475,7 +466,9 @@ function drop() {
 
     <template #body>
       <div class="session-section">
-        <span class="label">Granted group</span>
+        <div class="session-section__header">
+          <span class="label">Granted group</span>
+        </div>
         <scale-tag size="small" variant="neutral"
           ><span data-testid="escalation-name">{{ breakglass.to }}</span></scale-tag
         >
@@ -705,15 +698,15 @@ function drop() {
       </p>
     </div>
 
-    <div class="modal-actions">
+    <div slot="action" class="modal-actions">
+      <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"
+        >Cancel</scale-button
+      >
       <DisabledReason :reason="isReasonMissing ? 'Enter a reason to submit the request.' : ''">
         <scale-button :disabled="isReasonMissing" data-testid="submit-request-button" @click="request">
           Confirm Request
         </scale-button>
       </DisabledReason>
-      <scale-button variant="secondary" data-testid="cancel-request-button" @click="closeRequestModal"
-        >Cancel</scale-button
-      >
     </div>
   </scale-modal>
 </template>
@@ -814,13 +807,15 @@ function drop() {
 .duration-selector,
 .schedule-section,
 .reason-field {
-  margin-bottom: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
 
 .helper {
   font: var(--telekom-text-style-caption);
   color: var(--telekom-color-text-and-icon-additional);
-  margin-top: var(--space-2xs);
+  margin: 0;
 }
 
 .helper.warning {
@@ -843,7 +838,7 @@ function drop() {
   border-radius: var(--radius-sm);
   border: 1px solid var(--tone-chip-info-border);
   border-left: 3px solid var(--telekom-color-functional-informational-standard);
-  margin-top: var(--space-xs);
+  margin: 0;
   font: var(--telekom-text-style-caption);
   color: var(--tone-chip-info-text);
 }
@@ -879,7 +874,7 @@ function drop() {
 
 :deep(input::placeholder),
 :deep(textarea::placeholder) {
-  color: var(--telekom-color-text-placeholder);
+  color: var(--telekom-color-text-and-icon-additional);
   opacity: 1;
 }
 

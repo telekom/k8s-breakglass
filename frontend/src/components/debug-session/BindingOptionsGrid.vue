@@ -210,7 +210,7 @@ const emit = defineEmits<{
   padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-primary-standard);
   color: var(--telekom-color-text-and-icon-inverted-standard);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-pill);
 }
 
 .binding-key-constraints {
@@ -218,7 +218,7 @@ const emit = defineEmits<{
   gap: var(--space-md);
   margin-bottom: var(--space-sm);
   padding-bottom: var(--space-sm);
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-key-constraints .key-constraint {
@@ -272,7 +272,7 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   padding: var(--space-2xs) var(--space-sm);
   background: var(--telekom-color-background-surface-subtle);
-  border-radius: var(--radius-full);
+  border-radius: var(--radius-pill);
   color: var(--telekom-color-text-and-icon-additional);
 }
 
@@ -312,7 +312,7 @@ const emit = defineEmits<{
   font: var(--telekom-text-style-badge);
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-approvers .approvers-label {
@@ -335,7 +335,7 @@ const emit = defineEmits<{
   color: var(--telekom-color-text-and-icon-additional);
   padding-top: var(--space-xs);
   margin-top: auto;
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .binding-source-ref .ref-value {

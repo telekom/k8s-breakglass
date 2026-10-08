@@ -343,7 +343,7 @@ function handleDurationChange(ev: Event) {
   font: var(--telekom-text-style-small);
   font-family: monospace;
   background: var(--telekom-color-background-surface-subtle);
-  border: 1px solid var(--telekom-color-ui-border-subtle);
+  border: 1px solid var(--telekom-color-ui-faint);
   border-radius: var(--radius-sm);
 }
 
@@ -355,7 +355,7 @@ function handleDurationChange(ev: Event) {
   font: var(--telekom-text-style-small);
   font-family: monospace;
   background: var(--telekom-color-background-surface-subtle);
-  border: 1px solid var(--telekom-color-ui-border-subtle);
+  border: 1px solid var(--telekom-color-ui-faint);
   border-radius: var(--radius-sm);
 }
 
@@ -379,8 +379,8 @@ function handleDurationChange(ev: Event) {
   gap: var(--space-sm);
   padding: var(--space-md);
   background: var(--telekom-color-background-surface-subtle);
-  border: 1px solid var(--telekom-color-ui-border-subtle);
-  border-radius: var(--radius-standard);
+  border: 1px solid var(--telekom-color-ui-faint);
+  border-radius: var(--radius-md);
 }
 
 .fixed-label {
@@ -401,8 +401,8 @@ function handleDurationChange(ev: Event) {
   margin-bottom: var(--space-lg);
   padding: var(--space-md);
   background: var(--telekom-color-background-surface-subtle);
-  border-radius: var(--radius-standard);
-  border: 1px solid var(--telekom-color-ui-border-subtle);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--telekom-color-ui-faint);
 }
 
 .info-item {

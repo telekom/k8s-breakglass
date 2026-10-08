@@ -299,7 +299,7 @@ function openRenewModal() {
 }
 
 .debug-session-card:hover {
-  box-shadow: var(--telekom-shadow-raised);
+  box-shadow: var(--shadow-card);
 }
 
 .debug-session-card.state-active {
@@ -318,7 +318,7 @@ function openRenewModal() {
 
 .card-header {
   padding: var(--space-md);
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .session-name {
@@ -371,7 +371,7 @@ function openRenewModal() {
 
 .card-actions {
   padding: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 /* Keep one flat action row so every button shares the row's centre line. */

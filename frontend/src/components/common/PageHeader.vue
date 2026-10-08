@@ -47,7 +47,7 @@ const displayBadge = computed(() => {
         <slot name="subtitle"></slot>
       </div>
 
-      <div class="page-header__aside">
+      <div v-if="displayBadge || hasActions" class="page-header__aside">
         <scale-tag v-if="displayBadge" :variant="badgeVariant" class="page-header__badge">
           {{ displayBadge }}
         </scale-tag>
@@ -66,7 +66,6 @@ const displayBadge = computed(() => {
   display: flex;
   flex-direction: column;
   gap: var(--space-md);
-  margin-bottom: var(--space-xl);
 }
 
 .page-header__breadcrumbs {

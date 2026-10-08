@@ -748,7 +748,10 @@ function handleTemplateChange(ev: Event) {
     </div>
 
     <div v-else-if="!hasAvailableTemplates" class="no-templates-message" data-testid="no-available-templates-message">
-      <scale-icon-alert-warning size="48" color="var(--scl-color-warning)"></scale-icon-alert-warning>
+      <scale-icon-alert-warning
+        size="48"
+        color="var(--telekom-color-text-and-icon-functional-warning)"
+      ></scale-icon-alert-warning>
       <h2>No Templates With Available Clusters</h2>
       <p>
         {{ templates.length }} template(s) exist, but none have clusters you can access. This may be due to cluster
@@ -927,13 +930,11 @@ function handleTemplateChange(ev: Event) {
 /* Wizard Stepper */
 .wizard-stepper {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: center;
   gap: var(--space-sm);
-  margin: 0 0 var(--space-xl) 0;
-  padding: var(--space-md);
-  background: var(--telekom-color-background-surface);
-  border-radius: var(--radius-md);
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
@@ -944,33 +945,36 @@ function handleTemplateChange(ev: Event) {
   color: var(--telekom-color-text-and-icon-additional);
 }
 
-.step.active {
-  color: var(--telekom-color-text-and-icon-standard);
-}
-
+.step.active,
 .step.completed {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
+/* Upcoming steps are outlined so their number stays legible; the current
+   step is filled with the brand colour and finished steps are tinted success. */
 .step-number {
   display: flex;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
+  border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: 50%;
-  background: var(--telekom-color-text-and-icon-additional);
-  color: var(--telekom-color-text-and-icon-inverted);
-  font-weight: 600;
   font: var(--telekom-text-style-caption);
+  font-weight: 700;
+  color: var(--telekom-color-text-and-icon-additional);
 }
 
 .step.active .step-number {
   background: var(--accent-telekom);
+  border-color: var(--accent-telekom);
+  color: var(--telekom-color-text-and-icon-inverted-standard);
 }
 
 .step.completed .step-number {
-  background: var(--accent-success);
+  background: var(--telekom-color-functional-success-subtle);
+  border-color: var(--accent-success);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .step-label {
@@ -980,7 +984,7 @@ function handleTemplateChange(ev: Event) {
 
 .step-connector {
   width: 40px;
-  height: 2px;
+  height: 1px;
   background: var(--telekom-color-ui-border-standard);
 }
 

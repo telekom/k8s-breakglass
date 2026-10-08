@@ -46,14 +46,17 @@ describe("SessionErrorView", () => {
   describe("Error Messages", () => {
     it("shows generic error for /session path", async () => {
       const wrapper = await createWrapper("/session");
-      expect(wrapper.text()).toContain("Invalid session URL");
-      expect(wrapper.text()).toContain("valid session approval link");
+      // The message is the Scale notification heading (an attribute, not slotted text).
+      const heading = wrapper.find('[data-testid="session-error-details"]').attributes("heading");
+      expect(heading).toContain("Invalid session URL");
+      expect(heading).toContain("valid session approval link");
     });
 
     it("shows incomplete URL error for /session/:name without /approve", async () => {
       const wrapper = await createWrapper("/session/my-session-123");
-      expect(wrapper.text()).toContain("Incomplete session URL");
-      expect(wrapper.text()).toContain("my-session-123");
+      const heading = wrapper.find('[data-testid="session-error-details"]').attributes("heading");
+      expect(heading).toContain("Incomplete session URL");
+      expect(heading).toContain("my-session-123");
     });
   });
 

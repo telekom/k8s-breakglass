@@ -1013,7 +1013,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   margin: 0 0 var(--space-md);
   font: var(--telekom-text-style-body);
   font-weight: 600;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
   padding-bottom: var(--space-sm);
 }
 
@@ -1057,7 +1057,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 
 .actions {
   padding-top: var(--space-md);
-  border-top: 1px solid var(--telekom-color-ui-border-subtle);
+  border-top: 1px solid var(--telekom-color-ui-faint);
 }
 
 .info-list {
@@ -1071,7 +1071,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
   gap: var(--space-sm);
   min-width: 0;
   padding: var(--space-xs) 0;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .info-item:last-child {
@@ -1113,7 +1113,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
 .participant-item,
 .pod-item {
   padding: var(--space-sm) 0;
-  border-bottom: 1px solid var(--telekom-color-ui-border-subtle);
+  border-bottom: 1px solid var(--telekom-color-ui-faint);
 }
 
 .participant-item:last-child,

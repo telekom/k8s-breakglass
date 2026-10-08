@@ -40,12 +40,9 @@ const handleViewSessions = () => {
 
       <h1 class="error-title">Invalid Session Link</h1>
 
-      <scale-notification variant="danger" opened>
-        <div class="error-content">
+      <scale-notification variant="danger" :heading="errorMessage" opened data-testid="session-error-details">
+        <div slot="text" class="error-content">
           <p>
-            <strong>{{ errorMessage }}</strong>
-          </p>
-          <p class="mt-3">
             Session approval links should look like:<br />
             <code>/session/[session-name]/approve</code>
           </p>
@@ -82,8 +79,14 @@ const handleViewSessions = () => {
   text-align: center;
 }
 
+/* The icon and title are centred; the notification keeps Scale's start alignment. */
+.error-container scale-notification {
+  display: block;
+  text-align: start;
+}
+
 .error-icon {
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-functional-danger);
   margin-bottom: var(--space-xl);
 }
 
@@ -91,7 +94,7 @@ const handleViewSessions = () => {
   font: var(--telekom-text-style-heading-3);
   font-weight: 600;
   margin-bottom: var(--space-xl);
-  color: var(--scl-color-danger);
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .error-content {

@@ -168,17 +168,11 @@ const cardClasses = computed(() => ({
   gap: var(--space-lg);
 }
 
+/* Chips line up with the card text, without a wrapper box. */
 .session-summary-card__chips {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-sm);
-  padding: var(--space-sm);
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-}
-
-:root[data-high-contrast="true"] .session-summary-card__chips {
-  border-color: var(--telekom-color-ui-border-standard);
 }
 
 /* Ensure long tag content doesn't overflow */
@@ -223,6 +217,7 @@ const cardClasses = computed(() => ({
   .session-summary-card__status {
     align-items: flex-start;
     width: 100%;
+    text-align: left;
   }
 }
 </style>

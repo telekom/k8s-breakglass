@@ -84,26 +84,52 @@ scale-dropdown::part(combobox-label) {
 }
 
 /* High contrast (light and dark): solid black/white primary buttons from the
-   --cta-* tokens, including custom slotted labels and icons. */
-:root[data-high-contrast="true"] scale-button::part(variant-primary),
-:root[data-high-contrast="true"] scale-button[variant="primary"]::part(button),
-:root[data-high-contrast="true"] scale-button[variant="primary"]::part(base),
-:root[data-high-contrast="true"] scale-button:not([variant])::part(button),
-:root[data-high-contrast="true"] scale-button:not([variant])::part(base) {
+   --cta-* tokens. Match the rendered part, not the host attribute: Vue sets
+   `variant` as a property, so `scale-button[variant]` selectors never match.
+   Slotted labels and icons inherit the colour through the flat tree. */
+:root[data-high-contrast="true"] scale-button::part(variant-primary) {
   background-color: var(--cta-bg) !important;
   color: var(--cta-fg) !important;
   border: 2px solid var(--cta-bg) !important;
 }
 
-:root[data-high-contrast="true"][data-theme="dark"] scale-telekom-header::part(app-name-text) {
-  color: var(--telekom-color-text-and-icon-standard) !important;
+/* The two pins above must not repaint disabled primaries: restore Scale's
+   own disabled fill and text (::part() cannot be combined with :not()). */
+:root:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-button::part(variant-primary disabled),
+:root[data-theme="dark"]:not([data-high-contrast="true"]):not([data-ui-flavour="oss"]):not([data-ui-flavour="neutral"])
+  scale-button::part(variant-primary disabled) {
+  background-color: var(--telekom-color-ui-disabled) !important;
+  color: var(--telekom-color-text-and-icon-disabled) !important;
+  border-color: transparent !important;
 }
 
-:root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__label,
-:root[data-high-contrast="true"] scale-button[variant="primary"] .action-button__icon,
-:root[data-high-contrast="true"] scale-button[variant="primary"] > *,
-:root[data-high-contrast="true"] scale-button:not([variant]) > * {
-  color: var(--cta-fg) !important;
+:root[data-high-contrast="true"] scale-button::part(variant-primary disabled) {
+  background-color: transparent !important;
+  color: var(--telekom-color-text-and-icon-disabled) !important;
+  border: 2px solid var(--telekom-color-text-and-icon-disabled) !important;
+}
+
+/* High contrast: Scale draws the checkmark/dot in white on the primary fill,
+   which is white itself in dark high contrast. Use the CTA foreground, which
+   always contrasts with the --cta-bg/primary fill. */
+:root[data-high-contrast="true"] :is(scale-checkbox, scale-radio-button, scale-switch) {
+  --telekom-color-text-and-icon-white-standard: var(--cta-fg);
+}
+
+/* High contrast remaps the primary token to black/white, which would make the
+   white logo invisible on its own tile. Logos are exempt from contrast rules
+   (WCAG 1.4.3), so the tile keeps the brand magenta. */
+:root[data-high-contrast="true"] scale-telekom-header {
+  --background-logo: var(--button-primary-bg-branded);
+}
+
+:root[data-high-contrast="true"] scale-telekom-header::part(app-logo) {
+  --telekom-color-primary-standard: var(--button-primary-bg-branded);
+}
+
+:root[data-high-contrast="true"][data-theme="dark"] scale-telekom-header::part(app-name-text) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
 }
 
 /* AAA contrast: lighten ghost button text in dark mode for 7:1 on dark bg */
@@ -318,7 +344,7 @@ body {
   margin: 0;
   min-height: 100vh;
   background-color: var(--surface-primary);
-  color: inherit;
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 #app {
