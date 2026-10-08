@@ -46,6 +46,14 @@ export async function focusedStop(page: Page): Promise<FocusStop | null> {
   return { ...info, aria: firstAriaLine(snapshot) };
 }
 
+function focusedInViewport(page: Page): Promise<boolean> {
+  return page.evaluate(() => {
+    const el = (window as unknown as Record<string, Element | undefined>).__srFocusProbe;
+    const r = el?.getBoundingClientRect();
+    return !!r && r.bottom > 0 && r.top < window.innerHeight && r.width > 0 && r.height > 0;
+  });
+}
+
 function firstAriaLine(snapshot: string): string {
   const line = snapshot.split("\n").find((l) => l.trim().startsWith("- ")) ?? "";
   let entry = line.trim().replace(/^- /, "");
@@ -85,7 +93,12 @@ export async function expectTabOrderFollowsReadingOrder(
     if (!stop?.inMain) break;
     const name = nameOf(stop.aria);
     expect(name.trim(), `${context}: Tab stop #${i + 1} (${stop.aria}) has no accessible name`).not.toBe("");
-    expect(stop.inViewport, `${context}: Tab stop #${i + 1} (${stop.aria}) is not scrolled into view`).toBe(true);
+    // WebKit scrolls the focused element into view a frame or two after the keypress.
+    await expect
+      .poll(() => (stop.inViewport ? true : focusedInViewport(page)), {
+        message: `${context}: Tab stop #${i + 1} (${stop.aria}) is not scrolled into view`,
+      })
+      .toBe(true);
     const index = reading.findIndex((line, n) => n >= cursor && line.includes(mask(name)));
     expect(
       index,
@@ -126,7 +139,8 @@ export async function expectFocusOnPageHeading(page: Page, context: string): Pro
  */
 export async function expectModalDialog(modal: Locator, name: string): Promise<Locator> {
   const dialog = modal.getByRole("dialog", { name, exact: true });
-  await expect(dialog).toBeVisible();
+  // The first open lazy-loads the Scale modal bundle, which can be slow under parallel load.
+  await expect(dialog).toBeVisible({ timeout: 15_000 });
   await expect(dialog).toHaveAttribute("aria-modal", "true");
   await expect(dialog.getByRole("heading", { name, exact: true })).toBeVisible();
   await expect

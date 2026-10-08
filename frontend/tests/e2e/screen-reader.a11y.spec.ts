@@ -275,6 +275,10 @@ test.describe("Screen reader semantics (mock)", () => {
     await expect(region).toHaveCount(1);
     await expect(region.locator("scale-notification-toast")).toHaveCount(0);
 
+    // Keep the shared mock server state intact so the withdraw dialog test stays repeatable.
+    await page.route("**/api/breakglassSessions/*/withdraw", (route) =>
+      route.fulfill({ status: 200, contentType: "application/json", body: '{"message":"session withdrawn"}' }),
+    );
     await mockNavigate(page, "/requests/mine");
     await page.locator('[data-testid="withdraw-button"]').filter({ visible: true }).first().click();
     const modal = page.locator('[data-testid="withdraw-confirm-modal"]').first();
