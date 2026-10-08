@@ -126,7 +126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   main-nav item stripped from the first link), its theme rows use the link
   colour in dark mode, wrapped filter checkboxes align in columns, the request
   card no longer repeats the reason hint in red, and the Session Browser hides
-  its result count while loading or failed.
+  its result count while loading or failed. Header icons are evenly spaced, and
+  the mobile menu's current page carries a start bar in every theme.
 - The kind e2e setup waits for escalations by their `breakglass-` prefixed
   names, removing repeated timeouts that slowed every UI E2E run.
 
