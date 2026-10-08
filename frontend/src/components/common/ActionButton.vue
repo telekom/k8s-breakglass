@@ -53,7 +53,7 @@ function handleClick(event: Event) {
 <template>
   <scale-button
     class="action-button"
-    :class="{ 'action-button--loading': loading }"
+    :data-loading="loading || undefined"
     :variant="variant"
     :size="size"
     :disabled="isDisabled"
@@ -79,7 +79,7 @@ function handleClick(event: Event) {
   }
 }
 
-.action-button--loading {
+.action-button[data-loading] {
   cursor: wait;
 }
 

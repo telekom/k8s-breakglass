@@ -9,6 +9,7 @@ import { expect, type Page } from "@playwright/test";
  * on whatever is rendered, so new views and dialogs are covered without
  * per-page assertions:
  *
+ *  - hydration: Scale elements that lost Stencil's hydrated flag (invisible);
  *  - header: logo, app name, nav items and header controls share one vertical
  *    centre (±1px) and nav labels are never truncated;
  *  - overlap: visible text or controls that intersect each other or are
@@ -82,6 +83,17 @@ export async function findVisualProblems(page: Page, scopeSelector = "body"): Pr
       return false;
     };
     const visible = all.filter((el) => inScope(el) && !hidden(el));
+
+    // --- Scale hydration ------------------------------------------------------------------------
+    // Stencil hides Scale elements until they carry the "hydrated" class. A Vue
+    // class binding that changes after mount rewrites the class attribute and
+    // drops the flag, so the control silently disappears.
+    for (const el of all) {
+      if (!el.tagName.startsWith("SCALE-") || el.getRootNode() !== document || !inScope(el)) continue;
+      if (!customElements.get(el.tagName.toLowerCase()) || el.classList.contains("hydrated")) continue;
+      const parent = parentOf(el);
+      if (parent && !hidden(parent, true)) problems.push(`${describe(el)} is hidden: it lost Stencil's hydrated flag`);
+    }
 
     // --- Header ---------------------------------------------------------------------------------
     const header = document.querySelector("scale-telekom-header");

@@ -157,14 +157,16 @@ async function prepare(page: Page, theme: AuditTheme) {
 
 async function audit(page: Page, context: string, scope = "body", ignore?: RegExp) {
   // Stencil keeps new Scale elements invisible until they hydrate; judge the settled UI.
-  await page.waitForFunction(
-    () =>
-      Array.from(document.querySelectorAll("#app [class]")).every(
-        (el) => !el.tagName.startsWith("SCALE-") || el.classList.contains("hydrated"),
-      ),
-    null,
-    { timeout: 5000 },
-  );
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("#app [class]")).every(
+          (el) => !el.tagName.startsWith("SCALE-") || el.classList.contains("hydrated"),
+        ),
+      null,
+      { timeout: 5000 },
+    )
+    .catch(() => {}); // findVisualProblems names any element that never hydrates.
   const problems = [
     ...(await findLayoutProblems(page, scope)),
     ...(await findAlignmentProblems(page, scope)),

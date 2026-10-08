@@ -89,7 +89,7 @@ const tagVariant = computed(() => {
 
 <template>
   <HintTooltip :hint="resolvedHint">
-    <scale-tag class="status-tag" :class="[`status-tag--${size}`, `status-tag--${computedTone}`]" :variant="tagVariant">
+    <scale-tag class="status-tag" :data-size="size" :data-tone="computedTone" :variant="tagVariant">
       <span v-if="icon" class="status-tag__icon" aria-hidden="true">
         <scale-icon-action-success v-if="icon === 'action-success'" size="14" decorative />
         <scale-icon-content-hour-glass v-else-if="icon === 'content-hour-glass'" size="14" decorative />
@@ -108,7 +108,7 @@ const tagVariant = computed(() => {
   letter-spacing: 0.04em;
 }
 
-.status-tag--small {
+.status-tag[data-size="small"] {
   font: var(--telekom-text-style-badge);
   padding: var(--space-xs) var(--space-sm);
 }

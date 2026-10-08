@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, useSlots } from "vue";
+import { useSlots } from "vue";
 
 type Tone = "neutral" | "info" | "warning" | "danger" | "success" | "muted";
 
-const props = withDefaults(
+withDefaults(
   defineProps<{
     eyebrow?: string;
     title: string;
@@ -21,13 +21,10 @@ const props = withDefaults(
 
 const slots = useSlots();
 const hasSlot = (name: string) => Boolean(slots[name]);
-const cardClasses = computed(() => ({
-  "session-summary-card--dense": props.dense,
-}));
 </script>
 
 <template>
-  <scale-card class="session-summary-card" :class="cardClasses">
+  <scale-card class="session-summary-card" :data-dense="dense || undefined">
     <div class="session-summary-card__content">
       <div class="session-summary-card__header">
         <div>
@@ -91,7 +88,7 @@ const cardClasses = computed(() => ({
   gap: var(--space-lg);
 }
 
-.session-summary-card--dense .session-summary-card__content {
+.session-summary-card[data-dense] .session-summary-card__content {
   gap: var(--space-md);
 }
 

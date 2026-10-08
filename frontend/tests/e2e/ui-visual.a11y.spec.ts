@@ -280,6 +280,40 @@ for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {
       }
     });
 
+    test("theme and contrast switches stay visible after every toggle", async ({ page }) => {
+      await prepare(page);
+      const html = page.locator("html");
+      const mobile = viewport.width < 1040;
+      const openMenu = async () => {
+        const trigger = page.locator("#mobile-nav-trigger").locator("visible=true").first();
+        if ((await trigger.getAttribute("aria-expanded")) !== "true") await trigger.click();
+      };
+      const toggles = mobile
+        ? [".mobile-flyout-nav .mobile-util-btn >> nth=0", ".mobile-flyout-nav .mobile-util-btn--contrast"]
+        : [".theme-toggle-button", ".hc-toggle-button"];
+      // Light -> dark -> light, then contrast on -> off: each switch must remain clickable.
+      for (const [selector, attr, values] of [
+        [toggles[0], "data-theme", ["dark", "light"]],
+        [toggles[1], "data-high-contrast", ["true", null]],
+      ] as const) {
+        for (const value of values) {
+          if (mobile) await openMenu();
+          const toggle = page.locator(selector);
+          await expect(toggle, `${selector} before switching ${attr} to ${value}`).toBeVisible();
+          await toggle.click();
+          if (value === null) await expect(html).not.toHaveAttribute(attr, /.+/);
+          else await expect(html).toHaveAttribute(attr, value);
+          // Stencil hides Scale elements that lost their hydrated flag.
+          const lost = await page.evaluate(() =>
+            Array.from(document.querySelectorAll("#app [class]"))
+              .filter((el) => el.tagName.startsWith("SCALE-") && !el.classList.contains("hydrated"))
+              .map((el) => `${el.tagName.toLowerCase()}.${el.className}`),
+          );
+          expect(lost, `Scale elements without the hydrated flag after ${attr}=${value}`).toEqual([]);
+        }
+      }
+    });
+
     test("toasts: one per failure, stacked below the header with token gaps and padding", async ({ page }) => {
       await prepare(page);
       // The interceptor and the view both report this failure; only one toast may show.

@@ -536,7 +536,7 @@ watch(
                 variant="ghost"
                 type="button"
                 icon-only
-                :class="['theme-toggle-button', { 'theme-dark': isDarkThemePreference }]"
+                class="theme-toggle-button"
                 :inner-aria-label="themeToggleAriaLabel"
                 :aria-pressed="isDarkThemePreference"
                 @click="toggleTheme"
@@ -553,7 +553,7 @@ watch(
                 variant="ghost"
                 type="button"
                 icon-only
-                :class="['hc-toggle-button', { 'hc-active': highContrast }]"
+                class="hc-toggle-button"
                 :inner-aria-label="
                   highContrast
                     ? 'High contrast mode enabled. Click to disable.'
@@ -651,7 +651,7 @@ watch(
                       <scale-button
                         variant="ghost"
                         type="button"
-                        :class="['mobile-util-btn', { active: highContrast }]"
+                        class="mobile-util-btn mobile-util-btn--contrast"
                         :aria-pressed="highContrast"
                         @click="toggleHighContrast"
                       >
@@ -692,7 +692,7 @@ watch(
                   <scale-button
                     variant="ghost"
                     type="button"
-                    :class="['mobile-util-btn', { active: highContrast }]"
+                    class="mobile-util-btn mobile-util-btn--contrast"
                     :aria-pressed="highContrast"
                     @click="toggleHighContrast"
                   >
@@ -848,7 +848,7 @@ scale-telekom-header::part(app-name-text) {
 }
 
 :root .header-functions-container scale-button:not(.mobile-util-btn)::part(base):hover,
-:root .theme-utilities .hc-active::part(base) {
+:root .theme-utilities .hc-toggle-button[aria-pressed="true"]::part(base) {
   color: var(--telekom-color-text-and-icon-primary-standard) !important;
 }
 
@@ -869,7 +869,7 @@ scale-telekom-header::part(app-name-text) {
   font-weight: 500;
 }
 
-.mobile-util-btn.active::part(base) {
+.mobile-util-btn--contrast[aria-pressed="true"]::part(base) {
   color: var(--telekom-color-text-and-icon-link-standard);
   font-weight: 700;
 }
