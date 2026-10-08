@@ -161,6 +161,10 @@ function formatValue(value: string | Date | number | null | undefined): string {
   color: var(--telekom-color-text-and-icon-standard);
 }
 
+.timeline-item--highlight .timeline-item__label {
+  color: var(--tone-chip-info-text);
+}
+
 .timeline-grid--compact .timeline-item__label {
   font: var(--telekom-text-style-small);
 }
