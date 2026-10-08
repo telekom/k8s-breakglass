@@ -214,6 +214,15 @@ describe("SessionBrowser", () => {
 
       expect(status.text()).toBe("Showing 1 of 1 session");
     });
+
+    it("omits the result count when the search failed", async () => {
+      mockSearchSessions.mockRejectedValue(new Error("Request failed with status code 500"));
+
+      const wrapper = await createWrapper();
+
+      expect(wrapper.find('[data-testid="results-section"] h2').text()).toBe("Results");
+      expect(wrapper.find('[data-testid="session-results-status"]').exists()).toBe(false);
+    });
   });
 
   describe("Session name filter", () => {

@@ -490,7 +490,7 @@ onMounted(() => {
 
       <section class="results-card" data-testid="results-section">
         <header>
-          <h2>Results ({{ visibleSessions.length }})</h2>
+          <h2>{{ loading || error ? "Results" : `Results (${visibleSessions.length})` }}</h2>
           <p
             v-if="!loading && !error"
             class="sr-only"
