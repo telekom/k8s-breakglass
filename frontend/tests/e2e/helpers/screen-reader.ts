@@ -55,7 +55,11 @@ function focusedInViewport(page: Page): Promise<boolean> {
 }
 
 function firstAriaLine(snapshot: string): string {
-  const line = snapshot.split("\n").find((l) => l.trim().startsWith("- ")) ?? "";
+  return ariaEntry(snapshot.split("\n").find((l) => l.trim().startsWith("- ")) ?? "");
+}
+
+/** One snapshot line without indentation, list marker, YAML quoting or trailing colon. */
+function ariaEntry(line: string): string {
   let entry = line.trim().replace(/^- /, "");
   // Entries containing ": " are YAML single-quoted.
   const quoted = /^'((?:[^']|'')*)'(.*)$/.exec(entry);
@@ -84,9 +88,13 @@ export async function expectTabOrderFollowsReadingOrder(
 ): Promise<string[]> {
   // Digits are masked: countdowns and relative times tick while tabbing.
   const mask = (text: string) => text.replace(/\d+/g, "#");
-  const reading = (await page.locator(scope).ariaSnapshot()).split("\n").map(mask);
+  const reading = (await page.locator(scope).ariaSnapshot()).split("\n").map((line) => mask(ariaEntry(line)));
   const stops: string[] = [];
-  let cursor = 0;
+  // Position just after the previous stop. Controls with a role own a snapshot
+  // entry, so they are matched by their whole `role "name"` key and the cursor
+  // moves past that entry. Focusable text without a role is flattened into its
+  // parent's line, so it is matched from the column after the previous stop.
+  let cursor = { line: 0, column: 0 };
   for (let i = 0; i < maxStops; i++) {
     await page.keyboard.press("Tab");
     const stop = await focusedStop(page);
@@ -99,18 +107,41 @@ export async function expectTabOrderFollowsReadingOrder(
         message: `${context}: Tab stop #${i + 1} (${stop.aria}) is not scrolled into view`,
       })
       .toBe(true);
-    const index = reading.findIndex((line, n) => n >= cursor && line.includes(mask(name)));
+    const next = nextReadingPosition(reading, cursor, mask(stop.aria), mask(name));
     expect(
-      index,
-      `${context}: Tab stop #${i + 1} (${stop.aria}) comes before "${reading[cursor]?.trim()}" in reading order` +
+      next,
+      `${context}: Tab stop #${i + 1} (${stop.aria}) comes before "${reading[cursor.line]}" in reading order` +
         `\nstops: ${stops.join(" | ")}\nreading:\n${reading.join("\n")}`,
-    ).toBeGreaterThanOrEqual(0);
-    // Stay on the line: several stops can share one flattened text line.
-    cursor = index;
+    ).not.toBeNull();
+    cursor = next!;
     stops.push(stop.aria);
   }
   expect(stops.length, `${context}: Tab never reached a control in ${scope}`).toBeGreaterThan(0);
   return stops;
+}
+
+function nextReadingPosition(
+  reading: string[],
+  from: { line: number; column: number },
+  aria: string,
+  name: string,
+): { line: number; column: number } | null {
+  const role = /^[a-z]+ "(?:[^"\\]|\\.)*"/.exec(aria)?.[0];
+  if (role) {
+    const start = from.column > 0 ? from.line + 1 : from.line;
+    for (let line = start; line < reading.length; line++) {
+      const entry = reading[line];
+      if (entry === role || entry.startsWith(`${role} `) || entry.startsWith(`${role}:`)) {
+        return { line: line + 1, column: 0 };
+      }
+    }
+    return null;
+  }
+  for (let line = from.line; line < reading.length; line++) {
+    const column = reading[line].indexOf(name, line === from.line ? from.column : 0);
+    if (column >= 0) return { line, column: column + name.length };
+  }
+  return null;
 }
 
 /** Exactly one level-1 heading is exposed, so screen reader heading navigation has one page title. */

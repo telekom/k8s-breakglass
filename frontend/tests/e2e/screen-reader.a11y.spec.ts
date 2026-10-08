@@ -293,3 +293,42 @@ test.describe("Screen reader semantics (mock)", () => {
     await expectToastAnnounced(page, "error-toast", /./);
   });
 });
+
+test.describe("Tab order audit", () => {
+  // Positive tabindex values reverse the Tab sequence without changing the reading order.
+  // Each case gets a fresh page: the sequential focus starting point survives setContent.
+  // The trailing button ends the walk; Firefox otherwise wraps Tab back into main.
+  const withExit = (main: string) => `${main}<button>After main</button>`;
+  const cases = [
+    {
+      name: "prefix-sharing button names",
+      html: (a: number, b: number) =>
+        withExit(
+          `<main id="main"><button tabindex="${a}">Select template</button><button tabindex="${b}">Select</button></main>`,
+        ),
+      stops: ['button "Select template"', 'button "Select"'],
+    },
+    {
+      name: "focusable text flattened into one line",
+      html: (a: number, b: number) =>
+        withExit(
+          `<main id="main"><p><span tabindex="${a}">alpha</span> and <span tabindex="${b}">beta</span></p></main>`,
+        ),
+      stops: ["text: alpha", "text: beta"],
+    },
+  ];
+
+  for (const { name, html, stops } of cases) {
+    test(`accepts Tab stops in reading order: ${name}`, async ({ page }) => {
+      await page.setContent(html(0, 0));
+      expect(await expectTabOrderFollowsReadingOrder(page, name)).toEqual(stops);
+    });
+
+    test(`rejects reversed Tab stops: ${name}`, async ({ page }) => {
+      await page.setContent(html(2, 1));
+      await expect(expectTabOrderFollowsReadingOrder(page, name)).rejects.toThrow(
+        `Tab stop #2 (${stops[0]}) comes before`,
+      );
+    });
+  }
+});
