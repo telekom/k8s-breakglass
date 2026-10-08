@@ -276,7 +276,7 @@ function handleIDPButtonClick(idpName: string) {
 }
 
 .required {
-  color: var(--telekom-color-text-error);
+  color: var(--telekom-color-text-and-icon-functional-danger);
 }
 
 /* IDP Buttons Container */
@@ -323,7 +323,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .idp-button-status {
   font: var(--telekom-text-style-caption);
-  color: var(--telekom-color-text-disabled);
+  color: var(--telekom-color-text-and-icon-disabled);
   line-height: 1.1;
 }
 
@@ -353,7 +353,7 @@ function handleIDPButtonClick(idpName: string) {
 
 .warning {
   margin: 0;
-  color: var(--chip-warning-text);
+  color: var(--tone-chip-warning-text);
   font-weight: 500;
 }
 

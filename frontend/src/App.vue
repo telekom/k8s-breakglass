@@ -212,7 +212,7 @@ const primaryNavItems: PrimaryNavItem[] = [
     label: "Pending Approvals",
     navLabel: "Approvals",
     to: { name: "pendingApprovals" },
-    matches: ["pendingApprovals"],
+    matches: ["pendingApprovals", "sessionApproval", "sessionIncomplete", "sessionMissing"],
   },
   {
     id: "review",
@@ -248,7 +248,8 @@ const homeHref = computed(() => router.resolve({ name: "home" }).href);
 
 const activeNavId = computed(() => {
   const currentName = (route.name as string) ?? "";
-  return primaryNavItems.find((item) => item.matches.includes(currentName))?.id ?? "home";
+  // Unknown routes (404) highlight no section rather than falling back to Request.
+  return primaryNavItems.find((item) => item.matches.includes(currentName))?.id ?? "";
 });
 
 const userDisplayName = computed(() => user.value?.profile.name || user.value?.profile.email || "");
@@ -508,7 +509,7 @@ watch(
     <scale-telekom-app-shell>
       <scale-telekom-header
         slot="header"
-        type="slim"
+        :type.attr="'slim'"
         :app-name="brandingTitle"
         :app-name-link="homeHref"
         :logo-title="brandingTitle"
@@ -561,7 +562,7 @@ watch(
                 :aria-pressed="highContrast"
                 @click="toggleHighContrast"
               >
-                <scale-icon-action-show-password :decorative="true"></scale-icon-action-show-password>
+                <scale-icon-action-show-password size="20" :decorative="true"></scale-icon-action-show-password>
               </scale-button>
             </scale-tooltip>
           </div>
@@ -743,71 +744,134 @@ watch(
 <style scoped>
 scale-telekom-header::part(app-name-text) {
   font: var(--telekom-text-style-heading-6);
+  white-space: nowrap;
 }
 
+/*
+ * The functions slot spans the full header bar, but Scale pads the slot from
+ * the top (by breakpoint, see scale-telekom-header) so that its nav items can
+ * bottom-align. Pull the cluster back to the top edge and give it the full bar
+ * height so the logo, app name, nav labels and every header control share one
+ * vertical centre.
+ */
 .header-functions-container {
+  --_header-slot-offset: 0px;
   display: flex;
   align-items: center;
   gap: var(--space-md);
+  height: var(--scl-telekom-header-height, 60px);
+  margin-top: calc(-1 * var(--_header-slot-offset));
+}
+
+@media (min-width: 1040px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-06);
+  }
+}
+
+@media (min-width: 1296px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-07);
+  }
+}
+
+@media (min-width: 1680px) {
+  .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-10);
+  }
+
+  scale-telekom-header[scrolled] .header-functions-container {
+    --_header-slot-offset: var(--telekom-spacing-composition-space-02);
+  }
+}
+
+.header-functions-container > * {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+/* Scale bottom-aligns nav-item content with a padding; centre it in the bar instead. */
+.profile-nav-item,
+.header-functions-container :deep(scale-telekom-profile-menu),
+.header-functions-container :deep(scale-menu-flyout) {
+  display: flex;
+  align-items: center;
+  height: 100%;
+}
+
+.header-functions-container :deep(.user-menu-desktop),
+.header-functions-container :deep(.user-menu-mobile) {
+  align-items: center;
+  height: 100%;
+}
+
+/* One-line user label; below 1440px only the icon shows (the accessible name stays). */
+.header-functions-container :deep(.flyout-label) {
+  white-space: nowrap;
+}
+
+@media (max-width: 1439px) {
+  .header-functions-container :deep(.flyout-label > [aria-hidden="true"]) {
+    display: none;
+  }
+}
+
+/* The trigger spans the bar like a nav item, so Scale opens the menu under the
+   header instead of over it. */
+.header-functions-container :deep(.scale-menu-trigger),
+.header-functions-container :deep(.user-menu-mobile > button) {
+  align-items: center;
+  height: auto;
+  min-height: var(--scl-telekom-header-height, 60px);
+  padding-bottom: 0;
 }
 
 .theme-utilities {
-  display: flex;
-  align-items: center;
+  align-self: center;
+  height: auto;
   gap: var(--space-xs);
-  padding: 0 var(--space-md);
+  padding-right: var(--space-md);
   border-right: 1px solid var(--telekom-color-ui-border-standard);
-  margin-right: var(--space-sm);
 }
 
-.theme-toggle-button,
-.hc-toggle-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: var(--telekom-radius-standard, 0.5rem);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--telekom-color-text-and-icon-standard);
-  cursor: pointer;
-  transition: all var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
-}
-
-.theme-toggle-button:hover,
-.hc-toggle-button:hover {
-  background-color: var(--surface-card-subtle);
-}
-
-.theme-toggle-button.theme-dark,
-.hc-toggle-button.hc-active {
-  background-color: var(--telekom-color-primary-standard);
-  color: var(--telekom-color-text-and-icon-white);
-}
-
-.mobile-util-btn {
+.theme-utilities > scale-tooltip {
   display: flex;
-  align-items: center;
-  gap: var(--space-md);
-  background: transparent;
-  border: none;
-  color: var(--telekom-color-text-and-icon-standard);
-  font: inherit;
-  padding: var(--space-md);
-  cursor: pointer;
+}
+
+/* Header function icons share the profile icon's colour, as in the Scale
+   header, instead of the ghost button's link blue; hover and the active
+   high-contrast switch use the brand colour. !important beats the global
+   dark-mode ghost colour override in base.css. */
+:root .header-functions-container scale-button:not(.mobile-util-btn)::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root .header-functions-container scale-button:not(.mobile-util-btn)::part(base):hover,
+:root .theme-utilities .hc-active::part(base) {
+  color: var(--telekom-color-text-and-icon-primary-standard) !important;
+}
+
+/* Flyout theme switches read as menu rows: same inset, height and type as the
+   navigation links above them, left-aligned within the full row. */
+.mobile-util-btn {
+  display: block;
   width: 100%;
-  text-align: left;
-  transition: background-color var(--telekom-motion-duration-transition, 200ms) var(--telekom-motion-easing-standard);
+  --width: 100%;
 }
 
-.mobile-util-btn:hover {
-  background-color: var(--telekom-color-ui-subtle-hover);
+.mobile-util-btn::part(base) {
+  justify-content: flex-start;
+  gap: var(--space-md);
+  min-height: 44px;
+  padding: var(--space-sm) var(--space-md);
+  color: var(--telekom-color-text-and-icon-standard);
+  font-weight: 500;
 }
 
-.mobile-util-btn.active {
+.mobile-util-btn.active::part(base) {
   color: var(--telekom-color-text-and-icon-link-standard);
-  font-weight: bold;
+  font-weight: 700;
 }
 
 .center {
@@ -902,6 +966,8 @@ scale-telekom-header::part(app-name-text) {
   }
 
   .mobile-nav-fallback__utilities {
+    display: flex;
+    flex-direction: column;
     margin-top: var(--space-xs);
     padding-top: var(--space-xs);
     border-top: 1px solid var(--telekom-color-ui-border-standard);
