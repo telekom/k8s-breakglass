@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through shadow-DOM controls, Escape returns focus to the opener or the page
   heading) and the accessible names and keyboard activation of icon buttons
   and the skip link on the deployed UI.
+- Screen-reader-equivalent Playwright checks (`screen-reader.a11y` mock spec
+  and `ui-screen-reader` UI E2E spec) assert ARIA-tree roles, names and states
+  of every dialog, disabled-button descriptions, Tab order, focus trap/restore,
+  route-change focus, toast live regions and exactly one `h1` per route.
 
 - Add opt-in diagnostic artifact collection and durable terminal recording with
   authenticated access, retention, and provider-backed storage.
@@ -69,6 +73,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **Frontend**: Route-change and dialog-close focus fallback now targets the visible page heading instead of the app shell's screen-reader-only brand heading, and falls back to the main content while an asynchronously loaded page has not rendered its heading yet.
+- **Frontend**: Every page exposes exactly one `h1`: the app shell's
+  screen-reader brand heading only renders on the login gate, and session
+  approval errors and loading debug-session details render a page `h1`.
+  Scheduled timeline labels on the info highlight meet AAA contrast.
 - **Frontend**: Session detail info buttons now show their tooltip text; the
   tooltip was rendered empty because it used unsupported `label`/`position`
   attributes instead of Scale's `content`/`placement`.
