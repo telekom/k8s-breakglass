@@ -20,6 +20,7 @@ import { expect, type Page } from "@playwright/test";
  *  - empty space: bordered or filled boxes much taller than their content;
  *  - gaps: flex/grid gaps that are not on the spacing token scale;
  *  - icons: icon-only controls in one row with different icon sizes;
+ *  - option groups: wrapped checkboxes/radios that do not line up in columns;
  *  - cards: same-type cards with different radii or paddings.
  *
  * Everything runs in the page and pierces open shadow roots, because most of
@@ -411,6 +412,29 @@ export async function findVisualProblems(page: Page, scopeSelector = "body"): Pr
             .map((i) => `${describe(i.el)}=${i.size}`)
             .join(", ")})`,
         );
+      }
+    }
+
+    // --- Wrapped option groups align in columns -------------------------------------------------
+    // Checkboxes or radios that wrap onto several lines must start on the
+    // columns of their widest line, not flow raggedly after an inline label.
+    const isOption = (el: Element) =>
+      /^SCALE-(CHECKBOX|RADIO-BUTTON)$/.test(el.tagName) ||
+      (el.tagName === "INPUT" && /^(checkbox|radio)$/.test((el as HTMLInputElement).type));
+    for (const group of visible.filter((el) => el.matches("[role='group'], [role='radiogroup'], fieldset"))) {
+      const options = visible.filter((el) => isOption(el) && group.contains(el) && !insideControl(el));
+      if (options.length < 3) continue;
+      const rows: DOMRect[][] = [];
+      for (const rect of options.map((o) => o.getBoundingClientRect()).sort((a, b) => a.top - b.top)) {
+        const row = rows.find((r) => Math.abs(r[0].top - rect.top) < 4);
+        if (row) row.push(rect);
+        else rows.push([rect]);
+      }
+      if (rows.length < 2) continue;
+      const columns = rows.reduce((a, b) => (b.length > a.length ? b : a)).map((r) => r.left);
+      const ragged = rows.flat().filter((r) => !columns.some((x) => Math.abs(x - r.left) <= 1));
+      if (ragged.length) {
+        problems.push(`${describe(group)}: ${ragged.length} wrapped option(s) are not aligned with the option columns`);
       }
     }
 

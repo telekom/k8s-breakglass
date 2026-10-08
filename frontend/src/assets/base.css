@@ -548,6 +548,19 @@ select:focus {
   color: var(--telekom-color-text-and-icon-additional);
 }
 
+/* Below the desktop header breakpoint the options wrap into aligned columns
+   under their label instead of a ragged inline flow. */
+@media (max-width: 1039px) {
+  .ui-toolbar-group {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  }
+
+  .ui-toolbar-group-label {
+    grid-column: 1 / -1;
+  }
+}
+
 /* Result count: last line of the panel, directly under the controls it describes. */
 .ui-toolbar-info {
   flex: 1 1 100%;
