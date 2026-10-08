@@ -375,18 +375,22 @@ const debugToggleDisabledReason = computed(() =>
 </template>
 
 <style scoped>
+/*
+ * Dev-only. The toggle sits in the page flow after the content, so it can
+ * never cover page actions; only the panel it opens floats over the page.
+ */
 .debug-panel-container {
-  position: fixed;
-  bottom: var(--space-lg);
-  right: var(--space-lg);
-  z-index: var(--z-debug-panel);
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 var(--space-lg) var(--space-lg);
   font-family: monospace;
 }
 
 .debug-panel-wrapper {
-  position: absolute;
-  bottom: 60px;
-  right: 0;
+  position: fixed;
+  bottom: var(--space-lg);
+  right: var(--space-lg);
+  z-index: var(--z-debug-panel);
   width: clamp(280px, 40vw, 500px);
   max-height: calc(100vh - 120px);
   display: flex;
@@ -479,7 +483,7 @@ const debugToggleDisabledReason = computed(() =>
 .error-message {
   color: var(--tone-chip-danger-text);
   padding: var(--space-xs);
-  background-color: var(--telekom-color-ui-background-surface);
+  background-color: var(--telekom-color-background-surface);
   border: 1px solid var(--telekom-color-ui-border-standard);
   border-radius: var(--radius-xs);
   word-break: break-all;
@@ -512,7 +516,7 @@ const debugToggleDisabledReason = computed(() =>
 }
 
 .debug-content::-webkit-scrollbar-thumb:hover {
-  background: var(--telekom-color-primary-hover);
+  background: var(--telekom-color-primary-hovered);
 }
 
 @media (max-width: 768px) {
