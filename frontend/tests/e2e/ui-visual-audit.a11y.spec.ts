@@ -160,8 +160,12 @@ async function audit(page: Page, context: string, scope = "body", ignore?: RegEx
   await page
     .waitForFunction(
       () =>
-        Array.from(document.querySelectorAll("#app [class]")).every(
-          (el) => !el.tagName.startsWith("SCALE-") || el.classList.contains("hydrated"),
+        // Stencil hydrates asynchronously; an element still waiting has no class attribute yet.
+        Array.from(document.querySelectorAll("#app *")).every(
+          (el) =>
+            !el.tagName.startsWith("SCALE-") ||
+            !customElements.get(el.tagName.toLowerCase()) ||
+            el.classList.contains("hydrated"),
         ),
       null,
       { timeout: 5000 },
