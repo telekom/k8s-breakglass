@@ -44,6 +44,7 @@ async function measureHeader(page: Page) {
     const centre = (r: DOMRect) => (r.top + r.bottom) / 2;
     const bar = sr.querySelector("[part~='fixed-wrapper']")!.getBoundingClientRect();
     const items: { name: string; centre: number }[] = [];
+    const icons: { name: string; x: number }[] = [];
     const logo = sr.querySelector("[part~='app-logo']");
     if (logo) items.push({ name: "logo", centre: centre(logo.getBoundingClientRect()) });
     const appName = sr.querySelector("[part~='bottom-app-name'] [part~='app-name-text']");
@@ -71,9 +72,14 @@ async function measureHeader(page: Page) {
       controlCount++;
       const inner = ctl.tagName === "SCALE-BUTTON" ? (ctl.shadowRoot?.querySelector("button") ?? ctl) : ctl;
       const label = ctl.getAttribute("aria-label") || ctl.getAttribute("data-testid") || ctl.tagName.toLowerCase();
-      items.push({ name: label, centre: centre(inner.getBoundingClientRect()) });
+      const box = inner.getBoundingClientRect();
+      items.push({ name: label, centre: centre(box) });
+      // Labelled controls (the profile name from 1440px) are wider than an icon target.
+      if (box.width <= 48) icons.push({ name: label, x: (box.left + box.right) / 2 });
     }
-    return { barCentre: centre(bar), items, truncated, navCount, controlCount };
+    icons.sort((a, b) => a.x - b.x);
+    const iconGaps = icons.slice(1).map((c, i) => ({ between: `${icons[i].name} → ${c.name}`, gap: c.x - icons[i].x }));
+    return { barCentre: centre(bar), items, truncated, navCount, controlCount, iconGaps };
   });
 }
 
@@ -261,6 +267,11 @@ for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {
               .toBeLessThanOrEqual(1);
           }
           expect.soft(m.truncated, `${path} truncated nav labels`).toEqual([]);
+          // Icon controls sit on one rhythm, across the divider between the theme switches and the rest.
+          const gaps = m.iconGaps.map((g) => g.gap);
+          expect
+            .soft(Math.max(...gaps) - Math.min(...gaps), `${path} header icon spacing ${JSON.stringify(m.iconGaps)}`)
+            .toBeLessThanOrEqual(4);
         }
       }
       if (viewport.width < 1040) {

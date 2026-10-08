@@ -829,10 +829,12 @@ scale-telekom-header::part(app-name-text) {
   padding-bottom: 0;
 }
 
+/* The gap matches the 24px rhythm of the profile and menu items, so every
+   header icon sits the same distance apart across the divider. */
 .theme-utilities {
   align-self: center;
   height: auto;
-  gap: var(--space-xs);
+  gap: var(--space-xl);
   padding-right: var(--space-md);
   border-right: 1px solid var(--telekom-color-ui-border-standard);
 }

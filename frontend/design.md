@@ -454,7 +454,7 @@ These carry session/breakglass domain knowledge and are not intended for reuse o
 
 Tooltips must open on hover and on keyboard focus. Do not add tooltips to buttons whose visible label already says everything.
 
-**Header.** Nav labels are one or two short words (Request, Approvals, Reviews, My Requests, Sessions, Debug) and must never truncate; put the descriptive wording in the accessible name. The logo, app name, nav items and the theme/contrast/profile controls share one vertical centre (±1 px) at every width.
+**Header.** Nav labels are one or two short words (Request, Approvals, Reviews, My Requests, Sessions, Debug) and must never truncate; put the descriptive wording in the accessible name. The logo, app name, nav items and the theme/contrast/profile controls share one vertical centre (±1 px) at every width. The header icons (theme, contrast, profile, menu) sit at even centre-to-centre distances (±4 px) on both sides of the divider.
 
 **Toasts.** `ErrorToasts.vue` renders one fixed stack of Scale `scale-notification type="toast"` elements, `--space-lg` below the measured bottom of the header bar, with a `--space-md` gap between toasts, Scale's own internal padding, and a width capped to the viewport minus the page gutter on mobile. Report caught errors with `reportError(err, fallback)` from `@/services/toast`, never `pushError(err.message)`: the HTTP layer already toasts backend errors, and `reportError` skips errors it has already reported. Identical concurrent messages are merged.
 
