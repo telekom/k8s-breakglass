@@ -72,7 +72,7 @@
     "eslint-plugin-vuejs-accessibility": "^2.6.0",
     "express": "^5.2.1",
     "fast-glob": "file:./shims/fast-glob",
-    "jsdom": "^30.1.1",
+    "jsdom": "^30.1.2",
     "playwright": "^1.63.0",
     "postcss-html": "^2.0.0",
     "prettier": "^3.9.9",
