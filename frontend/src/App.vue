@@ -574,7 +574,7 @@ watch(
             role="group"
             aria-label="Header actions"
           >
-            <scale-telekom-nav-item v-if="authenticated" class="profile-nav-item">
+            <scale-telekom-nav-item v-if="authenticated" variant="functions" class="profile-nav-item">
               <scale-telekom-profile-menu
                 ref="profileMenuRef"
                 class="profile-menu"
@@ -594,7 +594,9 @@ watch(
               ></scale-telekom-profile-menu>
             </scale-telekom-nav-item>
 
-            <scale-telekom-nav-item v-if="authenticated" class="mobile-nav-item">
+            <!-- variant="functions": a main-nav item rewrites aria-current on the first link inside it,
+                 which here is the current page in the mobile flyout. -->
+            <scale-telekom-nav-item v-if="authenticated" variant="functions" class="mobile-nav-item">
               <scale-tooltip
                 :content="mobileNavOpen ? 'Close navigation menu' : 'Open navigation menu'"
                 placement="bottom-end"
@@ -865,13 +867,28 @@ scale-telekom-header::part(app-name-text) {
   gap: var(--space-md);
   min-height: 44px;
   padding: var(--space-sm) var(--space-md);
-  color: var(--telekom-color-text-and-icon-standard);
   font-weight: 500;
 }
 
-.mobile-util-btn--contrast[aria-pressed="true"]::part(base) {
-  color: var(--telekom-color-text-and-icon-link-standard);
+/* Same colours as the links above them in every theme; the selector outranks
+   the global dark-mode ghost colour in base.css. The pressed switch uses the
+   brand colour, like the active link and the header contrast toggle. */
+:root .mobile-nav-fallback__utilities .mobile-util-btn::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root .mobile-nav-fallback__utilities .mobile-util-btn--contrast[aria-pressed="true"]::part(base) {
+  color: var(--telekom-color-text-and-icon-primary-standard) !important;
   font-weight: 700;
+}
+
+/* High contrast keeps brand magenta out; weight alone marks the active row. */
+:root[data-high-contrast="true"] .mobile-nav-fallback__utilities .mobile-util-btn--contrast::part(base) {
+  color: var(--telekom-color-text-and-icon-standard) !important;
+}
+
+:root[data-high-contrast="true"] .mobile-nav-fallback__link--active {
+  color: var(--telekom-color-text-and-icon-standard);
 }
 
 .center {
@@ -961,7 +978,7 @@ scale-telekom-header::part(app-name-text) {
   }
 
   .mobile-nav-fallback__link--active {
-    color: var(--telekom-color-text-and-icon-link-standard);
+    color: var(--telekom-color-text-and-icon-primary-standard);
     font-weight: 700;
   }
 

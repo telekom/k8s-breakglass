@@ -314,6 +314,47 @@ for (const [viewportName, viewport] of Object.entries(LAYOUT_VIEWPORTS)) {
       }
     });
 
+    if (viewport.width < 1040) {
+      for (const theme of ["light", "dark", "hc"] as const) {
+        test(`mobile menu rows share the link colour; the active row is marked [${theme}]`, async ({ page }) => {
+          await useAuditTheme(page, theme);
+          await mockLogin(page);
+          await mockNavigate(page, "/");
+          await page.locator("#mobile-nav-trigger").locator("visible=true").first().click();
+          await expect(page.locator(".mobile-flyout-nav a").locator("visible=true").first()).toBeVisible();
+          // Scale's nav-item host used to strip aria-current from the first link it contains.
+          await expect(page.locator(".mobile-flyout-nav a[aria-current='page']")).toHaveText("Request Access");
+          const c = await page.evaluate(() => {
+            const colour = (el: Element | null | undefined) => (el ? getComputedStyle(el).color : "missing");
+            const nav = document.querySelector(".mobile-flyout-nav")!;
+            const probe = document.createElement("span");
+            probe.style.color = "var(--telekom-color-text-and-icon-primary-standard)";
+            nav.appendChild(probe);
+            const brand = colour(probe);
+            probe.remove();
+            return {
+              link: colour(nav.querySelector("a:not([aria-current])")),
+              active: colour(nav.querySelector("a[aria-current='page']")),
+              activeWeight: Number(getComputedStyle(nav.querySelector("a[aria-current='page']")!).fontWeight),
+              rows: Array.from(nav.querySelectorAll(".mobile-util-btn")).map((b) => ({
+                pressed: b.getAttribute("aria-pressed") === "true" && b.classList.contains("mobile-util-btn--contrast"),
+                colour: colour(b.shadowRoot?.querySelector("button")),
+              })),
+              brand,
+            };
+          });
+          // Theme switches read as menu rows: same colour as the links, unless contrast is on.
+          for (const row of c.rows.filter((r) => !r.pressed || theme === "hc")) {
+            expect(row.colour, "theme/contrast row colour").toBe(c.link);
+          }
+          // The current page is marked like the desktop nav: bold, brand colour in light mode;
+          // dark and high contrast keep the AAA text colour (base.css nav policy).
+          expect(c.activeWeight, "active mobile link weight").toBeGreaterThanOrEqual(700);
+          expect(c.active, "active mobile link colour").toBe(theme === "light" ? c.brand : c.link);
+        });
+      }
+    }
+
     test("toasts: one per failure, stacked below the header with token gaps and padding", async ({ page }) => {
       await prepare(page);
       // The interceptor and the view both report this failure; only one toast may show.
