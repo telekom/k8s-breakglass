@@ -1205,7 +1205,6 @@ jobs:
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
           # Keycloak configuration for CLI OIDC authentication
-          KEYCLOAK_HOST: ${{ env.KEYCLOAK_HOST }}
           KEYCLOAK_REALM: "breakglass-e2e"
           KEYCLOAK_CLIENT_ID: "breakglass-ui"
           # The issuer host must match the IdentityProvider's issuer claim (in-cluster hostname)
@@ -2754,7 +2753,6 @@ jobs:
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG || '' }}
           # Keycloak runs as Docker container with port 8443 mapped to host
           # Go tests run on host so use localhost (e2e-keycloak is only in Kind /etc/hosts)
-          KEYCLOAK_HOST: ${{ env.KEYCLOAK_HOST }}
           KEYCLOAK_REALM: breakglass-e2e
           # Use breakglass-ui client (defined in breakglass-e2e-realm.json with directAccessGrantsEnabled)
           KEYCLOAK_CLIENT_ID: breakglass-ui
