@@ -204,13 +204,7 @@ function openRenewModal() {
           Terminate
         </scale-button>
 
-        <scale-button
-          v-if="canApprove"
-          variant="primary"
-          size="small"
-          data-testid="approve-button"
-          @click="emit('viewDetails')"
-        >
+        <scale-button v-if="canApprove" variant="primary" data-testid="approve-button" @click="emit('viewDetails')">
           Review
         </scale-button>
 
