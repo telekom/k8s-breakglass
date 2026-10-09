@@ -35,6 +35,7 @@ type SessionRequest struct {
 	Cluster          string `json:"cluster"`
 	User             string `json:"user"`
 	Group            string `json:"group"`
+	EscalationName   string `json:"escalationName,omitempty"`
 	Reason           string `json:"reason,omitempty"`
 	DurationSeconds  int64  `json:"duration,omitempty"`
 	ScheduledStartAt string `json:"scheduledStartTime,omitempty"`
