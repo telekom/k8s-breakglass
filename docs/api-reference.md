@@ -286,6 +286,9 @@ Authorization: Bearer <token>
 - The selected policy's name and UID are persisted as the session's controller
   owner reference. Approval remains scoped to that UID and its approver policy;
   another escalation granting the same group cannot supply approvers.
+  Escalation admission already enforces cluster-wide unique resource names
+  across namespaces; conflicting legacy names fail closed instead of selecting
+  an arbitrary owner.
 
 **User group resolution:** As with the escalations list endpoint, the
 requester's groups are resolved from the JWT `groups`/`realm_access` claim

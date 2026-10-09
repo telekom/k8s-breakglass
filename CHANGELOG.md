@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Select a specific eligible escalation via optional API `escalationName`,
   `bgctl session request --escalation`, and separate UI policy cards. Ambiguous
-  group-only requests now return409 with sorted eligible candidates rather than
+  group-only requests now return 409 with sorted eligible candidates rather than
   silently selecting the first same-group policy. The existing controller-owner
   UID approval fence remains unchanged; other policies' approvers are never
   combined. Single-policy requests remain compatible; overlapping integrations
