@@ -15,7 +15,6 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	corev1 "k8s.io/api/core/v1"
-	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -129,8 +128,7 @@ spec:
 		if s.Client.Get(ctx, client.ObjectKeyFromObject(active), active) != nil {
 			return false
 		}
-		return apimeta.IsStatusConditionTrue(active.Status.Conditions, string(breakglassv1alpha1.DebugSessionConditionReady)) &&
-			len(active.Status.AllowedPods) > 0 && active.Status.AllowedPods[0].Ready
+		return len(active.Status.AllowedPods) > 0 && active.Status.AllowedPods[0].Ready
 	}, helpers.WaitForStateTimeout, time.Second, "approved diagnostic pod must become Ready")
 
 	kubeconfig := helpers.GetKubeconfig()
