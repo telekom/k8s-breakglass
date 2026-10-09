@@ -308,8 +308,9 @@ export async function findEscalationCardByName(
       const card = cards.nth(i);
       const nameElement = card.locator('[data-testid="escalation-name"]');
       const name = await nameElement.textContent().catch(() => null);
+      const policyName = await card.getAttribute("data-escalation-name");
 
-      if (name && name.trim() === escalationName) {
+      if (policyName === escalationName || (name && name.trim() === escalationName)) {
         // If we need the card to be available, check for request button
         if (requireAvailable) {
           const requestButton = card.locator('[data-testid="request-access-button"]');
