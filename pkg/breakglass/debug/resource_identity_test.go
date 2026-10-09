@@ -18,6 +18,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
@@ -692,6 +693,53 @@ func TestCreateRecoveryAllowsServerDefaultsAndStatus(t *testing.T) {
 			}).Build()
 			require.NoError(t, applyOwnedTrackedResource(context.Background(), target, tc.desired, session))
 			require.Equal(t, types.UID("created"), tc.desired.GetUID())
+		})
+	}
+}
+
+func TestLegacyWorkloadRecoveryAfterPodSessionUIDStamping(t *testing.T) {
+	for _, workload := range []client.Object{
+		&appsv1.Deployment{},
+		&appsv1.DaemonSet{},
+		&batchv1.Job{},
+	} {
+		t.Run(fmt.Sprintf("%T", workload), func(t *testing.T) {
+			for _, scenario := range []string{"legacy missing UID", "conflicting pod UID", "changed workload", "foreign session", "foreign operation"} {
+				t.Run(scenario, func(t *testing.T) {
+					session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+					legacy := workload.DeepCopyObject().(client.Object)
+					legacy.SetName("legacy-workload")
+					legacy.SetNamespace("default")
+					operationID, err := stampCreateOperation(legacy, session)
+					require.NoError(t, err)
+					desired := legacy.DeepCopyObject().(client.Object)
+					managedWorkloadPodMetadata(desired).Annotations = map[string]string{sourceSessionUIDAnnotation: string(session.UID)}
+					newOperationID, err := stampCreateOperation(desired, session)
+					require.NoError(t, err)
+					require.Equal(t, operationID, newOperationID, "adding a controller marker must not change workload intent")
+					require.Equal(t, string(session.UID), managedWorkloadPodMetadata(desired).Annotations[sourceSessionUIDAnnotation], "hashing must not mutate desired annotations")
+					legacy.SetUID("legacy-workload-uid")
+					switch scenario {
+					case "conflicting pod UID":
+						managedWorkloadPodMetadata(legacy).Annotations = map[string]string{sourceSessionUIDAnnotation: "another-session"}
+					case "changed workload":
+						managedWorkloadPodMetadata(legacy).Labels = map[string]string{"changed": "workload"}
+						managedWorkloadPodMetadata(desired).Labels = map[string]string{"changed": "desired"}
+					case "foreign session":
+						legacy.GetAnnotations()[sourceSessionUIDAnnotation] = "another-session"
+					case "foreign operation":
+						legacy.GetAnnotations()[createOperationIDAnnotation] = "another-operation"
+					}
+					target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+					err = createOrRecoverTargetObject(context.Background(), target, desired, session)
+					if scenario == "legacy missing UID" {
+						require.NoError(t, err)
+						require.Equal(t, types.UID("legacy-workload-uid"), desired.GetUID())
+					} else {
+						require.Error(t, err, "legacy compatibility must preserve ownership and content fences")
+					}
+				})
+			}
 		})
 	}
 }
