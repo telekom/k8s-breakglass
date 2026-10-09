@@ -854,6 +854,9 @@ $CA_INLINE
       groups:
         claim: groups
         prefix: "oidc:"
+      extra:
+      - key: identity.t-caas.telekom.com/issuer
+        valueExpression: claims.iss
 EOF
 
 # Create an audit policy that logs unauthenticated requests and requests resulting in 4xx/5xx (RBAC denies show up as 403)

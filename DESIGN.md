@@ -15,6 +15,14 @@ It enables engineers to safely gain elevated access when needed (e.g., during an
 
 ## High-Level Architecture
 
+DebugSessions deploy targeted diagnostic workloads; BreakglassEscalations and
+BreakglassSessions grant temporary Kubernetes API access. These are independent
+features. DebugSession discovery and creation match authenticated identity
+groups/users against the template and selected binding. IdentityProvider group
+mapping and optional group-sync remain the identity source. Approval, namespace,
+pod security, duration and provider/issuer checks remain on the debug workflow;
+an escalation grant is neither required nor injected into requester groups.
+
 The system consists of two primary components:
 1. **Go-based Kubernetes Controller (Backend)**: Manages CRDs, interacts with the Kubernetes API, serves the RESTful Gin API, and runs the controller-runtime reconcilers.
 2. **Vue 3 / TypeScript Frontend**: Provides an accessible, user-friendly interface for requesting, approving, and auditing breakglass sessions.

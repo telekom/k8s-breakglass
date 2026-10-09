@@ -922,6 +922,14 @@ GET /api/debug/buildinfo
 
 ## Debug Sessions API
 
+Discovery and creation authorize the authenticated requester's identity
+groups/users against the debug template and selected cluster binding. No active
+BreakglassSession or escalation grant is required. IdentityProvider group
+mapping and optional group-sync continue unchanged. Provider/issuer provenance,
+approval and self-approval restrictions remain enforced. Administrators using
+synthetic escalation-group debug allowlists must migrate them to real identity
+groups; see [the migration guide](debug-session.md#migration-from-escalation-grant-authorization).
+
 The debug sessions API provides endpoints for managing temporary debug access to clusters. For full feature documentation, see [Debug Session](./debug-session.md).
 
 ### List Debug Sessions

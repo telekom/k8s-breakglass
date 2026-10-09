@@ -242,8 +242,7 @@ func TestSessionStateTransitionsComplete(t *testing.T) {
 
 // TestDebugSessionCleanupFlow tests that debug sessions go through proper cleanup lifecycle.
 func TestDebugSessionCleanupFlow(t *testing.T) {
-	setup := helpers.SetupTest(t, helpers.WithShortTimeout())
-	setupNativeDebugSessionGrantForUser(t, setup, helpers.TestUsers.SchedulingTestRequester, helpers.TestUsers.SchedulingTestApprover)
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()

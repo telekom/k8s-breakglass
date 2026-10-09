@@ -422,7 +422,16 @@ jwt:
       groups:
         claim: groups
         prefix: "oidc:"
+      extra:
+      - key: identity.t-caas.telekom.com/issuer
+        valueExpression: claims.iss
 ```
+
+The issuer extra carries the **verified** JWT issuer to the authorization
+webhook. Provider-bound DebugSession pod operations require this provenance;
+matching an email alone does not authorize `exec`, `attach`, or `portforward`.
+Missing or mismatched issuers remain denied. Legacy OIDC flags do not propagate
+this extra, so use structured authentication for direct OIDC pod operations.
 
 Then in the kube-apiserver manifest:
 ```yaml
