@@ -25,8 +25,13 @@ import (
 )
 
 func TestDebugSessionIdentityGroupsWithoutEscalation(t *testing.T) {
-	for _, group := range []string{"tenant-poweruser", "breakglass:platform:debugsession"} {
-		t.Run(group, func(t *testing.T) {
+	for _, tc := range []struct{ group, allowedGroup string }{
+		{"tenant-poweruser", "tenant-poweruser"},
+		{"tenant-poweruser", "tenant-*"},
+		{"breakglass:platform:debugsession", "breakglass:platform:debugsession"},
+	} {
+		group := tc.group
+		t.Run(tc.allowedGroup, func(t *testing.T) {
 			template := &breakglassv1alpha1.DebugSessionTemplate{
 				ObjectMeta: metav1.ObjectMeta{Name: "diagnostics"},
 				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
@@ -38,7 +43,7 @@ func TestDebugSessionIdentityGroupsWithoutEscalation(t *testing.T) {
 				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 					TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
 					Clusters:    []string{"prod-eu"},
-					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}},
+					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{tc.allowedGroup}},
 				},
 			}
 			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "prod-eu"}}

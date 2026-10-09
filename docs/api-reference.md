@@ -1307,6 +1307,8 @@ identities using selectable fields, then validates the fresh snapshot's provider
 issuer, target cluster, state, and expiry without querying grants again per cluster.
 Lookup failures suppress aliases only; identity-authorized discovery continues.
 Aliases never authorize creation, approval, or pod access.
+Auto-approval hints use the identity's groups, not discovery aliases. Group
+allowlist globs use the same matcher for identities and optional aliases.
 The trusted single-provider `legacy_identity_allowed` compatibility path retains
 legacy provenance rules; provider-aware authentication requires both
 the matching provider name and issuer. Template-wide variable and scheduling fields aggregate authorized
