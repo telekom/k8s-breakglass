@@ -1591,6 +1591,14 @@ to work normally. No escalation or active BreakglassSession is required.
 Cluster binding, namespace protections, target namespace constraints, duration,
 approval and pod security checks remain enforced.
 
+Direct Kubernetes pod operations must also preserve the authenticated issuer:
+configure the API server's structured authentication `claimMappings.extra` to
+send `identity.t-caas.telekom.com/issuer` with `valueExpression: claims.iss`.
+See [Kubernetes OIDC configuration](keycloak-configuration.md#kubernetes-api-server-oidc-configuration)
+and [defender identity security](security-defender-identities.md). An approved
+DebugSession does not weaken provider isolation: an issuer-less or wrong-issuer
+SubjectAccessReview remains denied, even when its email matches the owner.
+
 #### Migration from escalation-grant authorization
 
 The previous `breakglass:platform:debugsession` prerequisite and synthetic grant

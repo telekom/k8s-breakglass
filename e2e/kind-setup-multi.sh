@@ -267,6 +267,9 @@ $(echo "$keycloak_ca_content" | sed 's/^/      /')
     groups:
       claim: groups
       prefix: ""
+    extra:
+    - key: identity.t-caas.telekom.com/issuer
+      valueExpression: claims.iss
 # Contractors realm for external contractors
 - issuer:
     url: https://e2e-keycloak:8443/realms/${KEYCLOAK_CONTRACTORS_REALM}
@@ -281,6 +284,9 @@ $(echo "$keycloak_ca_content" | sed 's/^/      /')
     groups:
       claim: groups
       prefix: ""
+    extra:
+    - key: identity.t-caas.telekom.com/issuer
+      valueExpression: claims.iss
 EOF
 
   # Create webhook kubeconfig that points to hub breakglass webhook
