@@ -207,24 +207,20 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 						RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: "cluster-admin"},
 						Subjects:   []rbacv1.Subject{{Kind: "User", APIGroup: rbacv1.GroupName, Name: "not-a-real-user"}},
 					}
-					if i == 0 {
-						_, err := nativeUser(i).RbacV1().ClusterRoleBindings().Create(s.Ctx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-						require.NoError(t, err, "approved grant must authorize a real privileged server dry-run")
-					}
+					_, err := nativeUser(i).RbacV1().ClusterRoleBindings().Create(s.Ctx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+					require.NoError(t, err, "approved grant must authorize a real privileged server dry-run")
 					var output bytes.Buffer
 					command := bgctlcmd.NewRootCommand(bgctlcmd.Config{OutputWriter: &output})
 					command.SetArgs([]string{"--server", helpers.GetAPIBaseURL(), "--token", s.TC.OIDCProvider().GetTokenForUser(t, s.Ctx, user), "--token-storage", "file",
 						"--non-interactive", "session", "drop", session.Name, "--yes"})
 					require.NoError(t, command.ExecuteContext(s.Ctx), output.String())
 					helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
-					if i == 0 {
-						require.Eventually(t, func() bool {
-							_, err := nativeUser(i).RbacV1().ClusterRoleBindings().Create(s.Ctx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
-							return apierrors.IsForbidden(err)
-						}, helpers.WaitForStateTimeout, 2*time.Second, "same CREATE must revoke within bounded propagation; fixtures explicitly disable positive caching")
-						_, err := admins[i].RbacV1().ClusterRoleBindings().Get(s.Ctx, probe.Name, metav1.GetOptions{})
-						require.True(t, apierrors.IsNotFound(err), "server dry-run must leave zero persisted probe resources")
-					}
+					require.Eventually(t, func() bool {
+						_, err := nativeUser(i).RbacV1().ClusterRoleBindings().Create(s.Ctx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
+						return apierrors.IsForbidden(err)
+					}, helpers.WaitForStateTimeout, 2*time.Second, "same CREATE must revoke within bounded propagation; fixtures explicitly disable positive caching")
+					_, err = admins[i].RbacV1().ClusterRoleBindings().Get(s.Ctx, probe.Name, metav1.GetOptions{})
+					require.True(t, apierrors.IsNotFound(err), "server dry-run must leave zero persisted probe resources")
 				case "natural-expiry":
 					helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStateExpired, 4*time.Minute)
 					require.False(t, time.Now().Before(session.Status.ExpiresAt.Time))
