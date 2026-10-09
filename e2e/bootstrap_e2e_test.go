@@ -39,8 +39,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -62,6 +64,33 @@ const (
 	// bootstrapSystem is the namespace where breakglass and Keycloak are deployed.
 	bootstrapSystem = "breakglass-system"
 )
+
+func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
+	for _, script := range []string{"oidc_tests.sh", "oidc_from_idp_tests.sh"} {
+		t.Run(script, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("tests", script))
+			require.NoError(t, err)
+			fragment := regexp.MustCompile(`(?ms)^_KEYCLOAK_HOST_RAW=.*?^KEYCLOAK_ISSUER_URL=[^\n]*`).Find(source)
+			require.NotEmpty(t, fragment)
+			for _, tc := range []struct{ host, path, want string }{
+				{"e2e-keycloak", "/auth", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
+				{"https://localhost:8443/auth", "/auth", "https://localhost:8443/auth/realms/breakglass-e2e"},
+				{"http://localhost:8080/auth", "/auth", "http://localhost:8080/auth/realms/breakglass-e2e"},
+				{"https://issuer.example.test:9443/custom", "/custom", "https://issuer.example.test:9443/custom/realms/breakglass-e2e"},
+			} {
+				t.Run(tc.host, func(t *testing.T) {
+					t.Setenv("KEYCLOAK_HOST", tc.host)
+					t.Setenv("KEYCLOAK_PORT", "8443")
+					t.Setenv("KEYCLOAK_REALM", "breakglass-e2e")
+					t.Setenv("KEYCLOAK_RELATIVE_PATH", tc.path)
+					output, err := exec.Command("bash", "-c", string(fragment)+"\nprintf '%s' \"$KEYCLOAK_ISSUER_URL\"").CombinedOutput()
+					require.NoError(t, err, "%s", output)
+					require.Equal(t, tc.want, string(output))
+				})
+			}
+		})
+	}
+}
 
 // getBootstrapTdir returns the TDIR path used by kind-setup-single.sh.
 // It prefers the TDIR environment variable; falls back to the conventional

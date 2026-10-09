@@ -988,6 +988,7 @@ jobs:
             echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> "$GITHUB_ENV"
@@ -1204,7 +1205,7 @@ jobs:
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
           # Keycloak configuration for CLI OIDC authentication
-          KEYCLOAK_HOST: "https://localhost:8443"
+          KEYCLOAK_HOST: ${{ env.KEYCLOAK_HOST }}
           KEYCLOAK_REALM: "breakglass-e2e"
           KEYCLOAK_CLIENT_ID: "breakglass-ui"
           # The issuer host must match the IdentityProvider's issuer claim (in-cluster hostname)
@@ -1519,6 +1520,7 @@ jobs:
             echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
             echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
             echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
+            echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> $GITHUB_ENV
             echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
             echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
             echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
@@ -2587,6 +2589,9 @@ jobs:
           KUBECONFIG=$E2E_SPOKE_B_KUBECONFIG kubectl get nodes
 
           # Export for subsequent steps with absolute paths
+          echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
+          echo "KEYCLOAK_URL=${KEYCLOAK_URL}" >> "$GITHUB_ENV"
+          echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> "$GITHUB_ENV"
           echo "E2E_HUB_KUBECONFIG=$(realpath $E2E_HUB_KUBECONFIG)" >> $GITHUB_ENV
           echo "E2E_SPOKE_A_KUBECONFIG=$(realpath $E2E_SPOKE_A_KUBECONFIG)" >> $GITHUB_ENV
           echo "E2E_SPOKE_B_KUBECONFIG=$(realpath $E2E_SPOKE_B_KUBECONFIG)" >> $GITHUB_ENV
@@ -2749,7 +2754,7 @@ jobs:
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG || '' }}
           # Keycloak runs as Docker container with port 8443 mapped to host
           # Go tests run on host so use localhost (e2e-keycloak is only in Kind /etc/hosts)
-          KEYCLOAK_HOST: https://localhost:8443
+          KEYCLOAK_HOST: ${{ env.KEYCLOAK_HOST }}
           KEYCLOAK_REALM: breakglass-e2e
           # Use breakglass-ui client (defined in breakglass-e2e-realm.json with directAccessGrantsEnabled)
           KEYCLOAK_CLIENT_ID: breakglass-ui
