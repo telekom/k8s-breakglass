@@ -26,5 +26,5 @@ The image is built from the repository root with
 
 The image builder is pinned to Go 1.27 for this independently built utility
 image. Repository and controller CI compilation continues to use the Go
-1.26.6 version declared in `go.mod`; the separate image toolchain does not
+1.26.9 version declared in `go.mod`; the separate image toolchain does not
 change the module's supported compiler.
