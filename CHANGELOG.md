@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pwru/kubestr with `golang.org/x/net` 0.60.0 to include the HTTP/2 security fix
   in these independently built utility binaries.
 
+### Changed
+
+- Keep DebugSession discovery and creation independent of escalation grants.
+  Optional, deprecated grant aliases can add cluster-scoped discoverability for
+  configured allowlist groups, but never authorize creation or pod operations.
+  Identity-authorized discovery remains available when optional grant lookup fails.
+- Expose the controller-provided immutable `.session.uid` to workload and
+  auxiliary-resource templates, without allowing user variables to override it.
+
 ### Fixed
 
 - Restore DebugSession discovery/creation from authenticated identity groups and

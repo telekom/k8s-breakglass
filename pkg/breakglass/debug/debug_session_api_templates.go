@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
@@ -256,7 +257,7 @@ type debugTemplateRequester struct {
 	username        string
 	email           string
 	groups          []string
-	grantedClusters map[string]*breakglassv1alpha1.ClusterConfig
+	grantedClusters map[string][]string
 	clusters        map[string]*breakglassv1alpha1.ClusterConfig
 	configured      []breakglassv1alpha1.ClusterConfig
 }
@@ -273,11 +274,7 @@ func debugTemplateRequesterFromContext(ctx *gin.Context) debugTemplateRequester 
 		}
 	}
 	if groups, ok := ctx.Get("groups"); ok && groups != nil {
-		for _, group := range debugSessionGroupsFromContext(groups) {
-			if group != "breakglass:platform:debugsession" {
-				requester.groups = append(requester.groups, group)
-			}
-		}
+		requester.groups = debugSessionGroupsFromContext(groups)
 	}
 
 	return requester
@@ -309,17 +306,39 @@ func (c *DebugSessionAPIController) discoveryGrants(ctx context.Context, opts ..
 	return breakglassv1alpha1.BreakglassSessionList{}, fmt.Errorf("debug discovery grant history exceeds limit")
 }
 
-// Resolve temporary grants with the same live authorization checks as creation.
-// Keep them scoped to a cluster: a grant on one cluster cannot reveal another.
-func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, configured []breakglassv1alpha1.ClusterConfig) (debugTemplateRequester, error) {
+// Only query optional grants for configured groups absent from the identity.
+func discoveryAliasGroups(templates []breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding, identity debugTemplateRequester) []string {
+	var groups []string
+	add := func(allowed *breakglassv1alpha1.DebugSessionAllowed) {
+		if allowed == nil || identity.canRequest(allowed) {
+			return
+		}
+		for _, group := range allowed.Groups {
+			if !slices.Contains(identity.groups, group) && !slices.Contains(groups, group) {
+				groups = append(groups, group)
+			}
+		}
+	}
+	for i := range templates {
+		add(templates[i].Spec.Allowed)
+	}
+	for i := range bindings {
+		add(bindings[i].Spec.Allowed)
+	}
+	return groups
+}
+
+// Optional discovery aliases are fresh, provenance-checked and cluster-scoped.
+// They never become DebugSession creation or pod-operation credentials.
+func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx context.Context, configured []breakglassv1alpha1.ClusterConfig, aliasGroups []string) (debugTemplateRequester, error) {
 	r := debugTemplateRequesterFromContext(ctx)
 	r.clusters, _ = readyDebugClusterConfigMap(configured)
 	r.configured = configured
-	if r.username == "" {
+	if r.username == "" || len(aliasGroups) == 0 {
 		return r, nil
 	}
 	clusters := r.clusters
-	r.grantedClusters = make(map[string]*breakglassv1alpha1.ClusterConfig)
+	r.grantedClusters = make(map[string][]string)
 	// Query fresh requester grants using the CRD's selectable fields. Older
 	// servers and clients without these indexes retain the filtered fallback.
 	var sessions breakglassv1alpha1.BreakglassSessionList
@@ -330,7 +349,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 		}
 		seenIdentities[identity] = true
 		matches, err := c.discoveryGrants(apiCtx, ctrlclient.MatchingFields{
-			"spec.user": identity, "spec.grantedGroup": "breakglass:platform:debugsession",
+			"spec.user": identity,
 		})
 		if err == nil {
 			sessions.Items = append(sessions.Items, matches.Items...)
@@ -352,9 +371,11 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 			continue
 		}
 		name := configuredCluster.Name
-		if clusters[name] != nil && isActiveDebugSessionGrant(session, r.username, r.email,
+		if clusters[name] != nil && slices.Contains(aliasGroups, session.Spec.GrantedGroup) && isActiveDebugSessionGrant(session, r.username, r.email,
 			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"), now) {
-			r.grantedClusters[name] = clusters[name]
+			if !slices.Contains(r.grantedClusters[name], session.Spec.GrantedGroup) {
+				r.grantedClusters[name] = append(r.grantedClusters[name], session.Spec.GrantedGroup)
+			}
 		}
 	}
 	return r, nil
@@ -362,7 +383,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 
 func (r debugTemplateRequester) forCluster(name string) debugTemplateRequester {
 	if r.grantedClusters[name] != nil {
-		r.groups = append(append([]string(nil), r.groups...), "breakglass:platform:debugsession")
+		r.groups = append(append([]string(nil), r.groups...), r.grantedClusters[name]...)
 	}
 	r.grantedClusters = nil
 	return r
@@ -387,7 +408,8 @@ func (c *DebugSessionAPIController) templateResponseRequester(
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	requester debugTemplateRequester,
 ) debugTemplateRequester {
-	for name, cluster := range requester.grantedClusters {
+	for name := range requester.grantedClusters {
+		cluster := requester.clusters[name]
 		scoped := requester.forCluster(name)
 		if directTemplateAllowsClusterReference(template, name, cluster, requester.configured) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
 			return scoped
@@ -622,11 +644,10 @@ func (c *DebugSessionAPIController) handleListTemplates(ctx *gin.Context) {
 		return
 	}
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
+	aliasGroups := discoveryAliasGroups(templateList.Items, bindingList.Items, debugTemplateRequesterFromContext(ctx))
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items, aliasGroups)
 	if err != nil {
-		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
-		return
+		reqLog.Warnw("Optional discovery aliases unavailable; retaining identity authorization", "error", err)
 	}
 
 	includeHidden := ctx.Query("includeHidden") == "true"
@@ -715,11 +736,10 @@ func (c *DebugSessionAPIController) handleGetTemplate(ctx *gin.Context) {
 	}
 	clusterMap, allClusterNames := readyDebugClusterConfigMap(clusterConfigList.Items)
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
+	aliasGroups := discoveryAliasGroups([]breakglassv1alpha1.DebugSessionTemplate{*template}, bindingList.Items, debugTemplateRequesterFromContext(ctx))
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items, aliasGroups)
 	if err != nil {
-		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
-		return
+		reqLog.Warnw("Optional discovery aliases unavailable; retaining identity authorization", "error", err)
 	}
 	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)
 	if !c.canReadTemplateWithBindings(template, applicableBindings, requester) {
@@ -765,18 +785,17 @@ func (c *DebugSessionAPIController) handleGetTemplateClusters(ctx *gin.Context) 
 	}
 	clusterMap, _ := readyDebugClusterConfigMap(clusterConfigList.Items)
 
-	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items)
-	if err != nil {
-		reqLog.Errorw("Failed to resolve debug session grants", "error", err)
-		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate Breakglass access")
-		return
-	}
-
 	var bindingList breakglassv1alpha1.DebugSessionClusterBindingList
 	if err := c.reader().List(apiCtx, &bindingList); err != nil {
 		reqLog.Errorw("Failed to list cluster bindings", "error", err)
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to list bindings")
 		return
+	}
+
+	aliasGroups := discoveryAliasGroups([]breakglassv1alpha1.DebugSessionTemplate{*template}, bindingList.Items, debugTemplateRequesterFromContext(ctx))
+	requester, err := c.templateRequester(ctx, apiCtx, clusterConfigList.Items, aliasGroups)
+	if err != nil {
+		reqLog.Warnw("Optional discovery aliases unavailable; retaining identity authorization", "error", err)
 	}
 
 	applicableBindings := c.findBindingsForTemplate(template, bindingList.Items)

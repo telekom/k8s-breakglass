@@ -20,10 +20,43 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestIdentityDiscoverySurvivesOptionalGrantLookupFailure(t *testing.T) {
+	cluster := readyDebugClusterConfig("breakglass", "target", nil)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "identity"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{cluster.Name}, Groups: []string{"identity-debuggers"},
+			},
+		},
+	}
+	alias := template.DeepCopy()
+	alias.Name = "optional-alias"
+	alias.Spec.Allowed.Groups = []string{"unavailable-grant"}
+	base := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(&cluster, template, alias).
+		WithInterceptorFuncs(interceptor.Funcs{
+			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+				if _, ok := list.(*breakglassv1alpha1.BreakglassSessionList); ok {
+					return fmt.Errorf("optional session lookup unavailable")
+				}
+				return cl.List(ctx, list, opts...)
+			},
+		}).Build()
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), base, nil, nil)
+	router := debugSessionAPITestRouter(t, controller, "alice", "alice@example.test", []string{"identity-debuggers"})
+	for _, path := range []string{"/templates", "/templates/identity", "/templates/identity/clusters"} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/v1/debugSessions"+path, nil))
+		require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		require.NotContains(t, response.Body.String(), "optional-alias")
+	}
+}
+
 func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
-	const group = "breakglass:platform:debugsession"
+	const group = "tenant-debuggers"
 	for _, mode := range []string{"direct", "direct alias", "binding"} {
 		bindingBacked := mode == "binding"
 		t.Run(mode, func(t *testing.T) {
@@ -46,7 +79,7 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 				{"wrong issuer", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.IdentityProviderIssuer = "https://other.example" }, false},
 				{"wrong identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "other" }, false},
 				{"wrong cluster", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.Cluster = "unrelated" }, false},
-				{"OIDC claim alone", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.GrantedGroup = "other" }, false},
+				{"unconfigured grant group", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.GrantedGroup = "other" }, false},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}, Clusters: []string{"tenant-*"}}}}
@@ -77,9 +110,6 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 						ctx.Set("username", "alice")
 						ctx.Set("email", "alice@example.test")
 						ctx.Set("groups", []string{"tenant-user"})
-						if tc.name == "OIDC claim alone" {
-							ctx.Set("groups", []string{group})
-						}
 						ctx.Set("identity_provider_name", "idp")
 						ctx.Set("issuer", "https://idp.example")
 					})
@@ -166,7 +196,7 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 	requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{
 		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-a"}},
 		{ObjectMeta: metav1.ObjectMeta{Name: "tenant-b"}},
-	})
+	}, []string{grant.Spec.GrantedGroup})
 	require.NoError(t, err)
 	require.Contains(t, requester.grantedClusters, "tenant-a")
 	require.Contains(t, requester.grantedClusters, "tenant-b")
@@ -175,8 +205,8 @@ func TestTemplateRequesterFiltersGrantQueries(t *testing.T) {
 	require.ElementsMatch(t, []string{"alice", "alice@example.test"}, debugSessionRecordedFieldValues(reader.calls[:2], "spec.user"))
 	for _, call := range reader.calls[:2] {
 		value, found := call.FieldSelector.RequiresExactMatch("spec.grantedGroup")
-		require.True(t, found)
-		require.Equal(t, "breakglass:platform:debugsession", value)
+		require.False(t, found)
+		require.Empty(t, value)
 	}
 	for _, call := range reader.calls {
 		require.False(t, call.FieldSelector.Empty(), "indexed discovery must not list the entire session collection")
@@ -234,11 +264,13 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 			}
 			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
 			router := gin.New()
+			var identityGroups []string
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("username", "alice")
 				ctx.Set("email", "alice@example.test")
 				ctx.Set("identity_provider_name", "idp")
 				ctx.Set("issuer", "https://idp.example")
+				ctx.Set("groups", identityGroups)
 			})
 			require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
 			list := httptest.NewRecorder()
@@ -254,6 +286,7 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/api/debugSessions", strings.NewReader(`{"templateRef":"debug","cluster":"cluster-a","reason":"debugging"}`))
 			request.Header.Set("Content-Type", "application/json")
 			router.ServeHTTP(create, request)
+			require.Equal(t, http.StatusForbidden, create.Code, "discovery aliases must not authorize creation: %s", create.Body.String())
 			if !tc.allowed {
 				require.Empty(t, templates.Templates)
 				require.Equal(t, http.StatusForbidden, clusters.Code)
@@ -269,6 +302,11 @@ func TestGrantAliasDiscoveryAndCanonicalCreation(t *testing.T) {
 			require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &detail))
 			require.Len(t, detail.Clusters, 1)
 			require.Equal(t, "cluster-a", detail.Clusters[0].Name)
+			identityGroups = []string{grant.Spec.GrantedGroup}
+			create = httptest.NewRecorder()
+			request = httptest.NewRequest(http.MethodPost, "/api/debugSessions", strings.NewReader(`{"templateRef":"debug","cluster":"cluster-a","reason":"debugging"}`))
+			request.Header.Set("Content-Type", "application/json")
+			router.ServeHTTP(create, request)
 			require.Equal(t, http.StatusCreated, create.Code, create.Body.String())
 			var session DebugSessionDetailResponse
 			require.NoError(t, json.Unmarshal(create.Body.Bytes(), &session))
@@ -402,7 +440,7 @@ func TestTemplateRequesterBoundedGrantHistory(t *testing.T) {
 				ctx.Set("username", "alice")
 				ctx.Set("identity_provider_name", "idp")
 				ctx.Set("issuer", "https://idp.example")
-				requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{{ObjectMeta: metav1.ObjectMeta{Name: "tenant"}}})
+				requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{{ObjectMeta: metav1.ObjectMeta{Name: "tenant"}}}, []string{"breakglass:platform:debugsession"})
 				if overflow {
 					require.ErrorContains(t, err, "history exceeds limit")
 					require.Empty(t, requester.grantedClusters, "a valid grant in a partial snapshot must not authorize")
