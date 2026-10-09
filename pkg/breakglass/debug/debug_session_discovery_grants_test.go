@@ -104,6 +104,73 @@ func TestTemplateDiscoveryAggregatesOnlyAuthorizedClusterAliases(t *testing.T) {
 		[]breakglassv1alpha1.DebugSessionTemplate{*template}, nil, requester))
 }
 
+func TestDiscoveryAliasesIncludeNestedAndBindingOptionGroups(t *testing.T) {
+	cluster := readyDebugClusterConfig("breakglass", "target", nil)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{{
+				Name: "choice", InputType: breakglassv1alpha1.InputTypeSelect,
+				Options: []breakglassv1alpha1.SelectOption{
+					{Value: "ordinary"},
+					{Value: "restricted", AllowedGroups: []string{"variable-option"}},
+				},
+			}},
+		},
+	}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "breakglass"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+			Clusters:    []string{cluster.Name},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"identity"}},
+			SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+				Required: true,
+				Options: []breakglassv1alpha1.SchedulingOption{{
+					Name: "required", AllowedGroups: []string{"binding-option"},
+				}},
+			},
+		},
+	}
+	identity := debugTemplateRequester{username: "alice", groups: []string{"identity"}}
+	require.ElementsMatch(t, []string{"variable-option", "binding-option"}, discoveryAliasGroups(
+		[]breakglassv1alpha1.DebugSessionTemplate{*template}, []breakglassv1alpha1.DebugSessionClusterBinding{*binding}, identity))
+	objects := []client.Object{&cluster, template, binding}
+	for _, group := range []string{"variable-option", "binding-option"} {
+		objects = append(objects, &breakglassv1alpha1.BreakglassSession{
+			ObjectMeta: metav1.ObjectMeta{Name: group},
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: cluster.Name, User: "alice", GrantedGroup: group,
+				IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			},
+		})
+	}
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
+	router := gin.New()
+	router.Use(func(ctx *gin.Context) {
+		ctx.Set("username", "alice")
+		ctx.Set("groups", identity.groups)
+		ctx.Set("identity_provider_name", "idp")
+		ctx.Set("issuer", "https://idp.example")
+	})
+	require.NoError(t, controller.Register(router.Group("/api/debugSessions")))
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/debugSessions/templates/debug/clusters", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var detail TemplateClustersResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &detail))
+	require.Len(t, detail.Clusters, 1)
+	require.Len(t, detail.Clusters[0].BindingOptions, 1)
+	option := detail.Clusters[0].BindingOptions[0]
+	require.Len(t, option.SchedulingOptions.Options, 1)
+	require.Equal(t, "required", option.SchedulingOptions.Options[0].Name)
+	require.Len(t, option.ExtraDeployVariables, 1)
+	require.Len(t, option.ExtraDeployVariables[0].Options, 2)
+}
+
 func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 	const group = "tenant-debuggers"
 	for _, mode := range []string{"direct", "direct alias", "binding", "direct glob", "binding glob"} {

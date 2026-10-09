@@ -324,6 +324,9 @@ func discoveryAliasGroups(templates []breakglassv1alpha1.DebugSessionTemplate, b
 		}
 		for _, variable := range spec.ExtraDeployVariables {
 			addGroups(variable.AllowedGroups)
+			for _, option := range variable.Options {
+				addGroups(option.AllowedGroups)
+			}
 		}
 		if spec.SchedulingOptions != nil {
 			for _, option := range spec.SchedulingOptions.Options {
@@ -334,6 +337,11 @@ func discoveryAliasGroups(templates []breakglassv1alpha1.DebugSessionTemplate, b
 	for i := range bindings {
 		if bindings[i].Spec.Allowed != nil {
 			addGroups(bindings[i].Spec.Allowed.Groups)
+		}
+		if bindings[i].Spec.SchedulingOptions != nil {
+			for _, option := range bindings[i].Spec.SchedulingOptions.Options {
+				addGroups(option.AllowedGroups)
+			}
 		}
 	}
 	return groups
