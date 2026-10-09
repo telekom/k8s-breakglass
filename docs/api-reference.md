@@ -289,6 +289,8 @@ Authorization: Bearer <token>
   Escalation admission already enforces cluster-wide unique resource names
   across namespaces; conflicting legacy names fail closed instead of selecting
   an arbitrary owner.
+  Escalation discovery preserves `metadata.uid` so clients can pair sessions
+  with the exact policy owner rather than a same-name replacement.
 
 **User group resolution:** As with the escalations list endpoint, the
 requester's groups are resolved from the JWT `groups`/`realm_access` claim

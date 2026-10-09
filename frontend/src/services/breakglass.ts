@@ -355,6 +355,7 @@ export default class BreakglassService {
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
       return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
+        metadata: ses.metadata,
         group: ses?.spec?.grantedGroup || "",
         expiry: ses?.status?.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : 0,
         cluster: ses?.spec?.cluster || "",

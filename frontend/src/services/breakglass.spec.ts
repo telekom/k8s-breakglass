@@ -95,6 +95,54 @@ describe("BreakglassService", () => {
     },
   );
 
+  it.each(["policy-uid", "replacement-uid"])(
+    "keeps historical owner identity through API normalization for %s",
+    async (policyUID) => {
+      const ownerReferences = [
+        { controller: true, kind: "BreakglassEscalation", name: "firstline", uid: "policy-uid" },
+      ];
+      mockClient.get.mockImplementation(async (url, config) => {
+        if (url === "/breakglassEscalations") {
+          return {
+            data: [
+              {
+                metadata: { name: "firstline", uid: policyUID },
+                spec: {
+                  allowed: { groups: ["fixed-core"], clusters: ["prod"] },
+                  escalatedGroup: "emergency",
+                },
+              },
+              {
+                metadata: { name: "platform", uid: "other-uid" },
+                spec: {
+                  allowed: { groups: ["poweruser"], clusters: ["prod"] },
+                  escalatedGroup: "emergency",
+                },
+              },
+            ],
+          };
+        }
+        return {
+          data: config?.params?.state?.includes("rejected")
+            ? [
+                {
+                  metadata: { name: "ended-session", ownerReferences },
+                  spec: { cluster: "prod", grantedGroup: "emergency" },
+                  status: { state: "Expired" },
+                },
+              ]
+            : [],
+        };
+      });
+      const cards = await service.getBreakglasses();
+      expect(cards[0]!.escalationUID).toBe(policyUID);
+      expect(cards[0]!.state).toBe(policyUID === "policy-uid" ? "Expired" : "Available");
+      expect(cards[1]!.state).toBe("Available");
+      const historical = await service.fetchHistoricalSessions();
+      expect(historical[0]!.metadata!.ownerReferences).toEqual(ownerReferences);
+    },
+  );
+
   it("maps withdrawn and rejected sessions using status.state", async () => {
     mockClient.get.mockResolvedValueOnce({
       data: [
