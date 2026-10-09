@@ -1098,6 +1098,12 @@ Templates do not need to set this annotation themselves. Other annotation keys
 retain their existing merge precedence.
 Auxiliary resources that create child Pods must explicitly render this
 annotation on their Pod templates using the trusted `.session.uid` context.
+Legacy managed workloads without the Pod-template marker can be recovered
+unchanged after an interrupted activation or controller upgrade. The marker is
+excluded from deterministic create intent only when it has the trusted session
+UID; source-session ownership, operation identity, and workload-content checks
+remain enforced, and a conflicting nested UID fails closed. Recovery does not
+retroactively annotate or roll existing Pods.
 
 ### Lifecycle
 

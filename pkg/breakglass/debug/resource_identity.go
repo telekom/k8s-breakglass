@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -293,6 +295,11 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
+	if podMetadata := managedWorkloadPodMetadata(existing); podMetadata != nil {
+		if uid := podMetadata.Annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
+			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID: %w", obj.GetNamespace(), obj.GetName(), createErr)
+		}
+	}
 	contentMatches, err := recoveredCreateContentMatches(obj, existing)
 	if err != nil {
 		return fmt.Errorf("validate recovered resource %s/%s content: %w", obj.GetNamespace(), obj.GetName(), err)
@@ -333,6 +340,7 @@ func deterministicCreateOperationID(obj client.Object, session *breakglassv1alph
 		return "", fmt.Errorf("cannot stamp create operation without a session")
 	}
 	desired := obj.DeepCopyObject().(client.Object)
+	removeManagedPodSessionUID(desired, string(session.UID))
 	annotations := desired.GetAnnotations()
 	if annotations != nil {
 		annotations = maps.Clone(annotations)
@@ -368,7 +376,9 @@ func recoveredCreateContentMatches(desired, existing client.Object) (bool, error
 }
 
 func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error) {
-	serialized, err := json.Marshal(obj)
+	normalized := obj.DeepCopyObject().(client.Object)
+	removeManagedPodSessionUID(normalized, obj.GetAnnotations()[sourceSessionUIDAnnotation])
+	serialized, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +393,28 @@ func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error
 		}
 	}
 	return result, nil
+}
+
+func managedWorkloadPodMetadata(obj client.Object) *metav1.ObjectMeta {
+	switch workload := obj.(type) {
+	case *appsv1.Deployment:
+		return &workload.Spec.Template.ObjectMeta
+	case *appsv1.DaemonSet:
+		return &workload.Spec.Template.ObjectMeta
+	case *batchv1.Job:
+		return &workload.Spec.Template.ObjectMeta
+	default:
+		return nil
+	}
+}
+
+// The controller-added marker is not workload intent. Excluding only its
+// trusted value preserves create identity across upgrades from unstamped Pods.
+func removeManagedPodSessionUID(obj client.Object, uid string) {
+	if metadata := managedWorkloadPodMetadata(obj); metadata != nil && uid != "" &&
+		metadata.Annotations[sourceSessionUIDAnnotation] == uid {
+		delete(metadata.Annotations, sourceSessionUIDAnnotation)
+	}
 }
 
 func jsonSubset(expected, actual interface{}) bool {
