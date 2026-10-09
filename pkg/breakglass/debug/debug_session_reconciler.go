@@ -1503,13 +1503,10 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
 		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
 	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
-			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
-			}
-			clusterConfig = &clusterConfigList.Items[i]
-		}
+	var clusterAmbiguity debugClusterConfigAmbiguity
+	clusterConfig, clusterAmbiguity = findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterName)
+	if clusterAmbiguity != debugClusterConfigAmbiguityNone {
+		return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
 	}
 	readyClusterConfig := clusterConfig
 	if !isDebugClusterConfigReady(readyClusterConfig) {
