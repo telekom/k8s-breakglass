@@ -122,6 +122,9 @@ const approvalReasonValid = computed(() => {
 
 // Rejection dialog state
 const rejectDialogOpen = ref(false);
+useModalBehavior(approveDialogOpen, () => {
+  approveDialogOpen.value = false;
+});
 useModalBehavior(renewDialogOpen, () => {
   renewDialogOpen.value = false;
 });

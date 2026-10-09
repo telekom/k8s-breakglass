@@ -1566,6 +1566,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 }
 
 // isActiveDebugSessionGrant validates optional discovery aliases, not creation.
+// Match the grant's identity exactly, as in the live selectable-field query;
+// display/lifecycle identity normalization must not broaden grant provenance.
 func isActiveDebugSessionGrant(session breakglassv1alpha1.BreakglassSession, username, email, provider, issuer string, legacyAllowed bool, now time.Time) bool {
 	if session.Spec.GrantedGroup == "" ||
 		!breakglass.IsSessionAuthorizationEligible(session, now) ||

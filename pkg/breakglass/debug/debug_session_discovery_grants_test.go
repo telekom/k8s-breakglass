@@ -127,6 +127,8 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 				{"wrong provider", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.IdentityProviderName = "other" }, false},
 				{"wrong issuer", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.IdentityProviderIssuer = "https://other.example" }, false},
 				{"wrong identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "other" }, false},
+				{"case-changed identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "Alice" }, false},
+				{"identity whitespace", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = " alice " }, false},
 				{"wrong cluster", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.Cluster = "unrelated" }, false},
 				{"unconfigured grant group", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.GrantedGroup = "other" }, false},
 			} {

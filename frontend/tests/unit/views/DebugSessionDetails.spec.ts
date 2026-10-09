@@ -397,6 +397,12 @@ describe("DebugSessionDetails", () => {
     await flushPromises();
     await wrapper.get('[data-testid="approve-session-button"]').trigger("click");
     expect(mockApproveSession).not.toHaveBeenCalled();
+    expect(document.body.style.overflow).toBe("hidden");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(document.body.style.overflow).not.toBe("hidden");
+    expect(mockApproveSession).not.toHaveBeenCalled();
+    await wrapper.get('[data-testid="approve-session-button"]').trigger("click");
     const confirm = wrapper.get('[data-testid="confirm-approve-button"]');
     expect(confirm.attributes("disabled")).toBe(String(mandatory));
     const input = wrapper.get('[data-testid="approve-reason-input"]');
