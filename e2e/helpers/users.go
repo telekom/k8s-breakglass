@@ -94,7 +94,8 @@ var TestUsers = struct {
 
 	// SecurityRequester is a user specifically for security tests with minimal permissions
 	// Groups: security-test-requester
-	SecurityRequester TestUser
+	SecurityRequester         TestUser
+	PlatformIdentityRequester TestUser
 
 	// SecurityApprover is an approver specifically for security tests
 	// Groups: approver, security-test-approver
@@ -337,6 +338,12 @@ var TestUsers = struct {
 			"self-approve-test-group",
 			"unreachable-test-group",
 		},
+	},
+	PlatformIdentityRequester: TestUser{
+		Username: "platform-identity",
+		Password: "platform-identity-password",
+		Email:    "platform-identity@example.test",
+		Groups:   []string{"dttcaas-platform_poweruser"},
 	},
 	SecurityApprover: TestUser{
 		Username: "security-approver",

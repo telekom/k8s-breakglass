@@ -10,6 +10,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export E2E_DIR="$SCRIPT_DIR"
 E2E_LOG_PREFIX="[multi-e2e]"
+KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH:-/auth}
 
 # Source common library (provides shared functions)
 if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
@@ -255,7 +256,7 @@ kind: AuthenticationConfiguration
 jwt:
 # Main realm for employees
 - issuer:
-    url: https://e2e-keycloak:8443/realms/${KEYCLOAK_MAIN_REALM}
+    url: https://e2e-keycloak:8443${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_MAIN_REALM}
     audiences:
     - kubernetes
     certificateAuthority: |
@@ -272,7 +273,7 @@ $(echo "$keycloak_ca_content" | sed 's/^/      /')
       valueExpression: claims.iss
 # Contractors realm for external contractors
 - issuer:
-    url: https://e2e-keycloak:8443/realms/${KEYCLOAK_CONTRACTORS_REALM}
+    url: https://e2e-keycloak:8443${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_CONTRACTORS_REALM}
     audiences:
     - kubernetes
     certificateAuthority: |
@@ -770,7 +771,7 @@ EOF
   else
     keycloak_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$KEYCLOAK_CONTAINER_NAME" 2>/dev/null || echo "")
   fi
-  HUB_KEYCLOAK_URL="http://${keycloak_ip}:8080"
+  HUB_KEYCLOAK_URL="http://${keycloak_ip}:8080${KEYCLOAK_RELATIVE_PATH}"
   
   log "Hub webhook URL for spoke clusters: $HUB_WEBHOOK_URL"
   log "Hub API URL for spoke clusters: $HUB_API_URL"
@@ -847,8 +848,8 @@ verify_hub_services_ready() {
   fi
   
   # 5. Verify Keycloak realm is accessible (OIDC discovery endpoint)
-  log "Checking Keycloak OIDC discovery at http://$keycloak_ip:8080/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration..."
-  if ! curl -sf --connect-timeout 5 "http://$keycloak_ip:8080/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration" >/dev/null 2>&1; then
+  log "Checking Keycloak OIDC discovery at http://$keycloak_ip:8080${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration..."
+  if ! curl -sf --connect-timeout 5 "http://$keycloak_ip:8080${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration" >/dev/null 2>&1; then
     log_error "Keycloak OIDC discovery check failed for realm ${KEYCLOAK_MAIN_REALM}"
     failed=1
   else
@@ -1046,7 +1047,7 @@ apply_multi_cluster_resources() {
   # CRITICAL: Use DNS name (e2e-keycloak) NOT IP address!
   # The spoke clusters' AuthenticationConfiguration expects tokens with issuer using DNS name.
   # The breakglass controller pod has hostAliases to resolve e2e-keycloak to the container IP.
-  local issuer_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_MAIN_REALM}"
+  local issuer_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_MAIN_REALM}"
   log "OIDC issuer URL for ClusterConfigs: $issuer_url"
   
   # Read Keycloak CA certificate for OIDC issuer TLS validation
@@ -1984,8 +1985,8 @@ print_summary() {
   log "  export E2E_HUB_EXTERNAL_IP=$hub_ip"
   log "  export E2E_HUB_WEBHOOK_URL=$hub_webhook_url"
   log "  export E2E_HUB_API_URL=$hub_api_url"
-  log "  export KEYCLOAK_URL=https://localhost:8443"
-  log "  export KEYCLOAK_HOST=https://localhost:8443"
+  log "  export KEYCLOAK_URL=https://localhost:8443${KEYCLOAK_RELATIVE_PATH}"
+  log "  export KEYCLOAK_HOST=https://localhost:8443${KEYCLOAK_RELATIVE_PATH}"
   log "  export KEYCLOAK_PORT=8443"
   log ""
   log "To run multi-cluster tests:"
@@ -2024,8 +2025,9 @@ export E2E_SPOKE_A_OIDC_KUBECONFIG=$SPOKE_A_OIDC_KUBECONFIG
 export E2E_SPOKE_B_OIDC_KUBECONFIG=$SPOKE_B_OIDC_KUBECONFIG
 export E2E_MULTI_CLUSTER=true
 export KEYCLOAK_CONTAINER_NAME=$KEYCLOAK_CONTAINER_NAME
-export KEYCLOAK_URL=https://localhost:8443
-export KEYCLOAK_HOST=https://localhost:8443
+export KEYCLOAK_URL=https://localhost:8443${KEYCLOAK_RELATIVE_PATH}
+export KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}
+export KEYCLOAK_HOST=https://localhost:8443${KEYCLOAK_RELATIVE_PATH}
 export KEYCLOAK_PORT=8443
 export KEYCLOAK_MAIN_REALM=$KEYCLOAK_MAIN_REALM
 export KEYCLOAK_CONTRACTORS_REALM=$KEYCLOAK_CONTRACTORS_REALM
@@ -2035,7 +2037,7 @@ export E2E_HUB_EXTERNAL_IP=$hub_ip
 export E2E_HUB_WEBHOOK_URL=$hub_webhook_url
 export E2E_HUB_API_URL=$hub_api_url
 export KEYCLOAK_CA_FILE=${TLS_DIR}/keycloak/ca.crt
-export KEYCLOAK_INTERNAL_URL=https://${KEYCLOAK_CONTAINER_NAME}:8443
+export KEYCLOAK_INTERNAL_URL=https://${KEYCLOAK_CONTAINER_NAME}:8443${KEYCLOAK_RELATIVE_PATH}
 export TLS_DIR=$TLS_DIR
 # K8s API server URLs for OIDC tests
 # External URLs (localhost) for test runner access

@@ -883,6 +883,23 @@
       "lastName": "Security"
     },
     {
+      "username": "platform-identity",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "platform-identity@example.test",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "platform-identity-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["offline_access", "uma_authorization"],
+      "groups": ["dttcaas-platform_poweruser"],
+      "firstName": "Platform",
+      "lastName": "Identity"
+    },
+    {
       "username": "security-requester",
       "enabled": true,
       "emailVerified": true,
@@ -2063,6 +2080,9 @@
     },
     {
       "name": "self-approve-test-group"
+    },
+    {
+      "name": "dttcaas-platform_poweruser"
     },
     {
       "name": "security-test-requester"

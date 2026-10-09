@@ -6,6 +6,10 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,9 +32,23 @@ import (
 
 func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithTimeout(20*time.Minute))
-	user := helpers.TestUsers.SecurityRequester
+	user := helpers.TestUsers.PlatformIdentityRequester
 	peer := helpers.TestUsers.SecurityApprover
 	requester := s.TC.ClientForUser(user)
+	token := s.TC.OIDCProvider().GetTokenForUser(t, s.Ctx, user)
+	parts := strings.Split(token, ".")
+	require.Len(t, parts, 3)
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var claims struct {
+		Issuer string   `json:"iss"`
+		Email  string   `json:"email"`
+		Groups []string `json:"groups"`
+	}
+	require.NoError(t, json.Unmarshal(payload, &claims))
+	require.Contains(t, claims.Issuer, "/auth/realms/")
+	require.Equal(t, user.Email, claims.Email)
+	require.True(t, slices.Contains(claims.Groups, "dttcaas-platform_poweruser"))
 	targets := []struct {
 		name       string
 		kubeconfig string
@@ -72,8 +90,18 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 		var cluster breakglassv1alpha1.ClusterConfig
 		key := client.ObjectKey{Namespace: s.Namespace, Name: target.name}
 		require.NoError(t, s.Client.Get(s.Ctx, key, &cluster))
+		originalSpec := cluster.Spec.DeepCopy()
+		t.Cleanup(func() {
+			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				var current breakglassv1alpha1.ClusterConfig
+				if err := s.Client.Get(context.Background(), key, &current); err != nil {
+					return err
+				}
+				current.Spec = *originalSpec
+				return s.Client.Update(context.Background(), &current)
+			}))
+		})
 		if helpers.IsMultiClusterEnabled() {
-			originalSpec := cluster.Spec.DeepCopy()
 			raw, err := clientcmd.LoadFromFile(target.kubeconfig)
 			require.NoError(t, err)
 			require.NoError(t, clientcmdapi.MinifyConfig(raw))
@@ -101,25 +129,23 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 				}
 				return s.Client.Update(s.Ctx, &cluster)
 			}))
-			t.Cleanup(func() {
-				require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
-					var current breakglassv1alpha1.ClusterConfig
-					if err := s.Client.Get(context.Background(), key, &current); err != nil {
-						return err
-					}
-					current.Spec = *originalSpec
-					return s.Client.Update(context.Background(), &current)
-				}))
-			})
+		} else {
+			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+				if err := s.Client.Get(s.Ctx, key, &cluster); err != nil {
+					return err
+				}
+				cluster.Spec.AuthType = breakglassv1alpha1.ClusterAuthTypeKubeconfig
+				return s.Client.Update(s.Ctx, &cluster)
+			}))
 		}
-		require.True(t, cluster.Spec.AuthType == "" || cluster.Spec.AuthType == breakglassv1alpha1.ClusterAuthTypeKubeconfig)
+		require.Equal(t, breakglassv1alpha1.ClusterAuthTypeKubeconfig, cluster.Spec.AuthType)
 	}
 
 	for _, end := range []string{"drop-yes", "natural-expiry", "owner-prune"} {
 		t.Run(end, func(t *testing.T) {
 			group := helpers.GenerateUniqueName("native-privilege")
 			policy := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("wildcard-policy"), s.Namespace).
-				WithAllowedClusters("*").WithAllowedGroups("security-test-requester").
+				WithAllowedClusters("*").WithAllowedGroups("dttcaas-platform_poweruser").
 				WithEscalatedGroup(group).WithApproverUsers(peer.Email).
 				WithMaxValidFor("10m").Build()
 			policy.Spec.SessionLimitsOverride = &breakglassv1alpha1.SessionLimitsOverride{
@@ -154,6 +180,7 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 				}, helpers.WaitForStateTimeout)
 				require.NoError(t, err)
 				s.Cleanup.Add(session)
+				require.Equal(t, user.Email, session.Spec.User, "target user identifier must use email with no prefix")
 				owner := metav1.GetControllerOf(session)
 				require.NotNil(t, owner)
 				require.Equal(t, policy.Name, owner.Name)
@@ -194,7 +221,7 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 						require.Eventually(t, func() bool {
 							_, err := nativeUser(i).RbacV1().ClusterRoleBindings().Create(s.Ctx, probe, metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
 							return apierrors.IsForbidden(err)
-						}, 6*time.Minute, 2*time.Second, "same cached CREATE must revoke within fixture authorizedTTL5m plus propagation/polling")
+						}, helpers.WaitForStateTimeout, 2*time.Second, "same CREATE must revoke within bounded propagation; fixtures explicitly disable positive caching")
 						_, err := admins[i].RbacV1().ClusterRoleBindings().Get(s.Ctx, probe.Name, metav1.GetOptions{})
 						require.True(t, apierrors.IsNotFound(err), "server dry-run must leave zero persisted probe resources")
 					}
