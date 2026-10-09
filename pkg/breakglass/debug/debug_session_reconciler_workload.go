@@ -574,6 +574,9 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 	// The session UID is controller-owned resource identity.  Reassert it after
 	// merging every user-controlled annotation source, including rendered
 	// workload metadata.
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
 	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 	if restrictedCatalogue {
 		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
