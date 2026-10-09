@@ -2,6 +2,7 @@ export interface Breakglass extends AvailableBreakglass, ActiveBreakglass {}
 
 export interface AvailableBreakglass {
   escalationName?: string; // resource identifier, separate from session names
+  escalationUID?: string;
   displayName?: string; // human-readable escalation name
   escalationIdentities?: string[]; // resource names and display labels represented by a cluster/group card
   from: string; // source role/group user has (base role for escalation)
@@ -39,6 +40,7 @@ export interface SessionMetadata {
   name?: string;
   creationTimestamp?: string;
   annotations?: Record<string, string>;
+  ownerReferences?: Array<{ kind?: string; name?: string; uid?: string; controller?: boolean }>;
   labels?: Record<string, string>;
   [key: string]: unknown;
 }

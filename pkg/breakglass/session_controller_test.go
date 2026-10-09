@@ -1570,6 +1570,61 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 	}
 }
 
+func TestHandleRequestBreakglassSession_ValidatesEscalationName(t *testing.T) {
+	for _, name := range []string{"Uppercase", "namespace/name", "invalid name", "valid-policy.example"} {
+		t.Run(name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+			builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "valid-policy.example", Namespace: "escns", UID: "valid-policy-uid"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+						Clusters: []string{"test"}, Groups: []string{"system:authenticated"},
+					},
+					EscalatedGroup: "g1",
+					Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+						Users: []string{"approver@example.com"},
+					},
+				},
+			})
+			cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+			logger := zap.NewNop().Sugar()
+			ctrl := NewBreakglassSessionController(logger, config.Config{},
+				&SessionManager{Client: cli}, &testEscalationLookup{Client: cli},
+				func(c *gin.Context) {
+					c.Set("email", "req@example.com")
+					c.Set("username", "Requester")
+					c.Set("legacy_identity_allowed", true)
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{"system:authenticated"}, nil
+			}
+			engine := gin.New()
+			require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+			body, err := json.Marshal(BreakglassSessionRequest{
+				Clustername: "test", Username: "req@example.com", GroupName: "g1", EscalationName: name,
+			})
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(body)))
+			var sessions breakglassv1alpha1.BreakglassSessionList
+			require.NoError(t, cli.List(context.Background(), &sessions))
+			if name == "valid-policy.example" {
+				require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+				require.Len(t, sessions.Items, 1)
+				require.Equal(t, name, sessions.Items[0].OwnerReferences[0].Name)
+			} else {
+				require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
+				require.Contains(t, response.Body.String(), "escalationName must be a valid Kubernetes resource name")
+				require.Empty(t, sessions.Items)
+			}
+		})
+	}
+}
+
 func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLookup(t *testing.T) {
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
 	for index, fn := range sessionIndexFunctions {

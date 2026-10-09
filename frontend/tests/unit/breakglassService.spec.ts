@@ -131,7 +131,7 @@ describe("BreakglassService", () => {
       await expect(service.fetchMyOutstandingRequests()).rejects.toThrow("Request failed");
     });
 
-    it("requests only cluster/group even when the card aggregates escalation identities", async () => {
+    it("requests the selected resource name, never a display label or aggregated identity", async () => {
       mockPost.mockResolvedValueOnce({ status: 201 });
       const transition = {
         cluster: "prod",
@@ -151,6 +151,7 @@ describe("BreakglassService", () => {
       expect(mockPost).toHaveBeenCalledWith("/breakglassSessions", {
         cluster: "prod",
         group: "admin",
+        escalationName: "first-id",
         user: "test@example.com",
         reason: "Incident repair",
         duration: 3600,
