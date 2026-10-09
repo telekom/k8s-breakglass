@@ -23,6 +23,13 @@ mapping and optional group-sync remain the identity source. Approval, namespace,
 pod security, duration and provider/issuer checks remain on the debug workflow;
 an escalation grant is neither required nor injected into requester groups.
 
+Discovery alone may use deprecated, cluster-scoped grant aliases to display
+additional configured profiles. Only fresh, active grants with matching
+identity/provider/issuer provenance qualify. An alias lookup failure does not
+affect identity-authorized results; aliases never become creation credentials.
+Workload and auxiliary renderers expose the immutable Kubernetes DebugSession
+UID under `.session.uid`, isolated from user-controlled `.vars`.
+
 The system consists of two primary components:
 1. **Go-based Kubernetes Controller (Backend)**: Manages CRDs, interacts with the Kubernetes API, serves the RESTful Gin API, and runs the controller-runtime reconcilers.
 2. **Vue 3 / TypeScript Frontend**: Provides an accessible, user-friendly interface for requesting, approving, and auditing breakglass sessions.

@@ -1299,21 +1299,24 @@ Deployment or DaemonSet.
 | `namespaceConstraints.allowedLabelSelectors` | array | Label selectors for allowed namespaces |
 | `namespaceConstraints.deniedLabelSelectors` | array | Label selectors for denied namespaces |
 
-Temporary `breakglass:platform:debugsession` groups used for template and binding
-access come from active BreakglassSessions, not token claims. Discovery queries
-requester identities and the required granted group using selectable fields,
-then validates that fresh snapshot with the same provider, issuer, target-cluster,
-state, and expiry checks as creation, without querying grants again per cluster.
+Identity groups authorize template and binding access directly, including
+groups with historic escalation names. No BreakglassSession is required.
+Discovery may additionally show deprecated compatibility aliases for configured
+allowlist groups held through active BreakglassSessions. It queries requester
+identities using selectable fields, then validates the fresh snapshot's provider,
+issuer, target cluster, state, and expiry without querying grants again per cluster.
+Lookup failures suppress aliases only; identity-authorized discovery continues.
+Aliases never authorize creation, approval, or pod access.
 The trusted single-provider `legacy_identity_allowed` compatibility path retains
-creation's legacy provenance rules; provider-aware authentication requires both
+legacy provenance rules; provider-aware authentication requires both
 the matching provider name and issuer. Template-wide variable and scheduling fields aggregate authorized
 target clusters; the cluster endpoint returns each target's scoped fields.
 
 Grant targets use the same unique ClusterConfig name/tenant-alias resolution as
 creation. An exact ClusterConfig name takes precedence over a tenant alias;
 ambiguous aliases (including collisions with unready configurations) do not grant
-access. Discovery returns canonical ClusterConfig names, and creation accepts an
-active grant recorded under that canonical name or its uniquely resolved alias.
+alias discovery. Discovery returns canonical ClusterConfig names, and creation
+uses those names with the authenticated identity's template/binding allowlists.
 Direct template cluster patterns match the resolved cluster's canonical name or
 uniquely resolved tenant alias consistently during discovery, creation, and
 reconciliation. Both direct templates and binding aliases include unready configs

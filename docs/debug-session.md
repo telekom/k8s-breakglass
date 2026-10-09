@@ -1711,18 +1711,20 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
-Creation uses the same identity-group authorization as discovery. No
+Creation uses identity-group authorization. No
 BreakglassSession lookup or synthetic escalation group is used. A group with
 the historic grant name is treated like any other authenticated identity group;
 it has no special meaning. Provider/issuer provenance is still persisted and
 enforced on later session operations.
 
-Template list, detail, and cluster discovery resolve temporary grants through
-fresh selectable-field queries for each distinct username/email identity. Each
+Template list, detail, and cluster discovery may additionally resolve optional
+grant aliases for allowlist groups absent from the identity. They use fresh
+selectable-field queries for each distinct username/email identity. Each
 query, including the compatibility fallback on servers without selectable fields,
 is limited to four pages of 250 sessions. Incomplete or oversized responses fail
-closed rather than exposing profiles from a partial grant snapshot. Operators
-should prune retained grant history if discovery reports this limit.
+closed for aliases rather than exposing profiles from a partial grant snapshot.
+Lookup failures never remove identity-authorized profiles or prevent creation.
+Operators should prune retained grant history if alias discovery reports this limit.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
@@ -2233,18 +2235,23 @@ Approval snapshots use their canonical persisted JSON representation: runtime-on
 
 Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.
 
-### Discovering profiles authorized by a Breakglass grant
+### Optional Breakglass grant discovery aliases
 
-Templates and cluster bindings may require `breakglass:platform:debugsession` in
-`allowed.groups`. Request and approve the corresponding Breakglass escalation
-through the normal UI or `bgctl` before listing these debug profiles. Template
-list, detail, and cluster discovery use the same active-session authorization
-checks as debug-session creation: the grant must match the requester username
+Identity groups alone authorize discovery and creation through template and
+binding `allowed.groups`/`allowed.users`; no escalation is required. Any group,
+including the historic `breakglass:platform:debugsession`, is accepted directly
+when present in the authenticated identity.
+
+For deprecated compatibility, template list, detail, and cluster discovery may
+also display profiles whose configured allowlist group is held through an active
+BreakglassSession. The optional grant must match the requester username
 or email, identity-provider name and issuer, and target cluster, and must be
-approved with an unexpired lease. A token containing that group alone does not
-make these profiles available. Withdrawn, rejected, expired, and retained grants
+approved with an unexpired lease. Withdrawn, rejected, expired, and retained grants
 cannot authorize discovery. A grant on one cluster does not reveal profiles or
-binding options restricted to another cluster.
+binding options restricted to another cluster. These aliases provide
+discoverability only: creation still requires the identity itself to satisfy
+the selected template/binding allowlist. Migrate synthetic allowlist groups to
+actual identity groups; do not create unlock-only escalations.
 
 The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
 API endpoints; no separate client-side grant configuration is needed. API
@@ -2256,7 +2263,7 @@ scheduling options available on the template's authorized target clusters.
 After selecting a cluster, use that cluster's resolved fields and binding
 options; those remain limited to the grant for that specific cluster.
 
-Discovery retains creation's trusted single-provider `legacy_identity_allowed`
+Discovery retains the trusted single-provider `legacy_identity_allowed`
 compatibility for legacy grant provenance. Provider-aware authentication requires
 both a matching provider name and issuer; this compatibility is not inferred
 from the requester's token.
