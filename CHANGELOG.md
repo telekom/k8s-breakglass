@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Reserve fresh Helm chart versions for v0.3.0-rc.9: escalation-config 0.4.2
+  and debug-session-catalogue 0.2.5. The release workflow stamps both packaged
+  charts with the release tag as `appVersion`.
+
 - Require Go 1.26.9 or newer so CI and source builds no longer select the
   vulnerable Go 1.26.6 standard library. Production image builds remain on
   the existing Go 1.27 builder. Update `golang.org/x/net` to 0.60.0 to include
