@@ -1580,14 +1580,30 @@ the requester, approver, or current token. A trusted
 issuer-only legacy record for its single trusted provider; provider-aware
 multi-provider authentication still requires the persisted provider and issuer.
 
-### Native Breakglass prerequisite and expiry
+### Identity authorization and expiry
 
-For a provider-aware native deployment, the DebugSession authorization path is
-the approved Breakglass session, not a direct OIDC group. The Breakglass
-session must grant exactly `breakglass:platform:debugsession`, must be bound to
-the same provider and issuer as the request, and must still be approved and
-unexpired. The grant is removed or becomes unusable after drop, rejection,
-withdrawal, or expiry.
+DebugSessions deploy targeted diagnostic workloads; BreakglassEscalations and
+BreakglassSessions escalate Kubernetes API access. They are independent features.
+Discovery and creation use the authenticated requester's identity groups and
+username/email, matched against template/binding `allowed.groups` and
+`allowed.users`. IdentityProvider group mapping and optional group-sync continue
+to work normally. No escalation or active BreakglassSession is required.
+Cluster binding, namespace protections, target namespace constraints, duration,
+approval and pod security checks remain enforced.
+
+#### Migration from escalation-grant authorization
+
+The previous `breakglass:platform:debugsession` prerequisite and synthetic grant
+group injection are deprecated and removed. Before upgrading, replace any
+template/binding `allowed.groups` that names an escalation's `escalatedGroup`
+with the real identity groups of its requesters (for example `tenant_poweruser`
+or `platform-operators`). Keep approval groups on the debug binding/template,
+not on a prerequisite escalation. Audit `autoApproveFor` independently.
+Once all clients use the new controller, remove debug-only escalations that
+existed solely to mint those grant groups. Escalations for ordinary API access
+are unaffected. Existing active DebugSessions retain their lifecycle.
+
+DebugSession four-eyes and self-approval checks remain unchanged.
 
 TDI and TDG are separate provider scopes when both are configured. Each profile
 has its own issuer and approver route; a TDG approver cannot approve a TDI
@@ -1673,24 +1689,11 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
-When creating a session, only an approved, unexpired Breakglass grant for
-`breakglass:platform:debugsession` is considered. The authenticated username or
-email claim must exactly match `BreakglassSession.spec.user`. Complete provider
-records require both provider name and issuer to match; issuer-only legacy
-records require the trusted single-provider identity and matching issuer.
-Blank legacy records are accepted only through that trusted compatibility path,
-and provider-only records are not accepted. `allowIDPMismatch` is a spoke
-authorization compatibility setting; it does not bypass the provider/issuer
-fence for native DebugSession creation. The API does not
-infer an email address from a username's local part, because the same local part
-can belong to different domains. The authorization webhook has a separate,
-issuer-scoped email-alias compatibility path for SubjectAccessReviews; that path
-does not broaden the DebugSession creation check. Grant lookup uses the cached
-`spec.cluster` and `spec.user` field indexes when available and re-reads positive
-candidates through the fresh reader. If the indexes are unavailable, it performs
-one full-list fallback. If no eligible exact grant remains, it performs a fresh
-full-reader fallback, so newly approved grants are not hidden by cache
-propagation delay and revoked or deleted cached grants are not trusted.
+Creation uses the same identity-group authorization as discovery. No
+BreakglassSession lookup or synthetic escalation group is used. A group with
+the historic grant name is treated like any other authenticated identity group;
+it has no special meaning. Provider/issuer provenance is still persisted and
+enforced on later session operations.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad

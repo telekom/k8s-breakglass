@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Restore DebugSession discovery/creation from authenticated identity groups and
+  template/binding allowlists, without requiring an active BreakglassSession.
+  This fixes the provider-aware grant prerequisite introduced by PR #1346
+  (first released in v0.3.0-rc.3), and removes grant injection introduced in
+  PR #1326. Provider/issuer fences, four-eyes approval, namespace protections,
+  duration and pod security remain unchanged.
+  **Migration:** replace synthetic escalation-group debug allowlists with
+  requesters' real identity groups before upgrading, and remove debug-only
+  prerequisite escalations afterwards; see
+  [the migration guide](docs/debug-session.md#migration-from-escalation-grant-authorization).
+
 ### Changed
 
 - Require Go 1.26.9 or newer so CI and source builds no longer select the
