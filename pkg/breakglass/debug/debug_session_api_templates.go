@@ -257,6 +257,7 @@ type debugTemplateRequester struct {
 	username        string
 	email           string
 	groups          []string
+	identityGroups  []string
 	grantedClusters map[string][]string
 	clusters        map[string]*breakglassv1alpha1.ClusterConfig
 	configured      []breakglassv1alpha1.ClusterConfig
@@ -311,7 +312,7 @@ func discoveryAliasGroups(templates []breakglassv1alpha1.DebugSessionTemplate, b
 	var groups []string
 	addGroups := func(allowed []string) {
 		for _, group := range allowed {
-			if !slices.Contains(identity.groups, group) && !slices.Contains(groups, group) {
+			if !identity.canRequest(&breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}}) && !slices.Contains(groups, group) {
 				groups = append(groups, group)
 			}
 		}
@@ -381,7 +382,9 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 			continue
 		}
 		name := configuredCluster.Name
-		if clusters[name] != nil && slices.Contains(aliasGroups, session.Spec.GrantedGroup) && isActiveDebugSessionGrant(session, r.username, r.email,
+		if clusters[name] != nil && isDebugSessionRequesterAllowed(
+			&breakglassv1alpha1.DebugSessionAllowed{Groups: aliasGroups}, "", "", []string{session.Spec.GrantedGroup},
+		) && isActiveDebugSessionGrant(session, r.username, r.email,
 			ctx.GetString("identity_provider_name"), ctx.GetString("issuer"), ctx.GetBool("legacy_identity_allowed"), now) {
 			if !slices.Contains(r.grantedClusters[name], session.Spec.GrantedGroup) {
 				r.grantedClusters[name] = append(r.grantedClusters[name], session.Spec.GrantedGroup)
@@ -393,6 +396,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 
 func (r debugTemplateRequester) forCluster(name string) debugTemplateRequester {
 	if r.grantedClusters[name] != nil {
+		r.identityGroups = append([]string{}, r.groups...)
 		r.groups = append(append([]string(nil), r.groups...), r.grantedClusters[name]...)
 	}
 	r.grantedClusters = nil
@@ -1059,6 +1063,11 @@ func debugSchedulingOptionsAvailableForRequester(
 // buildClusterDetailWithBindings creates a cluster detail with all matching binding options.
 // The first binding becomes the default (for backward compatibility with BindingRef).
 func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *breakglassv1alpha1.DebugSessionTemplate, matchingBindings []*breakglassv1alpha1.DebugSessionClusterBinding, cc *breakglassv1alpha1.ClusterConfig, requester debugTemplateRequester) AvailableClusterDetail {
+	// Approval metadata must not treat optional discovery aliases as credentials.
+	approvalGroups := requester.groups
+	if requester.identityGroups != nil {
+		approvalGroups = requester.identityGroups
+	}
 	detail := AvailableClusterDetail{
 		Name:        cc.Name,
 		DisplayName: cc.Name,
@@ -1077,7 +1086,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.SchedulingOptions = c.resolveSchedulingOptionsForRequester(template, nil, requester)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, nil)
 		detail.Impersonation = c.resolveImpersonation(template, nil)
-		detail.Approval = c.resolveApproval(template, nil, cc, requester.groups)
+		detail.Approval = c.resolveApproval(template, nil, cc, approvalGroups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, nil)
 		return detail
 	}
@@ -1099,7 +1108,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 			NamespaceConstraints:          c.resolveNamespaceConstraints(template, binding),
 			Impersonation:                 c.resolveImpersonation(template, binding),
 			RequiredAuxResourceCategories: c.resolveRequiredAuxResourceCategories(template, binding),
-			Approval:                      c.resolveApproval(template, binding, cc, requester.groups),
+			Approval:                      c.resolveApproval(template, binding, cc, approvalGroups),
 			RequestReason:                 c.resolveRequestReason(template, binding),
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
@@ -1125,7 +1134,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.SchedulingOptions = c.resolveSchedulingOptionsForRequester(template, primaryBinding, requester)
 		detail.NamespaceConstraints = c.resolveNamespaceConstraints(template, primaryBinding)
 		detail.Impersonation = c.resolveImpersonation(template, primaryBinding)
-		detail.Approval = c.resolveApproval(template, primaryBinding, cc, requester.groups)
+		detail.Approval = c.resolveApproval(template, primaryBinding, cc, approvalGroups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, primaryBinding)
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)

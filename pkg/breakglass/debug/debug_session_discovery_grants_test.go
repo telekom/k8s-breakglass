@@ -106,8 +106,12 @@ func TestTemplateDiscoveryAggregatesOnlyAuthorizedClusterAliases(t *testing.T) {
 
 func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 	const group = "tenant-debuggers"
-	for _, mode := range []string{"direct", "direct alias", "binding"} {
-		bindingBacked := mode == "binding"
+	for _, mode := range []string{"direct", "direct alias", "binding", "direct glob", "binding glob"} {
+		bindingBacked := strings.HasPrefix(mode, "binding")
+		allowedGroup := group
+		if strings.Contains(mode, "glob") {
+			allowedGroup = "tenant-debug*"
+		}
 		t.Run(mode, func(t *testing.T) {
 			for _, tc := range []struct {
 				name    string
@@ -115,6 +119,7 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 				allowed bool
 			}{
 				{"approved", nil, true},
+				{"approved without token groups", nil, true},
 				{"email identity", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.User = "alice@example.test" }, true},
 				{"expired", func(s *breakglassv1alpha1.BreakglassSession) {
 					s.Status.ExpiresAt = metav1.NewTime(time.Now().Add(-time.Minute))
@@ -133,8 +138,12 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 				{"unconfigured grant group", func(s *breakglassv1alpha1.BreakglassSession) { s.Spec.GrantedGroup = "other" }, false},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}, Clusters: []string{"tenant-*"}}}}
+					template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "debug"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{allowedGroup}, Clusters: []string{"tenant-*"}}}}
 					template.Spec.ExtraDeployVariables = []breakglassv1alpha1.ExtraDeployVariable{{Name: "target", AllowedGroups: []string{group}}}
+					template.Spec.Approvers = &breakglassv1alpha1.DebugSessionApprovers{
+						Groups:         []string{"peer-approvers"},
+						AutoApproveFor: &breakglassv1alpha1.AutoApproveConfig{Groups: []string{group}},
+					}
 					template.Spec.SchedulingOptions = &breakglassv1alpha1.SchedulingOptions{Required: true, Options: []breakglassv1alpha1.SchedulingOption{{Name: "granted", AllowedGroups: []string{group}}}}
 					otherTemplate := template.DeepCopy()
 					otherTemplate.Name = "ungranted"
@@ -153,7 +162,7 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 					}
 					if bindingBacked {
 						template.Spec.Allowed = &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"unavailable"}}
-						objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "debug"}, Clusters: []string{"tenant-a", "tenant-b"}, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}}}})
+						objects = append(objects, &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "debug"}, Clusters: []string{"tenant-a", "tenant-b"}, Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{allowedGroup}}}})
 					}
 					controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(objects...).Build(), nil, nil)
 					router := gin.New()
@@ -161,6 +170,9 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 						ctx.Set("username", "alice")
 						ctx.Set("email", "alice@example.test")
 						ctx.Set("groups", []string{"tenant-user"})
+						if tc.name == "approved without token groups" {
+							ctx.Set("groups", []string{})
+						}
 						ctx.Set("identity_provider_name", "idp")
 						ctx.Set("issuer", "https://idp.example")
 					})
@@ -202,6 +214,8 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 					require.NoError(t, json.Unmarshal(clusters.Body.Bytes(), &response))
 					require.Len(t, response.Clusters, 1)
 					require.Equal(t, "tenant-a", response.Clusters[0].Name)
+					require.True(t, response.Clusters[0].Approval.Required)
+					require.False(t, response.Clusters[0].Approval.CanAutoApprove, "optional discovery aliases must not advertise auto-approval")
 					require.Len(t, response.Clusters[0].ExtraDeployVariables, 1)
 					require.Equal(t, "target", response.Clusters[0].ExtraDeployVariables[0].Name)
 					require.Len(t, response.Clusters[0].SchedulingOptions.Options, 1)
@@ -209,6 +223,7 @@ func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 					if bindingBacked {
 						require.Len(t, response.Clusters[0].BindingOptions, 1)
 						require.Equal(t, "binding", response.Clusters[0].BindingOptions[0].BindingRef.Name)
+						require.False(t, response.Clusters[0].BindingOptions[0].Approval.CanAutoApprove)
 					} else {
 						require.Equal(t, []string{"tenant-a"}, list.Templates[0].AllowedClusters)
 					}

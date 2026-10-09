@@ -2256,6 +2256,8 @@ binding options restricted to another cluster. These aliases provide
 discoverability only: creation still requires the identity itself to satisfy
 the selected template/binding allowlist. Migrate synthetic allowlist groups to
 actual identity groups; do not create unlock-only escalations.
+Auto-approval hints remain identity-based even when a profile is shown through
+an alias. Group allowlist patterns retain the existing glob matching semantics.
 
 The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
 API endpoints; no separate client-side grant configuration is needed. API
