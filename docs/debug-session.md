@@ -1089,12 +1089,15 @@ Use `{{ required "session UID is required" .session.uid | yamlQuote }}` when a
 resource must be scoped to the exact session. A missing UID then fails rendering.
 User input remains under `.vars` and cannot override `.session.uid`.
 
-The controller always stamps `breakglass.t-caas.telekom.com/source-session-uid`
-on workloads, their Pod templates, and deployed Pod-template resources.
+For managed debug workloads, the controller always stamps
+`breakglass.t-caas.telekom.com/source-session-uid` on the workload, its Pod
+template, and deployed resources originating from a DebugPodTemplate.
 For this controller-owned key, session, binding, template, and rendered
 annotation values cannot override the immutable DebugSession UID.
 Templates do not need to set this annotation themselves. Other annotation keys
 retain their existing merge precedence.
+Auxiliary resources that create child Pods must explicitly render this
+annotation on their Pod templates using the trusted `.session.uid` context.
 
 ### Lifecycle
 
