@@ -14,6 +14,27 @@ The `BreakglassSession` custom resource represents an active or requested privil
 - Audit information
 - A metadata owner reference to the originating `BreakglassEscalation` for proper garbage collection
 
+## Choosing an escalation
+
+The REST request accepts optional `escalationName` containing the escalation's
+Kubernetes resource name. `bgctl session request --escalation NAME` sends this
+selection; the UI displays separate cards for policies granting the same group
+and submits the selected card's resource name.
+
+If only one ready, requester-eligible, provider-allowed policy grants the requested
+group on the target cluster, existing group-only requests continue to work.
+If multiple policies match, group-only requests return `409 AMBIGUOUS_ESCALATION`
+with sorted eligible candidates instead of silently choosing the first policy.
+Choose a candidate explicitly; a named policy still requires requester eligibility.
+The server persists its name/UID as the controller owner reference. Approval checks
+that exact owner UID, never the union of other policies' approvers.
+
+**Migration:** dual-role requesters and integrations with overlapping eligible
+same-group policies must submit `escalationName` (CLI: `--escalation`). Single-role
+requesters with only one eligible policy do not need a new field. This creation
+ambiguity is distinct from a GroupSync credentials failure: failed group resolution
+can leave no approvers even when the session already has the correct owner.
+
 ## Session State Machine
 
 The breakglass controller implements a **state-first validation architecture** where:

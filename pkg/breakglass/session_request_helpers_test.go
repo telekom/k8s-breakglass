@@ -2,6 +2,7 @@ package breakglass
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -37,6 +38,57 @@ func newTestSessionController(t *testing.T) *BreakglassSessionController {
 		sesManager, escManager,
 		nil, "/config/config.yaml", nil, cli,
 	)
+}
+
+func TestSelectRequestedEscalation(t *testing.T) {
+	a := breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-policy"},
+		Spec:       breakglassv1alpha1.BreakglassEscalationSpec{EscalatedGroup: "admin"},
+	}
+	b := *a.DeepCopy()
+	b.Name = "b-policy"
+	unready := *a.DeepCopy()
+	unready.Name = "unready"
+	unready.Status.Conditions = []metav1.Condition{{Type: "Ready", Status: metav1.ConditionFalse}}
+	for _, tc := range []struct {
+		name       string
+		eligible   []breakglassv1alpha1.BreakglassEscalation
+		group      string
+		selection  string
+		wantName   string
+		wantStatus int
+	}{
+		{name: "legacy unique policy", eligible: []breakglassv1alpha1.BreakglassEscalation{a}, group: "admin", wantName: a.Name},
+		{name: "explicit policy", eligible: []breakglassv1alpha1.BreakglassEscalation{b, a}, group: "admin", selection: b.Name, wantName: b.Name},
+		{name: "ambiguous", eligible: []breakglassv1alpha1.BreakglassEscalation{b, a}, group: "admin", wantStatus: http.StatusConflict},
+		{name: "ineligible selection", eligible: []breakglassv1alpha1.BreakglassEscalation{a}, group: "admin", selection: b.Name, wantStatus: http.StatusForbidden},
+		{name: "wrong group", eligible: []breakglassv1alpha1.BreakglassEscalation{a}, group: "viewer", selection: a.Name, wantStatus: http.StatusForbidden},
+		{name: "unready selection", eligible: []breakglassv1alpha1.BreakglassEscalation{a, unready}, group: "admin", selection: unready.Name, wantStatus: http.StatusForbidden},
+		{name: "unready not a candidate", eligible: []breakglassv1alpha1.BreakglassEscalation{a, unready}, group: "admin", wantName: a.Name},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(recorder)
+			selected, ok := selectRequestedEscalation(c, tc.eligible, BreakglassSessionRequest{GroupName: tc.group, EscalationName: tc.selection})
+			if tc.wantName != "" {
+				require.True(t, ok)
+				require.Equal(t, tc.wantName, selected.Name)
+				return
+			}
+			require.False(t, ok)
+			require.Nil(t, selected)
+			require.Equal(t, tc.wantStatus, recorder.Code)
+			if tc.wantStatus == http.StatusConflict {
+				var response struct {
+					Code       string   `json:"code"`
+					Candidates []string `json:"candidates"`
+				}
+				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, "AMBIGUOUS_ESCALATION", response.Code)
+				assert.Equal(t, []string{a.Name, b.Name}, response.Candidates)
+			}
+		})
+	}
 }
 
 // ----- collectApproversFromEscalations tests -----

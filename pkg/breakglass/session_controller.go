@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/system"
 	durationutils "github.com/telekom/k8s-breakglass/pkg/utils"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/rest"
 )
 
@@ -205,6 +206,9 @@ func (wc *BreakglassSessionController) validateSessionRequest(request Breakglass
 	if request.GroupName == "" {
 		return errors.New("group is required")
 	}
+	if request.EscalationName != "" && len(validation.IsDNS1123Subdomain(request.EscalationName)) != 0 {
+		return errors.New("escalationName must be a valid Kubernetes resource name")
+	}
 	return nil
 }
 
@@ -324,8 +328,12 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		return
 	}
 
-	// Phase 6: Collect approvers and find matched escalation in a single pass
-	resolution := wc.collectApproversFromEscalations(ctx, escalations, request.GroupName, reqLog)
+	selected, ok := selectRequestedEscalation(c, escalations, request)
+	if !ok {
+		return
+	}
+	// Resolve approvers only after the requester has selected an unambiguous policy.
+	resolution := wc.collectApproversFromEscalations(ctx, []breakglassv1alpha1.BreakglassEscalation{*selected}, request.GroupName, reqLog)
 
 	if !slices.Contains(resolution.possibleGroups, request.GroupName) {
 		reqLog.Warnw("User not authorized for group", "user", request.Username, "group", system.RedactGroupName(request.GroupName))

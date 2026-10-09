@@ -78,6 +78,20 @@ bgctl escalation list -o yaml
 bgctl session list -o wide
 ```
 
+## Explicit escalation selection
+
+When several eligible policies grant the same group on a cluster, select the
+Kubernetes resource name, not the display name:
+
+```bash
+bgctl session request --cluster prod-1 --group breakglass:platform:emergency \
+  --escalation firstline-emergency --reason "Incident response"
+```
+
+Group-only requests still work when exactly one policy is eligible. Ambiguous
+requests return409 with sorted candidates and create no session; selecting a name
+does not bypass requester, cluster, identity-provider, or readiness checks.
+
 ## Pagination
 
 ```bash

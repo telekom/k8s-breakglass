@@ -176,7 +176,7 @@ describe("BreakglassView", () => {
     });
 
     it.each(["First admin", "first-id", "SECOND ADMIN", "second-id"])(
-      "searches all identities of a deduplicated cluster/group card: %s",
+      "searches the selected policy without merging another policy for the same grant: %s",
       async (search) => {
         mockGetBreakglasses.mockResolvedValueOnce([
           { escalationName: "first-id", displayName: "First admin", cluster: "prod", to: "admin", from: "ops" },
@@ -187,19 +187,39 @@ describe("BreakglassView", () => {
         const cards = wrapper.findAllComponents({ name: "BreakglassCard" });
         expect(cards).toHaveLength(1);
         const breakglass = cards[0]!.props("breakglass");
+        const second = search.toLowerCase().includes("second");
         expect(breakglass).toMatchObject({
-          escalationName: "first-id",
-          displayName: "First admin",
+          escalationName: second ? "second-id" : "first-id",
+          displayName: second ? "Second admin" : "First admin",
           cluster: "prod",
           to: "admin",
-          requestingGroups: ["ops", "dev"],
-          escalationIdentities: ["first-id", "First admin", "second-id", "Second admin"],
+          requestingGroups: second ? ["dev"] : ["ops"],
+          escalationIdentities: second ? ["second-id", "Second admin"] : ["first-id", "First admin"],
         });
         await cards[0]!.vm.$emit("request", "Incident repair", 3600);
         await flushPromises();
         expect(mockRequestBreakglass).toHaveBeenCalledWith(breakglass, "Incident repair", 3600, undefined);
       },
     );
+
+    it("offers distinct policies for the same cluster and grant, while merging requester groups within one policy", async () => {
+      mockGetBreakglasses.mockResolvedValueOnce([
+        { escalationName: "firstline", cluster: "prod", to: "emergency", from: "fixed-core" },
+        { escalationName: "firstline", cluster: "prod", to: "emergency", from: "mobile-core" },
+        { escalationName: "platform", cluster: "prod", to: "emergency", from: "poweruser" },
+      ]);
+      const wrapper = await createWrapper();
+      const cards = wrapper.findAllComponents({ name: "BreakglassCard" });
+      expect(cards).toHaveLength(2);
+      expect(cards[0]!.props("breakglass")).toMatchObject({
+        escalationName: "firstline",
+        requestingGroups: ["fixed-core", "mobile-core"],
+      });
+      expect(cards[1]!.props("breakglass")).toMatchObject({
+        escalationName: "platform",
+        requestingGroups: ["poweruser"],
+      });
+    });
 
     it.each(["Production admin", "a1b2c3d4"])(
       "finds escalations by display name or resource name: %s",

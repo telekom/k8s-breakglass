@@ -193,11 +193,20 @@ describe("BreakglassService", () => {
     const svc = new BreakglassService(fakeAuth2);
     mockClient2.post.mockResolvedValueOnce({ status: 201 });
 
-    const transition = { cluster: "c1", to: "g1", duration: 3600 } as unknown as Breakglass;
+    const transition = {
+      cluster: "c1",
+      to: "g1",
+      duration: 3600,
+      escalationName: "firstline-emergency",
+    } as unknown as Breakglass;
     await svc.requestBreakglass(transition, "needed for testing");
     expect(mockClient2.post).toHaveBeenCalledWith(
       "/breakglassSessions",
-      expect.objectContaining({ reason: "needed for testing", user: "test-user@example.com" }),
+      expect.objectContaining({
+        reason: "needed for testing",
+        user: "test-user@example.com",
+        escalationName: "firstline-emergency",
+      }),
     );
   });
 

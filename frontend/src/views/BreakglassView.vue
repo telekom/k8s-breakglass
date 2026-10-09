@@ -106,7 +106,7 @@ const dedupedBreakglasses = computed(() => {
     const identities = Array.from(
       new Set([bg.escalationName, bg.displayName].filter((value): value is string => Boolean(value))),
     );
-    const key = `${bg.cluster || "global"}::${bg.to}`;
+    const key = `${bg.cluster || "global"}::${bg.to}::${bg.escalationName || ""}`;
     const existing = map.get(key);
     if (!existing) {
       const groups = collectRequesterGroups(bg);
@@ -340,11 +340,7 @@ async function onDrop(bg: Breakglass) {
       <div class="breakglass-grid" data-testid="escalation-list">
         <BreakglassCard
           v-for="bg in filteredBreakglasses"
-          :key="
-            (bg.sessionActive && bg.sessionActive.metadata && bg.sessionActive.metadata.name) ||
-            (bg.sessionPending && bg.sessionPending.metadata && bg.sessionPending.metadata.name) ||
-            bg.to + ':' + bg.cluster
-          "
+          :key="`${bg.escalationName || ''}:${bg.cluster}:${bg.to}`"
           :breakglass="bg"
           :time="time"
           @request="

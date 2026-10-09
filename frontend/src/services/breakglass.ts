@@ -260,10 +260,12 @@ export default class BreakglassService {
         cluster: string;
         group: string;
         user: string;
+        escalationName?: string;
         reason?: string;
         duration?: number;
         scheduledStartTime?: string;
       } = { cluster: transition.cluster, group: transition.to, user: username };
+      if (transition.escalationName) body.escalationName = transition.escalationName;
       if (reason && reason.trim().length > 0) body.reason = reason;
       if (duration && duration > 0) body.duration = Math.floor(duration);
       if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;

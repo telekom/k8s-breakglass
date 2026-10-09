@@ -19,9 +19,10 @@ type ClusterUserGroup struct {
 
 // BreakglassSessionRequest is the expected payload when requesting a session via the API.
 type BreakglassSessionRequest struct {
-	Clustername string `json:"cluster,omitempty"`
-	Username    string `json:"user,omitempty"`
-	GroupName   string `json:"group,omitempty"`
+	Clustername    string `json:"cluster,omitempty"`
+	Username       string `json:"user,omitempty"`
+	GroupName      string `json:"group,omitempty"`
+	EscalationName string `json:"escalationName,omitempty"`
 	// Reason is an optional free-text field supplied by the requester. Its requirement and description
 	// are driven by the escalation's RequestReason configuration.
 	// Max 500 characters, sanitized on server-side to prevent injection attacks.

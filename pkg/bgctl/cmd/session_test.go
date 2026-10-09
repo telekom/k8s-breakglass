@@ -121,6 +121,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 			Cluster          string `json:"cluster"`
 			User             string `json:"user"`
 			Group            string `json:"group"`
+			EscalationName   string `json:"escalationName"`
 			Reason           string `json:"reason"`
 			DurationSeconds  int64  `json:"duration"`
 			ScheduledStartAt string `json:"scheduledStartTime"`
@@ -129,6 +130,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 		require.Equal(t, "prod-cluster", req.Cluster)
 		require.Equal(t, "alice@example.com", req.User)
 		require.Equal(t, "admins", req.Group)
+		require.Equal(t, "firstline-emergency", req.EscalationName)
 		require.Equal(t, "incident-123", req.Reason)
 		require.EqualValues(t, 3600, req.DurationSeconds)
 		require.Equal(t, "2026-06-29T10:00:00Z", req.ScheduledStartAt)
@@ -153,6 +155,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 		"session", "request",
 		"--cluster", "prod-cluster",
 		"--group", "admins",
+		"--escalation", "firstline-emergency",
 		"--user", "alice@example.com",
 		"--reason", "incident-123",
 		"--duration", "3600",

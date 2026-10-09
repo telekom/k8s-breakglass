@@ -94,6 +94,7 @@ type SessionRequest struct {
 	Cluster            string `json:"cluster"`
 	User               string `json:"user"`
 	Group              string `json:"group"`
+	EscalationName     string `json:"escalationName,omitempty"`
 	Reason             string `json:"reason,omitempty"`
 	Duration           int64  `json:"duration,omitempty"`
 	ScheduledStartTime string `json:"scheduledStartTime,omitempty"`
@@ -188,6 +189,9 @@ func (c *APIClient) CreateSession(ctx context.Context, t *testing.T, req Session
 		session, err := c.doCreateSession(ctx, t, req)
 		if err == nil {
 			return session, nil
+		}
+		if strings.Contains(err.Error(), "AMBIGUOUS_ESCALATION") {
+			return nil, err
 		}
 
 		if attempt < maxRetries {
