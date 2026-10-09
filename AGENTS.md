@@ -193,17 +193,18 @@ cluster) created by that invocation.
 
 ## DebugSession security contracts
 
-- Native provider-aware requests must carry the temporary Breakglass grant
-  `breakglass:platform:debugsession`. This is an escalation result, not an
-  OIDC group to seed in a token.
+- DebugSession discovery and creation use authenticated identity groups/users
+  matched against template/binding allowlists. No BreakglassSession grant is
+  required, looked up or injected. IdentityProvider mapping and group-sync
+  remain the identity source; no group name has special escalation semantics.
 - Provider scope is the pair of identity-provider name and issuer. Approval,
-  rejection, and Breakglass-session lookup must match both values; a provider
+  rejection, and other provider-aware DebugSession operations match both values; a provider
   name alone is not sufficient.
 - Requester self-approval is denied using both authenticated username and
   email, even when the requester is also in an approver group. Binding-backed
   sessions use only the approvers from their recorded `spec.bindingRef`.
-- Expiry is authoritative. A missing or elapsed `status.expiresAt`, a
-  rejected/withdrawn/terminal Breakglass session, or a session beyond its
+- Expiry is authoritative. A missing or elapsed DebugSession `status.expiresAt`,
+  a terminal DebugSession, or a session beyond its
   retention state cannot authorize DebugSession operations. Do not bypass this
   with status edits or clock changes.
 - A legacy DebugSession without persisted provider provenance is intentionally
