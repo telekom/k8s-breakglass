@@ -158,7 +158,7 @@ spec:
 
 	for _, namespace := range []string{"kube-system", "default", "tenant-unbound"} {
 		_, status, err = requesterAPI.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
-			TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "10m", TargetNamespace: namespace,
+			TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "10m", Namespace: namespace,
 		})
 		require.Error(t, err, "Function-style fixed namespace must reject %s", namespace)
 		require.Equal(t, http.StatusBadRequest, status)
