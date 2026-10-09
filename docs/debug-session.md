@@ -1598,7 +1598,10 @@ group injection are deprecated and removed. Before upgrading, replace any
 template/binding `allowed.groups` that names an escalation's `escalatedGroup`
 with the real identity groups of its requesters (for example `tenant_poweruser`
 or `platform-operators`). Keep approval groups on the debug binding/template,
-not on a prerequisite escalation. Audit `autoApproveFor` independently.
+not on a prerequisite escalation. Also migrate any synthetic-group references
+in scheduling option `allowedGroups`, extra-deploy variable/option
+`allowedGroups`, and `autoApproveFor`; these policies now consistently evaluate
+the requester's real authenticated groups.
 Once all clients use the new controller, remove debug-only escalations that
 existed solely to mint those grant groups. Escalations for ordinary API access
 are unaffected. Existing active DebugSessions retain their lifecycle.
