@@ -8,6 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_LOG_PREFIX="[single-e2e]"
 export E2E_DIR="$SCRIPT_DIR"
+KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH:-/auth}
 
 # Source common library (provides shared functions for logging, TLS, network, etc.)
 if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
@@ -354,7 +355,7 @@ assign_keycloak_service_account_roles() {
   # Use kcadm.sh inside the container to assign roles
   # First, login as admin
   if ! KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL exec -n "$DEV_NS" "$keycloak_pod" -- \
-    /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080 \
+    /opt/keycloak/bin/kcadm.sh config credentials --server "http://localhost:8080${KEYCLOAK_RELATIVE_PATH}" \
     --realm master --user "$admin_user" --password "$admin_password" 2>/dev/null; then
     log "Warning: Failed to authenticate to Keycloak admin CLI"
     return 1
@@ -842,7 +843,7 @@ apiVersion: ${AUTHN_API_VER}
 kind: AuthenticationConfiguration
 jwt:
   - issuer:
-      url: https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}/realms/${KEYCLOAK_REALM}
+      url: https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}
       certificateAuthority: |
 $CA_INLINE
       audiences:
@@ -1125,6 +1126,35 @@ log 'cert-manager is ready'
 
 # Apply the dev overlay (creates config ConfigMap among other resources)
 apply_kustomize config/dev
+KEYCLOAK_DEPLOY_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" get deployments -l app=keycloak -o jsonpath='{.items[0].metadata.name}')
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" patch deployment "$KEYCLOAK_DEPLOY_NAME" --type=strategic --patch "$(cat <<EOF
+spec:
+  template:
+    spec:
+      containers:
+      - name: keycloak
+        env:
+        - name: KC_HTTP_RELATIVE_PATH
+          value: "${KEYCLOAK_RELATIVE_PATH}"
+        readinessProbe:
+          httpGet:
+            path: "${KEYCLOAK_RELATIVE_PATH}/realms/master"
+EOF
+)"
+CONTROLLER_DEPLOY_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" get deployments -l app=breakglass -o jsonpath='{.items[0].metadata.name}')
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" patch deployment "$CONTROLLER_DEPLOY_NAME" --type=strategic --patch "$(cat <<EOF
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: wait-for-keycloak
+        args:
+        - /bin/sh
+        - -c
+        - >-
+          while [ \$(curl -sw '%{http_code}' "https://breakglass-keycloak:8443${KEYCLOAK_RELATIVE_PATH}/realms/master/protocol/openid-connect/certs" -o /dev/null --insecure) -ne 200 ]; do sleep 5; done
+EOF
+)"
 
 # Wait for cert-manager to inject the CA bundle (instead of manually patching)
 # cert-manager's cainjector watches the Certificate and injects CA into ValidatingWebhookConfiguration
@@ -1151,12 +1181,12 @@ data:
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443${KEYCLOAK_RELATIVE_PATH}
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
     frontend:
-      oidcAuthority: https://localhost:8443/realms/breakglass-e2e
+      oidcAuthority: https://localhost:8443${KEYCLOAK_RELATIVE_PATH}/realms/breakglass-e2e
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
       uiFlavour: "$UI_FLAVOUR"
@@ -1201,12 +1231,12 @@ data:
     server:
       listenAddress: 0.0.0.0:8080
     authorizationServer:
-      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
+      url: https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443${KEYCLOAK_RELATIVE_PATH}
       jwksEndpoint: "realms/breakglass-e2e/protocol/openid-connect/certs"
       certificateAuthority: |
 $CA_INLINE
     frontend:
-      oidcAuthority: https://localhost:8443/realms/breakglass-e2e
+      oidcAuthority: https://localhost:8443${KEYCLOAK_RELATIVE_PATH}/realms/breakglass-e2e
       oidcClientID: breakglass-ui
       baseURL: http://localhost:${CONTROLLER_FORWARD_PORT}
       uiFlavour: "$UI_FLAVOUR"
@@ -1365,7 +1395,7 @@ done
 
 PF=$(start_port_forward "$KC_SVC_NS" "$KC_SVC_NAME" ${KEYCLOAK_FORWARD_PORT} ${KEYCLOAK_SVC_PORT})
 wait_for_local_port "${KEYCLOAK_FORWARD_PORT}" "Keycloak port-forward" || true
-JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
+JWKS_URL="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/certs"
 # Prefer using the generated CA for TLS validation when available; fall back to insecure if not present
 if [ -n "${KEYCLOAK_CA_FILE:-}" ] && [ -f "${KEYCLOAK_CA_FILE}" ]; then
   KC_CURL_CA=(--cacert "$KEYCLOAK_CA_FILE")
@@ -1437,8 +1467,8 @@ fi
   # Exec curl from the netshoot pod to verify DNS and HTTPS connectivity to the issuer
   INST_CODE=000
   for i in {1..60}; do
-    log "In-cluster issuer attempt $i: exec into $NETS_POD_NAME and curl https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration"
-    INST_CODE=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" exec "$NETS_POD_NAME" -- curl -s -o /dev/null -w '%{http_code}' --insecure "https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration" 2>/dev/null || echo 000)
+    log "In-cluster issuer attempt $i: exec into $NETS_POD_NAME and curl https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration"
+    INST_CODE=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" exec "$NETS_POD_NAME" -- curl -s -o /dev/null -w '%{http_code}' --insecure "https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration" 2>/dev/null || echo 000)
     printf '[single-e2e] In-cluster issuer http status: %s
 ' "$INST_CODE"
     if [ "$INST_CODE" = "200" ]; then
@@ -1554,8 +1584,8 @@ fi
   # Exec curl from the netshoot pod to verify DNS and HTTPS connectivity to the issuer
   INST_CODE=000
   for i in {1..60}; do
-    log "In-cluster issuer attempt $i: exec into $NETS_POD_NAME and curl https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration"
-    INST_CODE=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" exec "$NETS_POD_NAME" -- curl -s -o /dev/null -w '%{http_code}' --insecure "https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration" 2>/dev/null || echo 000)
+    log "In-cluster issuer attempt $i: exec into $NETS_POD_NAME and curl https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration"
+    INST_CODE=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" exec "$NETS_POD_NAME" -- curl -s -o /dev/null -w '%{http_code}' --insecure "https://${KEYCLOAK_HOST}:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration" 2>/dev/null || echo 000)
     printf '[single-e2e] In-cluster issuer http status: %s\n' "$INST_CODE"
     if [ "$INST_CODE" = "200" ]; then
       log "Issuer reachable from inside the cluster (attempt $i)"
@@ -1866,11 +1896,11 @@ spec:
   # Mark as primary so controller uses this as default provider
   primary: true
   # Issuer URL - use in-cluster service name so controller can validate tokens
-  issuer: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
+  issuer: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}"
   oidc:
     # Authority URL - use in-cluster service name for consistency
     # Frontend will access this via port-forward with /etc/hosts mapping
-    authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443/realms/${KEYCLOAK_REALM}"
+    authority: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}"
     # OIDC client ID (must match realm configuration)
     clientID: "breakglass-ui"
     expectedAudience: "breakglass-ui"
@@ -1881,7 +1911,7 @@ $KEYCLOAK_CA_INLINE
   groupSyncProvider: Keycloak
   keycloak:
     # Group sync uses in-cluster service name (controller runs in cluster)
-    baseURL: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
+    baseURL: "https://${KEYCLOAK_SERVICE_HOSTNAME}:8443${KEYCLOAK_RELATIVE_PATH}"
     realm: "${KEYCLOAK_REALM}"
     clientID: "breakglass-group-sync"
     clientSecretRef:
@@ -2011,7 +2041,7 @@ for i in {1..40}; do
     # Use a temporary netshoot pod to test connectivity (controller image is distroless)
     KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL run keycloak-test-$i --rm -i --restart=Never --image=nicolaka/netshoot --image-pull-policy=IfNotPresent \
       --namespace="$DEV_NS" -- curl -sk --max-time 5 \
-      "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e/.well-known/openid-configuration" 2>&1 | head -10 || \
+      "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443${KEYCLOAK_RELATIVE_PATH}/realms/breakglass-e2e/.well-known/openid-configuration" 2>&1 | head -10 || \
       log "Keycloak connectivity test via netshoot failed"
     log "--- End debug info ---"
   fi
@@ -2162,7 +2192,7 @@ log 'Single-cluster setup complete'
 OIDC_TEST_USERNAME=${OIDC_TEST_USERNAME:-test-user}
 OIDC_TEST_PASSWORD=${OIDC_TEST_PASSWORD:-test-password}
 OIDC_CLIENT_ID=${OIDC_CLIENT_ID:-kubernetes}
-OIDC_ISSUER="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}/realms/${KEYCLOAK_REALM}"
+OIDC_ISSUER="https://breakglass-keycloak.breakglass-system.svc.cluster.local:${KEYCLOAK_FORWARD_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/${KEYCLOAK_REALM}"
 OIDC_KUBECONFIG="$TDIR/oidc-test-user.kubeconfig"
 
 log "Generating kubeconfig for OIDC test user (kubelogin exec) : $OIDC_TEST_USERNAME -> $OIDC_KUBECONFIG"
@@ -2337,8 +2367,9 @@ export E2E_TEST_APPROVER=approver@example.org
 export BREAKGLASS_API_URL=http://localhost:$API_PORT
 export BREAKGLASS_WEBHOOK_URL=http://localhost:$API_PORT
 export BREAKGLASS_METRICS_URL=http://localhost:${METRICS_FORWARD_PORT}/metrics
-export KEYCLOAK_URL=https://localhost:${KEYCLOAK_FORWARD_PORT}
-export KEYCLOAK_HOST=https://localhost:${KEYCLOAK_FORWARD_PORT}
+export KEYCLOAK_URL=https://localhost:${KEYCLOAK_FORWARD_PORT}${KEYCLOAK_RELATIVE_PATH}
+export KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}
+export KEYCLOAK_HOST=https://localhost:${KEYCLOAK_FORWARD_PORT}${KEYCLOAK_RELATIVE_PATH}
 export KEYCLOAK_PORT=${KEYCLOAK_FORWARD_PORT}
 export KEYCLOAK_REALM=${KEYCLOAK_REALM}
 export KEYCLOAK_CLIENT_ID=breakglass-ui
@@ -2350,7 +2381,7 @@ export KEYCLOAK_GROUP_SYNC_CLIENT_SECRET=breakglass-group-sync-secret
 export KEYCLOAK_ISSUER_HOST=breakglass-keycloak.breakglass-system.svc.cluster.local:8443
 export KEYCLOAK_SERVICE_HOSTNAME=breakglass-keycloak.breakglass-system.svc.cluster.local
 # KEYCLOAK_INTERNAL_URL is used by tests to construct issuer URLs reachable from controller
-export KEYCLOAK_INTERNAL_URL=https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443
+export KEYCLOAK_INTERNAL_URL=https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443${KEYCLOAK_RELATIVE_PATH}
 # Kubernetes API server URL (external, for kubectl from test runner)
 export KUBERNETES_API_SERVER=$KUBERNETES_API_SERVER
 # Kubernetes API server URL (internal, reachable from controller pod via Docker network)

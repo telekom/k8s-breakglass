@@ -48,10 +48,7 @@ func TestClusterConfigOIDCAuthentication(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 
 	// Get Keycloak issuer URL from environment or use default
-	keycloakIssuer := os.Getenv("KEYCLOAK_ISSUER_URL")
-	if keycloakIssuer == "" {
-		keycloakIssuer = "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e"
-	}
+	keycloakIssuer := configuredE2EIssuer()
 
 	t.Run("CC-OIDC-001_BasicOIDCConfig", func(t *testing.T) {
 		// Create client secret required by webhook validation
@@ -721,10 +718,7 @@ func TestClusterConfigOIDCWithEscalation(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithMediumTimeout())
 
 	// Get Keycloak issuer URL from environment or use default
-	keycloakIssuer := os.Getenv("KEYCLOAK_ISSUER_URL")
-	if keycloakIssuer == "" {
-		keycloakIssuer = "https://breakglass-keycloak.breakglass-system.svc.cluster.local:8443/realms/breakglass-e2e"
-	}
+	keycloakIssuer := configuredE2EIssuer()
 
 	t.Run("CC-OIDC-ESC-001_EscalationWithOIDCClusterConfigRef", func(t *testing.T) {
 		// Create client secret required by webhook validation

@@ -21,7 +21,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -411,8 +410,8 @@ func createCLIConfig(t *testing.T, serverURL string) config.Config {
 				Name:   "default",
 				Server: serverURL,
 				OIDC: &config.InlineOIDC{
-					Authority: fmt.Sprintf("https://%s/realms/%s",
-						os.Getenv("KEYCLOAK_HOST"),
+					Authority: fmt.Sprintf("%s/realms/%s",
+						helpers.GetKeycloakURL(),
 						helpers.GetKeycloakMainRealm()),
 					ClientID: helpers.GetKeycloakClientID(),
 				},

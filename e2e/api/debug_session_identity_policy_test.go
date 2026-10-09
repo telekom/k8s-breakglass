@@ -34,7 +34,7 @@ import (
 func TestDebugSessionIdentityOnlyWorkflow(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	ctx := s.Ctx
-	requester := helpers.TestUsers.DebugSessionRequester
+	requester := helpers.TestUsers.PlatformIdentityRequester
 	approver := helpers.TestUsers.DebugSessionApprover
 	token := s.TC.OIDCProvider().GetTokenForUser(t, ctx, requester)
 	requesterAPI := NewDebugSessionAPIClient(token)
@@ -125,7 +125,7 @@ spec:
 		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
 			Clusters:    []string{s.Cluster},
-			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"debug-session-test-group"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"dttcaas-platform_poweruser"}},
 			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{requester.Email, approver.Email}},
 		},
 	}
