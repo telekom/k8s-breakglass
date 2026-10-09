@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
@@ -23,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -177,6 +179,27 @@ spec:
 	status, err = requesterAPI.ApproveDebugSession(ctx, t, session.Name, "self approval must be blocked")
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, status)
+	var clusterConfig breakglassv1alpha1.ClusterConfig
+	clusterKey := client.ObjectKey{Namespace: s.Namespace, Name: s.Cluster}
+	require.NoError(t, s.Client.Get(ctx, clusterKey, &clusterConfig))
+	originalBlockSelfApproval := clusterConfig.Spec.BlockSelfApproval
+	setBlockSelfApproval := func(value bool) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			var current breakglassv1alpha1.ClusterConfig
+			if err := s.Client.Get(ctx, clusterKey, &current); err != nil {
+				return err
+			}
+			current.Spec.BlockSelfApproval = value
+			return s.Client.Update(ctx, &current)
+		})
+	}
+	t.Cleanup(func() { require.NoError(t, setBlockSelfApproval(originalBlockSelfApproval)) })
+	for _, blocked := range []bool{false, true} {
+		require.NoError(t, setBlockSelfApproval(blocked))
+		status, err = requesterAPI.ApproveDebugSession(ctx, t, session.Name, "debug self-approval does not inherit escalation overrides")
+		require.Error(t, err)
+		require.Equal(t, http.StatusForbidden, status, "ClusterConfig.blockSelfApproval=%t must not relax debug approval", blocked)
+	}
 	approverAPI.AuthToken = s.TC.OIDCProvider().GetTokenForUser(t, ctx, approver)
 	status, err = approverAPI.ApproveDebugSession(ctx, t, session.Name, "peer approval")
 	require.NoError(t, err)
@@ -288,6 +311,131 @@ spec:
 	}
 }
 
+func TestDebugSessionBindingTargetSelectionNativeWorkflow(t *testing.T) {
+	s := helpers.SetupTest(t, helpers.WithLongTimeout())
+	requester := s.TC.ClientForUser(helpers.TestUsers.DebugSessionRequester)
+	approver := s.TC.ClientForUser(helpers.TestUsers.DebugSessionApprover)
+	api := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, s.Ctx, helpers.TestUsers.DebugSessionRequester))
+	var cluster breakglassv1alpha1.ClusterConfig
+	key := client.ObjectKey{Namespace: s.Namespace, Name: s.Cluster}
+	require.NoError(t, s.Client.Get(s.Ctx, key, &cluster), "the real target ClusterConfig is required, not skipped")
+	originalLabels := maps.Clone(cluster.Labels)
+	updateLabels := func(labels map[string]string) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			var current breakglassv1alpha1.ClusterConfig
+			if err := s.Client.Get(s.Ctx, key, &current); err != nil {
+				return err
+			}
+			current.Labels = maps.Clone(labels)
+			return s.Client.Update(s.Ctx, &current)
+		})
+	}
+	t.Cleanup(func() { require.NoError(t, updateLabels(originalLabels)) })
+	selectorLabels := map[string]string{
+		"app.kubernetes.io/name":                               "escalation-config",
+		"breakglass.t-caas.telekom.com/debug-sessions-enabled": "true",
+		"breakglass.t-caas.telekom.com/platform-diagnostics":   "true",
+	}
+	for _, tc := range []struct {
+		name     string
+		exact    bool
+		allowed  bool
+		override map[string]string
+	}{
+		{name: "exact target", exact: true, allowed: true},
+		{name: "outside exact target", exact: true},
+		{name: "all selector labels", allowed: true},
+		{name: "debug disabled optout", override: map[string]string{"breakglass.t-caas.telekom.com/debug-sessions-enabled": "false"}},
+		{name: "profile disabled optout", override: map[string]string{"breakglass.t-caas.telekom.com/platform-diagnostics": "false"}},
+		{name: "wrong catalogue label", override: map[string]string{"app.kubernetes.io/name": "another-function"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			labels := maps.Clone(originalLabels)
+			if labels == nil {
+				labels = map[string]string{}
+			}
+			maps.Copy(labels, selectorLabels)
+			maps.Copy(labels, tc.override)
+			require.NoError(t, updateLabels(labels))
+			template := &breakglassv1alpha1.DebugSessionTemplate{
+				ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("target-selection")},
+				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+					DisplayName: "Binding-only target diagnostics", Mode: breakglassv1alpha1.DebugSessionModeWorkload,
+					TargetNamespace: "breakglass-debug",
+					NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
+						DefaultNamespace: "breakglass-debug", AllowUserNamespace: false,
+					},
+					FailMode: "closed",
+					PodTemplateString: `apiVersion: v1
+			kind: Pod
+			spec:
+			  containers:
+			  - name: debug
+			    image: busybox:1.37
+			    command: ["sleep", "600"]
+			    securityContext:
+			      runAsNonRoot: true
+			      runAsUser: 65532
+			      allowPrivilegeEscalation: false
+			      capabilities:
+			        drop: ["ALL"]
+			      seccompProfile:
+			        type: RuntimeDefault
+			`,
+					Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "10m", DefaultDuration: "5m"},
+				},
+			}
+			require.NoError(t, s.CreateResource(template))
+			binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("target-binding"), Namespace: s.Namespace},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
+					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"debug-session-test-group"}},
+					Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{helpers.TestUsers.DebugSessionApprover.Email}},
+				},
+			}
+			if tc.exact {
+				binding.Spec.Clusters = []string{s.Cluster}
+				if !tc.allowed {
+					binding.Spec.Clusters = []string{helpers.GenerateUniqueName("outside-cluster")}
+				}
+			} else {
+				binding.Spec.ClusterSelector = &metav1.LabelSelector{MatchLabels: maps.Clone(selectorLabels)}
+			}
+			require.NoError(t, s.CreateResource(binding))
+			if !tc.allowed {
+				// Wait for the binding's informer to observe its generation before
+				// testing a real denial, rather than relying on an absent fixture.
+				require.Eventually(t, func() bool {
+					return s.Client.Get(s.Ctx, client.ObjectKeyFromObject(binding), binding) == nil &&
+						binding.Status.ObservedGeneration == binding.Generation
+				}, helpers.WaitForStateTimeout, time.Second)
+				_, status, err := api.CreateDebugSession(s.Ctx, t, DebugSessionCreateRequest{
+					TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "5m",
+				})
+				require.Error(t, err)
+				require.Equal(t, http.StatusForbidden, status, "outside-selection targets must fail closed")
+				return
+			}
+			session := requester.MustCreateDebugSession(t, s.Ctx, helpers.DebugSessionRequest{
+				TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "5m", Reason: tc.name,
+			})
+			s.Cleanup.Add(session)
+			t.Cleanup(func() { _ = requester.TerminateDebugSession(context.Background(), t, session.Name) })
+			helpers.WaitForDebugSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForStateTimeout)
+			require.NoError(t, approver.ApproveDebugSession(s.Ctx, t, session.Name, "independent binding approval"))
+			require.Eventually(t, func() bool {
+				if s.Client.Get(s.Ctx, client.ObjectKeyFromObject(session), session) != nil {
+					return false
+				}
+				return session.Status.State == breakglassv1alpha1.DebugSessionStateActive &&
+					len(session.Status.AllowedPods) > 0 && session.Status.AllowedPods[0].Ready
+			}, helpers.WaitForStateTimeout, time.Second, "matching binding must deploy a real Ready pod")
+			require.NoError(t, requester.TerminateDebugSession(s.Ctx, t, session.Name))
+			helpers.WaitForDebugSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateTerminated, helpers.WaitForStateTimeout)
+		})
+	}
+}
 func waitForNoDebugResources(t *testing.T, ctx context.Context, kube kubernetes.Interface, session string) {
 	t.Helper()
 	require.Eventually(t, func() bool {
