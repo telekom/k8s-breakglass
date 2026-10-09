@@ -55,6 +55,55 @@ func TestIdentityDiscoverySurvivesOptionalGrantLookupFailure(t *testing.T) {
 	}
 }
 
+func TestTemplateDiscoveryAggregatesOnlyAuthorizedClusterAliases(t *testing.T) {
+	configured := []breakglassv1alpha1.ClusterConfig{
+		readyDebugClusterConfig("breakglass", "cluster-a", nil),
+		readyDebugClusterConfig("breakglass", "cluster-b", nil),
+		readyDebugClusterConfig("breakglass", "cluster-c", nil),
+	}
+	clusters, _ := readyDebugClusterConfigMap(configured)
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "debug"},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{
+				Clusters: []string{"cluster-a", "cluster-b"},
+				Groups:   []string{"grant-a", "grant-b"},
+			},
+			ExtraDeployVariables: []breakglassv1alpha1.ExtraDeployVariable{
+				{Name: "a", AllowedGroups: []string{"grant-a"}},
+				{Name: "b", AllowedGroups: []string{"grant-b"}},
+				{Name: "c", AllowedGroups: []string{"grant-c"}},
+			},
+			SchedulingOptions: &breakglassv1alpha1.SchedulingOptions{
+				Options: []breakglassv1alpha1.SchedulingOption{
+					{Name: "a", AllowedGroups: []string{"grant-a"}},
+					{Name: "b", AllowedGroups: []string{"grant-b"}},
+					{Name: "c", AllowedGroups: []string{"grant-c"}},
+				},
+			},
+		},
+	}
+	requester := debugTemplateRequester{
+		username: "alice", groups: []string{"identity"},
+		clusters: clusters, configured: configured,
+		grantedClusters: map[string][]string{
+			"cluster-a": {"grant-a"}, "cluster-b": {"grant-b"}, "cluster-c": {"grant-c"},
+		},
+	}
+	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
+	for range 20 {
+		response := controller.buildTemplateResponse(template, requester, clusters, 2, nil)
+		require.Len(t, response.ExtraDeployVariables, 2)
+		require.Equal(t, "a", response.ExtraDeployVariables[0].Name)
+		require.Equal(t, "b", response.ExtraDeployVariables[1].Name)
+		require.Len(t, response.SchedulingOptions.Options, 2)
+	}
+	require.Equal(t, []string{"identity"}, requester.groups)
+	require.Equal(t, []string{"identity", "grant-a"}, requester.forCluster("cluster-a").groups)
+	require.ElementsMatch(t, []string{"grant-a", "grant-b", "grant-c"}, discoveryAliasGroups(
+		[]breakglassv1alpha1.DebugSessionTemplate{*template}, nil, requester))
+}
+
 func TestTemplateDiscoveryUsesClusterScopedBreakglassGrants(t *testing.T) {
 	const group = "tenant-debuggers"
 	for _, mode := range []string{"direct", "direct alias", "binding"} {

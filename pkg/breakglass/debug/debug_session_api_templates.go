@@ -309,21 +309,31 @@ func (c *DebugSessionAPIController) discoveryGrants(ctx context.Context, opts ..
 // Only query optional grants for configured groups absent from the identity.
 func discoveryAliasGroups(templates []breakglassv1alpha1.DebugSessionTemplate, bindings []breakglassv1alpha1.DebugSessionClusterBinding, identity debugTemplateRequester) []string {
 	var groups []string
-	add := func(allowed *breakglassv1alpha1.DebugSessionAllowed) {
-		if allowed == nil || identity.canRequest(allowed) {
-			return
-		}
-		for _, group := range allowed.Groups {
+	addGroups := func(allowed []string) {
+		for _, group := range allowed {
 			if !slices.Contains(identity.groups, group) && !slices.Contains(groups, group) {
 				groups = append(groups, group)
 			}
 		}
 	}
 	for i := range templates {
-		add(templates[i].Spec.Allowed)
+		spec := &templates[i].Spec
+		if spec.Allowed != nil {
+			addGroups(spec.Allowed.Groups)
+		}
+		for _, variable := range spec.ExtraDeployVariables {
+			addGroups(variable.AllowedGroups)
+		}
+		if spec.SchedulingOptions != nil {
+			for _, option := range spec.SchedulingOptions.Options {
+				addGroups(option.AllowedGroups)
+			}
+		}
 	}
 	for i := range bindings {
-		add(bindings[i].Spec.Allowed)
+		if bindings[i].Spec.Allowed != nil {
+			addGroups(bindings[i].Spec.Allowed.Groups)
+		}
 	}
 	return groups
 }
@@ -408,11 +418,20 @@ func (c *DebugSessionAPIController) templateResponseRequester(
 	bindings []breakglassv1alpha1.DebugSessionClusterBinding,
 	requester debugTemplateRequester,
 ) debugTemplateRequester {
+	response := requester
+	response.groups = append([]string(nil), requester.groups...)
+	addGroups := func(scoped debugTemplateRequester) {
+		for _, group := range scoped.groups {
+			if !slices.Contains(response.groups, group) {
+				response.groups = append(response.groups, group)
+			}
+		}
+	}
 	for name := range requester.grantedClusters {
 		cluster := requester.clusters[name]
 		scoped := requester.forCluster(name)
 		if directTemplateAllowsClusterReference(template, name, cluster, requester.configured) && scoped.canRequest(effectiveDebugSessionAllowed(template, nil)) {
-			return scoped
+			addGroups(scoped)
 		}
 	}
 	for i := range bindings {
@@ -420,12 +439,13 @@ func (c *DebugSessionAPIController) templateResponseRequester(
 			if requester.grantedClusters[name] != nil {
 				scoped := requester.forCluster(name)
 				if scoped.canRequest(effectiveDebugSessionAllowed(template, &bindings[i])) {
-					return scoped
+					addGroups(scoped)
 				}
 			}
 		}
 	}
-	return requester
+	sort.Strings(response.groups)
+	return response
 }
 
 func (c *DebugSessionAPIController) canReadTemplateWithBindings(
