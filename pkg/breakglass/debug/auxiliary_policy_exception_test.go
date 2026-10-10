@@ -188,6 +188,7 @@ func TestAuxiliaryRecoveryRejectsForeignPodTemplateSessionUID(t *testing.T) {
 					return nil
 				},
 			}).Build()
+			require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(existing), existing))
 			session := &breakglassv1alpha1.DebugSession{
 				ObjectMeta: metav1.ObjectMeta{UID: "same-session"},
 				Status: breakglassv1alpha1.DebugSessionStatus{AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{

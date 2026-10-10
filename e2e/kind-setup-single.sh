@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_LOG_PREFIX="[single-e2e]"
 export E2E_DIR="$SCRIPT_DIR"
-KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH:-/auth}
+KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH-/auth}
 
 # Source common library (provides shared functions for logging, TLS, network, etc.)
 if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
