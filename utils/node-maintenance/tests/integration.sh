@@ -1152,10 +1152,17 @@ for option in --target-node --interface --evidence-dir --confirm; do
 		"$option" ''
 	grep -Fq -- "$option may be supplied only once" "$fixture_dir/output" \
 		|| fail "duplicate preflight $option produced no parsing denial"
-	assert_volume_path_absent .node-maintenance-operation.lock
+	if "$docker_bin" run --rm --network none --read-only --cap-drop ALL \
+		--security-opt no-new-privileges --security-opt seccomp=builtin \
+		--mount "source=$volume_name,destination=/evidence" --entrypoint /bin/sh "$image" \
+		-c '! find /evidence -mindepth 1 -maxdepth 1 -print | grep -q .'; then
+		:
+	else
+		fail "duplicate preflight $option created evidence before argument validation"
+	fi
 	destroy_fixture
 done
-pass 'duplicate preflight options are rejected before acquiring an operation lock'
+pass 'duplicate preflight options are rejected before evidence creation'
 
 run_command guard-neighbor-injection 2 none neighbor-replace network-repair \
 	--target-node node-a --interface lo --action neighbor-replace \
