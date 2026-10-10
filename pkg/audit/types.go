@@ -299,6 +299,9 @@ type Actor struct {
 
 // Target represents what was affected by an audit event
 type Target struct {
+	// UID is the immutable Kubernetes UID of the target, when available.
+	UID string `json:"uid,omitempty"`
+
 	// Kind is the Kubernetes resource kind
 	Kind string `json:"kind"`
 
@@ -310,6 +313,9 @@ type Target struct {
 
 	// Cluster name (for cross-cluster operations)
 	Cluster string `json:"cluster,omitempty"`
+
+	// ClusterUID is the immutable UID of the referenced ClusterConfig.
+	ClusterUID string `json:"clusterUID,omitempty"`
 
 	// APIGroup is the API group of the resource
 	APIGroup string `json:"apiGroup,omitempty"`
@@ -326,11 +332,19 @@ type RequestContext struct {
 	// SessionName is the breakglass session name
 	SessionName string `json:"sessionName,omitempty"`
 
+	// SessionUID identifies the session independently of namespace/name reuse.
+	SessionUID string `json:"sessionUID,omitempty"`
+
 	// EscalationName is the escalation template name
 	EscalationName string `json:"escalationName,omitempty"`
 
+	// EscalationUID identifies an exactly selected escalation, when known.
+	EscalationUID string `json:"escalationUID,omitempty"`
+
 	// DebugSessionName is the debug session name
 	DebugSessionName string `json:"debugSessionName,omitempty"`
+
+	DebugSessionUID string `json:"debugSessionUID,omitempty"`
 }
 
 // SeverityForEventType returns the default severity for an event type

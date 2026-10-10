@@ -6,7 +6,7 @@ The breakglass controller includes an extremely granular, non-blocking audit sys
 
 The audit system is designed for:
 - **Extreme Granularity**: Captures 120+ event types covering every Kubernetes operation including non-resource URLs
-- **Non-Blocking**: Never slows down cluster operations - events are queued and processed async
+- **Async by default**: Events are queued; optional backpressure and sensitive-event synchronous delivery have bounded waits
 - **High Throughput**: Handles thousands of events per second with batching and backpressure
 - **Multiple Sinks**: Send events to Kafka, webhooks, structured logs, or Kubernetes Events
 - **Flexible Filtering**: Include/exclude by event type, user, namespace, or resource
@@ -381,8 +381,20 @@ spec:
   queue:
     size: 100000      # Buffer up to 100k events
     workers: 5        # 5 parallel sink writers
-    dropOnFull: true  # Drop events silently when full (non-blocking)
+    dropOnFull: true  # Drop with metrics when full (non-blocking)
+    retryAttempts: 8
+    retryInitialBackoffMillis: 1000
+    retryMaxBackoffMillis: 10000
+    retryTimeoutSeconds: 60
 ```
+
+Failed writes retain the same batch and event IDs while retrying. Exhaustion
+counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
+to the caller deadline or five seconds. Each config's settings apply to its own
+sinks; the manager's shared ingress settings still come from the first config.
+These are bounded in-memory retries, not a durable outbox. See
+[audit delivery and immutable identity](audit-delivery.md) for limits, duplicate
+delivery semantics and the additive session/resource UID fields.
 
 **Recommendations:**
 - Production: `size: 100000`, `workers: 5-10`
@@ -424,7 +436,7 @@ sinks:
 The audit system exposes Prometheus metrics:
 
 - `breakglass_audit_events_processed_total` - Events successfully written
-- `breakglass_audit_events_dropped_total` - Events dropped (queue full)
+- `breakglass_audit_events_dropped_total{sink="...",reason="..."}` - Events lost to overflow, enqueue timeout, circuit rejection or retry exhaustion
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink
 - `breakglass_audit_sink_latency_seconds{sink="..."}` - Write latency histogram
 - `breakglass_audit_circuit_breaker_state{sink="..."}` - Per-sink circuit state (`0` closed, `1` open, `2` half-open)

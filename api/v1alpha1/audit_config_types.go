@@ -307,11 +307,40 @@ type AuditQueueConfig struct {
 	// +optional
 	Workers int `json:"workers,omitempty"`
 
-	// DropOnFull silently drops events when queue is full.
-	// If false, a warning is logged for each dropped event.
+	// DropOnFull drops events when the queue is full.
+	// If false, enqueue blocks up to the caller deadline or five seconds.
 	// +kubebuilder:default=true
 	// +optional
 	DropOnFull bool `json:"dropOnFull,omitempty"`
+
+	// RetryAttempts bounds attempts for a failed sink write, including the first.
+	// +kubebuilder:default=8
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +optional
+	RetryAttempts int `json:"retryAttempts,omitempty"`
+
+	// RetryInitialBackoffMillis is the initial exponential retry delay.
+	// +kubebuilder:default=1000
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=60000
+	// +optional
+	RetryInitialBackoffMillis int `json:"retryInitialBackoffMillis,omitempty"`
+
+	// RetryMaxBackoffMillis caps the exponential retry delay.
+	// +kubebuilder:default=10000
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=60000
+	// +optional
+	RetryMaxBackoffMillis int `json:"retryMaxBackoffMillis,omitempty"`
+
+	// RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
+	// Failed batches remain in the worker until delivered or this bound is reached.
+	// +kubebuilder:default=60
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=300
+	// +optional
+	RetryTimeoutSeconds int `json:"retryTimeoutSeconds,omitempty"`
 }
 
 // AuditFilterConfig controls which events are captured.

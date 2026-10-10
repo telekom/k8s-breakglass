@@ -18,9 +18,18 @@ type AuditQueueConfigApplyConfiguration struct {
 	Size *int `json:"size,omitempty"`
 	// Workers is the number of concurrent sink writers.
 	Workers *int `json:"workers,omitempty"`
-	// DropOnFull silently drops events when queue is full.
-	// If false, a warning is logged for each dropped event.
+	// DropOnFull drops events when the queue is full.
+	// If false, enqueue blocks up to the caller deadline or five seconds.
 	DropOnFull *bool `json:"dropOnFull,omitempty"`
+	// RetryAttempts bounds attempts for a failed sink write, including the first.
+	RetryAttempts *int `json:"retryAttempts,omitempty"`
+	// RetryInitialBackoffMillis is the initial exponential retry delay.
+	RetryInitialBackoffMillis *int `json:"retryInitialBackoffMillis,omitempty"`
+	// RetryMaxBackoffMillis caps the exponential retry delay.
+	RetryMaxBackoffMillis *int `json:"retryMaxBackoffMillis,omitempty"`
+	// RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
+	// Failed batches remain in the worker until delivered or this bound is reached.
+	RetryTimeoutSeconds *int `json:"retryTimeoutSeconds,omitempty"`
 }
 
 // AuditQueueConfigApplyConfiguration constructs a declarative configuration of the AuditQueueConfig type for use with
@@ -50,5 +59,37 @@ func (b *AuditQueueConfigApplyConfiguration) WithWorkers(value int) *AuditQueueC
 // If called multiple times, the DropOnFull field is set to the value of the last call.
 func (b *AuditQueueConfigApplyConfiguration) WithDropOnFull(value bool) *AuditQueueConfigApplyConfiguration {
 	b.DropOnFull = &value
+	return b
+}
+
+// WithRetryAttempts sets the RetryAttempts field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetryAttempts field is set to the value of the last call.
+func (b *AuditQueueConfigApplyConfiguration) WithRetryAttempts(value int) *AuditQueueConfigApplyConfiguration {
+	b.RetryAttempts = &value
+	return b
+}
+
+// WithRetryInitialBackoffMillis sets the RetryInitialBackoffMillis field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetryInitialBackoffMillis field is set to the value of the last call.
+func (b *AuditQueueConfigApplyConfiguration) WithRetryInitialBackoffMillis(value int) *AuditQueueConfigApplyConfiguration {
+	b.RetryInitialBackoffMillis = &value
+	return b
+}
+
+// WithRetryMaxBackoffMillis sets the RetryMaxBackoffMillis field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetryMaxBackoffMillis field is set to the value of the last call.
+func (b *AuditQueueConfigApplyConfiguration) WithRetryMaxBackoffMillis(value int) *AuditQueueConfigApplyConfiguration {
+	b.RetryMaxBackoffMillis = &value
+	return b
+}
+
+// WithRetryTimeoutSeconds sets the RetryTimeoutSeconds field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RetryTimeoutSeconds field is set to the value of the last call.
+func (b *AuditQueueConfigApplyConfiguration) WithRetryTimeoutSeconds(value int) *AuditQueueConfigApplyConfiguration {
+	b.RetryTimeoutSeconds = &value
 	return b
 }

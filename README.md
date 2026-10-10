@@ -115,6 +115,7 @@ Complete documentation is available in the [docs/](./docs/) directory:
 - **[ClusterConfig](./docs/cluster-config.md)** - Configure managed clusters
 - **[DenyPolicy](./docs/deny-policy.md)** - Create access restrictions and policies
 - **[AuditConfig](./docs/audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
+- **[Audit delivery](./docs/audit-delivery.md)** - Bounded retries, backpressure, loss metrics and immutable correlation
 - **[MailProvider](./docs/mail-provider.md)** - Email notification configuration
 - **[Debug Session](./docs/debug-session.md)** - Debug sessions and templates
 - **[Workload diagnostics image runbook](./docs/runbooks/workload-debug.md)** - Restricted standalone DNS/TLS/HTTP/Kubernetes API diagnostics (`workload-diagnostics` intent)

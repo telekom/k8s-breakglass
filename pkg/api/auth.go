@@ -20,6 +20,7 @@ import (
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
@@ -861,6 +862,13 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 			groups = []string{}
 		}
 		c.Set("groups", groups)
+		var identifiers []string
+		for _, claim := range []interface{}{userID, email, username} {
+			if identifier, ok := claim.(string); ok && identifier != "" {
+				identifiers = append(identifiers, identifier)
+			}
+		}
+		c.Request = c.Request.WithContext(audit.WithAuthenticatedActor(c.Request.Context(), identifiers, groups))
 	}
 
 	return true

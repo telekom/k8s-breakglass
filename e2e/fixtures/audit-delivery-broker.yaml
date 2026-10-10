@@ -1,0 +1,49 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: audit-delivery
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: broker
+  namespace: audit-delivery
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: audit-delivery
+  template:
+    metadata:
+      labels:
+        app: audit-delivery
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:4.1.1@sha256:0bc1bb2478f45b6cea78864df86acdc11e8df2c5172477819a4d12942cbe5d40
+          env:
+            - {name: KAFKA_NODE_ID, value: "1"}
+            - {name: KAFKA_PROCESS_ROLES, value: "broker,controller"}
+            - {name: KAFKA_LISTENERS, value: "HOST://:9095,INTERNAL://:9093,CONTROLLER://:9094"}
+            - {name: KAFKA_ADVERTISED_LISTENERS, value: "HOST://localhost:19093,INTERNAL://localhost:9093"}
+            - {name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP, value: "HOST:PLAINTEXT,INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT"}
+            - {name: KAFKA_INTER_BROKER_LISTENER_NAME, value: "INTERNAL"}
+            - {name: KAFKA_CONTROLLER_LISTENER_NAMES, value: "CONTROLLER"}
+            - {name: KAFKA_CONTROLLER_QUORUM_VOTERS, value: "1@localhost:9094"}
+            - {name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR, value: "1"}
+            - {name: KAFKA_TRANSACTION_STATE_LOG_MIN_ISR, value: "1"}
+            - {name: KAFKA_NUM_PARTITIONS, value: "1"}
+            - {name: KAFKA_LOG_DIRS, value: "/var/lib/kafka/data"}
+            - {name: KAFKA_HEAP_OPTS, value: "-Xms256m -Xmx512m"}
+          ports:
+            - {name: kafka, containerPort: 9095}
+          resources:
+            requests: {cpu: "100m", memory: 512Mi}
+            limits: {memory: 1Gi}
+          readinessProbe:
+            tcpSocket: {port: kafka}
+            initialDelaySeconds: 10
+            periodSeconds: 2

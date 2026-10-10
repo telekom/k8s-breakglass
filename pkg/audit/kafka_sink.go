@@ -131,9 +131,11 @@ type KafkaSink struct {
 	messagesFailed  atomic.Int64
 	batchesSent     atomic.Int64
 	connected       atomic.Bool
-	lastError       atomic.Value // stores error
+	lastError       atomic.Value // stores kafkaSinkError
 	lastErrorTime   atomic.Value // stores time.Time
 }
+
+type kafkaSinkError struct{ err error }
 
 // NewKafkaSink creates a new KafkaSink.
 func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
@@ -236,6 +238,22 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		logger: logger.Named("kafka-audit"),
 	}
 	sink.connected.Store(true) // Optimistically assume connected
+	if cfg.Async {
+		writer.Completion = func(messages []kafka.Message, err error) {
+			if err == nil {
+				return
+			}
+			sink.messagesFailed.Add(int64(len(messages)))
+			sink.connected.Store(false)
+			sink.lastError.Store(kafkaSinkError{err: err})
+			sink.lastErrorTime.Store(time.Now())
+			metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(0)
+			metrics.AuditSinkErrors.WithLabelValues(sinkName, "async_write").Inc()
+			metrics.AuditEventsDropped.WithLabelValues(sinkName, "async_write").Add(float64(len(messages)))
+			sink.logger.Error("asynchronous Kafka delivery failed",
+				zap.Int("count", len(messages)), zap.Error(err))
+		}
+	}
 
 	// Initialize metrics
 	metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
@@ -370,7 +388,7 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 		}
 
 		// Store last error for diagnostics
-		s.lastError.Store(err)
+		s.lastError.Store(kafkaSinkError{err: err})
 		s.lastErrorTime.Store(time.Now())
 
 		// Log with appropriate severity based on error type
@@ -518,18 +536,13 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 	}
 
 	start := time.Now()
-	serializationErrors := 0
-
 	messages := make([]kafka.Message, 0, len(events))
 	for _, event := range events {
 		value, err := json.Marshal(event)
 		if err != nil {
-			serializationErrors++
 			metrics.AuditSinkErrors.WithLabelValues(s.name, "serialization").Inc()
-			s.logger.Warn("failed to marshal audit event, skipping",
-				zap.String("event_id", event.ID),
-				zap.String("error", err.Error()))
-			continue
+			s.messagesFailed.Add(int64(len(events)))
+			return fmt.Errorf("marshal audit batch event %q: %w", event.ID, err)
 		}
 
 		headers := []kafka.Header{
@@ -543,11 +556,6 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 			Value:   value,
 			Headers: headers,
 		})
-	}
-
-	if len(messages) == 0 {
-		s.messagesFailed.Add(int64(serializationErrors))
-		return nil
 	}
 
 	// Track in-flight messages
@@ -570,7 +578,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 		}
 
 		// Store last error
-		s.lastError.Store(err)
+		s.lastError.Store(kafkaSinkError{err: err})
 		s.lastErrorTime.Store(time.Now())
 
 		s.logger.Warn("failed to write batch to Kafka",
@@ -612,9 +620,9 @@ func (s *KafkaSink) IsConnected() bool {
 
 // LastError returns the last error encountered and when it occurred.
 func (s *KafkaSink) LastError() (time.Time, error) {
-	err, _ := s.lastError.Load().(error)
+	stored, _ := s.lastError.Load().(kafkaSinkError)
 	t, _ := s.lastErrorTime.Load().(time.Time)
-	return t, err
+	return t, stored.err
 }
 
 // MessageStats returns message statistics for monitoring.

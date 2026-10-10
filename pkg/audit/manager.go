@@ -66,6 +66,9 @@ type BatchSink interface {
 
 // ManagerConfig configures the audit Manager.
 type ManagerConfig struct {
+	// Enrich captures resource identity before an event enters asynchronous queues.
+	Enrich func(context.Context, *Event)
+
 	// QueueSize is the size of the async event queue.
 	// For extremely granular auditing, use a large queue (100k+).
 	// Default: 100000
@@ -86,8 +89,8 @@ type ManagerConfig struct {
 	BatchTimeout time.Duration
 
 	// DropOnFull controls behavior when queue is full.
-	// If true, new events are dropped silently (non-blocking).
-	// If false, events are still dropped but a warning is logged.
+	// If true, new events are dropped (non-blocking).
+	// If false, enqueue waits up to WriteTimeout or the caller deadline.
 	// Default: true (non-blocking)
 	DropOnFull bool
 
@@ -216,6 +219,10 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	if m.closed.Load() {
 		return
 	}
+	enrichActor(ctx, event)
+	if m.config.Enrich != nil {
+		m.config.Enrich(ctx, event)
+	}
 
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return
@@ -250,6 +257,19 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	// Re-check closed under the lock: Close sets closed=true then acquires
 	// closeMu.Lock, so if we see closed=true here the channel is already closed.
 	if m.closed.Load() {
+		return
+	}
+	if !m.config.DropOnFull {
+		writeCtx, cancel := context.WithTimeout(ctx, m.config.WriteTimeout)
+		defer cancel()
+		select {
+		case m.asyncQueue <- event:
+			m.queuedEvents.Add(1)
+		case <-writeCtx.Done():
+			m.droppedEvents.Add(1)
+			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
+			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
+		}
 		return
 	}
 
@@ -455,6 +475,10 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	defer m.closeMu.RUnlock()
 	if m.closed.Load() {
 		return errors.New("audit manager is closed")
+	}
+	enrichActor(ctx, event)
+	if m.config.Enrich != nil {
+		m.config.Enrich(ctx, event)
 	}
 
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {

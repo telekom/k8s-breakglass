@@ -59,6 +59,7 @@ e2e/kind-setup-single-kind-cfg.yaml
 e2e-setup-failure-logs/
 e2e-diagnostics/
 logs/
+.scratch/
 multi-cluster-e2e-diagnostics/
 multi-cluster-setup-failure-logs/
 

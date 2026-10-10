@@ -27,6 +27,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"k8s.io/apimachinery/pkg/util/wait"
 )
 
 // QueuedSinkConfig configures a QueuedSink.
@@ -48,10 +49,15 @@ type QueuedSinkConfig struct {
 	WriteTimeout time.Duration
 
 	// DropOnFull controls behavior when queue is full.
-	// If true, new events are dropped silently (non-blocking).
-	// If false, events are still dropped but a warning is logged.
+	// If true, new events are dropped (non-blocking).
+	// If false, enqueue waits up to WriteTimeout or the caller deadline.
 	// Default: true
 	DropOnFull bool
+
+	RetryAttempts       int
+	RetryInitialBackoff time.Duration
+	RetryMaxBackoff     time.Duration
+	RetryTimeout        time.Duration
 
 	// CircuitBreakerThreshold is the number of consecutive failures before opening the circuit.
 	// Default: 5
@@ -71,6 +77,10 @@ func DefaultQueuedSinkConfig() QueuedSinkConfig {
 		BatchTimeout:            100 * time.Millisecond,
 		WriteTimeout:            5 * time.Second,
 		DropOnFull:              true,
+		RetryAttempts:           8,
+		RetryInitialBackoff:     time.Second,
+		RetryMaxBackoff:         10 * time.Second,
+		RetryTimeout:            time.Minute,
 		CircuitBreakerThreshold: 5,
 		CircuitBreakerResetTime: 30 * time.Second,
 	}
@@ -123,14 +133,16 @@ type QueuedSink struct {
 	lastSuccessTime time.Time
 
 	// Lifecycle
-	wg     sync.WaitGroup
-	closed atomic.Bool
+	wg               sync.WaitGroup
+	closed           atomic.Bool
+	shutdownDeadline atomic.Int64
 
 	// sendMu serialises sends on queue against the close in Close.
 	// Every send goes through [QueuedSink.enqueue], which holds the read lock
 	// and re-checks closed; Close takes the write lock before closing the
 	// channel, so no send can be in flight when the channel is closed.
 	sendMu sync.RWMutex
+	stop   chan struct{}
 }
 
 // enqueue performs a non-blocking send on the event queue that is safe against a
@@ -178,12 +190,28 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	if cfg.BatchTimeout <= 0 {
 		cfg.BatchTimeout = 100 * time.Millisecond
 	}
+	if cfg.RetryAttempts <= 0 {
+		cfg.RetryAttempts = 8
+	}
+	if cfg.RetryInitialBackoff <= 0 {
+		cfg.RetryInitialBackoff = time.Second
+	}
+	if cfg.RetryMaxBackoff <= 0 {
+		cfg.RetryMaxBackoff = 10 * time.Second
+	}
+	if cfg.RetryTimeout <= 0 {
+		cfg.RetryTimeout = time.Minute
+	}
+	if cfg.RetryInitialBackoff > cfg.RetryMaxBackoff {
+		cfg.RetryInitialBackoff = cfg.RetryMaxBackoff
+	}
 
 	qs := &QueuedSink{
 		sink:   sink,
 		queue:  make(chan *Event, cfg.QueueSize),
 		config: cfg,
 		logger: logger.Named("queued-sink").With(zap.String("sink", sink.Name())),
+		stop:   make(chan struct{}),
 	}
 
 	batchSink, isBatchSink := sink.(BatchSink)
@@ -210,9 +238,27 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 // Write enqueues an event for async processing. A sensitive event may
 // synchronously fall back to the underlying sink when a queue is full or its
 // circuit is open.
-func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
+func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+	}
+	if !qs.config.DropOnFull {
+		writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+		defer cancel()
+		qs.sendMu.RLock()
+		defer qs.sendMu.RUnlock()
+		if qs.closed.Load() {
+			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		}
+		select {
+		case qs.queue <- event:
+			return nil
+		case <-qs.stop:
+			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		case <-writeCtx.Done():
+			qs.recordDrop(1, "enqueue_timeout")
+			return fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
+		}
 	}
 
 	// Check circuit breaker
@@ -234,9 +280,7 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 				qs.logger.Warn("circuit open but event is sensitive, attempting synchronous write",
 					zap.String("sink", qs.sink.Name()),
 					zap.String("event_type", string(event.Type)))
-				ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
-				defer cancel()
-				return qs.sink.Write(ctx, event)
+				return qs.syncFallback(ctx, event)
 			}
 			// Non-sensitive event: drop silently
 			qs.droppedEvents.Add(1)
@@ -258,9 +302,7 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 		qs.logger.Warn("queue full but event is sensitive, attempting synchronous write",
 			zap.String("sink", qs.sink.Name()),
 			zap.String("event_type", string(event.Type)))
-		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
-		defer cancel()
-		return qs.sink.Write(ctx, event)
+		return qs.syncFallback(ctx, event)
 	}
 	// Non-sensitive event: drop
 	qs.droppedEvents.Add(1)
@@ -272,6 +314,18 @@ func (qs *QueuedSink) Write(_ context.Context, event *Event) error {
 			zap.String("event_id", event.ID))
 	}
 	return nil
+}
+
+func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
+	writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+	defer cancel()
+	err := qs.sink.Write(writeCtx, event)
+	if err != nil {
+		qs.failedEvents.Add(1)
+		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "sync_fallback").Inc()
+		qs.recordDrop(1, "sync_fallback")
+	}
+	return err
 }
 
 // processQueue is the worker goroutine that processes events from the queue.
@@ -290,68 +344,76 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
-		// Wait if circuit is open
-		for qs.circuitOpen.Load() {
-			if qs.closed.Load() {
-				return
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
+		qs.deliver(1, "write", func(ctx context.Context) error {
+			return qs.sink.Write(ctx, event)
+		})
+	}
+}
 
-		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
-		err := qs.sink.Write(ctx, event)
-		cancel()
+func (qs *QueuedSink) recordDrop(count int, reason string) {
+	qs.droppedEvents.Add(int64(count))
+	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), reason).Add(float64(count))
+	qs.logger.Warn("audit events dropped", zap.Int("count", count), zap.String("reason", reason))
+}
 
-		if err != nil {
-			if errors.Is(err, ErrCircuitOpen) {
-				// Try to push it back into the queue if the circuit opened during Write.
-				// This must NOT be done from an untracked goroutine: Close() closes
-				// qs.queue once the tracked workers are accounted for, and a detached
-				// send would then panic with "send on closed channel" — precisely when
-				// the backend is down during shutdown. enqueue() is non-blocking and
-				// serialised against Close, so requeue inline instead.
-				if !qs.enqueue(event) {
-					qs.droppedEvents.Add(1)
-					metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open_requeue").Inc()
-				}
-				continue
-			}
-
-			qs.failedEvents.Add(1)
-			fails := qs.consecutiveFails.Add(1)
-			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "write").Inc()
-
-			qs.mu.Lock()
-			qs.lastError = err.Error()
-			qs.lastErrorTime = time.Now()
-			qs.mu.Unlock()
-
-			qs.logger.Error("failed to write audit event",
-				zap.Int("worker", workerID),
-				zap.String("event_id", event.ID),
-				zap.String("event_type", string(event.Type)),
-				zap.String("error", err.Error()),
-				zap.Int32("consecutive_fails", fails))
-
-			// Check if we should open the circuit breaker
-			if int(fails) >= qs.config.CircuitBreakerThreshold {
-				if qs.circuitOpen.CompareAndSwap(false, true) {
-					qs.lastResetAttempt.Store(time.Now().Unix())
-					qs.logger.Warn("circuit breaker opened for sink",
-						zap.String("sink", qs.sink.Name()),
-						zap.Int32("consecutive_fails", fails))
-				}
-			}
-		} else {
-			qs.processedEvents.Add(1)
+// deliver retains the same event identities in the worker through bounded retries.
+// A Kafka acknowledgement may be lost after delivery, so consumers must deduplicate IDs.
+func (qs *QueuedSink) deliver(count int, operation string, write func(context.Context) error) {
+	retryCtx, cancel := context.WithTimeout(context.Background(), qs.config.RetryTimeout)
+	defer cancel()
+	if deadline := qs.shutdownDeadline.Load(); deadline != 0 {
+		var shutdownCancel context.CancelFunc
+		retryCtx, shutdownCancel = context.WithDeadline(retryCtx, time.Unix(0, deadline))
+		defer shutdownCancel()
+	}
+	backoff := wait.Backoff{
+		Duration: qs.config.RetryInitialBackoff, Factor: 2,
+		Steps: qs.config.RetryAttempts, Cap: qs.config.RetryMaxBackoff,
+	}
+	var err error
+	for attempt := 0; attempt < qs.config.RetryAttempts; attempt++ {
+		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
+		err = write(writeCtx)
+		writeCancel()
+		if err == nil {
+			qs.processedEvents.Add(int64(count))
 			qs.consecutiveFails.Store(0)
-			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Inc()
-
+			qs.circuitOpen.Store(false)
+			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
 			qs.mu.Lock()
 			qs.lastSuccessTime = time.Now()
 			qs.mu.Unlock()
+			return
+		}
+		qs.failedEvents.Add(int64(count))
+		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), operation).Add(float64(count))
+		qs.mu.Lock()
+		qs.lastError = err.Error()
+		qs.lastErrorTime = time.Now()
+		qs.mu.Unlock()
+		if attempt+1 == qs.config.RetryAttempts || qs.closed.Load() || retryCtx.Err() != nil {
+			break
+		}
+		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "retry").Inc()
+		timer := time.NewTimer(backoff.Step())
+		select {
+		case <-timer.C:
+		case <-retryCtx.Done():
+		case <-qs.stop:
+		}
+		timer.Stop()
+		if qs.closed.Load() || retryCtx.Err() != nil {
+			break
 		}
 	}
+	fails := qs.consecutiveFails.Add(1)
+	if int(fails) >= qs.config.CircuitBreakerThreshold {
+		qs.circuitOpen.Store(true)
+		qs.lastResetAttempt.Store(time.Now().Unix())
+	}
+	qs.recordDrop(count, "retry_exhausted")
+	qs.logger.Error("audit delivery retries exhausted",
+		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
 }
 
 // Health returns the current health status of this sink.
@@ -393,9 +455,11 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 
 // Close shuts down the queued sink gracefully.
 func (qs *QueuedSink) Close() error {
+	qs.shutdownDeadline.CompareAndSwap(0, time.Now().Add(qs.config.WriteTimeout).UnixNano())
 	if qs.closed.Swap(true) {
 		return nil // Already closed
 	}
+	close(qs.stop)
 
 	// Take the write lock so no enqueue() is in flight, then close. Every send
 	// site re-checks qs.closed under the read lock, so after this point no
@@ -424,10 +488,14 @@ type IsolatedMultiSink struct {
 
 // NewIsolatedMultiSink creates a multi-sink where each underlying sink
 // has its own queue and operates independently.
-func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger) *IsolatedMultiSink {
+func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger, perSink ...QueuedSinkConfig) *IsolatedMultiSink {
 	queuedSinks := make([]*QueuedSink, 0, len(sinks))
-	for _, sink := range sinks {
-		queuedSinks = append(queuedSinks, NewQueuedSink(sink, cfg, logger))
+	for i, sink := range sinks {
+		sinkConfig := cfg
+		if i < len(perSink) {
+			sinkConfig = perSink[i]
+		}
+		queuedSinks = append(queuedSinks, NewQueuedSink(sink, sinkConfig, logger))
 	}
 
 	return &IsolatedMultiSink{
@@ -508,45 +576,10 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
-		err := batchSink.WriteBatch(ctx, batch)
-		cancel()
-
-		if err != nil {
-			qs.failedEvents.Add(int64(len(batch)))
-			fails := qs.consecutiveFails.Add(1)
-			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "batch_write").Add(float64(len(batch)))
-
-			qs.mu.Lock()
-			qs.lastError = err.Error()
-			qs.lastErrorTime = time.Now()
-			qs.mu.Unlock()
-
-			qs.logger.Error("failed to write audit batch",
-				zap.Int("worker", workerID),
-				zap.Int("batch_size", len(batch)),
-				zap.String("error", err.Error()),
-				zap.Int32("consecutive_fails", fails))
-
-			if int(fails) >= qs.config.CircuitBreakerThreshold {
-				if qs.circuitOpen.CompareAndSwap(false, true) {
-					qs.lastResetAttempt.Store(time.Now().Unix())
-					qs.logger.Warn("circuit breaker opened for sink",
-						zap.String("sink", qs.sink.Name()),
-						zap.Int32("consecutive_fails", fails))
-				}
-			}
-		} else {
-			qs.processedEvents.Add(int64(len(batch)))
-			qs.consecutiveFails.Store(0)
-			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(len(batch)))
-
-			qs.mu.Lock()
-			qs.lastSuccessTime = time.Now()
-			qs.mu.Unlock()
-		}
-
-		batch = batch[:0] // Reset batch
+		qs.deliver(len(batch), "batch_write", func(ctx context.Context) error {
+			return batchSink.WriteBatch(ctx, batch)
+		})
+		batch = batch[:0]
 	}
 
 	for {
