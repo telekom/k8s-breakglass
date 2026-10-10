@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Multi-cluster Kind acceptance for cached authorization revocation and a
+  webhook outage with NoOpinion, proving ordinary RBAC access remains effective
+  without granting additional uncached Breakglass authority. Dedicated spoke
+  authorization files are restored after each test.
+
 - Optional `BreakglassEscalation.spec.displayName` (maximum 253 characters)
   for human-readable UI and CLI labels, defaulting to `metadata.name`.
   The escalation-config chart preserves the original long name as the label
