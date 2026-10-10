@@ -165,6 +165,25 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		return true
 	}
 	actual := pod.Spec.DeepCopy()
+	memoryPressure := corev1.Toleration{
+		Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
+	}
+	configured := false
+	for _, tolerance := range template.Spec.Tolerations {
+		if equality.Semantic.DeepEqual(tolerance, memoryPressure) {
+			configured = true
+		}
+	}
+	if !configured && workloadHasQoSResources(template.Spec) {
+		// TaintNodesByCondition adds this exact toleration to non-BestEffort
+		// Pods, not ReplicaSet templates. Preserve every other toleration.
+		for i, tolerance := range actual.Tolerations {
+			if equality.Semantic.DeepEqual(tolerance, memoryPressure) {
+				actual.Tolerations = append(actual.Tolerations[:i], actual.Tolerations[i+1:]...)
+				break
+			}
+		}
+	}
 	if template.Spec.EnableServiceLinks == nil && actual.EnableServiceLinks != nil && *actual.EnableServiceLinks {
 		actual.EnableServiceLinks = nil
 	}
@@ -181,6 +200,30 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		actual.PriorityClassName = ""
 	}
 	return podMatchesWorkloadTemplate(&corev1.Pod{Spec: *actual}, template, daemonSet)
+}
+
+func workloadHasQoSResources(spec corev1.PodSpec) bool {
+	hasResources := func(resources corev1.ResourceRequirements) bool {
+		for _, list := range []corev1.ResourceList{resources.Requests, resources.Limits} {
+			for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+				if quantity, ok := list[name]; ok && quantity.Sign() > 0 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if spec.Resources != nil {
+		return hasResources(*spec.Resources)
+	}
+	for _, containers := range [][]corev1.Container{spec.Containers, spec.InitContainers} {
+		for _, container := range containers {
+			if hasResources(container.Resources) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func verifyAdmittedPriority(ctx context.Context, target client.Client, actual *corev1.PodSpec, expected corev1.PodSpec) bool {

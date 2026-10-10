@@ -23,6 +23,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -808,6 +809,74 @@ func TestStampCreateOperationSeparatesConflictingDesiredContent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, firstID, secondID)
 	require.NotEqual(t, firstID, second.GetAnnotations()[createOperationIDAnnotation])
+}
+
+func TestAdmittedWorkloadMemoryPressureToleration(t *testing.T) {
+	memoryPressure := corev1.Toleration{Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	for _, tc := range []struct {
+		name             string
+		requests, limits corev1.ResourceList
+		tolerance        corev1.Toleration
+		want             bool
+	}{
+		{"burstable", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, memoryPressure, true},
+		{"guaranteed", corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("64Mi")}, corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("64Mi")}, memoryPressure, true},
+		{"best effort", nil, nil, memoryPressure, false},
+		{"ephemeral storage only", corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("1Gi")}, nil, memoryPressure, false},
+		{"arbitrary toleration", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: "dedicated", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}, false},
+		{"wrong effect", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute}, false},
+		{"nonempty value", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Value: "spoofed", Effect: corev1.TaintEffectNoSchedule}, false},
+		{"bounded seconds", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule, TolerationSeconds: ptr.To[int64](300)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1", Resources: corev1.ResourceRequirements{Requests: tc.requests, Limits: tc.limits}}}}}
+			pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
+			pod.Spec.Tolerations = []corev1.Toleration{tc.tolerance}
+			before := pod.DeepCopy()
+			target := fake.NewClientBuilder().WithScheme(testScheme()).Build()
+			require.False(t, podMatchesWorkloadTemplate(pod, template, false), "synthetic ReplicaSet templates remain strict")
+			require.Equal(t, tc.want, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+			require.Equal(t, before, pod)
+			require.Empty(t, template.Spec.Tolerations)
+			pod.Spec.Containers[0].Image = "spoofed:v1"
+			require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+		})
+	}
+}
+
+func TestAdmittedWorkloadMemoryPressurePreservesExplicitAndDuplicateEntries(t *testing.T) {
+	tolerance := corev1.Toleration{Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "debug", Image: "debug:v1", Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+		}}},
+		Tolerations: []corev1.Toleration{tolerance},
+	}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).Build()
+	pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
+	require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+	pod.Spec.Tolerations = append(pod.Spec.Tolerations, tolerance)
+	require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+	template.Spec.Tolerations = nil
+	require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false), "only one native toleration may be removed")
+	pod.Spec.Tolerations = []corev1.Toleration{tolerance}
+	require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+}
+
+func TestWorkloadQoSResourceClassification(t *testing.T) {
+	positive := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}
+	for _, tc := range []struct {
+		name string
+		spec corev1.PodSpec
+		want bool
+	}{
+		{"init resources", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: positive}}}, true},
+		{"pod resources", corev1.PodSpec{Resources: &positive}, true},
+		{"empty pod-level overrides containers", corev1.PodSpec{Resources: &corev1.ResourceRequirements{}, Containers: []corev1.Container{{Resources: positive}}}, false},
+		{"zero resources", corev1.PodSpec{Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0")}}}}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) { require.Equal(t, tc.want, workloadHasQoSResources(tc.spec)) })
+	}
 }
 
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {
