@@ -593,6 +593,41 @@ func TestTemplateRequesterBoundedGrantHistory(t *testing.T) {
 	}
 }
 
+func TestTemplateRequesterDiscardsAliasesOnLaterIdentityQueryFailure(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		t.Run(fmt.Sprintf("fallback=%t", fallback), func(t *testing.T) {
+			calls := 0
+			controller := &DebugSessionAPIController{apiReader: discoveryPagedReader{list: func(list client.ObjectList, _ client.ListOptions) error {
+				calls++
+				if calls == 1 {
+					list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{{
+						Spec:   breakglassv1alpha1.BreakglassSessionSpec{Cluster: "tenant", User: "alice", GrantedGroup: "debug-alias", IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example"},
+						Status: breakglassv1alpha1.BreakglassSessionStatus{State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour))},
+					}}
+					return nil
+				}
+				if fallback && calls == 2 {
+					return fmt.Errorf("Index with name field:spec.user does not exist")
+				}
+				return fmt.Errorf("grant reader unavailable")
+			}}}
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("username", "alice")
+			ctx.Set("email", "alice@example.org")
+			ctx.Set("groups", []string{"identity"})
+			ctx.Set("identity_provider_name", "idp")
+			ctx.Set("issuer", "https://idp.example")
+			requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{{
+				ObjectMeta: metav1.ObjectMeta{Name: "tenant"},
+			}}, []string{"debug-alias"})
+			require.ErrorContains(t, err, "grant reader unavailable")
+			require.Empty(t, requester.grantedClusters)
+			require.False(t, requester.forCluster("tenant").canRequest(&breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"debug-alias"}}))
+			require.True(t, requester.canRequest(&breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"identity"}}))
+		})
+	}
+}
+
 func TestDiscoveryGrantsRejectsReaderIgnoringPageLimit(t *testing.T) {
 	controller := &DebugSessionAPIController{apiReader: discoveryPagedReader{list: func(list client.ObjectList, _ client.ListOptions) error {
 		list.(*breakglassv1alpha1.BreakglassSessionList).Items = make([]breakglassv1alpha1.BreakglassSession, discoveryGrantPageSize+1)

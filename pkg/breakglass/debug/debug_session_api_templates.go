@@ -375,10 +375,12 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 			continue
 		}
 		if !breakglass.IsFieldIndexError(err) {
+			r.grantedClusters = nil
 			return r, fmt.Errorf("list debug discovery grants: %w", err)
 		}
 		sessions, err = c.discoveryGrants(apiCtx)
 		if err != nil {
+			r.grantedClusters = nil
 			return r, fmt.Errorf("list debug discovery grants without indexes: %w", err)
 		}
 		break
