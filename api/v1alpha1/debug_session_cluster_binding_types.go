@@ -112,6 +112,11 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	NamespaceConstraints *NamespaceConstraints `json:"namespaceConstraints,omitempty"`
 
+	// kubectlDebugTargetNamespaces restricts source namespaces for kubectl-debug
+	// operations. These allowlists are additive to the template's filters.
+	// +optional
+	KubectlDebugTargetNamespaces *KubectlDebugTargetNamespaceConstraints `json:"kubectlDebugTargetNamespaces,omitempty"`
+
 	// extraDeployVariables narrows the variables exposed by the referenced
 	// template for this binding. Entries must name variables defined by the
 	// template; options and validation can only become more restrictive.
@@ -195,6 +200,20 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
+}
+
+// KubectlDebugTargetNamespaceConstraints narrows the source namespaces
+// accessible to kubectl-debug operations through a binding.
+type KubectlDebugTargetNamespaceConstraints struct {
+	// ephemeralContainers is an additional allowlist for ephemeral-container
+	// targets. It is intersected with the template's allowed namespaces.
+	// +optional
+	EphemeralContainers *NamespaceFilter `json:"ephemeralContainers,omitempty"`
+
+	// podCopy is an additional allowlist for pod-copy source namespaces.
+	// It is intersected with the template's allowed namespaces.
+	// +optional
+	PodCopy *NamespaceFilter `json:"podCopy,omitempty"`
 }
 
 // TemplateReference references a DebugSessionTemplate by name.
@@ -538,6 +557,20 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 		result.Errors = append(result.Errors, validateNamespaceConstraints(spec.NamespaceConstraints, specPath.Child("namespaceConstraints"))...)
 		// Bindings don't have a targetNamespace field, so pass empty string
 		result.Warnings = append(result.Warnings, warnNamespaceConstraintIssues(spec.NamespaceConstraints, "")...)
+	}
+	if targetNamespaces := spec.KubectlDebugTargetNamespaces; targetNamespaces != nil {
+		validateFilter := func(name string, filter *NamespaceFilter) {
+			if filter == nil {
+				return
+			}
+			filterPath := specPath.Child("kubectlDebugTargetNamespaces", name)
+			if filter.IsEmpty() {
+				result.Errors = append(result.Errors, field.Required(filterPath, "at least one of patterns or selectorTerms must be specified"))
+			}
+			result.Errors = append(result.Errors, validateNamespaceFilterGlobPatterns(filter, filterPath)...)
+		}
+		validateFilter("ephemeralContainers", targetNamespaces.EphemeralContainers)
+		validateFilter("podCopy", targetNamespaces.PodCopy)
 	}
 
 	// Validate binding-side extra deploy variable constraint shape. Whether a

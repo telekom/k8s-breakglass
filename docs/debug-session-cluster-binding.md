@@ -177,6 +177,30 @@ Override namespace restrictions:
 | `allowUserNamespace` | bool | Allow users to specify namespace |
 | `denyUserNamespace` | bool | Narrowing switch: when `true`, reject user-specified namespaces even if the template allows them. Absent or `false` keeps existing behaviour |
 
+### kubectlDebugTargetNamespaces
+
+Restrict the source namespaces that kubectl-debug operations can target. This is
+separate from `namespaceConstraints`, which controls where Breakglass creates
+debug pods. Each configured binding filter is intersected with the template's
+operation-specific filters and can only narrow access; an omitted filter
+inherits the template behavior.
+
+```yaml
+kubectlDebugTargetNamespaces:
+  ephemeralContainers:
+    patterns:
+      - tenant-a-*
+  podCopy:
+    selectorTerms:
+      - matchLabels:
+          tenant: team-a
+```
+
+`ephemeralContainers` applies to ephemeral-container source Pods and `podCopy`
+to source Pods copied for debugging. Filters support namespace `patterns` and
+label-based `selectorTerms`, evaluated using live target-cluster namespace
+labels. These binding filters are captured in the approved session snapshot.
+
 ### schedulingConstraints
 
 Additional scheduling restrictions:

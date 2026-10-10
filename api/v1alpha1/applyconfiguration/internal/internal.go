@@ -1715,6 +1715,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: impersonation
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
+    - name: kubectlDebugTargetNamespaces
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugTargetNamespaceConstraints
     - name: labels
       type:
         map:
@@ -3018,6 +3021,15 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugOperation
           elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugTargetNamespaceConstraints
+  map:
+    fields:
+    - name: ephemeralContainers
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+    - name: podCopy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
   map:
     fields:
