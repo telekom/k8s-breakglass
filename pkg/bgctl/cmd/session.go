@@ -284,12 +284,13 @@ func newSessionGetCommand() *cobra.Command {
 
 func newSessionRequestCommand() *cobra.Command {
 	var (
-		cluster   string
-		group     string
-		user      string
-		reason    string
-		duration  int64
-		scheduled string
+		cluster        string
+		group          string
+		user           string
+		reason         string
+		ticketSystemID string
+		duration       int64
+		scheduled      string
 	)
 	cmd := &cobra.Command{
 		Use:   "request",
@@ -321,6 +322,7 @@ reason when the escalation policy requires one.`,
 				User:             user,
 				Group:            group,
 				Reason:           reason,
+				TicketSystemID:   ticketSystemID,
 				DurationSeconds:  duration,
 				ScheduledStartAt: scheduled,
 			}
@@ -340,6 +342,7 @@ reason when the escalation policy requires one.`,
 	cmd.Flags().StringVarP(&group, "group", "g", "", "Group to request")
 	cmd.Flags().StringVarP(&user, "user", "u", "", "User identifier (defaults to token user)")
 	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Reason for request")
+	cmd.Flags().StringVar(&ticketSystemID, "ticket-system-id", "", "Optional freeform ticket system ID (audit only; not validated)")
 	cmd.Flags().Int64VarP(&duration, "duration", "d", 0, "Requested duration in seconds")
 	cmd.Flags().StringVarP(&scheduled, "scheduled-start", "S", "", "Scheduled start time (RFC3339)")
 	_ = cmd.MarkFlagRequired("cluster")

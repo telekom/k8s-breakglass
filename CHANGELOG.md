@@ -49,6 +49,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional freeform `ticketSystemID` on escalation session requests, persisted
+  in the immutable session spec, recorded in lifecycle audit events and logs,
+  shown to approvers, and available in the UI and `bgctl --ticket-system-id`.
+  This field is audit-only; it does not validate tickets or grant authority.
+
 - Optional `BreakglassEscalation.spec.displayName` (maximum 253 characters)
   for human-readable UI and CLI labels, defaulting to `metadata.name`.
   The escalation-config chart preserves the original long name as the label

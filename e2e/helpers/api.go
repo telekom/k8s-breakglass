@@ -95,6 +95,7 @@ type SessionRequest struct {
 	User               string `json:"user"`
 	Group              string `json:"group"`
 	Reason             string `json:"reason,omitempty"`
+	TicketSystemID     string `json:"ticketSystemID,omitempty"`
 	Duration           int64  `json:"duration,omitempty"`
 	ScheduledStartTime string `json:"scheduledStartTime,omitempty"`
 }

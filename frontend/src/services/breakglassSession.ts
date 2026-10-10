@@ -44,6 +44,7 @@ export default class BreakglassSessionService {
       // name and activeOnly are not part of create request payload in backend API
       if (request.name) payload.name = request.name;
       if (request.reason) payload.reason = request.reason;
+      if (request.ticketSystemID !== undefined) payload.ticketSystemID = request.ticketSystemID;
       if (request.scheduledStartTime) payload.scheduledStartTime = request.scheduledStartTime;
       return await this.client.post("/breakglassSessions", payload);
     } catch (e) {

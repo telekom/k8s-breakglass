@@ -26,6 +26,8 @@ type BreakglassSessionRequest struct {
 	// are driven by the escalation's RequestReason configuration.
 	// Max 500 characters, sanitized on server-side to prevent injection attacks.
 	Reason string `json:"reason,omitempty"`
+	// TicketSystemID is an optional audit-only reference, preserved verbatim.
+	TicketSystemID string `json:"ticketSystemID,omitempty"`
 	// Duration is the requested duration in seconds. Must not exceed the escalation's maxValidFor.
 	// Optional; if not provided, uses escalation's maxValidFor.
 	Duration int64 `json:"duration,omitempty"`

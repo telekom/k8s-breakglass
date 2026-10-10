@@ -90,6 +90,7 @@ func (wc *BreakglassSessionController) recordUnverifiedApproverGroupsDecision(
 			"groupBasis":    "unverified_request_context",
 			"loadBearing":   true,
 			"authorization": "allowed",
+			"ticketSystemID": session.Spec.TicketSystemID,
 		},
 	})
 }
@@ -1018,10 +1019,11 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 			EscalationName: session.Spec.GrantedGroup,
 		},
 		Details: map[string]interface{}{
-			"message":      message,
-			"cluster":      session.Spec.Cluster,
-			"grantedGroup": session.Spec.GrantedGroup,
-			"state":        string(session.Status.State),
+			"message":        message,
+			"cluster":        session.Spec.Cluster,
+			"grantedGroup":   session.Spec.GrantedGroup,
+			"state":          string(session.Status.State),
+			"ticketSystemID": session.Spec.TicketSystemID,
 		},
 	}
 
@@ -1062,6 +1064,7 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 		Details: map[string]interface{}{
 			"message":          message,
 			"expirationReason": reason,
+			"ticketSystemID":   session.Spec.TicketSystemID,
 			"cluster":          session.Spec.Cluster,
 			"grantedGroup":     session.Spec.GrantedGroup,
 			"user":             session.Spec.User,

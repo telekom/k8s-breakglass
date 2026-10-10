@@ -246,6 +246,7 @@ export default class BreakglassService {
     reason?: string,
     duration?: number,
     scheduledStartTime?: string,
+    ticketSystemID?: string,
   ): Promise<AxiosResponse> {
     // Backend expects POST /api/breakglassSessions with body { cluster, user, group, reason, duration, scheduledStartTime }
     try {
@@ -263,10 +264,12 @@ export default class BreakglassService {
         reason?: string;
         duration?: number;
         scheduledStartTime?: string;
+        ticketSystemID?: string;
       } = { cluster: transition.cluster, group: transition.to, user: username };
       if (reason && reason.trim().length > 0) body.reason = reason;
       if (duration && duration > 0) body.duration = Math.floor(duration);
       if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;
+      if (ticketSystemID !== undefined) body.ticketSystemID = ticketSystemID;
       const response = await this.client.post("/breakglassSessions", body);
       debug("BreakglassService.requestBreakglass", "Request submitted", { status: response.status });
       return response;

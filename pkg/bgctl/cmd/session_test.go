@@ -122,6 +122,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 			User             string `json:"user"`
 			Group            string `json:"group"`
 			Reason           string `json:"reason"`
+			TicketSystemID   string `json:"ticketSystemID"`
 			DurationSeconds  int64  `json:"duration"`
 			ScheduledStartAt string `json:"scheduledStartTime"`
 		}
@@ -130,6 +131,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 		require.Equal(t, "alice@example.com", req.User)
 		require.Equal(t, "admins", req.Group)
 		require.Equal(t, "incident-123", req.Reason)
+		require.Equal(t, "operations/example-123", req.TicketSystemID)
 		require.EqualValues(t, 3600, req.DurationSeconds)
 		require.Equal(t, "2026-06-29T10:00:00Z", req.ScheduledStartAt)
 
@@ -155,6 +157,7 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 		"--group", "admins",
 		"--user", "alice@example.com",
 		"--reason", "incident-123",
+		"--ticket-system-id", "operations/example-123",
 		"--duration", "3600",
 		"--scheduled-start", "2026-06-29T10:00:00Z",
 	})

@@ -7,6 +7,7 @@ export interface BreakglassSessionRequest {
   mine?: boolean;
   approver?: boolean;
   reason?: string;
+  ticketSystemID?: string;
   scheduledStartTime?: string; // ISO 8601 date-time, e.g., "2024-01-20T15:30:00Z"
 }
 
