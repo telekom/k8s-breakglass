@@ -13,7 +13,7 @@ CA=${CA:-}
 # Use KEYCLOAK_ISSUER_HOST (set by setup scripts) or fall back to the in-cluster service name.
 HOST_HEADER=${HOST_HEADER:-${KEYCLOAK_ISSUER_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local:8443}}
 PROTO=${PROTO:-https}
-RELATIVE_PATH="${KEYCLOAK_RELATIVE_PATH:-/auth}"
+RELATIVE_PATH="${KEYCLOAK_RELATIVE_PATH:-}"
 RELATIVE_PATH="/${RELATIVE_PATH#/}"
 RELATIVE_PATH="${RELATIVE_PATH%/}"
 curl_args=(-s -H "Host: $HOST_HEADER" -d grant_type=password -d client_id=breakglass-ui -d username="${USER}" -d password="${PASS}")

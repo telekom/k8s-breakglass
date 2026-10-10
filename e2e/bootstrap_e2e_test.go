@@ -101,7 +101,8 @@ func TestBootstrapTokenHelperRelativePath(t *testing.T) {
 		name, path, endpoint string
 		fallback             bool
 	}{
-		{"default", "", "/auth", false},
+		{"default", "", "", false},
+		{"canonical", "/auth", "/auth", false},
 		{"custom", "/custom", "/custom", false},
 		{"root", "/", "", false},
 		{"fallback", "/custom", "/custom", true},
