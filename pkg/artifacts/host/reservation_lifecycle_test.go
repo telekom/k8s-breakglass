@@ -271,6 +271,8 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.NoError(t, batchv1.AddToScheme(hub.Scheme()))
 	expires := metav1.NewTime(now.Add(time.Hour))
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "session-uid"}, Spec: breakglassv1alpha1.DebugSessionSpec{RequestedBy: "owner", Cluster: "spoke", TargetNamespace: "target"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expires, ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{ArtifactCollection: &breakglassv1alpha1.DebugSessionArtifactCollection{AllowedRecipes: []string{archive.SystemSummaryRecipe}}}, AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "approved", UID: "pod-uid"}}, ConnectionLease: &breakglassv1alpha1.DebugSessionConnectionLease{UID: "lease-uid", TargetUID: "cluster-uid", Epoch: 1}}}
+	caRef := &breakglassv1alpha1.ArtifactUploadCABundleReference{Kind: "ConfigMap", Name: "private-upload-ca", Key: "ca.pem"}
+	session.Status.ResolvedTemplate.ArtifactCollection.UploadCABundleRef = caRef
 	require.NoError(t, hub.Create(ctx, session))
 	require.NoError(t, coordinationv1.AddToScheme(hub.Scheme()))
 	leaseRef, leaseErr := debug.NewConnectionLeaseService(hub).WithLiveReader(hub).AcquireForSession(ctx, session, "cluster-uid")
@@ -336,6 +338,8 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	require.NoError(t, hub.Update(ctx, session))
 	denied := send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved","image":"evil"}`)
 	require.Equal(t, http.StatusBadRequest, denied.Code)
+	denied = send(`{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved","uploadCABundleRef":{"kind":"Secret","name":"requester-ca","key":"ca.pem"}}`)
+	require.Equal(t, http.StatusBadRequest, denied.Code, "requesters cannot select upload trust")
 	requestBody := `{"recipe":"system-summary.v1","podNamespace":"target","podName":"approved"}`
 	oversized := send(requestBody + strings.Repeat(" ", 4097-len(requestBody)) + `{}`)
 	require.Equal(t, http.StatusRequestEntityTooLarge, oversized.Code)
@@ -349,6 +353,7 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	record, err := repo.Get(ctx, "hub", "session", public.ArtifactID)
 	require.NoError(t, err)
 	require.Equal(t, "pod-uid", record.TargetPodUID)
+	require.Equal(t, caRef, record.UploadCABundleRef)
 	reconciler := &artifactcontroller.Reconciler{Client: hub, LiveReader: hub, Service: svc, TokenIssuer: &uploadTokenIssuer{keyring: keys, now: func() time.Time { return *now }}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
 	key := client.ObjectKey{Namespace: "controller", Name: record.ArtifactID}
 	_, err = reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key})
@@ -360,6 +365,10 @@ func TestRegisteredCollectorAdmissionCreatesJobWithReservedToken(t *testing.T) {
 	job := &batchv1.Job{}
 	require.NoError(t, spoke.Get(ctx, client.ObjectKey{Namespace: "target", Name: "dsa-" + record.ArtifactUID + "-collect"}, job))
 	require.Equal(t, "registry.example/collector@sha256:"+strings.Repeat("c", 64), job.Spec.Template.Spec.InitContainers[0].Image)
+	require.Equal(t, caRef.Name, job.Spec.Template.Spec.Volumes[1].ConfigMap.Name)
+	require.True(t, job.Spec.Template.Spec.Containers[0].VolumeMounts[1].ReadOnly)
+	require.Len(t, job.Spec.Template.Spec.InitContainers[0].VolumeMounts, 1, "offline collector must not mount upload trust")
+	require.Empty(t, job.OwnerReferences, "hub Artifact must not own spoke Jobs")
 	route := "/api/debugSessionArtifactUploads/hub/session/" + record.ArtifactID
 	body := validLocalArchive(t, record.Expected)
 	uploadRequest := httptest.NewRequest(http.MethodPut, route, bytes.NewReader(body))

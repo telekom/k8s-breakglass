@@ -26,6 +26,10 @@ spec:
   displayName: {{ required (printf "profiles[%s].displayName is required" $profile.name) $profile.displayName | quote }}
   description: {{ required (printf "profiles[%s].description is required" $profile.name) $profile.description | quote }}
   mode: workload
+  {{- with $profile.artifactCollection }}
+  artifactCollection:
+{{ toYaml . | nindent 4 }}
+  {{- end }}
   podTemplateRef:
     name: {{ include "debug-session-catalogue.profileName" (dict "root" $ "profile" $profile) }}
   {{- with $profile.podOverridesTemplate }}

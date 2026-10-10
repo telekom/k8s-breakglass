@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `DebugSessionTemplate.spec.artifactCollection.uploadCABundleRef`
+  selects a ConfigMap or Secret CA bundle in the collector's target namespace.
+  Only the uploader mounts it read-only and appends it to image-pinned system
+  roots; hostname verification remains enabled. The reference is snapshotted
+  into immutable artifact reservations and supported by catalogue profiles.
+
 ### Security
 
 - Use Go 1.27.2 for source, controller, CI and utility image builds to address

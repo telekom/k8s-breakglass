@@ -9,6 +9,10 @@ All notable changes to this image are documented here.
 
 ### Added
 
+- Optional fixed-path private CA bundle, appended to pinned system roots only
+  by the uploader; hostname verification and ambient override rejection remain.
+- Kind upload proof with ConfigMap/Secret CA projections and an
+  unknown-authority failure without the bundle, using the untouched image.
 - Added immutable crashdump-collection.v1 and system-summary.v1 recipes.
 - Added a collision-preservation Kind proof: the integration harness now uses
   unique owned cluster/image names and never removes pre-existing resources.

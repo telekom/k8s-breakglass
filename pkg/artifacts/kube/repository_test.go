@@ -13,9 +13,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/types"
+	clientgotesting "k8s.io/client-go/testing"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func TestStatusFromRecordPreservesDurableEvidence(t *testing.T) {
@@ -153,4 +156,36 @@ func TestCreatePreservesLargestRepresentableVersions(t *testing.T) {
 	require.Equal(t, "assigned-uid", created.ArtifactUID)
 	require.EqualValues(t, record.RecipeVersion, c.stored.Spec.RecipeVersion)
 	require.EqualValues(t, record.Expected.RedactionVersion, c.stored.Spec.RedactionVersion)
+}
+
+func TestUploadCABundleSurvivesRepositoryRoundTrip(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	// This persistence test does not exercise SSA. The fake's default managed
+	// fields converter cannot reflect the existing uint64 operationEpoch.
+	tracker := clientgotesting.NewObjectTracker(scheme, serializer.NewCodecFactory(scheme).UniversalDecoder())
+	kubeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjectTracker(tracker).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c ctrlclient.WithWatch, object ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+			object.SetUID("assigned-artifact-uid")
+			return c.Create(ctx, object, opts...)
+		},
+	}).Build()
+	repository, err := NewRepositoryInNamespace(kubeClient, "artifact-system")
+	require.NoError(t, err)
+	record := backend.Record{Namespace: "sessions", SessionName: "session", SessionUID: "session-uid", ArtifactID: "dsa-0123456789abcdef01234567", RecipeVersion: 1}
+	record.Expected.RedactionVersion = 1
+	record.UploadCABundleRef = &breakglassv1alpha1.ArtifactUploadCABundleReference{Kind: "Secret", Name: "private-upload-ca", Key: "ca.pem"}
+	created, err := repository.Create(context.Background(), record)
+	require.NoError(t, err)
+	require.Equal(t, record.UploadCABundleRef, created.UploadCABundleRef)
+	record.UploadCABundleRef.Name = "changed-after-create"
+	restarted, err := NewRepositoryInNamespace(kubeClient, "artifact-system")
+	require.NoError(t, err)
+	recovered, err := restarted.Get(context.Background(), record.Namespace, record.SessionName, record.ArtifactID)
+	require.NoError(t, err)
+	require.Equal(t, "private-upload-ca", recovered.UploadCABundleRef.Name)
+	recovered.UploadCABundleRef.Key = "changed-after-read"
+	recovered, err = restarted.Get(context.Background(), record.Namespace, record.SessionName, record.ArtifactID)
+	require.NoError(t, err)
+	require.Equal(t, "ca.pem", recovered.UploadCABundleRef.Key)
 }

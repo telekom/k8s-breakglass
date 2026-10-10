@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
@@ -97,6 +98,11 @@ func (c *collectionController) create(ctx *gin.Context) {
 		return
 	}
 	record := backend.Record{ConnectionLeaseUID: string(session.Status.ConnectionLease.UID), Namespace: session.Namespace, SessionName: session.Name, SessionUID: string(session.UID), TargetClusterUID: string(config.UID), TargetPodNamespace: pod.Namespace, TargetPodName: pod.Name, TargetPodUID: string(pod.UID), Recipe: request.Recipe, RecipeVersion: 1, OperationEpoch: uint64(session.Status.ConnectionLease.Epoch), ExpiresAt: session.Status.ExpiresAt.Time, MaxBytes: c.maximum}
+	record.UploadCABundleRef = session.Status.ResolvedTemplate.ArtifactCollection.UploadCABundleRef.DeepCopy()
+	if err := record.UploadCABundleRef.Validate(); err != nil {
+		ctx.Status(http.StatusForbidden)
+		return
+	}
 	if session.Status.ConnectionLease.TargetUID != config.UID {
 		ctx.Status(http.StatusForbidden)
 		return
@@ -152,10 +158,11 @@ func (c *collectionController) create(ctx *gin.Context) {
 	}
 	record.RuntimeBindingDigest = opaqueDigest(profile + "/" + record.TargetIdentityDigest + "/" + record.ConnectionLeaseUID)
 	plan, _ := json.Marshal(struct {
-		Recipe  string
-		Inputs  archive.Inputs
-		Profile string
-	}{request.Recipe, record.Expected.Inputs, profile})
+		Recipe            string
+		Inputs            archive.Inputs
+		Profile           string
+		UploadCABundleRef *breakglassv1alpha1.ArtifactUploadCABundleReference `json:",omitempty"`
+	}{request.Recipe, record.Expected.Inputs, profile, record.UploadCABundleRef})
 	record.PlanDigest = opaqueDigest(string(plan))
 	if err := c.provider.ValidatePrivilegedOperationClusterConfig(ctx.Request.Context(), config); err != nil {
 		ctx.Status(http.StatusForbidden)

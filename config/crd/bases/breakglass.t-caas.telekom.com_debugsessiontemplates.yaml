@@ -1200,6 +1200,37 @@ spec:
                       type: string
                     maxItems: 2
                     type: array
+                  uploadCABundleRef:
+                    description: |-
+                      uploadCABundleRef appends administrator-owned CA certificates to image-pinned
+                      system trust for uploads. The resource must exist in each target namespace
+                      and be protected from requester writes. No TLS verification is disabled.
+                    properties:
+                      key:
+                        description: key contains PEM-encoded CA certificates, not
+                          credentials.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[-._a-zA-Z0-9]+$
+                        type: string
+                      kind:
+                        description: kind is the Kubernetes resource containing the
+                          PEM bundle.
+                        enum:
+                        - ConfigMap
+                        - Secret
+                        type: string
+                      name:
+                        description: name is the resource name in the target namespace.
+                        maxLength: 253
+                        minLength: 1
+                        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                        type: string
+                    required:
+                    - key
+                    - kind
+                    - name
+                    type: object
                 required:
                 - allowedRecipes
                 type: object

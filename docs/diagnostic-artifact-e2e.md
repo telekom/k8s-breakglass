@@ -38,12 +38,21 @@ Workload Pod identity checks tolerate Kubernetes' canonical
 `enableServiceLinks: true` admission default only when the workload left it
 unset; an explicit `false` remains authoritative.
 
-The setup creates a fresh private test CA and signing Secret, builds the actual
-collector/uploader from source, appends the CA to a test-only trust layer, and
-imports its archive into every disposable Kind node. It tags each node's actual
-containerd manifest digest and requires those digests to agree. Both generated
-Job containers use that immutable reference. This proves the test image; it does
-not publish or certify the release image.
+The setup creates a fresh private test CA and signing Secret and builds the
+actual collector/uploader from source. Both generated Job containers use the
+untouched image with its pinned system roots, imported into every disposable
+Kind node by verified immutable manifest digest. Templates select a ConfigMap
+for system-summary and a Secret for crashdump upload trust. Their CA key is
+projected only into the uploader; the lifecycle test verifies the reference's
+repository round-trip and successfully uploads through the private-CA TLS edge.
+The system-summary termination case also runs the same fixed Job/image without
+the bundle and requires an unknown-authority certificate-verification failure.
+It never disables verification. This proves the test image, not a published
+release image.
+
+Only the test-only storage/TLS fixture layer appends the CA to its own system
+roots, for MinIO and independent backend inventory. Collector Jobs do not use
+that layer.
 
 A single-replica Recreate controller mounts a private RWO PVC. A test-only init
 command calls `local.ProvisionSentinels`; production startup still fails closed

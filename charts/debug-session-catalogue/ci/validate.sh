@@ -4,6 +4,7 @@
 set -euo pipefail
 
 chart_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+bash "$chart_dir/ci/validate-artifact-upload-ca.sh"
 rendered="$(mktemp)"
 custom_rendered="$(mktemp)"
 all_rendered="$(mktemp)"

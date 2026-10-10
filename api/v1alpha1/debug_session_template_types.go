@@ -1309,6 +1309,11 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 
 	specPath := field.NewPath("spec")
 	var allErrs field.ErrorList
+	if collection := template.Spec.ArtifactCollection; collection != nil {
+		if err := collection.UploadCABundleRef.Validate(); err != nil {
+			allErrs = append(allErrs, field.Invalid(specPath.Child("artifactCollection", "uploadCABundleRef"), collection.UploadCABundleRef, err.Error()))
+		}
+	}
 
 	// Validate mode-dependent requirements
 	mode := template.Spec.Mode
@@ -1397,6 +1402,11 @@ func init() {
 
 // DebugSessionArtifactCollection enables only controller-owned fixed recipes.
 type DebugSessionArtifactCollection struct {
+	// uploadCABundleRef appends administrator-owned CA certificates to image-pinned
+	// system trust for uploads. The resource must exist in each target namespace
+	// and be protected from requester writes. No TLS verification is disabled.
+	// +optional
+	UploadCABundleRef *ArtifactUploadCABundleReference `json:"uploadCABundleRef,omitempty"`
 	// allowedRecipes is the administrator-selected collection allowlist.
 	// +kubebuilder:validation:MaxItems=2
 	// +kubebuilder:validation:items:Enum=system-summary.v1;crashdump-collection.v1

@@ -152,8 +152,15 @@ expiry with its terminal authorization response (including HTTP 410); the image
 does not retry that response. The image carries the pinned builder's CA bundle
 for normal certificate verification and ignores
 ambient `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables. HTTP endpoints
-are never accepted; development fixtures must use certificate-verified HTTPS
-with an injected test transport. A per-attempt request timeout is retryable
+are never accepted. Administrators may set
+`BREAKGLASS_ARTIFACT_UPLOAD_CA_BUNDLE=true` and mount a PEM bundle read-only at
+the fixed `/etc/breakglass/artifact-upload-ca/ca.crt` path. The uploader appends
+it to the pinned system roots without disabling hostname verification. Only
+that exact opt-in value is accepted; it cannot select an arbitrary path.
+Missing, empty, invalid or over-1-MiB bundles fail closed. In controller Jobs,
+configure the template's `artifactCollection.uploadCABundleRef` instead of
+editing commands or environment. Protect the referenced ConfigMap/Secret from
+requester writes in every target namespace. A per-attempt request timeout is retryable
 only while the total operation context still has budget; once that context is
 done, cancellation/deadline is terminal.
 

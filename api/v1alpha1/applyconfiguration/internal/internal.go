@@ -217,6 +217,18 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: uid
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactUploadCABundleReference
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditConfig
   map:
     fields:
@@ -1459,6 +1471,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: uploadCABundleRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactUploadCABundleReference
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionArtifactSpec
   map:
     fields:
@@ -1525,6 +1540,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: timeoutSeconds
       type:
         scalar: numeric
+    - name: uploadCABundleRef
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ArtifactUploadCABundleReference
     - name: uploadJTIHash
       type:
         scalar: string

@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+profiles:
+  - name: artifact-summary
+    intent: diagnostic-artifact-collection
+    displayName: System summary
+    description: Fixed-recipe system summary with administrator-provisioned upload trust.
+    enabled: true
+    elevated: false
+    preset: restricted
+    imageKey: diagnosticArtifactCollector
+    command: ["/bin/sleep"]
+    args: ["3600"]
+    artifactCollection:
+      allowedRecipes: [system-summary.v1]
+      uploadCABundleRef:
+        kind: ConfigMap
+        name: artifact-upload-ca
+        key: ca.pem

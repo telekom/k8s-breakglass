@@ -38,6 +38,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.ArtifactResourceReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactSessionReference"):
 		return &apiv1alpha1.ArtifactSessionReferenceApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("ArtifactUploadCABundleReference"):
+		return &apiv1alpha1.ArtifactUploadCABundleReferenceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfig"):
 		return &apiv1alpha1.AuditConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AuditConfigSpec"):

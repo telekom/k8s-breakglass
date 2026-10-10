@@ -73,6 +73,24 @@
         "args": { "type": "array", "items": { "type": "string" } },
         "sourcePath": { "type": "string", "pattern": "^/input/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$", "maxLength": 262 },
         "workloadType": { "type": "string", "enum": ["DaemonSet", "Deployment", "Job"] },
+        "artifactCollection": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowedRecipes"],
+          "properties": {
+            "allowedRecipes": { "type": "array", "maxItems": 2, "items": { "enum": ["system-summary.v1", "crashdump-collection.v1"] } },
+            "uploadCABundleRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["kind", "name", "key"],
+              "properties": {
+                "kind": { "enum": ["ConfigMap", "Secret"] },
+                "name": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
+                "key": { "type": "string", "minLength": 1, "maxLength": 253, "pattern": "^[-._a-zA-Z0-9]+$" }
+              }
+            }
+          }
+        },
         "podOverridesTemplate": { "type": "string", "minLength": 1 },
         "extraDeployVariables": { "type": "array", "items": { "type": "object" } },
         "replicas": { "type": "integer", "minimum": 1 },

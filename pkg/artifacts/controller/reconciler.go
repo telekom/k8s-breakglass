@@ -312,6 +312,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 		return err
 	}
 	config := artifactjob.Config{Namespace: targetNamespace, Name: jobName, ArtifactID: object.Spec.ArtifactID, ArtifactName: object.Name, ArtifactUID: string(object.UID), SessionNamespace: object.Spec.SessionRef.Namespace, SessionName: object.Spec.SessionRef.Name, SessionUID: object.Spec.SessionRef.UID, Recipe: object.Spec.Recipe, RecipeVersion: int(object.Spec.RecipeVersion), PlanDigest: object.Spec.PlanDigest, RuntimeBindingDigest: object.Spec.RuntimeBindingDigest, RedactionProfile: object.Spec.RedactionProfile, RedactionVersion: int(object.Spec.RedactionVersion), UploadURL: strings.TrimSuffix(reconciler.ControllerURL, "/") + route, UploadTokenSecretName: secretName, Image: reconciler.Image, Node: valueOrEmpty(object.Spec.Node), MaxBytes: object.Spec.MaxBytes, TimeoutSeconds: object.Spec.TimeoutSeconds, DetailLevel: valueOrEmpty(object.Spec.Inputs.DetailLevel), MaxAgeMinutes: valueOrZero(object.Spec.Inputs.MaxAgeMinutes)}
+	config.UploadCABundleRef = object.Spec.UploadCABundleRef.DeepCopy()
 	collectorJob, err := artifactjob.Build(config)
 	if err != nil {
 		return fmt.Errorf("build diagnostic artifact collector Job: %w", err)

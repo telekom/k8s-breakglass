@@ -267,6 +267,36 @@ spec:
                 maximum: 3600
                 minimum: 1
                 type: integer
+              uploadCABundleRef:
+                description: |-
+                  uploadCABundleRef snapshots controller-owned trust in the target namespace.
+                  Requesters cannot select it; changing controller configuration affects only
+                  new reservations. Bundle contents may be rotated by the administrator.
+                properties:
+                  key:
+                    description: key contains PEM-encoded CA certificates, not credentials.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[-._a-zA-Z0-9]+$
+                    type: string
+                  kind:
+                    description: kind is the Kubernetes resource containing the PEM
+                      bundle.
+                    enum:
+                    - ConfigMap
+                    - Secret
+                    type: string
+                  name:
+                    description: name is the resource name in the target namespace.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+                    type: string
+                required:
+                - key
+                - kind
+                - name
+                type: object
               uploadJTIHash:
                 description: uploadJTIHash binds the one-time upload lease without
                   persisting the token identifier.

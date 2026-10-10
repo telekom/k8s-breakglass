@@ -11,6 +11,37 @@ UID, target identity digest, recipe plan digest, redaction policy, bounded
 inputs, size limit, and expiry. Its specification cannot be changed after
 creation.
 
+## Private CA upload endpoints
+
+Administrators may configure uploader trust on a `DebugSessionTemplate`:
+
+```yaml
+spec:
+  artifactCollection:
+    allowedRecipes: [system-summary.v1, crashdump-collection.v1]
+    uploadCABundleRef:
+      kind: ConfigMap # or Secret
+      name: artifact-upload-ca
+      key: ca.pem
+```
+
+Provision that exact resource/key in **each target debug namespace**, not only
+on the hub. Protect it from requester/tenant writes: whoever can change its PEM
+certificates can change the uploader's trusted certificate authorities.
+Only the selected key is projected read-only at the fixed uploader-only path
+`/etc/breakglass/artifact-upload-ca/ca.crt`; the offline collector never mounts
+the bundle. Missing resources/keys block the Pod, and unreadable, empty,
+invalid or oversized (over 1 MiB) bundles fail upload.
+
+The uploader appends these certificates to its image-pinned system roots;
+public roots remain available and normal hostname verification is unchanged.
+`SSL_CERT_FILE`, `SSL_CERT_DIR`, proxy overrides and insecure TLS options are
+not supported. Omitting the reference preserves the previous system-only
+trust. The approved template reference is snapshotted into the immutable
+artifact specification and bound into its plan digest. Changes to a template
+affect new sessions; administrators can rotate bundle contents in place.
+Use a new resource name to keep existing reservations on old trust.
+
 The controller renders a fixed collector Job. On retry it compares the complete
 execution specification with the approved rendering, permitting only standard
 Kubernetes defaults and controller-generated Job identity labels and selectors.

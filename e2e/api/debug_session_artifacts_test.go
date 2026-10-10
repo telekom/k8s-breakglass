@@ -36,6 +36,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	artifactarchive "github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
+	artifactjob "github.com/telekom/k8s-breakglass/pkg/artifacts/job"
 )
 
 // This named CI lane requires its fixture; missing configuration is a failure.
@@ -54,13 +55,29 @@ func testArtifactRecipeLifecycle(t *testing.T, recipe, cleanup string) {
 	require.Contains(t, []string{"local", "s3"}, backend, "backend must be selected explicitly")
 	require.Contains(t, image, "@sha256:", "run e2e/fixtures/artifacts/setup.sh first")
 	ctx, ns := s.Ctx, s.Namespace
+	caRef := &breakglassv1alpha1.ArtifactUploadCABundleReference{Kind: "Secret", Name: "artifact-e2e-tls", Key: "ca.crt"}
+	// ConfigMap and Secret projection both exercise the production uploader.
+	if recipe == artifactarchive.SystemSummaryRecipe {
+		var secret corev1.Secret
+		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: "breakglass-system", Name: caRef.Name}, &secret))
+		caRef.Kind, caRef.Name = "ConfigMap", fmt.Sprintf("artifact-upload-ca-%d", time.Now().UnixNano())
+		ca := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: caRef.Name}, Data: map[string]string{caRef.Key: string(secret.Data[caRef.Key])}}
+		require.NoError(t, s.Client.Create(ctx, ca))
+		t.Cleanup(func() { _ = s.Client.Delete(ctx, ca) })
+	} else if ns != "breakglass-system" {
+		var secret corev1.Secret
+		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: "breakglass-system", Name: caRef.Name}, &secret))
+		ca := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: caRef.Name}, Data: map[string][]byte{caRef.Key: secret.Data[caRef.Key]}}
+		require.NoError(t, s.Client.Create(ctx, ca))
+		t.Cleanup(func() { _ = s.Client.Delete(ctx, ca) })
+	}
 	tc := helpers.NewTestContext(t, ctx)
 	requester := helpers.NewAPIClientWithAuth(tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.SecurityRequester))
 	outsider := helpers.NewAPIClientWithAuth(tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.UnauthorizedUser))
 	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: fmt.Sprintf("artifact-e2e-%d", time.Now().UnixNano())}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 		Mode: breakglassv1alpha1.DebugSessionModeWorkload, TargetNamespace: ns,
 		Allowed:            &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{s.Cluster}, Groups: []string{"*"}},
-		ArtifactCollection: &breakglassv1alpha1.DebugSessionArtifactCollection{AllowedRecipes: []string{recipe}},
+		ArtifactCollection: &breakglassv1alpha1.DebugSessionArtifactCollection{AllowedRecipes: []string{recipe}, UploadCABundleRef: caRef},
 		PodTemplateString: `apiVersion: v1
 kind: Pod
 metadata:
@@ -166,6 +183,7 @@ spec:
 		return result
 	}
 	baseline := files()
+	caNegativeProven := false
 	collect := func() (*breakglassv1alpha1.DebugSessionArtifact, []byte, string) {
 		admitted, e := requester.CollectDebugSessionArtifact(ctx, sessionNamespace, session.Name, request)
 		require.NoError(t, e)
@@ -188,6 +206,7 @@ spec:
 			assert.Len(c, object.Status.Resources, 2, "artifact %s tracked resources", object.Name)
 		}, helpers.WaitForStateTimeout, time.Second)
 		require.NotEmpty(t, object.UID)
+		require.Equal(t, caRef, object.Spec.UploadCABundleRef, "durable upload trust snapshot")
 		require.Equal(t, sessionNamespace, object.Spec.SessionRef.Namespace)
 		require.Equal(t, session.Name, object.Spec.SessionRef.Name)
 		require.Equal(t, string(active.UID), object.Spec.SessionRef.UID)
@@ -205,6 +224,33 @@ spec:
 				}, helpers.WaitForStateTimeout, time.Second)
 				require.Equal(t, image, job.Spec.Template.Spec.InitContainers[0].Image)
 				require.Equal(t, image, job.Spec.Template.Spec.Containers[0].Image)
+				if !caNegativeProven && recipe == artifactarchive.SystemSummaryRecipe && cleanup == "terminate" {
+					// The same untouched image and TLS endpoint must reject the
+					// private CA without the administrator-selected projection.
+					negative, buildErr := artifactjob.Build(artifactjob.Config{
+						Namespace: ref.Namespace, Name: fmt.Sprintf("artifact-no-ca-%d", time.Now().UnixNano()),
+						ArtifactID: object.Spec.ArtifactID, ArtifactUID: string(object.UID),
+						SessionNamespace: sessionNamespace, SessionName: session.Name, SessionUID: string(active.UID),
+						Recipe: recipe, RecipeVersion: 1, PlanDigest: object.Spec.PlanDigest, RuntimeBindingDigest: object.Spec.RuntimeBindingDigest,
+						RedactionProfile: "credential-text.v1", RedactionVersion: 1,
+						UploadURL:   "https://artifact-e2e.breakglass-system.svc:8444/api/debugSessionArtifactUploads/" + sessionNamespace + "/" + session.Name + "/" + object.Spec.ArtifactID,
+						UploadToken: "kind-negative-private-ca-proof", Image: image,
+						MaxBytes: object.Spec.MaxBytes, TimeoutSeconds: 120, DetailLevel: "basic",
+					})
+					require.NoError(t, buildErr)
+					negative.OwnerReferences = nil
+					require.NoError(t, s.Client.Create(ctx, negative))
+					t.Cleanup(func() {
+						_ = s.Client.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground))
+					})
+					require.Eventually(t, func() bool {
+						return s.Client.Get(ctx, client.ObjectKeyFromObject(negative), negative) == nil && negative.Status.Failed == 1
+					}, 150*time.Second, time.Second, "upload without private CA must fail, never bypass verification")
+					output, logErr := exec.CommandContext(ctx, "kubectl", "-n", negative.Namespace, "logs", "job/"+negative.Name, "-c", "uploader").CombinedOutput()
+					require.NoError(t, logErr, string(output))
+					require.Contains(t, string(output), "certificate signed by unknown authority")
+					caNegativeProven = true
+				}
 				require.NotNil(t, job.Spec.Template.Spec.SecurityContext.FSGroup)
 				pods := &corev1.PodList{}
 				require.NoError(t, s.Client.List(ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))

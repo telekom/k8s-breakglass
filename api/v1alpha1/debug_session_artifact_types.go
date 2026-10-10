@@ -118,6 +118,11 @@ type DebugSessionArtifactSpec struct {
 	// +kubebuilder:validation:Maximum=9999
 	// +required
 	RecipeVersion int32 `json:"recipeVersion"`
+	// uploadCABundleRef snapshots controller-owned trust in the target namespace.
+	// Requesters cannot select it; changing controller configuration affects only
+	// new reservations. Bundle contents may be rotated by the administrator.
+	// +optional
+	UploadCABundleRef *ArtifactUploadCABundleReference `json:"uploadCABundleRef,omitempty"`
 	// planDigest binds the rendered Job and uploader contract.
 	// +kubebuilder:validation:Pattern="^[0-9a-f]{64}$"
 	// +required

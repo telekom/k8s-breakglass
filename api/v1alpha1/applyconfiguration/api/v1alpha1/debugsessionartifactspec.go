@@ -35,6 +35,10 @@ type DebugSessionArtifactSpecApplyConfiguration struct {
 	Recipe *string `json:"recipe,omitempty"`
 	// recipeVersion is the immutable recipe schema version.
 	RecipeVersion *int32 `json:"recipeVersion,omitempty"`
+	// uploadCABundleRef snapshots controller-owned trust in the target namespace.
+	// Requesters cannot select it; changing controller configuration affects only
+	// new reservations. Bundle contents may be rotated by the administrator.
+	UploadCABundleRef *ArtifactUploadCABundleReferenceApplyConfiguration `json:"uploadCABundleRef,omitempty"`
 	// planDigest binds the rendered Job and uploader contract.
 	PlanDigest *string `json:"planDigest,omitempty"`
 	// runtimeBindingDigest binds the target runtime identity and operation.
@@ -134,6 +138,14 @@ func (b *DebugSessionArtifactSpecApplyConfiguration) WithRecipe(value string) *D
 // If called multiple times, the RecipeVersion field is set to the value of the last call.
 func (b *DebugSessionArtifactSpecApplyConfiguration) WithRecipeVersion(value int32) *DebugSessionArtifactSpecApplyConfiguration {
 	b.RecipeVersion = &value
+	return b
+}
+
+// WithUploadCABundleRef sets the UploadCABundleRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UploadCABundleRef field is set to the value of the last call.
+func (b *DebugSessionArtifactSpecApplyConfiguration) WithUploadCABundleRef(value *ArtifactUploadCABundleReferenceApplyConfiguration) *DebugSessionArtifactSpecApplyConfiguration {
+	b.UploadCABundleRef = value
 	return b
 }
 

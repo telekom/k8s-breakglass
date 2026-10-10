@@ -17,6 +17,7 @@ import (
 	"os"
 	"time"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
@@ -98,6 +99,7 @@ type Record struct {
 	PlanDigest           string
 	Recipe               string
 	RecipeVersion        int
+	UploadCABundleRef    *breakglassv1alpha1.ArtifactUploadCABundleReference
 	Expected             archive.Expected
 	ExpiresAt            time.Time
 	MaxBytes             int64

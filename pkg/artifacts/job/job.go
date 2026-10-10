@@ -17,6 +17,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation"
 
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/archive"
 )
 
@@ -26,6 +27,8 @@ const (
 	outputPath         = "/output/artifact.tar.gz"
 	uploadURLKey       = "BREAKGLASS_ARTIFACT_UPLOAD_URL"
 	uploadTokenKey     = "BREAKGLASS_ARTIFACT_UPLOAD_TOKEN"
+	uploadCAKey        = "BREAKGLASS_ARTIFACT_UPLOAD_CA_BUNDLE"
+	uploadCAMountPath  = "/etc/breakglass/artifact-upload-ca"
 )
 
 // Config is the controller-owned rendering input. UploadURL is the Breakglass
@@ -49,6 +52,7 @@ type Config struct {
 	UploadURL             string
 	UploadToken           string
 	UploadTokenSecretName string
+	UploadCABundleRef     *breakglassv1alpha1.ArtifactUploadCABundleReference
 	Image                 string
 	Node                  string
 	MaxBytes              int64
@@ -108,6 +112,20 @@ func Build(config Config) (*batchv1.Job, error) {
 	if crashdump {
 		collectorMounts = append(collectorMounts, corev1.VolumeMount{Name: "host-coredumps", MountPath: "/host-coredumps", ReadOnly: true})
 	}
+	uploaderMounts := []corev1.VolumeMount{{Name: "output", MountPath: "/output"}}
+	if ref := config.UploadCABundleRef; ref != nil {
+		mode := int32(0444)
+		items := []corev1.KeyToPath{{Key: ref.Key, Path: "ca.crt"}}
+		source := corev1.VolumeSource{}
+		if ref.Kind == "ConfigMap" {
+			source.ConfigMap = &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: ref.Name}, Items: items, DefaultMode: &mode, Optional: boolPtr(false)}
+		} else {
+			source.Secret = &corev1.SecretVolumeSource{SecretName: ref.Name, Items: items, DefaultMode: &mode, Optional: boolPtr(false)}
+		}
+		volumes = append(volumes, corev1.Volume{Name: "upload-ca", VolumeSource: source})
+		uploaderMounts = append(uploaderMounts, corev1.VolumeMount{Name: "upload-ca", MountPath: uploadCAMountPath, ReadOnly: true})
+		uploaderEnv = append(uploaderEnv, corev1.EnvVar{Name: uploadCAKey, Value: "true"})
+	}
 	pod := corev1.PodSpec{
 		RestartPolicy:                corev1.RestartPolicyNever,
 		AutomountServiceAccountToken: boolPtr(false),
@@ -117,7 +135,7 @@ func Build(config Config) (*batchv1.Job, error) {
 		SecurityContext:              &corev1.PodSecurityContext{FSGroup: int64Ptr(65532), FSGroupChangePolicy: fsGroupChangePolicyPtr(corev1.FSGroupChangeOnRootMismatch)},
 		Volumes:                      volumes,
 		InitContainers:               []corev1.Container{{Name: collectorContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "collect", "--recipe", config.Recipe, "--output", outputPath}, Env: env, SecurityContext: collectorSecurity, VolumeMounts: collectorMounts}},
-		Containers:                   []corev1.Container{{Name: uploaderContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "upload", "--archive", outputPath}, Env: uploaderEnv, SecurityContext: uploaderSecurity, VolumeMounts: []corev1.VolumeMount{{Name: "output", MountPath: "/output"}}}},
+		Containers:                   []corev1.Container{{Name: uploaderContainer, Image: config.Image, ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"/usr/local/bin/diagnostic-artifact-collector", "upload", "--archive", outputPath}, Env: uploaderEnv, SecurityContext: uploaderSecurity, VolumeMounts: uploaderMounts}},
 	}
 	if crashdump {
 		pod.NodeName = config.Node
@@ -136,6 +154,9 @@ func Build(config Config) (*batchv1.Job, error) {
 }
 
 func validate(config Config) error {
+	if err := config.UploadCABundleRef.Validate(); err != nil {
+		return err
+	}
 	if len(validation.IsDNS1123Label(config.Namespace)) != 0 || len(validation.IsDNS1123Subdomain(config.Name)) != 0 || (config.ArtifactName != "" && len(validation.IsDNS1123Subdomain(config.ArtifactName)) != 0) || len(validation.IsDNS1123Subdomain(config.SessionNamespace)) != 0 || len(validation.IsDNS1123Subdomain(config.SessionName)) != 0 {
 		return errors.New("diagnostic artifact Job identity is invalid")
 	}

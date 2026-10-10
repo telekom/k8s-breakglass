@@ -9,7 +9,8 @@ source "$(dirname -- "${BASH_SOURCE[0]}")/../../lib/common.sh"
 : "${KUBECONFIG:?source the single-cluster e2e environment first}"
 ns=breakglass-system
 cluster=${CLUSTER_NAME:-breakglass-hub}
-work=$(mktemp -d)
+work="$PWD/.artifact-fixture-$$"
+mkdir -m 0700 "$work"
 trap 'rm -rf "$work"' EXIT
 nodes=$(kind get nodes --name "$cluster")
 test -n "$nodes"
@@ -33,8 +34,8 @@ docker build -t artifact-collector-e2e:source utils/images/diagnostic-artifact-c
 cat > "$work/Dockerfile" <<'DOCKER'
 FROM artifact-collector-e2e:source
 USER 0
-COPY ca.crt /tmp/fixture-ca.crt
-RUN cat /tmp/fixture-ca.crt >> /etc/ssl/certs/ca-certificates.crt && rm /tmp/fixture-ca.crt
+COPY ca.crt /fixture-ca.crt
+RUN cat /fixture-ca.crt >> /etc/ssl/certs/ca-certificates.crt && rm /fixture-ca.crt
 COPY --chmod=0755 fixture /fixture
 COPY --chmod=0755 minio /minio
 COPY MINIO-LICENSE /usr/share/licenses/minio/LICENSE
@@ -42,35 +43,44 @@ USER 65532:65532
 DOCKER
 printf '*\n!Dockerfile\n!ca.crt\n!fixture\n!minio\n!MINIO-LICENSE\n' > "$work/.dockerignore"
 docker build -t artifact-collector-e2e:trusted "$work"
-docker save artifact-collector-e2e:trusted -o "$work/image.tar"
+docker save artifact-collector-e2e:trusted artifact-collector-e2e:source -o "$work/image.tar"
 digest=""
+collector_digest=""
 for node in $nodes; do
- cat "$work/image.tar" | docker exec -i "$node" ctr -n k8s.io images import - >/dev/null
+ docker exec -i "$node" ctr -n k8s.io images import - < "$work/image.tar" >/dev/null
  current=$(docker exec "$node" ctr -n k8s.io images list | awk '$1 == "docker.io/library/artifact-collector-e2e:trusted" {print $3}')
  [[ "$current" =~ ^sha256:[a-f0-9]{64}$ ]]
  if [[ -n "$digest" && "$digest" != "$current" ]]; then echo "node image digest mismatch" >&2; exit 1; fi
  digest=$current
  docker exec "$node" ctr -n k8s.io images tag docker.io/library/artifact-collector-e2e:trusted "docker.io/library/artifact-collector-e2e@$digest" >/dev/null
+ # Collector Jobs use the untouched production image, not the TLS/backend
+ # fixture layer whose system roots include the disposable private CA.
+ current_collector=$(docker exec "$node" ctr -n k8s.io images list | awk '$1 == "docker.io/library/artifact-collector-e2e:source" {print $3}')
+ [[ "$current_collector" =~ ^sha256:[a-f0-9]{64}$ ]]
+ if [[ -n "$collector_digest" && "$collector_digest" != "$current_collector" ]]; then echo "node collector image digest mismatch" >&2; exit 1; fi
+ collector_digest=$current_collector
+ docker exec "$node" ctr -n k8s.io images tag docker.io/library/artifact-collector-e2e:source "docker.io/library/artifact-collector-e2e@$collector_digest" >/dev/null
  # Harmless synthetic source exists only inside this disposable Kind node.
  docker exec "$node" mkdir -p /var/lib/systemd/coredump
  docker exec "$node" sh -c 'printf "artifact-kind-synthetic-dump\n" > /var/lib/systemd/coredump/core.artifact-kind-fixture; chmod 0644 /var/lib/systemd/coredump/core.artifact-kind-fixture'
 done
 image="docker.io/library/artifact-collector-e2e@$digest"
 export ARTIFACT_FIXTURE_IMAGE="$image"
+export ARTIFACT_COLLECTOR_IMAGE="docker.io/library/artifact-collector-e2e@$collector_digest"
 kubectl -n "$ns" get deployment breakglass-manager -o json > "$work/deployment.json"
 config=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(v["configMap"]["name"] for v in d["spec"]["template"]["spec"]["volumes"] if v["name"]=="config"))' "$work/deployment.json")
 kubectl -n "$ns" get configmap "$config" -o json > "$work/config.json"
 python3 - "$work" <<'PY'
 import json,os,sys
 from pathlib import Path
-p=Path(sys.argv[1]); image=os.environ['ARTIFACT_FIXTURE_IMAGE']
+p=Path(sys.argv[1]); image=os.environ['ARTIFACT_FIXTURE_IMAGE']; collector_image=os.environ['ARTIFACT_COLLECTOR_IMAGE']
 c=json.loads((p/'config.json').read_text())
 c['data']['config.yaml']+='''
 artifacts:
   enabled: true
   backend: local
   stagingDir: /artifacts/uploads
-  collectorImage: '''+image+'''
+  collectorImage: '''+collector_image+'''
   controllerURL: https://artifact-e2e.breakglass-system.svc:8444
   uploadMaxBytes: 16777216
   tokenSecretName: artifact-e2e-signing
@@ -149,4 +159,4 @@ done
 kubectl -n "$ns" exec deployment/breakglass-manager -c artifact-tls -- /fixture s3-provision
 wait_for_http "${BREAKGLASS_API_URL:-http://localhost:8080}/api/config" 60 "artifact fixture API port-forward"
 printf 'E2E_ARTIFACT_BACKEND=local\n' >> "$GITHUB_ENV"
-printf 'E2E_ARTIFACT_IMAGE_DIGEST=%s\n' "$image" >> "$GITHUB_ENV"
+printf 'E2E_ARTIFACT_IMAGE_DIGEST=%s\n' "$ARTIFACT_COLLECTOR_IMAGE" >> "$GITHUB_ENV"

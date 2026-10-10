@@ -13,6 +13,10 @@ package v1alpha1
 //
 // DebugSessionArtifactCollection enables only controller-owned fixed recipes.
 type DebugSessionArtifactCollectionApplyConfiguration struct {
+	// uploadCABundleRef appends administrator-owned CA certificates to image-pinned
+	// system trust for uploads. The resource must exist in each target namespace
+	// and be protected from requester writes. No TLS verification is disabled.
+	UploadCABundleRef *ArtifactUploadCABundleReferenceApplyConfiguration `json:"uploadCABundleRef,omitempty"`
 	// allowedRecipes is the administrator-selected collection allowlist.
 	AllowedRecipes []string `json:"allowedRecipes,omitempty"`
 }
@@ -21,6 +25,14 @@ type DebugSessionArtifactCollectionApplyConfiguration struct {
 // apply.
 func DebugSessionArtifactCollection() *DebugSessionArtifactCollectionApplyConfiguration {
 	return &DebugSessionArtifactCollectionApplyConfiguration{}
+}
+
+// WithUploadCABundleRef sets the UploadCABundleRef field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UploadCABundleRef field is set to the value of the last call.
+func (b *DebugSessionArtifactCollectionApplyConfiguration) WithUploadCABundleRef(value *ArtifactUploadCABundleReferenceApplyConfiguration) *DebugSessionArtifactCollectionApplyConfiguration {
+	b.UploadCABundleRef = value
+	return b
 }
 
 // WithAllowedRecipes adds the given value to the AllowedRecipes field in the declarative configuration

@@ -1,6 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
+# Optional per-profile collector transport configuration (unset by default):
+# artifactCollection:
+#   allowedRecipes: [system-summary.v1]
+#   uploadCABundleRef: {kind: ConfigMap, name: artifact-upload-ca, key: ca.pem}
+# Provision and protect that resource in every target namespace.
+
 # Cluster-scoped templates only; this chart does not create namespaces, RBAC,
 # ClusterConfig resources, or images. Pre-create targetNamespace.
 enabled: true

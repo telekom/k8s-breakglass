@@ -9,6 +9,14 @@ the cluster administrator.
 
 ## Install
 
+Profiles may opt into fixed artifact recipes with `artifactCollection`.
+Uploader trust is unset by default; for a private-CA HTTPS controller endpoint,
+add `uploadCABundleRef: {kind: ConfigMap, name: artifact-upload-ca, key: ca.pem}`
+(or `kind: Secret`) alongside `allowedRecipes`. Provision and protect the
+resource in every target debug namespace. The uploader projects only that key
+read-only and appends its PEM certificates to system trust; it does not disable
+hostname verification. See [the artifact transport contract](../../docs/diagnostic-artifacts.md#private-ca-upload-endpoints).
+
 Install the CRDs and controller first, then configure access and targets:
 
 ```yaml
