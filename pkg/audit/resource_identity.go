@@ -57,7 +57,8 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 	// A name lookup cannot prove which object the emitter originally observed.
 	// Only validate/enrich identities captured at the object-bearing source.
 	if name != "" && rc.SessionUID == "" && rc.DebugSessionUID == "" &&
-		(event.Target.UID == "" || (event.Target.Kind != "BreakglassSession" && event.Target.Kind != "DebugSession")) {
+		(event.Target.Name != name || event.Target.UID == "" ||
+			(event.Target.Kind != "BreakglassSession" && event.Target.Kind != "DebugSession")) {
 		return
 	}
 	var session client.Object

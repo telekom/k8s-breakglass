@@ -41,7 +41,6 @@ func TestManagerCapturesActorAndIdentityBeforeAsyncAndSyncDelivery(t *testing.T)
 		require.Equal(t, "captured-uid", event.Target.UID)
 		require.Equal(t, []string{"/full/path", "second-group"}, event.Actor.Groups)
 	}
-
 }
 
 func TestAuthenticatedActorPreservesEmailAndUsername(t *testing.T) {
@@ -139,6 +138,30 @@ func TestAuditIdentityRejectsNameReuseAndAmbiguousNamespace(t *testing.T) {
 	svc.enrichResourceIdentity(context.Background(), ambiguous)
 	require.Empty(t, ambiguous.Target.UID)
 	require.Nil(t, ambiguous.RequestContext)
+}
+
+func TestAuditIdentityRejectsUnrelatedTargetUID(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	for _, kind := range []string{"BreakglassSession", "DebugSession"} {
+		t.Run(kind, func(t *testing.T) {
+			metadata := metav1.ObjectMeta{Name: "a", Namespace: "test", UID: "a-uid",
+				OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(),
+					Kind: "BreakglassEscalation", Name: "owner", UID: "owner-uid", Controller: ptr.To(true)}}}
+			var object client.Object = &breakglassv1alpha1.BreakglassSession{ObjectMeta: metadata}
+			if kind == "DebugSession" {
+				object = &breakglassv1alpha1.DebugSession{ObjectMeta: metadata}
+			}
+			svc := NewService(fake.NewClientBuilder().WithScheme(scheme).WithObjects(object).Build(), nil, zap.NewNop(), "test")
+			event := &Event{Target: Target{Kind: kind, Name: "b", Namespace: "test", UID: "b-uid"},
+				RequestContext: &RequestContext{SessionName: "a"}}
+			svc.enrichResourceIdentity(context.Background(), event)
+			require.Equal(t, "b-uid", event.Target.UID)
+			require.Empty(t, event.RequestContext.SessionUID)
+			require.Empty(t, event.RequestContext.DebugSessionUID)
+			require.Empty(t, event.RequestContext.EscalationUID)
+		})
+	}
 }
 
 func TestSessionContextCapturesOwnerWithoutResourceLookup(t *testing.T) {
