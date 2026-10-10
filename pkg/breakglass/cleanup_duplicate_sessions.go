@@ -402,7 +402,7 @@ func duplicateCleanupAuditEvent(session *breakglassv1alpha1.BreakglassSession, c
 		Details: map[string]interface{}{
 			"reason":              "duplicateCleanup",
 			"terminalDecision":    string(terminalState),
-			"ticketSystemID": session.Spec.TicketSystemID,
+			"ticketSystemID":      session.Spec.TicketSystemID,
 			"transitionCommitted": true,
 			"grantedGroup":        session.Spec.GrantedGroup,
 		},
