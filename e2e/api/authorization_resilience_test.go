@@ -181,6 +181,18 @@ func (s *SpokeHubAuthorizationSuite) TestCachedAuthorizationRevocation() {
 	s.configureSpokeAuthorization(true, false)
 	session, token, apiClient := s.approvedResilienceSession()
 	kubeconfig := s.getOIDCKubeconfig(s.mcCtx.Config.SpokeAClusterName)
+	directWebhook := helpers.NewAPIClient()
+	directWebhook.BaseURL = s.mcCtx.Config.HubWebhookURL
+	directWebhook.HTTPClient = helpers.WebhookHTTPClient()
+	directWebhook.HTTPClient.Timeout = 2 * time.Second
+	sar := helpers.BuildResourceSAR(helpers.MultiClusterTestUsers.Employee.Email,
+		append(append([]string(nil), helpers.MultiClusterTestUsers.Employee.Groups...), "system:authenticated"),
+		"list", "pods", "default")
+	allowed, err := directWebhook.SendSAR(s.ctx, s.T(), s.mcCtx.Config.SpokeAClusterName, sar)
+	s.Require().NoError(err)
+	s.Require().Equal("SubjectAccessReview", allowed.Kind)
+	s.Require().Empty(allowed.Status.EvaluationError)
+	s.Require().True(allowed.Status.Allowed, "equivalent direct webhook control must allow before revocation")
 	// A real list operation populates the Kubernetes apiserver's webhook cache.
 	out, err := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 	s.Require().NoError(err, out)
@@ -188,8 +200,19 @@ func (s *SpokeHubAuthorizationSuite) TestCachedAuthorizationRevocation() {
 	s.Require().NoError(apiClient.DropSessionViaAPI(s.ctx, s.T(), session.Name, session.Namespace))
 	helpers.WaitForSessionState(s.T(), s.ctx, s.hubClient, session.Name, session.Namespace,
 		breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+	s.Require().NoError(wait.PollUntilContextTimeout(s.ctx, 100*time.Millisecond, 10*time.Second, true,
+		func(ctx context.Context) (bool, error) {
+			response, sendErr := directWebhook.SendSAR(ctx, s.T(), s.mcCtx.Config.SpokeAClusterName, sar)
+			if sendErr != nil {
+				return false, sendErr
+			}
+			if response.Kind != "SubjectAccessReview" || response.Status.EvaluationError != "" {
+				return false, fmt.Errorf("invalid direct webhook response: kind=%q, evaluationError=%q", response.Kind, response.Status.EvaluationError)
+			}
+			return !response.Status.Allowed, nil
+		}), "the uncached hub webhook must recognize revocation before proving a warm apiserver cache hit")
 	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
-	s.Require().NoError(err, "warm cached allow must be observed after revocation: %s", out)
+	s.Require().NoError(err, "warm cached allow must be observed after the direct hub webhook denies: %s", out)
 	s.Require().Eventually(func() bool {
 		out, requestErr := s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 		return requestErr != nil && strings.Contains(strings.ToLower(out), "forbidden")

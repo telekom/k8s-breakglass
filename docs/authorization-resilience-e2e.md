@@ -12,6 +12,10 @@ The existing multi-cluster Kind suite now exercises two serial spoke-A cases:
   cache with a 20-second TTL, approves a session through the hub API, performs
   a real resource operation, drops through the requester API, observes a warm
   cached allow after revocation, then requires Forbidden within a bounded TTL.
+  An equivalent SAR first proves the direct hub webhook allows the operation;
+  after revocation it polls that uncached endpoint until it denies before
+  requiring the identical kubectl operation to remain allowed. This separates
+  apiserver cache hits from controller informer propagation lag.
 * `TestWebhookOutageNoOpinionPreservesRBAC`: proves approved session access,
   configures the dedicated spoke webhook connection to a closed local port,
   disables caching, and verifies ordinary narrow RBAC access remains allowed
