@@ -13,18 +13,21 @@ CA=${CA:-}
 # Use KEYCLOAK_ISSUER_HOST (set by setup scripts) or fall back to the in-cluster service name.
 HOST_HEADER=${HOST_HEADER:-${KEYCLOAK_ISSUER_HOST:-breakglass-keycloak.breakglass-system.svc.cluster.local:8443}}
 PROTO=${PROTO:-https}
+RELATIVE_PATH="${KEYCLOAK_RELATIVE_PATH:-/auth}"
+RELATIVE_PATH="/${RELATIVE_PATH#/}"
+RELATIVE_PATH="${RELATIVE_PATH%/}"
 curl_args=(-s -H "Host: $HOST_HEADER" -d grant_type=password -d client_id=breakglass-ui -d username="${USER}" -d password="${PASS}")
 if [ "$PROTO" = "https" ]; then
   if [ -n "$CA" ]; then curl_args+=(--cacert "$CA"); else curl_args+=(-k); fi
 fi
-URL_BASE="${PROTO}://localhost:${PORT}"
+URL_BASE="${PROTO}://localhost:${PORT}${RELATIVE_PATH}"
 resp=$(curl "${curl_args[@]}" "$URL_BASE/realms/${REALM}/protocol/openid-connect/token" || true)
 if [ -z "$resp" ] || ! printf '%s' "$resp" | grep -q 'access_token'; then
   # Fallback to plain HTTP port if HTTPS failed and fallback allowed
   if [ "$PROTO" = "https" ]; then
     # Fallback to HTTP alt port if HTTPS token fetch fails; default to 8080
     alt_port=${ALT_HTTP_PORT:-8080}
-    URL_BASE="http://localhost:${alt_port}"
+    URL_BASE="http://localhost:${alt_port}${RELATIVE_PATH}"
     resp=$(curl -s -H "Host: $HOST_HEADER" -d grant_type=password -d client_id=breakglass-ui -d username="${USER}" -d password="${PASS}" "$URL_BASE/realms/${REALM}/protocol/openid-connect/token" || true)
   fi
 fi

@@ -93,6 +93,47 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 	}
 }
 
+func TestBootstrapTokenHelperRelativePath(t *testing.T) {
+	script, err := filepath.Abs("get-token.sh")
+	require.NoError(t, err)
+	token := strings.Repeat("x", 64)
+	for _, tc := range []struct {
+		name, path, endpoint string
+		fallback             bool
+	}{
+		{"default", "", "/auth", false},
+		{"custom", "/custom", "/custom", false},
+		{"root", "/", "", false},
+		{"fallback", "/custom", "/custom", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", tc.path)
+			t.Setenv("PROTO", "https")
+			t.Setenv("PORT", "8443")
+			t.Setenv("ALT_HTTP_PORT", "8080")
+			t.Setenv("EXPECTED_PATH", tc.endpoint+"/realms/breakglass-e2e/protocol/openid-connect/token")
+			t.Setenv("TEST_TOKEN", token)
+			t.Setenv("TEST_FALLBACK", fmt.Sprint(tc.fallback))
+			output, err := exec.Command("bash", "-c", `
+curl() {
+  local url=""
+  for arg in "$@"; do url="$arg"; done
+  if [[ "$url" == "https://localhost:8443$EXPECTED_PATH" ]]; then
+    if [[ "$TEST_FALLBACK" == true ]]; then return 0; fi
+  elif [[ "$TEST_FALLBACK" != true || "$url" != "http://localhost:8080$EXPECTED_PATH" ]]; then
+    printf 'Unexpected token endpoint: %s\n' "$url" >&2
+    return 1
+  fi
+  printf '{"access_token":"%s"}' "$TEST_TOKEN"
+}
+source "$1" test-user test-password
+`, "token-helper-test", script).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, token, string(output))
+		})
+	}
+}
+
 func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
 	skipUnlessE2E(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)

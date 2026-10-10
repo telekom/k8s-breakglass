@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Preserve bgctl runtime initialization when commands are executed with a caller
+  context, including native session drop commands.
 - Restore DebugSession discovery/creation from authenticated identity groups and
   template/binding allowlists, without requiring an active BreakglassSession.
   This fixes the provider-aware grant prerequisite introduced by PR #1346
