@@ -5,7 +5,9 @@ package audit
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -174,4 +176,54 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	sink.writer.Completion([]kafka.Message{{Key: []byte("third")}}, context.DeadlineExceeded)
 	_, lastErr := sink.LastError()
 	require.ErrorIs(t, lastErr, context.DeadlineExceeded)
+}
+
+func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {
+	data, err := json.Marshal(breakglassv1alpha1.AuditQueueConfig{DropOnFull: false})
+	require.NoError(t, err)
+	require.Contains(t, string(data), `"dropOnFull":false`)
+}
+
+func TestIsolatedFanoutDoesNotDelayHealthySink(t *testing.T) {
+	block, started := make(chan struct{}), make(chan struct{})
+	unhealthy, healthy := newQueuedMockSink("backpressure"), newQueuedMockSink("healthy")
+	unhealthy.blockFirst, unhealthy.firstStarted = block, started
+	cfg := retryTestConfig()
+	cfg.QueueSize, cfg.DropOnFull = 1, false
+	ims := NewIsolatedMultiSink([]Sink{unhealthy, healthy}, cfg, zap.NewNop())
+	t.Cleanup(func() { close(block); require.NoError(t, ims.Close()) })
+	require.NoError(t, ims.sinks[0].Write(context.Background(), &Event{ID: "first"}))
+	<-started
+	require.NoError(t, ims.sinks[0].Write(context.Background(), &Event{ID: "second"}))
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		_ = ims.Write(ctx, &Event{ID: "fanout"})
+		close(done)
+	}()
+	require.Eventually(t, func() bool { return healthy.writtenCount.Load() == 1 }, 100*time.Millisecond, time.Millisecond)
+	<-done
+}
+
+type contextBlockedSink struct{}
+
+func (contextBlockedSink) Name() string { return "context-blocked" }
+func (contextBlockedSink) Close() error { return nil }
+func (contextBlockedSink) Write(ctx context.Context, _ *Event) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func TestManagerShutdownBoundsIngressDrain(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.WriteTimeout = 100, 1, time.Minute
+	manager := NewManager(contextBlockedSink{}, cfg, zap.NewNop())
+	for i := range 100 {
+		manager.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventSessionRequested})
+	}
+	start := time.Now()
+	require.NoError(t, manager.Close())
+	require.Less(t, time.Since(start), 6*time.Second)
+	require.Positive(t, manager.Stats().DroppedEvents)
 }

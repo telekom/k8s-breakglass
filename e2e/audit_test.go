@@ -305,6 +305,10 @@ func TestAuditLogging(t *testing.T) {
 				require.Equal(t, string(persisted.UID), event.Target.UID)
 				require.NotNil(t, event.RequestContext)
 				require.Equal(t, string(persisted.UID), event.RequestContext.SessionUID)
+				owner := metav1.GetControllerOf(persisted)
+				require.NotNil(t, owner, "session must identify its selected escalation")
+				require.Equal(t, string(owner.UID), event.RequestContext.EscalationUID)
+				require.Equal(t, owner.Name, event.RequestContext.EscalationName)
 				switch audit.EventType(event.Type) {
 				case audit.EventSessionRequested:
 					require.Equal(t, helpers.TestUsers.Requester.Email, event.Actor.User)

@@ -508,25 +508,22 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 // enqueued without waiting; sensitive events may synchronously fall back to
 // the underlying sink when a queue is full or its circuit is open.
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
-	var errs []error
-	for _, qs := range ims.sinks {
-		// Each sink may synchronously write sensitive events on fallback paths.
-		if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	return ims.WriteBatch(ctx, []*Event{event})
 }
 
 // Close shuts down all queued sinks.
 func (ims *IsolatedMultiSink) Close() error {
-	var lastErr error
-	for _, qs := range ims.sinks {
-		if err := qs.Close(); err != nil {
-			lastErr = err
-		}
+	var wg sync.WaitGroup
+	errs := make([]error, len(ims.sinks))
+	for i, qs := range ims.sinks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = qs.Close()
+		}()
 	}
-	return lastErr
+	wg.Wait()
+	return errors.Join(errs...)
 }
 
 // Name returns the sink identifier.
@@ -615,13 +612,19 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 // enqueued without waiting; sensitive events may synchronously fall back to
 // the underlying sinks when a queue is full or a circuit is open.
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
-	var errs []error
-	for _, qs := range ims.sinks {
-		for _, event := range events {
-			if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
-				errs = append(errs, err)
+	var wg sync.WaitGroup
+	errs := make([]error, len(ims.sinks))
+	for i, qs := range ims.sinks {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for _, event := range events {
+				if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+					errs[i] = errors.Join(errs[i], err)
+				}
 			}
-		}
+		}()
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
