@@ -249,7 +249,7 @@ export default class BreakglassService {
     scheduledStartTime?: string,
     ticketSystemID?: string,
   ): Promise<AxiosResponse> {
-    // Backend expects POST /api/breakglassSessions with body { cluster, user, group, reason, duration, scheduledStartTime }
+    // Backend expects POST /api/breakglassSessions with body { cluster, user, group, reason, duration, scheduledStartTime, ticketSystemID }
     try {
       debug("BreakglassService.requestBreakglass", "Requesting breakglass", {
         transition,

@@ -121,6 +121,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the approved binding snapshot, so a shared template can be fenced to a
   binding's own source namespaces. The escalation-config chart renders the
   field from `debugSessionBindings[].kubectlDebugTargetNamespaces`.
+- Optional freeform `ticketSystemID` on BreakglassSession requests as an
+  audit-only reference. It is not validated, is stored verbatim in the
+  immutable session spec and audit events, and is shown in the API, UI
+  (requester and approver views) and `bgctl`. See
+  [Ticket system ID](docs/ticket-system-id.md).
 - Optional `BreakglassEscalation.spec.displayName` (maximum 253 characters)
   for human-readable UI and CLI labels, defaulting to `metadata.name`.
   The escalation-config chart preserves the original long name as the label
