@@ -9,7 +9,9 @@ Queued audit sinks now retain failed batches in their worker and retry the same
 event IDs with bounded exponential backoff. `queue.dropOnFull: false` now applies
 bounded backpressure rather than dropping with a warning. Each AuditConfig's
 queue/delivery settings apply to its own sinks, independently of other configs.
-The manager's shared ingress queue retains its existing first-config settings.
+The manager's shared ingress queue remains fixed at 100,000 entries and five
+workers; only `dropOnFull` is copied from the first enabled AuditConfig.
+Per-config `queue.size` and `queue.workers` tune sink queues, not shared ingress.
 
 The event envelope has additive optional `target.uid`, `target.clusterUID`,
 `requestContext.sessionUID`, `requestContext.debugSessionUID` and

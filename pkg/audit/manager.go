@@ -479,13 +479,12 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if m.closed.Load() {
 		return errors.New("audit manager is closed")
 	}
+	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
+		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)
+	}
 	enrichActor(ctx, event)
 	if m.config.Enrich != nil {
 		m.config.Enrich(ctx, event)
-	}
-
-	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)
 	}
 
 	// Assign ID if not set

@@ -55,6 +55,20 @@ func TestAuthenticatedActorPreservesEmailAndUsername(t *testing.T) {
 	}
 }
 
+func TestFilteredSynchronousEventSkipsEnrichment(t *testing.T) {
+	cfg := DefaultManagerConfig()
+	cfg.ExcludeEventTypes = []string{string(EventSessionRequested)}
+	enriched := false
+	cfg.Enrich = func(context.Context, *Event) { enriched = true }
+	manager := NewManager(&testSink{name: "filtered-enrichment"}, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	event := &Event{Type: EventSessionRequested, Actor: Actor{User: "requester"}}
+	ctx := WithAuthenticatedActor(context.Background(), []string{"requester"}, []string{"group"})
+	require.ErrorContains(t, manager.EmitSync(ctx, event), "filtered out")
+	require.False(t, enriched)
+	require.Nil(t, event.Actor.Groups)
+}
+
 func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
