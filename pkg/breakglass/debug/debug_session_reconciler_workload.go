@@ -400,6 +400,11 @@ func isDebugSessionStatusConflict(err error) bool {
 	return errors.As(err, &statusConflict)
 }
 
+func isDebugSessionDeploymentConflict(err error) bool {
+	var applyConflict *auxiliaryApplyConflict
+	return isDebugSessionStatusConflict(err) || errors.As(err, &applyConflict)
+}
+
 func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
 	err := breakglass.ApplyDebugSessionStatus(ctx, c, ds)
 	if apierrors.IsConflict(err) {

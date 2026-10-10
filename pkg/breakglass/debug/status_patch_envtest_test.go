@@ -217,6 +217,7 @@ func TestSSAEnvtestAuxiliaryRecoveryApplyAndCompetingManager(t *testing.T) {
 			"data": map[string]interface{}{"owned": value},
 		}}
 	}
+
 	c := &ssatest.CountingClient{Client: apiClient}
 	obj := render("first")
 	require.NoError(t, applyOrRecoverAuxiliaryResource(t.Context(), c, obj, session, "auxiliary"))
@@ -240,4 +241,50 @@ func TestSSAEnvtestAuxiliaryRecoveryApplyAndCompetingManager(t *testing.T) {
 	require.NoError(t, apiClient.Delete(t.Context(), obj))
 	require.True(t, apierrors.IsNotFound(applyOrRecoverAuxiliaryResource(t.Context(), c, render("first"), session, "auxiliary")))
 	require.EqualValues(t, 2, c.Applies.Load())
+}
+
+func TestSSAEnvtestAuxiliaryApplyConflictRepeatsFreshIdentityRead(t *testing.T) {
+	apiClient := ssatest.Start(t)
+	session := ssatest.DebugSession(t, apiClient, "auxiliary-conflict")
+	render := func() *unstructured.Unstructured {
+		return &unstructured.Unstructured{Object: map[string]interface{}{
+			"apiVersion": "v1", "kind": "ConfigMap",
+			"metadata": map[string]interface{}{
+				"name": "auxiliary-conflict", "namespace": "default",
+				"annotations": map[string]interface{}{sourceSessionUIDAnnotation: string(session.UID), createOperationIDAnnotation: "approved-operation"},
+			},
+			"data": map[string]interface{}{"owned": "approved"},
+		}}
+	}
+	obj := render()
+	require.NoError(t, applyOrRecoverAuxiliaryResource(t.Context(), apiClient, obj, session, "auxiliary"))
+	session.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{
+		Name: "auxiliary", APIVersion: "v1", Kind: "ConfigMap", Namespace: "default",
+		ResourceName: obj.GetName(), UID: string(obj.GetUID()), CreateOperationID: "approved-operation",
+	}}
+	key := client.ObjectKeyFromObject(obj)
+	live := &corev1.ConfigMap{}
+	require.NoError(t, apiClient.Get(t.Context(), key, live))
+	live.Data["owned"] = "drift"
+	require.NoError(t, apiClient.Update(t.Context(), live))
+	c := &ssatest.CountingClient{Client: apiClient}
+	var once sync.Once
+	c.BeforeApply = func(ctx context.Context) {
+		once.Do(func() {
+			current := &corev1.ConfigMap{}
+			require.NoError(t, apiClient.Get(ctx, key, current))
+			current.Data["concurrent"] = "preserve"
+			require.NoError(t, apiClient.Update(ctx, current))
+		})
+	}
+	err := applyOrRecoverAuxiliaryResource(t.Context(), c, render(), session, "auxiliary")
+	require.True(t, apierrors.IsConflict(err), "must exercise actual API-server resourceVersion conflict: %v", err)
+	require.True(t, isDebugSessionDeploymentConflict(err))
+	require.False(t, isDebugSessionStatusConflict(err))
+	require.NoError(t, applyOrRecoverAuxiliaryResource(t.Context(), c, render(), session, "auxiliary"))
+	require.EqualValues(t, 2, c.Applies.Load())
+	require.NoError(t, apiClient.Get(t.Context(), key, live))
+	require.Equal(t, obj.GetUID(), live.UID)
+	require.Equal(t, "approved", live.Data["owned"])
+	require.Equal(t, "preserve", live.Data["concurrent"])
 }

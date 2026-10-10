@@ -18,6 +18,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Retry same-session auxiliary server-side apply conflicts from fresh activation
+  and resource identity fences instead of failing the DebugSession. Conflicts
+  do not bypass required resources, approval, expiry or replacement UID checks.
 - Recognize the exact native memory-pressure toleration admitted for non-
   BestEffort workload Pods when checking debug workload identity. ReplicaSet
   templates, arbitrary tolerations, executable content and owner UID fences
