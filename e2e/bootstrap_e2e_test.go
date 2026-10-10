@@ -75,6 +75,8 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 			require.NotEmpty(t, fragment)
 			for _, tc := range []struct{ host, path, want string }{
 				{"e2e-keycloak", "", "https://e2e-keycloak:8443/realms/breakglass-e2e"},
+				{"e2e-keycloak", "/", "https://e2e-keycloak:8443/realms/breakglass-e2e"},
+				{"e2e-keycloak", "/auth/", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
 				{"e2e-keycloak", "/auth", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
 				{"https://localhost:8443/auth", "/auth", "https://localhost:8443/auth/realms/breakglass-e2e"},
 				{"http://localhost:8080/auth", "/auth", "http://localhost:8080/auth/realms/breakglass-e2e"},
@@ -90,6 +92,21 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 					require.Equal(t, tc.want, string(output))
 				})
 			}
+		})
+	}
+}
+
+func TestBootstrapCommonNormalizesKeycloakRelativePath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("lib", "common.sh"))
+	require.NoError(t, err)
+	fragment := regexp.MustCompile(`(?ms)^KEYCLOAK_RELATIVE_PATH=.*?^if \[\[ -n "\$KEYCLOAK_RELATIVE_PATH" \]\]; then[^\n]*`).Find(source)
+	require.NotEmpty(t, fragment)
+	for path, want := range map[string]string{"": "", "/": "", "///": "", "/auth": "/auth", "/auth/": "/auth", "auth/": "/auth", "//custom///": "/custom"} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			output, err := exec.Command("bash", "-c", string(fragment)+"\nprintf '%s' \"$KEYCLOAK_RELATIVE_PATH\"").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, want, string(output))
 		})
 	}
 }
