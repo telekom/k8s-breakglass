@@ -338,8 +338,8 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
-	if podMetadata := managedWorkloadPodMetadata(existing); podMetadata != nil {
-		if uid := podMetadata.Annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
+	if annotations := managedPodAnnotations(existing); annotations != nil {
+		if uid := annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
 			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID: %w", obj.GetNamespace(), obj.GetName(), createErr)
 		}
 	}
@@ -358,6 +358,19 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) && session.UID != "" {
+		annotations, _, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		if err != nil {
+			return "", fmt.Errorf("read workload PodTemplate annotations: %w", err)
+		}
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[sourceSessionUIDAnnotation] = string(session.UID)
+		if err := unstructured.SetNestedStringMap(workload.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return "", err
+		}
 	}
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
@@ -454,10 +467,38 @@ func managedWorkloadPodMetadata(obj client.Object) *metav1.ObjectMeta {
 // The controller-added marker is not workload intent. Excluding only its
 // trusted value preserves create identity across upgrades from unstamped Pods.
 func removeManagedPodSessionUID(obj client.Object, uid string) {
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) {
+		annotations := managedPodAnnotations(obj)
+		if uid != "" && annotations[sourceSessionUIDAnnotation] == uid {
+			delete(annotations, sourceSessionUIDAnnotation)
+			if len(annotations) == 0 {
+				unstructured.RemoveNestedField(workload.Object, "spec", "template", "metadata", "annotations")
+			} else {
+				_ = unstructured.SetNestedStringMap(workload.Object, annotations, "spec", "template", "metadata", "annotations")
+			}
+		}
+		return
+	}
 	if metadata := managedWorkloadPodMetadata(obj); metadata != nil && uid != "" &&
 		metadata.Annotations[sourceSessionUIDAnnotation] == uid {
 		delete(metadata.Annotations, sourceSessionUIDAnnotation)
 	}
+}
+
+func isManagedUnstructuredWorkload(obj *unstructured.Unstructured) bool {
+	return (obj.GetAPIVersion() == "apps/v1" && (obj.GetKind() == "Deployment" || obj.GetKind() == "DaemonSet")) ||
+		(obj.GetAPIVersion() == "batch/v1" && obj.GetKind() == "Job")
+}
+
+func managedPodAnnotations(obj client.Object) map[string]string {
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) {
+		annotations, _, _ := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		return annotations
+	}
+	if metadata := managedWorkloadPodMetadata(obj); metadata != nil {
+		return metadata.Annotations
+	}
+	return nil
 }
 
 func jsonSubset(expected, actual interface{}) bool {

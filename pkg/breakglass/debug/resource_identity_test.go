@@ -35,6 +35,44 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestUnstructuredWorkloadTrustedPodSessionUID(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "trusted-session"}}
+	for _, kind := range []string{"Deployment", "DaemonSet", "Job"} {
+		t.Run(kind, func(t *testing.T) {
+			apiVersion := "apps/v1"
+			if kind == "Job" {
+				apiVersion = "batch/v1"
+			}
+			legacy := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": apiVersion, "kind": kind,
+				"metadata": map[string]interface{}{"name": "workload", "namespace": "debug"},
+				"spec": map[string]interface{}{"template": map[string]interface{}{
+					"metadata": map[string]interface{}{"labels": map[string]interface{}{"app": "debug"}},
+					"spec":     map[string]interface{}{"containers": []interface{}{map[string]interface{}{"name": "debug", "image": "debug:v1"}}},
+				}},
+			}}
+			oldID, err := deterministicCreateOperationID(legacy, session)
+			require.NoError(t, err)
+			desired := legacy.DeepCopy()
+			require.NoError(t, unstructured.SetNestedStringMap(desired.Object, map[string]string{sourceSessionUIDAnnotation: "spoofed"}, "spec", "template", "metadata", "annotations"))
+			newID, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			require.Equal(t, oldID, newID)
+			require.Equal(t, string(session.UID), managedPodAnnotations(desired)[sourceSessionUIDAnnotation])
+			legacy.SetAnnotations(map[string]string{sourceSessionUIDAnnotation: string(session.UID), createOperationIDAnnotation: oldID})
+			matches, err := recoveredCreateContentMatches(desired, legacy)
+			require.NoError(t, err)
+			require.True(t, matches, "legacy unstamped nested metadata must retain identical intent")
+			legacy.SetUID("original-workload")
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+			require.NoError(t, createOrRecoverTargetObject(context.Background(), target, desired.DeepCopy(), session))
+			require.NoError(t, unstructured.SetNestedStringMap(legacy.Object, map[string]string{sourceSessionUIDAnnotation: "foreign"}, "spec", "template", "metadata", "annotations"))
+			target = fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+			require.ErrorContains(t, createOrRecoverTargetObject(context.Background(), target, desired.DeepCopy(), session), "different PodTemplate session UID")
+		})
+	}
+}
+
 func TestDeleteTrackedJobCascadesWithUIDPrecondition(t *testing.T) {
 	job := &batchv1.Job{
 		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
