@@ -217,7 +217,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			if config.Spec.Queue.Workers > 0 {
 				workerCount = config.Spec.Queue.Workers
 			}
-			dropOnFull = config.Spec.Queue.DropOnFull
+			if config.Spec.Queue.DropOnFull != nil {
+				dropOnFull = *config.Spec.Queue.DropOnFull
+			}
 		}
 
 		if config.Spec.Sampling != nil {

@@ -20,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -166,7 +167,7 @@ func TestService_ReloadWithQueueConfig(t *testing.T) {
 			Queue: &breakglassv1alpha1.AuditQueueConfig{
 				Size:       5000,
 				Workers:    3,
-				DropOnFull: true,
+				DropOnFull: ptr.To(true),
 			},
 			Sinks: []breakglassv1alpha1.AuditSinkConfig{
 				{

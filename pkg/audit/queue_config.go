@@ -20,7 +20,9 @@ func queuedConfig(queue *breakglassv1alpha1.AuditQueueConfig) QueuedSinkConfig {
 	if queue.Workers > 0 {
 		cfg.WorkerCount = queue.Workers
 	}
-	cfg.DropOnFull = queue.DropOnFull
+	if queue.DropOnFull != nil {
+		cfg.DropOnFull = *queue.DropOnFull
+	}
 	if queue.RetryAttempts > 0 {
 		cfg.RetryAttempts = queue.RetryAttempts
 	}

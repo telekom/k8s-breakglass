@@ -22,8 +22,11 @@ Resource identity is captured through the existing **uncached** client before
 enqueue, with a one-second lookup deadline. Session emission sites also carry
 their already-known UID. A previously captured UID is never replaced by a
 same-named resource's new UID. Missing/ambiguous resources do not produce an
-invented identity. Consumers should flag missing correlation when a resource was
-deleted before emission. A granted group is not an escalation name: the old
+invented identity. Name-only emitters remain uncorrelated: a lookup cannot prove
+which object they originally observed. Object-bearing emitters must supply the
+source UID. Consumers should flag missing correlation when a resource was
+deleted before emission or an older emitter omits its UID.
+A granted group is not an escalation name: the old
 misleading group-based reference is not used for identity resolution.
 `escalationUID` and its canonical name come only from the session's controlling
 BreakglassEscalation owner reference, including after the escalation is deleted

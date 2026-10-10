@@ -19,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 )
@@ -83,7 +84,7 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 				Name: "outage", Type: breakglassv1alpha1.AuditSinkTypeKafka,
 				Kafka: &breakglassv1alpha1.KafkaSinkSpec{Brokers: []string{"localhost:19093"}, Topic: "audit-delivery", RequiredAcks: -1, BatchSize: 1},
 			}},
-			Queue: &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1, DropOnFull: false,
+			Queue: &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1, DropOnFull: ptr.To(false),
 				RetryAttempts: 100, RetryInitialBackoffMillis: 1000, RetryMaxBackoffMillis: 5000, RetryTimeoutSeconds: 180},
 		},
 	}))

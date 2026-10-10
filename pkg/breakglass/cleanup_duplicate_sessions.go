@@ -366,11 +366,12 @@ func legacyDuplicateCleanupAuditEvent(session *breakglassv1alpha1.BreakglassSess
 		Actor:     audit.Actor{User: "system"},
 		Target: audit.Target{
 			Kind:      "BreakglassSession",
+			UID:       string(session.UID),
 			Name:      session.Name,
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{SessionName: session.Name},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"ticketSystemID": session.Spec.TicketSystemID,
 			"reason":         "duplicateCleanup",
@@ -395,11 +396,12 @@ func duplicateCleanupAuditEvent(session *breakglassv1alpha1.BreakglassSession, c
 		Actor:     audit.Actor{User: "system"},
 		Target: audit.Target{
 			Kind:      "BreakglassSession",
+			UID:       string(session.UID),
 			Name:      session.Name,
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{SessionName: session.Name},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"reason":              "duplicateCleanup",
 			"terminalDecision":    string(terminalState),

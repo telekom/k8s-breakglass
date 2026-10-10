@@ -58,7 +58,7 @@ func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
 	groups := []string{"/team/approvers", "operators", "system:authenticated"}
 	ctx := WithAuthenticatedActor(context.Background(), []string{"approver"}, groups)
 	groups[0] = "mutated"
-	event := &Event{Actor: Actor{User: "approver"}, Target: Target{Kind: "DebugSession", Name: "session", Namespace: "test"},
+	event := &Event{Actor: Actor{User: "approver"}, Target: Target{Kind: "DebugSession", Name: "session", Namespace: "test", UID: "session-uid"},
 		RequestContext: &RequestContext{SessionName: "session", EscalationName: "escalation"}}
 	enrichActor(ctx, event)
 	svc.enrichResourceIdentity(ctx, event)
@@ -73,7 +73,7 @@ func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
 	other := &Event{Actor: Actor{User: "system"}}
 	enrichActor(ctx, other)
 	require.Nil(t, other.Actor.Groups)
-	requester := &Event{Actor: Actor{User: "requester"}, Target: Target{Kind: "DebugSession", Name: "session", Namespace: "test"}}
+	requester := &Event{Actor: Actor{User: "requester"}, Target: Target{Kind: "DebugSession", Name: "session", Namespace: "test", UID: "session-uid"}}
 	svc.enrichResourceIdentity(context.Background(), requester)
 	require.Equal(t, []string{"requester-group"}, requester.Actor.Groups)
 }
@@ -97,7 +97,7 @@ func TestEscalationIdentityRequiresControllingOwner(t *testing.T) {
 			session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "test", UID: "session", OwnerReferences: []metav1.OwnerReference{tc.owner}}}
 			replacement := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "group", Namespace: "test", UID: "replacement"}}
 			svc := NewService(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, replacement).Build(), nil, zap.NewNop(), "test")
-			event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test"}, RequestContext: &RequestContext{EscalationName: "group"}}
+			event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test", UID: "session"}, RequestContext: &RequestContext{EscalationName: "group"}}
 			svc.enrichResourceIdentity(context.Background(), event)
 			require.Equal(t, tc.want, event.RequestContext.EscalationUID)
 		})
@@ -115,8 +115,30 @@ func TestAuditIdentityRejectsNameReuseAndAmbiguousNamespace(t *testing.T) {
 	svc.enrichResourceIdentity(context.Background(), event)
 	require.Equal(t, "old-uid", event.Target.UID)
 	require.Equal(t, "old-uid", event.RequestContext.SessionUID)
+	nameOnly := &Event{Target: Target{Kind: "BreakglassSession", Name: "same", Namespace: "one"}}
+	svc.enrichResourceIdentity(context.Background(), nameOnly)
+	require.Empty(t, nameOnly.Target.UID, "a replacement resource must not supply name-only correlation")
+	require.Nil(t, nameOnly.RequestContext)
 	ambiguous := &Event{Target: Target{Kind: "BreakglassSession", Name: "same"}}
 	svc.enrichResourceIdentity(context.Background(), ambiguous)
 	require.Empty(t, ambiguous.Target.UID)
 	require.Nil(t, ambiguous.RequestContext)
+}
+
+func TestSessionContextCapturesOwnerWithoutResourceLookup(t *testing.T) {
+	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{
+		Name: "session", UID: "source-session",
+		OwnerReferences: []metav1.OwnerReference{{APIVersion: breakglassv1alpha1.GroupVersion.String(),
+			Kind: "BreakglassEscalation", Name: "escalation", UID: "deleted-escalation", Controller: ptr.To(true)}},
+	}}
+	rc := SessionRequestContext(session)
+	require.Equal(t, "source-session", rc.SessionUID)
+	require.Equal(t, "deleted-escalation", rc.EscalationUID)
+	require.Equal(t, "escalation", rc.EscalationName)
+	require.Empty(t, rc.DebugSessionUID)
+	debug := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "debug", UID: "debug-uid"}}
+	rc = SessionRequestContext(debug)
+	require.Equal(t, "debug-uid", rc.SessionUID)
+	require.Equal(t, "debug-uid", rc.DebugSessionUID)
+	require.Equal(t, "debug", rc.DebugSessionName)
 }

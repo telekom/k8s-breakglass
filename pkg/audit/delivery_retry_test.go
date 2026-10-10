@@ -18,6 +18,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
+	"k8s.io/utils/ptr"
 )
 
 type retryBatchSink struct {
@@ -135,7 +136,7 @@ func TestQueuedBlockingEnqueueHonorsCallerDeadline(t *testing.T) {
 func TestPerSinkDeliveryConfiguration(t *testing.T) {
 	first := queuedConfig(nil)
 	second := queuedConfig(&breakglassv1alpha1.AuditQueueConfig{
-		Size: 1000, Workers: 1, DropOnFull: false, RetryAttempts: 3,
+		Size: 1000, Workers: 1, DropOnFull: ptr.To(false), RetryAttempts: 3,
 		RetryInitialBackoffMillis: 5, RetryMaxBackoffMillis: 10, RetryTimeoutSeconds: 2,
 	})
 	require.Equal(t, 8, first.RetryAttempts)
@@ -179,9 +180,13 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 }
 
 func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {
-	data, err := json.Marshal(breakglassv1alpha1.AuditQueueConfig{DropOnFull: false})
+	data, err := json.Marshal(breakglassv1alpha1.AuditQueueConfig{DropOnFull: ptr.To(false)})
 	require.NoError(t, err)
 	require.Contains(t, string(data), `"dropOnFull":false`)
+	data, err = json.Marshal(breakglassv1alpha1.AuditQueueConfig{Size: 10000})
+	require.NoError(t, err)
+	require.NotContains(t, string(data), `"dropOnFull"`)
+	require.True(t, queuedConfig(&breakglassv1alpha1.AuditQueueConfig{Size: 10000}).DropOnFull)
 }
 
 func TestIsolatedFanoutDoesNotDelayHealthySink(t *testing.T) {
@@ -226,4 +231,20 @@ func TestManagerShutdownBoundsIngressDrain(t *testing.T) {
 	require.NoError(t, manager.Close())
 	require.Less(t, time.Since(start), 6*time.Second)
 	require.Positive(t, manager.Stats().DroppedEvents)
+}
+
+func TestFilteredAndSampledEventsSkipResourceEnrichment(t *testing.T) {
+	for _, filtered := range []bool{true, false} {
+		cfg := DefaultManagerConfig()
+		cfg.Enrich = func(context.Context, *Event) { t.Error("discarded event must not perform resource reads") }
+		if filtered {
+			cfg.ExcludeEventTypes = []EventType{EventResourceList}
+		} else {
+			cfg.SampleRate, cfg.sampleRateConfigured = 0, true
+			cfg.HighVolumeEventTypes = []EventType{EventResourceList}
+		}
+		manager := NewManager(newQueuedMockSink("filtered"), cfg, zap.NewNop())
+		manager.Emit(context.Background(), &Event{Type: EventResourceList})
+		require.NoError(t, manager.Close())
+	}
 }

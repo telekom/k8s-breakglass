@@ -703,9 +703,8 @@ func TestAuditConfigKafkaSinkFeature(t *testing.T) {
 			Spec: breakglassv1alpha1.AuditConfigSpec{
 				Enabled: true,
 				Queue: &breakglassv1alpha1.AuditQueueConfig{
-					Size:       100000,
-					Workers:    5,
-					DropOnFull: true,
+					Size:    100000,
+					Workers: 5,
 				},
 				Sinks: []breakglassv1alpha1.AuditSinkConfig{
 					{

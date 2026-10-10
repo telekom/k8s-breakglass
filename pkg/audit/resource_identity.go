@@ -15,6 +15,25 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// SessionRequestContext captures immutable identity from the object an emitter
+// observed, including its original controlling escalation after deletion.
+func SessionRequestContext(session metav1.Object) *RequestContext {
+	rc := &RequestContext{SessionName: session.GetName(), SessionUID: string(session.GetUID())}
+	if _, debug := session.(*breakglassv1alpha1.DebugSession); debug {
+		rc.DebugSessionName, rc.DebugSessionUID = session.GetName(), string(session.GetUID())
+	}
+	captureEscalationOwner(session, rc)
+	return rc
+}
+
+func captureEscalationOwner(session metav1.Object, rc *RequestContext) {
+	if owner := metav1.GetControllerOf(session); owner != nil &&
+		owner.Kind == "BreakglassEscalation" &&
+		schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind).Group == breakglassv1alpha1.GroupVersion.Group {
+		rc.EscalationName, rc.EscalationUID = owner.Name, string(owner.UID)
+	}
+}
+
 // Capture identity at emission, not delivery: retrying a name must never resolve
 // a replacement object's UID. Missing or ambiguous resources stay uncorrelated.
 func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
@@ -33,6 +52,12 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 	}
 	if name == "" && (event.Target.Kind == "BreakglassSession" || debug) {
 		name = event.Target.Name
+	}
+	// A name lookup cannot prove which object the emitter originally observed.
+	// Only validate/enrich identities captured at the object-bearing source.
+	if name != "" && rc.SessionUID == "" && rc.DebugSessionUID == "" &&
+		(event.Target.UID == "" || (event.Target.Kind != "BreakglassSession" && event.Target.Kind != "DebugSession")) {
+		return
 	}
 	var session client.Object
 	if name != "" {
@@ -110,12 +135,7 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 		}
 	}
 	if session != nil && rc.EscalationUID == "" {
-		if owner := metav1.GetControllerOf(session); owner != nil &&
-			owner.Kind == "BreakglassEscalation" &&
-			schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind).Group == breakglassv1alpha1.GroupVersion.Group {
-			rc.EscalationName = owner.Name
-			rc.EscalationUID = string(owner.UID)
-		}
+		captureEscalationOwner(session, rc)
 	}
 	if event.Target.Cluster != "" && event.Target.ClusterUID == "" && session != nil {
 		cluster := &breakglassv1alpha1.ClusterConfig{}

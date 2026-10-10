@@ -357,14 +357,12 @@ func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(ctx context
 		},
 		Target: audit.Target{
 			Kind:      "BreakglassSession",
+			UID:       string(session.UID),
 			Name:      session.Name,
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{
-			SessionName:    session.Name,
-			EscalationName: session.Spec.GrantedGroup,
-		},
+		RequestContext: audit.SessionRequestContext(&session),
 		Details: map[string]interface{}{
 			"message":            "Scheduled session activated",
 			"cluster":            session.Spec.Cluster,

@@ -40,6 +40,7 @@ import (
 	eventsv1 "k8s.io/api/events/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -505,7 +506,7 @@ func TestAuditConfigQueue(t *testing.T) {
 				Queue: &breakglassv1alpha1.AuditQueueConfig{
 					Size:       10000,
 					Workers:    4,
-					DropOnFull: false,
+					DropOnFull: ptr.To(false),
 				},
 			},
 		}
@@ -519,7 +520,18 @@ func TestAuditConfigQueue(t *testing.T) {
 		require.NotNil(t, fetched.Spec.Queue)
 		assert.Equal(t, 10000, fetched.Spec.Queue.Size)
 		assert.Equal(t, 4, fetched.Spec.Queue.Workers)
-		assert.False(t, fetched.Spec.Queue.DropOnFull, "typed false must survive API defaulting")
+		require.NotNil(t, fetched.Spec.Queue.DropOnFull)
+		assert.False(t, *fetched.Spec.Queue.DropOnFull, "typed false must survive API defaulting")
+		defaultQueue := auditConfig.DeepCopy()
+		defaultQueue.Name = "e2e-audit-queue-default"
+		defaultQueue.ResourceVersion = ""
+		defaultQueue.UID = ""
+		defaultQueue.Spec.Queue.DropOnFull = nil
+		cleanup.Add(defaultQueue)
+		require.NoError(t, cli.Create(ctx, defaultQueue))
+		require.NoError(t, cli.Get(ctx, types.NamespacedName{Name: defaultQueue.Name}, &fetched))
+		require.NotNil(t, fetched.Spec.Queue.DropOnFull)
+		assert.True(t, *fetched.Spec.Queue.DropOnFull, "omitted option must preserve the CRD default")
 
 		t.Logf("AuditConfig with queue (size=%d, workers=%d) created",
 			fetched.Spec.Queue.Size, fetched.Spec.Queue.Workers)

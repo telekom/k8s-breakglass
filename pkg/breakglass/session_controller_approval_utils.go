@@ -79,10 +79,7 @@ func (wc *BreakglassSessionController) recordUnverifiedApproverGroupsDecision(
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{
-			SessionUID:  string(session.UID),
-			SessionName: session.Name,
-		},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"message":        "Approval authorization used unverified JWT-claim groups because the cluster-side group lookup failed",
 			"cluster":        session.Spec.Cluster,
@@ -1016,10 +1013,7 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{
-			SessionUID:  string(session.UID),
-			SessionName: session.Name,
-		},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"message":        message,
 			"cluster":        session.Spec.Cluster,
@@ -1060,10 +1054,7 @@ func (b *BreakglassSessionController) emitSessionExpiredAuditEvent(ctx context.C
 			Namespace: session.Namespace,
 			Cluster:   session.Spec.Cluster,
 		},
-		RequestContext: &audit.RequestContext{
-			SessionUID:  string(session.UID),
-			SessionName: session.Name,
-		},
+		RequestContext: audit.SessionRequestContext(session),
 		Details: map[string]interface{}{
 			"message":          message,
 			"expirationReason": reason,

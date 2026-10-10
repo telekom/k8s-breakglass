@@ -222,19 +222,17 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	if m.closed.Load() {
 		return
 	}
-	enrichActor(ctx, event)
-	if m.config.Enrich != nil {
-		m.config.Enrich(ctx, event)
-	}
-
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return
 	}
-
 	// Apply sampling for high-volume event types
 	if m.shouldSample(event.Type) {
 		m.droppedEvents.Add(1)
 		return
+	}
+	enrichActor(ctx, event)
+	if m.config.Enrich != nil {
+		m.config.Enrich(ctx, event)
 	}
 
 	// Assign ID if not set

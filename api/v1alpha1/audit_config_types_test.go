@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func TestAuditConfig_BasicValidation(t *testing.T) {
@@ -215,7 +216,7 @@ func TestAuditConfig_QueueConfig(t *testing.T) {
 			queue: AuditQueueConfig{
 				Size:       100000,
 				Workers:    5,
-				DropOnFull: true,
+				DropOnFull: ptr.To(true),
 			},
 			expected: struct {
 				size    int
@@ -227,7 +228,7 @@ func TestAuditConfig_QueueConfig(t *testing.T) {
 			queue: AuditQueueConfig{
 				Size:       500000,
 				Workers:    20,
-				DropOnFull: true,
+				DropOnFull: ptr.To(true),
 			},
 			expected: struct {
 				size    int
@@ -630,13 +631,13 @@ func TestAuditQueueConfig_EdgeCases(t *testing.T) {
 	zeroQueue := AuditQueueConfig{}
 	assert.Zero(t, zeroQueue.Size)
 	assert.Zero(t, zeroQueue.Workers)
-	assert.False(t, zeroQueue.DropOnFull)
+	assert.Nil(t, zeroQueue.DropOnFull)
 
 	// Large queue
 	largeQueue := AuditQueueConfig{
 		Size:       1000000,
 		Workers:    100,
-		DropOnFull: true,
+		DropOnFull: ptr.To(true),
 	}
 	assert.Equal(t, 1000000, largeQueue.Size)
 }
