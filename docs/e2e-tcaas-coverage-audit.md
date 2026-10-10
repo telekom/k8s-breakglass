@@ -50,7 +50,13 @@ T-CaaS shape is not exercised.
 | Email enabled and `--disable-email` | enabled MailHog smoke | disabled path is not deployed | covered with fakes | No deployed toggle matrix |
 | Webhook TLS/cert path | validating webhook resources are installed | CA is generated, but SAR route uses hub HTTP API NodePort | partial | The cross-cluster harness does not currently exercise `:9443` TLS |
 | Metrics, health and webhook ports (`8081`, `8082`, `8083`, `9443`) | metrics/health partial | `8081` partial | covered in server tests | No deployed assertion for all endpoints |
-| `authorizedTTL`/`unauthorizedTTL` authorization caching | gap | gap: cache explicitly disabled in `kind-setup-multi.sh:199-202` | gap | Needs a Kubernetes apiserver configuration test |
+| `authorizedTTL`/`unauthorizedTTL` authorization caching | gap | Positive-cache revocation scenario added in `authorization_resilience_test.go`; default harness caching remains disabled | gap | `TestCachedAuthorizationRevocation` enables a real spoke-apiserver positive cache temporarily; negative-cache TTL acceptance remains a gap |
+| Authorization webhook outage with `NoOpinion` | gap | Scenario added in `authorization_resilience_test.go` | partial | `TestWebhookOutageNoOpinionPreservesRBAC` requires RBAC access to survive and additional Breakglass access to be denied |
+
+The authorization resilience scenarios require successful exact-head multi-cluster
+Kind execution before they count as acceptance. Compilation or static review
+alone does not close these gaps. See [Authorization resilience E2E](./authorization-resilience-e2e.md)
+for cache-window semantics, restoration and the real outage positive/negative controls.
 
 ## Tests that bypass production wiring
 

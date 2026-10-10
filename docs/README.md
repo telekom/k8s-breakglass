@@ -118,6 +118,7 @@ Every utility is published as an immutable,
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
 - **[T-CaaS deployment-model E2E coverage audit](./e2e-tcaas-coverage-audit.md)** - Deployment-shape coverage, evidence, and remaining gaps
+- **[Authorization resilience E2E](./authorization-resilience-e2e.md)** - Real apiserver cache revocation and NoOpinion outage controls
 - **[Node-maintenance image](./node-maintenance.md)** - Allowlisted node recovery preflight and network repair runbooks
 
 ## Contributing
