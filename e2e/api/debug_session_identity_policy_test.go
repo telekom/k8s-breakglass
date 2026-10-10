@@ -55,6 +55,7 @@ func TestDebugSessionIdentityOnlyWorkflow(t *testing.T) {
 		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 			DisplayName:     "Identity-only diagnostics",
 			Mode:            breakglassv1alpha1.DebugSessionModeWorkload,
+			WorkloadType:    breakglassv1alpha1.DebugWorkloadDeployment,
 			TargetNamespace: "breakglass-debug",
 			NamespaceConstraints: &breakglassv1alpha1.NamespaceConstraints{
 				DefaultNamespace:   "breakglass-debug",
