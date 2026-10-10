@@ -6,6 +6,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io"
 	"maps"
 	"net/http"
 	"strings"
@@ -69,7 +71,7 @@ spec:
   - name: debug
     image: busybox:1.37
     stdin: true
-    command: ["sh", "-c", "while read -r line; do printf 'identity-only-attach:%s\\n' \"$line\"; [ \"$line\" = finish ] && exit 0; done"]
+    command: ["sh", "-c", "while read -r line; do printf 'identity-only-attach:%s\\n' \"$line\"; done"]
     env:
     - name: SESSION_UID
       value: {{ required "session UID required" .session.uid | yamlQuote }}
@@ -269,12 +271,23 @@ spec:
 		if err != nil {
 			return "", err
 		}
-		attachCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		attachCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		var output, errors bytes.Buffer
+		input, send := io.Pipe()
+		defer input.Close()
+		defer send.Close()
+		go func() {
+			_, _ = io.WriteString(send, "probe\n")
+		}()
+		var output, stderr bytes.Buffer
+		// Keep stdin open until the bounded stream ends: immediate EOF can close
+		// the kubelet attach stream before the container's response is drained.
 		err = executor.StreamWithContext(attachCtx, remotecommand.StreamOptions{
-			Stdin: strings.NewReader("probe\nfinish\n"), Stdout: &output, Stderr: &errors,
+			Stdin: input, Stdout: &output, Stderr: &stderr,
 		})
+		if errors.Is(err, context.DeadlineExceeded) && strings.Contains(output.String(), "identity-only-attach:probe") {
+			err = nil
+		}
 		return output.String(), err
 	}
 	output, err := attach(active)
