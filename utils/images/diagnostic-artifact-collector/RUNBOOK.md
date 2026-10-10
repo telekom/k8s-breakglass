@@ -51,7 +51,14 @@ exact controller-assigned URL, with a bounded retry budget for HTTP 408/429,
 reset/refused/broken-pipe failures. Redirects, URLs containing queries/fragments,
 non-TLS URLs, empty
 tokens, arbitrary headers, and methods are rejected. The URL and token are
-never logged. Only the image-pinned CA bundle is trusted; ambient
+never logged. Image-pinned system roots are always trusted. Administrators may
+set exactly `BREAKGLASS_ARTIFACT_UPLOAD_CA_BUNDLE=true` and project a PEM bundle
+read-only at `/etc/breakglass/artifact-upload-ca/ca.crt`. Its certificates are
+appended without disabling hostname verification. Missing, empty, invalid or
+over-1-MiB bundles fail closed; the opt-in cannot select an arbitrary path.
+Controller Jobs use `artifactCollection.uploadCABundleRef` on the approved
+template; provision and protect the selected ConfigMap/Secret key in each
+target debug namespace. Ambient
 `SSL_CERT_FILE`, `SSL_CERT_DIR`, and proxy variables are ignored. The
 controller should always issue a non-empty HMAC token. A per-attempt request
 timeout is retried only while the total operation context remains live; a

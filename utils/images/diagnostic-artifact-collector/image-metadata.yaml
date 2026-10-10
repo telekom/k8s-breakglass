@@ -159,6 +159,17 @@ contract:
     redirects: denied
     tls: TLS1.2-or-newer-verified
     trust_store: /etc/ssl/certs/ca-certificates.crt
+    additional_trust_bundle:
+      opt_in_source: BREAKGLASS_ARTIFACT_UPLOAD_CA_BUNDLE
+      opt_in_value: "true"
+      path: /etc/breakglass/artifact-upload-ca/ca.crt
+      max_bytes: 1048576
+      format: PEM-certificates
+      mount: read-only-uploader-only
+      system_roots: retained
+      hostname_verification: required
+      missing_empty_invalid_oversized: fail-closed
+      arbitrary_path: denied
     ambient_ca_and_proxy_environment: ignored
     recipe_ceiling_source: /output/artifact.manifest.json
     transfer_integrity: before-after-sha256-and-stable-metadata

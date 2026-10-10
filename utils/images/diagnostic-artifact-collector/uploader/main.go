@@ -1282,7 +1282,7 @@ func uploadHTTPClientForCABundles(caBundlePath, additionalBundlePath string) (*h
 		if err != nil {
 			return nil, fmt.Errorf("open upload CA bundle: %w", err)
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		bundle, err := io.ReadAll(io.LimitReader(file, maxUploadCABundleBytes+1))
 		if err != nil {
 			return nil, fmt.Errorf("read upload CA bundle: %w", err)
