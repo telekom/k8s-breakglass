@@ -143,6 +143,11 @@ linters:
       - linters:
           - gocritic
         path: _test\.go$
+      # RequeueAfter bypasses the rate limiter; preserve these existing retries.
+      - linters:
+          - staticcheck
+        path: ^pkg/(artifacts/controller/reconciler|config/identity_provider_reconciler)\.go$
+        text: 'SA1019: .*\.Requeue is deprecated'
     paths:
       - "frontend/node_modules/.*"
       - "zz_generated.*\\.go$"
