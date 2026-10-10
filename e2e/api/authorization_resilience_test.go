@@ -43,11 +43,11 @@ func (s *SpokeHubAuthorizationSuite) writeNodeFile(ctx context.Context, path str
 }
 
 func (s *SpokeHubAuthorizationSuite) restartSpokeAPIServer(ctx context.Context) {
-	output, err := s.nodeCommand(ctx, "crictl", "ps", "--name", "kube-apiserver", "-q")
+	output, err := s.nodeCommand(ctx, "crictl", "--runtime-endpoint", "unix:///run/containerd/containerd.sock", "ps", "--name", "kube-apiserver", "-q")
 	s.Require().NoError(err)
 	ids := strings.Fields(string(output))
 	s.Require().Len(ids, 1, "restart only the dedicated spoke's running apiserver")
-	_, err = s.nodeCommand(ctx, "crictl", "stop", ids[0])
+	_, err = s.nodeCommand(ctx, "crictl", "--runtime-endpoint", "unix:///run/containerd/containerd.sock", "stop", ids[0])
 	s.Require().NoError(err)
 	s.Require().Eventually(func() bool {
 		out, requestErr := s.runKubectlWithKubeconfig(ctx, s.mcCtx.Config.SpokeAKubeconfig, "get", "--raw=/readyz")
