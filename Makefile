@@ -370,7 +370,16 @@ $(CONTROLLER_GEN): $(LOCALBIN)
 .PHONY: golangci-lint
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	@[ -f "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_X_TOOLS_VERSION)" ] || { \
+	set -e; \
+	mkdir -p "$(LOCALBIN)/golangci-build"; \
+	cd "$(LOCALBIN)/golangci-build"; \
+	test -f go.mod || go mod init breakglass.local/golangci-build; \
+	go get github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION) golang.org/x/tools@$(GOLANGCI_X_TOOLS_VERSION); \
+	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint; \
+	mv "$(GOLANGCI_LINT)" "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_X_TOOLS_VERSION)"; \
+	}; \
+	ln -sf "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_X_TOOLS_VERSION)" "$(GOLANGCI_LINT)"
 
 .PHONY: setup-envtest
 setup-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
