@@ -3359,8 +3359,15 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
-		terminateStatus, _ := requesterClient.TerminateDebugSession(ctx, t, session.Name)
-		require.True(t, terminateStatus == http.StatusOK || terminateStatus == http.StatusNoContent)
+		require.Eventually(t, func() bool {
+			terminateStatus, err := requesterClient.TerminateDebugSession(ctx, t, session.Name)
+			if terminateStatus == http.StatusConflict {
+				return false
+			}
+			require.NoError(t, err)
+			require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, terminateStatus)
+			return true
+		}, helpers.WaitForConditionTimeout, time.Second, "retry only genuine concurrent status conflicts")
 
 		time.Sleep(helpers.CachePropagationDelay)
 
