@@ -181,6 +181,28 @@ log_skip() { printf FAIL; }
 	}
 }
 
+func TestBootstrapMultiOIDCNormalizedRootPath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("tests", "multi_oidc_tests.sh"))
+	require.NoError(t, err)
+	for _, variable := range []string{"issuer_url", "discovery_url"} {
+		fragment := regexp.MustCompile(`(?m)^  local ` + variable + `=[^\n]*`).Find(source)
+		require.NotEmpty(t, fragment)
+		for _, path := range []string{"", "/auth", "/custom"} {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			t.Setenv("KEYCLOAK_CONTAINER_NAME", "e2e-keycloak")
+			t.Setenv("KEYCLOAK_PORT", "8443")
+			t.Setenv("KEYCLOAK_MAIN_REALM", "breakglass-e2e")
+			output, err := exec.Command("bash", "-c", "probe() {\n"+string(fragment)+"\nprintf '%s' \"$"+variable+"\"\n}\nprobe").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			want := "https://e2e-keycloak:8443" + path + "/realms/breakglass-e2e"
+			if variable == "discovery_url" {
+				want += "/.well-known/openid-configuration"
+			}
+			require.Equal(t, want, string(output))
+		}
+	}
+}
+
 func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
 	skipUnlessE2E(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
