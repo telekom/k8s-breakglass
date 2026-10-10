@@ -66,7 +66,7 @@ jobs:
           # attempt still fails closed and never changes versions.
           install_status=1
           for attempt in 1 2 3; do
-            if go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1; then
+            if go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0; then
               install_status=0
               break
             fi

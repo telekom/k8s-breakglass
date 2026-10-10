@@ -34,6 +34,9 @@ RUN set -eux; \
 	mkdir -p /src/pwru /out; \
 	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
 	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
+	chmod -R u+w /src/pwru; \
+	go -C /src/pwru get golang.org/x/net@v0.60.0; \
+	go -C /src/pwru mod tidy; \
 	chmod +x /src/pwru/libpcap/configure; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
 	install -m 0755 pwru /out/pwru

@@ -13,7 +13,7 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
     && go -C /src/kubestr get \
         github.com/moby/spdystream@v0.5.1 \
         golang.org/x/crypto@v0.53.0 \
-        golang.org/x/net@v0.56.0 \
+        golang.org/x/net@v0.60.0 \
         golang.org/x/oauth2@v0.27.0 \
         golang.org/x/text@v0.39.0 \
     && go -C /src/kubestr mod tidy \

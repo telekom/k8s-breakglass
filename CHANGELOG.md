@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use Go 1.27.2 for source, controller, CI and utility image builds to address
   standard-library CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031.
   All Go builder images are pinned to the verified multi-platform image digest.
+- Update the Go analyzers for Go 1.27 export-data compatibility and rebuild
+  pwru/kubestr with `golang.org/x/net` 0.60.0 to include the HTTP/2 security fix
+  in these independently built utility binaries.
 - Restore DebugSession discovery/creation from authenticated identity groups and
   template/binding allowlists, without requiring an active BreakglassSession.
   This fixes the provider-aware grant prerequisite introduced by PR #1346
