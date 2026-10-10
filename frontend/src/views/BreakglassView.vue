@@ -176,7 +176,13 @@ const filteredBreakglasses = computed(() => {
   return bgs;
 });
 
-async function onRequest(bg: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string | null, ticketSystemID?: string) {
+async function onRequest(
+  bg: Breakglass,
+  reason?: string,
+  duration?: number,
+  scheduledStartTime?: string | null,
+  ticketSystemID?: string,
+) {
   try {
     await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime ?? undefined, ticketSystemID);
     // Success path: created/ok

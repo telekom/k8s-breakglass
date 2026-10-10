@@ -372,7 +372,7 @@ func (ssa *ScheduledSessionActivator) emitSessionActivatedAuditEvent(ctx context
 			"state":              string(session.Status.State),
 			"scheduledStartTime": session.Spec.ScheduledStartTime,
 			"actualStartTime":    session.Status.ActualStartTime,
-			"ticketSystemID": session.Spec.TicketSystemID,
+			"ticketSystemID":     session.Spec.TicketSystemID,
 		},
 	})
 }
