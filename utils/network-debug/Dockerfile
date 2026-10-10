@@ -40,7 +40,9 @@ RUN set -eux; \
 	go -C /src/pwru mod tidy; \
 	chmod +x /src/pwru/libpcap/configure; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
-	install -m 0755 pwru /out/pwru
+	install -m 0755 pwru /out/pwru; \
+	go version -m /out/pwru > /out/pwru-build-info; \
+	awk -v expected="${X_NET_VERSION}" '$1 == "dep" && $2 == "golang.org/x/net" { found = ($3 == expected) } END { exit !found }' /out/pwru-build-info
 
 FROM runtime
 
@@ -84,6 +86,7 @@ LABEL org.opencontainers.image.title="Network Debug Utility" \
 	io.telekom.breakglass.security.capabilities="NET_RAW,NET_ADMIN,BPF,PERFMON,SYS_RESOURCE,SYS_PTRACE"
 
 COPY --from=tools /out/pwru /usr/local/bin/pwru
+COPY --from=tools /out/pwru-build-info /usr/share/breakglass/pwru-build-info
 COPY scripts/net-debug /usr/local/bin/net-debug
 COPY scripts/net-report /usr/local/bin/net-report
 COPY scripts/network-debug-profile.sh /etc/profile.d/network-debug.sh

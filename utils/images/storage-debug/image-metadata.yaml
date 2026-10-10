@@ -11,6 +11,10 @@ platforms:
 base:
   image: alpine:3.24
   digest: sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+builder:
+  image: golang:1.27.2
+  digest: sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c
+dependencyLock: versions.env
 runtime:
   user: "65532:65532"
   writable_paths:
@@ -20,6 +24,12 @@ runtime:
   privileged: false
   network_required: operation-dependent
 dependencies:
+  - name: golang.org/x/net
+    version: v0.60.0
+  - name: golang.org/x/crypto
+    version: v0.57.0
+  - name: golang.org/x/text
+    version: v0.42.0
   - name: fio
     version: 3.41-r0
   - name: ioping

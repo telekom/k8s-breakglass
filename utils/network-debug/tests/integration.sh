@@ -197,6 +197,12 @@ command -v kubectl >/dev/null 2>&1 || requirement "kubectl is required to run th
 command -v jq >/dev/null 2>&1 || requirement "jq is required to validate structured Kubernetes resources"
 command -v timeout >/dev/null 2>&1 || requirement "GNU timeout is required for bounded integration commands"
 docker_call image inspect "$IMAGE" >/dev/null 2>&1 || requirement "image $IMAGE is unavailable; build it before running integration proofs"
+build_info="$(docker_call run --rm --network none --cap-drop ALL --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+    --entrypoint cat "$IMAGE" /usr/share/breakglass/pwru-build-info)"
+x_net_version="$(awk -F= '$1 == "X_NET_VERSION" { print $2 }' "$(dirname -- "$0")/../versions.env")"
+printf '%s\n' "$build_info" | awk -v expected="$x_net_version" \
+    '$1 == "dep" && $2 == "golang.org/x/net" { found = ($3 == expected) } END { exit !found }' ||
+    requirement "compiled pwru x/net differs from the dependency lock"
 
 # Never mutate a caller-selected Kubernetes context. The proof owns the kind
 # cluster and its kubeconfig from creation through cleanup, so invoking this

@@ -111,6 +111,15 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
     image_owned_id=$(docker image inspect "$image" --format '{{.Id}}') || fail 'could not capture built image ID'
 fi
 
+build_info="$(run_docker --rm --network none --cap-drop ALL --entrypoint cat "$image" /usr/share/breakglass/kubestr-build-info)"
+for module in NET CRYPTO TEXT; do
+    version="$(awk -F= -v key="X_${module}_VERSION" '$1 == key { print $2 }' "$root/versions.env")"
+    lower="$(printf '%s' "$module" | tr '[:upper:]' '[:lower:]')"
+    printf '%s\n' "$build_info" | awk -v name="golang.org/x/$lower" -v expected="$version" \
+        '$1 == "dep" && $2 == name { found = ($3 == expected) } END { exit !found }' ||
+        fail "compiled kubestr module $lower differs from the dependency lock"
+done
+
 [ "$(docker image inspect "$image" --format '{{.Config.User}}')" = '65532:65532' ] || \
     fail 'image does not run as UID/GID 65532'
 [ "$(docker image inspect "$image" --format '{{index .Config.Entrypoint 0}}')" = '/usr/local/bin/storage-diagnostics' ] || \

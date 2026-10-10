@@ -21,7 +21,10 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
         "golang.org/x/text@${X_TEXT_VERSION}" \
     && go -C /src/kubestr mod tidy \
     && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
-    && test -x /out/kubestr
+    && test -x /out/kubestr \
+    && go version -m /out/kubestr > /out/kubestr-build-info \
+    && awk -v net="${X_NET_VERSION}" -v crypto="${X_CRYPTO_VERSION}" -v text="${X_TEXT_VERSION}" \
+        '$1 == "dep" { if ($2 == "golang.org/x/net") n = ($3 == net); if ($2 == "golang.org/x/crypto") c = ($3 == crypto); if ($2 == "golang.org/x/text") t = ($3 == text) } END { exit !(n && c && t) }' /out/kubestr-build-info
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
@@ -59,6 +62,7 @@ RUN apk add --no-cache \
     && install -d -o root -g root /usr/share/breakglass/runbooks/upstream/storage-diagnostics
 
 COPY --from=kubestr-builder /out/kubestr /usr/libexec/storage-debug/kubestr
+COPY --from=kubestr-builder /out/kubestr-build-info /usr/share/breakglass/kubestr-build-info
 COPY --chmod=0755 bin/storage-report bin/storage-diagnostics /usr/local/bin/
 COPY --chmod=0644 motd /etc/motd
 COPY --chmod=0644 README.md RUNBOOK.md /usr/share/breakglass/runbooks/upstream/storage-diagnostics/
