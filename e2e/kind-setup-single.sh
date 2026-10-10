@@ -1715,6 +1715,7 @@ log 'Created breakglass-debug namespace for debug session workloads'
 # Use --server-side --force-conflicts to handle ValidatingWebhookConfiguration that may have been
 # previously patched with CA bundle (resourceVersion conflict resolution)
 KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build config/dev | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side --force-conflicts -f -
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side --force-conflicts -f "$TMP_CFG"
 configure_keycloak_relative_path
 
 # Wait for cert-manager to inject the CA bundle into ValidatingWebhookConfiguration
