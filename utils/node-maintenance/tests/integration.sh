@@ -1146,6 +1146,17 @@ assert_volume_path_absent() {
 		|| fail "unexpected evidence-volume path was created: $relative_path"
 }
 
+for option in --target-node --interface --evidence-dir --confirm; do
+	run_command "guard-preflight-duplicate-${option#--}" 2 none read-only node-recovery \
+		--target-node node-a --interface lo --evidence-dir /evidence --confirm NODE-RECOVERY-PREFLIGHT \
+		"$option" ''
+	grep -Fq -- "$option may be supplied only once" "$fixture_dir/output" \
+		|| fail "duplicate preflight $option produced no parsing denial"
+	assert_volume_path_absent .node-maintenance-operation.lock
+	destroy_fixture
+done
+pass 'duplicate preflight options are rejected before acquiring an operation lock'
+
 run_command guard-neighbor-injection 2 none neighbor-replace network-repair \
 	--target-node node-a --interface lo --action neighbor-replace \
 	--neighbor-address '192.0.2.2;touch-/evidence/injected' --entry-mac 02:00:00:00:00:02 \
