@@ -17,6 +17,9 @@ The event envelope has additive optional `target.uid`, `target.clusterUID`,
 verified group claim list; group paths are not truncated. System actors do not
 inherit the requester or approver's identity. Background DebugSession events can
 use the admission-protected authenticated requester group snapshot.
+Existing actor identifiers are preserved: session request events use the
+requester's email, while API approval events prefer the authenticated username
+and fall back to email. Both identifiers receive the same verified group claims.
 
 Resource identity is captured through the existing **uncached** client before
 enqueue, with a one-second lookup deadline. Session emission sites also carry

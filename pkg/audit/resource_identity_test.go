@@ -41,6 +41,19 @@ func TestManagerCapturesActorAndIdentityBeforeAsyncAndSyncDelivery(t *testing.T)
 		require.Equal(t, "captured-uid", event.Target.UID)
 		require.Equal(t, []string{"/full/path", "second-group"}, event.Actor.Groups)
 	}
+
+}
+
+func TestAuthenticatedActorPreservesEmailAndUsername(t *testing.T) {
+	ctx := WithAuthenticatedActor(context.Background(),
+		[]string{"subject", "approver@example.org", "approver-user"},
+		[]string{"/team/approvers", "operators"})
+	for _, user := range []string{"approver@example.org", "approver-user"} {
+		event := &Event{Actor: Actor{User: user}}
+		enrichActor(ctx, event)
+		require.Equal(t, user, event.Actor.User)
+		require.Equal(t, []string{"/team/approvers", "operators"}, event.Actor.Groups)
+	}
 }
 
 func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
