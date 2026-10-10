@@ -82,13 +82,16 @@ spec:
       seccompProfile:
         type: RuntimeDefault
 `,
-			Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "20m", DefaultDuration: "10m", RetainFor: "10s"},
+			Constraints:               &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "20m", DefaultDuration: "10m", RetainFor: "10s"},
+			AuxiliaryResourceDefaults: map[string]bool{"uid-proof": true},
 			AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{
-				Name: "uid-proof",
+				Name:     "uid-proof",
+				Category: "uid-proof",
 				TemplateString: `apiVersion: batch/v1
 kind: Job
 metadata:
   name: {{ .session.name }}-uid-proof
+  namespace: breakglass-debug
   labels:
     e2e-session-proof: {{ .session.name | yamlQuote }}
 spec:
@@ -367,21 +370,21 @@ func TestDebugSessionBindingTargetSelectionNativeWorkflow(t *testing.T) {
 					},
 					FailMode: "closed",
 					PodTemplateString: `apiVersion: v1
-			kind: Pod
-			spec:
-			  containers:
-			  - name: debug
-			    image: busybox:1.37
-			    command: ["sleep", "600"]
-			    securityContext:
-			      runAsNonRoot: true
-			      runAsUser: 65532
-			      allowPrivilegeEscalation: false
-			      capabilities:
-			        drop: ["ALL"]
-			      seccompProfile:
-			        type: RuntimeDefault
-			`,
+kind: Pod
+spec:
+  containers:
+  - name: debug
+    image: busybox:1.37
+    command: ["sleep", "600"]
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+`,
 					Constraints: &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "10m", DefaultDuration: "5m"},
 				},
 			}
