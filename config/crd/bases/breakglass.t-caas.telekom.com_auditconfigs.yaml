@@ -265,9 +265,38 @@ spec:
                   dropOnFull:
                     default: true
                     description: |-
-                      DropOnFull silently drops events when queue is full.
-                      If false, a warning is logged for each dropped event.
+                      DropOnFull drops events when the queue is full.
+                      If false, enqueue blocks up to the caller deadline or five seconds.
                     type: boolean
+                  retryAttempts:
+                    default: 8
+                    description: RetryAttempts bounds attempts for a failed sink write,
+                      including the first.
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  retryInitialBackoffMillis:
+                    default: 1000
+                    description: RetryInitialBackoffMillis is the initial exponential
+                      retry delay.
+                    maximum: 60000
+                    minimum: 1
+                    type: integer
+                  retryMaxBackoffMillis:
+                    default: 10000
+                    description: RetryMaxBackoffMillis caps the exponential retry
+                      delay.
+                    maximum: 60000
+                    minimum: 1
+                    type: integer
+                  retryTimeoutSeconds:
+                    default: 60
+                    description: |-
+                      RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
+                      Failed batches remain in the worker until delivered or this bound is reached.
+                    maximum: 300
+                    minimum: 1
+                    type: integer
                   size:
                     default: 100000
                     description: |-

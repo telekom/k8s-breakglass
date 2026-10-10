@@ -568,7 +568,7 @@ var (
 	}, []string{"sink"})
 	AuditEventsDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_events_dropped_total",
-		Help: "Total number of audit events dropped due to queue overflow or circuit breaker",
+		Help: "Total number of audit events dropped due to overflow, enqueue timeout, circuit breaker or exhausted retries",
 	}, []string{"sink", "reason"})
 	AuditSensitiveEventsSyncWritten = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sensitive_events_sync_written_total",

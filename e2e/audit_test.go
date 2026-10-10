@@ -46,22 +46,25 @@ const maxKafkaReadErrors = 60
 
 // AuditEvent represents the structure of the audit event JSON (matches pkg/audit/types.go Event)
 type AuditEvent struct {
-	ID        string                 `json:"id"`
-	Type      string                 `json:"type"`
-	Severity  string                 `json:"severity"`
-	Timestamp string                 `json:"timestamp"`
-	Actor     AuditActor             `json:"actor"`
-	Target    AuditTarget            `json:"target"`
-	Details   map[string]interface{} `json:"details,omitempty"`
+	ID             string                 `json:"id"`
+	Type           string                 `json:"type"`
+	Severity       string                 `json:"severity"`
+	Timestamp      string                 `json:"timestamp"`
+	Actor          AuditActor             `json:"actor"`
+	Target         AuditTarget            `json:"target"`
+	Details        map[string]interface{} `json:"details,omitempty"`
+	RequestContext *audit.RequestContext  `json:"requestContext,omitempty"`
 }
 
 // AuditActor represents who triggered the event
 type AuditActor struct {
-	User string `json:"user"`
+	User   string   `json:"user"`
+	Groups []string `json:"groups"`
 }
 
 // AuditTarget represents what was affected
 type AuditTarget struct {
+	UID       string `json:"uid"`
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
@@ -228,6 +231,9 @@ func TestAuditLogging(t *testing.T) {
 	// 3. Wait for session to be Ready/Active
 	helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
 		breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+	persisted := &breakglassv1alpha1.BreakglassSession{}
+	require.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(session), persisted))
+	require.NotEmpty(t, persisted.UID)
 
 	// 4. Verify Audit Events
 	// We expect:
@@ -295,7 +301,22 @@ func TestAuditLogging(t *testing.T) {
 		// Filter by our session name (Target.Name should match session name)
 		if event.Target.Name == session.Name {
 			t.Logf("✓ Found matching audit event for our session: %s", event.Type)
-			if _, ok := expectedEvents[event.Type]; ok {
+			if found, ok := expectedEvents[event.Type]; ok && !found {
+				require.Equal(t, string(persisted.UID), event.Target.UID)
+				require.NotNil(t, event.RequestContext)
+				require.Equal(t, string(persisted.UID), event.RequestContext.SessionUID)
+				owner := metav1.GetControllerOf(persisted)
+				require.NotNil(t, owner, "session must identify its selected escalation")
+				require.Equal(t, string(owner.UID), event.RequestContext.EscalationUID)
+				require.Equal(t, owner.Name, event.RequestContext.EscalationName)
+				switch audit.EventType(event.Type) {
+				case audit.EventSessionRequested:
+					require.Equal(t, helpers.TestUsers.Requester.Email, event.Actor.User)
+					require.ElementsMatch(t, helpers.TestUsers.Requester.Groups, event.Actor.Groups)
+				case audit.EventSessionApproved:
+					require.Equal(t, helpers.TestUsers.Approver.Email, event.Actor.User)
+					require.ElementsMatch(t, helpers.TestUsers.Approver.Groups, event.Actor.Groups)
+				}
 				expectedEvents[event.Type] = true
 				foundCount++
 			}

@@ -358,6 +358,22 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
       default: true
+    - name: retryAttempts
+      type:
+        scalar: numeric
+      default: 8
+    - name: retryInitialBackoffMillis
+      type:
+        scalar: numeric
+      default: 1000
+    - name: retryMaxBackoffMillis
+      type:
+        scalar: numeric
+      default: 10000
+    - name: retryTimeoutSeconds
+      type:
+        scalar: numeric
+      default: 60
     - name: size
       type:
         scalar: numeric
