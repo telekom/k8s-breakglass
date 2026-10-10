@@ -62,27 +62,38 @@ func TestDebugSessionIdentityOnlyWorkflow(t *testing.T) {
 			},
 			FailMode:             "closed",
 			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: ptr.To(true), Attach: ptr.To(true)},
-			PodTemplateString: `apiVersion: v1
-kind: Pod
+			PodTemplateString: `apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: identity-diagnostics
 spec:
-  containers:
-  - name: debug
-    image: busybox:1.37
-    stdin: true
-    command: ["sh", "-c", "while read -r line; do printf 'identity-only-attach:%s\\n' \"$line\"; done"]
-    env:
-    - name: SESSION_UID
-      value: {{ required "session UID required" .session.uid | yamlQuote }}
-    securityContext:
-      runAsNonRoot: true
-      runAsUser: 65532
-      allowPrivilegeEscalation: false
-      capabilities:
-        drop: ["ALL"]
-      seccompProfile:
-        type: RuntimeDefault
+  selector:
+    matchLabels:
+      identity-session: {{ .session.name | yamlQuote }}
+  template:
+    metadata:
+      labels:
+        identity-session: {{ .session.name | yamlQuote }}
+    spec:
+      containers:
+      - name: debug
+        image: busybox:1.37
+        stdin: true
+        command: ["sh", "-c", "while read -r line; do printf 'identity-only-attach:%s\\n' \"$line\"; done"]
+        resources:
+          requests:
+            memory: 64Mi
+        env:
+        - name: SESSION_UID
+          value: {{ required "session UID required" .session.uid | yamlQuote }}
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 65532
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+          seccompProfile:
+            type: RuntimeDefault
 `,
 			Constraints:               &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "20m", DefaultDuration: "10m", RetainFor: "10s"},
 			AuxiliaryResourceDefaults: map[string]bool{"uid-proof": true},
@@ -249,6 +260,12 @@ spec:
 	actualPod, err := admin.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
 	require.NoError(t, err)
 	require.Equal(t, string(session.UID), actualPod.Annotations["breakglass.t-caas.telekom.com/source-session-uid"])
+	require.Equal(t, corev1.PodQOSBurstable, actualPod.Status.QOSClass)
+	require.NotNil(t, metav1.GetControllerOf(actualPod))
+	require.Equal(t, "ReplicaSet", metav1.GetControllerOf(actualPod).Kind)
+	require.Contains(t, actualPod.Spec.Tolerations, corev1.Toleration{
+		Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
+	}, "actual non-BestEffort Deployment must exercise native QoS admission")
 	require.Eventually(t, func() bool {
 		proofs, err := admin.CoreV1().Pods("breakglass-debug").List(ctx, metav1.ListOptions{LabelSelector: "e2e-session-proof=" + session.Name})
 		if err != nil || len(proofs.Items) != 1 || proofs.Items[0].Status.Phase != corev1.PodSucceeded {

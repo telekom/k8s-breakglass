@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Recognize the exact native memory-pressure toleration admitted for non-
+  BestEffort workload Pods when checking debug workload identity. ReplicaSet
+  templates, arbitrary tolerations, executable content and owner UID fences
+  remain strict; this restores allowed-pod registration for QoS debug workloads.
+
 - Delete tracked debug workloads and auxiliary Jobs with explicit background
   propagation, preserving UID preconditions and avoiding orphaned child pods.
 - Preserve bgctl runtime initialization when commands are executed with a caller
