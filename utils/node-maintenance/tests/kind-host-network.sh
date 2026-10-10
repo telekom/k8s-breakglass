@@ -281,4 +281,6 @@ run_pod recovery node-recovery NODE-RECOVERY-PREFLIGHT read-only '[]' 0
 # before/after evidence and never become an unbounded or privileged operation.
 run_pod repair network-repair NETWORK-REPAIR restart-autonegotiation '["NET_ADMIN"]' any
 
+"${script_dir}/kind-exact-network-repair.sh" "${image}" "${namespace}" "${node}"
+
 printf 'node-maintenance host-network recovery/repair proof passed on %s\n' "${node}"

@@ -1768,4 +1768,20 @@ grep -q 'Unsupported command' "$fixture_dir/output" || fail 'unknown command pro
 destroy_fixture
 pass 'dispatcher rejects unknown commands'
 
+new_fixture exact-network-decoys
+set +e
+"$docker_bin" run --name "$container_name" --user 0 --network none --read-only \
+	--cap-drop ALL --cap-add NET_ADMIN \
+	--security-opt no-new-privileges --security-opt seccomp=builtin \
+	--env BREAKGLASS_NODE_NAME=node-a --env BREAKGLASS_FIXTURE_ID="$prefix-exact" \
+	--mount "source=$volume_name,destination=/evidence" \
+	--mount "type=bind,source=$test_dir/exact-network-fixture.sh,destination=/fixture.sh,readonly" \
+	--entrypoint /bin/sh "$image" /fixture.sh
+exact_fixture_status=$?
+set -e
+assert_container_security "$container_name" NET_ADMIN
+destroy_fixture
+[ "$exact_fixture_status" -eq 0 ] || fail "exact-network fixture returned $exact_fixture_status"
+pass 'real exact-network repairs preserve decoys and reject widened targets'
+
 printf 'PASS: node-maintenance integration contract completed with no host-network changes\n'
