@@ -96,10 +96,11 @@ func TestWebhookSubjectAccessReviewAllow(t *testing.T) {
 	approverClient := tc.ApproverClient()
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.GetTestUserEmail(),
-		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "Testing webhook allow",
+		Cluster:        clusterName,
+		User:           helpers.GetTestUserEmail(),
+		Group:          escalation.Spec.EscalatedGroup,
+		EscalationName: escalation.Name,
+		Reason:         "Testing webhook allow",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
@@ -224,10 +225,11 @@ func TestWebhookExpiredSession(t *testing.T) {
 	approverClient := tc.ApproverClient()
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.TestUsers.Requester.Email,
-		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "Testing expired session webhook",
+		Cluster:        clusterName,
+		User:           helpers.TestUsers.Requester.Email,
+		Group:          escalation.Spec.EscalatedGroup,
+		EscalationName: escalation.Name,
+		Reason:         "Testing expired session webhook",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
@@ -322,10 +324,11 @@ func TestWebhookPendingSession(t *testing.T) {
 	apiClient := tc.RequesterClient()
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.TestUsers.Requester.Email,
-		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "Testing pending session webhook",
+		Cluster:        clusterName,
+		User:           helpers.TestUsers.Requester.Email,
+		Group:          escalation.Spec.EscalatedGroup,
+		EscalationName: escalation.Name,
+		Reason:         "Testing pending session webhook",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
@@ -391,10 +394,11 @@ func TestWebhookRejectedSession(t *testing.T) {
 	approverClient := tc.ApproverClient()
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.TestUsers.Requester.Email,
-		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "Testing rejected session webhook",
+		Cluster:        clusterName,
+		User:           helpers.TestUsers.Requester.Email,
+		Group:          escalation.Spec.EscalatedGroup,
+		EscalationName: escalation.Name,
+		Reason:         "Testing rejected session webhook",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)

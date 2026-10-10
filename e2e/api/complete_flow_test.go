@@ -206,10 +206,11 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 
 	// Create and approve session via API
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    testUser,
-		Group:   testGroup,
-		Reason:  "Deny policy flow test",
+		Cluster:        clusterName,
+		User:           testUser,
+		Group:          testGroup,
+		Reason:         "Deny policy flow test",
+		EscalationName: escalation.Name,
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
