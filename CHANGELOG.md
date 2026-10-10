@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Delete tracked debug workloads and auxiliary Jobs with explicit background
+  propagation, preserving UID preconditions and avoiding orphaned child pods.
 - Preserve bgctl runtime initialization when commands are executed with a caller
   context, including native session drop commands.
 - Restore DebugSession discovery/creation from authenticated identity groups and
