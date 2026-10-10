@@ -11,9 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
   `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
-  Explicit labels override matching chart defaults; connection/access policy
-  remains unchanged. Consumers can replace Flux-only metadata post-renderers
-  with these portable values for native/manual Helm installs and upgrades.
+  Explicit labels override matching chart defaults. Empty maps preserve current
+  behavior; non-empty label changes can expand or restrict clusters matched by
+  DebugSession template/binding selectors and must be reviewed as access-policy
+  changes. Consumers can replace Flux-only metadata post-renderers with these
+  portable values for native/manual Helm installs and upgrades.
 
 ### Fixed
 

@@ -81,8 +81,10 @@ clusterConfig:
 
 These labels are present in plain `helm template` output and therefore behave
 identically with Flux and native/manual Helm installs and upgrades. Empty maps
-preserve existing metadata defaults; they do not change connection or access
-policy fields.
+preserve existing behavior. Non-empty label changes can expand or restrict
+cluster eligibility through existing DebugSession template/binding selectors;
+review them as access-policy changes. Connection and approval fields are not
+modified by these metadata values.
 
 ```yaml
 cluster:
