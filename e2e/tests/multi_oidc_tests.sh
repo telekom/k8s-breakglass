@@ -176,7 +176,7 @@ test_MO002_spoke_oidc_clusterconfig() {
   # Using IP address would cause issuer mismatch and auth failure with:
   # "the server has asked for the client to provide credentials"
   # ============================================================================
-  local issuer_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/${KEYCLOAK_MAIN_REALM}"
+  local issuer_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}${KEYCLOAK_RELATIVE_PATH:-}/realms/${KEYCLOAK_MAIN_REALM}"
   log "Using Keycloak issuer: $issuer_url"
   
   # Get spoke-a API server from existing ClusterConfig (preferred - uses internal address)
@@ -396,7 +396,7 @@ test_MO004_hub_keycloak_connectivity() {
   
   # Try to reach Keycloak OIDC discovery endpoint using DNS name
   # The controller pod has hostAliases to resolve e2e-keycloak to the container IP
-  local discovery_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration"
+  local discovery_url="https://${KEYCLOAK_CONTAINER_NAME}:${KEYCLOAK_PORT}${KEYCLOAK_RELATIVE_PATH:-}/realms/${KEYCLOAK_MAIN_REALM}/.well-known/openid-configuration"
   log "Discovery URL: $discovery_url"
   
   # Use wget or curl inside the controller pod (if available)
