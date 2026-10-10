@@ -93,11 +93,49 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 }
 
 func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
-	source, err := os.ReadFile("kind-setup-single.sh")
-	require.NoError(t, err)
-	require.Equal(t, 2, strings.Count(string(source), "\nconfigure_keycloak_relative_path\n"))
-	require.Contains(t, string(source), "rollout status deployment \"$KEYCLOAK_DEPLOY_NAME\"")
-	require.Contains(t, string(source), "rollout status deployment \"$CONTROLLER_DEPLOY_NAME\"")
+	skipUnlessE2E(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cli := setupClient(t)
+	path := os.Getenv("KEYCLOAK_RELATIVE_PATH")
+	if path == "" {
+		path = "/auth"
+	}
+	for _, label := range []string{"app=keycloak", "app=breakglass"} {
+		name, err := findDeploymentByLabel(ctx, cli, bootstrapSystem, label)
+		require.NoError(t, err)
+		require.NoError(t, helpers.WaitForDeploymentReady(ctx, cli, bootstrapSystem, name, 4*time.Minute))
+		var deployment appsv1.Deployment
+		require.NoError(t, cli.Get(ctx, client.ObjectKey{Namespace: bootstrapSystem, Name: name}, &deployment))
+		require.GreaterOrEqual(t, deployment.Status.ObservedGeneration, deployment.Generation)
+		if label == "app=keycloak" {
+			var matched bool
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				if container.Name != "keycloak" {
+					continue
+				}
+				for _, env := range container.Env {
+					if env.Name == "KC_HTTP_RELATIVE_PATH" {
+						require.Equal(t, path, env.Value)
+						matched = true
+					}
+				}
+				require.NotNil(t, container.ReadinessProbe)
+				require.NotNil(t, container.ReadinessProbe.HTTPGet)
+				require.Equal(t, path+"/realms/master", container.ReadinessProbe.HTTPGet.Path)
+			}
+			require.True(t, matched, "actual Keycloak deployment must retain the configured base path")
+		} else {
+			var matched bool
+			for _, container := range deployment.Spec.Template.Spec.InitContainers {
+				if container.Name == "wait-for-keycloak" {
+					require.Contains(t, strings.Join(container.Args, " "), path+"/realms/master/protocol/openid-connect/certs")
+					matched = true
+				}
+			}
+			require.True(t, matched, "actual controller init route must retain the configured base path")
+		}
+	}
 }
 
 // getBootstrapTdir returns the TDIR path used by kind-setup-single.sh.
