@@ -49,6 +49,7 @@ export interface SessionSpec {
   user?: string;
   denyPolicyRefs?: string[];
   requestReason?: string;
+  ticketSystemID?: string;
   idleTimeout?: string;
   requester?: string;
   approverGroup?: string | string[];

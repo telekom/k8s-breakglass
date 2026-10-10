@@ -39,6 +39,10 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	// requestReason stores the free-text reason supplied by the requester when creating the session.
 	// This field is optional and may be populated depending on escalation configuration.
 	RequestReason *string `json:"requestReason,omitempty"`
+	// ticketSystemID is an optional, freeform ticket reference supplied by the
+	// requester for correlation and audit. It is not validated or an authorization
+	// credential, and does not replace requestReason or approval requirements.
+	TicketSystemID *string `json:"ticketSystemID,omitempty"`
 	// scheduledStartTime optionally specifies when this session should become active.
 	// If not set or zero, session activates immediately upon approval.
 	// Must be set to a future time if provided (validated by admission webhook).
@@ -147,6 +151,14 @@ func (b *BreakglassSessionSpecApplyConfiguration) WithDenyPolicyRefs(values ...s
 // If called multiple times, the RequestReason field is set to the value of the last call.
 func (b *BreakglassSessionSpecApplyConfiguration) WithRequestReason(value string) *BreakglassSessionSpecApplyConfiguration {
 	b.RequestReason = &value
+	return b
+}
+
+// WithTicketSystemID sets the TicketSystemID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TicketSystemID field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithTicketSystemID(value string) *BreakglassSessionSpecApplyConfiguration {
+	b.TicketSystemID = &value
 	return b
 }
 

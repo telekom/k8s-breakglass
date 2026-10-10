@@ -17,7 +17,7 @@ import type { Breakglass } from "@/model/breakglass";
 
 const props = defineProps<{ breakglass: Breakglass; time: number }>();
 const emit = defineEmits<{
-  request: [reason: string, duration: number, scheduledStartTime: string | null];
+  request: [reason: string, duration: number, scheduledStartTime: string | null, ticketSystemID: string];
   drop: [];
   withdraw: [];
 }>();
@@ -26,6 +26,7 @@ const emit = defineEmits<{
 const cardUid = useId();
 
 const requestReason = ref("");
+const ticketSystemID = ref("");
 const selectedDuration = ref<number | null>(null);
 const durationInput = ref<string>("");
 const showRequestModal = ref(false);
@@ -46,6 +47,7 @@ let suppressPartSync = false;
 function closeRequestModal() {
   showRequestModal.value = false;
   requestReason.value = "";
+  ticketSystemID.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
@@ -62,6 +64,7 @@ watch(
   () => props.breakglass,
   () => {
     requestReason.value = "";
+    ticketSystemID.value = "";
     selectedDuration.value = null;
     durationInput.value = "";
     scheduledStartTime.value = null;
@@ -414,8 +417,9 @@ function request() {
 
   const sanitizedReason = sanitizeReason(requestReason.value);
 
-  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value);
+  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value, ticketSystemID.value);
   requestReason.value = "";
+  ticketSystemID.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
@@ -657,6 +661,14 @@ function drop() {
     </div>
 
     <div class="reason-field">
+      <scale-text-field
+        :id="`ticket-system-id-${cardUid}`"
+        data-testid="ticket-system-id-input"
+        label="Ticket system ID"
+        :value="ticketSystemID"
+        helper-text="Optional reference for the audit trail. Not validated."
+        @scale-change="ticketSystemID = extractScaleValue($event)"
+      />
       <scale-textarea
         :id="`reason-field-input-${cardUid}`"
         data-testid="reason-input"

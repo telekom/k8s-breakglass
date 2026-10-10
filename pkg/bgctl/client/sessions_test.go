@@ -172,12 +172,14 @@ func TestSessionsRequest(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "test-cluster", req.Cluster)
 		require.Equal(t, "admin", req.Group)
+		require.Equal(t, "operations/example-123", req.TicketSystemID)
 
 		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-new"},
 			Spec: breakglassv1alpha1.BreakglassSessionSpec{
-				Cluster:      req.Cluster,
-				GrantedGroup: req.Group,
+				Cluster:        req.Cluster,
+				GrantedGroup:   req.Group,
+				TicketSystemID: req.TicketSystemID,
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
@@ -189,13 +191,15 @@ func TestSessionsRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	result, err := client.Sessions().Request(context.Background(), SessionRequest{
-		Cluster: "test-cluster",
-		Group:   "admin",
-		User:    "user@example.com",
-		Reason:  "testing",
+		Cluster:        "test-cluster",
+		Group:          "admin",
+		User:           "user@example.com",
+		Reason:         "testing",
+		TicketSystemID: "operations/example-123",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "session-new", result.Name)
+	require.Equal(t, "operations/example-123", result.Spec.TicketSystemID)
 }
 
 func TestSessionsApprove(t *testing.T) {

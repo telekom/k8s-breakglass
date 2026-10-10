@@ -69,6 +69,22 @@ function makeBreakglass(overrides: Partial<Breakglass> = {}): Breakglass {
 }
 
 describe("BreakglassCard request reason validation", () => {
+  it("submits an optional ticket reference verbatim without treating it as a reason", async () => {
+    const wrapper = mount(BreakglassCard, {
+      props: { breakglass: makeBreakglass({ requestReason: { mandatory: false } }), time: Date.now() },
+      global: { stubs: SCALE_STUBS },
+    });
+    await wrapper.find('[data-testid="request-access-button"]').trigger("click");
+    const ticketSystemID = "arbitrary <reference>\nü";
+    wrapper
+      .get('[data-testid="ticket-system-id-input"]')
+      .element.dispatchEvent(new CustomEvent("scale-change", { bubbles: true, detail: { value: ticketSystemID } }));
+    await nextTick();
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    const requests = wrapper.emitted("request");
+    expect(requests).toHaveLength(1);
+    expect(requests?.[0]?.[3]).toBe(ticketSystemID);
+  });
   it.each([
     { displayName: "Production admin", escalationName: "admin-a1b2c3d4", expected: "Production admin" },
     { displayName: "", escalationName: "admin-a1b2c3d4", expected: "admin-a1b2c3d4" },

@@ -264,7 +264,8 @@ Authorization: Bearer <token>
   "cluster": "prod-cluster-1",
   "user": "user@example.com",
   "group": "cluster-admin",
-  "reason": "Emergency access for incident response"
+  "reason": "Emergency access for incident response",
+  "ticketSystemID": "external tracker / arbitrary reference"
 }
 ```
 
@@ -275,6 +276,15 @@ Authorization: Bearer <token>
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
+
+**Optional audit reference:** `ticketSystemID` is freeform, optional and stored
+verbatim in `spec.ticketSystemID`. It has no required, pattern or length
+validation and does not affect authorization or approval eligibility. The UI
+shows it to approvers as unverified; lifecycle audit events include it as
+`details.ticketSystemID`, and session creation includes it in structured logs.
+The immutable spec retains the reference through status transitions. This is
+user-supplied audit context, not proof that a ticket exists or authorizes access.
+See [Ticket system ID](./ticket-system-id.md) for API and CLI examples.
 
 **User group resolution:** As with the escalations list endpoint, the
 requester's groups are resolved from the JWT `groups`/`realm_access` claim
@@ -302,7 +312,8 @@ to zero groups is honored as-is and does not trigger the cluster fallback.
     "cluster": "prod-cluster-1",
     "user": "user@example.com",
     "grantedGroup": "cluster-admin",
-    "requestReason": "Emergency access for incident response"
+    "requestReason": "Emergency access for incident response",
+    "ticketSystemID": "external tracker / arbitrary reference"
   },
   "status": {
     "state": "Pending",

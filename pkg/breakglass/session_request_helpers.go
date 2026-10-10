@@ -568,6 +568,7 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		GrantedGroup:   request.GroupName,
 		DenyPolicyRefs: selectedDenyPolicies,
 		RequestReason:  request.Reason,
+		TicketSystemID: request.TicketSystemID,
 	}
 
 	// Multi-IDP: Populate IDP tracking fields from authentication middleware

@@ -35,6 +35,10 @@
       <strong>Request reason:</strong>
       <div class="reason-text">{{ requestReason }}</div>
     </div>
+    <div v-if="sessionSpec?.ticketSystemID" class="modal-reason" data-testid="ticket-system-id">
+      <strong>Ticket system ID (unverified):</strong>
+      <div class="reason-text">{{ sessionSpec.ticketSystemID }}</div>
+    </div>
 
     <p v-if="isAwaitingScheduledStart" class="modal-state-note" data-testid="scheduled-activation-note">
       This session has already been approved. It will activate automatically at the scheduled start time.

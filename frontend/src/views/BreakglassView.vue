@@ -176,9 +176,15 @@ const filteredBreakglasses = computed(() => {
   return bgs;
 });
 
-async function onRequest(bg: Breakglass, reason?: string, duration?: number, scheduledStartTime?: string | null) {
+async function onRequest(
+  bg: Breakglass,
+  reason?: string,
+  duration?: number,
+  scheduledStartTime?: string | null,
+  ticketSystemID?: string,
+) {
   try {
-    await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime ?? undefined);
+    await breakglassService.requestBreakglass(bg, reason, duration, scheduledStartTime ?? undefined, ticketSystemID);
     // Success path: created/ok
     pushSuccess(`Requested group '${bg.to}' for cluster '${bg.cluster}': request submitted successfully!`);
     await refresh();
@@ -348,8 +354,8 @@ async function onDrop(bg: Breakglass) {
           :breakglass="bg"
           :time="time"
           @request="
-            (reason: string, duration: number, scheduledStartTime: string | null) => {
-              onRequest(bg, reason, duration, scheduledStartTime);
+            (reason: string, duration: number, scheduledStartTime: string | null, ticketSystemID: string) => {
+              onRequest(bg, reason, duration, scheduledStartTime, ticketSystemID);
             }
           "
           @drop="

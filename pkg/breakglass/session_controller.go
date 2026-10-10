@@ -390,6 +390,7 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 
 	// Emit audit event for session creation
 	wc.emitSessionAuditEvent(c.Request.Context(), audit.EventSessionRequested, bs, request.Username, "Session requested")
+	reqLog.Infow("Session ticket reference recorded", "session", bs.Name, "ticketSystemID", bs.Spec.TicketSystemID)
 	reqLog.Debugw("Session created",
 		"user", request.Username, "cluster", request.Clustername,
 		"group", system.RedactGroupName(request.GroupName), "generatedName", bs.Name)
