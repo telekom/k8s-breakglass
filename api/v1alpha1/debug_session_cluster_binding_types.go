@@ -478,13 +478,41 @@ func (b *DebugSessionClusterBinding) SetupWebhookWithManager(mgr ctrl.Manager) e
 		Complete()
 }
 
+// ValidateKubectlDebugTargetNamespaceFilter validates a binding allowlist before
+// admission or use from an approved session snapshot.
+func ValidateKubectlDebugTargetNamespaceFilter(filter *NamespaceFilter, filterPath *field.Path) field.ErrorList {
+	if filter == nil {
+		return nil
+	}
+	errs := validateNamespaceFilterGlobPatterns(filter, filterPath)
+	if filter.IsEmpty() {
+		errs = append(errs, field.Required(filterPath, "at least one of patterns or selectorTerms must be specified"))
+	}
+	for i, term := range filter.SelectorTerms {
+		termPath := filterPath.Child("selectorTerms").Index(i)
+		if len(term.MatchLabels) == 0 && len(term.MatchExpressions) == 0 {
+			errs = append(errs, field.Required(termPath, "at least one of matchLabels or matchExpressions must be specified"))
+			continue
+		}
+		selector := &metav1.LabelSelector{MatchLabels: term.MatchLabels}
+		for _, expression := range term.MatchExpressions {
+			selector.MatchExpressions = append(selector.MatchExpressions, metav1.LabelSelectorRequirement{
+				Key: expression.Key, Operator: metav1.LabelSelectorOperator(expression.Operator), Values: expression.Values,
+			})
+		}
+		if _, err := metav1.LabelSelectorAsSelector(selector); err != nil {
+			errs = append(errs, field.Invalid(termPath, term, err.Error()))
+		}
+	}
+	return errs
+}
+
 // ValidateDebugSessionClusterBinding validates a DebugSessionClusterBinding.
 func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *ValidationResult {
 	result := &ValidationResult{}
 	if binding == nil {
 		return result
 	}
-
 	specPath := field.NewPath("spec")
 	spec := &binding.Spec
 
@@ -564,11 +592,9 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 				return
 			}
 			filterPath := specPath.Child("kubectlDebugTargetNamespaces", name)
-			if filter.IsEmpty() {
-				result.Errors = append(result.Errors, field.Required(filterPath, "at least one of patterns or selectorTerms must be specified"))
-			}
-			result.Errors = append(result.Errors, validateNamespaceFilterGlobPatterns(filter, filterPath)...)
+			result.Errors = append(result.Errors, ValidateKubectlDebugTargetNamespaceFilter(filter, filterPath)...)
 		}
+
 		validateFilter("ephemeralContainers", targetNamespaces.EphemeralContainers)
 		validateFilter("podCopy", targetNamespaces.PodCopy)
 	}

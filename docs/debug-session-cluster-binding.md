@@ -200,6 +200,9 @@ kubectlDebugTargetNamespaces:
 to source Pods copied for debugging. Filters support namespace `patterns` and
 label-based `selectorTerms`, evaluated using live target-cluster namespace
 labels. These binding filters are captured in the approved session snapshot.
+Empty selector terms and invalid expression value cardinalities are rejected:
+`In`/`NotIn` require values, while `Exists`/`DoesNotExist` forbid them. Pod-copy
+authorization rechecks binding selectors against fresh labels before creation.
 
 ### schedulingConstraints
 

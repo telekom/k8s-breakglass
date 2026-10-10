@@ -25,8 +25,33 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func TestValidateKubectlDebugTargetNamespaceFilter(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		term  NamespaceSelectorTerm
+		valid bool
+	}{
+		{name: "empty term"},
+		{name: "empty labels", term: NamespaceSelectorTerm{MatchLabels: map[string]string{}}},
+		{name: "labels", term: NamespaceSelectorTerm{MatchLabels: map[string]string{"team": "payments"}}, valid: true},
+		{name: "In without values", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpIn}}}},
+		{name: "NotIn without values", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpNotIn}}}},
+		{name: "Exists with values", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpExists, Values: []string{"payments"}}}}},
+		{name: "DoesNotExist with values", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpDoesNotExist, Values: []string{"payments"}}}}},
+		{name: "In", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpIn, Values: []string{"payments"}}}}, valid: true},
+		{name: "Exists", term: NamespaceSelectorTerm{MatchExpressions: []NamespaceSelectorRequirement{{Key: "team", Operator: NamespaceSelectorOpExists}}}, valid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			filter := &NamespaceFilter{SelectorTerms: []NamespaceSelectorTerm{tc.term}}
+			errs := ValidateKubectlDebugTargetNamespaceFilter(filter, field.NewPath("filter"))
+			assert.Equal(t, tc.valid, len(errs) == 0, "errors: %v", errs)
+		})
+	}
+}
 
 func TestDebugSessionClusterBinding_Defaults(t *testing.T) {
 	binding := &DebugSessionClusterBinding{

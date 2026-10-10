@@ -37,6 +37,10 @@ for invalid in (
     {"kubectlDebugTargetNamespaces": {"unknown": {"patterns": ["x"]}}},
     {"kubectlDebugTargetNamespaces": {"podCopy": {"patterns": [""]}}},
     {"kubectlDebugTargetNamespaces": {"podCopy": {"names": ["x"]}}},
+    {"kubectlDebugTargetNamespaces": {"podCopy": {"selectorTerms": [{}]}}},
+    {"kubectlDebugTargetNamespaces": {"ephemeralContainers": {"selectorTerms": [{"matchLabel": {"team": "payments"}}]}}},
+    {"kubectlDebugTargetNamespaces": {"podCopy": {"selectorTerms": [{"matchExpressions": [{"key": "team", "operator": "In", "values": []}]}]}}},
+    {"kubectlDebugTargetNamespaces": {"ephemeralContainers": {"selectorTerms": [{"matchExpressions": [{"key": "team", "operator": "Exists", "values": ["payments"]}]}]}}},
 ):
     if render(invalid).returncode == 0:
         raise SystemExit(f"schema accepted invalid kubectlDebugTargetNamespaces: {invalid}")

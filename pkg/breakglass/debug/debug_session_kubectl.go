@@ -37,6 +37,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/component-helpers/scheduling/corev1/nodeaffinity"
@@ -1397,7 +1398,8 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	if err != nil {
 		return nil, fmt.Errorf("failed to re-read namespace labels for %s before copy: %w", originalNamespace, err)
 	}
-	if !matcher.IsAllowedWithLabels(originalNamespace, freshNamespaceLabels) {
+	if !matcher.IsAllowedWithLabels(originalNamespace, freshNamespaceLabels) ||
+		(bindingAllowedNamespaces != nil && !utils.NewNamespaceAllowDenyMatcher(bindingAllowedNamespaces, nil).IsAllowedWithLabels(originalNamespace, freshNamespaceLabels)) {
 		return nil, kubectlDebugPolicyErrorf("namespace %s is no longer allowed for pod copy", originalNamespace)
 	}
 
@@ -1968,8 +1970,8 @@ func resolvedKubectlDebugTargetNamespaceFilter(ds *breakglassv1alpha1.DebugSessi
 	default:
 		return nil, fmt.Errorf("unsupported kubectl-debug target namespace operation %q", operation)
 	}
-	if filter != nil && filter.IsEmpty() {
-		return nil, fmt.Errorf("resolved binding has an empty kubectl-debug target namespace filter for %s", operation)
+	if errs := breakglassv1alpha1.ValidateKubectlDebugTargetNamespaceFilter(filter, field.NewPath("kubectlDebugTargetNamespaces", operation)); len(errs) > 0 {
+		return nil, fmt.Errorf("resolved binding has an invalid kubectl-debug target namespace filter for %s: %w", operation, errs.ToAggregate())
 	}
 	return filter, nil
 }
