@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Real Docker/Kind exact-entry network-repair fixtures now verify untouched
+  neighbor/interface and FDB MAC/VLAN/bridge decoys, forged-tuple/broad-flush
+  denials, failed VLAN preflight and owned fixture cleanup with NET_ADMIN only.
+  This does not enable maintenance profiles or add a kexec executor.
+
 ### Fixed
 
 - Restore DebugSession discovery/creation from authenticated identity groups and
