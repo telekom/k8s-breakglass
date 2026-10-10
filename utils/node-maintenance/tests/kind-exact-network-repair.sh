@@ -87,15 +87,31 @@ spec:
         name: ${configmap}
 YAML
 pod_uid="$(kubectl get pod -n "${namespace}" "${pod}" -o jsonpath='{.metadata.uid}')"
-kubectl get pod -n "${namespace}" "${pod}" -o json | jq -e --arg node "${node}" '
+kubectl get pod -n "${namespace}" "${pod}" -o json | jq -e --arg node "${node}" --arg configmap "${configmap}" --arg image "${image}" '
 	.spec.nodeName == $node and .spec.hostNetwork == true and (.spec.hostPID // false) == false and
-	.spec.automountServiceAccountToken == false and
+	(.spec.hostIPC // false) == false and .spec.automountServiceAccountToken == false and
+	(.spec.containers | length) == 1 and (.spec.initContainers // [] | length) == 0 and
+	(.spec.ephemeralContainers // [] | length) == 0 and
+	.spec.containers[0].name == "fixture" and .spec.containers[0].image == $image and
+	.spec.containers[0].command == ["/bin/sh", "/fixture/fixture.sh"] and
+	.spec.containers[0].securityContext.runAsUser == 0 and
+	.spec.containers[0].securityContext.runAsGroup == 0 and
 	.spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
 	.spec.containers[0].securityContext.capabilities.add == ["NET_ADMIN"] and
 	.spec.containers[0].securityContext.readOnlyRootFilesystem == true and
 	.spec.containers[0].securityContext.allowPrivilegeEscalation == false and
 	.spec.containers[0].securityContext.privileged == false and
-	.spec.containers[0].securityContext.seccompProfile.type == "RuntimeDefault"
+	.spec.containers[0].securityContext.seccompProfile.type == "RuntimeDefault" and
+	(.spec.volumes | length) == 2 and
+	.spec.volumes[0].name == "evidence" and .spec.volumes[0].emptyDir.sizeLimit == "64Mi" and
+	.spec.volumes[1].name == "fixture" and .spec.volumes[1].configMap.name == $configmap and
+	all(.spec.volumes[]; has("hostPath") | not) and
+	(.spec.containers[0].volumeMounts | length) == 2 and
+	.spec.containers[0].volumeMounts[0].name == "evidence" and
+	.spec.containers[0].volumeMounts[0].mountPath == "/evidence" and
+	.spec.containers[0].volumeMounts[1].name == "fixture" and
+	.spec.containers[0].volumeMounts[1].mountPath == "/fixture" and
+	.spec.containers[0].volumeMounts[1].readOnly == true
 ' >/dev/null
 for _ in $(seq 1 90); do
 	phase="$(kubectl get pod -n "${namespace}" "${pod}" -o jsonpath='{.status.phase}')"
