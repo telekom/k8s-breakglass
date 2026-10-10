@@ -31,6 +31,7 @@ func TestTicketSystemIDRoundTrip(t *testing.T) {
 			for index, fn := range sessionIndexFunctions {
 				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 			}
+
 			escalation := &breakglassv1alpha1.BreakglassEscalation{
 				ObjectMeta: metav1.ObjectMeta{Name: "ticket-policy"},
 				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
@@ -78,4 +79,31 @@ func TestTicketSystemIDRoundTrip(t *testing.T) {
 			require.Equal(t, ticket, mockAudit.GetEvents()[1].Details["ticketSystemID"])
 		})
 	}
+}
+
+func TestTicketSystemIDIndependentLifecycleEmitters(t *testing.T) {
+	const ticket = "arbitrary <reference>\nü"
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "ticket-session", Namespace: "test", UID: "ticket-session-uid"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "test-cluster", TicketSystemID: ticket},
+	}
+	mockAudit := NewMockAuditEmitter(true)
+	activator := &ScheduledSessionActivator{auditService: mockAudit}
+	activator.emitSessionActivatedAuditEvent(context.Background(), session)
+	controller := &BreakglassSessionController{auditService: mockAudit}
+	controller.recordUnverifiedApproverGroupsDecision(context.Background(), &session,
+		"approver", "group", "provider", zap.NewNop().Sugar())
+	events := mockAudit.GetEvents()
+	require.Len(t, events, 2)
+	require.Equal(t, audit.EventSessionActivated, events[0].Type)
+	require.Equal(t, audit.EventSessionApprovalUnverifiedGroups, events[1].Type)
+	for _, event := range events {
+		require.Equal(t, ticket, event.Details["ticketSystemID"])
+	}
+	event := duplicateCleanupAuditEvent(&session, metav1.Condition{
+		Reason: duplicateCleanupIntentWithdraw, LastTransitionTime: metav1.Now(),
+	})
+	require.NotNil(t, event)
+	require.Equal(t, audit.EventSessionTerminationIntent, event.Type)
+	require.Equal(t, ticket, event.Details["ticketSystemID"])
 }
