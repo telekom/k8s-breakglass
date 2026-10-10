@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v7",
+  "contractVersion": "node-maintenance.integration/v8",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -7,6 +7,9 @@
     "hostNetworkMutation": false,
     "disposableVethNeighborFixture": true,
     "disposableVLANBridgeFixture": true,
+    "untouchedNeighborInterfaceAndAddressDecoys": true,
+    "untouchedFDBBridgeMACAndVLANDecoys": true,
+    "kindExactTupleReplacement": true,
     "kernelIfindexMutation": true,
     "nameReplacementAdversary": true,
     "bridgeReparentAdversary": true
