@@ -65,6 +65,27 @@ The `cluster` section defines the target cluster connection:
 
 #### Kubeconfig Authentication (Default)
 
+Extra metadata belongs in `clusterConfig.labels` and
+`clusterConfig.annotations`, not a backend-specific post-renderer. These maps
+apply only to the ClusterConfig; explicit labels override matching chart
+defaults. Values must be strings (quote `"true"` and `"false"`).
+
+```yaml
+clusterConfig:
+  labels:
+    breakglass.t-caas.telekom.com/debug-sessions-enabled: "true"
+    breakglass.t-caas.telekom.com/platform-diagnostics: "true"
+  annotations:
+    example.com/managed-by: platform
+```
+
+These labels are present in plain `helm template` output and therefore behave
+identically with Flux and native/manual Helm installs and upgrades. Empty maps
+preserve existing behavior. Non-empty label changes can expand or restrict
+cluster eligibility through existing DebugSession template/binding selectors;
+review them as access-policy changes. Connection and approval fields are not
+modified by these metadata values.
+
 ```yaml
 cluster:
   clusterID: production-cluster

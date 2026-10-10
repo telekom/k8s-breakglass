@@ -54,6 +54,12 @@ networkPolicy:
   #           protocol: TCP
   additionalIngressRules: []
 
+clusterConfig:
+  # Extra metadata only on the ClusterConfig, independent of Helm backend.
+  # Explicit labels override chart defaults with the same key.
+  labels: {}
+  annotations: {}
+
 cluster:
   clusterID: ""
   tenant: ""
