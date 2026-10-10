@@ -4,6 +4,15 @@ templates:
 values:
   - ../ci/test-values.yaml
 tests:
+  - it: supports absent metadata parent from legacy reused values
+    set:
+      clusterConfig: null
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: escalation-config
+      - notExists:
+          path: metadata.annotations
   - it: preserves defaults with no extra metadata
     asserts:
       - equal:
