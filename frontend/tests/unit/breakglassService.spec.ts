@@ -147,13 +147,14 @@ describe("BreakglassService", () => {
         expiry: 0,
         state: "Available",
       };
-      await service.requestBreakglass(transition, "Incident repair", 3600);
+      await service.requestBreakglass(transition, "Incident repair", 3600, undefined, "operations/example-123");
       expect(mockPost).toHaveBeenCalledWith("/breakglassSessions", {
         cluster: "prod",
         group: "admin",
         escalationName: "first-id",
         user: "test@example.com",
         reason: "Incident repair",
+        ticketSystemID: "operations/example-123",
         duration: 3600,
       });
     });

@@ -806,6 +806,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: scheduledStartTime
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: ticketSystemID
+      type:
+        scalar: string
     - name: user
       type:
         scalar: string

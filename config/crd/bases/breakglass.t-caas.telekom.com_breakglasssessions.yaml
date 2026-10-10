@@ -179,6 +179,12 @@ spec:
                   Sessions in WaitingForScheduledTime state are not considered valid/active until this time is reached.
                 format: date-time
                 type: string
+              ticketSystemID:
+                description: |-
+                  ticketSystemID is an optional, freeform ticket reference supplied by the
+                  requester for correlation and audit. It is not validated or an authorization
+                  credential, and does not replace requestReason or approval requirements.
+                type: string
               user:
                 description: user is the name of the user the session is valid for.
                 type: string

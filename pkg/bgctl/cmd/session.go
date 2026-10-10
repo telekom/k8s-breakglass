@@ -289,6 +289,7 @@ func newSessionRequestCommand() *cobra.Command {
 		group          string
 		user           string
 		reason         string
+		ticketSystemID string
 		duration       int64
 		scheduled      string
 	)
@@ -323,6 +324,7 @@ reason when the escalation policy requires one.`,
 				Group:            group,
 				EscalationName:   escalationName,
 				Reason:           reason,
+				TicketSystemID:   ticketSystemID,
 				DurationSeconds:  duration,
 				ScheduledStartAt: scheduled,
 			}
@@ -343,6 +345,7 @@ reason when the escalation policy requires one.`,
 	cmd.Flags().StringVar(&escalationName, "escalation", "", "Escalation resource name (required when several eligible policies grant this group)")
 	cmd.Flags().StringVarP(&user, "user", "u", "", "User identifier (defaults to token user)")
 	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Reason for request")
+	cmd.Flags().StringVar(&ticketSystemID, "ticket-system-id", "", "Optional freeform ticket system ID (audit only; not validated)")
 	cmd.Flags().Int64VarP(&duration, "duration", "d", 0, "Requested duration in seconds")
 	cmd.Flags().StringVarP(&scheduled, "scheduled-start", "S", "", "Scheduled start time (RFC3339)")
 	_ = cmd.MarkFlagRequired("cluster")

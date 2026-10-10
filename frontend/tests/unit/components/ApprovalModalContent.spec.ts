@@ -34,6 +34,20 @@ function isDisabled(selector: string, wrapper: ReturnType<typeof mount>): boolea
 }
 
 describe("ApprovalModalContent", () => {
+  it("shows an unverified ticket reference as escaped text", () => {
+    const ticketSystemID = "<script>not executable</script>";
+    const wrapper = mount(ApprovalModalContent, {
+      props: {
+        session: { ...requiredNoteSession, spec: { ...requiredNoteSession.spec, ticketSystemID } },
+        approverNote: "",
+        isApproving: false,
+      },
+      global: { stubs: { "scale-button": ScaleButtonStub, "scale-textarea": true } },
+    });
+    expect(wrapper.get('[data-testid="ticket-system-id"]').text()).toContain(ticketSystemID);
+    expect(wrapper.get('[data-testid="ticket-system-id"]').find("script").exists()).toBe(false);
+    expect(wrapper.get('[data-testid="ticket-system-id"]').text()).toContain("unverified");
+  });
   it("disables approve and reject while a required approver note is empty", () => {
     const wrapper = mount(ApprovalModalContent, {
       props: {
