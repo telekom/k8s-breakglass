@@ -19,6 +19,7 @@ ARG TARGETARCH
 ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
 ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
+ARG X_NET_VERSION=v0.60.0
 
 WORKDIR /src/pwru
 
@@ -35,7 +36,7 @@ RUN set -eux; \
 	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
 	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
 	chmod -R u+w /src/pwru; \
-	go -C /src/pwru get golang.org/x/net@v0.60.0; \
+	go -C /src/pwru get "golang.org/x/net@${X_NET_VERSION}"; \
 	go -C /src/pwru mod tidy; \
 	chmod +x /src/pwru/libpcap/configure; \
 	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \

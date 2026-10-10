@@ -28,9 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Require Go 1.26.9 or newer so CI and source builds no longer select the
-  vulnerable Go 1.26.6 standard library. Production image builds remain on
-  the existing Go 1.27 builder. Update `golang.org/x/net` to 0.60.0 to include
+- Require Go 1.27.2 or newer for CI, source builds and production image builders
+  to avoid vulnerable standard-library versions.
+  Update `golang.org/x/net` to 0.60.0 to include
   the corresponding HTTP/2 fixes. No controller behavior or CRD changes.
 
 - Escalation-config chart 0.4.0 hashes names longer than 63 characters instead
