@@ -21,8 +21,10 @@ The authorizer contract is asserted as Node, RBAC, Webhook and NoOpinion.
 NoOpinion is chain continuation, not grant-all. Admission webhook failure
 policies are unrelated and remain unchanged.
 
-Both tests restart only the Kind spoke-A apiserver, restoring exact original
-authorization files and restarting again in cleanup. The shared hub remains
+Both tests rewrite the host-side source of the read-only Kind bind mounts,
+restricted to regular fixture files inside this checkout. They restart only the
+Kind spoke-A apiserver, restoring exact original authorization file bytes and
+restarting again in cleanup. The shared hub remains
 available. Do not run these methods concurrently or against a non-disposable
 cluster. A network/setup error is not accepted as Forbidden evidence.
 
@@ -36,7 +38,10 @@ E2E_MULTI_CLUSTER=true go test -tags=multicluster ./e2e/api \
 
 The default multi-cluster CI selector includes these suite methods. No separate
 deployment harness is introduced. The short TTL makes Kind execution bounded;
-deployments with five-minute authorizedTTL still permit cached access for up to
-five minutes after revocation or outage. Immediate authorization revocation
+deployments with **positive authorization caching enabled** and five-minute
+authorizedTTL still permit cached access for up to five minutes after revocation
+or outage. When `cacheAuthorizedRequests: false`, that TTL is inactive; this test
+explicitly opts into positive caching without changing production guidance.
+Immediate authorization revocation
 requires a different apiserver cache policy. Existing exec streams are a separate
 lifecycle/termination concern.

@@ -7,11 +7,11 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,10 +36,36 @@ func (s *SpokeHubAuthorizationSuite) nodeCommand(ctx context.Context, args ...st
 
 func (s *SpokeHubAuthorizationSuite) writeNodeFile(ctx context.Context, path string, data []byte) {
 	node := s.mcCtx.Config.SpokeAClusterName + "-control-plane"
-	cmd := exec.CommandContext(ctx, "docker", "exec", "-i", node, "tee", path)
-	cmd.Stdin = bytes.NewReader(data)
-	cmd.Stdout = io.Discard // Never emit webhook kubeconfig credentials.
-	s.Require().NoError(cmd.Run(), "write dedicated Kind spoke configuration")
+	output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .Mounts}}", node).Output()
+	s.Require().NoError(err)
+	var mounts []struct{ Type, Source, Destination string }
+	s.Require().NoError(json.Unmarshal(output, &mounts))
+	cwd, err := os.Getwd()
+	s.Require().NoError(err)
+	// go test runs this package from <checkout>/e2e/api.
+	root, err := filepath.EvalSymlinks(filepath.Join(cwd, "..", ".."))
+	s.Require().NoError(err)
+	for _, mount := range mounts {
+		if mount.Destination != path || mount.Type != "bind" {
+			continue
+		}
+		info, statErr := os.Lstat(mount.Source)
+		s.Require().NoError(statErr)
+		s.Require().True(info.Mode().IsRegular(), "only a regular Kind fixture file may be rewritten")
+		source, resolveErr := filepath.EvalSymlinks(mount.Source)
+		s.Require().NoError(resolveErr)
+		relative, relErr := filepath.Rel(root, source)
+		s.Require().NoError(relErr)
+		s.Require().False(relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)),
+			"Kind fixture must belong to this checkout, not another user's cluster")
+		writePath, pathErr := filepath.Rel(cwd, source)
+		s.Require().NoError(pathErr)
+		// Kind mounts these files read-only. Truncate the host fixture in place so
+		// the existing bind mount observes the update without replacing its inode.
+		s.Require().NoError(os.WriteFile(writePath, data, info.Mode().Perm()))
+		return
+	}
+	s.FailNow("no dedicated bind-mounted Kind fixture found", path)
 }
 
 func (s *SpokeHubAuthorizationSuite) restartSpokeAPIServer(ctx context.Context) {
