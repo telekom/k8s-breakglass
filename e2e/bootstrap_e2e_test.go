@@ -208,8 +208,8 @@ func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cli := setupClient(t)
-	path := os.Getenv("KEYCLOAK_RELATIVE_PATH")
-	if path == "" {
+	path, configured := os.LookupEnv("KEYCLOAK_RELATIVE_PATH")
+	if !configured {
 		path = "/auth"
 	}
 	var configs corev1.ConfigMapList
