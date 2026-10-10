@@ -61,12 +61,15 @@ jobs:
 
       - name: Install gosec
         run: |
-          # The pinned module version is intentionally unchanged. Bounded
-          # retries tolerate transient proxy/HTTP2 failures, while the final
-          # attempt still fails closed and never changes versions.
+          # Pin a Go 1.27-compatible export-data reader until gosec includes it.
+          mkdir -p .gosec-build
+          cd .gosec-build
+          go mod init breakglass.local/gosec-build
+          # Bounded retries tolerate transient proxy failures and fail closed.
           install_status=1
           for attempt in 1 2 3; do
-            if go install github.com/securego/gosec/v2/cmd/gosec@v2.29.0; then
+            if go get github.com/securego/gosec/v2/cmd/gosec@v2.29.0 golang.org/x/tools@v0.50.0 &&
+               go install github.com/securego/gosec/v2/cmd/gosec; then
               install_status=0
               break
             fi
