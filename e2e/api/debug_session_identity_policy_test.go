@@ -96,8 +96,9 @@ spec:
           seccompProfile:
             type: RuntimeDefault
 `,
-			Constraints:               &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "20m", DefaultDuration: "10m", RetainFor: "10s"},
-			AuxiliaryResourceDefaults: map[string]bool{"uid-proof": true},
+			Constraints:                         &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "20m", DefaultDuration: "10m", RetainFor: "10s"},
+			AuxiliaryResourceDefaults:           map[string]bool{"uid-proof": true},
+			RequiredAuxiliaryResourceCategories: []string{"egress"},
 			AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{
 				Name:     "uid-proof",
 				Category: "uid-proof",
@@ -132,6 +133,19 @@ spec:
             drop: ["ALL"]
           seccompProfile:
             type: RuntimeDefault
+`,
+			}, {
+				Name: "debug-session-egress", Category: "egress",
+				TemplateString: `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .session.name }}-egress
+spec:
+  podSelector:
+    matchLabels:
+      identity-session: {{ .session.name | yamlQuote }}
+  policyTypes: [Egress]
+  egress: []
 `,
 			}},
 		},
@@ -267,6 +281,19 @@ spec:
 	require.Contains(t, actualPod.Spec.Tolerations, corev1.Toleration{
 		Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
 	}, "actual non-BestEffort Deployment must exercise native QoS admission")
+	egress, err := admin.NetworkingV1().NetworkPolicies("breakglass-debug").Get(ctx, session.Name+"-egress", metav1.GetOptions{})
+	require.NoError(t, err)
+	require.Equal(t, string(session.UID), egress.Annotations["breakglass.t-caas.telekom.com/source-session-uid"])
+	require.NotEmpty(t, egress.UID)
+	trackedEgress := false
+	for _, status := range active.Status.AuxiliaryResourceStatuses {
+		if status.Name == "debug-session-egress" {
+			require.Equal(t, string(egress.UID), status.UID)
+			require.NotEmpty(t, status.CreateOperationID)
+			trackedEgress = true
+		}
+	}
+	require.True(t, trackedEgress, "required native NetworkPolicy must retain its immutable creation identity")
 	require.Eventually(t, func() bool {
 		proofs, err := admin.CoreV1().Pods("breakglass-debug").List(ctx, metav1.ListOptions{LabelSelector: "e2e-session-proof=" + session.Name})
 		if err != nil || len(proofs.Items) != 1 || proofs.Items[0].Status.Phase != corev1.PodSucceeded {
@@ -509,6 +536,10 @@ func waitForNoDebugResources(t *testing.T, ctx context.Context, kube kubernetes.
 			}
 			secrets, err := kube.CoreV1().Secrets("breakglass-debug").List(ctx, opts)
 			if err != nil || len(secrets.Items) != 0 {
+				return false
+			}
+			policies, err := kube.NetworkingV1().NetworkPolicies("breakglass-debug").List(ctx, opts)
+			if err != nil || len(policies.Items) != 0 {
 				return false
 			}
 		}
