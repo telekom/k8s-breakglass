@@ -75,10 +75,10 @@ describe("BreakglassCard request reason validation", () => {
       global: { stubs: SCALE_STUBS },
     });
     await wrapper.find('[data-testid="request-access-button"]').trigger("click");
-    const ticketSystemID = "arbitrary <reference>\nü";
-    wrapper
-      .get('[data-testid="ticket-system-id-input"]')
-      .element.dispatchEvent(new CustomEvent("scale-change", { bubbles: true, detail: { value: ticketSystemID } }));
+    const ticketSystemID = "arbitrary <reference> ü";
+    const input = wrapper.get('[data-testid="ticket-system-id-input"]').element as HTMLInputElement;
+    input.value = ticketSystemID;
+    input.dispatchEvent(new CustomEvent("scale-change", { bubbles: true, detail: { value: ticketSystemID } }));
     await nextTick();
     await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
     const requests = wrapper.emitted("request");
