@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v7",
+  "contractVersion": "node-maintenance.integration/v8",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -64,6 +64,7 @@
       "target": "node-a",
       "interface": "lo",
       "confirmation": "NODE-RECOVERY-PREFLIGHT",
+      "duplicateOptionsRejectedBeforeExecution": ["--target-node", "--interface", "--evidence-dir", "--confirm"],
       "expectedExit": 0,
       "requiredEvidence": ["interface.txt", "addresses.txt", "routes.txt", "neighbors.txt", "ethtool.txt", "resolver.txt", "kernel.txt", "metadata", "events.jsonl"]
     },

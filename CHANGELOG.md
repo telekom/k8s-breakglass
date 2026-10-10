@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject duplicate node-recovery preflight options before any probe, evidence
+  write or operation lock, matching network repair and kexec input validation.
+  Repeated identical or empty target/interface/destination/confirmation values
+  no longer silently override an earlier value. Kexec remains validation-only.
+
 - Restore DebugSession discovery/creation from authenticated identity groups and
   template/binding allowlists, without requiring an active BreakglassSession.
   This fixes the provider-aware grant prerequisite introduced by PR #1346
