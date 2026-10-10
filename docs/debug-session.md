@@ -2003,6 +2003,12 @@ spec:
 
 ### Cleanup
 
+Concurrent updates to an existing, session-owned auxiliary resource can cause a
+server-side apply conflict during activation. The controller retries from the
+persisted creation intent rather than failing or bypassing the auxiliary resource.
+Each reconciliation repeats approval, expiry, target and resource identity
+checks; foreign session markers, operation IDs and replacement UIDs remain denied.
+
 1. **Monitor expired sessions**: Sessions clean up automatically
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
