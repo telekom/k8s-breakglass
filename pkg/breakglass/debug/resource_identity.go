@@ -65,7 +65,7 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 	if live.GetUID() != uid {
 		return nil
 	}
-	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete tracked resource with UID %s: %w", uid, err)
 	}
 	// An accepted DELETE may leave the original instance pending finalizers.

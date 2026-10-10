@@ -34,6 +34,32 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
+func TestDeleteTrackedJobCascadesWithUIDPrecondition(t *testing.T) {
+	job := &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "auxiliary-proof", Namespace: "debug", UID: types.UID("original-job"),
+		},
+	}
+	deleted := false
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, cli client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			options := &client.DeleteOptions{}
+			for _, option := range opts {
+				option.ApplyToDelete(options)
+			}
+			require.NotNil(t, options.Preconditions)
+			require.Equal(t, job.UID, *options.Preconditions.UID)
+			require.NotNil(t, options.PropagationPolicy)
+			require.Equal(t, metav1.DeletePropagationBackground, *options.PropagationPolicy)
+			deleted = true
+			return cli.Delete(ctx, obj, opts...)
+		},
+	}).Build()
+	require.NoError(t, deleteTrackedResource(context.Background(), target, nil, job))
+	require.True(t, deleted)
+}
+
 func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 	for _, tc := range []struct {
 		name, recorded, live, recovery string
