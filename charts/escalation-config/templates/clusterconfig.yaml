@@ -1,10 +1,11 @@
+{{- $metadata := .Values.clusterConfig | default dict }}
 apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: ClusterConfig
 metadata:
   labels:
     {{- $defaultLabels := include "escalation-config.labels" $ | fromYaml }}
-    {{- toYaml (mergeOverwrite $defaultLabels .Values.clusterConfig.labels) | nindent 4 }}
-  {{- with .Values.clusterConfig.annotations }}
+    {{- toYaml (mergeOverwrite $defaultLabels ($metadata.labels | default dict)) | nindent 4 }}
+  {{- with $metadata.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

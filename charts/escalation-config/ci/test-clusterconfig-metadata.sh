@@ -5,7 +5,7 @@ set -euo pipefail
 
 ruby -rjson -ryaml - <<'RUBY'
 chart = "charts/escalation-config"
-[{}, {"labels" => {"app.kubernetes.io/name" => "custom-config",
+[nil, {}, {"labels" => {"app.kubernetes.io/name" => "custom-config",
                   "breakglass.t-caas.telekom.com/debug-sessions-enabled" => "false",
                   "breakglass.t-caas.telekom.com/platform-diagnostics" => "true"},
       "annotations" => {"example.com/owner" => "platform"}}].each do |metadata|
@@ -20,10 +20,10 @@ chart = "charts/escalation-config"
   abort "ClusterConfig missing" unless config
   labels = config.fetch("metadata").fetch("labels")
   abort "default chart label missing" unless labels.key?("helm.sh/chart")
-  metadata.fetch("labels", {}).each do |key, value|
+  (metadata || {}).fetch("labels", {}).each do |key, value|
     abort "label #{key} missing or changed" unless labels[key] == value
   end
-  unless metadata.empty?
+  if metadata && !metadata.empty?
     abort "annotations changed" unless config["metadata"]["annotations"] == metadata["annotations"]
     documents.reject { |doc| doc["kind"] == "ClusterConfig" }.each do |doc|
       abort "ClusterConfig label leaked to #{doc['kind']}" if doc.dig("metadata", "labels", "breakglass.t-caas.telekom.com/debug-sessions-enabled")
