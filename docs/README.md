@@ -83,6 +83,7 @@ Every utility is published as an immutable,
 - **[ClusterConfig](./cluster-config.md)** - Manage tenant cluster connections
 - **[BreakglassEscalation](./breakglass-escalation.md)** - Define privilege escalation policies
 - **[BreakglassSession](./breakglass-session.md)** - Active escalation sessions
+- **[Ticket system ID](./ticket-system-id.md)** - Optional, unverified session reference for approvers and audit events
 - **[Debug Session](./debug-session.md)** - Debug pod deployments and kubectl debug access
 - **[Terminal recording](./terminal-recording.md)** - Controller-owned terminal-byte transport, durable retention, and replay validation
 - **[DebugSession cleanup recovery](./debug-session-cleanup.md)** - UID-fenced cleanup and legacy recovery behavior

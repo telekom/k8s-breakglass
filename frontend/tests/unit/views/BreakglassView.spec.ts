@@ -196,9 +196,16 @@ describe("BreakglassView", () => {
           requestingGroups: second ? ["dev"] : ["ops"],
           escalationIdentities: second ? ["second-id", "Second admin"] : ["first-id", "First admin"],
         });
-        await cards[0]!.vm.$emit("request", "Incident repair", 3600);
+        const ticketSystemID = "external tracker / arbitrary reference";
+        await cards[0]!.vm.$emit("request", "Incident repair", 3600, undefined, ticketSystemID);
         await flushPromises();
-        expect(mockRequestBreakglass).toHaveBeenCalledWith(breakglass, "Incident repair", 3600, undefined);
+        expect(mockRequestBreakglass).toHaveBeenCalledWith(
+          breakglass,
+          "Incident repair",
+          3600,
+          undefined,
+          ticketSystemID,
+        );
       },
     );
 
