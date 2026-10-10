@@ -184,9 +184,8 @@ spec:
 	status, err = requesterAPI.ApproveDebugSession(ctx, t, session.Name, "self approval must be blocked")
 	require.Error(t, err)
 	require.Equal(t, http.StatusForbidden, status)
-	var clusterConfig breakglassv1alpha1.ClusterConfig
-	clusterKey := client.ObjectKey{Namespace: s.Namespace, Name: s.Cluster}
-	require.NoError(t, s.Client.Get(ctx, clusterKey, &clusterConfig))
+	clusterConfig := nativeTargetClusterConfig(t, ctx, s.Client, s.Cluster)
+	clusterKey := client.ObjectKeyFromObject(clusterConfig)
 	originalBlockSelfApproval := clusterConfig.Spec.BlockSelfApproval
 	setBlockSelfApproval := func(value bool) error {
 		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -332,9 +331,8 @@ func TestDebugSessionBindingTargetSelectionNativeWorkflow(t *testing.T) {
 	requester := s.TC.ClientForUser(helpers.TestUsers.DebugSessionRequester)
 	approver := s.TC.ClientForUser(helpers.TestUsers.DebugSessionApprover)
 	api := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, s.Ctx, helpers.TestUsers.DebugSessionRequester))
-	var cluster breakglassv1alpha1.ClusterConfig
-	key := client.ObjectKey{Namespace: s.Namespace, Name: s.Cluster}
-	require.NoError(t, s.Client.Get(s.Ctx, key, &cluster), "the real target ClusterConfig is required, not skipped")
+	cluster := nativeTargetClusterConfig(t, s.Ctx, s.Client, s.Cluster)
+	key := client.ObjectKeyFromObject(cluster)
 	originalLabels := maps.Clone(cluster.Labels)
 	updateLabels := func(labels map[string]string) error {
 		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
