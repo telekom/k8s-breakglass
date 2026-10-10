@@ -28,6 +28,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -555,6 +556,35 @@ func TestKubectlDebugHandler_ValidateEphemeralContainerRequestNamespaceSelectors
 
 		require.NoError(t, err)
 	})
+}
+
+func TestKubectlDebugHandler_ValidateEphemeralContainerRequestBindingNamespaceFilter(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true},
+				},
+			},
+			ResolvedBindingSpec: &apiextensionsv1.JSON{Raw: []byte(`{"kubectlDebugTargetNamespaces":{"ephemeralContainers":{"patterns":["tenant-*"]}}}`)},
+		},
+	}
+	targetClient := fake.NewClientBuilder().
+		WithScheme(newKubectlTestScheme()).
+		WithObjects(&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}}).
+		Build()
+	handler := newTestKubectlDebugHandler(fake.NewClientBuilder().WithScheme(newKubectlTestScheme()).Build(), &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	err := handler.ValidateEphemeralContainerRequest(
+		context.Background(), session, "production", "app", "busybox:latest", nil, false, false,
+	)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "namespace production is not allowed")
+	assert.Equal(t, http.StatusForbidden, kubectlDebugOperationHTTPStatus(err))
 }
 
 func TestKubectlDebugHandler_isNamespaceAllowed(t *testing.T) {
@@ -2874,6 +2904,23 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 			"app-pod",
 			"",
 			"test-user@example.com",
+		)
+
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "namespace production is not allowed for pod copy")
+	})
+
+	t.Run("binding source namespace allowlist is additive", func(t *testing.T) {
+		sessionWithBindingFilter := testSession.DeepCopy()
+		sessionWithBindingFilter.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{
+			Raw: []byte(`{"kubectlDebugTargetNamespaces":{"podCopy":{"patterns":["tenant-*"]}}}`),
+		}
+		hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sessionWithBindingFilter).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		handlerWithBindingFilter := newTestKubectlDebugHandler(hub, mockProvider)
+
+		_, err := handlerWithBindingFilter.CreatePodCopy(
+			context.Background(), sessionWithBindingFilter, "production", "app-pod", "", "test-user@example.com",
 		)
 
 		require.Error(t, err)

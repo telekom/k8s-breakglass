@@ -57,6 +57,9 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	// namespaceConstraints defines where debug pods can be deployed.
 	// Can only be MORE restrictive than the template's constraints.
 	NamespaceConstraints *NamespaceConstraintsApplyConfiguration `json:"namespaceConstraints,omitempty"`
+	// kubectlDebugTargetNamespaces restricts source namespaces for kubectl-debug
+	// operations. These allowlists are additive to the template's filters.
+	KubectlDebugTargetNamespaces *KubectlDebugTargetNamespaceConstraintsApplyConfiguration `json:"kubectlDebugTargetNamespaces,omitempty"`
 	// extraDeployVariables narrows the variables exposed by the referenced
 	// template for this binding. Entries must name variables defined by the
 	// template; options and validation can only become more restrictive.
@@ -214,6 +217,14 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithConstraints(value
 // If called multiple times, the NamespaceConstraints field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithNamespaceConstraints(value *NamespaceConstraintsApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.NamespaceConstraints = value
+	return b
+}
+
+// WithKubectlDebugTargetNamespaces sets the KubectlDebugTargetNamespaces field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubectlDebugTargetNamespaces field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithKubectlDebugTargetNamespaces(value *KubectlDebugTargetNamespaceConstraintsApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.KubectlDebugTargetNamespaces = value
 	return b
 }
 

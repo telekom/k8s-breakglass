@@ -210,6 +210,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.KubectlDebugOperationTargetPodApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugStatus"):
 		return &apiv1alpha1.KubectlDebugStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("KubectlDebugTargetNamespaceConstraints"):
+		return &apiv1alpha1.KubectlDebugTargetNamespaceConstraintsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("KubernetesSinkSpec"):
 		return &apiv1alpha1.KubernetesSinkSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("LogSinkSpec"):
