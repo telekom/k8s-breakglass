@@ -67,7 +67,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   must select a resource name. This is distinct from GroupSync credentials
   failures with an already-correct session owner.
 
-- Reject duplicate node-recovery preflight target, asset, confirmation and
+- Reject duplicate node-recovery preflight target, interface, confirmation and
   evidence options before inspection, including conflicting exact Node targets.
   Kexec execution remains unsupported; this hardens validation only.
 
