@@ -519,6 +519,7 @@ func TestAuditConfigQueue(t *testing.T) {
 		require.NotNil(t, fetched.Spec.Queue)
 		assert.Equal(t, 10000, fetched.Spec.Queue.Size)
 		assert.Equal(t, 4, fetched.Spec.Queue.Workers)
+		assert.False(t, fetched.Spec.Queue.DropOnFull, "typed false must survive API defaulting")
 
 		t.Logf("AuditConfig with queue (size=%d, workers=%d) created",
 			fetched.Spec.Queue.Size, fetched.Spec.Queue.Workers)

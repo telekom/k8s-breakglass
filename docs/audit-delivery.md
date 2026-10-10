@@ -24,9 +24,10 @@ their already-known UID. A previously captured UID is never replaced by a
 same-named resource's new UID. Missing/ambiguous resources do not produce an
 invented identity. Consumers should flag missing correlation when a resource was
 deleted before emission. A granted group is not an escalation name: the old
-misleading `escalationName: <grantedGroup>` is removed. `escalationUID` is supplied
-only when an exact escalation reference is known, not by guessing which matching
-escalation authorized the session.
+misleading group-based reference is not used for identity resolution.
+`escalationUID` and its canonical name come only from the session's controlling
+BreakglassEscalation owner reference, including after the escalation is deleted
+or recreated. A same-named current escalation is never substituted.
 
 ## Configuration
 
@@ -61,7 +62,11 @@ bounded by `retryTimeoutSeconds` (1–300). Backoff doubles to its configured ca
 The worker holds the batch while retrying, bounding memory to the configured
 queue plus worker batches. Network circuit-open errors are retried within the
 same bound. Shutdown interrupts backoff and shares a five-second queue-drain
-budget; failed shutdown writes are counted.
+budget; failed shutdown writes are counted. The manager ingress drain has its
+own five-second budget; unprocessed ingress events are counted with reason
+`shutdown`. Sink queues then drain concurrently with a five-second budget each.
+Blocking sink ingress runs in parallel, so an unavailable sink cannot prevent
+healthy sinks from receiving the same event.
 
 With `dropOnFull: false`, enqueue blocks until capacity, caller cancellation, or
 five seconds. Cancellation/timeout returns an error at the sink and counts the

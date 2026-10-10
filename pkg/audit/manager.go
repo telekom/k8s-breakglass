@@ -42,8 +42,10 @@ type Manager struct {
 	// closeMu guards asyncQueue sends against concurrent Close. Emit/EmitSync
 	// hold RLock while sending; Close holds Lock before closing the channel, so
 	// no send can race with the channel close.
-	closeMu   sync.RWMutex
-	stopStats chan struct{} // Signal to stop stats reporter
+	closeMu     sync.RWMutex
+	stopStats   chan struct{} // Signal to stop stats reporter
+	workerCtx   context.Context
+	stopWorkers context.CancelFunc
 
 	// Metrics for monitoring
 	queuedEvents               atomic.Int64
@@ -181,6 +183,7 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 		config:      cfg,
 		stopStats:   make(chan struct{}),
 	}
+	m.workerCtx, m.stopWorkers = context.WithCancel(context.Background())
 
 	// Check if sink supports batch writes
 	if batchSink, ok := sink.(BatchSink); ok {
@@ -265,6 +268,8 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		select {
 		case m.asyncQueue <- event:
 			m.queuedEvents.Add(1)
+		case <-m.workerCtx.Done():
+			m.recordShutdownDrops(1)
 		case <-writeCtx.Done():
 			m.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
@@ -281,7 +286,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
 		// queue_full / circuit_open) are not intercepted by this path.
 		if IsSensitiveEvent(event.Type) {
-			writeCtx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
+			writeCtx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
 			defer cancel()
 
 			writeErr := m.syncWriteDirect(writeCtx, event)
@@ -547,7 +552,11 @@ func (m *Manager) processQueue(workerID int) {
 	defer m.wg.Done()
 
 	for event := range m.asyncQueue {
-		ctx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
+		if m.workerCtx.Err() != nil {
+			m.recordShutdownDrops(1)
+			continue
+		}
+		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
 		if err := m.sink.Write(ctx, event); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit event",
@@ -577,7 +586,12 @@ func (m *Manager) processBatchQueue(workerID int) {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), m.config.WriteTimeout)
+		if m.workerCtx.Err() != nil {
+			m.recordShutdownDrops(len(batch))
+			batch = batch[:0]
+			return
+		}
+		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
 		if err := m.batchSink.WriteBatch(ctx, batch); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit batch",
@@ -612,6 +626,11 @@ func (m *Manager) processBatchQueue(workerID int) {
 	}
 }
 
+func (m *Manager) recordShutdownDrops(count int) {
+	m.droppedEvents.Add(int64(count))
+	metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "shutdown").Add(float64(count))
+}
+
 // Close shuts down the audit manager gracefully.
 func (m *Manager) Close() error {
 	if m.closed.Swap(true) {
@@ -620,6 +639,9 @@ func (m *Manager) Close() error {
 
 	// Stop stats reporter
 	close(m.stopStats)
+	drainTimer := time.AfterFunc(5*time.Second, m.stopWorkers)
+	defer drainTimer.Stop()
+	defer m.stopWorkers()
 
 	// Acquire the exclusive write lock before closing the channel so that any
 	// concurrent Emit holding the read lock finishes its send first.

@@ -311,7 +311,7 @@ type AuditQueueConfig struct {
 	// If false, enqueue blocks up to the caller deadline or five seconds.
 	// +kubebuilder:default=true
 	// +optional
-	DropOnFull bool `json:"dropOnFull,omitempty"`
+	DropOnFull bool `json:"dropOnFull"`
 
 	// RetryAttempts bounds attempts for a failed sink write, including the first.
 	// +kubebuilder:default=8

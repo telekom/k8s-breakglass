@@ -10,6 +10,8 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -107,10 +109,12 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 			}
 		}
 	}
-	if rc.EscalationName != "" && session != nil && rc.EscalationUID == "" {
-		escalation := &breakglassv1alpha1.BreakglassEscalation{}
-		if err := s.client.Get(ctx, client.ObjectKey{Namespace: session.GetNamespace(), Name: rc.EscalationName}, escalation); err == nil {
-			rc.EscalationUID = string(escalation.UID)
+	if session != nil && rc.EscalationUID == "" {
+		if owner := metav1.GetControllerOf(session); owner != nil &&
+			owner.Kind == "BreakglassEscalation" &&
+			schema.FromAPIVersionAndKind(owner.APIVersion, owner.Kind).Group == breakglassv1alpha1.GroupVersion.Group {
+			rc.EscalationName = owner.Name
+			rc.EscalationUID = string(owner.UID)
 		}
 	}
 	if event.Target.Cluster != "" && event.Target.ClusterUID == "" && session != nil {
