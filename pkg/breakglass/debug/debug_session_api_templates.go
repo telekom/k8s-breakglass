@@ -353,7 +353,7 @@ func (c *DebugSessionAPIController) templateRequester(ctx *gin.Context, apiCtx c
 	r := debugTemplateRequesterFromContext(ctx)
 	r.clusters, _ = readyDebugClusterConfigMap(configured)
 	r.configured = configured
-	if r.username == "" || len(aliasGroups) == 0 {
+	if (r.username == "" && r.email == "") || len(aliasGroups) == 0 {
 		return r, nil
 	}
 	clusters := r.clusters

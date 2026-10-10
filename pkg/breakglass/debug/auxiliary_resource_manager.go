@@ -849,6 +849,11 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 	if recordedUID != "" && string(existing.GetUID()) != recordedUID {
 		return fmt.Errorf("target resource %s/%s UID does not match recorded auxiliary resource", obj.GetNamespace(), obj.GetName())
 	}
+	if annotations := managedPodAnnotations(existing); annotations != nil {
+		if uid := annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
+			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID", obj.GetNamespace(), obj.GetName())
+		}
+	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)

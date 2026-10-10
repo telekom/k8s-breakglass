@@ -541,6 +541,36 @@ func (r discoveryPagedReader) List(_ context.Context, list client.ObjectList, op
 	return r.list(list, options)
 }
 
+func TestTemplateRequesterEmailOnlyGrantLookup(t *testing.T) {
+	calls := 0
+	controller := &DebugSessionAPIController{apiReader: discoveryPagedReader{list: func(list client.ObjectList, options client.ListOptions) error {
+		calls++
+		identity, found := options.FieldSelector.RequiresExactMatch("spec.user")
+		require.True(t, found)
+		require.Equal(t, "alice@example.test", identity)
+		list.(*breakglassv1alpha1.BreakglassSessionList).Items = []breakglassv1alpha1.BreakglassSession{{
+			Spec: breakglassv1alpha1.BreakglassSessionSpec{
+				Cluster: "tenant", User: identity, GrantedGroup: "debug-alias",
+				IdentityProviderName: "idp", IdentityProviderIssuer: "https://idp.example",
+			},
+			Status: breakglassv1alpha1.BreakglassSessionStatus{
+				State: breakglassv1alpha1.SessionStateApproved, ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+			},
+		}}
+		return nil
+	}}}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("email", "alice@example.test")
+	ctx.Set("identity_provider_name", "idp")
+	ctx.Set("issuer", "https://idp.example")
+	requester, err := controller.templateRequester(ctx, context.Background(), []breakglassv1alpha1.ClusterConfig{{
+		ObjectMeta: metav1.ObjectMeta{Name: "tenant"},
+	}}, []string{"debug-alias"})
+	require.NoError(t, err)
+	require.Equal(t, 1, calls)
+	require.Equal(t, []string{"debug-alias"}, requester.grantedClusters["tenant"])
+}
+
 func TestTemplateRequesterBoundedGrantHistory(t *testing.T) {
 	for _, fallback := range []bool{false, true} {
 		for _, overflow := range []bool{false, true} {
