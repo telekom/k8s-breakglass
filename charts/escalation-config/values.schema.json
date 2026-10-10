@@ -440,6 +440,51 @@
             },
             "type": "object"
           },
+          "kubectlDebugTargetNamespaces": {
+            "additionalProperties": false,
+            "description": "Binding-scoped source namespace allowlists for kubectl-debug operations, intersected with the template filters.",
+            "properties": {
+              "ephemeralContainers": {
+                "additionalProperties": false,
+                "properties": {
+                  "patterns": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "selectorTerms": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "podCopy": {
+                "additionalProperties": false,
+                "properties": {
+                  "patterns": {
+                    "items": {
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "selectorTerms": {
+                    "items": {
+                      "type": "object"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              }
+            },
+            "type": "object"
+          },
           "maxActiveSessionsPerUser": {
             "minimum": 1,
             "type": "integer"

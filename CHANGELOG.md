@@ -115,6 +115,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `DebugSessionClusterBinding.spec.kubectlDebugTargetNamespaces`
+  with `ephemeralContainers` and `podCopy` namespace filters. They are
+  intersected with the template's kubectl-debug filters and enforced against
+  the approved binding snapshot, so a shared template can be fenced to a
+  binding's own source namespaces. The escalation-config chart renders the
+  field from `debugSessionBindings[].kubectlDebugTargetNamespaces`.
 - Optional `BreakglassEscalation.spec.displayName` (maximum 253 characters)
   for human-readable UI and CLI labels, defaulting to `metadata.name`.
   The escalation-config chart preserves the original long name as the label

@@ -463,6 +463,16 @@ debugSessionBindings: []
   #     #     - "debug-*"
   #     #     - "breakglass-*"
   #   
+  #   # kubectl-debug source namespace allowlists (intersected with the template)
+  #   # kubectlDebugTargetNamespaces:
+  #   #   ephemeralContainers:
+  #   #     selectorTerms:
+  #   #       - matchLabels:
+  #   #           team: payments
+  #   #   podCopy:
+  #   #     patterns:
+  #   #       - "payments-*"
+  #
   #   # Impersonation - deploy debug pods as specific ServiceAccount
   #   # impersonation:
   #   #   serviceAccountRef:

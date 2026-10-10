@@ -188,6 +188,12 @@ spec:
     {{- end }}
   {{- end }}
 
+  {{- /* kubectl-debug source namespace allowlists */}}
+  {{- with $binding.kubectlDebugTargetNamespaces }}
+  kubectlDebugTargetNamespaces:
+{{ toYaml . | indent 4 }}
+  {{- end }}
+
   {{- /* Impersonation config */}}
   {{- if $binding.impersonation }}
   impersonation:

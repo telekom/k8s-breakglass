@@ -359,6 +359,8 @@ debugSessionBindings:
 | `constraints.idleTimeout` | Expire idle sessions after this duration | - |
 | `constraints.retainFor` | Retain terminal session evidence for this duration | - |
 | `namespaceConstraints` | Namespace deployment rules | - |
+| `kubectlDebugTargetNamespaces.ephemeralContainers` | Source namespace allowlist (`patterns`/`selectorTerms`) for kubectl-debug ephemeral containers, intersected with the template filter | - |
+| `kubectlDebugTargetNamespaces.podCopy` | Source namespace allowlist (`patterns`/`selectorTerms`) for kubectl-debug pod copies, intersected with the template filter | - |
 | `impersonation` | ServiceAccount impersonation config | - |
 | `requiredAuxiliaryResourceCategories` | Required auxiliary resources | - |
 | `auxiliaryResourceOverrides` | Enable/disable auxiliary resources | - |
