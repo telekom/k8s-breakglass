@@ -305,6 +305,48 @@ func TestValidateDebugSessionClusterBinding(t *testing.T) {
 			},
 			wantErrors: 0,
 		},
+		{
+			name: "valid kubectl-debug target namespace filters",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					TemplateRef: &TemplateReference{Name: "test-template"},
+					Clusters:    []string{"cluster-1"},
+					KubectlDebugTargetNamespaces: &KubectlDebugTargetNamespaceConstraints{
+						EphemeralContainers: &NamespaceFilter{Patterns: []string{"tenant-*"}},
+						PodCopy:             &NamespaceFilter{SelectorTerms: []NamespaceSelectorTerm{{MatchLabels: map[string]string{"tenant": "team-a"}}}},
+					},
+				},
+			},
+			wantErrors: 0,
+		},
+		{
+			name: "empty kubectl-debug target namespace filter",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					TemplateRef: &TemplateReference{Name: "test-template"},
+					Clusters:    []string{"cluster-1"},
+					KubectlDebugTargetNamespaces: &KubectlDebugTargetNamespaceConstraints{
+						PodCopy: &NamespaceFilter{},
+					},
+				},
+			},
+			wantErrors:  1,
+			errContains: "at least one of patterns or selectorTerms",
+		},
+		{
+			name: "invalid kubectl-debug target namespace glob",
+			binding: &DebugSessionClusterBinding{
+				Spec: DebugSessionClusterBindingSpec{
+					TemplateRef: &TemplateReference{Name: "test-template"},
+					Clusters:    []string{"cluster-1"},
+					KubectlDebugTargetNamespaces: &KubectlDebugTargetNamespaceConstraints{
+						PodCopy: &NamespaceFilter{Patterns: []string{"tenant-["}},
+					},
+				},
+			},
+			wantErrors:  1,
+			errContains: "invalid glob pattern",
+		},
 	}
 
 	for _, tt := range tests {
