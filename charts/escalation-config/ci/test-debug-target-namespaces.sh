@@ -35,6 +35,9 @@ assert "kubectlDebugTargetNamespaces" not in spec(render({}))
 
 for invalid in (
     {"kubectlDebugTargetNamespaces": {"unknown": {"patterns": ["x"]}}},
+    {"kubectlDebugTargetNamespaces": {"ephemeralContainers": {}}},
+    {"kubectlDebugTargetNamespaces": {"podCopy": {"patterns": []}}},
+    {"kubectlDebugTargetNamespaces": {"ephemeralContainers": {"selectorTerms": []}}},
     {"kubectlDebugTargetNamespaces": {"podCopy": {"patterns": [""]}}},
     {"kubectlDebugTargetNamespaces": {"podCopy": {"names": ["x"]}}},
     {"kubectlDebugTargetNamespaces": {"podCopy": {"selectorTerms": [{}]}}},

@@ -487,6 +487,10 @@
             "properties": {
               "ephemeralContainers": {
                 "additionalProperties": false,
+                "anyOf": [
+                  {"required": ["patterns"], "properties": {"patterns": {"minItems": 1}}},
+                  {"required": ["selectorTerms"], "properties": {"selectorTerms": {"minItems": 1}}}
+                ],
                 "properties": {
                   "patterns": {
                     "items": {
@@ -506,6 +510,10 @@
               },
               "podCopy": {
                 "additionalProperties": false,
+                "anyOf": [
+                  {"required": ["patterns"], "properties": {"patterns": {"minItems": 1}}},
+                  {"required": ["selectorTerms"], "properties": {"selectorTerms": {"minItems": 1}}}
+                ],
                 "properties": {
                   "patterns": {
                     "items": {
