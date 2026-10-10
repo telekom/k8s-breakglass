@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -32,6 +33,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/tools/events"
 )
+
+// ErrSerialization marks an event that cannot be delivered regardless of sink health.
+var ErrSerialization = errors.New("audit event serialization failed")
 
 // Sink defines the interface for audit event destinations.
 type Sink interface {
@@ -213,7 +217,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	body, err := json.Marshal(event)
 	if err != nil {
 		s.eventsFailed++
-		return fmt.Errorf("failed to marshal audit event: %w", err)
+		return fmt.Errorf("failed to marshal audit event: %w: %w", ErrSerialization, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
@@ -278,7 +282,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 	body, err := json.Marshal(batchPayload)
 	if err != nil {
 		s.eventsFailed += int64(len(events))
-		return fmt.Errorf("failed to marshal batch payload: %w", err)
+		return fmt.Errorf("failed to marshal batch payload: %w: %w", ErrSerialization, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.batchURL, bytes.NewReader(body))

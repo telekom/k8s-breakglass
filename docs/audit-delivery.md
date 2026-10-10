@@ -93,7 +93,9 @@ them but an acknowledgement was lost. Consumers must deduplicate by event ID.
 The event ID is stable across retries. Multiple workers do not establish total
 lifecycle ordering; use event timestamps and immutable session identity.
 Serialization failure rejects the entire batch before any network write instead
-of silently skipping records. Fire-and-forget completion failures are explicitly
+of silently skipping records. Such permanent failures are not retried and do
+not alter either circuit breaker's failure or success state; dropped events
+are counted with reason `serialization`. Fire-and-forget completion failures are explicitly
 logged and counted with the `async_write` reason; they cannot be retried by the
 external queue because submission already returned.
 

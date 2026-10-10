@@ -350,7 +350,7 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	if err != nil {
 		metrics.AuditSinkErrors.WithLabelValues(s.name, "serialization").Inc()
 		s.messagesFailed.Add(1)
-		return fmt.Errorf("failed to marshal audit event: %w", err)
+		return fmt.Errorf("failed to marshal audit event: %w: %w", ErrSerialization, err)
 	}
 
 	// Use event ID as the key for partitioning
@@ -555,7 +555,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 		if err != nil {
 			metrics.AuditSinkErrors.WithLabelValues(s.name, "serialization").Inc()
 			s.messagesFailed.Add(int64(len(events)))
-			return fmt.Errorf("marshal audit batch event %q: %w", event.ID, err)
+			return fmt.Errorf("marshal audit batch event %q: %w: %w", event.ID, ErrSerialization, err)
 		}
 
 		headers := []kafka.Header{

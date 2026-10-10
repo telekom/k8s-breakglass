@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"testing"
 	"time"
@@ -159,9 +161,47 @@ func TestKafkaBatchSerializationFailureIsNotSuccessfulDelivery(t *testing.T) {
 		{ID: "valid"}, {ID: "invalid", Details: map[string]interface{}{"unsupported": make(chan int)}},
 	})
 	require.ErrorContains(t, err, "marshal audit batch")
+	require.ErrorIs(t, err, ErrSerialization)
 	written, failed, _ := sink.MessageStats()
 	require.Zero(t, written)
 	require.Equal(t, int64(2), failed)
+}
+
+func TestQueuedSerializationFailureDoesNotRetryOrTripCircuitBreakers(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	kafkaSink, err := NewKafkaSink(KafkaSinkConfig{Name: "serialization-kafka", Brokers: []string{"localhost:1"}, Topic: "test"}, zap.NewNop())
+	require.NoError(t, err)
+	webhook := NewWebhookSink(WebhookSinkConfig{Name: "serialization-webhook", URL: server.URL}, zap.NewNop())
+	for _, sink := range []Sink{kafkaSink, webhook} {
+		t.Run(sink.Name(), func(t *testing.T) {
+			cbCfg := DefaultCircuitBreakerConfig()
+			cbCfg.FailureThreshold = 1
+			cb := NewCircuitBreakerSink(sink, cbCfg, zap.NewNop())
+			cfg := retryTestConfig()
+			cfg.CircuitBreakerThreshold = 1
+			qs := NewQueuedSink(cb, cfg, zap.NewNop())
+			t.Cleanup(func() { require.NoError(t, qs.Close()) })
+			before := testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry"))
+			require.NoError(t, qs.WriteBatch(context.Background(), []*Event{
+				{ID: "valid"}, {ID: "invalid", Details: map[string]interface{}{"unsupported": make(chan int)}},
+			}))
+			require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 2 }, time.Second, time.Millisecond)
+			require.Equal(t, int64(2), qs.Health().FailedEvents, "serialization is attempted only once")
+			require.False(t, qs.circuitOpen.Load())
+			require.Zero(t, qs.consecutiveFails.Load())
+			require.Equal(t, CircuitClosed, cb.Stats().State)
+			require.Zero(t, cb.Stats().TotalFailures)
+			require.Zero(t, cb.Stats().ConsecutiveFails)
+			require.Equal(t, before, testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry")))
+			if sink == webhook {
+				require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "next"}, {ID: "healthy"}}))
+				require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, time.Millisecond)
+			}
+		})
+	}
 }
 
 func TestKafkaAsyncFailuresAreObservable(t *testing.T) {

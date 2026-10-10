@@ -422,6 +422,12 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 		qs.lastError = err.Error()
 		qs.lastErrorTime = time.Now()
 		qs.mu.Unlock()
+		if errors.Is(err, ErrSerialization) {
+			qs.recordDrop(count, "serialization")
+			qs.logger.Error("audit event serialization failed",
+				zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+			return
+		}
 		if attempt+1 == qs.config.RetryAttempts || qs.closed.Load() || retryCtx.Err() != nil {
 			break
 		}
