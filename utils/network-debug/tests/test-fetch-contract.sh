@@ -40,4 +40,8 @@ grep -F "ARG NETSHOOT_ALPINE_VERSION=${base_alpine_version}" "${dockerfile}" >/d
 	exit 1
 }
 
+version="$(awk -F= '$1 == "X_NET_VERSION" { print $2 }' "${versions}")"
+[[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+grep -Fx "ARG X_NET_VERSION=${version}" "${dockerfile}" >/dev/null
+grep -F "go -C /src/pwru get \"golang.org/x/net@\${X_NET_VERSION}\"" "${dockerfile}" >/dev/null
 printf '%s\n' 'network-debug immutable source contract passed'

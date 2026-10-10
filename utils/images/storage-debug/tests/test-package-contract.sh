@@ -18,4 +18,11 @@ if grep -F -- '--repository https://dl-cdn.alpinelinux.org/alpine/v3.24/' "${doc
 	exit 1
 fi
 
+for module in NET CRYPTO TEXT; do
+	version="$(awk -F= -v key="X_${module}_VERSION" '$1 == key { print $2 }' "${root}/versions.env")"
+	[[ "${version}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+	grep -Fx "ARG X_${module}_VERSION=${version}" "${dockerfile}" >/dev/null
+	lower="$(printf '%s' "${module}" | tr '[:upper:]' '[:lower:]')"
+	grep -F "golang.org/x/${lower}@\${X_${module}_VERSION}" "${dockerfile}" >/dev/null
+done
 printf '%s\n' 'storage-debug exact package contract passed'

@@ -977,8 +977,8 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			reqLog.Warnw("Binding is not active",
 				"bindingRef", req.BindingRef,
 				"disabled", resolvedBinding.Spec.Disabled,
-				"effectiveFrom", resolvedBinding.Spec.EffectiveFrom,
-				"expiresAt", resolvedBinding.Spec.ExpiresAt,
+				"effectiveFrom", fmt.Sprint(resolvedBinding.Spec.EffectiveFrom),
+				"expiresAt", fmt.Sprint(resolvedBinding.Spec.ExpiresAt),
 			)
 			respondBindingForbidden("binding is not active (disabled, expired, or not yet effective)", *resolvedBinding)
 			return
