@@ -438,6 +438,10 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 		}
 	}
 	fails := qs.consecutiveFails.Add(1)
+	if qs.closed.Load() {
+		qs.recordDrop(count, "shutdown")
+		return
+	}
 	if int(fails) >= qs.config.CircuitBreakerThreshold {
 		qs.circuitOpen.Store(true)
 		qs.lastResetAttempt.Store(time.Now().Unix())

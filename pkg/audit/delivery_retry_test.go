@@ -180,6 +180,8 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	sink.writer.Completion([]kafka.Message{{Key: []byte("recovered")}}, nil)
 	require.True(t, sink.IsConnected())
 	require.Equal(t, float64(1), testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
+	written, _, _ := sink.MessageStats()
+	require.Equal(t, int64(1), written, "only successful completion counts delivery")
 }
 
 func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {

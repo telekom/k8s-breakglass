@@ -142,3 +142,16 @@ func TestSessionContextCapturesOwnerWithoutResourceLookup(t *testing.T) {
 	require.Equal(t, "debug-uid", rc.DebugSessionUID)
 	require.Equal(t, "debug", rc.DebugSessionName)
 }
+
+func TestSessionIdentityUsesExplicitClusterConfigReference(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "test", UID: "source"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", ClusterConfigRef: "actual-config"}}
+	cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "test", UID: "wrong"}}
+	referenced := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "actual-config", Namespace: "test", UID: "correct"}}
+	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, cluster, referenced).Build(), nil, zap.NewNop(), "test")
+	event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test", UID: "source"}}
+	svc.enrichResourceIdentity(context.Background(), event)
+	require.Equal(t, "correct", event.Target.ClusterUID)
+}

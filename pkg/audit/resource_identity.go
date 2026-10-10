@@ -138,8 +138,12 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 		captureEscalationOwner(session, rc)
 	}
 	if event.Target.Cluster != "" && event.Target.ClusterUID == "" && session != nil {
+		clusterName := event.Target.Cluster
+		if obj, ok := session.(*breakglassv1alpha1.BreakglassSession); ok && obj.Spec.ClusterConfigRef != "" {
+			clusterName = obj.Spec.ClusterConfigRef
+		}
 		cluster := &breakglassv1alpha1.ClusterConfig{}
-		if err := s.client.Get(ctx, client.ObjectKey{Namespace: session.GetNamespace(), Name: event.Target.Cluster}, cluster); err == nil {
+		if err := s.client.Get(ctx, client.ObjectKey{Namespace: session.GetNamespace(), Name: clusterName}, cluster); err == nil {
 			event.Target.ClusterUID = string(cluster.UID)
 		}
 	}

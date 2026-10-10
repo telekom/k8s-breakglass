@@ -241,6 +241,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	if cfg.Async {
 		writer.Completion = func(messages []kafka.Message, err error) {
 			if err == nil {
+				sink.messagesWritten.Add(int64(len(messages)))
 				sink.connected.Store(true)
 				metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
 				return
@@ -431,7 +432,9 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	// Success path
 	duration := time.Since(start)
 	metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
-	s.messagesWritten.Add(1)
+	if !s.writer.Async {
+		s.messagesWritten.Add(1)
+	}
 
 	// Mark as connected if we weren't before
 	if !s.writer.Async && !s.connected.Swap(true) {
@@ -600,7 +603,9 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 	duration := time.Since(start)
 	metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
 	metrics.AuditKafkaBatchesSent.WithLabelValues(s.name).Inc()
-	s.messagesWritten.Add(int64(len(messages)))
+	if !s.writer.Async {
+		s.messagesWritten.Add(int64(len(messages)))
+	}
 	s.batchesSent.Add(1)
 
 	// Mark as connected if we weren't before
