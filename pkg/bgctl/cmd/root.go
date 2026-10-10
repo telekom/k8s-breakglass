@@ -48,6 +48,7 @@ func NewRootCommand(cfg Config) *cobra.Command {
 		Use:   "bgctl",
 		Short: "Breakglass CLI",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			cmd.SetContext(context.WithValue(cmd.Context(), runtimeKey{}, rt))
 			if rt.writer == nil {
 				rt.writer = os.Stdout
 			}
