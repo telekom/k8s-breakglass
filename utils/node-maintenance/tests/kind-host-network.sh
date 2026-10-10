@@ -147,12 +147,17 @@ run_pod() {
 	approved_action=$4
 	caps=$5
 	expected_exit=$6
+	duplicate_option=${7:-}
 	printf 'Applying proof pod: %s\n' "${pod}"
 	approved_request="target_node=${node}&interface=lo&action=${approved_action}&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=${confirmation}"
 	if [[ "${command_name}" == network-repair ]]; then
 		helper_args="network-repair --target-node ${node} --interface lo --action ${approved_action} --evidence-dir /evidence --confirm ${confirmation}"
 	else
 		helper_args="node-recovery --target-node ${node} --interface lo --evidence-dir /evidence --confirm ${confirmation}"
+	fi
+	if [[ -n "${duplicate_option}" ]]; then
+		case "${duplicate_option}" in --target-node|--interface|--evidence-dir|--confirm) ;; *) fail 'unsupported duplicate preflight option';; esac
+		helper_args+=" ${duplicate_option} ''"
 	fi
 	kubectl apply -n "${namespace}" -f - >/dev/null <<YAML || fail "could not create ${pod}"
 apiVersion: v1
@@ -222,6 +227,22 @@ YAML
 	kubectl exec -n "${namespace}" "${pod}" -- test -s /evidence/helper.exit >/dev/null || { kubectl logs -n "${namespace}" "${pod}" >&2 || true; fail "${pod} did not complete its helper"; }
 	printf 'Helper completed: %s\n' "${pod}"
 	logs="$(kubectl logs -n "${namespace}" "${pod}")"
+	actual_status="$(kubectl exec -n "${namespace}" "${pod}" -- cat /evidence/helper.exit)"
+	if [[ -n "${duplicate_option}" ]]; then
+		[[ "${actual_status}" == 2 ]] || fail "${pod} returned ${actual_status}, expected duplicate-input denial"
+		grep -Fx -- "node-maintenance: ${duplicate_option} may be supplied only once" <<<"${logs}" >/dev/null \
+			|| fail "${pod} did not reject its duplicate option"
+		# shellcheck disable=SC2016 # the expression is evaluated inside the pod
+		kubectl exec -n "${namespace}" "${pod}" -- sh -c \
+			'[ "$(find /evidence -mindepth 1 -maxdepth 1 | wc -l)" -eq 1 ] && [ -f /evidence/helper.exit ]' \
+			|| fail "${pod} performed evidence or lock writes before rejecting the duplicate"
+		kubernetes_delete_uid "${KUBECONFIG_FILE}" \
+			"/api/v1/namespaces/${namespace}/pods/${pod}" "${pod_uid}" >/dev/null || fail "${pod} UID-fenced cleanup failed"
+		kubectl --kubeconfig "${KUBECONFIG_FILE}" wait --for=delete \
+			pod/"${pod}" --namespace "${namespace}" --timeout=60s >/dev/null || fail "${pod} deletion did not complete"
+		printf 'Duplicate preflight rejection and cleanup passed: %s\n' "${pod}"
+		return
+	fi
 	printf '%s\n' "${logs}" | grep -E '/evidence/[A-Za-z0-9_.-]+' >/dev/null || fail "${pod} did not publish an evidence path"
 	# Discover and validate one bundle once; all later assertions use this exact
 	# directory so a decoy bundle cannot satisfy a separate glob.
@@ -237,7 +258,6 @@ YAML
 		[ "$bundle_count" -eq 1 ] && [ -s "$bundle_dir/metadata" ] && [ -s "$bundle_dir/events.jsonl" ] || exit 1
 		printf "%s" "$bundle_dir"
 	')" || fail "${pod} did not retain exactly one complete evidence bundle"
-	actual_status="$(kubectl exec -n "${namespace}" "${pod}" -- cat /evidence/helper.exit)"
 	if [[ "${expected_exit}" == 0 ]]; then
 		[[ "${actual_status}" == 0 ]] || fail "${pod} returned ${actual_status}, expected exit 0"
 	elif [[ "${expected_exit}" != any ]]; then
@@ -276,6 +296,9 @@ YAML
 
 # Read-only recovery proves exact target/node placement with no capabilities.
 run_pod recovery node-recovery NODE-RECOVERY-PREFLIGHT read-only '[]' 0
+for option in --target-node --interface --evidence-dir --confirm; do
+	run_pod "duplicate-${option#--}" node-recovery NODE-RECOVERY-PREFLIGHT read-only '[]' 2 "${option}"
+done
 # A real allowlisted repair helper runs in host networking with only NET_ADMIN;
 # loopback has no auto-negotiation, so its expected failure still must emit
 # before/after evidence and never become an unbounded or privileged operation.

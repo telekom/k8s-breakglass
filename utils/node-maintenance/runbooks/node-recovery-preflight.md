@@ -28,6 +28,10 @@ Use this read-only procedure before changing a node network interface.
      --confirm NODE-RECOVERY-PREFLIGHT
    ```
 
+   Supply each option exactly once. Duplicate options, including identical or
+   empty values, are rejected before probes, evidence writes, or lock acquisition;
+   the helper never chooses the first or last of conflicting targets.
+
 4. Preserve the printed evidence bundle and ticket it before proceeding. A
    missing interface is a hard stop; an unsupported probe is recorded.
 5. Review `interface.txt`, `addresses.txt`, `routes.txt`, `neighbors.txt`,

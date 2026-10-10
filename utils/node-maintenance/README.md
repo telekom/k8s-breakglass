@@ -43,6 +43,9 @@ Every invocation requires `BREAKGLASS_NODE_NAME`, `BREAKGLASS_OPERATION_ID`,
 and `BREAKGLASS_RECORDING_ID` from the controller-owned immutable workload.
 The requested node must exactly equal `BREAKGLASS_NODE_NAME`, which must come
 from Downward API `spec.nodeName`; hostname discovery is not trusted.
+All three helpers reject duplicate options, including repeated identical or
+empty values, before execution; node-recovery preflight does not silently
+replace an earlier target, interface, evidence directory, or confirmation.
 
 Every mutating repair and kexec validation additionally requires
 `BREAKGLASS_APPROVAL_ID` and an exact `BREAKGLASS_APPROVED_ACTION` match.

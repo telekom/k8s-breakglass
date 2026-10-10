@@ -17,6 +17,7 @@ Usage:
 
 This command is read-only. It records link, address, route, neighbor, NIC,
 resolver, and kernel evidence for the explicitly named node and interface.
+Each option may be supplied only once, including when its value is empty.
 EOF
 }
 
@@ -24,12 +25,16 @@ target_node=
 interface=
 evidence_dir=
 confirmation=
+target_node_seen=false
+interface_seen=false
+evidence_dir_seen=false
+confirmation_seen=false
 while [ "$#" -gt 0 ]; do
 	case "$1" in
-		--target-node) [ "$#" -ge 2 ] || die "--target-node needs a value"; target_node=$2; shift 2 ;;
-		--interface) [ "$#" -ge 2 ] || die "--interface needs a value"; interface=$2; shift 2 ;;
-		--evidence-dir) [ "$#" -ge 2 ] || die "--evidence-dir needs a value"; evidence_dir=$2; shift 2 ;;
-		--confirm) [ "$#" -ge 2 ] || die "--confirm needs a value"; confirmation=$2; shift 2 ;;
+		--target-node) [ "$target_node_seen" = false ] || die "--target-node may be supplied only once"; [ "$#" -ge 2 ] || die "--target-node needs a value"; target_node_seen=true; target_node=$2; shift 2 ;;
+		--interface) [ "$interface_seen" = false ] || die "--interface may be supplied only once"; [ "$#" -ge 2 ] || die "--interface needs a value"; interface_seen=true; interface=$2; shift 2 ;;
+		--evidence-dir) [ "$evidence_dir_seen" = false ] || die "--evidence-dir may be supplied only once"; [ "$#" -ge 2 ] || die "--evidence-dir needs a value"; evidence_dir_seen=true; evidence_dir=$2; shift 2 ;;
+		--confirm) [ "$confirmation_seen" = false ] || die "--confirm may be supplied only once"; [ "$#" -ge 2 ] || die "--confirm needs a value"; confirmation_seen=true; confirmation=$2; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
 		*) die "unsupported option '$1'" ;;
 	esac
