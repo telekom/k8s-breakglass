@@ -18,10 +18,12 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"go.uber.org/zap"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -32,6 +34,70 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
+
+func TestUnstructuredWorkloadTrustedPodSessionUID(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "trusted-session"}}
+	for _, kind := range []string{"Deployment", "DaemonSet", "Job"} {
+		t.Run(kind, func(t *testing.T) {
+			apiVersion := "apps/v1"
+			if kind == "Job" {
+				apiVersion = "batch/v1"
+			}
+			legacy := &unstructured.Unstructured{Object: map[string]interface{}{
+				"apiVersion": apiVersion, "kind": kind,
+				"metadata": map[string]interface{}{"name": "workload", "namespace": "debug"},
+				"spec": map[string]interface{}{"template": map[string]interface{}{
+					"metadata": map[string]interface{}{"labels": map[string]interface{}{"app": "debug"}},
+					"spec":     map[string]interface{}{"containers": []interface{}{map[string]interface{}{"name": "debug", "image": "debug:v1"}}},
+				}},
+			}}
+			oldID, err := deterministicCreateOperationID(legacy, session)
+			require.NoError(t, err)
+			desired := legacy.DeepCopy()
+			require.NoError(t, unstructured.SetNestedStringMap(desired.Object, map[string]string{sourceSessionUIDAnnotation: "spoofed"}, "spec", "template", "metadata", "annotations"))
+			newID, err := stampCreateOperation(desired, session)
+			require.NoError(t, err)
+			require.Equal(t, oldID, newID)
+			require.Equal(t, string(session.UID), managedPodAnnotations(desired)[sourceSessionUIDAnnotation])
+			legacy.SetAnnotations(map[string]string{sourceSessionUIDAnnotation: string(session.UID), createOperationIDAnnotation: oldID})
+			matches, err := recoveredCreateContentMatches(desired, legacy)
+			require.NoError(t, err)
+			require.True(t, matches, "legacy unstamped nested metadata must retain identical intent")
+			legacy.SetUID("original-workload")
+			target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+			require.NoError(t, createOrRecoverTargetObject(context.Background(), target, desired.DeepCopy(), session))
+			require.NoError(t, unstructured.SetNestedStringMap(legacy.Object, map[string]string{sourceSessionUIDAnnotation: "foreign"}, "spec", "template", "metadata", "annotations"))
+			target = fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+			require.ErrorContains(t, createOrRecoverTargetObject(context.Background(), target, desired.DeepCopy(), session), "different PodTemplate session UID")
+		})
+	}
+}
+
+func TestDeleteTrackedJobCascadesWithUIDPrecondition(t *testing.T) {
+	job := &batchv1.Job{
+		TypeMeta: metav1.TypeMeta{APIVersion: "batch/v1", Kind: "Job"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "auxiliary-proof", Namespace: "debug", UID: types.UID("original-job"),
+		},
+	}
+	deleted := false
+	target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(job).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, cli client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			options := &client.DeleteOptions{}
+			for _, option := range opts {
+				option.ApplyToDelete(options)
+			}
+			require.NotNil(t, options.Preconditions)
+			require.Equal(t, job.UID, *options.Preconditions.UID)
+			require.NotNil(t, options.PropagationPolicy)
+			require.Equal(t, metav1.DeletePropagationBackground, *options.PropagationPolicy)
+			deleted = true
+			return cli.Delete(ctx, obj, opts...)
+		},
+	}).Build()
+	require.NoError(t, deleteTrackedResource(context.Background(), target, nil, job))
+	require.True(t, deleted)
+}
 
 func TestDeleteTrackedResourceIdentityAndLegacyRecovery(t *testing.T) {
 	for _, tc := range []struct {
@@ -696,6 +762,53 @@ func TestCreateRecoveryAllowsServerDefaultsAndStatus(t *testing.T) {
 	}
 }
 
+func TestLegacyWorkloadRecoveryAfterPodSessionUIDStamping(t *testing.T) {
+	for _, workload := range []client.Object{
+		&appsv1.Deployment{},
+		&appsv1.DaemonSet{},
+		&batchv1.Job{},
+	} {
+		t.Run(fmt.Sprintf("%T", workload), func(t *testing.T) {
+			for _, scenario := range []string{"legacy missing UID", "conflicting pod UID", "changed workload", "foreign session", "foreign operation"} {
+				t.Run(scenario, func(t *testing.T) {
+					session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "session-uid"}}
+					legacy := workload.DeepCopyObject().(client.Object)
+					legacy.SetName("legacy-workload")
+					legacy.SetNamespace("default")
+					operationID, err := stampCreateOperation(legacy, session)
+					require.NoError(t, err)
+					desired := legacy.DeepCopyObject().(client.Object)
+					managedWorkloadPodMetadata(desired).Annotations = map[string]string{sourceSessionUIDAnnotation: string(session.UID)}
+					newOperationID, err := stampCreateOperation(desired, session)
+					require.NoError(t, err)
+					require.Equal(t, operationID, newOperationID, "adding a controller marker must not change workload intent")
+					require.Equal(t, string(session.UID), managedWorkloadPodMetadata(desired).Annotations[sourceSessionUIDAnnotation], "hashing must not mutate desired annotations")
+					legacy.SetUID("legacy-workload-uid")
+					switch scenario {
+					case "conflicting pod UID":
+						managedWorkloadPodMetadata(legacy).Annotations = map[string]string{sourceSessionUIDAnnotation: "another-session"}
+					case "changed workload":
+						managedWorkloadPodMetadata(legacy).Labels = map[string]string{"changed": "workload"}
+						managedWorkloadPodMetadata(desired).Labels = map[string]string{"changed": "desired"}
+					case "foreign session":
+						legacy.GetAnnotations()[sourceSessionUIDAnnotation] = "another-session"
+					case "foreign operation":
+						legacy.GetAnnotations()[createOperationIDAnnotation] = "another-operation"
+					}
+					target := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(legacy).Build()
+					err = createOrRecoverTargetObject(context.Background(), target, desired, session)
+					if scenario == "legacy missing UID" {
+						require.NoError(t, err)
+						require.Equal(t, types.UID("legacy-workload-uid"), desired.GetUID())
+					} else {
+						require.Error(t, err, "legacy compatibility must preserve ownership and content fences")
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestStampCreateOperationReusesPersistedIntentAfterRestart(t *testing.T) {
 	obj := &unstructured.Unstructured{}
 	obj.SetAPIVersion("v1")
@@ -734,6 +847,74 @@ func TestStampCreateOperationSeparatesConflictingDesiredContent(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, firstID, secondID)
 	require.NotEqual(t, firstID, second.GetAnnotations()[createOperationIDAnnotation])
+}
+
+func TestAdmittedWorkloadMemoryPressureToleration(t *testing.T) {
+	memoryPressure := corev1.Toleration{Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	for _, tc := range []struct {
+		name             string
+		requests, limits corev1.ResourceList
+		tolerance        corev1.Toleration
+		want             bool
+	}{
+		{"burstable", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, memoryPressure, true},
+		{"guaranteed", corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("64Mi")}, corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("64Mi")}, memoryPressure, true},
+		{"best effort", nil, nil, memoryPressure, false},
+		{"ephemeral storage only", corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("1Gi")}, nil, memoryPressure, false},
+		{"arbitrary toleration", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: "dedicated", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}, false},
+		{"wrong effect", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute}, false},
+		{"nonempty value", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Value: "spoofed", Effect: corev1.TaintEffectNoSchedule}, false},
+		{"bounded seconds", corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}, nil, corev1.Toleration{Key: memoryPressure.Key, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule, TolerationSeconds: ptr.To[int64](300)}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "debug", Image: "debug:v1", Resources: corev1.ResourceRequirements{Requests: tc.requests, Limits: tc.limits}}}}}
+			pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
+			pod.Spec.Tolerations = []corev1.Toleration{tc.tolerance}
+			before := pod.DeepCopy()
+			target := fake.NewClientBuilder().WithScheme(testScheme()).Build()
+			require.False(t, podMatchesWorkloadTemplate(pod, template, false), "synthetic ReplicaSet templates remain strict")
+			require.Equal(t, tc.want, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+			require.Equal(t, before, pod)
+			require.Empty(t, template.Spec.Tolerations)
+			pod.Spec.Containers[0].Image = "spoofed:v1"
+			require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+		})
+	}
+}
+
+func TestAdmittedWorkloadMemoryPressurePreservesExplicitAndDuplicateEntries(t *testing.T) {
+	tolerance := corev1.Toleration{Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule}
+	template := &corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		Containers: []corev1.Container{{Name: "debug", Image: "debug:v1", Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")},
+		}}},
+		Tolerations: []corev1.Toleration{tolerance},
+	}}
+	target := fake.NewClientBuilder().WithScheme(testScheme()).Build()
+	pod := &corev1.Pod{Spec: *template.Spec.DeepCopy()}
+	require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+	pod.Spec.Tolerations = append(pod.Spec.Tolerations, tolerance)
+	require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+	template.Spec.Tolerations = nil
+	require.False(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false), "only one native toleration may be removed")
+	pod.Spec.Tolerations = []corev1.Toleration{tolerance}
+	require.True(t, podMatchesAdmittedWorkloadTemplate(context.Background(), target, pod, template, false))
+}
+
+func TestWorkloadQoSResourceClassification(t *testing.T) {
+	positive := corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")}}
+	for _, tc := range []struct {
+		name string
+		spec corev1.PodSpec
+		want bool
+	}{
+		{"init resources", corev1.PodSpec{InitContainers: []corev1.Container{{Resources: positive}}}, true},
+		{"pod resources", corev1.PodSpec{Resources: &positive}, true},
+		{"empty pod-level overrides containers", corev1.PodSpec{Resources: &corev1.ResourceRequirements{}, Containers: []corev1.Container{{Resources: positive}}}, false},
+		{"zero resources", corev1.PodSpec{Containers: []corev1.Container{{Resources: corev1.ResourceRequirements{Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("0")}}}}}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) { require.Equal(t, tc.want, workloadHasQoSResources(tc.spec)) })
+	}
 }
 
 func TestWorkloadTemplateAllowsConfiguredDefaultTolerations(t *testing.T) {

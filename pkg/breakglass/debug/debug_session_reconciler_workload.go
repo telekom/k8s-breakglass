@@ -400,6 +400,11 @@ func isDebugSessionStatusConflict(err error) bool {
 	return errors.As(err, &statusConflict)
 }
 
+func isDebugSessionDeploymentConflict(err error) bool {
+	var applyConflict *auxiliaryApplyConflict
+	return isDebugSessionStatusConflict(err) || errors.As(err, &applyConflict)
+}
+
 func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
 	err := breakglass.ApplyDebugSessionStatus(ctx, c, ds)
 	if apierrors.IsConflict(err) {
@@ -571,6 +576,13 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 
 	// Merge pod-level annotations from the template manifest
 	annotations = mergeStringMaps(annotations, renderResult.PodAnnotations)
+	// The session UID is controller-owned resource identity.  Reassert it after
+	// merging every user-controlled annotation source, including rendered
+	// workload metadata.
+	if annotations == nil {
+		annotations = make(map[string]string)
+	}
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 	if restrictedCatalogue {
 		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
 			return nil, nil, err
@@ -764,6 +776,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
 		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 		// Apply the modified PodSpec back into the workload.
 		// buildPodSpec applies overrides (schedulingConstraints, tolerations, affinity,
@@ -800,6 +813,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
 		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 
 		// Apply the modified PodSpec back into the workload (see Deployment comment above).
 		w.Spec.Template.Spec = renderResult.PodSpec
@@ -823,6 +837,7 @@ func (c *DebugSessionController) useTemplateWorkload(
 		w.Spec.Selector = &metav1.LabelSelector{MatchLabels: selectorLabels}
 		w.Spec.Template.Labels = mergeStringMaps(w.Spec.Template.Labels, labels, selectorLabels)
 		w.Spec.Template.Annotations = mergeStringMaps(w.Spec.Template.Annotations, annotations)
+		w.Spec.Template.Annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 		w.Spec.Template.Spec = renderResult.PodSpec
 		if w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyNever && w.Spec.Template.Spec.RestartPolicy != corev1.RestartPolicyOnFailure {
 			w.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyNever
@@ -887,6 +902,7 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		annotations = make(map[string]string)
 	}
 	annotations["breakglass.t-caas.telekom.com/source-session"] = fmt.Sprintf("%s/%s", ds.Namespace, ds.Name)
+	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
 	obj.SetAnnotations(annotations)
 	operationID, err := stampCreateOperation(obj, ds)
 	if err != nil {
@@ -1520,6 +1536,7 @@ func validateRestrictedCatalogueResources(resources []*unstructured.Unstructured
 func (c *DebugSessionController) buildPodRenderContext(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) breakglassv1alpha1.AuxiliaryResourceContext {
 	ctx := breakglassv1alpha1.AuxiliaryResourceContext{
 		Session: breakglassv1alpha1.AuxiliaryResourceSessionContext{
+			UID:         string(ds.UID),
 			Name:        ds.Name,
 			Namespace:   ds.Namespace,
 			Cluster:     ds.Spec.Cluster,

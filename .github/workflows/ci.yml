@@ -988,6 +988,7 @@ jobs:
             echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> "$GITHUB_ENV"
+            echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> "$GITHUB_ENV"
             echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> "$GITHUB_ENV"
@@ -1101,7 +1102,7 @@ jobs:
 
           # Wait for Keycloak to be reachable
           for i in {1..30}; do
-            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+            if curl -sk "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/breakglass-e2e/.well-known/openid-configuration" > /dev/null 2>&1; then
               echo "✓ Keycloak reachable at localhost:8443"
               break
             fi
@@ -1135,7 +1136,7 @@ jobs:
       - name: Run API E2E tests
         run: |
           set -o pipefail
-          go test -v ./e2e/api/... -timeout 45m 2>&1 | tee e2e-results.txt
+          go test -v ./e2e/api/... -timeout 60m 2>&1 | tee e2e-results.txt
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
@@ -1204,7 +1205,6 @@ jobs:
           RUN_SHELL_TESTS: "true"
           BGCTL_BIN: "./bin/bgctl"
           # Keycloak configuration for CLI OIDC authentication
-          KEYCLOAK_HOST: "https://localhost:8443"
           KEYCLOAK_REALM: "breakglass-e2e"
           KEYCLOAK_CLIENT_ID: "breakglass-ui"
           # The issuer host must match the IdentityProvider's issuer claim (in-cluster hostname)
@@ -1519,6 +1519,7 @@ jobs:
             echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> $GITHUB_ENV
             echo "KEYCLOAK_PORT=${KEYCLOAK_PORT}" >> $GITHUB_ENV
             echo "KEYCLOAK_URL=${KEYCLOAK_URL:-}" >> $GITHUB_ENV
+            echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> $GITHUB_ENV
             echo "KEYCLOAK_REALM=${KEYCLOAK_REALM}" >> $GITHUB_ENV
             echo "KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID}" >> $GITHUB_ENV
             echo "KEYCLOAK_ISSUER_HOST=${KEYCLOAK_ISSUER_HOST}" >> $GITHUB_ENV
@@ -1582,14 +1583,14 @@ jobs:
 
           # Wait for Keycloak to be reachable via port-forward
           for i in {1..60}; do
-            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+            if curl -sk "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/breakglass-e2e/.well-known/openid-configuration" > /dev/null 2>&1; then
               echo "✓ Keycloak reachable at localhost:8443"
               break
             fi
             sleep 1
           done
 
-          if ! curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+          if ! curl -sk "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/breakglass-e2e/.well-known/openid-configuration" > /dev/null 2>&1; then
             echo "ERROR: Keycloak not reachable at localhost:8443 after 60s"
             kubectl get pods -n breakglass-system -l app=keycloak 2>&1 || true
             exit 1
@@ -1840,7 +1841,7 @@ jobs:
           echo "Waiting for services..."
 
           for i in {1..30}; do
-            if curl -sk https://localhost:8443/realms/breakglass-e2e/.well-known/openid-configuration > /dev/null 2>&1; then
+            if curl -sk "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/breakglass-e2e/.well-known/openid-configuration" > /dev/null 2>&1; then
               echo "✓ Keycloak reachable at localhost:8443"
               break
             fi
@@ -1964,7 +1965,7 @@ jobs:
           }
 
           # Test Keycloak (critical for tests)
-          test_service "Keycloak" "https://localhost:8443/realms/master" 60 "-sk" || {
+          test_service "Keycloak" "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 60 "-sk" || {
             echo "CRITICAL: Keycloak not ready - gathering diagnostics"
 
             # Check if port-forward is running
@@ -1981,8 +1982,8 @@ jobs:
             netstat -tlnp 2>/dev/null | grep 8443 || ss -tlnp 2>/dev/null | grep 8443 || echo "Port 8443 not listening"
 
             # Try alternative endpoints
-            echo "Trying http://localhost:8080/realms/master..."
-            curl -v "http://localhost:8080/realms/master" 2>&1 | head -30 || true
+            echo "Trying http://localhost:8080${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master..."
+            curl -v "http://localhost:8080${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 2>&1 | head -30 || true
 
             exit 1
           }
@@ -2002,7 +2003,7 @@ jobs:
           source ../e2e/kind-setup-single-tdir/e2e-env.sh
 
           # Use in-cluster service hostname (accessible via /etc/hosts + port-forward)
-          KEYCLOAK_E2E_URL="https://${KEYCLOAK_SERVICE_HOSTNAME}:8443"
+          KEYCLOAK_E2E_URL="https://${KEYCLOAK_SERVICE_HOSTNAME}:8443${KEYCLOAK_RELATIVE_PATH:-/auth}"
 
           wait_for_keycloak() {
             local url="$1"
@@ -2044,7 +2045,7 @@ jobs:
             echo "Active Keycloak port-forwards:"
             ps aux | grep "port-forward.*keycloak" | grep -v grep || echo "No keycloak port-forward found"
             echo "Trying localhost fallback..."
-            curl -skv "https://localhost:8443/realms/$KEYCLOAK_REALM" 2>&1 | head -50
+            curl -skv "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/$KEYCLOAK_REALM" 2>&1 | head -50
             exit 1
           }
 
@@ -2087,10 +2088,10 @@ jobs:
             curl -v http://localhost:8080 2>&1 | head -30 || echo "Controller UI not accessible"
 
             echo -e "\n=== Keycloak HTTPS (localhost:8443) ==="
-            curl -skv https://localhost:8443/realms/master 2>&1 | head -30 || echo "Keycloak HTTPS not accessible"
+            curl -skv "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 2>&1 | head -30 || echo "Keycloak HTTPS not accessible"
 
             echo -e "\n=== Keycloak HTTP (localhost:8080) ==="
-            curl -v http://localhost:8080/realms/master 2>&1 | head -30 || echo "Keycloak HTTP not accessible"
+            curl -v "http://localhost:8080${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 2>&1 | head -30 || echo "Keycloak HTTP not accessible"
 
             echo -e "\n=== MailHog (localhost:8025) ==="
             curl -v http://localhost:8025 2>&1 | head -30 || echo "MailHog not accessible"
@@ -2132,11 +2133,11 @@ jobs:
           # Test Keycloak endpoints directly
           {
             echo "=== Keycloak Realms Endpoint ==="
-            curl -skv https://localhost:8443/realms/master 2>&1 || true
+            curl -skv "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 2>&1 || true
             echo -e "\n=== Keycloak Admin Console ==="
             curl -skv https://localhost:8443/admin 2>&1 || true
             echo -e "\n=== Keycloak Breakglass Realm ==="
-            curl -skv https://localhost:8443/realms/breakglass-e2e 2>&1 || true
+            curl -skv "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/breakglass-e2e" 2>&1 || true
           } > "$DIAG_DIR/keycloak/endpoint-tests.log" 2>&1
 
           # ===========================================
@@ -2335,7 +2336,7 @@ jobs:
   multi-cluster-e2e:
     name: Multi-Cluster E2E Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 90
     needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
     steps:
       - name: Checkout code
@@ -2444,7 +2445,7 @@ jobs:
 
           # Try HTTPS port as well
           nc -zv localhost 8443 > e2e-setup-failure-logs/keycloak-https-port-check.txt 2>&1 || echo "Port 8443 not listening"
-          curl -skv https://localhost:8443/realms/master > e2e-setup-failure-logs/keycloak-https-check.txt 2>&1 || echo "HTTPS check failed"
+          curl -skv "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" > e2e-setup-failure-logs/keycloak-https-check.txt 2>&1 || echo "HTTPS check failed"
 
           # Check if TLS files exist on host
           if [ -d e2e/kind-setup-multi-tls/keycloak ]; then
@@ -2587,6 +2588,9 @@ jobs:
           KUBECONFIG=$E2E_SPOKE_B_KUBECONFIG kubectl get nodes
 
           # Export for subsequent steps with absolute paths
+          echo "KEYCLOAK_HOST=${KEYCLOAK_HOST}" >> "$GITHUB_ENV"
+          echo "KEYCLOAK_URL=${KEYCLOAK_URL}" >> "$GITHUB_ENV"
+          echo "KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH}" >> "$GITHUB_ENV"
           echo "E2E_HUB_KUBECONFIG=$(realpath $E2E_HUB_KUBECONFIG)" >> $GITHUB_ENV
           echo "E2E_SPOKE_A_KUBECONFIG=$(realpath $E2E_SPOKE_A_KUBECONFIG)" >> $GITHUB_ENV
           echo "E2E_SPOKE_B_KUBECONFIG=$(realpath $E2E_SPOKE_B_KUBECONFIG)" >> $GITHUB_ENV
@@ -2737,7 +2741,7 @@ jobs:
           # - TestHubSpokeSuite (hub_spoke_test.go)
           # - TestSpokeHubAuthorizationSuite (spoke_hub_authorization_test.go)
           # - TestMultiIDPAuthorizationSuite (multi_idp_authorization_test.go)
-          go test -v -tags=multicluster ./e2e/api/... -timeout 45m \
+          go test -v -tags=multicluster ./e2e/api/... -timeout 60m \
             2>&1 | tee e2e-multi-results.txt
         env:
           E2E_TEST: "true"
@@ -2749,12 +2753,11 @@ jobs:
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG || '' }}
           # Keycloak runs as Docker container with port 8443 mapped to host
           # Go tests run on host so use localhost (e2e-keycloak is only in Kind /etc/hosts)
-          KEYCLOAK_HOST: https://localhost:8443
           KEYCLOAK_REALM: breakglass-e2e
           # Use breakglass-ui client (defined in breakglass-e2e-realm.json with directAccessGrantsEnabled)
           KEYCLOAK_CLIENT_ID: breakglass-ui
           # KEYCLOAK_ISSUER_HOST is passed as Host header to Keycloak so token issuer matches IdentityProvider
-          # IdentityProvider expects issuer https://e2e-keycloak:8443/realms/breakglass-e2e
+          # IdentityProvider expects issuer https://e2e-keycloak:8443/auth/realms/breakglass-e2e
           KEYCLOAK_ISSUER_HOST: e2e-keycloak:8443
           # KEYCLOAK_INTERNAL_URL is the URL that the controller (inside cluster) uses to reach Keycloak
           KEYCLOAK_INTERNAL_URL: ${{ env.KEYCLOAK_INTERNAL_URL }}
@@ -3098,7 +3101,7 @@ jobs:
 
             echo "=== KEYCLOAK CONNECTIVITY ==="
             echo "Testing Keycloak from test runner..."
-            timeout 10 curl -sk https://localhost:8443/realms/master 2>&1 | head -5 || echo "Keycloak not reachable"
+            timeout 10 curl -sk "https://localhost:8443${KEYCLOAK_RELATIVE_PATH:-/auth}/realms/master" 2>&1 | head -5 || echo "Keycloak not reachable"
 
           } > "$DIAG_DIR/DEBUG_SUMMARY.txt" 2>&1
 

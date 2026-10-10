@@ -28,7 +28,7 @@ _KEYCLOAK_HOST_RAW=${KEYCLOAK_HOST:-breakglass-keycloak.breakglass-system.svc.cl
 if [[ "$_KEYCLOAK_HOST_RAW" =~ ^https?:// ]]; then
   # KEYCLOAK_HOST contains a full URL - extract just host:port
   KEYCLOAK_SCHEME=$(echo "$_KEYCLOAK_HOST_RAW" | grep -oE '^https?')
-  _HOST_PORT=$(echo "$_KEYCLOAK_HOST_RAW" | sed -E 's|^https?://||')
+  _HOST_PORT=$(echo "$_KEYCLOAK_HOST_RAW" | sed -E 's|^https?://||; s|/.*$||')
   KEYCLOAK_HOST=$(echo "$_HOST_PORT" | cut -d: -f1)
   if [[ "$_HOST_PORT" == *:* ]]; then
     KEYCLOAK_PORT=$(echo "$_HOST_PORT" | cut -d: -f2)
@@ -43,7 +43,8 @@ else
   KEYCLOAK_SCHEME=https
 fi
 KEYCLOAK_REALM=${KEYCLOAK_REALM:-breakglass-e2e}
-KEYCLOAK_ISSUER_URL="${KEYCLOAK_SCHEME}://${KEYCLOAK_HOST}:${KEYCLOAK_PORT}/realms/${KEYCLOAK_REALM}"
+_KEYCLOAK_PATH="${KEYCLOAK_RELATIVE_PATH:-}"
+KEYCLOAK_ISSUER_URL="${KEYCLOAK_SCHEME}://${KEYCLOAK_HOST}:${KEYCLOAK_PORT}${_KEYCLOAK_PATH%/}/realms/${KEYCLOAK_REALM}"
 # The group-sync client is configured with client credentials flow
 KEYCLOAK_CLIENT_ID=${KEYCLOAK_CLIENT_ID:-breakglass-group-sync}
 KEYCLOAK_CLIENT_SECRET=${KEYCLOAK_CLIENT_SECRET:-breakglass-group-sync-secret}

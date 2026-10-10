@@ -85,7 +85,7 @@ func TestResolveClustersFromBindingSkipsAmbiguousClusterConfigNames(t *testing.T
 	}
 	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
 
-	clusters := controller.resolveClustersFromBinding(binding, clusterMap)
+	clusters := controller.resolveClustersFromBinding(binding, clusterMap, nil)
 	require.ElementsMatch(t, []string{"unique"}, clusters)
 	require.NotContains(t, clusters, "shared")
 }
@@ -99,7 +99,7 @@ func TestResolveClustersFromBindingEmptySelectorKeepsExplicitOnly(t *testing.T) 
 		Clusters: []string{"explicit"}, ClusterSelector: &metav1.LabelSelector{},
 	}}
 	controller := &DebugSessionAPIController{log: zap.NewNop().Sugar()}
-	require.Equal(t, []string{"explicit"}, controller.resolveClustersFromBinding(binding, clusterMap))
+	require.Equal(t, []string{"explicit"}, controller.resolveClustersFromBinding(binding, clusterMap, nil))
 }
 
 func TestResolveClustersFromBindingExpandsUniqueTenantAlias(t *testing.T) {
@@ -112,7 +112,7 @@ func TestResolveClustersFromBindingExpandsUniqueTenantAlias(t *testing.T) {
 		Clusters: []string{"tenant-a"},
 	}}
 
-	require.Equal(t, []string{"canonical"}, controller.resolveClustersFromBinding(binding, clusterMap))
+	require.Equal(t, []string{"canonical"}, controller.resolveClustersFromBinding(binding, clusterMap, []breakglassv1alpha1.ClusterConfig{cluster}))
 }
 
 func TestDirectTemplateAllowsClusterReferenceUsesTenantAlias(t *testing.T) {
@@ -122,5 +122,41 @@ func TestDirectTemplateAllowsClusterReferenceUsesTenantAlias(t *testing.T) {
 		Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"tenant-a"}},
 	}}
 
-	require.True(t, directTemplateAllowsClusterReference(template, "canonical", &cluster))
+	require.True(t, directTemplateAllowsClusterReference(template, "canonical", &cluster, []breakglassv1alpha1.ClusterConfig{cluster}))
+}
+
+func TestClusterReferenceChecksNamespaceBeforeCanonicalGrant(t *testing.T) {
+	cluster := readyDebugClusterConfig("team-a", "canonical", map[string]string{"env": "prod"})
+	cluster.Spec.Tenant = "tenant-a"
+	configured := []breakglassv1alpha1.ClusterConfig{cluster}
+	controller := &DebugSessionController{}
+	for _, selector := range []bool{false, true} {
+		template := &breakglassv1alpha1.DebugSessionTemplate{Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"canonical"}},
+		}}
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{Clusters: []string{"canonical"}}}
+		if selector {
+			template.Spec.Allowed.Clusters = nil
+			template.Spec.Allowed.ClusterSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}
+			binding.Spec.Clusters = nil
+			binding.Spec.ClusterSelector = template.Spec.Allowed.ClusterSelector
+		}
+		for reference, allowed := range map[string]bool{
+			"canonical": true, "tenant-a": true, "team-a/canonical": true,
+			"team-a/tenant-a": true, "other/canonical": false, "other/tenant-a": false,
+			"missing": false, "team-a/missing": false,
+		} {
+			require.Equal(t, allowed, directTemplateAllowsClusterReference(template, reference, &cluster, configured), reference)
+			require.Equal(t, allowed, controller.bindingMatchesClusterReference(binding, reference, &cluster, configured), reference)
+		}
+		for _, otherName := range []string{"other", "tenant-a", "canonical"} {
+			other := readyDebugClusterConfig("team-b", otherName, cluster.Labels)
+			other.Spec.Tenant = cluster.Spec.Tenant
+			snapshot := []breakglassv1alpha1.ClusterConfig{cluster, other}
+			for _, reference := range []string{"tenant-a", "team-a/tenant-a"} {
+				require.False(t, directTemplateAllowsClusterReference(template, reference, &cluster, snapshot), otherName+"/"+reference)
+				require.False(t, controller.bindingMatchesClusterReference(binding, reference, &cluster, snapshot), otherName+"/"+reference)
+			}
+		}
+	}
 }

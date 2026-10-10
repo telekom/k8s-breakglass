@@ -945,11 +945,9 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	// Recheck selectors from the approved snapshots. Live objects above are
 	// lookup inputs and may have changed since approval.
-	if binding != nil && !c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) &&
-		!c.bindingMatchesCluster(binding, ds.Spec.Cluster, clusterConfig) &&
-		(clusterConfig.Spec.Tenant == "" || !c.bindingMatchesCluster(binding, clusterConfig.Spec.Tenant, clusterConfig)) {
+	if binding != nil && !c.bindingMatchesClusterReference(binding, ds.Spec.Cluster, clusterConfig, clusterConfigList.Items) {
 		return c.failSession(ctx, ds, "binding cluster grant no longer grants access; recreate this session")
-	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig) {
+	} else if binding == nil && template.Spec.Allowed != nil && !directTemplateAllowsClusterReference(template, ds.Spec.Cluster, clusterConfig, clusterConfigList.Items) {
 		return c.failSession(ctx, ds, "template cluster selector no longer grants access; recreate this session")
 	}
 	if binding != nil {
@@ -1029,7 +1027,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
 		if err := c.deployDebugResources(ctx, ds, template); err != nil {
-			if isDebugSessionStatusConflict(err) {
+			if isDebugSessionDeploymentConflict(err) {
 				return ctrl.Result{}, err
 			}
 			log.Errorw("Failed to deploy debug resources", "error", err)
@@ -1505,13 +1503,10 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if err := c.approvalReader().List(ctx, clusterConfigList); err != nil {
 		return nil, fmt.Errorf("list cluster configs for binding quota resolution: %w", err)
 	}
-	for i := range clusterConfigList.Items {
-		if clusterConfigList.Items[i].Name == clusterName {
-			if clusterConfig != nil {
-				return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
-			}
-			clusterConfig = &clusterConfigList.Items[i]
-		}
+	var clusterAmbiguity debugClusterConfigAmbiguity
+	clusterConfig, clusterAmbiguity = findDebugClusterConfigByNameOrTenant(clusterConfigList.Items, clusterName)
+	if clusterAmbiguity != debugClusterConfigAmbiguityNone {
+		return nil, fmt.Errorf("ambiguous cluster config for binding quota resolution")
 	}
 	readyClusterConfig := clusterConfig
 	if !isDebugClusterConfigReady(readyClusterConfig) {
@@ -1538,7 +1533,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 		}
 
 		// Check if binding matches this cluster
-		if !c.bindingMatchesCluster(binding, clusterName, clusterConfig) {
+		if !c.bindingMatchesClusterReference(binding, clusterName, clusterConfig, clusterConfigList.Items) {
 			continue
 		}
 		if clusterConfig != nil && !isDebugClusterConfigReady(clusterConfig) {
@@ -1558,7 +1553,7 @@ func (c *DebugSessionController) findBindingForSession(ctx context.Context, temp
 	if invalidPolicy != nil {
 		// Match API discovery: an invalid binding must not shadow a direct
 		// template grant. Valid bindings still take precedence above.
-		if directTemplateAllowsCluster(template, clusterName, readyClusterConfig) {
+		if directTemplateAllowsClusterReference(template, clusterName, readyClusterConfig, clusterConfigList.Items) {
 			return nil, nil
 		}
 		return nil, invalidPolicy
@@ -1588,6 +1583,31 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 func (c *DebugSessionController) bindingMatchesTemplate(binding *breakglassv1alpha1.DebugSessionClusterBinding, template *breakglassv1alpha1.DebugSessionTemplate) bool {
 	return utils.DebugBindingMatchesTemplate(binding, template)
 }
+
+// Match aliases only while they resolve uniquely to this target, including when
+// rechecking an approved binding immediately before workload creation.
+func (c *DebugSessionController) bindingMatchesClusterReference(binding *breakglassv1alpha1.DebugSessionClusterBinding, requested string, clusterConfig *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
+	if clusterConfig == nil {
+		return c.bindingMatchesCluster(binding, requested, nil)
+	}
+	if !debugClusterReferenceResolvesTo(requested, clusterConfig, configured) {
+		return false
+	}
+	if c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) {
+		return true
+	}
+	for _, reference := range []string{requested, clusterConfig.Spec.Tenant} {
+		if reference == "" || reference == clusterConfig.Name {
+			continue
+		}
+		if debugClusterReferenceResolvesTo(reference, clusterConfig, configured) &&
+			c.bindingMatchesCluster(binding, reference, clusterConfig) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *DebugSessionController) bindingMatchesCluster(binding *breakglassv1alpha1.DebugSessionClusterBinding, clusterName string, clusterConfig *breakglassv1alpha1.ClusterConfig) bool {
 	return utils.DebugBindingMatchesCluster(binding, clusterName, clusterConfig)
 }

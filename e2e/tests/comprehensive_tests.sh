@@ -114,7 +114,8 @@ test_K002_jwks_reachable() {
   
   # Check if port-forward is active by testing the local endpoint
   local status
-  status=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:8443/realms/breakglass-e2e/protocol/openid-connect/certs" 2>/dev/null || echo "000")
+  local relative_path="${KEYCLOAK_RELATIVE_PATH:-}"
+  status=$(curl -sk -o /dev/null -w '%{http_code}' "https://localhost:8443${relative_path%/}/realms/breakglass-e2e/protocol/openid-connect/certs" 2>/dev/null || echo "000")
   
   if [ "$status" = "200" ]; then
     log_pass "K-002: JWKS endpoint reachable (HTTP 200)"

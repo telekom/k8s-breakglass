@@ -999,6 +999,10 @@ KEYCLOAK_ADMIN_PASS=${KEYCLOAK_ADMIN_PASS:-admin}
 KEYCLOAK_HTTP_PORT=${KEYCLOAK_HTTP_PORT:-8080}
 KEYCLOAK_HTTPS_PORT=${KEYCLOAK_HTTPS_PORT:-8443}
 KEYCLOAK_REALM=${KEYCLOAK_REALM:-breakglass-e2e}
+KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH:-}
+while [[ "$KEYCLOAK_RELATIVE_PATH" == /* ]]; do KEYCLOAK_RELATIVE_PATH="${KEYCLOAK_RELATIVE_PATH#/}"; done
+while [[ "$KEYCLOAK_RELATIVE_PATH" == */ ]]; do KEYCLOAK_RELATIVE_PATH="${KEYCLOAK_RELATIVE_PATH%/}"; done
+if [[ -n "$KEYCLOAK_RELATIVE_PATH" ]]; then KEYCLOAK_RELATIVE_PATH="/$KEYCLOAK_RELATIVE_PATH"; fi
 
 # Get the IP address of the Keycloak container
 get_keycloak_ip() {
@@ -1079,6 +1083,7 @@ start_keycloak_container() {
     -e "KC_HOSTNAME_STRICT=false"
     -e "KC_HOSTNAME_STRICT_HTTPS=false"
     -e "KC_HTTP_ENABLED=true"
+    -e "KC_HTTP_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH:-/}"
     -e "KC_LOG_LEVEL=DEBUG"
   )
   log "Base docker args configured"
@@ -1290,7 +1295,7 @@ start_keycloak_container() {
   log "=== Keycloak container logs (first 20 lines after start) ==="
   { $DOCKER logs "$KEYCLOAK_CONTAINER_NAME" 2>&1 | head -20 || log_warn "Could not get initial container logs"; } >&2
   
-  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}/realms/master" 300 "Keycloak master realm"; then
+  if ! wait_for_http "http://localhost:${KEYCLOAK_HTTP_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/master" 300 "Keycloak master realm"; then
     log_error "Keycloak failed to become ready on localhost:${KEYCLOAK_HTTP_PORT}"
     log "=== Keycloak container status ==="
     $DOCKER ps -a --filter "name=$KEYCLOAK_CONTAINER_NAME" >&2 2>&1 || true
@@ -1304,8 +1309,8 @@ start_keycloak_container() {
     log "=== Testing localhost connectivity ==="
     { curl -v "http://localhost:${KEYCLOAK_HTTP_PORT}/" 2>&1 | head -30 || true; } >&2
     
-    log "Trying container IP as fallback: http://${keycloak_ip}:8080/realms/master"
-    if ! wait_for_http "http://${keycloak_ip}:8080/realms/master" 120 "Keycloak master realm (container IP)"; then
+    log "Trying container IP as fallback: http://${keycloak_ip}:8080${KEYCLOAK_RELATIVE_PATH}/realms/master"
+    if ! wait_for_http "http://${keycloak_ip}:8080${KEYCLOAK_RELATIVE_PATH}/realms/master" 120 "Keycloak master realm (container IP)"; then
       log_error "Keycloak failed to become ready via container IP as well"
       log "=== Final diagnostics before failure ==="
       log "Container still running: $(is_keycloak_running && echo 'YES' || echo 'NO')"
@@ -1320,7 +1325,7 @@ start_keycloak_container() {
   # Final verification: Test HTTPS endpoint if TLS is configured
   if [ -n "$tls_dir" ]; then
     log "Testing HTTPS endpoint..."
-    if curl -sk --connect-timeout 5 "https://localhost:${KEYCLOAK_HTTPS_PORT}/realms/master" >/dev/null 2>&1; then
+    if curl -sk --connect-timeout 5 "https://localhost:${KEYCLOAK_HTTPS_PORT}${KEYCLOAK_RELATIVE_PATH}/realms/master" >/dev/null 2>&1; then
       log "HTTPS endpoint is accessible on port ${KEYCLOAK_HTTPS_PORT}"
     else
       log_warn "HTTPS endpoint not accessible on port ${KEYCLOAK_HTTPS_PORT}, but container is running"
@@ -1352,7 +1357,7 @@ stop_keycloak_container() {
 # This function only waits for the realm to be available after import
 configure_keycloak_realm() {
   local realm="${1:-$KEYCLOAK_REALM}"
-  local keycloak_url="${2:-http://$(get_keycloak_ip):8080}"
+  local keycloak_url="${2:-http://$(get_keycloak_ip):8080${KEYCLOAK_RELATIVE_PATH}}"
   
   log "Waiting for Keycloak realm '$realm' to be ready..."
   
@@ -1537,7 +1542,7 @@ get_keycloak_issuer_url() {
   local port="${3:-8080}"
   local scheme="${4:-http}"
   
-  echo "${scheme}://${keycloak_host}:${port}/realms/${realm}"
+  echo "${scheme}://${keycloak_host}:${port}${KEYCLOAK_RELATIVE_PATH}/realms/${realm}"
 }
 
 # Create IdentityProvider CR pointing to Keycloak

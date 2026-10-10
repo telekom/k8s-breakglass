@@ -1077,12 +1077,33 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 | Variable | Description |
 |----------|-------------|
 | `.session.name` | Debug session name |
+| `.session.uid` | Immutable Kubernetes DebugSession UID; controller-provided, never taken from user variables |
 | `.session.namespace` | Session's namespace |
 | `.session.cluster` | Target cluster name |
 | `.session.requestedBy` | Requesting user |
 | `.target.namespace` | Target namespace for debug pods |
 | `.session.reason` | Session request reason |
 | `.template.name` | Template name |
+
+Use `{{ required "session UID is required" .session.uid | yamlQuote }}` when a
+resource must be scoped to the exact session. A missing UID then fails rendering.
+User input remains under `.vars` and cannot override `.session.uid`.
+
+For managed debug workloads, the controller always stamps
+`breakglass.t-caas.telekom.com/source-session-uid` on the workload, its Pod
+template, and deployed resources originating from a DebugPodTemplate.
+For this controller-owned key, session, binding, template, and rendered
+annotation values cannot override the immutable DebugSession UID.
+Templates do not need to set this annotation themselves. Other annotation keys
+retain their existing merge precedence.
+Auxiliary resources that create child Pods must explicitly render this
+annotation on their Pod templates using the trusted `.session.uid` context.
+Legacy managed workloads without the Pod-template marker can be recovered
+unchanged after an interrupted activation or controller upgrade. The marker is
+excluded from deterministic create intent only when it has the trusted session
+UID; source-session ownership, operation identity, and workload-content checks
+remain enforced, and a conflicting nested UID fails closed. Recovery does not
+retroactively annotate or roll existing Pods.
 
 ### Lifecycle
 
@@ -1700,11 +1721,20 @@ debug session when they are the requester, an active participant, an invited
 participant, a configured approver, or a recorded approver/rejector for that
 session.
 
-Creation uses the same identity-group authorization as discovery. No
+Creation uses identity-group authorization. No
 BreakglassSession lookup or synthetic escalation group is used. A group with
 the historic grant name is treated like any other authenticated identity group;
 it has no special meaning. Provider/issuer provenance is still persisted and
 enforced on later session operations.
+
+Template list, detail, and cluster discovery may additionally resolve optional
+grant aliases for allowlist groups absent from the identity. They use fresh
+selectable-field queries for each distinct username/email identity. Each
+query, including the compatibility fallback on servers without selectable fields,
+is limited to four pages of 250 sessions. Incomplete or oversized responses fail
+closed for aliases rather than exposing profiles from a partial grant snapshot.
+Lookup failures never remove identity-authorized profiles or prevent creation.
+Operators should prune retained grant history if alias discovery reports this limit.
 
 Mutating DebugSession endpoints that accept JSON bodies use strict decoding:
 unknown fields, malformed JSON, and trailing JSON values return `400 Bad
@@ -1973,6 +2003,12 @@ spec:
 
 ### Cleanup
 
+Concurrent updates to an existing, session-owned auxiliary resource can cause a
+server-side apply conflict during activation. The controller retries from the
+persisted creation intent rather than failing or bypassing the auxiliary resource.
+Each reconciliation repeats approval, expiry, target and resource identity
+checks; foreign session markers, operation IDs and replacement UIDs remain denied.
+
 1. **Monitor expired sessions**: Sessions clean up automatically
 2. **Review long-running sessions**: Set alerts for sessions approaching max duration
 3. **Use termination**: Actively terminate sessions when done
@@ -2214,3 +2250,38 @@ Fresh auto-approved sessions persist `Pending` with their approval snapshot befo
 Approval snapshots use their canonical persisted JSON representation: runtime-only regex intersections are reconstructed from the stored original policy and binding, and empty policy slices normalize to nil under the separate capture marker. Once complete approval is recorded, deleting the live template does not invalidate the captured activation decision; current session identity, approval, cluster readiness and expiry fences still apply. Binding references must retain valid nonempty name and namespace values.
 
 Replaying a confirmed ephemeral-container completion keeps reference bookkeeping idempotent. Allowed-pod authorization is restored only for an Active session that still passes the expiry fence.
+
+### Optional Breakglass grant discovery aliases
+
+Identity groups alone authorize discovery and creation through template and
+binding `allowed.groups`/`allowed.users`; no escalation is required. Any group,
+including the historic `breakglass:platform:debugsession`, is accepted directly
+when present in the authenticated identity.
+
+For deprecated compatibility, template list, detail, and cluster discovery may
+also display profiles whose configured allowlist group is held through an active
+BreakglassSession. The optional grant must match the requester username
+or email, identity-provider name and issuer, and target cluster, and must be
+approved with an unexpired lease. Withdrawn, rejected, expired, and retained grants
+cannot authorize discovery. A grant on one cluster does not reveal profiles or
+binding options restricted to another cluster. These aliases provide
+discoverability only: creation still requires the identity itself to satisfy
+the selected template/binding allowlist. Migrate synthetic allowlist groups to
+actual identity groups; do not create unlock-only escalations.
+Auto-approval hints remain identity-based even when a profile is shown through
+an alias. Group allowlist patterns retain the existing glob matching semantics.
+
+The UI and `bgctl debug template list`, `get`, and `clusters` use these shared
+API endpoints; no separate client-side grant configuration is needed. API
+creation persists the canonical ClusterConfig name and selected binding reference
+before reconciliation, retaining the binding approval and constraint policy.
+
+Template list and detail fields aggregate the grant-protected variables and
+scheduling options available on the template's authorized target clusters.
+After selecting a cluster, use that cluster's resolved fields and binding
+options; those remain limited to the grant for that specific cluster.
+
+Discovery retains the trusted single-provider `legacy_identity_allowed`
+compatibility for legacy grant provenance. Provider-aware authentication requires
+both a matching provider name and issuer; this compatibility is not inferred
+from the requester's token.

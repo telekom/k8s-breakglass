@@ -13,6 +13,8 @@ import (
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	schedulingv1 "k8s.io/api/scheduling/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -63,7 +65,7 @@ func deleteTrackedResource(ctx context.Context, target client.Client, session *b
 	if live.GetUID() != uid {
 		return nil
 	}
-	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+	if err := target.Delete(ctx, live, client.Preconditions{UID: &uid}, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !apierrors.IsNotFound(err) {
 		return fmt.Errorf("delete tracked resource with UID %s: %w", uid, err)
 	}
 	// An accepted DELETE may leave the original instance pending finalizers.
@@ -163,6 +165,25 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		return true
 	}
 	actual := pod.Spec.DeepCopy()
+	memoryPressure := corev1.Toleration{
+		Key: "node.kubernetes.io/memory-pressure", Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule,
+	}
+	configured := false
+	for _, tolerance := range template.Spec.Tolerations {
+		if equality.Semantic.DeepEqual(tolerance, memoryPressure) {
+			configured = true
+		}
+	}
+	if !configured && workloadHasQoSResources(template.Spec) {
+		// PodTolerationRestriction adds this exact toleration to non-BestEffort
+		// Pods, not ReplicaSet templates. Preserve every other toleration.
+		for i, tolerance := range actual.Tolerations {
+			if equality.Semantic.DeepEqual(tolerance, memoryPressure) {
+				actual.Tolerations = append(actual.Tolerations[:i], actual.Tolerations[i+1:]...)
+				break
+			}
+		}
+	}
 	if template.Spec.EnableServiceLinks == nil && actual.EnableServiceLinks != nil && *actual.EnableServiceLinks {
 		actual.EnableServiceLinks = nil
 	}
@@ -179,6 +200,30 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		actual.PriorityClassName = ""
 	}
 	return podMatchesWorkloadTemplate(&corev1.Pod{Spec: *actual}, template, daemonSet)
+}
+
+func workloadHasQoSResources(spec corev1.PodSpec) bool {
+	hasResources := func(resources corev1.ResourceRequirements) bool {
+		for _, list := range []corev1.ResourceList{resources.Requests, resources.Limits} {
+			for _, name := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+				if quantity, ok := list[name]; ok && quantity.Sign() > 0 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if spec.Resources != nil {
+		return hasResources(*spec.Resources)
+	}
+	for _, containers := range [][]corev1.Container{spec.Containers, spec.InitContainers} {
+		for _, container := range containers {
+			if hasResources(container.Resources) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func verifyAdmittedPriority(ctx context.Context, target client.Client, actual *corev1.PodSpec, expected corev1.PodSpec) bool {
@@ -293,6 +338,11 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	if existingAnnotations[createOperationIDAnnotation] != desiredOperationID {
 		return fmt.Errorf("target resource %s/%s already exists with a different operation identity: %w", obj.GetNamespace(), obj.GetName(), createErr)
 	}
+	if annotations := managedPodAnnotations(existing); annotations != nil {
+		if uid := annotations[sourceSessionUIDAnnotation]; uid != "" && uid != string(session.UID) {
+			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID: %w", obj.GetNamespace(), obj.GetName(), createErr)
+		}
+	}
 	contentMatches, err := recoveredCreateContentMatches(obj, existing)
 	if err != nil {
 		return fmt.Errorf("validate recovered resource %s/%s content: %w", obj.GetNamespace(), obj.GetName(), err)
@@ -308,6 +358,19 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
 	if session == nil {
 		return "", fmt.Errorf("cannot stamp create operation without a session")
+	}
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) && session.UID != "" {
+		annotations, _, err := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		if err != nil {
+			return "", fmt.Errorf("read workload PodTemplate annotations: %w", err)
+		}
+		if annotations == nil {
+			annotations = map[string]string{}
+		}
+		annotations[sourceSessionUIDAnnotation] = string(session.UID)
+		if err := unstructured.SetNestedStringMap(workload.Object, annotations, "spec", "template", "metadata", "annotations"); err != nil {
+			return "", err
+		}
 	}
 	annotations := obj.GetAnnotations()
 	if annotations == nil {
@@ -333,6 +396,7 @@ func deterministicCreateOperationID(obj client.Object, session *breakglassv1alph
 		return "", fmt.Errorf("cannot stamp create operation without a session")
 	}
 	desired := obj.DeepCopyObject().(client.Object)
+	removeManagedPodSessionUID(desired, string(session.UID))
 	annotations := desired.GetAnnotations()
 	if annotations != nil {
 		annotations = maps.Clone(annotations)
@@ -368,7 +432,9 @@ func recoveredCreateContentMatches(desired, existing client.Object) (bool, error
 }
 
 func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error) {
-	serialized, err := json.Marshal(obj)
+	normalized := obj.DeepCopyObject().(client.Object)
+	removeManagedPodSessionUID(normalized, obj.GetAnnotations()[sourceSessionUIDAnnotation])
+	serialized, err := json.Marshal(normalized)
 	if err != nil {
 		return nil, err
 	}
@@ -383,6 +449,56 @@ func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error
 		}
 	}
 	return result, nil
+}
+
+func managedWorkloadPodMetadata(obj client.Object) *metav1.ObjectMeta {
+	switch workload := obj.(type) {
+	case *appsv1.Deployment:
+		return &workload.Spec.Template.ObjectMeta
+	case *appsv1.DaemonSet:
+		return &workload.Spec.Template.ObjectMeta
+	case *batchv1.Job:
+		return &workload.Spec.Template.ObjectMeta
+	default:
+		return nil
+	}
+}
+
+// The controller-added marker is not workload intent. Excluding only its
+// trusted value preserves create identity across upgrades from unstamped Pods.
+func removeManagedPodSessionUID(obj client.Object, uid string) {
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) {
+		annotations := managedPodAnnotations(obj)
+		if uid != "" && annotations[sourceSessionUIDAnnotation] == uid {
+			delete(annotations, sourceSessionUIDAnnotation)
+			if len(annotations) == 0 {
+				unstructured.RemoveNestedField(workload.Object, "spec", "template", "metadata", "annotations")
+			} else {
+				_ = unstructured.SetNestedStringMap(workload.Object, annotations, "spec", "template", "metadata", "annotations")
+			}
+		}
+		return
+	}
+	if metadata := managedWorkloadPodMetadata(obj); metadata != nil && uid != "" &&
+		metadata.Annotations[sourceSessionUIDAnnotation] == uid {
+		delete(metadata.Annotations, sourceSessionUIDAnnotation)
+	}
+}
+
+func isManagedUnstructuredWorkload(obj *unstructured.Unstructured) bool {
+	return (obj.GetAPIVersion() == "apps/v1" && (obj.GetKind() == "Deployment" || obj.GetKind() == "DaemonSet")) ||
+		(obj.GetAPIVersion() == "batch/v1" && obj.GetKind() == "Job")
+}
+
+func managedPodAnnotations(obj client.Object) map[string]string {
+	if workload, ok := obj.(*unstructured.Unstructured); ok && isManagedUnstructuredWorkload(workload) {
+		annotations, _, _ := unstructured.NestedStringMap(workload.Object, "spec", "template", "metadata", "annotations")
+		return annotations
+	}
+	if metadata := managedWorkloadPodMetadata(obj); metadata != nil {
+		return metadata.Annotations
+	}
+	return nil
 }
 
 func jsonSubset(expected, actual interface{}) bool {

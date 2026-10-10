@@ -7,8 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Keep DebugSession discovery and creation independent of escalation grants.
+  Optional, deprecated grant aliases can add cluster-scoped discoverability for
+  configured allowlist groups, but never authorize creation or pod operations.
+  Identity-authorized discovery remains available when optional grant lookup fails.
+- Expose the controller-provided immutable `.session.uid` to workload and
+  auxiliary-resource templates, without allowing user variables to override it.
+
 ### Fixed
 
+- Retry same-session auxiliary server-side apply conflicts from fresh activation
+  and resource identity fences instead of failing the DebugSession. Conflicts
+  do not bypass required resources, approval, expiry or replacement UID checks.
+- Recognize the exact native memory-pressure toleration admitted for non-
+  BestEffort workload Pods when checking debug workload identity. ReplicaSet
+  templates, arbitrary tolerations, executable content and owner UID fences
+  remain strict; this restores allowed-pod registration for QoS debug workloads.
+
+- Delete tracked debug workloads and auxiliary Jobs with explicit background
+  propagation, preserving UID preconditions and avoiding orphaned child pods.
+- Preserve bgctl runtime initialization when commands are executed with a caller
+  context, including native session drop commands.
 - Restore DebugSession discovery/creation from authenticated identity groups and
   template/binding allowlists, without requiring an active BreakglassSession.
   This fixes the provider-aware grant prerequisite introduced by PR #1346

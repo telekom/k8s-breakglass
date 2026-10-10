@@ -993,7 +993,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			return
 		}
 
-		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap)
+		bindingClusters := c.resolveClustersFromBinding(resolvedBinding, clusterMap, clusterConfigList.Items)
 		bindingAllowsRequestedCluster := false
 		for _, authorizationCluster := range authorizationClusters {
 			if slices.Contains(bindingClusters, authorizationCluster) {
@@ -1563,6 +1563,31 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		reqLog.Infow("Session created with warnings", "warnings", warnings)
 	}
 	ctx.JSON(http.StatusCreated, response)
+}
+
+// isActiveDebugSessionGrant validates optional discovery aliases, not creation.
+// Match the grant's identity exactly, as in the live selectable-field query;
+// display/lifecycle identity normalization must not broaden grant provenance.
+func isActiveDebugSessionGrant(session breakglassv1alpha1.BreakglassSession, username, email, provider, issuer string, legacyAllowed bool, now time.Time) bool {
+	if session.Spec.GrantedGroup == "" ||
+		!breakglass.IsSessionAuthorizationEligible(session, now) ||
+		(session.Spec.User != username && session.Spec.User != email) {
+		return false
+	}
+	sessionProvider := strings.TrimSpace(session.Spec.IdentityProviderName)
+	sessionIssuer := strings.TrimRight(strings.TrimSpace(session.Spec.IdentityProviderIssuer), "/")
+	requestProvider := strings.TrimSpace(provider)
+	requestIssuer := strings.TrimRight(strings.TrimSpace(issuer), "/")
+	switch {
+	case sessionProvider == "" && sessionIssuer == "":
+		return legacyAllowed
+	case sessionProvider == "":
+		return legacyAllowed && requestIssuer == sessionIssuer
+	case sessionIssuer == "":
+		return false
+	default:
+		return requestProvider == sessionProvider && requestIssuer == sessionIssuer
+	}
 }
 
 func (c *DebugSessionAPIController) persistAuthenticatedGroupProvenance(

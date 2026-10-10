@@ -230,6 +230,9 @@ type AuxiliaryResourceContext struct {
 
 // AuxiliaryResourceSessionContext contains session information for templates.
 type AuxiliaryResourceSessionContext struct {
+	// UID is the immutable DebugSession UID assigned by Kubernetes, never a user variable.
+	UID string `json:"uid"`
+
 	// Name is the DebugSession name.
 	Name string `json:"name"`
 

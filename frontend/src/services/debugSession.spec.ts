@@ -30,6 +30,15 @@ describe("DebugSessionService", () => {
     vi.clearAllMocks();
   });
 
+  it("sends the approval reason to the session action API", async () => {
+    mockClient.post.mockResolvedValueOnce({ data: { metadata: { name: "debug-prod" } } });
+    const service = new DebugSessionService(fakeAuth);
+    await service.approveSession("debug-prod", { reason: "Approved for investigation" });
+    expect(mockClient.post).toHaveBeenCalledWith("/debugSessions/debug-prod/approve", {
+      reason: "Approved for investigation",
+    });
+  });
+
   it("normalizes legacy list responses that return an array", async () => {
     mockClient.get.mockResolvedValueOnce({
       data: [

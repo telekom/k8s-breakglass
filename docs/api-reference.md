@@ -1299,6 +1299,34 @@ Deployment or DaemonSet.
 | `namespaceConstraints.allowedLabelSelectors` | array | Label selectors for allowed namespaces |
 | `namespaceConstraints.deniedLabelSelectors` | array | Label selectors for denied namespaces |
 
+Identity groups authorize template and binding access directly, including
+groups with historic escalation names. No BreakglassSession is required.
+Discovery may additionally show deprecated compatibility aliases for configured
+allowlist groups held through active BreakglassSessions. It queries requester
+identities using selectable fields, then validates the fresh snapshot's provider,
+issuer, target cluster, state, and expiry without querying grants again per cluster.
+Lookup failures suppress aliases only; identity-authorized discovery continues.
+Aliases never authorize creation, approval, or pod access.
+Auto-approval hints use the identity's groups, not discovery aliases. Group
+allowlist globs use the same matcher for identities and optional aliases.
+The trusted single-provider `legacy_identity_allowed` compatibility path retains
+legacy provenance rules; provider-aware authentication requires both
+the matching provider name and issuer. Template-wide variable and scheduling fields aggregate authorized
+target clusters; the cluster endpoint returns each target's scoped fields.
+
+Grant targets use the same unique ClusterConfig name/tenant-alias resolution as
+creation. An exact ClusterConfig name takes precedence over a tenant alias;
+ambiguous aliases (including collisions with unready configurations) do not grant
+alias discovery. Discovery returns canonical ClusterConfig names, and creation
+uses those names with the authenticated identity's template/binding allowlists.
+Direct template cluster patterns match the resolved cluster's canonical name or
+uniquely resolved tenant alias consistently during discovery, creation, and
+reconciliation. Both direct templates and binding aliases include unready configs
+in ambiguity checks and preserve exact-name precedence before filtering targets
+for readiness. Approved binding aliases are rechecked against the current full
+config snapshot before activation; a newly ambiguous or shadowed alias cannot
+create a workload.
+
 ### Get Debug Session Template
 
 ```http

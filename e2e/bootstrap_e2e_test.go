@@ -39,8 +39,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -53,6 +55,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -62,6 +65,214 @@ const (
 	// bootstrapSystem is the namespace where breakglass and Keycloak are deployed.
 	bootstrapSystem = "breakglass-system"
 )
+
+func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
+	for _, script := range []string{"oidc_tests.sh", "oidc_from_idp_tests.sh"} {
+		t.Run(script, func(t *testing.T) {
+			source, err := os.ReadFile(filepath.Join("tests", script))
+			require.NoError(t, err)
+			fragment := regexp.MustCompile(`(?ms)^_KEYCLOAK_HOST_RAW=.*?^KEYCLOAK_ISSUER_URL=[^\n]*`).Find(source)
+			require.NotEmpty(t, fragment)
+			for _, tc := range []struct{ host, path, want string }{
+				{"e2e-keycloak", "", "https://e2e-keycloak:8443/realms/breakglass-e2e"},
+				{"e2e-keycloak", "/", "https://e2e-keycloak:8443/realms/breakglass-e2e"},
+				{"e2e-keycloak", "/auth/", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
+				{"e2e-keycloak", "/auth", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
+				{"https://localhost:8443/auth", "/auth", "https://localhost:8443/auth/realms/breakglass-e2e"},
+				{"http://localhost:8080/auth", "/auth", "http://localhost:8080/auth/realms/breakglass-e2e"},
+				{"https://issuer.example.test:9443/custom", "/custom", "https://issuer.example.test:9443/custom/realms/breakglass-e2e"},
+			} {
+				t.Run(tc.host, func(t *testing.T) {
+					t.Setenv("KEYCLOAK_HOST", tc.host)
+					t.Setenv("KEYCLOAK_PORT", "8443")
+					t.Setenv("KEYCLOAK_REALM", "breakglass-e2e")
+					t.Setenv("KEYCLOAK_RELATIVE_PATH", tc.path)
+					output, err := exec.Command("bash", "-c", string(fragment)+"\nprintf '%s' \"$KEYCLOAK_ISSUER_URL\"").CombinedOutput()
+					require.NoError(t, err, "%s", output)
+					require.Equal(t, tc.want, string(output))
+				})
+			}
+		})
+	}
+}
+
+func TestBootstrapCommonNormalizesKeycloakRelativePath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("lib", "common.sh"))
+	require.NoError(t, err)
+	fragment := regexp.MustCompile(`(?ms)^KEYCLOAK_RELATIVE_PATH=.*?^if \[\[ -n "\$KEYCLOAK_RELATIVE_PATH" \]\]; then[^\n]*`).Find(source)
+	require.NotEmpty(t, fragment)
+	for path, want := range map[string]string{"": "", "/": "", "///": "", "/auth": "/auth", "/auth/": "/auth", "auth/": "/auth", "//custom///": "/custom"} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			output, err := exec.Command("bash", "-c", string(fragment)+"\nprintf '%s' \"$KEYCLOAK_RELATIVE_PATH\"").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, want, string(output))
+		})
+	}
+}
+
+func TestBootstrapTokenHelperRelativePath(t *testing.T) {
+	script, err := filepath.Abs("get-token.sh")
+	require.NoError(t, err)
+	token := strings.Repeat("x", 64)
+	for _, tc := range []struct {
+		name, path, endpoint string
+		fallback             bool
+	}{
+		{"default", "", "", false},
+		{"canonical", "/auth", "/auth", false},
+		{"custom", "/custom", "/custom", false},
+		{"root", "/", "", false},
+		{"fallback", "/custom", "/custom", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", tc.path)
+			t.Setenv("PROTO", "https")
+			t.Setenv("PORT", "8443")
+			t.Setenv("ALT_HTTP_PORT", "8080")
+			t.Setenv("EXPECTED_PATH", tc.endpoint+"/realms/breakglass-e2e/protocol/openid-connect/token")
+			t.Setenv("TEST_TOKEN", token)
+			t.Setenv("TEST_FALLBACK", fmt.Sprint(tc.fallback))
+			output, err := exec.Command("bash", "-c", `
+curl() {
+  local url=""
+  for arg in "$@"; do url="$arg"; done
+  if [[ "$url" == "https://localhost:8443$EXPECTED_PATH" ]]; then
+    if [[ "$TEST_FALLBACK" == true ]]; then return 0; fi
+  elif [[ "$TEST_FALLBACK" != true || "$url" != "http://localhost:8080$EXPECTED_PATH" ]]; then
+    printf 'Unexpected token endpoint: %s\n' "$url" >&2
+    return 1
+  fi
+  printf '{"access_token":"%s"}' "$TEST_TOKEN"
+}
+source "$1" test-user test-password
+`, "token-helper-test", script).CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, token, string(output))
+		})
+	}
+}
+
+func TestBootstrapComprehensiveJWKSRelativePath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("tests", "comprehensive_tests.sh"))
+	require.NoError(t, err)
+	fragment := regexp.MustCompile(`(?ms)^test_K002_jwks_reachable\(\) \{.*?^\}`).Find(source)
+	require.NotEmpty(t, fragment)
+	for _, path := range []string{"", "/", "/auth", "/custom/"} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			t.Setenv("EXPECTED_URL", "https://localhost:8443"+strings.TrimSuffix(path, "/")+"/realms/breakglass-e2e/protocol/openid-connect/certs")
+			output, err := exec.Command("bash", "-c", `
+set -eu
+if [[ -z "$KEYCLOAK_RELATIVE_PATH" ]]; then unset KEYCLOAK_RELATIVE_PATH; fi
+curl() {
+  local url=""
+  for arg in "$@"; do url="$arg"; done
+  [[ "$url" == "$EXPECTED_URL" ]] || return 1
+  printf 200
+}
+log() { :; }
+log_pass() { printf PASS; }
+log_skip() { printf FAIL; }
+`+string(fragment)+"\ntest_K002_jwks_reachable").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, "PASS", string(output))
+		})
+	}
+}
+
+func TestBootstrapMultiOIDCNormalizedRootPath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("tests", "multi_oidc_tests.sh"))
+	require.NoError(t, err)
+	for _, variable := range []string{"issuer_url", "discovery_url"} {
+		fragment := regexp.MustCompile(`(?m)^  local ` + variable + `=[^\n]*`).Find(source)
+		require.NotEmpty(t, fragment)
+		for _, path := range []string{"", "/auth", "/custom"} {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			t.Setenv("KEYCLOAK_CONTAINER_NAME", "e2e-keycloak")
+			t.Setenv("KEYCLOAK_PORT", "8443")
+			t.Setenv("KEYCLOAK_MAIN_REALM", "breakglass-e2e")
+			output, err := exec.Command("bash", "-c", "probe() {\n"+string(fragment)+"\nprintf '%s' \"$"+variable+"\"\n}\nprobe").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			want := "https://e2e-keycloak:8443" + path + "/realms/breakglass-e2e"
+			if variable == "discovery_url" {
+				want += "/.well-known/openid-configuration"
+			}
+			require.Equal(t, want, string(output))
+		}
+	}
+}
+
+func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
+	skipUnlessE2E(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cli := setupClient(t)
+	path := os.Getenv("KEYCLOAK_RELATIVE_PATH")
+	if path == "" {
+		path = "/auth"
+	}
+	var configs corev1.ConfigMapList
+	require.NoError(t, cli.List(ctx, &configs, client.InNamespace(bootstrapSystem)))
+	var matchedConfig bool
+	for _, config := range configs.Items {
+		raw, ok := config.Data["config.yaml"]
+		if !ok {
+			continue
+		}
+		var settings struct {
+			AuthorizationServer struct {
+				URL string `json:"url"`
+			} `json:"authorizationServer"`
+			Frontend struct {
+				OIDCAuthority string `json:"oidcAuthority"`
+			} `json:"frontend"`
+		}
+		require.NoError(t, yaml.Unmarshal([]byte(raw), &settings))
+		if settings.AuthorizationServer.URL == "" {
+			continue
+		}
+		require.True(t, strings.HasSuffix(settings.AuthorizationServer.URL, path))
+		require.True(t, strings.HasSuffix(settings.Frontend.OIDCAuthority, path+"/realms/"+helpers.GetKeycloakRealm()))
+		matchedConfig = true
+	}
+	require.True(t, matchedConfig, "actual controller ConfigMap must retain configured issuer routes")
+	for _, label := range []string{"app=keycloak", "app=breakglass"} {
+		name, err := findDeploymentByLabel(ctx, cli, bootstrapSystem, label)
+		require.NoError(t, err)
+		require.NoError(t, helpers.WaitForDeploymentReady(ctx, cli, bootstrapSystem, name, 4*time.Minute))
+		var deployment appsv1.Deployment
+		require.NoError(t, cli.Get(ctx, client.ObjectKey{Namespace: bootstrapSystem, Name: name}, &deployment))
+		require.GreaterOrEqual(t, deployment.Status.ObservedGeneration, deployment.Generation)
+		if label == "app=keycloak" {
+			var matched bool
+			for _, container := range deployment.Spec.Template.Spec.Containers {
+				if container.Name != "keycloak" {
+					continue
+				}
+				for _, env := range container.Env {
+					if env.Name == "KC_HTTP_RELATIVE_PATH" {
+						require.Equal(t, path, env.Value)
+						matched = true
+					}
+				}
+				require.NotNil(t, container.ReadinessProbe)
+				require.NotNil(t, container.ReadinessProbe.HTTPGet)
+				require.Equal(t, path+"/realms/master", container.ReadinessProbe.HTTPGet.Path)
+			}
+			require.True(t, matched, "actual Keycloak deployment must retain the configured base path")
+		} else {
+			var matched bool
+			for _, container := range deployment.Spec.Template.Spec.InitContainers {
+				if container.Name == "wait-for-keycloak" {
+					require.Contains(t, strings.Join(container.Args, " "), path+"/realms/master/protocol/openid-connect/certs")
+					matched = true
+				}
+			}
+			require.True(t, matched, "actual controller init route must retain the configured base path")
+		}
+	}
+}
 
 // getBootstrapTdir returns the TDIR path used by kind-setup-single.sh.
 // It prefers the TDIR environment variable; falls back to the conventional
@@ -225,6 +436,10 @@ func validateKubeAPIServerAuthConfiguration(t *testing.T, pod corev1.Pod) {
 	require.Equal(t, []string{"/etc/kubernetes/authorization-config.yaml"},
 		flagValues(args, "--authorization-config"),
 		"kube-apiserver must receive exactly one authorization configuration path")
+	admissionPlugins := flagValues(args, "--enable-admission-plugins")
+	require.Len(t, admissionPlugins, 1)
+	require.Contains(t, strings.Split(admissionPlugins[0], ","), "PodTolerationRestriction",
+		"native QoS toleration admission must run in the debug-session target")
 
 	volumes := make(map[string]corev1.Volume, len(pod.Spec.Volumes))
 	for _, volume := range pod.Spec.Volumes {
