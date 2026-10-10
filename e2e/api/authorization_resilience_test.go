@@ -227,7 +227,10 @@ func (s *SpokeHubAuthorizationSuite) TestWebhookOutageNoOpinionPreservesRBAC() {
 	s.Require().NoError(err, "RBAC allow remains effective during outage: %s", out)
 	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 	s.Require().Error(err, "a live approved session cannot grant uncached access through an unreachable webhook")
-	s.Require().Contains(strings.ToLower(out), "forbidden", "setup/network failures do not count as a policy denial")
+	s.Require().Contains(strings.ToLower(out), "internalerror",
+		"the apiserver retains the failed webhook's error when no authorizer allows the request")
+	s.Require().Contains(strings.ToLower(out), "connection refused",
+		"require the deliberately failed webhook, not a client or apiserver connectivity failure")
 
 	// In production order RBAC allows short-circuit before the webhook. A
 	// temporary downstream RBAC control distinguishes NoOpinion from Deny.
@@ -245,5 +248,6 @@ func (s *SpokeHubAuthorizationSuite) TestWebhookOutageNoOpinionPreservesRBAC() {
 	s.Require().NoError(err, "NoOpinion must continue past the failed webhook to a downstream RBAC allow: %s", out)
 	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 	s.Require().Error(err)
-	s.Require().Contains(strings.ToLower(out), "forbidden")
+	s.Require().Contains(strings.ToLower(out), "internalerror")
+	s.Require().Contains(strings.ToLower(out), "connection refused")
 }

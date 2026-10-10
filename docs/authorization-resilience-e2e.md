@@ -15,7 +15,10 @@ The existing multi-cluster Kind suite now exercises two serial spoke-A cases:
 * `TestWebhookOutageNoOpinionPreservesRBAC`: proves approved session access,
   configures the dedicated spoke webhook connection to a closed local port,
   disables caching, and verifies ordinary narrow RBAC access remains allowed
-  while additional Breakglass access is Forbidden. A second temporary control
+  while additional Breakglass access fails with the apiserver's `InternalError`
+  preserving the unreachable webhook's `connection refused` error. NoOpinion
+  does not suppress that error when no later authorizer allows the request.
+  A second temporary control
   puts the failed webhook before RBAC and requires continuation to the narrow
   RBAC allow, distinguishing `NoOpinion` from `Deny`.
 
@@ -30,7 +33,10 @@ restarting again in cleanup. Both file restores and the restart are attempted
 even if an earlier restoration step fails; any combined failure fails the test.
 The shared hub remains
 available. Do not run these methods concurrently or against a non-disposable
-cluster. A network/setup error is not accepted as Forbidden evidence.
+cluster. The client must reach the live apiserver: an arbitrary client/network
+failure is not acceptance. The intentional webhook transport error is preserved
+in the apiserver response for ungranted requests; ordinary revocation with a
+reachable webhook still requires Forbidden.
 
 Use the repository's existing `e2e/kind-setup-multi.sh` environment and run:
 
