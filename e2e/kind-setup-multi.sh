@@ -330,6 +330,7 @@ nodes:
       extraArgs:
         authentication-config: /etc/kubernetes/authentication-config.yaml
         authorization-config: /etc/kubernetes/authorization-config.yaml
+        enable-admission-plugins: PodTolerationRestriction
         v: "6"
       extraVolumes:
         - name: authentication-config

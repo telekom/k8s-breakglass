@@ -954,6 +954,7 @@ nodes:
     kind: ClusterConfiguration
     apiServer:
       extraArgs:
+        enable-admission-plugins: PodTolerationRestriction
         # Audit logging configuration
         audit-policy-file: /etc/kubernetes/audit-policy.yaml
         audit-log-path: /var/log/kubernetes/audit.log
