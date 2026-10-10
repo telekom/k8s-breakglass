@@ -299,8 +299,14 @@ spec:
 
 	// Canonical catalogue profiles explicitly disable attach. A new short lease
 	// also proves natural expiry without changing status or timestamps.
-	template.Spec.AllowedPodOperations.Attach = ptr.To(false)
-	require.NoError(t, s.Client.Update(ctx, template))
+	require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var current breakglassv1alpha1.DebugSessionTemplate
+		if err := s.Client.Get(ctx, client.ObjectKeyFromObject(template), &current); err != nil {
+			return err
+		}
+		current.Spec.AllowedPodOperations.Attach = ptr.To(false)
+		return s.Client.Update(ctx, &current)
+	}))
 	expiring := create("90s")
 	require.NoError(t, s.TC.ClientForUser(approver).ApproveDebugSession(ctx, t, expiring.Name, "peer approves short lease"))
 	expiring = helpers.WaitForDebugSessionState(t, ctx, s.Client, expiring.Name, expiring.Namespace, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
