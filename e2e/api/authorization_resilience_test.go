@@ -9,6 +9,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,6 +20,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
@@ -34,51 +37,75 @@ func (s *SpokeHubAuthorizationSuite) nodeCommand(ctx context.Context, args ...st
 	return exec.CommandContext(ctx, "docker", append([]string{"exec", node}, args...)...).CombinedOutput()
 }
 
-func (s *SpokeHubAuthorizationSuite) writeNodeFile(ctx context.Context, path string, data []byte) {
+func (s *SpokeHubAuthorizationSuite) writeNodeFile(ctx context.Context, path string, data []byte) error {
 	node := s.mcCtx.Config.SpokeAClusterName + "-control-plane"
 	output, err := exec.CommandContext(ctx, "docker", "inspect", "--format", "{{json .Mounts}}", node).Output()
-	s.Require().NoError(err)
+	if err != nil {
+		return fmt.Errorf("inspect Kind mounts: %w", err)
+	}
 	var mounts []struct{ Type, Source, Destination string }
-	s.Require().NoError(json.Unmarshal(output, &mounts))
+	if err := json.Unmarshal(output, &mounts); err != nil {
+		return err
+	}
 	cwd, err := os.Getwd()
-	s.Require().NoError(err)
+	if err != nil {
+		return err
+	}
 	// go test runs this package from <checkout>/e2e/api.
 	root, err := filepath.EvalSymlinks(filepath.Join(cwd, "..", ".."))
-	s.Require().NoError(err)
+	if err != nil {
+		return err
+	}
 	for _, mount := range mounts {
 		if mount.Destination != path || mount.Type != "bind" {
 			continue
 		}
 		info, statErr := os.Lstat(mount.Source)
-		s.Require().NoError(statErr)
-		s.Require().True(info.Mode().IsRegular(), "only a regular Kind fixture file may be rewritten")
+		if statErr != nil {
+			return statErr
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("Kind fixture is not a regular file: %s", mount.Source)
+		}
 		source, resolveErr := filepath.EvalSymlinks(mount.Source)
-		s.Require().NoError(resolveErr)
+		if resolveErr != nil {
+			return resolveErr
+		}
 		relative, relErr := filepath.Rel(root, source)
-		s.Require().NoError(relErr)
-		s.Require().False(relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)),
-			"Kind fixture must belong to this checkout, not another user's cluster")
+		if relErr != nil {
+			return relErr
+		}
+		if relative == ".." || strings.HasPrefix(relative, ".."+string(os.PathSeparator)) {
+			return fmt.Errorf("Kind fixture must belong to this checkout: %s", source)
+		}
 		writePath, pathErr := filepath.Rel(cwd, source)
-		s.Require().NoError(pathErr)
+		if pathErr != nil {
+			return pathErr
+		}
 		// Kind mounts these files read-only. Truncate the host fixture in place so
 		// the existing bind mount observes the update without replacing its inode.
-		s.Require().NoError(os.WriteFile(writePath, data, info.Mode().Perm()))
-		return
+		return os.WriteFile(writePath, data, info.Mode().Perm())
 	}
-	s.FailNow("no dedicated bind-mounted Kind fixture found", path)
+	return fmt.Errorf("no dedicated bind-mounted Kind fixture found: %s", path)
 }
 
-func (s *SpokeHubAuthorizationSuite) restartSpokeAPIServer(ctx context.Context) {
+func (s *SpokeHubAuthorizationSuite) restartSpokeAPIServer(ctx context.Context) error {
 	output, err := s.nodeCommand(ctx, "crictl", "--runtime-endpoint", "unix:///run/containerd/containerd.sock", "ps", "--name", "kube-apiserver", "-q")
-	s.Require().NoError(err)
+	if err != nil {
+		return fmt.Errorf("list spoke apiserver: %w: %s", err, output)
+	}
 	ids := strings.Fields(string(output))
-	s.Require().Len(ids, 1, "restart only the dedicated spoke's running apiserver")
+	if len(ids) != 1 {
+		return fmt.Errorf("expected one running spoke apiserver, got %d", len(ids))
+	}
 	_, err = s.nodeCommand(ctx, "crictl", "--runtime-endpoint", "unix:///run/containerd/containerd.sock", "stop", ids[0])
-	s.Require().NoError(err)
-	s.Require().Eventually(func() bool {
+	if err != nil {
+		return fmt.Errorf("stop spoke apiserver: %w", err)
+	}
+	return wait.PollUntilContextTimeout(ctx, time.Second, 2*time.Minute, true, func(ctx context.Context) (bool, error) {
 		out, requestErr := s.runKubectlWithKubeconfig(ctx, s.mcCtx.Config.SpokeAKubeconfig, "get", "--raw=/readyz")
-		return requestErr == nil && strings.TrimSpace(out) == "ok"
-	}, 2*time.Minute, time.Second, "spoke apiserver must be ready with the changed authorization configuration")
+		return requestErr == nil && strings.TrimSpace(out) == "ok", nil
+	})
 }
 
 // These suite methods run serially. Only spoke A is changed, not the hub service.
@@ -91,9 +118,12 @@ func (s *SpokeHubAuthorizationSuite) configureSpokeAuthorization(cache bool, out
 	s.T().Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		s.writeNodeFile(ctx, authorizationConfigPath, authz)
-		s.writeNodeFile(ctx, authorizationKubeconfigPath, kubeconfig)
-		s.restartSpokeAPIServer(ctx)
+		restoreErr := errors.Join(
+			s.writeNodeFile(ctx, authorizationConfigPath, authz),
+			s.writeNodeFile(ctx, authorizationKubeconfigPath, kubeconfig),
+			s.restartSpokeAPIServer(ctx),
+		)
+		s.Assert().NoError(restoreErr, "all spoke restoration steps must be attempted even after a failure")
 	})
 	var config map[string]interface{}
 	s.Require().NoError(yaml.Unmarshal(authz, &config))
@@ -113,7 +143,7 @@ func (s *SpokeHubAuthorizationSuite) configureSpokeAuthorization(cache bool, out
 	webhook["cacheUnauthorizedRequests"] = false
 	updated, err := json.Marshal(config)
 	s.Require().NoError(err)
-	s.writeNodeFile(s.ctx, authorizationConfigPath, updated)
+	s.Require().NoError(s.writeNodeFile(s.ctx, authorizationConfigPath, updated))
 	if outage {
 		cfg, loadErr := clientcmd.Load(kubeconfig)
 		s.Require().NoError(loadErr)
@@ -122,12 +152,12 @@ func (s *SpokeHubAuthorizationSuite) configureSpokeAuthorization(cache bool, out
 		}
 		updatedKubeconfig, writeErr := clientcmd.Write(*cfg)
 		s.Require().NoError(writeErr)
-		s.writeNodeFile(s.ctx, authorizationKubeconfigPath, updatedKubeconfig)
+		s.Require().NoError(s.writeNodeFile(s.ctx, authorizationKubeconfigPath, updatedKubeconfig))
 		probe, probeErr := s.nodeCommand(s.ctx, "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/1")
 		s.Require().Error(probeErr, "the configured outage endpoint must be unreachable")
 		s.Require().Contains(strings.ToLower(string(probe)), "connection refused")
 	}
-	s.restartSpokeAPIServer(s.ctx)
+	s.Require().NoError(s.restartSpokeAPIServer(s.ctx))
 }
 
 func (s *SpokeHubAuthorizationSuite) approvedResilienceSession() (*breakglassv1alpha1.BreakglassSession, string, *helpers.APIClient) {
@@ -198,4 +228,22 @@ func (s *SpokeHubAuthorizationSuite) TestWebhookOutageNoOpinionPreservesRBAC() {
 	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
 	s.Require().Error(err, "a live approved session cannot grant uncached access through an unreachable webhook")
 	s.Require().Contains(strings.ToLower(out), "forbidden", "setup/network failures do not count as a policy denial")
+
+	// In production order RBAC allows short-circuit before the webhook. A
+	// temporary downstream RBAC control distinguishes NoOpinion from Deny.
+	authz, err := s.nodeCommand(s.ctx, "cat", authorizationConfigPath)
+	s.Require().NoError(err)
+	var config map[string]interface{}
+	s.Require().NoError(yaml.Unmarshal(authz, &config))
+	authorizers := config["authorizers"].([]interface{})
+	authorizers[1], authorizers[2] = authorizers[2], authorizers[1]
+	updated, err := json.Marshal(config)
+	s.Require().NoError(err)
+	s.Require().NoError(s.writeNodeFile(s.ctx, authorizationConfigPath, updated))
+	s.Require().NoError(s.restartSpokeAPIServer(s.ctx))
+	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "configmaps", "-n", namespace.Name)
+	s.Require().NoError(err, "NoOpinion must continue past the failed webhook to a downstream RBAC allow: %s", out)
+	out, err = s.runKubectlWithToken(kubeconfig, token, "get", "pods", "-n", "default")
+	s.Require().Error(err)
+	s.Require().Contains(strings.ToLower(out), "forbidden")
 }
