@@ -74,6 +74,7 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 			fragment := regexp.MustCompile(`(?ms)^_KEYCLOAK_HOST_RAW=.*?^KEYCLOAK_ISSUER_URL=[^\n]*`).Find(source)
 			require.NotEmpty(t, fragment)
 			for _, tc := range []struct{ host, path, want string }{
+				{"e2e-keycloak", "", "https://e2e-keycloak:8443/realms/breakglass-e2e"},
 				{"e2e-keycloak", "/auth", "https://e2e-keycloak:8443/auth/realms/breakglass-e2e"},
 				{"https://localhost:8443/auth", "/auth", "https://localhost:8443/auth/realms/breakglass-e2e"},
 				{"http://localhost:8080/auth", "/auth", "http://localhost:8080/auth/realms/breakglass-e2e"},
