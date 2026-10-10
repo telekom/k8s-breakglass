@@ -92,6 +92,14 @@ func TestBootstrapOIDCIssuerRelativePath(t *testing.T) {
 	}
 }
 
+func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
+	source, err := os.ReadFile("kind-setup-single.sh")
+	require.NoError(t, err)
+	require.Equal(t, 2, strings.Count(string(source), "\nconfigure_keycloak_relative_path\n"))
+	require.Contains(t, string(source), "rollout status deployment \"$KEYCLOAK_DEPLOY_NAME\"")
+	require.Contains(t, string(source), "rollout status deployment \"$CONTROLLER_DEPLOY_NAME\"")
+}
+
 // getBootstrapTdir returns the TDIR path used by kind-setup-single.sh.
 // It prefers the TDIR environment variable; falls back to the conventional
 // directory next to this file.
