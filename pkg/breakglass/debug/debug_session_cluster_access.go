@@ -35,7 +35,7 @@ func directTemplateAllowsCluster(template *breakglassv1alpha1.DebugSessionTempla
 // directTemplateAllowsClusterReference checks the canonical name, requested
 // reference, and tenant alias used to reach a uniquely resolved cluster.
 func directTemplateAllowsClusterReference(template *breakglassv1alpha1.DebugSessionTemplate, requested string, cluster *breakglassv1alpha1.ClusterConfig, configured []breakglassv1alpha1.ClusterConfig) bool {
-	if cluster == nil {
+	if cluster == nil || !debugClusterReferenceResolvesTo(requested, cluster, configured) {
 		return false
 	}
 	if directTemplateAllowsCluster(template, cluster.Name, cluster) {

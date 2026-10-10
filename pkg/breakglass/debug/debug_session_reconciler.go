@@ -1590,6 +1590,9 @@ func (c *DebugSessionController) bindingMatchesClusterReference(binding *breakgl
 	if clusterConfig == nil {
 		return c.bindingMatchesCluster(binding, requested, nil)
 	}
+	if !debugClusterReferenceResolvesTo(requested, clusterConfig, configured) {
+		return false
+	}
 	if c.bindingMatchesCluster(binding, clusterConfig.Name, clusterConfig) {
 		return true
 	}
