@@ -55,6 +55,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/yaml"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -101,6 +102,31 @@ func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
 	if path == "" {
 		path = "/auth"
 	}
+	var configs corev1.ConfigMapList
+	require.NoError(t, cli.List(ctx, &configs, client.InNamespace(bootstrapSystem)))
+	var matchedConfig bool
+	for _, config := range configs.Items {
+		raw, ok := config.Data["config.yaml"]
+		if !ok {
+			continue
+		}
+		var settings struct {
+			AuthorizationServer struct {
+				URL string `json:"url"`
+			} `json:"authorizationServer"`
+			Frontend struct {
+				OIDCAuthority string `json:"oidcAuthority"`
+			} `json:"frontend"`
+		}
+		require.NoError(t, yaml.Unmarshal([]byte(raw), &settings))
+		if settings.AuthorizationServer.URL == "" {
+			continue
+		}
+		require.True(t, strings.HasSuffix(settings.AuthorizationServer.URL, path))
+		require.True(t, strings.HasSuffix(settings.Frontend.OIDCAuthority, path+"/realms/"+helpers.GetKeycloakRealm()))
+		matchedConfig = true
+	}
+	require.True(t, matchedConfig, "actual controller ConfigMap must retain configured issuer routes")
 	for _, label := range []string{"app=keycloak", "app=breakglass"} {
 		name, err := findDeploymentByLabel(ctx, cli, bootstrapSystem, label)
 		require.NoError(t, err)
