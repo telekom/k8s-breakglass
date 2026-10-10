@@ -46,7 +46,7 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 		Groups []string `json:"groups"`
 	}
 	require.NoError(t, json.Unmarshal(payload, &claims))
-	require.Equal(t, strings.TrimRight(helpers.GetKeycloakInternalURL(), "/")+"/realms/"+helpers.GetKeycloakRealm(), claims.Issuer)
+	require.Equal(t, configuredE2EIssuer(), claims.Issuer)
 	require.Equal(t, user.Email, claims.Email)
 	require.True(t, slices.Contains(claims.Groups, "dttcaas-platform_poweruser"))
 	targets := []struct {
