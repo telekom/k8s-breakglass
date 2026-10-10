@@ -238,7 +238,7 @@ func TestFilteredAndSampledEventsSkipResourceEnrichment(t *testing.T) {
 		cfg := DefaultManagerConfig()
 		cfg.Enrich = func(context.Context, *Event) { t.Error("discarded event must not perform resource reads") }
 		if filtered {
-			cfg.ExcludeEventTypes = []EventType{EventResourceList}
+			cfg.ExcludeEventTypes = []string{string(EventResourceList)}
 		} else {
 			cfg.SampleRate, cfg.sampleRateConfigured = 0, true
 			cfg.HighVolumeEventTypes = []EventType{EventResourceList}
