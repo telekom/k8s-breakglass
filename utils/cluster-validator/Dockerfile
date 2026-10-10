@@ -6,11 +6,8 @@
 # Build from the repository root:
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -f utils/cluster-validator/Dockerfile .
-# The utility image intentionally uses the pinned Go 1.27 builder while the
-# repository module and controller CI use the Go 1.26.9 toolchain from go.mod.
-# Keep this split explicit: the image build is an independently verified
-# release artifact and does not change the module's supported compiler.
-FROM golang:1.27@sha256:3680233e3204827fbdc66088528ae6d4b3d034f51d03a99d454f6de034888244 AS builder
+# Use the same patched Go toolchain as repository and controller CI builds.
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG VERSION=dev
