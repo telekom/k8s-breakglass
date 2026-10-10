@@ -391,10 +391,11 @@ func (s *SpokeHubAuthorizationSuite) TestSessionClusterScopeEnforced() {
 	// Create session for spoke-cluster-a ONLY via API
 	t.Logf("Step 1: Employee requests access to %s only via API", spokeA)
 	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
-		Cluster: spokeA,
-		User:    testUser.Email,
-		Group:   "breakglass-pods-admin",
-		Reason:  "E2E Test - Cluster scope verification",
+		Cluster:        spokeA,
+		User:           testUser.Email,
+		Group:          "breakglass-pods-admin",
+		Reason:         "E2E Test - Cluster scope verification",
+		EscalationName: "mc-spoke-a-pods",
 	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err)
 	s.cleanup.Add(session)
@@ -558,11 +559,12 @@ func (s *SpokeHubAuthorizationSuite) TestExpiredSessionDenied() {
 	// Create a normal session via API
 	t.Log("Step 1: Creating session via API")
 	session, err := userAPI.CreateSessionAndWaitForPending(s.ctx, t, helpers.SessionRequest{
-		Cluster:  spokeCluster,
-		User:     testUser.Email,
-		Group:    "breakglass-pods-admin",
-		Reason:   "E2E Test - Session expiry verification",
-		Duration: 60,
+		Cluster:        spokeCluster,
+		User:           testUser.Email,
+		Group:          "breakglass-pods-admin",
+		Reason:         "E2E Test - Session expiry verification",
+		EscalationName: "mc-spoke-a-pods",
+		Duration:       60,
 	}, helpers.WaitForStateTimeout)
 	s.Require().NoError(err, "Failed to create session via API")
 	s.cleanup.Add(session)
