@@ -21,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Only the uploader mounts it read-only and appends it to image-pinned system
   roots; hostname verification remains enabled. The reference is snapshotted
   into immutable artifact reservations and supported by catalogue profiles.
-- Add optional freeform `ticketSystemID` to session requests, API responses,
-  UI, `bgctl session request --ticket-system-id`, and audit events. The field
-  is audit-only: it has no format validation or mandatory requirement.
 
 ### Security
 
