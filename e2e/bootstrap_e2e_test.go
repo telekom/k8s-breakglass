@@ -369,6 +369,10 @@ func validateKubeAPIServerAuthConfiguration(t *testing.T, pod corev1.Pod) {
 	require.Equal(t, []string{"/etc/kubernetes/authorization-config.yaml"},
 		flagValues(args, "--authorization-config"),
 		"kube-apiserver must receive exactly one authorization configuration path")
+	admissionPlugins := flagValues(args, "--enable-admission-plugins")
+	require.Len(t, admissionPlugins, 1)
+	require.Contains(t, strings.Split(admissionPlugins[0], ","), "PodTolerationRestriction",
+		"native QoS toleration admission must run in the debug-session target")
 
 	volumes := make(map[string]corev1.Volume, len(pod.Spec.Volumes))
 	for _, volume := range pod.Spec.Volumes {

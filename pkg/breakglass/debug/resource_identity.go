@@ -175,7 +175,7 @@ func podMatchesAdmittedWorkloadTemplate(ctx context.Context, target client.Clien
 		}
 	}
 	if !configured && workloadHasQoSResources(template.Spec) {
-		// TaintNodesByCondition adds this exact toleration to non-BestEffort
+		// PodTolerationRestriction adds this exact toleration to non-BestEffort
 		// Pods, not ReplicaSet templates. Preserve every other toleration.
 		for i, tolerance := range actual.Tolerations {
 			if equality.Semantic.DeepEqual(tolerance, memoryPressure) {
