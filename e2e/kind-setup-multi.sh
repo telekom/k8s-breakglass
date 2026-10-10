@@ -1595,6 +1595,10 @@ rules:
 - apiGroups: ["batch"]
   resources: ["jobs"]
   verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Allow deploying required session-owned egress policy auxiliaries
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
 # Verify admission-derived scheduling fields for workload identity checks
 - apiGroups: ["scheduling.k8s.io"]
   resources: ["priorityclasses"]
