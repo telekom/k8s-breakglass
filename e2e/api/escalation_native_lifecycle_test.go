@@ -87,9 +87,8 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 			},
 		}
 
-		var cluster breakglassv1alpha1.ClusterConfig
-		key := client.ObjectKey{Namespace: s.Namespace, Name: target.name}
-		require.NoError(t, s.Client.Get(s.Ctx, key, &cluster))
+		cluster := nativeTargetClusterConfig(t, s.Ctx, s.Client, target.name)
+		key := client.ObjectKeyFromObject(cluster)
 		originalSpec := cluster.Spec.DeepCopy()
 		t.Cleanup(func() {
 			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -97,6 +96,7 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 				if err := s.Client.Get(context.Background(), key, &current); err != nil {
 					return err
 				}
+
 				current.Spec = *originalSpec
 				return s.Client.Update(context.Background(), &current)
 			}))
@@ -119,7 +119,7 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 			require.NoError(t, s.Client.Create(s.Ctx, secret))
 			s.Cleanup.Add(secret)
 			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				if err := s.Client.Get(s.Ctx, key, &cluster); err != nil {
+				if err := s.Client.Get(s.Ctx, key, cluster); err != nil {
 					return err
 				}
 				cluster.Spec.AuthType = breakglassv1alpha1.ClusterAuthTypeKubeconfig
@@ -127,15 +127,15 @@ func TestEscalationNativeWildcardPrivilegeLifecycle(t *testing.T) {
 				cluster.Spec.KubeconfigSecretRef = &breakglassv1alpha1.SecretKeyReference{
 					Name: secret.Name, Namespace: s.Namespace, Key: "value",
 				}
-				return s.Client.Update(s.Ctx, &cluster)
+				return s.Client.Update(s.Ctx, cluster)
 			}))
 		} else {
 			require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
-				if err := s.Client.Get(s.Ctx, key, &cluster); err != nil {
+				if err := s.Client.Get(s.Ctx, key, cluster); err != nil {
 					return err
 				}
 				cluster.Spec.AuthType = breakglassv1alpha1.ClusterAuthTypeKubeconfig
-				return s.Client.Update(s.Ctx, &cluster)
+				return s.Client.Update(s.Ctx, cluster)
 			}))
 		}
 		require.Equal(t, breakglassv1alpha1.ClusterAuthTypeKubeconfig, cluster.Spec.AuthType)
