@@ -5,6 +5,13 @@ Deletion uses UID preconditions. A same-name replacement is preserved, while
 inventory for the original is retired. Auxiliary readiness evaluates the same
 UID-checked object snapshot, rather than fetching by name again.
 
+Auxiliary workload recovery also rejects a foreign PodTemplate session UID
+before applying. When a recorded legacy workload has no nested session marker,
+recovery omits the newly added controller marker from its apply intent; this
+preserves immutable Job templates. Top-level session, operation and recorded
+resource UID checks still apply. Unmarked legacy Pods do not gain pod-operation
+authorization from this compatibility path; recreate sessions when needed.
+
 Copied-pod inventory uses the persisted `status.copiedPods[].uid` as its
 canonical merge identity, with the historical `copyUID` field as a legacy
 fallback. This preserves a same-name replacement recorded concurrently while

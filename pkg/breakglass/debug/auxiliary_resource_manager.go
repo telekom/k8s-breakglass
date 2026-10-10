@@ -854,6 +854,9 @@ func applyOrRecoverAuxiliaryResource(ctx context.Context, targetClient client.Cl
 			return fmt.Errorf("target resource %s/%s already exists with a different PodTemplate session UID", obj.GetNamespace(), obj.GetName())
 		}
 	}
+	if managedPodAnnotations(existing)[sourceSessionUIDAnnotation] == "" {
+		removeManagedPodSessionUID(obj, string(session.UID))
+	}
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	obj.SetManagedFields(nil)
