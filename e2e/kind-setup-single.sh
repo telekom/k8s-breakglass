@@ -1126,6 +1126,7 @@ log 'cert-manager is ready'
 
 # Apply the dev overlay (creates config ConfigMap among other resources)
 apply_kustomize config/dev
+configure_keycloak_relative_path() {
 KEYCLOAK_DEPLOY_NAME=$(KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" get deployments -l app=keycloak -o jsonpath='{.items[0].metadata.name}')
 KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" patch deployment "$KEYCLOAK_DEPLOY_NAME" --type=strategic --patch "$(cat <<EOF
 spec:
@@ -1155,6 +1156,10 @@ spec:
           while [ \$(curl -sw '%{http_code}' "https://breakglass-keycloak:8443${KEYCLOAK_RELATIVE_PATH}/realms/master/protocol/openid-connect/certs" -o /dev/null --insecure) -ne 200 ]; do sleep 5; done
 EOF
 )"
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" rollout status deployment "$KEYCLOAK_DEPLOY_NAME" --timeout=300s
+KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL -n "$DEV_NS" rollout status deployment "$CONTROLLER_DEPLOY_NAME" --timeout=300s
+}
+configure_keycloak_relative_path
 
 # Wait for cert-manager to inject the CA bundle (instead of manually patching)
 # cert-manager's cainjector watches the Certificate and injects CA into ValidatingWebhookConfiguration
@@ -1710,6 +1715,7 @@ log 'Created breakglass-debug namespace for debug session workloads'
 # Use --server-side --force-conflicts to handle ValidatingWebhookConfiguration that may have been
 # previously patched with CA bundle (resourceVersion conflict resolution)
 KUBECONFIG="$HUB_KUBECONFIG" $KUSTOMIZE build config/dev | KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply --server-side --force-conflicts -f -
+configure_keycloak_relative_path
 
 # Wait for cert-manager to inject the CA bundle into ValidatingWebhookConfiguration
 # This replaces manual patching which caused CA mismatch issues
