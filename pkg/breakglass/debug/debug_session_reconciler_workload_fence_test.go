@@ -211,6 +211,7 @@ func TestActivateSessionRejectsUnreadyExplicitClusterBinding(t *testing.T) {
 			Clusters:    []string{"spoke"},
 		},
 	}
+
 	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
 	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
 	ds.Status.ResolvedBindingSpec = &extensionsv1.JSON{Raw: []byte(`{}`)}
@@ -220,6 +221,53 @@ func TestActivateSessionRejectsUnreadyExplicitClusterBinding(t *testing.T) {
 	deployments := &appsv1.DeploymentList{}
 	require.NoError(t, target.List(context.Background(), deployments))
 	require.Empty(t, deployments.Items)
+}
+
+func TestActivateSessionRetriesRequiredAuxiliaryApplyConflict(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	c.auxiliaryMgr = newTestAuxiliaryResourceManager()
+	template.Spec.RequiredAuxiliaryResourceCategories = []string{"egress"}
+	template.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
+		Name: "egress", Category: "egress", FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail,
+		TemplateString: "apiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: debug-egress\nspec:\n  podSelector: {}\n  policyTypes: [Egress]\n",
+	}}
+	_, err := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(context.Background(), ds, &template.Spec, nil, target, "breakglass-debug", true, nil, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+		return c.persistAuxiliaryStatus(context.Background(), ds, status)
+	})
+	require.NoError(t, err)
+	live := &unstructured.Unstructured{}
+	live.SetAPIVersion("networking.k8s.io/v1")
+	live.SetKind("NetworkPolicy")
+	require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: "debug-egress"}, live))
+	require.NoError(t, unstructured.SetNestedSlice(live.Object, []interface{}{"Ingress"}, "spec", "policyTypes"))
+	require.NoError(t, target.Update(context.Background(), live))
+	applies := 0
+	fencedTarget := interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{
+		Apply: func(ctx context.Context, cli client.WithWatch, cfg runtime.ApplyConfiguration, opts ...client.ApplyOption) error {
+			applies++
+			if applies == 1 {
+				return apierrors.NewConflict(corev1.Resource("networkpolicies"), live.GetName(), nil)
+			}
+			return cli.Apply(ctx, cfg, opts...)
+		},
+	})
+	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return fencedTarget, nil }
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	require.NoError(t, c.client.Status().Update(context.Background(), ds))
+	_, err = c.activateSession(context.Background(), ds, template, nil)
+	require.True(t, isDebugSessionDeploymentConflict(err), "%v", err)
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, persisted.Status.State)
+	require.Equal(t, string(live.GetUID()), persisted.Status.AuxiliaryResourceStatuses[0].UID)
+	_, err = c.activateSession(context.Background(), persisted, template, nil)
+	require.NoError(t, err)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, persisted.Status.State)
+	require.Equal(t, 2, applies)
 }
 
 func TestBindingVariablePolicySurvivesApprovalActivationAndTemplateRotation(t *testing.T) {
