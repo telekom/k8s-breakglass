@@ -203,13 +203,15 @@ func TestCompleteFlowWithDenyPolicy(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session via API
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    testUser,
-		Group:   testGroup,
-		Reason:  "Deny policy flow test",
+		Cluster:        clusterName,
+		User:           testUser,
+		Group:          testGroup,
+		Reason:         "Deny policy flow test",
+		EscalationName: escalation.Name,
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)
@@ -340,15 +342,17 @@ func TestCompleteFlowMultipleUsers(t *testing.T) {
 		Build()
 	cleanup.Add(escalation)
 	require.NoError(t, cli.Create(ctx, escalation))
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create session only for user with session
 	for i, u := range users {
 		if u.hasSession {
 			session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-				Cluster: clusterName,
-				User:    u.email,
-				Group:   u.group,
-				Reason:  "Multi-user flow test",
+				Cluster:        clusterName,
+				User:           u.email,
+				Group:          u.group,
+				Reason:         "Multi-user flow test",
+				EscalationName: escalation.Name,
 			}, helpers.WaitForStateTimeout)
 			require.NoError(t, err, "Failed to create session via API")
 			cleanup.Add(session)

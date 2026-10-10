@@ -127,10 +127,11 @@ func TestDenyPolicyNamespaceSelectorTerms(t *testing.T) {
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.TestUsers.Requester.Email,
-		Group:   testGroup,
-		Reason:  "Test namespace selector policy",
+		Cluster:        clusterName,
+		User:           helpers.TestUsers.Requester.Email,
+		Group:          testGroup,
+		Reason:         "Test namespace selector policy",
+		EscalationName: escalation.Name,
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session")
 	cleanup.Add(session)
@@ -282,13 +283,15 @@ func TestDenyPolicyMixedNamespaceFilters(t *testing.T) {
 	cleanup.Add(escalation)
 	err = cli.Create(ctx, escalation)
 	require.NoError(t, err)
+	helpers.WaitForEscalationReady(t, ctx, cli, escalation.Name, namespace, helpers.WaitForStateTimeout)
 
 	// Create and approve session
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.TestUsers.Requester.Email,
-		Group:   testGroup,
-		Reason:  "Test mixed namespace filter",
+		Cluster:        clusterName,
+		User:           helpers.TestUsers.Requester.Email,
+		Group:          testGroup,
+		Reason:         "Test mixed namespace filter",
+		EscalationName: escalation.Name,
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err)
 	cleanup.Add(session)

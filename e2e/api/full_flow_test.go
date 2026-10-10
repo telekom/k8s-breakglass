@@ -67,10 +67,11 @@ func TestHappyPathCompleteBreakglassFlow(t *testing.T) {
 		approverClient := tc.ApproverClient()
 
 		session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-			Cluster: clusterName,
-			User:    helpers.GetTestUserEmail(),
-			Group:   escalation.Spec.EscalatedGroup,
-			Reason:  "Happy path E2E test session",
+			Cluster:        clusterName,
+			User:           helpers.GetTestUserEmail(),
+			Group:          escalation.Spec.EscalatedGroup,
+			EscalationName: escalation.Name,
+			Reason:         "Happy path E2E test session",
 		}, helpers.WaitForStateTimeout)
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
@@ -156,10 +157,11 @@ func TestHappyPathMultipleEscalationsForSameCluster(t *testing.T) {
 
 	for i, group := range groups {
 		session, err := apiClient.CreateSession(ctx, t, helpers.SessionRequest{
-			Cluster: clusterName,
-			User:    helpers.GetTestUserEmail(),
-			Group:   group,
-			Reason:  "Multi-escalation test",
+			Cluster:        clusterName,
+			User:           helpers.GetTestUserEmail(),
+			Group:          group,
+			Reason:         "Multi-escalation test",
+			EscalationName: "e2e-multi-esc-" + group,
 		})
 		require.NoError(t, err, "Failed to create session via API")
 		cleanup.Add(session)
@@ -207,10 +209,11 @@ func TestHappyPathSessionRejection(t *testing.T) {
 	approverClient := tc.ApproverClient()
 
 	session, err := apiClient.CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
-		Cluster: clusterName,
-		User:    helpers.GetTestUserEmail(),
-		Group:   escalation.Spec.EscalatedGroup,
-		Reason:  "Session that will be rejected",
+		Cluster:        clusterName,
+		User:           helpers.GetTestUserEmail(),
+		Group:          escalation.Spec.EscalatedGroup,
+		EscalationName: escalation.Name,
+		Reason:         "Session that will be rejected",
 	}, helpers.WaitForStateTimeout)
 	require.NoError(t, err, "Failed to create session via API")
 	cleanup.Add(session)

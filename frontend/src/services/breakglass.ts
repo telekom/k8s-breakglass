@@ -84,6 +84,7 @@ export default class BreakglassService {
           "") as string;
         const basePartial = {
           escalationName: ((item.metadata as Record<string, unknown> | undefined)?.name || "") as string,
+          escalationUID: ((item.metadata as Record<string, unknown> | undefined)?.uid || "") as string,
           displayName: (spec.displayName ||
             (item.metadata as Record<string, unknown> | undefined)?.name ||
             "") as string,
@@ -260,10 +261,12 @@ export default class BreakglassService {
         cluster: string;
         group: string;
         user: string;
+        escalationName?: string;
         reason?: string;
         duration?: number;
         scheduledStartTime?: string;
       } = { cluster: transition.cluster, group: transition.to, user: username };
+      if (transition.escalationName) body.escalationName = transition.escalationName;
       if (reason && reason.trim().length > 0) body.reason = reason;
       if (duration && duration > 0) body.duration = Math.floor(duration);
       if (scheduledStartTime) body.scheduledStartTime = scheduledStartTime;
@@ -352,6 +355,7 @@ export default class BreakglassService {
       debug("BreakglassService.fetchHistoricalSessions", "Fetched historical sessions", { count: all.length });
       return all.map((ses: SessionCR) => ({
         name: ses?.metadata?.name || "",
+        metadata: ses.metadata,
         group: ses?.spec?.grantedGroup || "",
         expiry: ses?.status?.expiresAt ? new Date(ses.status.expiresAt).getTime() / 1000 : 0,
         cluster: ses?.spec?.cluster || "",
@@ -446,15 +450,28 @@ export default class BreakglassService {
       historical: historical.length,
     });
     const result = available.map((av) => {
-      const match = active.find((a) => a.group === av.to && a.cluster === av.cluster);
-      const pendingMatch = pending.find((p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === av.cluster);
-      const historyMatch = historical.find((h) => h.group === av.to && h.cluster === av.cluster);
+      const belongsToPolicy = (session: Pick<SessionCR, "metadata">) => {
+        const owner = session.metadata?.ownerReferences?.find(
+          (reference) => reference.controller && reference.kind === "BreakglassEscalation",
+        );
+        return (
+          !owner ||
+          !av.escalationName ||
+          (owner.name === av.escalationName && (!av.escalationUID || owner.uid === av.escalationUID))
+        );
+      };
+      const match = active.find((a) => a.group === av.to && a.cluster === av.cluster && belongsToPolicy(a));
+      const pendingMatch = pending.find(
+        (p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === av.cluster && belongsToPolicy(p),
+      );
+      const historyMatch = historical.find((h) => h.group === av.to && h.cluster === av.cluster && belongsToPolicy(h));
       // Ensure sessionActive is a full session object with metadata/spec for drop/withdraw
       let sessionActive = null;
       if (match && typeof match === "object") {
         const m = match;
         sessionActive = {
           metadata: {
+            ...m.metadata,
             name: m.metadata?.name || m.name || m.group || "",
             creationTimestamp: (m.metadata?.creationTimestamp as string) || "",
           },
@@ -467,6 +484,7 @@ export default class BreakglassService {
         const p = pendingMatch;
         sessionPending = {
           metadata: {
+            ...p.metadata,
             name: p.metadata?.name || p.name || p.spec?.grantedGroup || p.group || "",
             creationTimestamp: (p.metadata?.creationTimestamp as string) || "",
           },

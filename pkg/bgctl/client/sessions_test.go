@@ -172,6 +172,7 @@ func TestSessionsRequest(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "test-cluster", req.Cluster)
 		require.Equal(t, "admin", req.Group)
+		require.Equal(t, "firstline-emergency", req.EscalationName)
 
 		response := breakglassv1alpha1.BreakglassSession{
 			ObjectMeta: metav1.ObjectMeta{Name: "session-new"},
@@ -189,10 +190,11 @@ func TestSessionsRequest(t *testing.T) {
 	require.NoError(t, err)
 
 	result, err := client.Sessions().Request(context.Background(), SessionRequest{
-		Cluster: "test-cluster",
-		Group:   "admin",
-		User:    "user@example.com",
-		Reason:  "testing",
+		Cluster:        "test-cluster",
+		Group:          "admin",
+		EscalationName: "firstline-emergency",
+		User:           "user@example.com",
+		Reason:         "testing",
 	})
 	require.NoError(t, err)
 	require.Equal(t, "session-new", result.Name)

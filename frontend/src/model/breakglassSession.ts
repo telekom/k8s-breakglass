@@ -2,6 +2,7 @@ export interface BreakglassSessionRequest {
   cluster?: string;
   user?: string;
   group?: string;
+  escalationName?: string;
   name?: string;
   activeOnly?: boolean;
   mine?: boolean;

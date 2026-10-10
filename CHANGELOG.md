@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Select a specific eligible escalation via optional API `escalationName`,
+  `bgctl session request --escalation`, and separate UI policy cards. Ambiguous
+  group-only requests now return 409 with sorted eligible candidates rather than
+  silently selecting the first same-group policy. The existing controller-owner
+  UID approval fence remains unchanged; other policies' approvers are never
+  combined. Single-policy requests remain compatible; overlapping integrations
+  must select a resource name. This is distinct from GroupSync credentials
+  failures with an already-correct session owner.
+
 - Restore DebugSession discovery/creation from authenticated identity groups and
   template/binding allowlists, without requiring an active BreakglassSession.
   This fixes the provider-aware grant prerequisite introduced by PR #1346

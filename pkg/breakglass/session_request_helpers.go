@@ -62,6 +62,39 @@ type escalationResolutionResult struct {
 	selectedDenyPolicies []string
 }
 
+func selectRequestedEscalation(c *gin.Context, eligible []breakglassv1alpha1.BreakglassEscalation, request BreakglassSessionRequest) (*breakglassv1alpha1.BreakglassEscalation, bool) {
+	var matches []*breakglassv1alpha1.BreakglassEscalation
+	for i := range eligible {
+		escalation := &eligible[i]
+		if escalation.IsReady() && escalation.Spec.EscalatedGroup == request.GroupName &&
+			(request.EscalationName == "" || escalation.Name == request.EscalationName) {
+			matches = append(matches, escalation)
+		}
+	}
+	if len(matches) == 0 {
+		if request.EscalationName == "" {
+			apiresponses.RespondForbidden(c, "user not authorized for requested group")
+		} else {
+			apiresponses.RespondForbidden(c, "user not authorized for requested escalation and group")
+		}
+		return nil, false
+	}
+	if len(matches) > 1 {
+		names := make([]string, 0, len(matches))
+		for _, escalation := range matches {
+			names = append(names, escalation.Name)
+		}
+		slices.Sort(names)
+		c.JSON(http.StatusConflict, gin.H{
+			"error":      "multiple eligible escalations match; specify escalationName",
+			"code":       "AMBIGUOUS_ESCALATION",
+			"candidates": names,
+		})
+		return nil, false
+	}
+	return matches[0], true
+}
+
 type duplicateSessionConflictResponse struct {
 	Error   string                               `json:"error"`
 	Code    string                               `json:"code"`

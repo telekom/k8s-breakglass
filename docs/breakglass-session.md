@@ -14,6 +14,80 @@ The `BreakglassSession` custom resource represents an active or requested privil
 - Audit information
 - A metadata owner reference to the originating `BreakglassEscalation` for proper garbage collection
 
+## Choosing an escalation
+
+The REST request accepts optional `escalationName` containing the escalation's
+Kubernetes resource name. `bgctl session request --escalation NAME` sends this
+selection; the UI displays separate cards for policies granting the same group
+and submits the selected card's resource name.
+
+If only one ready, requester-eligible, provider-allowed policy grants the requested
+group on the target cluster, existing group-only requests continue to work.
+If multiple policies match, group-only requests return `409 AMBIGUOUS_ESCALATION`
+with sorted eligible candidates instead of silently choosing the first policy.
+Choose a candidate explicitly; a named policy still requires requester eligibility.
+The server persists its name/UID as the controller owner reference. Approval checks
+that exact owner UID, never the union of other policies' approvers.
+
+**Migration:** dual-role requesters and integrations with overlapping eligible
+same-group policies must submit `escalationName` (CLI: `--escalation`). Single-role
+requesters with only one eligible policy do not need a new field. This creation
+ambiguity is distinct from a GroupSync credentials failure: failed group resolution
+can leave no approvers even when the session already has the correct owner.
+
+## Escalation deletion revokes existing sessions
+
+> **Warning:** Deleting or renaming a `BreakglassEscalation`, including through
+> GitOps or Helm pruning, garbage-collects its associated sessions, including
+> pending, approved, and active sessions, without waiting for their expiration.
+> Treat this as immediate grant revocation, not as a drain that preserves
+> already-approved leases. Kubernetes garbage collection is asynchronous, and
+> previously cached authorization decisions may remain usable for the cache
+> lifetime described below.
+
+Each session has a controller owner reference to its originating escalation's
+name and UID. Renaming a policy replaces the Kubernetes object; recreating its
+old name or adding another policy with the same granted group does not transfer
+existing sessions to the new owner. Session retention settings do not prevent
+owner-driven garbage collection.
+
+Before an upgrade or policy migration removes a legacy escalation, require zero
+pending, approved, or active sessions owned by it. Wait for expiry or drop the
+sessions; platform users should switch to the central global escalation first.
+Request and independently approve any replacement grant under its actual policy.
+The API permits only one outstanding session per user, cluster, and granted
+group, so requesting a second same-tuple grant while the legacy session exists
+returns a conflict. Do not reparent sessions or bypass approval to migrate them.
+
+## Kubernetes authorization-cache revocation latency
+
+A drop or natural expiry ends the grant for fresh breakglass authorization
+decisions. Kubernetes API servers can nevertheless reuse a previously allowed
+webhook decision until their configured authorized-cache TTL elapses. If positive
+caching is enabled with `authorizedTTL: 5m`, repeating the same cached API
+operation may remain allowed for up to five minutes after the last successful
+authorization, plus controller/informer propagation and the observer's polling
+interval. Different request attributes can trigger a fresh decision and deny
+sooner. A 403 on a fresh request is not proof that every previously cached
+operation has already been revoked.
+
+The Kind Single- and Multi-Cluster fixtures explicitly set
+`cacheAuthorizedRequests: false` and `cacheUnauthorizedRequests: false`, despite
+retaining `authorizedTTL: 5m` in the configuration. Their native revocation tests
+therefore measure uncached controller/informer propagation, not five-minute
+positive-cache expiration.
+
+For legacy webhook flags, configure
+`--authorization-webhook-cache-authorized-ttl`; for structured authorization,
+configure the Webhook authorizer's `authorizedTTL`. Choose a shorter TTL when
+revocation requirements demand it, accounting for increased webhook traffic.
+On Kubernetes versions supporting structured cache controls, positive caching
+can instead be explicitly disabled with `cacheAuthorizedRequests: false`;
+setting a TTL to zero is not equivalent because zero selects the default.
+Also consider the unauthorized-cache TTL when measuring grant activation.
+DebugSession termination/expiry additionally removes the managed Pods and
+workloads; it must not rely solely on cache expiration for cleanup.
+
 ## Session State Machine
 
 The breakglass controller implements a **state-first validation architecture** where:

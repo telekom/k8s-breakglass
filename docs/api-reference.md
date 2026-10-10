@@ -275,6 +275,22 @@ Authorization: Bearer <token>
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
+- `escalationName` optionally selects a `BreakglassEscalation` by Kubernetes
+  `metadata.name`, not its display name. The policy must be ready, grant the
+  requested `group`, match the requested cluster, allow the requester's groups,
+  and allow the authenticated identity provider. A name never bypasses eligibility.
+- Without `escalationName`, exactly one eligible ready policy must grant the
+  requested group. Multiple matches return `409 Conflict` with
+  `code: "AMBIGUOUS_ESCALATION"` and sorted eligible resource names in `candidates`.
+  Select one and retry; no session is created by an ambiguous request.
+- The selected policy's name and UID are persisted as the session's controller
+  owner reference. Approval remains scoped to that UID and its approver policy;
+  another escalation granting the same group cannot supply approvers.
+  Escalation admission already enforces cluster-wide unique resource names
+  across namespaces; conflicting legacy names fail closed instead of selecting
+  an arbitrary owner.
+  Escalation discovery preserves `metadata.uid` so clients can pair sessions
+  with the exact policy owner rather than a same-name replacement.
 
 **User group resolution:** As with the escalations list endpoint, the
 requester's groups are resolved from the JWT `groups`/`realm_access` claim
