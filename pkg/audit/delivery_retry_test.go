@@ -182,6 +182,9 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	require.Equal(t, float64(1), testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
 	written, _, _ := sink.MessageStats()
 	require.Equal(t, int64(1), written, "only successful completion counts delivery")
+	require.NoError(t, sink.Close())
+	require.False(t, sink.IsConnected())
+	require.Zero(t, testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
 }
 
 func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {

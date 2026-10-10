@@ -154,4 +154,10 @@ func TestSessionIdentityUsesExplicitClusterConfigReference(t *testing.T) {
 	event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test", UID: "source"}}
 	svc.enrichResourceIdentity(context.Background(), event)
 	require.Equal(t, "correct", event.Target.ClusterUID)
+	duplicate := referenced.DeepCopy()
+	duplicate.Namespace, duplicate.UID = "another", "ambiguous"
+	require.NoError(t, svc.client.Create(context.Background(), duplicate))
+	event.Target.ClusterUID = ""
+	svc.enrichResourceIdentity(context.Background(), event)
+	require.Empty(t, event.Target.ClusterUID, "global duplicate names must remain uncorrelated")
 }

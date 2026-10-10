@@ -456,6 +456,10 @@ func (s *KafkaSink) Close() error {
 		return nil
 	}
 	s.closed = true
+	defer func() {
+		s.connected.Store(false)
+		metrics.AuditSinkConnected.WithLabelValues(s.name).Set(0)
+	}()
 
 	// Update connected metric
 	metrics.AuditSinkConnected.WithLabelValues(s.name).Set(0)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/clusterconfiglookup"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -142,9 +143,11 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 		if obj, ok := session.(*breakglassv1alpha1.BreakglassSession); ok && obj.Spec.ClusterConfigRef != "" {
 			clusterName = obj.Spec.ClusterConfigRef
 		}
-		cluster := &breakglassv1alpha1.ClusterConfig{}
-		if err := s.client.Get(ctx, client.ObjectKey{Namespace: session.GetNamespace(), Name: clusterName}, cluster); err == nil {
-			event.Target.ClusterUID = string(cluster.UID)
+		clusters := &breakglassv1alpha1.ClusterConfigList{}
+		if err := s.client.List(ctx, clusters); err == nil {
+			if cluster, lookupErr := clusterconfiglookup.SingleByName(clusters.Items, clusterName); lookupErr == nil && cluster != nil {
+				event.Target.ClusterUID = string(cluster.UID)
+			}
 		}
 	}
 	if session != nil {
