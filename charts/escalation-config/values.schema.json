@@ -3,6 +3,23 @@
   "additionalProperties": false,
   "description": "JSON Schema for the breakglass escalation-config Helm chart values.",
   "properties": {
+    "clusterConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Extra ClusterConfig metadata; explicit labels override chart defaults.",
+      "properties": {
+        "labels": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "default": {}
+        },
+        "annotations": {
+          "type": "object",
+          "additionalProperties": {"type": "string"},
+          "default": {}
+        }
+      }
+    },
     "cluster": {
       "description": "Cluster configuration for the breakglass controller.",
       "properties": {

@@ -1,0 +1,36 @@
+suite: Portable ClusterConfig metadata
+templates:
+  - templates/clusterconfig.yaml
+values:
+  - ../ci/test-values.yaml
+tests:
+  - it: preserves defaults with no extra metadata
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: escalation-config
+      - notExists:
+          path: metadata.annotations
+  - it: merges scoped labels and annotations with explicit override
+    set:
+      clusterConfig.labels:
+        app.kubernetes.io/name: custom-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: "false"
+        breakglass.t-caas.telekom.com/platform-diagnostics: "true"
+      clusterConfig.annotations:
+        example.com/owner: platform
+    asserts:
+      - equal:
+          path: metadata.labels["app.kubernetes.io/name"]
+          value: custom-config
+      - equal:
+          path: metadata.labels["breakglass.t-caas.telekom.com/debug-sessions-enabled"]
+          value: "false"
+      - equal:
+          path: metadata.labels["breakglass.t-caas.telekom.com/platform-diagnostics"]
+          value: "true"
+      - exists:
+          path: metadata.labels["helm.sh/chart"]
+      - equal:
+          path: metadata.annotations["example.com/owner"]
+          value: platform
