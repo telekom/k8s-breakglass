@@ -136,6 +136,34 @@ source "$1" test-user test-password
 	}
 }
 
+func TestBootstrapComprehensiveJWKSRelativePath(t *testing.T) {
+	source, err := os.ReadFile(filepath.Join("tests", "comprehensive_tests.sh"))
+	require.NoError(t, err)
+	fragment := regexp.MustCompile(`(?ms)^test_K002_jwks_reachable\(\) \{.*?^\}`).Find(source)
+	require.NotEmpty(t, fragment)
+	for _, path := range []string{"", "/", "/auth", "/custom/"} {
+		t.Run(path, func(t *testing.T) {
+			t.Setenv("KEYCLOAK_RELATIVE_PATH", path)
+			t.Setenv("EXPECTED_URL", "https://localhost:8443"+strings.TrimSuffix(path, "/")+"/realms/breakglass-e2e/protocol/openid-connect/certs")
+			output, err := exec.Command("bash", "-c", `
+set -eu
+if [[ -z "$KEYCLOAK_RELATIVE_PATH" ]]; then unset KEYCLOAK_RELATIVE_PATH; fi
+curl() {
+  local url=""
+  for arg in "$@"; do url="$arg"; done
+  [[ "$url" == "$EXPECTED_URL" ]] || return 1
+  printf 200
+}
+log() { :; }
+log_pass() { printf PASS; }
+log_skip() { printf FAIL; }
+`+string(fragment)+"\ntest_K002_jwks_reachable").CombinedOutput()
+			require.NoError(t, err, "%s", output)
+			require.Equal(t, "PASS", string(output))
+		})
+	}
+}
+
 func TestBootstrapSingleReappliesKeycloakRelativePath(t *testing.T) {
 	skipUnlessE2E(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
