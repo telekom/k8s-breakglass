@@ -441,6 +441,8 @@ jobs:
           bash charts/escalation-config/ci/test-vap.sh
       - name: Validate escalation names and display labels
         run: bash charts/escalation-config/ci/test-escalation-names.sh
+      - name: Validate portable ClusterConfig metadata
+        run: bash charts/escalation-config/ci/test-clusterconfig-metadata.sh
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"

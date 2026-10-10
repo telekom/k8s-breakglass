@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
+  `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
+  Explicit labels override matching chart defaults; connection/access policy
+  remains unchanged. Consumers can replace Flux-only metadata post-renderers
+  with these portable values for native/manual Helm installs and upgrades.
+
 ### Fixed
 
 - Restore DebugSession discovery/creation from authenticated identity groups and
