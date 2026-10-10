@@ -112,11 +112,12 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 fi
 
 build_info="$(run_docker --rm --network none --cap-drop ALL --entrypoint cat "$image" /usr/share/breakglass/kubestr-build-info)"
+# Build info omits unused modules; x/crypto is not necessarily linked by kubestr.
 for module in NET CRYPTO TEXT; do
     version="$(awk -F= -v key="X_${module}_VERSION" '$1 == key { print $2 }' "$root/versions.env")"
     lower="$(printf '%s' "$module" | tr '[:upper:]' '[:lower:]')"
     printf '%s\n' "$build_info" | awk -v name="golang.org/x/$lower" -v expected="$version" \
-        '$1 == "dep" && $2 == name { found = ($3 == expected) } END { exit !found }' ||
+        'BEGIN { found = (name == "golang.org/x/crypto") } $1 == "dep" && $2 == name { found = ($3 == expected) } END { exit !found }' ||
         fail "compiled kubestr module $lower differs from the dependency lock"
 done
 

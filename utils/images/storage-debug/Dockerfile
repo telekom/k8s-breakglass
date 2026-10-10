@@ -11,6 +11,7 @@ ARG X_CRYPTO_VERSION=v0.57.0
 ARG X_TEXT_VERSION=v0.42.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
+# x/crypto is patched in the module graph; only require its version if linked.
 RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenhq/kubestr.git /src/kubestr \
     && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
     && go -C /src/kubestr get \
@@ -23,8 +24,9 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
     && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
     && test -x /out/kubestr \
     && go version -m /out/kubestr > /out/kubestr-build-info \
+    && cat /out/kubestr-build-info \
     && awk -v net="${X_NET_VERSION}" -v crypto="${X_CRYPTO_VERSION}" -v text="${X_TEXT_VERSION}" \
-        '$1 == "dep" { if ($2 == "golang.org/x/net") n = ($3 == net); if ($2 == "golang.org/x/crypto") c = ($3 == crypto); if ($2 == "golang.org/x/text") t = ($3 == text) } END { exit !(n && c && t) }' /out/kubestr-build-info
+        'BEGIN { c = 1 } $1 == "dep" { if ($2 == "golang.org/x/net") n = ($3 == net); if ($2 == "golang.org/x/crypto") c = ($3 == crypto); if ($2 == "golang.org/x/text") t = ($3 == text) } END { exit !(n && c && t) }' /out/kubestr-build-info
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
