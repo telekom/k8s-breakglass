@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -54,7 +55,9 @@ func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
 	}
 	cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "test", UID: types.UID("cluster-uid")}}
 	escalation := &breakglassv1alpha1.BreakglassEscalation{ObjectMeta: metav1.ObjectMeta{Name: "escalation", Namespace: "test", UID: types.UID("escalation-uid")}}
-	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, cluster, escalation).Build(), nil, zap.NewNop(), "test")
+	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.ClusterConfig{}, "metadata.name", func(obj client.Object) []string { return []string{obj.GetName()} }).
+		WithObjects(session, cluster, escalation).Build(), nil, zap.NewNop(), "test")
 	groups := []string{"/team/approvers", "operators", "system:authenticated"}
 	ctx := WithAuthenticatedActor(context.Background(), []string{"approver"}, groups)
 	groups[0] = "mutated"
@@ -150,12 +153,15 @@ func TestSessionIdentityUsesExplicitClusterConfigReference(t *testing.T) {
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", ClusterConfigRef: "actual-config"}}
 	cluster := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "cluster", Namespace: "test", UID: "wrong"}}
 	referenced := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "actual-config", Namespace: "test", UID: "correct"}}
-	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, cluster, referenced).Build(), nil, zap.NewNop(), "test")
+	svc := NewService(fake.NewClientBuilder().WithScheme(scheme).
+		WithIndex(&breakglassv1alpha1.ClusterConfig{}, "metadata.name", func(obj client.Object) []string { return []string{obj.GetName()} }).
+		WithObjects(session, cluster, referenced).Build(), nil, zap.NewNop(), "test")
 	event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test", UID: "source"}}
 	svc.enrichResourceIdentity(context.Background(), event)
 	require.Equal(t, "correct", event.Target.ClusterUID)
 	duplicate := referenced.DeepCopy()
 	duplicate.Namespace, duplicate.UID = "another", "ambiguous"
+	duplicate.ResourceVersion = ""
 	require.NoError(t, svc.client.Create(context.Background(), duplicate))
 	event.Target.ClusterUID = ""
 	svc.enrichResourceIdentity(context.Background(), event)

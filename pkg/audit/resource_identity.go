@@ -144,7 +144,7 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 			clusterName = obj.Spec.ClusterConfigRef
 		}
 		clusters := &breakglassv1alpha1.ClusterConfigList{}
-		if err := s.client.List(ctx, clusters); err == nil {
+		if err := s.client.List(ctx, clusters, client.MatchingFields{"metadata.name": clusterName}); err == nil {
 			if cluster, lookupErr := clusterconfiglookup.SingleByName(clusters.Items, clusterName); lookupErr == nil && cluster != nil {
 				event.Target.ClusterUID = string(cluster.UID)
 			}
