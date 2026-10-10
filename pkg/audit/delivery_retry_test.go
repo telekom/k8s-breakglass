@@ -177,6 +177,9 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	sink.writer.Completion([]kafka.Message{{Key: []byte("third")}}, context.DeadlineExceeded)
 	_, lastErr := sink.LastError()
 	require.ErrorIs(t, lastErr, context.DeadlineExceeded)
+	sink.writer.Completion([]kafka.Message{{Key: []byte("recovered")}}, nil)
+	require.True(t, sink.IsConnected())
+	require.Equal(t, float64(1), testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
 }
 
 func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {
@@ -243,8 +246,24 @@ func TestFilteredAndSampledEventsSkipResourceEnrichment(t *testing.T) {
 			cfg.SampleRate, cfg.sampleRateConfigured = 0, true
 			cfg.HighVolumeEventTypes = []EventType{EventResourceList}
 		}
+
 		manager := NewManager(newQueuedMockSink("filtered"), cfg, zap.NewNop())
 		manager.Emit(context.Background(), &Event{Type: EventResourceList})
 		require.NoError(t, manager.Close())
 	}
+}
+
+func TestExpiredShutdownDoesNotInvokeSinkForBacklog(t *testing.T) {
+	sink := newQueuedMockSink("expired-shutdown")
+	qs := &QueuedSink{sink: sink, logger: zap.NewNop(), config: retryTestConfig(), queue: make(chan *Event, 100)}
+	for i := range 100 {
+		qs.queue <- &Event{ID: fmt.Sprint(i)}
+	}
+	close(qs.queue)
+	qs.shutdownDeadline.Store(time.Now().Add(-time.Second).UnixNano())
+	require.True(t, qs.dropShutdownBacklog(0))
+	require.Equal(t, int64(100), qs.droppedEvents.Load())
+	qs.deliver(1, "write", func(context.Context) error { t.Error("expired shutdown must not call sink"); return nil })
+	require.Zero(t, sink.writeCount.Load())
+	require.Equal(t, int64(101), qs.droppedEvents.Load())
 }

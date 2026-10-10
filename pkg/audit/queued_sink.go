@@ -344,9 +344,32 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
+		if qs.dropShutdownBacklog(1) {
+			return
+		}
 		qs.deliver(1, "write", func(ctx context.Context) error {
 			return qs.sink.Write(ctx, event)
 		})
+	}
+}
+
+func (qs *QueuedSink) dropShutdownBacklog(pending int) bool {
+	deadline := qs.shutdownDeadline.Load()
+	if deadline == 0 || time.Now().UnixNano() < deadline {
+		return false
+	}
+	for {
+		select {
+		case _, ok := <-qs.queue:
+			if !ok {
+				qs.recordDrop(pending, "shutdown")
+				return true
+			}
+			pending++
+		default:
+			qs.recordDrop(pending, "shutdown")
+			return true
+		}
 	}
 }
 
@@ -372,6 +395,14 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 	}
 	var err error
 	for attempt := 0; attempt < qs.config.RetryAttempts; attempt++ {
+		if retryCtx.Err() != nil {
+			reason := "retry_exhausted"
+			if qs.shutdownDeadline.Load() != 0 {
+				reason = "shutdown"
+			}
+			qs.recordDrop(count, reason)
+			return
+		}
 		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
 		err = write(writeCtx)
 		writeCancel()
@@ -572,7 +603,10 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 		if len(batch) == 0 {
 			return
 		}
-
+		if qs.dropShutdownBacklog(len(batch)) {
+			batch = batch[:0]
+			return
+		}
 		qs.deliver(len(batch), "batch_write", func(ctx context.Context) error {
 			return batchSink.WriteBatch(ctx, batch)
 		})

@@ -70,6 +70,10 @@ own five-second budget; unprocessed ingress events are counted with reason
 `shutdown`. Sink queues then drain concurrently with a five-second budget each.
 Blocking sink ingress runs in parallel, so an unavailable sink cannot prevent
 healthy sinks from receiving the same event.
+After a sink's drain deadline, remaining queued events are counted together
+without invoking the sink again. As with other context-based I/O, an in-flight
+sink implementation must honor cancellation; a sink that ignores its context
+cannot be forcibly interrupted safely.
 
 With `dropOnFull: false`, enqueue blocks until capacity, caller cancellation, or
 five seconds. Cancellation/timeout returns an error at the sink and counts the

@@ -237,10 +237,12 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		writer: writer,
 		logger: logger.Named("kafka-audit"),
 	}
-	sink.connected.Store(true) // Optimistically assume connected
+	sink.connected.Store(!cfg.Async)
 	if cfg.Async {
 		writer.Completion = func(messages []kafka.Message, err error) {
 			if err == nil {
+				sink.connected.Store(true)
+				metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
 				return
 			}
 			sink.messagesFailed.Add(int64(len(messages)))
@@ -256,7 +258,11 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	}
 
 	// Initialize metrics
-	metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
+	if cfg.Async {
+		metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(0)
+	} else {
+		metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
+	}
 	metrics.AuditConfigReloads.WithLabelValues("success").Inc()
 
 	logger.Info("Kafka audit sink created",
@@ -428,7 +434,7 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	s.messagesWritten.Add(1)
 
 	// Mark as connected if we weren't before
-	if !s.connected.Swap(true) {
+	if !s.writer.Async && !s.connected.Swap(true) {
 		metrics.AuditSinkConnected.WithLabelValues(s.name).Set(1)
 		s.logger.Info("Kafka sink connection restored",
 			zap.String("name", s.name),
@@ -598,7 +604,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 	s.batchesSent.Add(1)
 
 	// Mark as connected if we weren't before
-	if !s.connected.Swap(true) {
+	if !s.writer.Async && !s.connected.Swap(true) {
 		metrics.AuditSinkConnected.WithLabelValues(s.name).Set(1)
 		s.logger.Info("Kafka sink connection restored",
 			zap.String("name", s.name),
