@@ -91,6 +91,8 @@ bgctl session request --cluster prod-1 --group breakglass:platform:emergency \
 Group-only requests still work when exactly one policy is eligible. Ambiguous
 requests return 409 with sorted candidates and create no session; selecting a name
 does not bypass requester, cluster, identity-provider, or readiness checks.
+The CLI includes the eligible resource names and `--escalation` retry guidance
+in its error output.
 
 ## Pagination
 

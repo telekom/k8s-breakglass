@@ -120,6 +120,15 @@ func TestHTTPError(t *testing.T) {
 	require.Equal(t, "request failed (403): access denied", err.Error())
 }
 
+func TestHTTPErrorEscalationCandidatesAreTerminalSafe(t *testing.T) {
+	err := &HTTPError{
+		StatusCode: http.StatusConflict, Code: "AMBIGUOUS_ESCALATION",
+		Message: "select an escalation", Candidates: []string{"policy\u001b[31m"}, CorrelationID: "trace",
+	}
+	require.Contains(t, err.Error(), "--escalation")
+	require.NotContains(t, err.Error(), "\u001b")
+}
+
 func TestWithTimeout(t *testing.T) {
 	tests := []struct {
 		name    string

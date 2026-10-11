@@ -161,6 +161,26 @@ func TestSessionsGet(t *testing.T) {
 	require.Equal(t, "session-123", result.Name)
 }
 
+func TestSessionsRequestDisplaysAmbiguousEscalationCandidates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/breakglassSessions", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		_, _ = io.WriteString(w, `{"error":"multiple eligible escalations match; specify escalationName","code":"AMBIGUOUS_ESCALATION","candidates":["emergency-a","emergency-b"]}`)
+	}))
+	defer server.Close()
+	c, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+	session, err := c.Sessions().Request(context.Background(), SessionRequest{Cluster: "tenant", Group: "emergency"})
+	require.Nil(t, session)
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, "AMBIGUOUS_ESCALATION", httpErr.Code)
+	require.Equal(t, []string{"emergency-a", "emergency-b"}, httpErr.Candidates)
+	require.Contains(t, err.Error(), "retry with --escalation using one of: emergency-a, emergency-b")
+	require.NotEmpty(t, httpErr.CorrelationID)
+}
+
 func TestSessionsRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/api/breakglassSessions", r.URL.Path)

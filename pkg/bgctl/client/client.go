@@ -227,7 +227,9 @@ func (c *Client) do(ctx context.Context, method, endpoint string, body any, out 
 
 func decodeError(resp *http.Response, correlationID string) error {
 	var apiErr struct {
-		Error string `json:"error"`
+		Error      string   `json:"error"`
+		Code       string   `json:"code"`
+		Candidates []string `json:"candidates"`
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
 	if len(body) > maxResponseBody {
@@ -243,18 +245,24 @@ func decodeError(resp *http.Response, correlationID string) error {
 	if msg == "" {
 		msg = resp.Status
 	}
-	return &HTTPError{StatusCode: resp.StatusCode, Message: msg, CorrelationID: correlationID}
+	return &HTTPError{StatusCode: resp.StatusCode, Message: msg, CorrelationID: correlationID, Code: apiErr.Code, Candidates: apiErr.Candidates}
 }
 
 type HTTPError struct {
 	StatusCode    int
 	Message       string
 	CorrelationID string
+	Code          string
+	Candidates    []string
 }
 
 func (e *HTTPError) Error() string {
-	if e.CorrelationID != "" {
-		return fmt.Sprintf("request failed (%d): %s (correlationID=%s)", e.StatusCode, terminal.SafeText(e.Message), terminal.SafeText(e.CorrelationID))
+	message := e.Message
+	if e.StatusCode == http.StatusConflict && e.Code == "AMBIGUOUS_ESCALATION" && len(e.Candidates) > 0 {
+		message += "; retry with --escalation using one of: " + strings.Join(e.Candidates, ", ")
 	}
-	return fmt.Sprintf("request failed (%d): %s", e.StatusCode, terminal.SafeText(e.Message))
+	if e.CorrelationID != "" {
+		return fmt.Sprintf("request failed (%d): %s (correlationID=%s)", e.StatusCode, terminal.SafeText(message), terminal.SafeText(e.CorrelationID))
+	}
+	return fmt.Sprintf("request failed (%d): %s", e.StatusCode, terminal.SafeText(message))
 }
