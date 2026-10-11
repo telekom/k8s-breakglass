@@ -421,6 +421,9 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 		err = write(writeCtx)
 		writeCancel()
 		if err == nil {
+			if asynchronousKafkaSink(qs.sink) != nil {
+				return
+			}
 			qs.processedEvents.Add(int64(count))
 			qs.consecutiveFails.Store(0)
 			qs.circuitOpen.Store(false)
@@ -471,6 +474,22 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
 }
 
+func asynchronousKafkaSink(sink Sink) *KafkaSink {
+	switch sink := sink.(type) {
+	case *KafkaSink:
+		if sink.writer != nil && sink.writer.Async {
+			return sink
+		}
+	case *CircuitBreakerSink:
+		return asynchronousKafkaSink(sink.sink)
+	case *filteredBatchSink:
+		return asynchronousKafkaSink(sink.sink)
+	case *filteredSink:
+		return asynchronousKafkaSink(sink.sink)
+	}
+	return nil
+}
+
 // Health returns the current health status of this sink.
 func (qs *QueuedSink) Health() QueuedSinkHealth {
 	qs.mu.RLock()
@@ -488,18 +507,31 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	// - Circuit is not open
 	// - Queue is not > 80% full
 	// - Had a recent success (within last minute) OR no errors yet
+	processed := qs.processedEvents.Load()
+	dropped, failed := qs.droppedEvents.Load(), qs.failedEvents.Load()
+	if sink := asynchronousKafkaSink(qs.sink); sink != nil {
+		processed = sink.messagesWritten.Load()
+		dropped += sink.asyncFailures.Load()
+		failed += sink.asyncFailures.Load()
+		if completed, err := sink.LastError(); completed.After(lastErrorTime) {
+			lastErrorTime = completed
+			lastError = err.Error()
+		}
+		if completed, ok := sink.lastSuccessTime.Load().(time.Time); ok && completed.After(lastSuccessTime) {
+			lastSuccessTime = completed
+		}
+	}
 	healthy := !circuitOpen &&
 		float64(queueLen) < float64(queueCap)*0.8 &&
 		(lastSuccessTime.After(time.Now().Add(-1*time.Minute)) || lastErrorTime.IsZero())
-
 	return QueuedSinkHealth{
 		Name:             qs.sink.Name(),
 		Healthy:          healthy,
 		QueueLength:      queueLen,
 		QueueCapacity:    queueCap,
-		DroppedEvents:    qs.droppedEvents.Load(),
-		ProcessedEvents:  qs.processedEvents.Load(),
-		FailedEvents:     qs.failedEvents.Load(),
+		DroppedEvents:    dropped,
+		ProcessedEvents:  processed,
+		FailedEvents:     failed,
 		ConsecutiveFails: consecutiveFails,
 		CircuitOpen:      circuitOpen,
 		LastError:        lastError,

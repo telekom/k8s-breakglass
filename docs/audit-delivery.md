@@ -104,6 +104,8 @@ not alter either circuit breaker's failure or success state; dropped events
 are counted with reason `serialization`. Fire-and-forget completion failures are explicitly
 logged and counted with the `async_write` reason; they cannot be retried by the
 external queue because submission already returned.
+For asynchronous Kafka, processed-event metrics and queue health count broker
+completion, not submission. Failed completions count as failed/dropped events.
 
 ## Observability
 

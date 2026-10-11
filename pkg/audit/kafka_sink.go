@@ -129,10 +129,12 @@ type KafkaSink struct {
 	// Metrics tracking (atomic for lock-free access)
 	messagesWritten atomic.Int64
 	messagesFailed  atomic.Int64
+	asyncFailures   atomic.Int64
 	batchesSent     atomic.Int64
 	connected       atomic.Bool
 	lastError       atomic.Value // stores kafkaSinkError
 	lastErrorTime   atomic.Value // stores time.Time
+	lastSuccessTime atomic.Value // stores time.Time
 }
 
 type kafkaSinkError struct{ err error }
@@ -242,11 +244,14 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		writer.Completion = func(messages []kafka.Message, err error) {
 			if err == nil {
 				sink.messagesWritten.Add(int64(len(messages)))
+				sink.lastSuccessTime.Store(time.Now())
+				metrics.AuditEventsProcessed.WithLabelValues(sinkName).Add(float64(len(messages)))
 				sink.connected.Store(true)
 				metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(1)
 				return
 			}
 			sink.messagesFailed.Add(int64(len(messages)))
+			sink.asyncFailures.Add(int64(len(messages)))
 			sink.connected.Store(false)
 			sink.lastError.Store(kafkaSinkError{err: err})
 			sink.lastErrorTime.Store(time.Now())
