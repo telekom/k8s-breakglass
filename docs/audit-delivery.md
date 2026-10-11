@@ -106,6 +106,9 @@ logged and counted with the `async_write` reason; they cannot be retried by the
 external queue because submission already returned.
 For asynchronous Kafka, processed-event metrics and queue health count broker
 completion, not submission. Failed completions count as failed/dropped events.
+The manager does not emit processed delivery metrics for handoffs into isolated
+or queued sinks; those sinks report delivery separately. In-memory Manager
+`ProcessedEvents` stats retain their ingress-handoff meaning.
 
 ## Observability
 

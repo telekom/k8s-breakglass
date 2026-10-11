@@ -274,6 +274,39 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	require.Zero(t, testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
 }
 
+func TestManagerIsolatedKafkaHandoffDoesNotCountDelivery(t *testing.T) {
+	sink, err := NewKafkaSink(KafkaSinkConfig{
+		Name: "manager-async-handoff", Brokers: []string{"localhost:1"}, Topic: "test", Async: true,
+	}, zap.NewNop())
+	require.NoError(t, err)
+	cfg := retryTestConfig()
+	cfg.BatchSize = 1
+	isolated := NewIsolatedMultiSink([]Sink{sink}, cfg, zap.NewNop())
+	manager := NewManager(isolated, ManagerConfig{
+		WorkerCount: 1, BatchSize: 1, StatsInterval: -1,
+	}, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, manager.Close()) })
+	aggregateBefore := testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(isolated.Name()))
+	deliveredBefore := testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(sink.Name()))
+	manager.Emit(context.Background(), &Event{
+		ID: "invalid", Type: EventConfigChanged,
+		Details: map[string]interface{}{"unsupported": make(chan int)},
+	})
+	require.Eventually(t, func() bool {
+		return manager.Stats().ProcessedEvents == 1 && isolated.Health()[0].DroppedEvents == 1
+	}, time.Second, time.Millisecond)
+	require.Zero(t, isolated.Health()[0].ProcessedEvents)
+	require.Equal(t, aggregateBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(isolated.Name())))
+	require.Equal(t, deliveredBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(sink.Name())))
+	sink.writer.Completion([]kafka.Message{{Key: []byte("failed")}}, errors.New("broker unavailable"))
+	require.Zero(t, isolated.Health()[0].ProcessedEvents)
+	require.Equal(t, aggregateBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(isolated.Name())))
+	sink.writer.Completion([]kafka.Message{{Key: []byte("completed")}}, nil)
+	require.Equal(t, int64(1), isolated.Health()[0].ProcessedEvents)
+	require.Equal(t, deliveredBefore+1, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(sink.Name())))
+	require.Equal(t, aggregateBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(isolated.Name())))
+}
+
 func TestTypedQueueConfigPreservesExplicitFalse(t *testing.T) {
 	data, err := json.Marshal(breakglassv1alpha1.AuditQueueConfig{DropOnFull: ptr.To(false)})
 	require.NoError(t, err)

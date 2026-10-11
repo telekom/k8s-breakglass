@@ -563,8 +563,7 @@ func (m *Manager) processQueue(workerID int) {
 				zap.String("error", err.Error()))
 			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "write").Inc()
 		} else {
-			m.processedEvents.Add(1)
-			metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Inc()
+			m.recordAsyncHandoff(1)
 		}
 		cancel()
 	}
@@ -597,8 +596,7 @@ func (m *Manager) processBatchQueue(workerID int) {
 				zap.String("error", err.Error()))
 			metrics.AuditSinkErrors.WithLabelValues(m.sink.Name(), "batch_write").Add(float64(len(batch)))
 		} else {
-			m.processedEvents.Add(int64(len(batch)))
-			metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Add(float64(len(batch)))
+			m.recordAsyncHandoff(len(batch))
 		}
 		cancel()
 
@@ -620,6 +618,19 @@ func (m *Manager) processBatchQueue(workerID int) {
 		case <-ticker.C:
 			flushBatch()
 		}
+	}
+}
+
+func (m *Manager) recordAsyncHandoff(count int) {
+	// Manager stats count accepted handoffs; buffered sinks report delivery
+	// metrics themselves after completing the downstream write.
+	m.processedEvents.Add(int64(count))
+	switch m.sink.(type) {
+	case *IsolatedMultiSink, *QueuedSink:
+		return
+	}
+	if asynchronousKafkaSink(m.sink) == nil {
+		metrics.AuditEventsProcessed.WithLabelValues(m.sink.Name()).Add(float64(count))
 	}
 }
 

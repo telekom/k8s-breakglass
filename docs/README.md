@@ -93,6 +93,7 @@ Every utility is published as an immutable,
 - **[Extra Deploy Variables](./extra-deploy-variables.md)** - User-provided variables for customizable templates
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
 - **[AuditConfig](./audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
+- **[Audit delivery](./audit-delivery.md)** - Bounded retries, backpressure, correlation and delivery metrics
 - **[IdentityProvider](./identity-provider.md)** - OIDC identity provider configuration
 - **[MailProvider](./mail-provider.md)** - SMTP mail provider configuration
 - **[Webhook Setup](./webhook-setup.md)** - Authorization webhook configuration

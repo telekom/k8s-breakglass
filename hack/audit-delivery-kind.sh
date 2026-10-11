@@ -19,6 +19,7 @@ cleanup() {
   if [[ $created == true ]]; then
     kind delete cluster --name "$name" || result=1
   fi
+  rm -rf -- "$work" || result=1
   exit "$result"
 }
 trap cleanup EXIT
