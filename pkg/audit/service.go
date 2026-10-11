@@ -445,14 +445,10 @@ func (s *Service) GetSinkHealth() []SinkHealth {
 	// If using isolated multi-sink (per-sink queues), get health from there
 	if s.isolatedMultiSink != nil {
 		for _, qh := range s.isolatedMultiSink.Health() {
-			circuitState := "closed"
-			if qh.CircuitOpen {
-				circuitState = "open"
-			}
 			h := SinkHealth{
 				Name:                qh.Name,
 				Healthy:             qh.Healthy,
-				CircuitState:        circuitState,
+				CircuitState:        qh.CircuitState,
 				ConsecutiveFailures: int64(qh.ConsecutiveFails),
 				TotalRequests:       qh.ProcessedEvents + qh.FailedEvents,
 				TotalFailures:       qh.FailedEvents,

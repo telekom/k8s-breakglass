@@ -159,6 +159,24 @@ func TestQueuedBatchExhaustionCountsEveryLostEvent(t *testing.T) {
 	require.Equal(t, before+2, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "retry_exhausted")))
 }
 
+func TestQueuedHealthUsesWrappedCircuitStateDuringRetries(t *testing.T) {
+	sink := &retryBatchSink{failures: 1000}
+	breakerConfig := DefaultCircuitBreakerConfig()
+	breakerConfig.FailureThreshold = 2
+	breakerConfig.OpenTimeout = time.Hour
+	breaker := NewCircuitBreakerSink(sink, breakerConfig, zap.NewNop())
+	qs := NewQueuedSink(NewFilteredSink(breaker, EventFilterConfig{}), retryTestConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "one"}, {ID: "two"}}))
+	require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 2 }, time.Second, time.Millisecond)
+	require.Equal(t, "open", qs.Health().CircuitState)
+	require.True(t, qs.Health().CircuitOpen)
+	require.False(t, qs.Health().Healthy)
+	require.Equal(t, int(breaker.Stats().ConsecutiveFails), qs.Health().ConsecutiveFails)
+	service := &Service{isolatedMultiSink: &IsolatedMultiSink{sinks: []*QueuedSink{qs}}}
+	require.Equal(t, "open", service.GetSinkHealth()[0].CircuitState)
+}
+
 func TestQueuedRetryShutdownInterruptsBackoff(t *testing.T) {
 	sink := &retryBatchSink{failures: 1000}
 	cfg := retryTestConfig()

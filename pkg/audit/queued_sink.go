@@ -97,6 +97,7 @@ type QueuedSinkHealth struct {
 	FailedEvents     int64     `json:"failedEvents"`
 	ConsecutiveFails int       `json:"consecutiveFails"`
 	CircuitOpen      bool      `json:"circuitOpen"`
+	CircuitState     string    `json:"circuitState"`
 	LastError        string    `json:"lastError,omitempty"`
 	LastErrorTime    time.Time `json:"lastErrorTime,omitempty"`
 	LastSuccessTime  time.Time `json:"lastSuccessTime,omitempty"`
@@ -507,6 +508,19 @@ func asynchronousKafkaSink(sink Sink) *KafkaSink {
 	return nil
 }
 
+func queuedCircuitBreaker(sink Sink) *CircuitBreakerSink {
+	switch sink := sink.(type) {
+	case *CircuitBreakerSink:
+		return sink
+	case *filteredBatchSink:
+		return queuedCircuitBreaker(sink.sink)
+	case *filteredSink:
+		return queuedCircuitBreaker(sink.sink)
+	default:
+		return nil
+	}
+}
+
 // Health returns the current health status of this sink.
 func (qs *QueuedSink) Health() QueuedSinkHealth {
 	qs.mu.RLock()
@@ -519,6 +533,16 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	queueCap := cap(qs.queue)
 	circuitOpen := qs.circuitOpen.Load()
 	consecutiveFails := int(qs.consecutiveFails.Load())
+	circuitState := "closed"
+	if circuitOpen {
+		circuitState = "open"
+	}
+	if sink := queuedCircuitBreaker(qs.sink); sink != nil {
+		stats := sink.Stats()
+		circuitState = stats.State.String()
+		circuitOpen = stats.State == CircuitOpen
+		consecutiveFails = int(stats.ConsecutiveFails)
+	}
 
 	// Consider healthy if:
 	// - Circuit is not open
@@ -538,7 +562,7 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 			lastSuccessTime = completed
 		}
 	}
-	healthy := !circuitOpen &&
+	healthy := circuitState == "closed" &&
 		float64(queueLen) < float64(queueCap)*0.8 &&
 		((lastSuccessTime.After(lastErrorTime) && lastSuccessTime.After(time.Now().Add(-1*time.Minute))) || lastErrorTime.IsZero())
 	return QueuedSinkHealth{
@@ -551,6 +575,7 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 		FailedEvents:     failed,
 		ConsecutiveFails: consecutiveFails,
 		CircuitOpen:      circuitOpen,
+		CircuitState:     circuitState,
 		LastError:        lastError,
 		LastErrorTime:    lastErrorTime,
 		LastSuccessTime:  lastSuccessTime,
