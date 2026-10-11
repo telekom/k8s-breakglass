@@ -140,7 +140,7 @@ kubectl --kubeconfig "$proof_dir/kubeconfig" label namespace breakglass-node-mai
 
 # This is disposable Kind-node kernel state, never an arbitrary caller command.
 docker exec "$node_id" sh -eu -c '
-	for link in bg1551n bg1551a bg1551b bg1551br; do
+	for link in bg1551n bg1551a bg1551ap bg1551b bg1551bp bg1551br; do
 		if ip link show "$link" >/dev/null 2>&1; then
 			echo "Fixture link collision: $link" >&2
 			exit 1
@@ -152,12 +152,16 @@ docker exec "$node_id" sh -eu -c '
 	ip neigh replace 192.0.2.2 lladdr 02:00:00:00:00:03 nud permanent dev bg1551n
 	ip neigh replace 192.0.2.9 lladdr 02:00:00:00:00:09 nud permanent dev bg1551n
 	ip link add bg1551br type bridge vlan_filtering 1
-	ip link add bg1551a type veth peer name bg1551b
+	# Each port gets an unbridged peer: bridging both ends of one veth pair
+	# forms a layer-2 loop whose broadcast storm starves the Kind control plane.
+	ip link add bg1551a type veth peer name bg1551ap
+	ip link add bg1551b type veth peer name bg1551bp
 	ip link set bg1551a master bg1551br
 	ip link set bg1551b master bg1551br
 	ip link set bg1551br up
-	ip link set bg1551a up
-	ip link set bg1551b up
+	for link in bg1551a bg1551ap bg1551b bg1551bp; do
+		ip link set "$link" up
+	done
 	bridge vlan add dev bg1551a vid 100
 	bridge vlan add dev bg1551b vid 100
 	bridge vlan add dev bg1551b vid 101
