@@ -242,6 +242,9 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 	}
+	if !queuedEventAllowed(qs.sink, event) {
+		return nil
+	}
 	if !qs.config.DropOnFull {
 		writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
 		defer cancel()
@@ -314,6 +317,17 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 			zap.String("event_id", event.ID))
 	}
 	return nil
+}
+
+func queuedEventAllowed(sink Sink, event *Event) bool {
+	switch filtered := sink.(type) {
+	case *filteredBatchSink:
+		return filtered.filter.allows(event) && queuedEventAllowed(filtered.sink, event)
+	case *filteredSink:
+		return filtered.filter.allows(event) && queuedEventAllowed(filtered.sink, event)
+	default:
+		return true
+	}
 }
 
 func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {

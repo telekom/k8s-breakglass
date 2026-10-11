@@ -61,6 +61,30 @@ func retryTestConfig() QueuedSinkConfig {
 	return cfg
 }
 
+func TestQueuedFiltersExcludedEventsBeforeLossAccounting(t *testing.T) {
+	sink := &retryBatchSink{failures: 1000}
+	filtered := NewFilteredSink(NewFilteredSink(sink, EventFilterConfig{
+		IncludeEventTypes: []string{string(EventSessionRequested)},
+	}), EventFilterConfig{ExcludeUsers: []string{"excluded"}})
+	cfg := retryTestConfig()
+	cfg.BatchSize = 1
+	cfg.RetryAttempts = 1
+	qs := NewQueuedSink(filtered, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	for i := 0; i < 99; i++ {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: fmt.Sprint(i),
+			Type: EventSessionRequested, Actor: Actor{User: "excluded"}}))
+	}
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "excluded-type", Type: EventAccessGranted}))
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "allowed", Type: EventSessionRequested}))
+	require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 1 }, time.Second, time.Millisecond)
+	require.Equal(t, int64(1), qs.Health().FailedEvents)
+	require.Zero(t, qs.Health().ProcessedEvents)
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	require.Equal(t, [][]string{{"allowed"}}, sink.calls)
+}
+
 func TestQueuedBatchRetainsIdentityAcrossRetry(t *testing.T) {
 	sink := &retryBatchSink{failures: 2}
 	qs := NewQueuedSink(sink, retryTestConfig(), zap.NewNop())
