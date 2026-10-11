@@ -255,6 +255,15 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
+		// activateSession acquires the hub connection lease before the
+		// maintenance executor is deployed, so deletion must release it as the
+		// terminal cleanup paths do. RevokeSession is a no-op when no lease is
+		// recorded or the Lease is already gone.
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		return ctrl.Result{}, c.removeMaintenanceFinalizer(ctx, ds)
 	}
 

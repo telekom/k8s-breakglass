@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
@@ -755,4 +756,42 @@ func TestNodeMaintenanceReplacedJobCannotBeReceipted(t *testing.T) {
 	require.Len(t, sink.Events(), 1)
 	require.Empty(t, ds.Status.NodeMaintenance.Result)
 	require.False(t, ds.Status.NodeMaintenance.Released)
+}
+
+func TestNodeMaintenanceDeletionReleasesHubConnectionLease(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		leaseAbsent bool
+	}{
+		{name: "lease present"},
+		{name: "lease already removed", leaseAbsent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, spoke, _ := maintenanceFixture(t)
+			lease, err := c.connectionLeases.AcquireForSession(t.Context(), ds, "cluster-uid")
+			require.NoError(t, err)
+			ds.Status.ConnectionLease = &lease
+			require.NoError(t, breakglass.ApplyDebugSessionStatus(t.Context(), c.client, ds))
+			require.NoError(t, c.deployMaintenance(t.Context(), ds))
+			require.True(t, hasMaintenanceFinalizer(ds))
+			leaseKey := client.ObjectKey{Namespace: lease.Namespace, Name: lease.Name}
+			if tc.leaseAbsent {
+				require.NoError(t, c.client.Delete(t.Context(), &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: lease.Namespace, Name: lease.Name}}))
+			} else {
+				require.NoError(t, c.client.Get(t.Context(), leaseKey, &coordinationv1.Lease{}))
+			}
+			require.NoError(t, c.client.Delete(t.Context(), ds))
+
+			_, err = c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+			require.NoError(t, err)
+
+			require.True(t, apierrors.IsNotFound(c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), &breakglassv1alpha1.DebugSession{})),
+				"finalizer must be removed once maintenance cleanup and lease release succeed")
+			require.True(t, apierrors.IsNotFound(c.client.Get(t.Context(), leaseKey, &coordinationv1.Lease{})),
+				"deleting a maintenance session must release its hub connection lease")
+			podKey := client.ObjectKey{Name: ds.Status.NodeMaintenance.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+			require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), podKey, &corev1.Pod{})))
+			require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), client.ObjectKey{Namespace: podKey.Namespace, Name: maintenanceIdentity("node-a")}, &coordinationv1.Lease{})))
+		})
+	}
 }
