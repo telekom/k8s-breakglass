@@ -241,7 +241,8 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	return escalations, true
 }
 
-func filterEscalationsByIdentityProvider(
+// FilterEscalationsByIdentityProvider applies requester-provider eligibility to discovery and creation.
+func FilterEscalationsByIdentityProvider(
 	escalations []breakglassv1alpha1.BreakglassEscalation,
 	provider string,
 ) []breakglassv1alpha1.BreakglassEscalation {

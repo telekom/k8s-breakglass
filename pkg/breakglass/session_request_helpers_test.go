@@ -175,7 +175,7 @@ func TestFilterEscalationsByIdentityProvider(t *testing.T) {
 		{ObjectMeta: metav1.ObjectMeta{Name: "unrestricted"}, Spec: breakglassv1alpha1.BreakglassEscalationSpec{}},
 	}
 
-	filtered := filterEscalationsByIdentityProvider(escalations, "idp-b")
+	filtered := FilterEscalationsByIdentityProvider(escalations, "idp-b")
 	require.Len(t, filtered, 3)
 	assert.Equal(t, []string{"restricted-requester", "both-fields", "unrestricted"}, []string{filtered[0].Name, filtered[1].Name, filtered[2].Name})
 }

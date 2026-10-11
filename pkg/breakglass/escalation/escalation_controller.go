@@ -118,6 +118,7 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		return
 	}
 	reqLog.Debugw("Successfully fetched escalations from manager", "escalationCount", len(escalations))
+	escalations = breakglass.FilterEscalationsByIdentityProvider(escalations, c.GetString("identity_provider_name"))
 
 	clusterReadiness := map[string]bool{}
 	if activeOnly {
