@@ -95,6 +95,12 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if errs := validatePositiveDurationFormat(spec.Constraints.MaxDuration, field.NewPath("constraints", "maxDuration")); len(errs) > 0 {
 		return fmt.Errorf("nodeMaintenance requires a valid positive maxDuration: %w", errs[0])
 	}
+	// The executor receives only the hard expiry. No debug operation advances
+	// activity, so an idle deadline would expire the session while the helper
+	// could still mutate until the later hard deadline.
+	if spec.Constraints.IdleTimeout != "" {
+		return fmt.Errorf("nodeMaintenance does not support idleTimeout; bound the session with maxDuration")
+	}
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
 	}

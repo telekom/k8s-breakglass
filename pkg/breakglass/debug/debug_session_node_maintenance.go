@@ -72,6 +72,9 @@ func maintenanceApprovers(template *breakglassv1alpha1.DebugSessionTemplate, bin
 		binding.Spec.SchedulingConstraints != nil || binding.Spec.SchedulingOptions != nil || binding.Spec.Impersonation != nil) {
 		return fmt.Errorf("nodeMaintenance binding cannot introduce namespace, variable, scheduling, impersonation or auxiliary overrides")
 	}
+	if binding != nil && binding.Spec.Constraints != nil && binding.Spec.Constraints.IdleTimeout != "" {
+		return fmt.Errorf("nodeMaintenance binding cannot introduce an idleTimeout")
+	}
 	return nil
 }
 
@@ -213,8 +216,8 @@ func (c *DebugSessionController) patchMaintenanceStatus(ctx context.Context, ds 
 // failure would instead make every retry and cleanup treat the outcome as
 // unknown and retain the node Lease indefinitely. If the rollback itself
 // fails, the marker stays set, which keeps the conservative behavior.
-func (c *DebugSessionController) rollbackMaintenanceCreateMarker(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cause error, clear func(*breakglassv1alpha1.NodeMaintenanceStatus)) error {
-	if err := c.patchMaintenanceStatus(ctx, ds, clear); err != nil {
+func (c *DebugSessionController) rollbackMaintenanceCreateMarker(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cause error, reset func(*breakglassv1alpha1.NodeMaintenanceStatus)) error {
+	if err := c.patchMaintenanceStatus(ctx, ds, reset); err != nil {
 		return errors.Join(cause, fmt.Errorf("roll back maintenance create marker: %w", err))
 	}
 	return cause

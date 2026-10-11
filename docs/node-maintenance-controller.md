@@ -34,7 +34,9 @@ cycling, kexec, arbitrary host commands, traffic mirroring or CRA.
   Node read with a Pod creation or a kernel operation; final UID fences do not
   provide such an impossible guarantee.
 - Set an explicit `constraints.maxDuration`, allowed users/groups/clusters and
-  independent approvers. Bind production only to the approved emergency persona
+  independent approvers. `constraints.idleTimeout` is rejected on maintenance
+  templates and their bindings: the executor only honours the hard expiry, and
+  no debug activity extends an idle deadline. Bind production only to the approved emergency persona
   and support workflow. The generic controller does not infer production from
   a cluster name or invent organizational approval groups.
 - Configure synchronous **durable** audit delivery. Execution fails closed on

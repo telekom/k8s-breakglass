@@ -370,6 +370,25 @@ func TestNodeMaintenanceCannotOverrideApprovalBinding(t *testing.T) {
 	require.Error(t, maintenanceApprovers(template, binding))
 }
 
+func TestNodeMaintenanceRejectsIdleTimeoutBeforeExecution(t *testing.T) {
+	c, ds, spoke, _ := maintenanceFixture(t)
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: *ds.Status.ResolvedTemplate}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		Constraints: &breakglassv1alpha1.DebugSessionConstraints{IdleTimeout: "1m"},
+	}}
+	require.ErrorContains(t, maintenanceApprovers(template, binding), "idleTimeout")
+
+	ds.Status.ResolvedTemplate.Constraints.IdleTimeout = "1m"
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	require.ErrorContains(t, c.deployMaintenance(t.Context(), ds), "idleTimeout")
+	var pods corev1.PodList
+	require.NoError(t, spoke.List(t.Context(), &pods))
+	require.Empty(t, pods.Items, "an idle-bounded session must never start the hard-deadline executor")
+	var jobs batchv1.JobList
+	require.NoError(t, spoke.List(t.Context(), &jobs))
+	require.Empty(t, jobs.Items)
+}
+
 func TestNodeMaintenanceCleanupRetainsReplacedResources(t *testing.T) {
 	for _, kind := range []string{"Pod", "Job", "Lease"} {
 		t.Run(kind, func(t *testing.T) {

@@ -111,6 +111,7 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 		{"open", func(s *DebugSessionTemplateSpec) { s.FailMode = "open" }},
 		{"hybrid", func(s *DebugSessionTemplateSpec) { s.Mode = DebugSessionModeHybrid }},
 		{"empty allowlist", func(s *DebugSessionTemplateSpec) { s.NodeMaintenance.AllowedTargets = nil }},
+		{"idle timeout", func(s *DebugSessionTemplateSpec) { s.Constraints.IdleTimeout = "1m" }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := spec.DeepCopy()
@@ -122,4 +123,9 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	require.NoError(t, ValidateNodeMaintenanceSession(&spec, &request))
 	request.NodeSelector = map[string]string{"node": "other"}
 	require.Error(t, ValidateNodeMaintenanceSession(&spec, &request))
+	// A binding-merged idle timeout in the resolved snapshot is rejected as well.
+	request.NodeSelector = nil
+	resolved := spec.DeepCopy()
+	resolved.Constraints.IdleTimeout = "1m"
+	require.ErrorContains(t, ValidateNodeMaintenanceSession(resolved, &request), "idleTimeout")
 }
