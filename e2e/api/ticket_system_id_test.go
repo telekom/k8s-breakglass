@@ -71,6 +71,8 @@ func TestTicketSystemIDAuditRoundTrip(t *testing.T) {
 			cleanup.Add(session)
 			require.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(session), session))
 			require.Equal(t, ticket, session.Spec.TicketSystemID)
+			helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
+				breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
 			require.NoError(t, tc.ApproverClient().ApproveSessionViaAPI(ctx, t, session.Name, session.Namespace))
 			helpers.WaitForSessionState(t, ctx, cli, session.Name, session.Namespace,
 				breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)

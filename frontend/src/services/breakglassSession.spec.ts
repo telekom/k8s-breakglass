@@ -31,6 +31,17 @@ describe("BreakglassSessionService", () => {
     vi.clearAllMocks();
   });
 
+  it.each([undefined, "", "arbitrary <reference>\nü"])("preserves the exact optional ticket reference %j", async (ticket) => {
+    const service = new BreakglassSessionService(fakeAuth);
+    const request = { cluster: "prod", user: "alice@example.com", group: "support" };
+    await service.requestSession({ ...request, ticketSystemID: ticket });
+
+    expect(mockClient.post).toHaveBeenCalledWith(
+      "/breakglassSessions",
+      ticket === undefined ? request : { ...request, ticketSystemID: ticket },
+    );
+  });
+
   it("does not toast when getSessionByName fails so the approval view owns the error state", async () => {
     const store = useErrors();
     store.errors.splice(0, store.errors.length);
