@@ -795,3 +795,66 @@ func TestNodeMaintenanceDeletionReleasesHubConnectionLease(t *testing.T) {
 		})
 	}
 }
+
+func TestNodeMaintenancePreCreateFailureDoesNotRecordUnknownOutcome(t *testing.T) {
+	for _, stage := range []string{"job", "pod"} {
+		for _, followUp := range []string{"retry", "cleanup"} {
+			t.Run(stage+"/"+followUp, func(t *testing.T) {
+				c, ds, spoke, _ := maintenanceFixture(t)
+				setNodeUID := func(uid types.UID) {
+					node := &corev1.Node{}
+					require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
+					node.UID = uid
+					require.NoError(t, spoke.Update(t.Context(), node))
+				}
+				failed := false
+				c.beforeDebugTargetWrite = func(_ string) {
+					if failed {
+						return
+					}
+					live := &breakglassv1alpha1.DebugSession{}
+					require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
+					status := live.Status.NodeMaintenance
+					if status == nil {
+						return
+					}
+					if (stage == "job" && status.JobCreateAttempted && status.JobUID == "") ||
+						(stage == "pod" && status.CreateAttempted && status.PodUID == "") {
+						failed = true
+						setNodeUID("replacement")
+					}
+				}
+				require.Error(t, c.deployMaintenance(t.Context(), ds))
+				require.True(t, failed, "the final fence must run after the create marker is persisted")
+				c.beforeDebugTargetWrite = nil
+
+				live := &breakglassv1alpha1.DebugSession{}
+				require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
+				key := client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: ds.Status.NodeMaintenance.OperationID}
+				require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), key, &corev1.Pod{})))
+				require.False(t, live.Status.NodeMaintenance.CreateAttempted, "a proven pre-create failure must not record an unknown Pod outcome")
+				if stage == "job" {
+					require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), key, &batchv1.Job{})))
+					require.False(t, live.Status.NodeMaintenance.JobCreateAttempted, "a proven pre-create failure must not record an unknown Job outcome")
+				} else {
+					require.True(t, live.Status.NodeMaintenance.JobCreateAttempted, "the created Job keeps its marker")
+					require.NotEmpty(t, live.Status.NodeMaintenance.JobUID)
+				}
+
+				setNodeUID("node-uid")
+				ds = live
+				leaseKey := client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: maintenanceIdentity("node-a")}
+				if followUp == "retry" {
+					require.NoError(t, c.deployMaintenance(t.Context(), ds))
+					require.NoError(t, spoke.Get(t.Context(), key, &corev1.Pod{}))
+					require.NotEmpty(t, ds.Status.NodeMaintenance.PodUID)
+					return
+				}
+				require.NoError(t, c.cleanupMaintenance(t.Context(), ds))
+				require.True(t, ds.Status.NodeMaintenance.Released)
+				require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), leaseKey, &coordinationv1.Lease{})),
+					"cleanup must release the node Lease after a proven pre-create failure")
+			})
+		}
+	}
+}

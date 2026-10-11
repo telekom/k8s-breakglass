@@ -207,6 +207,19 @@ func (c *DebugSessionController) patchMaintenanceStatus(ctx context.Context, ds 
 	})
 }
 
+// rollbackMaintenanceCreateMarker clears a create marker after a failure that
+// is known to precede the target Create call. The marker exists so a crash or
+// an ambiguous Create is never replayed; keeping it for a proven pre-create
+// failure would instead make every retry and cleanup treat the outcome as
+// unknown and retain the node Lease indefinitely. If the rollback itself
+// fails, the marker stays set, which keeps the conservative behavior.
+func (c *DebugSessionController) rollbackMaintenanceCreateMarker(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cause error, clear func(*breakglassv1alpha1.NodeMaintenanceStatus)) error {
+	if err := c.patchMaintenanceStatus(ctx, ds, clear); err != nil {
+		return errors.Join(cause, fmt.Errorf("roll back maintenance create marker: %w", err))
+	}
+	return cause
+}
+
 // acquireMaintenanceLease never steals on timeout. Only proven cleanup releases a lock.
 func acquireMaintenanceLease(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, fence func() error) (*coordinationv1.Lease, error) {
 	operation := ds.Status.NodeMaintenance.OperationID
@@ -359,7 +372,7 @@ func (c *DebugSessionController) ensureMaintenanceJob(ctx context.Context, targe
 			return err
 		}
 		if err := fence(); err != nil {
-			return err
+			return c.rollbackMaintenanceCreateMarker(ctx, ds, err, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.JobCreateAttempted = false })
 		}
 		job = maintenanceJob(ds)
 		if err := target.Create(ctx, job); err != nil {
@@ -510,15 +523,18 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 		if err := c.patchMaintenanceStatus(ctx, ds, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.CreateAttempted = true }); err != nil {
 			return err
 		}
-		if err := fence(); err != nil {
-			return err
+		preCreate := func() error {
+			if err := fence(); err != nil {
+				return err
+			}
+			// Read the exact lock again immediately before workload creation.
+			if _, err := acquireMaintenanceLease(ctx, target, ds, fence); err != nil {
+				return err
+			}
+			return c.ensureMaintenanceJob(ctx, target, ds, fence)
 		}
-		// Read the exact lock again immediately before workload creation.
-		if _, err := acquireMaintenanceLease(ctx, target, ds, fence); err != nil {
-			return err
-		}
-		if err := c.ensureMaintenanceJob(ctx, target, ds, fence); err != nil {
-			return err
+		if err := preCreate(); err != nil {
+			return c.rollbackMaintenanceCreateMarker(ctx, ds, err, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.CreateAttempted = false })
 		}
 		pod = maintenancePod(ds)
 		pod.Labels["breakglass.t-caas.telekom.com/maintenance-operation"] = ds.Status.NodeMaintenance.OperationID

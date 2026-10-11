@@ -64,6 +64,30 @@ func TestNodeMaintenanceExactAllowlist(t *testing.T) {
 	require.Error(t, ValidateNodeMaintenanceTarget("flush-neighbors", &neighbor))
 }
 
+// The fixed executor helper accepts only plain IPv4 or IPv6 literals, so
+// admission must reject IPv4-mapped IPv6 instead of approving an executor that
+// is guaranteed to fail before mutation.
+func TestNodeMaintenanceNeighborAddressMatchesExecutorContract(t *testing.T) {
+	for address, valid := range map[string]bool{
+		"192.0.2.2":        true,
+		"2001:db8::2":      true,
+		"::ffff:192.0.2.2": false,
+		"::ffff:c000:202":  false,
+		"::":               false,
+		"ff02::1":          false,
+	} {
+		t.Run(address, func(t *testing.T) {
+			target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: address}
+			err := ValidateNodeMaintenanceTarget("neighbor-replace", &target)
+			if valid {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+			}
+		})
+	}
+}
+
 func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: "192.0.2.2"}
 	spec := DebugSessionTemplateSpec{

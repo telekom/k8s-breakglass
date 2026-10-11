@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed node-maintenance DebugSessions (disabled by default) run one fixed,
+  template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
+  exact Node after independent approval. Each target Node is serialized by a
+  per-node Lease, the Job and Pod create intents are recorded so an executor is
+  never replayed, and a dedicated finalizer cleans up the Pod, Job, node Lease
+  and hub connection lease when the session is deleted. Execution intent and
+  result are audited through synchronous durable delivery. See
+  `docs/node-maintenance-controller.md`.
 - Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
   `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
   Explicit labels override matching chart defaults. Empty maps preserve current

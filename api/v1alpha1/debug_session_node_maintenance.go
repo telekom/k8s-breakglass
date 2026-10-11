@@ -142,7 +142,7 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 	case "neighbor-replace":
 		address, err := netip.ParseAddr(target.NeighborAddress)
 		if err != nil || address.String() != target.NeighborAddress || address.Zone() != "" ||
-			address.IsMulticast() || address.IsUnspecified() || target.Bridge != "" || target.VLAN != nil {
+			address.IsMulticast() || address.IsUnspecified() || address.Is4In6() || target.Bridge != "" || target.VLAN != nil {
 			return fmt.Errorf("neighbor-replace requires an exact canonical IP/MAC/interface and no bridge or VLAN")
 		}
 	case "bridge-fdb-replace":

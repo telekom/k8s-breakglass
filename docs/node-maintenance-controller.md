@@ -108,7 +108,8 @@ duration and reason fields:
 
 For `bridge-fdb-replace`, use `bridge`, `interface` (the exact bridge port),
 `entryMAC`, and integer `vlan` (1–4094); omit `neighborAddress`. Neighbour requests
-must omit `bridge` and `vlan`. MACs/IPs must be canonical and MACs nonzero unicast; CIDRs, wildcards,
+must omit `bridge` and `vlan`. MACs/IPs must be canonical and MACs nonzero unicast;
+IPv4-mapped IPv6 neighbour addresses, CIDRs, wildcards,
 alternate interfaces/UIDs and unknown free-text fields are rejected. Every
 request field must equal an entry in the template's allowlist. Action/image are
 template-owned, never requester inputs.
@@ -145,7 +146,9 @@ does not implement durable bundle export/retention; operational environments
 requiring it must remain disabled until an approved integration exists.
 
 Job and Pod creation intents are separately persisted before each Create.
-An ambiguous response is recovered
+A fence or Lease check that fails after an intent is persisted but before the
+Create call clears that intent again, so a retry or cleanup is not blocked by
+an outcome that is known not to exist. An ambiguous response is recovered
 only by exact UID/contract match; a missing unknown-outcome Pod is **never**
 recreated, and its Lease remains blocked for supported operator recovery.
 The controller-owned Job envelope cannot switch to the built-in Job manager;
@@ -169,7 +172,8 @@ the other session's Lease.
 
 Successful execution terminates the session; failed/interrupted execution
 fails/expires it. A dedicated finalizer retains cleanup responsibility after
-session deletion. Cleanup deletes only the exact owned Pod and Job, proving
+session deletion and also releases the session's hub connection lease before
+it is removed. Cleanup deletes only the exact owned Pod and Job, proving
 both absent before deleting the exact owned Lease. Namespace/UID ambiguity, pending
 termination, audit failure or target outage retain inventory and the lock.
 Cancellation records a matching Pod's observed terminal result when available.
