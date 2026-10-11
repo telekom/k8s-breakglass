@@ -495,4 +495,5 @@ func TestQueuedSink_WriteAfterCloseReturnsError(t *testing.T) {
 	err := qs.Write(context.Background(), &Event{ID: "after-close", Type: EventSessionValidated})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "is closed")
+	assert.Equal(t, int64(1), qs.Health().DroppedEvents)
 }

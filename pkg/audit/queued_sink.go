@@ -240,6 +240,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 // circuit is open.
 func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
+		qs.recordDrop(1, "shutdown")
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 	}
 	if !queuedEventAllowed(qs.sink, event) {
@@ -251,12 +252,14 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		qs.sendMu.RLock()
 		defer qs.sendMu.RUnlock()
 		if qs.closed.Load() {
+			qs.recordDrop(1, "shutdown")
 			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 		}
 		select {
 		case qs.queue <- event:
 			return nil
 		case <-qs.stop:
+			qs.recordDrop(1, "shutdown")
 			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 		case <-writeCtx.Done():
 			qs.recordDrop(1, "enqueue_timeout")
@@ -297,6 +300,7 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		return nil
 	}
 	if qs.closed.Load() {
+		qs.recordDrop(1, "shutdown")
 		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 	}
 	// Queue is full

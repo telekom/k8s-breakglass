@@ -180,6 +180,45 @@ func TestIsolatedBlockingEnqueuePropagatesOrdinaryDeadline(t *testing.T) {
 	require.Equal(t, int64(1), isolated.Health()[0].DroppedEvents)
 }
 
+func TestBlockingEnqueueShutdownCountsAbandonedEvent(t *testing.T) {
+	block, started := make(chan struct{}), make(chan struct{})
+	sink := newQueuedMockSink("shutdown-enqueue")
+	sink.blockFirst, sink.firstStarted = block, started
+	cfg := retryTestConfig()
+	cfg.QueueSize, cfg.DropOnFull, cfg.BatchSize = 1, false, 1
+	qs := NewQueuedSink(sink, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "first"}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		close(block)
+		t.Fatal("sink worker did not start")
+	}
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "second"}))
+	result := make(chan error, 1)
+	go func() { result <- qs.Write(context.Background(), &Event{ID: "abandoned"}) }()
+	require.Eventually(t, func() bool {
+		if qs.sendMu.TryLock() {
+			qs.sendMu.Unlock()
+			return false
+		}
+		return true
+	}, time.Second, time.Millisecond)
+	closed := make(chan error, 1)
+	go func() { closed <- qs.Close() }()
+	select {
+	case err := <-result:
+		require.ErrorContains(t, err, "is closed")
+	case <-time.After(time.Second):
+		close(block)
+		t.Fatal("shutdown did not interrupt blocked enqueue")
+	}
+	require.Equal(t, int64(1), qs.Health().DroppedEvents)
+	close(block)
+	require.NoError(t, <-closed)
+}
+
 func TestPerSinkDeliveryConfiguration(t *testing.T) {
 	first := queuedConfig(nil)
 	second := queuedConfig(&breakglassv1alpha1.AuditQueueConfig{

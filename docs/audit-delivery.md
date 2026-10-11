@@ -104,6 +104,9 @@ not alter either circuit breaker's failure or success state; dropped events
 are counted with reason `serialization`. Fire-and-forget completion failures are explicitly
 logged and counted with the `async_write` reason; they cannot be retried by the
 external queue because submission already returned.
+The external queue drain budget does not bound kafka-go's final `Writer.Close`
+flush for asynchronous submissions; that flush waits for the writer's own
+configured network timeouts and retries.
 For asynchronous Kafka, processed-event metrics and queue health count broker
 completion, not submission. Failed completions count as failed/dropped events.
 The manager does not emit processed delivery metrics for handoffs into isolated
