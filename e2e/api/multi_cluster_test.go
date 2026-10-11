@@ -188,7 +188,7 @@ users:
 					return false
 				}
 				return observed.Status.ObservedGeneration == observed.Generation && len(observed.Status.Conditions) > 0
-			}, helpers.WaitForStateTimeout, time.Second, "controller did not observe identity provider %s", provider.Name)
+			}, helpers.WaitForConditionTimeout, helpers.PollInterval, "controller did not observe identity provider %s", provider.Name)
 		}
 
 		kubeconfigSecret := &corev1.Secret{

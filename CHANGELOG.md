@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Update MongoDB Go Driver v2 to 2.9.2 to fix CVE-2026-81521
+  (`Client.BulkWrite` namespace handling) and CVE-2026-107325
+  (`bson.RawArray.Validate` malformed-length panic).
+
 - Use Go 1.27.2 for source, controller, CI and utility image builds to address
   standard-library CVE-2026-78667, CVE-2026-78669 and CVE-2026-97031.
   All Go builder images are pinned to the verified multi-platform image digest.
