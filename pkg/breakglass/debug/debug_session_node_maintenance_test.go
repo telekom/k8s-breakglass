@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -591,4 +592,85 @@ func TestNodeMaintenanceResultStatusRejectsRevokedConfiguration(t *testing.T) {
 	require.Empty(t, job.Status.Conditions)
 	require.Empty(t, ds.Status.NodeMaintenance.Result)
 	require.Len(t, sink.Events(), 1, "revoked target provenance must not emit a result receipt")
+}
+
+func TestNodeMaintenanceCleanupRejectsRevokedResultProvenance(t *testing.T) {
+	c, ds, spoke, sink := maintenanceFixture(t)
+	require.NoError(t, c.deployMaintenance(t.Context(), ds))
+	target := maintenanceRevokingReader{Client: spoke, revoke: func() {
+		secret := &corev1.Secret{}
+		require.NoError(t, c.client.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "spoke-kubeconfig"}, secret))
+		secret.Data["value"] = []byte("revoked credentials")
+		require.NoError(t, c.client.Update(t.Context(), secret))
+	}}
+	c.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return target, nil }
+	require.Error(t, c.cleanupMaintenance(t.Context(), ds))
+	require.Len(t, sink.Events(), 1, "cleanup must not receipt an outcome read with revoked target credentials")
+	require.False(t, ds.Status.NodeMaintenance.Released)
+	require.False(t, ds.Status.NodeMaintenance.ResultAudited)
+}
+
+func TestNodeMaintenanceTerminalFenceRejectsLiveChanges(t *testing.T) {
+	for _, change := range []string{"approval", "cancel", "node", "namespace"} {
+		t.Run(change, func(t *testing.T) {
+			c, ds, spoke, sink := maintenanceFixture(t)
+			require.NoError(t, c.deployMaintenance(t.Context(), ds))
+			key := client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: ds.Status.NodeMaintenance.OperationID}
+			pod := &corev1.Pod{}
+			require.NoError(t, spoke.Get(t.Context(), key, pod))
+			pod.Status.Phase = corev1.PodSucceeded
+			require.NoError(t, spoke.Status().Update(t.Context(), pod))
+			c.beforeDebugTargetWrite = func(_ string) {
+				switch change {
+				case "approval", "cancel":
+					live := &breakglassv1alpha1.DebugSession{}
+					require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(ds), live))
+					if change == "approval" {
+						live.Status.Approval.ApprovedBy = "different-approver@example.com"
+					} else {
+						live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+					}
+					require.NoError(t, c.client.Status().Update(t.Context(), live))
+				case "node":
+					node := &corev1.Node{}
+					require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
+					node.UID = "replacement"
+					require.NoError(t, spoke.Update(t.Context(), node))
+				case "namespace":
+					namespace := &corev1.Namespace{}
+					require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace))
+					namespace.UID = "replacement"
+					require.NoError(t, spoke.Update(t.Context(), namespace))
+				}
+			}
+			_, err := c.handleMaintenanceActive(t.Context(), ds)
+			require.Error(t, err)
+			job := &batchv1.Job{}
+			require.NoError(t, spoke.Get(t.Context(), key, job))
+			require.Empty(t, job.Status.Conditions)
+			require.Len(t, sink.Events(), 1)
+		})
+	}
+}
+
+func TestNodeMaintenanceCleanupRetainsMismatchedLeaseNodeUID(t *testing.T) {
+	for _, persisted := range []bool{false, true} {
+		for _, nodeUID := range []string{"", "replacement-node"} {
+			t.Run(fmt.Sprintf("persisted=%t/nodeUID=%s", persisted, nodeUID), func(t *testing.T) {
+				c, ds, spoke, _ := maintenanceFixture(t)
+				require.NoError(t, c.deployMaintenance(t.Context(), ds))
+				key := client.ObjectKey{Name: maintenanceIdentity(ds.Spec.NodeMaintenance.TargetNode), Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+				lease := &coordinationv1.Lease{}
+				require.NoError(t, spoke.Get(t.Context(), key, lease))
+				lease.Annotations["breakglass.t-caas.telekom.com/node-uid"] = nodeUID
+				require.NoError(t, spoke.Update(t.Context(), lease))
+				if !persisted {
+					require.NoError(t, c.patchMaintenanceStatus(t.Context(), ds, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.LeaseUID = "" }))
+				}
+				require.ErrorContains(t, c.cleanupMaintenance(t.Context(), ds), "Lease Node identity")
+				require.NoError(t, spoke.Get(t.Context(), key, lease))
+				require.False(t, ds.Status.NodeMaintenance.Released)
+			})
+		}
+	}
 }

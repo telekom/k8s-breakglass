@@ -146,6 +146,10 @@ func (c *DebugSessionController) validateMaintenancePending(ctx context.Context,
 }
 
 func (c *DebugSessionController) maintenanceFence(ctx context.Context, ds *breakglassv1alpha1.DebugSession, target ctrlclient.Reader, configurationFence func() error) error {
+	return c.maintenanceLiveFence(ctx, ds, target, configurationFence, false)
+}
+
+func (c *DebugSessionController) maintenanceLiveFence(ctx context.Context, ds *breakglassv1alpha1.DebugSession, target ctrlclient.Reader, configurationFence func() error, allowExpired bool) error {
 	if c.beforeDebugTargetWrite != nil {
 		c.beforeDebugTargetWrite("node-maintenance")
 	}
@@ -162,7 +166,7 @@ func (c *DebugSessionController) maintenanceFence(ctx context.Context, ds *break
 	}
 	if live.UID != ds.UID || !live.DeletionTimestamp.IsZero() || !maintenanceApproved(live) ||
 		live.Status.ResolvedTemplate == nil ||
-		live.Status.ExpiresAt == nil || !time.Now().UTC().Before(live.Status.ExpiresAt.Time) ||
+		live.Status.ExpiresAt == nil || (!allowExpired && !time.Now().UTC().Before(live.Status.ExpiresAt.Time)) ||
 		(live.Status.State != breakglassv1alpha1.DebugSessionStatePendingApproval && live.Status.State != breakglassv1alpha1.DebugSessionStateActive) {
 		return fmt.Errorf("maintenance session is no longer approved and live")
 	}
@@ -170,6 +174,8 @@ func (c *DebugSessionController) maintenanceFence(ctx context.Context, ds *break
 		return err
 	}
 	if !reflect.DeepEqual(live.Spec.NodeMaintenance, ds.Spec.NodeMaintenance) ||
+		!reflect.DeepEqual(live.Status.Approval, ds.Status.Approval) ||
+		!reflect.DeepEqual(live.Status.ResolvedTemplate, ds.Status.ResolvedTemplate) ||
 		!reflect.DeepEqual(live.Status.NodeMaintenance, ds.Status.NodeMaintenance) {
 		return fmt.Errorf("maintenance request or executor inventory changed before target write")
 	}
@@ -590,7 +596,7 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 		Type: condition, Status: corev1.ConditionTrue, Reason: "MaintenanceExecutorObserved",
 		Message: "Single maintenance executor " + result, LastTransitionTime: now,
 	}}
-	if err := configurationFence(); err != nil {
+	if err := c.maintenanceLiveFence(ctx, ds, target, configurationFence, true); err != nil {
 		return ctrl.Result{}, err
 	}
 	if err := target.Status().Update(ctx, job); err != nil {
@@ -682,6 +688,9 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		status = ds.Status.NodeMaintenance
 	}
 	if !status.ResultAudited {
+		if err := configurationFence(); err != nil {
+			return err
+		}
 		if err := c.auditMaintenance(ctx, ds, "result"); err != nil {
 			return err
 		}
@@ -753,6 +762,10 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		}
 		if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != status.OperationID {
 			return fmt.Errorf("maintenance cleanup Lease holder changed")
+		}
+		if lease.UID == "" || !lease.DeletionTimestamp.IsZero() ||
+			lease.Annotations["breakglass.t-caas.telekom.com/node-uid"] != ds.Spec.NodeMaintenance.TargetNodeUID {
+			return fmt.Errorf("maintenance cleanup Lease Node identity changed")
 		}
 		if status.CreateAttempted {
 			node := &corev1.Node{}

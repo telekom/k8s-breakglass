@@ -156,6 +156,11 @@ Failures/interruption/unknown outcomes are not reported as success.
 Required event types are `debug_session.node_maintenance.execution_intent` and
 `debug_session.node_maintenance.result`; both are sensitive events and use
 synchronous durable delivery. Include them in any configured sink allowlist.
+Terminal Job observation revalidates live session/approval, target credentials,
+Node and namespace identity; the expiry observation permits the original elapsed
+deadline only so expiry can be recorded, never to execute another mutation.
+Cleanup rechecks credentials before its result receipt and verifies the Lease's
+Node UID annotation even when recovering an unpersisted Lease UID.
 
 Successful execution terminates the session; failed/interrupted execution
 fails/expires it. A dedicated finalizer retains cleanup responsibility after
