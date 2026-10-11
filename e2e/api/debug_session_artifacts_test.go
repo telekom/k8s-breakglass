@@ -290,6 +290,10 @@ spec:
 					}
 				}
 				hostMounts := 0
+				require.Equal(t, []corev1.VolumeMount{
+					{Name: "output", MountPath: "/output"},
+					{Name: "upload-ca", MountPath: "/etc/breakglass/artifact-upload-ca", ReadOnly: true},
+				}, admitted.Containers[0].VolumeMounts, "uploader may mount output and its fixed CA bundle, never host coredumps")
 				for _, v := range admitted.Volumes {
 					if v.HostPath != nil {
 						hostMounts++
@@ -301,7 +305,6 @@ spec:
 					require.Equal(t, target.Spec.NodeName, admitted.NodeName)
 					require.Equal(t, 1, hostMounts)
 					require.Contains(t, admitted.InitContainers[0].VolumeMounts, corev1.VolumeMount{Name: "host-coredumps", MountPath: "/host-coredumps", ReadOnly: true})
-					require.Len(t, admitted.Containers[0].VolumeMounts, 1)
 				} else {
 					require.Zero(t, hostMounts)
 				}
