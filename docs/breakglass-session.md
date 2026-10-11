@@ -307,7 +307,9 @@ under a `30m` idle policy therefore has `maxValidFor: "20m0s"` and
 session, and hard expiry remains authoritative regardless of activity. An unset
 idle timeout stays unset, and the escalation itself is unchanged.
 
-Copied automatically from the matched `BreakglassEscalation` at approval time.
+Copied automatically from the matched `BreakglassEscalation` when the API creates
+the session request, bounded by a shorter custom duration. Approval does not
+change the immutable session spec.
 
 ```yaml
 idleTimeout: "30m"  # Expire after 30 minutes of inactivity
