@@ -86,6 +86,8 @@ This setting is separate from controller and debug-template image pull Secrets,
 and requests cannot override it. Omit it when the registry permits anonymous
 pulls or the target nodes already have registry credentials. Missing or invalid
 registry credentials result in Kubernetes image pull errors.
+Invalid reference names are rejected at startup before artifact dependencies
+are initialized, and again before any collector resources are provisioned.
 `stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,

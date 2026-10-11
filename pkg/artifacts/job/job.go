@@ -177,10 +177,8 @@ func validate(config Config) error {
 	if !validImageDigest(config.Image) {
 		return errors.New("diagnostic artifact image must be pinned by digest")
 	}
-	for _, secret := range config.ImagePullSecrets {
-		if len(validation.IsDNS1123Subdomain(secret.Name)) != 0 {
-			return errors.New("diagnostic artifact image pull Secret name is invalid")
-		}
+	if err := ValidateImagePullSecrets(config.ImagePullSecrets); err != nil {
+		return err
 	}
 	parsed, err := url.Parse(config.UploadURL)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.RawQuery != "" || parsed.Fragment != "" || strings.Contains(config.UploadURL, "provider") {
@@ -195,6 +193,17 @@ func validate(config Config) error {
 		}
 	} else if config.Node != "" || config.MaxAgeMinutes != 0 || (config.DetailLevel != "" && config.DetailLevel != "basic" && config.DetailLevel != "extended") {
 		return errors.New("system-summary recipe inputs are invalid")
+	}
+	return nil
+}
+
+// ValidateImagePullSecrets rejects invalid administrator-owned references
+// before host initialization or spoke resource provisioning.
+func ValidateImagePullSecrets(secrets []corev1.LocalObjectReference) error {
+	for _, secret := range secrets {
+		if len(validation.IsDNS1123Subdomain(secret.Name)) != 0 {
+			return errors.New("diagnostic artifact image pull Secret name is invalid")
+		}
 	}
 	return nil
 }

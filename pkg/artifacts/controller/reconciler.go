@@ -251,6 +251,9 @@ func (reconciler *Reconciler) cleanupRevokedCollection(ctx context.Context, expe
 }
 
 func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object breakglassv1alpha1.DebugSessionArtifact, record backend.Record) error {
+	if err := artifactjob.ValidateImagePullSecrets(reconciler.ImagePullSecrets); err != nil {
+		return err
+	}
 	if reconciler.Image == "" || reconciler.ControllerURL == "" {
 		return errors.New("artifact reconciler image and controller URL are required")
 	}

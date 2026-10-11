@@ -153,6 +153,18 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cluster-uid")}}}
 	pullSecrets := []corev1.LocalObjectReference{{Name: "collector-registry"}, {Name: "fallback-registry"}}
 	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ImagePullSecrets: pullSecrets, ControllerURL: "https://breakglass.example", ClusterProvider: provider}
+	reconciler.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "invalid/name"}}
+	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{}), "image pull Secret")
+	var emptySecrets corev1.SecretList
+	require.NoError(t, spoke.List(context.Background(), &emptySecrets))
+	require.Empty(t, emptySecrets.Items, "invalid configuration must not provision upload credentials")
+	var emptyJobs batchv1.JobList
+	require.NoError(t, spoke.List(context.Background(), &emptyJobs))
+	require.Empty(t, emptyJobs.Items)
+	var untouched breakglassv1alpha1.DebugSessionArtifact
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(&artifact), &untouched))
+	require.Empty(t, untouched.Status.Resources, "invalid configuration must not persist resource intents")
+	reconciler.ImagePullSecrets = pullSecrets
 	require.NoError(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
 	var spokeJob batchv1.Job
 	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-collect"}, &spokeJob))

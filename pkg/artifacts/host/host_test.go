@@ -27,9 +27,20 @@ import (
 )
 
 func TestBuildDisabledDoesNotReadOrRequireHostDependencies(t *testing.T) {
-	components, err := Build(context.Background(), config.Artifacts{}, "not-a-namespace", Dependencies{})
+	components, err := Build(context.Background(), config.Artifacts{CollectorImagePullSecrets: []corev1.LocalObjectReference{{Name: "invalid/name"}}}, "not-a-namespace", Dependencies{})
 	require.NoError(t, err)
 	require.Nil(t, components)
+}
+
+func TestBuildRejectsInvalidCollectorImagePullSecretsBeforeExternalDependencies(t *testing.T) {
+	for _, name := range []string{"", "UPPERCASE", "other/registry", strings.Repeat("a", 254)} {
+		t.Run(name, func(t *testing.T) {
+			cfg := config.Artifacts{Enabled: true, CollectorImagePullSecrets: []corev1.LocalObjectReference{{Name: name}}}
+			components, err := Build(context.Background(), cfg, "breakglass", Dependencies{})
+			require.ErrorContains(t, err, "image pull Secret")
+			require.Nil(t, components)
+		})
+	}
 }
 
 func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
