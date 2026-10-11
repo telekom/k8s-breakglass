@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -17,6 +18,8 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+const connectionSessionLeasePrefix = "debug-connection-session-"
 
 const (
 	connectionLeaseEpochAnnotation             = "breakglass.telekom.com/connection-epoch"
@@ -222,6 +225,37 @@ func (s *ConnectionLeaseService) RevokeSession(ctx context.Context, ds *breakgla
 	return s.Revoke(ctx, ConnectionLeaseRef{Namespace: l.Namespace, Name: l.Name, UID: l.UID, HolderUID: l.HolderUID, TargetUID: l.TargetUID, ProfileDigest: l.ProfileDigest, Epoch: l.Epoch, ExpiresAt: l.ExpiresAt.Time})
 }
 
+// RevokeUnrecordedSessionLeases deletes session-scoped leases still held by
+// ds, including one whose reference never reached status because the session
+// changed (e.g. was deleted) between Lease creation and the status write.
+func (s *ConnectionLeaseService) RevokeUnrecordedSessionLeases(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if s == nil || s.client == nil || ds == nil || ds.UID == "" {
+		return nil
+	}
+	namespace := s.namespace
+	if namespace == "" {
+		namespace = ds.Namespace
+	}
+	leases := &coordinationv1.LeaseList{}
+	if err := s.liveReader().List(ctx, leases, ctrlclient.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("list connection leases before revoke: %w", err)
+	}
+	for i := range leases.Items {
+		lease := &leases.Items[i]
+		if !strings.HasPrefix(lease.Name, connectionSessionLeasePrefix) || lease.Annotations[connectionLeaseSessionAnnotation] != string(ds.UID) ||
+			lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != string(ds.UID) {
+			continue
+		}
+		uid, rv := lease.UID, lease.ResourceVersion
+		err := s.client.Delete(ctx, &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Name: lease.Name, Namespace: lease.Namespace}},
+			&ctrlclient.DeleteOptions{Raw: &metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &rv}}})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("revoke unrecorded connection lease: %w", err)
+		}
+	}
+	return nil
+}
+
 func connectionLeaseName(p ConnectionLeaseProof) string {
 	// One durable lease per target is the exclusive attachment claim. The
 	// holder/session identity is stored in the lease and changes only after an
@@ -232,7 +266,7 @@ func connectionLeaseName(p ConnectionLeaseProof) string {
 
 func connectionSessionLeaseName(p ConnectionLeaseProof) string {
 	sum := sha256.Sum256([]byte(string(p.SessionUID) + "\x00" + string(p.TargetUID)))
-	return "debug-connection-session-" + hex.EncodeToString(sum[:])[:20]
+	return connectionSessionLeasePrefix + hex.EncodeToString(sum[:])[:20]
 }
 
 func (s *ConnectionLeaseService) Acquire(ctx context.Context, proof ConnectionLeaseProof) (ConnectionLeaseRef, error) {

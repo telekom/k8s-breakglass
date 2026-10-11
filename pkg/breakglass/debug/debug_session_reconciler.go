@@ -258,9 +258,13 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		// activateSession acquires the hub connection lease before the
 		// maintenance executor is deployed, so deletion must release it as the
 		// terminal cleanup paths do. RevokeSession is a no-op when no lease is
-		// recorded or the Lease is already gone.
+		// recorded or the Lease is already gone; the unrecorded sweep covers a
+		// Lease created after the session was deleted mid-activation.
 		if c.connectionLeases != nil {
 			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := c.connectionLeases.RevokeUnrecordedSessionLeases(ctx, ds); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -1010,6 +1014,17 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	ds.Status.Message = "Activating debug session"
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
+	}
+	if template.Spec.NodeMaintenance != nil {
+		// Install the cleanup finalizer before acquiring any hub lease: a
+		// deletion in between would otherwise drop the session without running
+		// the finalizer branch that revokes the lease.
+		if !ds.DeletionTimestamp.IsZero() {
+			return ctrl.Result{}, nil
+		}
+		if err := c.ensureMaintenanceFinalizer(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	if c.connectionLeases != nil && c.ccProvider != nil {
 		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)

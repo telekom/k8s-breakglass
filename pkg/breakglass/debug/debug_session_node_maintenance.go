@@ -40,6 +40,21 @@ func hasMaintenanceFinalizer(ds *breakglassv1alpha1.DebugSession) bool {
 	return controllerutil.ContainsFinalizer(ds, maintenanceFinalizer)
 }
 
+// ensureMaintenanceFinalizer makes cleanup responsibility durable before any
+// hub or target resource is created. The optimistic lock fails if the session
+// changed, including a concurrent deletion, since it was read.
+func (c *DebugSessionController) ensureMaintenanceFinalizer(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if hasMaintenanceFinalizer(ds) {
+		return nil
+	}
+	if !ds.DeletionTimestamp.IsZero() {
+		return fmt.Errorf("nodeMaintenance session is being deleted")
+	}
+	base := ds.DeepCopy()
+	controllerutil.AddFinalizer(ds, maintenanceFinalizer)
+	return c.client.Patch(ctx, ds, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{}))
+}
+
 func (c *DebugSessionController) removeMaintenanceFinalizer(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	base := ds.DeepCopy()
 	controllerutil.RemoveFinalizer(ds, maintenanceFinalizer)
@@ -469,12 +484,8 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 	if err := breakglassv1alpha1.ValidateNodeMaintenanceSession(ds.Status.ResolvedTemplate, &ds.Spec); err != nil {
 		return err
 	}
-	if !hasMaintenanceFinalizer(ds) {
-		base := ds.DeepCopy()
-		controllerutil.AddFinalizer(ds, maintenanceFinalizer)
-		if err := c.client.Patch(ctx, ds, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
-			return err
-		}
+	if err := c.ensureMaintenanceFinalizer(ctx, ds); err != nil {
+		return err
 	}
 	target, configurationFence, release, err := c.maintenanceClient(ctx, ds)
 	if err != nil {

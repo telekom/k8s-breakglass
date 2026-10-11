@@ -173,9 +173,11 @@ with no execution intent receives no executor result receipt and never deletes
 the other session's Lease.
 
 Successful execution terminates the session; failed/interrupted execution
-fails/expires it. A dedicated finalizer retains cleanup responsibility after
-session deletion and also releases the session's hub connection lease before
-it is removed. Cleanup deletes only the exact owned Pod and Job, proving
+fails/expires it. A dedicated finalizer, installed before activation acquires
+any hub connection lease, retains cleanup responsibility after session
+deletion. Before it is removed it releases the session's hub connection lease,
+including a lease whose reference never reached status because the session was
+deleted mid-activation. Cleanup deletes only the exact owned Pod and Job, proving
 both absent before deleting the exact owned Lease. Namespace/UID ambiguity, pending
 termination, audit failure or target outage retain inventory and the lock.
 Cancellation records a matching Pod's observed terminal result when available.

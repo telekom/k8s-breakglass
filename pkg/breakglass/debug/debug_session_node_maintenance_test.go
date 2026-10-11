@@ -815,6 +815,48 @@ func TestNodeMaintenanceDeletionReleasesHubConnectionLease(t *testing.T) {
 	}
 }
 
+func TestNodeMaintenanceDeletionDuringActivationReleasesHubConnectionLease(t *testing.T) {
+	c, ds, spoke, _ := maintenanceFixture(t)
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePendingApproval
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.ResolvedTemplateVariablePolicy = []breakglassv1alpha1.ExtraDeployVariable{}
+	require.NoError(t, c.client.Status().Update(t.Context(), ds))
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: ds.Spec.TemplateRef}, Spec: *ds.Status.ResolvedTemplate.DeepCopy()}
+	key := client.ObjectKeyFromObject(ds)
+	var leaseKey *client.ObjectKey
+	// The requester deletes the session exactly while activation creates the
+	// hub connection Lease, before any maintenance executor exists.
+	c.client = interceptor.NewClient(c.client.(client.WithWatch), interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		if _, ok := obj.(*coordinationv1.Lease); ok && leaseKey == nil {
+			leaseKey = &client.ObjectKey{Namespace: obj.GetNamespace(), Name: obj.GetName()}
+			live := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, cl.Get(ctx, key, live))
+			require.True(t, hasMaintenanceFinalizer(live), "cleanup responsibility must be durable before the hub Lease exists")
+			require.NoError(t, cl.Delete(ctx, live))
+		}
+		return cl.Create(ctx, obj, opts...)
+	}})
+	c.connectionLeases = NewConnectionLeaseService(c.client)
+
+	_, err := c.activateSession(t.Context(), ds, template, nil)
+	require.NotNil(t, leaseKey, "activation must acquire the hub connection Lease")
+	require.True(t, apierrors.IsConflict(err), "the deletion must prevent recording the Lease in status, got %v", err)
+	foreign := &coordinationv1.Lease{ObjectMeta: metav1.ObjectMeta{Namespace: leaseKey.Namespace, Name: connectionSessionLeasePrefix + "other",
+		Annotations: map[string]string{connectionLeaseSessionAnnotation: "other-session-uid"}},
+		Spec: coordinationv1.LeaseSpec{HolderIdentity: ptr.To("other-session-uid")}}
+	require.NoError(t, c.client.Create(t.Context(), foreign))
+	for i := 0; i < 3; i++ {
+		_, err = c.Reconcile(t.Context(), ctrl.Request{NamespacedName: key})
+		require.NoError(t, err)
+	}
+
+	require.True(t, apierrors.IsNotFound(c.client.Get(t.Context(), key, &breakglassv1alpha1.DebugSession{})))
+	require.True(t, apierrors.IsNotFound(c.client.Get(t.Context(), *leaseKey, &coordinationv1.Lease{})),
+		"a deletion racing activation must not orphan the hub connection Lease")
+	require.NoError(t, c.client.Get(t.Context(), client.ObjectKeyFromObject(foreign), &coordinationv1.Lease{}), "another session's Lease must survive")
+	require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: maintenanceIdentity("node-a")}, &coordinationv1.Lease{})))
+}
+
 func TestNodeMaintenancePreCreateFailureDoesNotRecordUnknownOutcome(t *testing.T) {
 	for _, stage := range []string{"job", "pod"} {
 		for _, followUp := range []string{"retry", "cleanup"} {
