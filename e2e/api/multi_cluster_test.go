@@ -180,6 +180,16 @@ users:
 		cleanup.Add(backupIDP)
 		err = cli.Create(ctx, backupIDP)
 		require.NoError(t, err, "Failed to create backup IDP")
+		// Admission reads the controller cache; wait for it to observe both new providers.
+		for _, provider := range []*breakglassv1alpha1.IdentityProvider{primaryIDP, backupIDP} {
+			require.Eventually(t, func() bool {
+				var observed breakglassv1alpha1.IdentityProvider
+				if err := cli.Get(ctx, types.NamespacedName{Name: provider.Name, Namespace: namespace}, &observed); err != nil {
+					return false
+				}
+				return observed.Status.ObservedGeneration == observed.Generation && len(observed.Status.Conditions) > 0
+			}, helpers.WaitForStateTimeout, time.Second, "controller did not observe identity provider %s", provider.Name)
+		}
 
 		kubeconfigSecret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
