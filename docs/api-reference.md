@@ -664,12 +664,12 @@ Authorization: Bearer <token>
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `activeOnly` | boolean | Only return ready escalations for ready clusters (default: `true`). With a concrete or glob `cluster` filter, escalations are hidden when every matching registered `ClusterConfig` is `Ready=False` or has an ambiguous duplicate name. Unfiltered multi-cluster/global escalations can still be returned when they match at least one ready registered cluster. |
+| `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
 
 Escalation discovery applies the same authenticated requester-provider filter as
 session creation: `allowedIdentityProvidersForRequests` takes precedence over
 `allowedIdentityProviders`. Unrestricted policies remain visible; restricted
 policies are hidden when the authenticated provider is missing or ineligible.
-| `cluster` | string | Filter by target cluster name. Supports exact matching and glob patterns. |
 
 **User group resolution:** The user's groups are resolved from the JWT
 `groups` claim (or Keycloak's `realm_access.roles`) when present, falling
