@@ -448,7 +448,10 @@ jobs:
       - name: Validate portable ClusterConfig metadata
         run: bash charts/escalation-config/ci/test-clusterconfig-metadata.sh
       - name: Validate kubectl-debug binding namespace fences
-        run: bash charts/escalation-config/ci/test-debug-target-namespaces.sh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-yaml
+          bash charts/escalation-config/ci/test-debug-target-namespaces.sh
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
