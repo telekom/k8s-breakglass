@@ -334,6 +334,34 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	require.Zero(t, testutil.ToFloat64(metrics.AuditSinkConnected.WithLabelValues(sink.Name())))
 }
 
+func TestKafkaErrorHealthSnapshotIsConsistent(t *testing.T) {
+	sink, err := NewKafkaSink(KafkaSinkConfig{
+		Name: "concurrent-error-health", Brokers: []string{"localhost:1"}, Topic: "test", Async: true,
+	}, zap.NewNop())
+	require.NoError(t, err)
+	qs := NewQueuedSink(sink, retryTestConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := int64(1); i <= 1000; i++ {
+			sink.lastError.Store(kafkaSinkError{
+				err: fmt.Errorf("failure-%d", i), at: time.Unix(0, i),
+			})
+		}
+	}()
+	for i := 0; i < 1000; i++ {
+		at, err := sink.LastError()
+		if at.IsZero() {
+			require.NoError(t, err)
+		} else {
+			require.EqualError(t, err, fmt.Sprintf("failure-%d", at.UnixNano()))
+		}
+		_ = qs.Health()
+	}
+	<-done
+}
+
 func TestManagerIsolatedKafkaHandoffDoesNotCountDelivery(t *testing.T) {
 	sink, err := NewKafkaSink(KafkaSinkConfig{
 		Name: "manager-async-handoff", Brokers: []string{"localhost:1"}, Topic: "test", Async: true,

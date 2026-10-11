@@ -133,11 +133,13 @@ type KafkaSink struct {
 	batchesSent     atomic.Int64
 	connected       atomic.Bool
 	lastError       atomic.Value // stores kafkaSinkError
-	lastErrorTime   atomic.Value // stores time.Time
 	lastSuccessTime atomic.Value // stores time.Time
 }
 
-type kafkaSinkError struct{ err error }
+type kafkaSinkError struct {
+	err error
+	at  time.Time
+}
 
 // NewKafkaSink creates a new KafkaSink.
 func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
@@ -253,8 +255,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 			sink.messagesFailed.Add(int64(len(messages)))
 			sink.asyncFailures.Add(int64(len(messages)))
 			sink.connected.Store(false)
-			sink.lastError.Store(kafkaSinkError{err: err})
-			sink.lastErrorTime.Store(time.Now())
+			sink.lastError.Store(kafkaSinkError{err: err, at: time.Now()})
 			metrics.AuditSinkConnected.WithLabelValues(sinkName).Set(0)
 			metrics.AuditSinkErrors.WithLabelValues(sinkName, "async_write").Inc()
 			metrics.AuditEventsDropped.WithLabelValues(sinkName, "async_write").Add(float64(len(messages)))
@@ -400,8 +401,7 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 		}
 
 		// Store last error for diagnostics
-		s.lastError.Store(kafkaSinkError{err: err})
-		s.lastErrorTime.Store(time.Now())
+		s.lastError.Store(kafkaSinkError{err: err, at: time.Now()})
 
 		// Log with appropriate severity based on error type
 		// Use zap.String for error to avoid stacktraces on expected network errors
@@ -596,8 +596,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 		}
 
 		// Store last error
-		s.lastError.Store(kafkaSinkError{err: err})
-		s.lastErrorTime.Store(time.Now())
+		s.lastError.Store(kafkaSinkError{err: err, at: time.Now()})
 
 		s.logger.Warn("failed to write batch to Kafka",
 			zap.String("error", err.Error()),
@@ -641,8 +640,7 @@ func (s *KafkaSink) IsConnected() bool {
 // LastError returns the last error encountered and when it occurred.
 func (s *KafkaSink) LastError() (time.Time, error) {
 	stored, _ := s.lastError.Load().(kafkaSinkError)
-	t, _ := s.lastErrorTime.Load().(time.Time)
-	return t, stored.err
+	return stored.at, stored.err
 }
 
 // MessageStats returns message statistics for monitoring.
