@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -1287,8 +1288,35 @@ func uploadHTTPClientForCABundles(caBundlePath, additionalBundlePath string) (*h
 		if err != nil {
 			return nil, fmt.Errorf("read upload CA bundle: %w", err)
 		}
-		if len(bundle) > int(maxUploadCABundleBytes) || !rootCAs.AppendCertsFromPEM(bundle) {
+		if len(bundle) > int(maxUploadCABundleBytes) {
 			return nil, errors.New("upload CA bundle must contain PEM certificates within the 1 MiB limit")
+		}
+		certificates := 0
+		for len(bytes.TrimSpace(bundle)) > 0 {
+			bundle = bytes.TrimSpace(bundle)
+			if !bytes.HasPrefix(bundle, []byte("-----BEGIN CERTIFICATE-----")) {
+				return nil, errors.New("upload CA bundle contains non-certificate data")
+			}
+			endMarker := []byte("-----END CERTIFICATE-----")
+			end := bytes.Index(bundle, endMarker)
+			if end < 0 {
+				return nil, errors.New("upload CA bundle contains unterminated PEM")
+			}
+			end += len(endMarker)
+			block, remainder := pem.Decode(bundle[:end])
+			if block == nil || len(bytes.TrimSpace(remainder)) != 0 || block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
+				return nil, errors.New("upload CA bundle contains invalid PEM")
+			}
+			certificate, err := x509.ParseCertificate(block.Bytes)
+			if err != nil {
+				return nil, fmt.Errorf("parse upload CA certificate: %w", err)
+			}
+			rootCAs.AddCert(certificate)
+			certificates++
+			bundle = bundle[end:]
+		}
+		if certificates == 0 {
+			return nil, errors.New("upload CA bundle contains no certificates")
 		}
 	}
 	return &http.Client{

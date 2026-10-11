@@ -68,7 +68,15 @@ func TestUploadCABundleRejectsMissingMalformedAndOversizedBundles(t *testing.T) 
 	dir := t.TempDir()
 	systemPath := filepath.Join(dir, "system.pem")
 	writeCertificateBundle(t, systemPath, server.Certificate().Raw)
-	for _, content := range []string{"", "not a certificate", strings.Repeat("x", int(maxUploadCABundleBytes)+1)} {
+	valid, err := os.ReadFile(systemPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"", "not a certificate", strings.Repeat("x", int(maxUploadCABundleBytes)+1),
+		string(valid) + "trailing garbage",
+		string(valid) + "-----BEGIN CERTIFICATE-----\ninvalid\n-----END CERTIFICATE-----\n",
+		"leading garbage\n" + string(valid),
+		string(valid) + "-----BEGIN PRIVATE KEY-----\nYQ==\n-----END PRIVATE KEY-----\n"} {
 		path := filepath.Join(dir, "extra.pem")
 		if err := os.WriteFile(path, []byte(content), 0600); err != nil {
 			t.Fatal(err)
