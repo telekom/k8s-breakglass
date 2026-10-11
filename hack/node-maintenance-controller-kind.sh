@@ -117,13 +117,23 @@ kubectl --kubeconfig "$proof_dir/kubeconfig" apply \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessionclusterbindings.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugpodtemplates.yaml
-kubectl --kubeconfig "$proof_dir/kubeconfig" wait --for=condition=Established --timeout=60s \
-	crd/clusterconfigs.breakglass.t-caas.telekom.com \
-	crd/debugpodtemplates.breakglass.t-caas.telekom.com \
-	crd/debugsessionclusterbindings.breakglass.t-caas.telekom.com \
-	crd/debugsessions.breakglass.t-caas.telekom.com \
-	crd/debugsessiontemplates.breakglass.t-caas.telekom.com
-kubectl --kubeconfig "$proof_dir/kubeconfig" wait --for=condition=Available --timeout=120s \
+# kubectl wait --for=condition fails instead of waiting while a fresh object
+# has no status.conditions yet, so retry it within the same 60s bound.
+established=false
+for _attempt in {1..12}; do
+	if kubectl --kubeconfig "$proof_dir/kubeconfig" wait --for=condition=Established --timeout=5s \
+		crd/clusterconfigs.breakglass.t-caas.telekom.com \
+		crd/debugpodtemplates.breakglass.t-caas.telekom.com \
+		crd/debugsessionclusterbindings.breakglass.t-caas.telekom.com \
+		crd/debugsessions.breakglass.t-caas.telekom.com \
+		crd/debugsessiontemplates.breakglass.t-caas.telekom.com; then
+		established=true
+		break
+	fi
+	sleep 1
+done
+[[ "$established" == true ]] || { echo "Proof CRDs did not become Established" >&2; exit 1; }
+kubectl --kubeconfig "$proof_dir/kubeconfig" rollout status --timeout=120s \
 	--namespace kube-system deployment/coredns
 ready=false
 for _attempt in {1..12}; do
