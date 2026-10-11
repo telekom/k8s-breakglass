@@ -54,6 +54,28 @@ read-only `/var/lib/systemd/coredump` host path. Collector Jobs receive a
 short-lived, one-time controller upload token and route. They never receive
 storage-provider credentials, bucket names, object keys, or provider URLs.
 
+For an authenticated collector image registry, configure
+`artifacts.collectorImagePullSecrets` alongside `artifacts.collectorImage`
+in the controller configuration:
+
+```yaml
+artifacts:
+  collectorImagePullSecrets:
+    - name: collector-registry
+```
+
+Administrators must provision each named image pull Secret in every target
+debug namespace on every spoke before collection. Registry credentials are
+consumed by the kubelet, not mounted in either collector container. The
+controller references these namespace-local Secrets without reading or copying
+them, and artifact cleanup leaves them untouched. Controller Pod and debug
+template pull Secrets are not inherited. Omitting this setting preserves the
+existing behavior and requires anonymous registry access or working node-level
+registry authentication; a mirror endpoint alone does not provide credentials.
+Changing the setting requires a controller restart and applies to newly rendered
+Jobs. Existing Jobs with different pull Secret references fail the execution-spec
+retry check rather than being silently modified.
+
 The artifact record is stored in the hub, while its upload Secret and collector
 Job are created in the live session's target spoke namespace through the
 target-cluster client. The controller rechecks the session, target UID, and

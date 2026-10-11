@@ -118,3 +118,48 @@ func TestBuildRejectsUnpinnedImageAndProviderURL(t *testing.T) {
 		t.Fatal("Build() accepted a provider upload URL")
 	}
 }
+
+func TestBuildCollectorImagePullSecrets(t *testing.T) {
+	for _, recipe := range []string{archive.SystemSummaryRecipe, archive.CrashdumpCollectionRecipe} {
+		for _, secrets := range [][]corev1.LocalObjectReference{nil, {{Name: "collector-registry"}, {Name: "fallback-registry"}}} {
+			t.Run(recipe+"/"+strings.Join(pullSecretNames(secrets), ","), func(t *testing.T) {
+				config := testConfig(recipe)
+				config.MaxBytes = archive.MaxSystemSummaryArchiveBytes
+				if recipe == archive.CrashdumpCollectionRecipe {
+					config.Node = "worker-one"
+				}
+				config.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), secrets...)
+				job, err := Build(config)
+				require.NoError(t, err)
+				require.Equal(t, secrets, job.Spec.Template.Spec.ImagePullSecrets)
+				for _, container := range append(job.Spec.Template.Spec.InitContainers, job.Spec.Template.Spec.Containers...) {
+					require.Equal(t, corev1.PullIfNotPresent, container.ImagePullPolicy)
+				}
+				if len(secrets) > 0 {
+					config.ImagePullSecrets[0].Name = "changed"
+					require.Equal(t, secrets, job.Spec.Template.Spec.ImagePullSecrets, "rendering must not retain the configuration slice")
+				}
+			})
+		}
+	}
+}
+
+func TestBuildRejectsInvalidCollectorImagePullSecretNames(t *testing.T) {
+	for _, name := range []string{"", "UPPERCASE", "other/registry", " registry", strings.Repeat("a", 254)} {
+		t.Run(name, func(t *testing.T) {
+			config := testConfig(archive.SystemSummaryRecipe)
+			config.MaxBytes = archive.MaxSystemSummaryArchiveBytes
+			config.ImagePullSecrets = []corev1.LocalObjectReference{{Name: name}}
+			_, err := Build(config)
+			require.ErrorContains(t, err, "image pull Secret")
+		})
+	}
+}
+
+func pullSecretNames(secrets []corev1.LocalObjectReference) []string {
+	names := make([]string, len(secrets))
+	for i, secret := range secrets {
+		names[i] = secret.Name
+	}
+	return names
+}

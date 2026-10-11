@@ -57,6 +57,8 @@ artifacts:
   backend: s3
   stagingDir: /var/lib/breakglass/upload-staging
   collectorImage: registry.example/breakglass/diagnostic-artifact-collector@sha256:<64-hex-digest>
+  collectorImagePullSecrets: # optional, for authenticated collector registries
+    - name: collector-registry
   controllerURL: https://breakglass.example.com
   uploadMaxBytes: 67108864
   tokenSecretName: artifact-signing
@@ -73,6 +75,17 @@ artifacts:
 ```
 
 Replace the image placeholder with an actually published immutable digest.
+`collectorImagePullSecrets` sets the collector Job Pod's `imagePullSecrets`,
+covering both the collector init container and uploader. Each `name` must be
+a valid Kubernetes Secret name. Administrators must provision those Secrets
+in **each target debug namespace on each spoke**, using namespace-scoped
+registry credentials and protecting them from requester/tenant writes. A
+Secret in the controller's namespace alone is insufficient. The controller
+only references the Secrets; it does not read, copy, create, or delete them.
+This setting is separate from controller and debug-template image pull Secrets,
+and requests cannot override it. Omit it when the registry permits anonymous
+pulls or the target nodes already have registry credentials. Missing or invalid
+registry credentials result in Kubernetes image pull errors.
 `stagingDir` must be a writable private staging directory. Use an HTTPS origin for `controllerURL`, reachable by collector Jobs; userinfo, non-root paths, query,
 and fragment components are rejected. Do not put credentials in this URL. `uploadMaxBytes` is required and must be between 1 and 536870912
 bytes; recipes impose additional limits. Requests cannot override the image,

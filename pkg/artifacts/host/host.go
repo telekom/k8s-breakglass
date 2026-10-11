@@ -137,6 +137,7 @@ func Build(ctx context.Context, artifactConfig config.Artifacts, namespace strin
 	}
 	issuerAdapter := &uploadTokenIssuer{keyring: keyring, now: time.Now}
 	reconciler := &artifactcontroller.Reconciler{Client: deps.Manager.GetClient(), LiveReader: deps.Reader, ClusterProvider: deps.ClusterProvider, Service: service, TokenIssuer: issuerAdapter, Image: artifactConfig.CollectorImage, ControllerURL: issuer, Log: deps.Log}
+	reconciler.ImagePullSecrets = append([]corev1.LocalObjectReference(nil), artifactConfig.CollectorImagePullSecrets...)
 	controllers, err := artifactAPIControllers(service, deps, artifactConfig.UploadMaxBytes)
 	if err != nil {
 		_ = closeStore()

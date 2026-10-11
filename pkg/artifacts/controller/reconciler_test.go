@@ -151,10 +151,15 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session, &artifact).WithStatusSubresource(&breakglassv1alpha1.DebugSessionArtifact{}).Build()
 	spoke := &uidAssigningClient{Client: fake.NewClientBuilder().WithScheme(scheme).Build()}
 	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cluster-uid")}}}
-	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ControllerURL: "https://breakglass.example", ClusterProvider: provider}
+	pullSecrets := []corev1.LocalObjectReference{{Name: "collector-registry"}, {Name: "fallback-registry"}}
+	reconciler := &Reconciler{Client: hub, LiveReader: hub, TokenIssuer: testTokenIssuer{}, Image: "registry.example/collector@sha256:" + strings.Repeat("c", 64), ImagePullSecrets: pullSecrets, ControllerURL: "https://breakglass.example", ClusterProvider: provider}
 	require.NoError(t, reconciler.ensureUploadResources(context.Background(), artifact, backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}))
 	var spokeJob batchv1.Job
 	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-collect"}, &spokeJob))
+	require.Equal(t, pullSecrets, spokeJob.Spec.Template.Spec.ImagePullSecrets)
+	var secrets corev1.SecretList
+	require.NoError(t, spoke.List(context.Background(), &secrets))
+	require.Len(t, secrets.Items, 1, "only the upload token is provisioned; registry Secrets remain administrator-owned")
 	var spokeSecret corev1.Secret
 	require.NoError(t, spoke.Get(context.Background(), types.NamespacedName{Namespace: "target", Name: "dsa-" + string(artifact.UID) + "-upload"}, &spokeSecret))
 	require.Contains(t, spokeJob.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: "BREAKGLASS_ARTIFACT_UPLOAD_TOKEN", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: spokeSecret.Name}, Key: "token", Optional: boolPtr(false)}}})
@@ -166,6 +171,10 @@ func TestEnsureUploadResourcesWritesOnlyToTargetClientAndCapturesUIDs(t *testing
 	require.Equal(t, string(spokeJob.UID), updated.Status.Resources[1].UID)
 	record := backend.Record{ArtifactID: artifact.Spec.ArtifactID, ArtifactUID: string(artifact.UID), SessionUID: artifact.Spec.SessionRef.UID, Namespace: artifact.Spec.SessionRef.Namespace, SessionName: artifact.Spec.SessionRef.Name, ExpiresAt: expires.Time}
 	require.NoError(t, reconciler.ensureUploadResources(context.Background(), updated, record), "unchanged existing Job remains valid")
+	spokeJob.Spec.Template.Spec.ImagePullSecrets[0].Name = "unauthorized-registry"
+	require.NoError(t, spoke.Update(context.Background(), &spokeJob))
+	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), updated, record), "execution differs")
+	spokeJob.Spec.Template.Spec.ImagePullSecrets = pullSecrets
 	spokeJob.Spec.Template.Spec.Containers[0].Command = []string{"unauthorized-command"}
 	require.NoError(t, spoke.Update(context.Background(), &spokeJob))
 	require.ErrorContains(t, reconciler.ensureUploadResources(context.Background(), updated, record), "execution differs")

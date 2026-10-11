@@ -9,6 +9,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"gopkg.in/yaml.v2"
+	corev1 "k8s.io/api/core/v1"
 )
 
 // CachedLoader provides thread-safe cached access to config with automatic reload on file change.
@@ -219,16 +220,19 @@ type Server struct {
 // credentials are referenced by exact Secret name; provider endpoints and
 // storage contracts are administrator-owned settings, never request inputs.
 type Artifacts struct {
-	Enabled          bool           `yaml:"enabled,omitempty"`
-	Backend          string         `yaml:"backend,omitempty"`
-	StagingDir       string         `yaml:"stagingDir,omitempty"`
-	CollectorImage   string         `yaml:"collectorImage,omitempty"`
-	ControllerURL    string         `yaml:"controllerURL,omitempty"`
-	UploadMaxBytes   int64          `yaml:"uploadMaxBytes,omitempty"`
-	TokenSecretName  string         `yaml:"tokenSecretName,omitempty"`
-	TokenSignerKeyID string         `yaml:"tokenSignerKeyID,omitempty"`
-	S3               *ArtifactS3    `yaml:"s3,omitempty"`
-	Local            *ArtifactLocal `yaml:"local,omitempty"`
+	Enabled        bool   `yaml:"enabled,omitempty"`
+	Backend        string `yaml:"backend,omitempty"`
+	StagingDir     string `yaml:"stagingDir,omitempty"`
+	CollectorImage string `yaml:"collectorImage,omitempty"`
+	// CollectorImagePullSecrets references administrator-provisioned Secrets
+	// in each target debug namespace, not the controller's namespace.
+	CollectorImagePullSecrets []corev1.LocalObjectReference `yaml:"collectorImagePullSecrets,omitempty"`
+	ControllerURL             string                        `yaml:"controllerURL,omitempty"`
+	UploadMaxBytes            int64                         `yaml:"uploadMaxBytes,omitempty"`
+	TokenSecretName           string                        `yaml:"tokenSecretName,omitempty"`
+	TokenSignerKeyID          string                        `yaml:"tokenSignerKeyID,omitempty"`
+	S3                        *ArtifactS3                   `yaml:"s3,omitempty"`
+	Local                     *ArtifactLocal                `yaml:"local,omitempty"`
 }
 
 // ArtifactS3 contains administrator-owned S3 settings. The credential Secret
