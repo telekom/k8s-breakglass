@@ -235,13 +235,18 @@ type DebugSessionStatus struct {
 	// +optional
 	DeployedResources []DeployedResourceRef `json:"deployedResources,omitempty"`
 
-	// allowedPods lists pods that users can exec into via this session.
+	// allowedPods lists the exact pods authorized for active session owners and participants.
+	// Named Pod GET returns the complete Pod object independently of allowedPodOperations;
+	// exec, attach, log, and portforward require the corresponding operation permission.
+	// Authorization requires matching live pod UID, namespace, cluster, identity, and expiry.
+	// Namespace-wide list/watch and unrelated pods are not authorized by this list.
 	// Dynamically updated as debug pods start/stop.
 	// +optional
 	AllowedPods []AllowedPodRef `json:"allowedPods,omitempty"`
 
 	// allowedPodOperations caches the resolved pod operations from the template.
-	// Used by the webhook to determine which operations are permitted.
+	// Used by the webhook to determine which pod subresource operations are permitted.
+	// Does not restrict the named Pod GET preflight authorized by allowedPods.
 	// +optional
 	AllowedPodOperations *AllowedPodOperations `json:"allowedPodOperations,omitempty"`
 
@@ -557,7 +562,8 @@ type DeployedResourceRef struct {
 	UID string `json:"uid,omitempty"`
 }
 
-// AllowedPodRef references a pod that users can exec into.
+// AllowedPodRef references an exact pod authorized for named GET and configured
+// subresource operations while the session and participant remain authorized.
 type AllowedPodRef struct {
 	// namespace is the pod's namespace.
 	// +required

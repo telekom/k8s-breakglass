@@ -362,8 +362,13 @@ falling through to RBAC or breakglass session authorization.
 > specific pod and operation, the webhook grants access **before** deny policies
 > are checked. This is by design — debug sessions represent pre-approved,
 > time-limited troubleshooting access to specific pods. The bypass is scoped only
-> to pods listed in the session's `status.allowedPods` and operations listed in the
-> session's `status.allowedPodOperations` (resolved from the template and any bindings).
+> to pods listed in the session's `status.allowedPods`, with matching live UID,
+> namespace, cluster, authorized participant/provider, and session expiry.
+> Named Pod `get` (empty subresource) is permitted independently of
+> `status.allowedPodOperations` and exposes the complete Pod object, including
+> metadata, spec, and status. Subresource operations must be permitted by
+> `status.allowedPodOperations` (resolved from the template and any bindings).
+> The session bypass never grants pod `list`, `watch`, mutations, or unrelated pods.
 >
 > To restrict debug session creation itself, use `DebugSessionTemplate` constraints
 > (allowed namespaces, approval requirements, image allow-lists, etc.). See

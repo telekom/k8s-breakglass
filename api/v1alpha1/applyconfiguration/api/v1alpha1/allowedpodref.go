@@ -11,7 +11,8 @@ package v1alpha1
 // AllowedPodRefApplyConfiguration represents a declarative configuration of the AllowedPodRef type for use
 // with apply.
 //
-// AllowedPodRef references a pod that users can exec into.
+// AllowedPodRef references an exact pod authorized for named GET and configured
+// subresource operations while the session and participant remain authorized.
 type AllowedPodRefApplyConfiguration struct {
 	// namespace is the pod's namespace.
 	Namespace *string `json:"namespace,omitempty"`

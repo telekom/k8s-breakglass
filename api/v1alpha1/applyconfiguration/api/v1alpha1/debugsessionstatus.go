@@ -35,11 +35,16 @@ type DebugSessionStatusApplyConfiguration struct {
 	TerminalSharing *TerminalSharingStatusApplyConfiguration `json:"terminalSharing,omitempty"`
 	// deployedResources lists resources created on the target cluster.
 	DeployedResources []DeployedResourceRefApplyConfiguration `json:"deployedResources,omitempty"`
-	// allowedPods lists pods that users can exec into via this session.
+	// allowedPods lists the exact pods authorized for active session owners and participants.
+	// Named Pod GET returns the complete Pod object independently of allowedPodOperations;
+	// exec, attach, log, and portforward require the corresponding operation permission.
+	// Authorization requires matching live pod UID, namespace, cluster, identity, and expiry.
+	// Namespace-wide list/watch and unrelated pods are not authorized by this list.
 	// Dynamically updated as debug pods start/stop.
 	AllowedPods []AllowedPodRefApplyConfiguration `json:"allowedPods,omitempty"`
 	// allowedPodOperations caches the resolved pod operations from the template.
-	// Used by the webhook to determine which operations are permitted.
+	// Used by the webhook to determine which pod subresource operations are permitted.
+	// Does not restrict the named Pod GET preflight authorized by allowedPods.
 	AllowedPodOperations *AllowedPodOperationsApplyConfiguration `json:"allowedPodOperations,omitempty"`
 	// kubectlDebugStatus tracks kubectl debug operations for kubectl-debug mode.
 	KubectlDebugStatus *KubectlDebugStatusApplyConfiguration `json:"kubectlDebugStatus,omitempty"`
