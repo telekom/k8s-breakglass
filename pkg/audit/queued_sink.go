@@ -337,7 +337,7 @@ func queuedEventAllowed(sink Sink, event *Event) bool {
 func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 	writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
 	defer cancel()
-	err := qs.sink.Write(writeCtx, event)
+	err := invokeQueuedWrite(writeCtx, func(ctx context.Context) error { return qs.sink.Write(ctx, event) })
 	if err != nil {
 		qs.failedEvents.Add(1)
 		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "sync_fallback").Inc()
@@ -401,6 +401,15 @@ func (qs *QueuedSink) recordDrop(count int, reason string) {
 	qs.logger.Warn("audit events dropped", zap.Int("count", count), zap.String("reason", reason))
 }
 
+func invokeQueuedWrite(ctx context.Context, write func(context.Context) error) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("audit sink panic: %v", recovered)
+		}
+	}()
+	return write(ctx)
+}
+
 // deliver retains the same event identities in the worker through bounded retries.
 // A Kafka acknowledgement may be lost after delivery, so consumers must deduplicate IDs.
 func (qs *QueuedSink) deliver(count int, operation string, write func(context.Context) error) {
@@ -426,7 +435,7 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 			return
 		}
 		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
-		err = write(writeCtx)
+		err = invokeQueuedWrite(writeCtx, write)
 		writeCancel()
 		if err == nil {
 			if asynchronousKafkaSink(qs.sink) != nil {

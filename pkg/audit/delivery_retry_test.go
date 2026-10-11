@@ -24,10 +24,11 @@ import (
 )
 
 type retryBatchSink struct {
-	mu       sync.Mutex
-	failures int
-	calls    [][]string
-	times    []time.Time
+	mu            sync.Mutex
+	failures      int
+	panicFailures bool
+	calls         [][]string
+	times         []time.Time
 }
 
 func (s *retryBatchSink) Name() string { return "retry-test" }
@@ -45,6 +46,9 @@ func (s *retryBatchSink) WriteBatch(_ context.Context, events []*Event) error {
 	s.calls = append(s.calls, ids)
 	s.times = append(s.times, time.Now())
 	if len(s.calls) <= s.failures {
+		if s.panicFailures {
+			panic("broker panic")
+		}
 		return errors.New("broker unavailable")
 	}
 	return nil
@@ -102,6 +106,45 @@ func TestQueuedBatchRetainsIdentityAcrossRetry(t *testing.T) {
 	}
 	require.GreaterOrEqual(t, sink.times[1].Sub(sink.times[0]), 5*time.Millisecond)
 	require.GreaterOrEqual(t, sink.times[2].Sub(sink.times[1]), 10*time.Millisecond)
+}
+
+func TestQueuedSinkPanicsRetainIdentityAndAccountLoss(t *testing.T) {
+	for _, batchSize := range []int{1, 2} {
+		for _, failures := range []int{2, 1000} {
+			t.Run(fmt.Sprintf("batch-%d/failures-%d", batchSize, failures), func(t *testing.T) {
+				sink := &retryBatchSink{failures: failures, panicFailures: true}
+				cfg := retryTestConfig()
+				cfg.BatchSize = batchSize
+				qs := NewQueuedSink(sink, cfg, zap.NewNop())
+				t.Cleanup(func() { require.NoError(t, qs.Close()) })
+				events := []*Event{{ID: "one"}}
+				if batchSize == 2 {
+					events = append(events, &Event{ID: "two"})
+				}
+				before := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "retry_exhausted"))
+				require.NoError(t, qs.WriteBatch(context.Background(), events))
+				count := int64(len(events))
+				if failures < cfg.RetryAttempts {
+					require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == count }, time.Second, time.Millisecond)
+					require.Zero(t, qs.Health().DroppedEvents)
+					require.Equal(t, int64(failures)*count, qs.Health().FailedEvents)
+				} else {
+					require.Eventually(t, func() bool { return qs.Health().DroppedEvents == count }, time.Second, time.Millisecond)
+					require.Equal(t, before+float64(count), testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "retry_exhausted")))
+					require.Equal(t, int64(cfg.RetryAttempts)*count, qs.Health().FailedEvents)
+				}
+				sink.mu.Lock()
+				defer sink.mu.Unlock()
+				for _, ids := range sink.calls {
+					require.Equal(t, len(events), len(ids))
+					require.Equal(t, "one", ids[0])
+					if len(events) == 2 {
+						require.Equal(t, "two", ids[1])
+					}
+				}
+			})
+		}
+	}
 }
 
 func TestQueuedBatchExhaustionCountsEveryLostEvent(t *testing.T) {
