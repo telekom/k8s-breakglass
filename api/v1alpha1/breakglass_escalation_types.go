@@ -80,6 +80,7 @@ type BreakglassEscalationSpec struct {
 	// for this escalation are automatically expired with state IdleExpired.
 	// If not set, idle timeout is not enforced for sessions created from this escalation.
 	// Must be at least 1m and must not exceed maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
+	// API requests may be shorter than idleTimeout; the session copies the smaller of idleTimeout and requested duration.
 	// +optional
 	// +kubebuilder:validation:Pattern="^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$"
 	IdleTimeout string `json:"idleTimeout,omitempty"`

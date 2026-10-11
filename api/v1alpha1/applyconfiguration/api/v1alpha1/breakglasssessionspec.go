@@ -29,6 +29,7 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	// is automatically expired with state IdleExpired. If not set, idle timeout is not enforced.
 	// Parsed by ParseDuration; supports day units (e.g., "15m", "1h", "1d").
 	// Must be at least 1m and must be less than or equal to maxValidFor; when maxValidFor is omitted, admission validates against the default 1h.
+	// API requests with a custom duration copy the smaller of the escalation idleTimeout and requested duration.
 	IdleTimeout *string `json:"idleTimeout,omitempty"`
 	// retainFor is the amount of time to wait before removing the session object after it was expired.
 	RetainFor *string `json:"retainFor,omitempty"`

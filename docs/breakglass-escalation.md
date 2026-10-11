@@ -163,6 +163,13 @@ idleTimeout: "30m"   # Expire after 30 minutes of inactivity
 
 **Relationship to maxValidFor**: `idleTimeout` must not exceed `maxValidFor`. If `maxValidFor` is omitted, admission validates against the default `1h`.
 
+This policy constraint does not impose a minimum requested session lifetime.
+When an API request supplies a shorter `duration`, the session copies
+`min(idleTimeout, requested duration)` while its `maxValidFor` becomes the requested
+duration. For example, a `30m` idle timeout permits a `1200`-second (`20m`) request;
+both session fields become `20m0s`. The escalation is unchanged, longer requests
+keep its configured idle timeout, and hard expiry is never extended by activity.
+
 ### retainFor
 
 How long to retain expired/revoked sessions before deletion:

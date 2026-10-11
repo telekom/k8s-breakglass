@@ -1,6 +1,7 @@
 package breakglass
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -327,6 +328,111 @@ func TestAuthenticatedIdentity_WithError(t *testing.T) {
 }
 
 // ----- buildSessionSpec integration tests -----
+
+func TestHandleRequestBreakglassSession_ShortDurationIdleTimeout(t *testing.T) {
+	builder := fake.NewClientBuilder().WithScheme(Scheme).
+		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
+		WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: "emergency", Namespace: "default", UID: "escalation"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{
+					Clusters: []string{"test-cluster"},
+					Groups:   []string{"responders"},
+				},
+				EscalatedGroup: "admin",
+				MaxValidFor:    "2h",
+				IdleTimeout:    "30m",
+				Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{
+					Users: []string{"approver@example.com"},
+				},
+			},
+		}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, underlying client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if session, ok := obj.(*breakglassv1alpha1.BreakglassSession); ok {
+					if _, err := session.ValidateCreate(ctx, session); err != nil {
+						return err
+					}
+					session.UID = "session"
+				}
+				return underlying.Create(ctx, obj, opts...)
+			},
+		})
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.Build()
+	controller := NewBreakglassSessionController(zaptest.NewLogger(t).Sugar(), config.Config{},
+		&SessionManager{Client: cli}, &testEscalationLookup{Client: cli},
+		func(c *gin.Context) {
+			c.Set("email", "responder@example.com")
+			c.Set("username", "responder@example.com")
+			c.Set("user_id", "responder@example.com")
+			c.Set("legacy_identity_allowed", true)
+			c.Set("groups", []string{"responders"})
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	engine := gin.New()
+	require.NoError(t, controller.Register(engine.Group("/breakglassSessions", controller.Handlers()...)))
+	request := httptest.NewRequest(http.MethodPost, "/breakglassSessions",
+		bytes.NewBufferString(`{"cluster":"test-cluster","group":"admin","escalationName":"emergency","duration":1200,"reason":"Fresh emergency authorization cycle"}`))
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+
+	var session breakglassv1alpha1.BreakglassSession
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &session))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(&session), &session))
+	assert.Equal(t, "20m0s", session.Spec.MaxValidFor)
+	assert.Equal(t, "20m0s", session.Spec.IdleTimeout)
+	assert.Equal(t, breakglassv1alpha1.SessionStatePending, session.Status.State)
+}
+
+func TestBuildSessionSpec_CustomDurationIdleTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		duration    int64
+		idleTimeout string
+		wantIdle    string
+		wantValid   time.Duration
+	}{
+		{name: "live lab short request", duration: 1200, idleTimeout: "30m", wantIdle: "20m0s", wantValid: 20 * time.Minute},
+		{name: "equal to idle timeout", duration: 1800, idleTimeout: "30m", wantIdle: "30m", wantValid: 30 * time.Minute},
+		{name: "longer than idle timeout", duration: 3600, idleTimeout: "30m", wantIdle: "30m", wantValid: time.Hour},
+		{name: "minimum request duration", duration: 60, idleTimeout: "30m", wantIdle: "1m0s", wantValid: time.Minute},
+		{name: "no custom duration", idleTimeout: "30m", wantIdle: "30m", wantValid: time.Hour},
+		{name: "idle timeout disabled", duration: 1200, wantValid: 20 * time.Minute},
+		{name: "extended duration format", duration: 1200, idleTimeout: "1d", wantIdle: "20m0s", wantValid: 20 * time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wc := newTestSessionController(t)
+			log := zaptest.NewLogger(t).Sugar()
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			escalation := &breakglassv1alpha1.BreakglassEscalation{
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					MaxValidFor: "1h",
+					IdleTimeout: tc.idleTimeout,
+				},
+			}
+			if tc.idleTimeout == "1d" {
+				escalation.Spec.MaxValidFor = "2d"
+			}
+			request := BreakglassSessionRequest{
+				Clustername: "test-cluster",
+				GroupName:   "admin",
+				Duration:    tc.duration,
+			}
+			spec, ok := wc.buildSessionSpec(c, request, "user@example.com", escalation, nil, nil, log)
+			require.True(t, ok)
+			session := &breakglassv1alpha1.BreakglassSession{Spec: spec}
+			_, err := session.ValidateCreate(context.Background(), session)
+			require.NoError(t, err, "API-built spec must pass admission")
+			require.Equal(t, tc.wantIdle, spec.IdleTimeout)
+			require.Equal(t, tc.wantValid, ParseMaxValidFor(spec, log), "controller must use requested hard validity")
+			require.Equal(t, tc.idleTimeout, escalation.Spec.IdleTimeout, "escalation policy must not change")
+		})
+	}
+}
 
 func TestBuildSessionSpec_AllowIDPMismatch_WithForRequestsOnly(t *testing.T) {
 	wc := newTestSessionController(t)

@@ -300,6 +300,13 @@ maxValidFor: "1.5h" # 1 hour and 30 minutes
 
 Maximum duration a session can remain idle (no authorized webhook requests) before being automatically expired to the `IdleExpired` state. If not set, the session remains active for its full `maxValidFor` window. Parsed via the project's `ParseDuration` (supports day, week, and year units such as `"1d12h"`, `"1w"`, and `"1y"`). Must be at least `1m` and must not exceed `maxValidFor`; when `maxValidFor` is omitted, admission validates against the default `1h`.
 
+When the API request specifies a shorter `duration`, it stores the smaller of the
+escalation's idle timeout and that requested duration. A `1200`-second request
+under a `30m` idle policy therefore has `maxValidFor: "20m0s"` and
+`idleTimeout: "20m0s"`; it is not rejected. Admission still validates the resulting
+session, and hard expiry remains authoritative regardless of activity. An unset
+idle timeout stays unset, and the escalation itself is unchanged.
+
 Copied automatically from the matched `BreakglassEscalation` at approval time.
 
 ```yaml

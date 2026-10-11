@@ -179,6 +179,10 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 - Validate `idleTimeout` is parseable via `v1alpha1.ParseDuration` if set.
 - Validate `idleTimeout` is at least `1m` when set.
 - Validate `idleTimeout` ≤ `maxValidFor` (idle timeout should not exceed session lifetime).
+- Before admission, API requests with a custom duration copy
+  `min(escalation.idleTimeout, requested duration)` to the session. This preserves
+  the invariant without rejecting requests shorter than the policy's idle timeout.
+  An unset idle timeout stays unset; hard expiry remains independent of activity.
 
 ### 6.2 Unit Tests
 
@@ -189,6 +193,9 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 - `TestExpireIdleSessions_RetrySucceedsOnSecondAttempt` — status update retries on conflict.
 - `TestExpireIdleSessions_AllRetriesExhausted` — error logged after max retries.
 - `TestExpireIdleSessions_ConcurrentTransitionDuringRetry` — stops retrying if another process already transitioned the session.
+- `TestBuildSessionSpec_CustomDurationIdleTimeout` — API-built specs pass the
+  admission validator for shorter, equal, longer, and minimum durations, with
+  controller validity matching the request and no escalation mutation.
 
 ## 7. Migration & Backward Compatibility
 
@@ -199,7 +206,7 @@ Add `IdleExpired` to the status tag mapping and session state options in the fro
 ## 8. Resolved Questions
 
 1. **Should `IdleExpired` sessions be re-approvable?** No — `IdleExpired` is a terminal state. The user must create a new request.
-2. **Should idle timeout be configurable per-escalation or per-session?** Both. `idleTimeout` is set on `BreakglassEscalation` and automatically copied to `BreakglassSessionSpec` when a session is approved. This allows operators to configure idle timeouts per escalation policy while still allowing per-session inspection.
+2. **Should idle timeout be configurable per-escalation or per-session?** Both. `idleTimeout` is set on `BreakglassEscalation` and copied to `BreakglassSessionSpec` when the API creates a session request, bounded by a shorter custom request duration. This allows operators to configure idle timeouts per escalation policy while still allowing per-session inspection.
 
 ## 9. Implementation Notes
 

@@ -276,6 +276,13 @@ Authorization: Bearer <token>
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
+- `duration` optionally requests a session lifetime in integer seconds, at least
+  `60` and no greater than the selected escalation's `maxValidFor`. Omitted or
+  zero uses the escalation's full lifetime. A positive value becomes the session's
+  `spec.maxValidFor`; a configured idle timeout is copied as
+  `min(escalation.idleTimeout, duration)`. For example, `duration: 1200` with a
+  `30m` idle timeout creates a valid `20m` session with a `20m` idle timeout.
+  Requesting less time never extends access or changes the escalation policy.
 - `escalationName` optionally selects a `BreakglassEscalation` by Kubernetes
   `metadata.name`, not its display name. The policy must be ready, grant the
   requested `group`, match the requested cluster, allow the requester's groups,
