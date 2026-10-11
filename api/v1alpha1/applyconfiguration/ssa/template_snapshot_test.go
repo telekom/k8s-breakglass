@@ -21,6 +21,7 @@ func TestApprovedTemplateRuntimePolicySurvivesTypedPersistence(t *testing.T) {
  "impersonation":{"mode":"user","userName":"approved","groups":["readers"]},
  "allowed":{"clusterSelector":{"matchLabels":{"safe":"true"},"matchExpressions":[{"key":"env","operator":"In","values":["prod"]}]}},
  "constraints":{"renewalLimit":2},
+ "artifactCollection":{"allowedRecipes":["system-summary.v1"],"uploadCABundleRef":{"kind":"ConfigMap","name":"private-upload-ca","key":"ca.pem"}},
  "auxiliaryResources":[{"name":"policy","templateString":"kind: ConfigMap","createBefore":true,"deleteAfter":true,"failurePolicy":"fail","optional":true}],
  "auxiliaryResourceDefaults":{"policy":true},"requiredAuxiliaryResourceCategories":["security"],
  "notification":{"enabled":true,"notifyOnExpiry":true,"excludedRecipients":{"users":["excluded"]}},

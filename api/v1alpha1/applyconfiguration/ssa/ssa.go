@@ -1000,7 +1000,11 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 
 	result := ac.DebugSessionTemplateSpec()
 	if t.ArtifactCollection != nil {
-		result.WithArtifactCollection(ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...))
+		collection := ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...)
+		if ref := t.ArtifactCollection.UploadCABundleRef; ref != nil {
+			collection.WithUploadCABundleRef(ac.ArtifactUploadCABundleReference().WithKind(ref.Kind).WithName(ref.Name).WithKey(ref.Key))
+		}
+		result.WithArtifactCollection(collection)
 	}
 
 	if t.DisplayName != "" {
