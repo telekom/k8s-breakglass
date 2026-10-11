@@ -122,8 +122,9 @@ reviewed together.
 
 When enabled, the host initializer requires an explicit `backend` of `s3` or
 `local`, a pinned collector image, an HTTPS controller URL, a bounded upload
-limit, and a token Secret name. Secret names are resolved only in the
-configured Breakglass namespace using exact uncached `get` calls. S3 uses the
+limit, and a token Secret name. Signing and storage credential Secret names
+are resolved only in the configured Breakglass namespace using exact uncached
+`get` calls. S3 uses the
 fixed `accessKeyID`, `secretAccessKey`, and optional `sessionToken` keys; local
 storage must satisfy its one-replica RWO/Recreate contract and is never an
 automatic fallback. The host reads the live session's persisted connection
