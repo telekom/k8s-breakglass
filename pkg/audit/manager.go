@@ -231,6 +231,9 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		m.droppedEvents.Add(1)
 		return
 	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
 	enrichActor(ctx, event)
 	if m.config.Enrich != nil {
 		m.config.Enrich(ctx, event)
@@ -239,11 +242,6 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	// Assign ID if not set
 	if event.ID == "" {
 		event.ID = uuid.New().String()
-	}
-
-	// Set timestamp if not set
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
 	}
 
 	// Set default severity if not set
@@ -483,6 +481,9 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)
 	}
+	if event.Timestamp.IsZero() {
+		event.Timestamp = time.Now().UTC()
+	}
 	enrichActor(ctx, event)
 	if m.config.Enrich != nil {
 		m.config.Enrich(ctx, event)
@@ -491,11 +492,6 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	// Assign ID if not set
 	if event.ID == "" {
 		event.ID = uuid.New().String()
-	}
-
-	// Set timestamp if not set
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now().UTC()
 	}
 
 	// Set default severity if not set

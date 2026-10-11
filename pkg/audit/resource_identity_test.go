@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -28,10 +29,14 @@ func TestManagerCapturesActorAndIdentityBeforeAsyncAndSyncDelivery(t *testing.T)
 		received = append(received, event)
 	}}
 	cfg := DefaultManagerConfig()
-	cfg.Enrich = func(_ context.Context, event *Event) { event.Target.UID = "captured-uid" }
+	cfg.Enrich = func(_ context.Context, event *Event) {
+		require.False(t, event.Timestamp.IsZero(), "capture occurrence time before potentially slow enrichment")
+		event.Target.UID = "captured-uid"
+	}
 	manager := NewManager(sink, cfg, zap.NewNop())
 	ctx := WithAuthenticatedActor(context.Background(), []string{"user"}, []string{"/full/path", "second-group"})
-	manager.Emit(ctx, &Event{ID: "async", Type: EventSessionRequested, Actor: Actor{User: "user"}})
+	originalTimestamp := time.Unix(100, 0).UTC()
+	manager.Emit(ctx, &Event{ID: "async", Type: EventSessionRequested, Actor: Actor{User: "user"}, Timestamp: originalTimestamp})
 	require.NoError(t, manager.EmitSync(ctx, &Event{ID: "sync", Type: EventSessionApproved, Actor: Actor{User: "user"}}))
 	require.NoError(t, manager.Close())
 	mu.Lock()
@@ -40,6 +45,9 @@ func TestManagerCapturesActorAndIdentityBeforeAsyncAndSyncDelivery(t *testing.T)
 	for _, event := range received {
 		require.Equal(t, "captured-uid", event.Target.UID)
 		require.Equal(t, []string{"/full/path", "second-group"}, event.Actor.Groups)
+		if event.ID == "async" {
+			require.Equal(t, originalTimestamp, event.Timestamp)
+		}
 	}
 }
 

@@ -568,7 +568,7 @@ var (
 	}, []string{"sink"})
 	AuditEventsDropped = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_events_dropped_total",
-		Help: "Total number of audit events dropped, partitioned by sink and reason",
+		Help: "Total number of audit delivery losses, excluding sampling, partitioned by sink and reason",
 	}, []string{"sink", "reason"})
 	AuditSensitiveEventsSyncWritten = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_audit_sensitive_events_sync_written_total",
