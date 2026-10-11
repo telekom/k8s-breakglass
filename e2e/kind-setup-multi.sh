@@ -115,8 +115,8 @@ generate_tls_certificates() {
   # Use common library function for comprehensive TLS generation
   generate_breakglass_tls "$TLS_DIR" "$hub_ip" "$NAMESPACE"
   
-  # Also generate Keycloak TLS if needed
-  generate_keycloak_tls "${TLS_DIR}/keycloak" "$hub_ip" "$NAMESPACE"
+  # setup_keycloak already generated and mounted the container's certificate.
+  # Do not replace it with a service-only certificate lacking its issuer hostname.
 }
 
 # Create Kind cluster configuration for HUB cluster (no OIDC/webhook needed - it IS the hub)

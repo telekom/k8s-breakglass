@@ -48,6 +48,8 @@ jobs:
           shellcheck -x e2e/lib/port-forward.sh e2e/lib/port-forward_test.sh
       - name: Verify Keycloak setup path normalization
         run: python3 e2e/lib/keycloak-path_test.py
+      - name: Verify Keycloak container TLS survives hub bootstrap
+        run: python3 e2e/lib/keycloak-tls_test.py
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
