@@ -514,7 +514,7 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	// Consider healthy if:
 	// - Circuit is not open
 	// - Queue is not > 80% full
-	// - Had a recent success (within last minute) OR no errors yet
+	// - Had a recent success after the latest error OR no errors yet
 	processed := qs.processedEvents.Load()
 	dropped, failed := qs.droppedEvents.Load(), qs.failedEvents.Load()
 	if sink := asynchronousKafkaSink(qs.sink); sink != nil {
@@ -531,7 +531,7 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	}
 	healthy := !circuitOpen &&
 		float64(queueLen) < float64(queueCap)*0.8 &&
-		(lastSuccessTime.After(time.Now().Add(-1*time.Minute)) || lastErrorTime.IsZero())
+		((lastSuccessTime.After(lastErrorTime) && lastSuccessTime.After(time.Now().Add(-1*time.Minute))) || lastErrorTime.IsZero())
 	return QueuedSinkHealth{
 		Name:             qs.sink.Name(),
 		Healthy:          healthy,

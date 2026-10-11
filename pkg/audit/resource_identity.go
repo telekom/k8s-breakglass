@@ -40,8 +40,6 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 	if s.client == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Second)
-	defer cancel()
 	rc := event.RequestContext
 	if rc == nil {
 		rc = &RequestContext{}
@@ -53,6 +51,9 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 	if name == "" && (event.Target.Kind == "BreakglassSession" || debug) {
 		name = event.Target.Name
 	}
+	if name == "" {
+		return
+	}
 	// A name lookup cannot prove which object the emitter originally observed.
 	// Only validate/enrich identities captured at the object-bearing source.
 	if name != "" && rc.SessionUID == "" && rc.DebugSessionUID == "" &&
@@ -60,6 +61,8 @@ func (s *Service) enrichResourceIdentity(ctx context.Context, event *Event) {
 			(event.Target.Kind != "BreakglassSession" && event.Target.Kind != "DebugSession")) {
 		return
 	}
+	ctx, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
 	var session client.Object
 	if name != "" {
 		if debug {
