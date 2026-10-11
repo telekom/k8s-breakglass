@@ -127,9 +127,6 @@ func TestQueuedRetryShutdownInterruptsBackoff(t *testing.T) {
 	require.NoError(t, qs.Close())
 	require.Less(t, time.Since(start), time.Second)
 	require.Equal(t, int64(2), qs.Health().DroppedEvents)
-	require.Equal(t, int64(2), qs.Health().FailedEvents)
-	require.False(t, qs.Health().Healthy)
-	require.Equal(t, "delivery failed", qs.Health().LastError)
 }
 
 func TestQueuedRetryDeadlineBoundsBackoff(t *testing.T) {
@@ -223,6 +220,13 @@ func TestQueuedSerializationFailureDoesNotRetryOrTripCircuitBreakers(t *testing.
 			require.Zero(t, cb.Stats().TotalFailures)
 			require.Zero(t, cb.Stats().ConsecutiveFails)
 			require.Equal(t, before, testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry")))
+			droppedBefore := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "serialization"))
+			fallbackBefore := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "sync_fallback"))
+			require.ErrorIs(t, qs.syncFallback(context.Background(), &Event{
+				ID: "invalid-fallback", Details: map[string]interface{}{"unsupported": make(chan int)},
+			}), ErrSerialization)
+			require.Equal(t, droppedBefore+1, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "serialization")))
+			require.Equal(t, fallbackBefore, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "sync_fallback")))
 			if sink == webhook {
 				require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "next"}, {ID: "healthy"}}))
 				require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, time.Millisecond)
@@ -248,6 +252,9 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	require.Equal(t, int64(2), failed)
 	require.Zero(t, qs.Health().ProcessedEvents)
 	require.Equal(t, int64(2), qs.Health().DroppedEvents)
+	require.Equal(t, int64(2), qs.Health().FailedEvents)
+	require.False(t, qs.Health().Healthy)
+	require.Equal(t, "delivery failed", qs.Health().LastError)
 	require.False(t, sink.IsConnected())
 	require.Equal(t, before+2, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "async_write")))
 	sink.writer.Completion([]kafka.Message{{Key: []byte("third")}}, context.DeadlineExceeded)

@@ -337,7 +337,11 @@ func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 	if err != nil {
 		qs.failedEvents.Add(1)
 		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "sync_fallback").Inc()
-		qs.recordDrop(1, "sync_fallback")
+		reason := "sync_fallback"
+		if errors.Is(err, ErrSerialization) {
+			reason = "serialization"
+		}
+		qs.recordDrop(1, reason)
 	}
 	return err
 }
