@@ -159,6 +159,9 @@ func TestDebugSessionPodGetAuthorization(t *testing.T) {
 			t.Run("helper", func(t *testing.T) {
 				require.Equal(t, tc.allow, wc.checkEarlyDebugSession(nil, state))
 				require.Equal(t, tc.allow, state.allowed)
+				if tc.allow && sar.Spec.ResourceAttributes.Subresource == "" {
+					require.Contains(t, state.reason, "operation: get")
+				}
 			})
 			t.Run("webhook SAR without baseline RBAC", func(t *testing.T) {
 				engine := gin.New()
@@ -171,6 +174,9 @@ func TestDebugSessionPodGetAuthorization(t *testing.T) {
 				var result SubjectAccessReviewResponse
 				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 				require.Equal(t, tc.allow, result.Status.Allowed, result.Status.Reason)
+				if tc.allow && sar.Spec.ResourceAttributes.Subresource == "" {
+					require.Contains(t, result.Status.Reason, "operation: get")
+				}
 			})
 		})
 	}

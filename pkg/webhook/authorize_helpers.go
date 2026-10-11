@@ -373,7 +373,7 @@ func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorize
 				s.phases.LogSummary()                // Log timing summary
 				s.reqLog.Infow("Debug session authorizing pod operation (bypassing deny policies)",
 					"session", debugSession.Name, "pod", ra.Name,
-					"namespace", ra.Namespace, "operation", ra.Subresource)
+					"namespace", ra.Namespace, "operation", debugSessionPodOperation(ra))
 				return true
 			}
 		}

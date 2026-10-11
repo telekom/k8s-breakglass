@@ -516,13 +516,13 @@ func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Conte
 				reqLog.Debugw("Direct debug-session pod operation denied because recording is required", "session", ds.Name, "operation", ra.Subresource)
 				return ds, reason
 			}
-			reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, ra.Subresource)
+			reason := fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, p.Role, debugSessionPodOperation(ra))
 			reqLog.Infow("Debug session pod operation allowed",
 				"session", ds.Name,
 				"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
 				"user", username,
 				"role", p.Role,
-				"operation", ra.Subresource)
+				"operation", debugSessionPodOperation(ra))
 			return ds, reason
 		}
 	}
@@ -644,7 +644,7 @@ func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context,
 			if !fenceNow.Before(ds.Status.ExpiresAt.Time) || breakglass.DebugSessionIdleExpired(&ds, fenceNow) {
 				return false, ""
 			}
-			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, ra.Subresource)
+			return true, fmt.Sprintf("Allowed by debug session %s (role: %s, operation: %s)", ds.Name, participant.Role, debugSessionPodOperation(ra))
 		}
 	}
 	return false, ""
@@ -1637,6 +1637,13 @@ func (wc *WebhookController) SetPodFetchFn(f PodFetchFunction) {
 // This is primarily used for testing to inject mock namespace labels.
 func (wc *WebhookController) SetNamespaceLabelsFetchFn(f NamespaceLabelsFetchFunction) {
 	wc.namespaceLabelsFetchFn = f
+}
+
+func debugSessionPodOperation(ra *authorizationv1.ResourceAttributes) string {
+	if ra.Subresource == "" {
+		return ra.Verb
+	}
+	return ra.Subresource
 }
 
 // isDebugSessionPodRequest includes the named pod GET used by kubectl before
