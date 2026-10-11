@@ -61,6 +61,28 @@
         }
       }
     },
+    "nodeMaintenanceTemplates": {
+      "description": "Default-off typed maintenance templates; the CRD webhook validates the complete operator-owned spec.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "spec"],
+        "properties": {
+          "name": {"type": "string", "minLength": 1},
+          "spec": {
+            "type": "object",
+            "required": ["nodeMaintenance", "approvers", "constraints", "targetNamespace"],
+            "properties": {
+              "nodeMaintenance": {"type": "object"},
+              "approvers": {"type": "object"},
+              "constraints": {"type": "object"},
+              "targetNamespace": {"const": "breakglass-node-maintenance"}
+            }
+          }
+        }
+      }
+    },
     "cluster": {
       "description": "Cluster configuration for the breakglass controller.",
       "properties": {

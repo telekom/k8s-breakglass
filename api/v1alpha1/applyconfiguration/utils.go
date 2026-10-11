@@ -148,6 +148,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionConnectionLeaseApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNodeMaintenance"):
+		return &apiv1alpha1.DebugSessionNodeMaintenanceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):
 		return &apiv1alpha1.DebugSessionNotificationConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionParticipant"):
@@ -236,6 +238,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.NamespaceSelectorTermApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeDebugConfig"):
 		return &apiv1alpha1.NodeDebugConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceStatus"):
+		return &apiv1alpha1.NodeMaintenanceStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceTarget"):
+		return &apiv1alpha1.NodeMaintenanceTargetApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NotificationExclusions"):
 		return &apiv1alpha1.NotificationExclusionsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("OIDCAuthConfig"):

@@ -1,3 +1,8 @@
+# Fixed maintenance is default-off. Populate only after support, signed image,
+# independent approvers, durable audit and the target namespace are provisioned.
+# See test-values/node-maintenance.yaml for a non-operational rendering example.
+nodeMaintenanceTemplates: []
+
 # ==========================================
 # ValidatingAdmissionPolicy Configuration
 # ==========================================

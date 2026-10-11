@@ -1052,6 +1052,7 @@ POST /api/debugSessions
 | `cluster` | string | Yes | Name of the target cluster. When a matching `ClusterConfig` exists, it must have `Ready=True`. |
 | `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
+| `nodeMaintenance` | object | Conditional | Exact operator-allowlisted Node name/UID and neighbour or FDB tuple, required only for a typed maintenance template. No action/image/command overrides. See [the complete contract](node-maintenance-controller.md#template-and-typed-request). |
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request. Required when the effective template or binding `requestReason.mandatory` is `true`; enforced after sanitization with configured `minLength` and `maxLength`. |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |

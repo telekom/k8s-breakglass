@@ -6,6 +6,10 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Node-maintenance image
 
+For the opt-in typed DebugSession executor, exact-tuple/Node-UID allowlists,
+independent approvals, per-node Leases and cleanup, see
+[Typed node-maintenance sessions](node-maintenance-controller.md).
+
 The standalone [`utils/node-maintenance`](../utils/node-maintenance/) image is
 for a narrowly scoped node-network incident workflow. It supports a read-only
 `node-recovery` preflight, exact-entry neighbor and bridge-FDB repair alongside

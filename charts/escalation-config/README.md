@@ -656,6 +656,18 @@ kubectl logs -l app=breakglass -n breakglass-system
 
 ## Related Documentation
 
+### Typed node maintenance
+
+`nodeMaintenanceTemplates` is empty by default. Its entries contain `name` and
+the complete operator-owned DebugSessionTemplate `spec`; CRD validation rejects
+generic executor overrides or approval bypasses. Use
+`test-values/node-maintenance.yaml` only as a rendering example, not a supported
+image/Node/identity configuration. Existing `debugSessionBindings` can bind these
+templates to independent approvers and supported clusters, without auto-approval
+or namespace/variable/scheduling overrides.
+See [the controller contract](../../docs/node-maintenance-controller.md) for
+target namespace, external Job manager, audit and support prerequisites.
+
 - [BreakglassEscalation Reference](../docs/breakglass-escalation.md)
 - [ClusterConfig Reference](../docs/cluster-config.md)
 - [Identity Provider Configuration](../docs/identity-provider.md)

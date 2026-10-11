@@ -1,0 +1,16 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- range .Values.nodeMaintenanceTemplates }}
+{{- $_ := required "nodeMaintenanceTemplates[].spec.nodeMaintenance is required" .spec.nodeMaintenance }}
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ required "nodeMaintenanceTemplates[].name is required" .name | quote }}
+  labels:
+    {{- include "escalation-config.labels" $ | nindent 4 }}
+spec:
+{{ toYaml .spec | indent 2 }}
+---
+{{- end }}

@@ -190,6 +190,16 @@ validate_approved_action() {
 	[ "$approved_action" = "$expected_action" ] || die "controller-approved action '$approved_action' does not match requested action '$expected_action'"
 }
 
+validate_action_deadline() {
+	action_deadline=${BREAKGLASS_ACTION_DEADLINE_UNIX:-}
+	[ -n "$action_deadline" ] || return 0
+	case "$action_deadline" in
+		*[!0-9]*) die "BREAKGLASS_ACTION_DEADLINE_UNIX must be an exact Unix timestamp" ;;
+	esac
+	[ "${#action_deadline}" -le 10 ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX exceeds the bounded timestamp format"
+	[ "$action_deadline" -gt "$(date +%s)" ] || die "approved action deadline expired; no repair was attempted"
+}
+
 validate_approved_network_request() {
 	requested_target=$1
 	requested_interface=$2

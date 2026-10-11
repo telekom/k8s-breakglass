@@ -84,6 +84,9 @@ const (
 
 // DebugSessionSpec defines the desired state of DebugSession.
 type DebugSessionSpec struct {
+	// nodeMaintenance is a typed request matched against the template's exact allowlist.
+	// +optional
+	NodeMaintenance *NodeMaintenanceTarget `json:"nodeMaintenance,omitempty"`
 	// cluster is the name of the target cluster.
 	// +required
 	Cluster string `json:"cluster"`
@@ -207,6 +210,9 @@ type BindingReference struct {
 
 // DebugSessionStatus defines the observed state of DebugSession.
 type DebugSessionStatus struct {
+	// nodeMaintenance tracks the fixed executor's durable single-attempt inventory.
+	// +optional
+	NodeMaintenance *NodeMaintenanceStatus `json:"nodeMaintenance,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	// +optional

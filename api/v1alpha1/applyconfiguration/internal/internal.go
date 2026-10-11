@@ -1890,6 +1890,21 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: retainFor
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNodeMaintenance
+  map:
+    fields:
+    - name: action
+      type:
+        scalar: string
+    - name: allowedTargets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceTarget
+          elementRelationship: atomic
+    - name: image
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
   map:
     fields:
@@ -1981,6 +1996,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: nodeMaintenance
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceTarget
     - name: nodeSelector
       type:
         map:
@@ -2095,6 +2113,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: message
       type:
         scalar: string
+    - name: nodeMaintenance
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceStatus
     - name: observedGeneration
       type:
         scalar: numeric
@@ -2276,6 +2297,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: namespaceConstraints
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
+    - name: nodeMaintenance
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNodeMaintenance
     - name: notification
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
@@ -3248,6 +3272,66 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceStatus
+  map:
+    fields:
+    - name: activeDeadlineSeconds
+      type:
+        scalar: numeric
+    - name: createAttempted
+      type:
+        scalar: boolean
+    - name: jobCreateAttempted
+      type:
+        scalar: boolean
+    - name: jobUID
+      type:
+        scalar: string
+    - name: leaseUID
+      type:
+        scalar: string
+    - name: namespaceUID
+      type:
+        scalar: string
+    - name: operationID
+      type:
+        scalar: string
+    - name: podUID
+      type:
+        scalar: string
+    - name: released
+      type:
+        scalar: boolean
+    - name: result
+      type:
+        scalar: string
+    - name: resultAudited
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceTarget
+  map:
+    fields:
+    - name: bridge
+      type:
+        scalar: string
+    - name: entryMAC
+      type:
+        scalar: string
+    - name: interface
+      type:
+        scalar: string
+    - name: neighborAddress
+      type:
+        scalar: string
+    - name: targetNode
+      type:
+        scalar: string
+    - name: targetNodeUID
+      type:
+        scalar: string
+    - name: vlan
+      type:
+        scalar: numeric
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
   map:
     fields:

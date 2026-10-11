@@ -94,6 +94,7 @@ esac
 validate_recording_context
 validate_approved_action "$action"
 validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation"
+validate_action_deadline
 prepare_evidence_dir "$evidence_dir"
 acquire_operation_lock "$evidence_dir" "$APPROVED_NETWORK_REQUEST_DIGEST"
 trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true' EXIT
@@ -175,6 +176,7 @@ printf 'Target: %s\nInterface: %s\nAction: %s\nEvidence: %s\n' \
 	"$target_node" "$interface" "$action" "$bundle"
 printf 'Confirmation and controller action binding accepted. Applying one allowlisted action...\n'
 
+validate_action_deadline
 set +e
 case "$action" in
 	link-cycle)

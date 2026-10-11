@@ -16,6 +16,10 @@ image:
     node-recovery: []
     network-repair: [NET_ADMIN]
     kexec-recovery-validate: []
+  controllerDeadline:
+    environment: BREAKGLASS_ACTION_DEADLINE_UNIX
+    operation: network-repair
+    checks: [before-preflight, before-mutation]
   runbooks: /usr/share/breakglass/runbooks/upstream/node-maintenance
   internalRunbookMount: /usr/share/breakglass/runbooks/internal
   attestations: [sbom, provenance, signature]

@@ -139,6 +139,50 @@ spec:
                 items:
                   type: string
                 type: array
+              nodeMaintenance:
+                description: nodeMaintenance is a typed request matched against the
+                  template's exact allowlist.
+                properties:
+                  bridge:
+                    description: bridge is the exact master bridge for an FDB operation.
+                    maxLength: 15
+                    type: string
+                  entryMAC:
+                    description: entryMAC is the canonical lowercase colon-delimited
+                      six-byte MAC.
+                    pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+                    type: string
+                  interface:
+                    description: interface is the neighbour interface or bridge FDB
+                      port.
+                    maxLength: 15
+                    type: string
+                  neighborAddress:
+                    description: neighborAddress is a canonical individual IP, never
+                      a prefix.
+                    maxLength: 45
+                    type: string
+                  targetNode:
+                    description: targetNode is the exact Kubernetes Node name.
+                    maxLength: 253
+                    type: string
+                  targetNodeUID:
+                    description: targetNodeUID prevents execution against a replaced
+                      Node.
+                    maxLength: 128
+                    type: string
+                  vlan:
+                    description: vlan is required only for an FDB operation.
+                    format: int32
+                    maximum: 4094
+                    minimum: 1
+                    type: integer
+                required:
+                - entryMAC
+                - interface
+                - targetNode
+                - targetNodeUID
+                type: object
               nodeSelector:
                 additionalProperties:
                   type: string
@@ -1641,6 +1685,66 @@ spec:
               message:
                 description: message provides human-readable status information.
                 type: string
+              nodeMaintenance:
+                description: nodeMaintenance tracks the fixed executor's durable single-attempt
+                  inventory.
+                properties:
+                  activeDeadlineSeconds:
+                    description: activeDeadlineSeconds is fixed before creation, never
+                      extended on recovery.
+                    format: int64
+                    minimum: 1
+                    type: integer
+                  createAttempted:
+                    description: createAttempted is persisted before calling Create.
+                      Never retry a missing Pod.
+                    type: boolean
+                  jobCreateAttempted:
+                    description: jobCreateAttempted is persisted before Job creation;
+                      missing unknown Jobs are never recreated.
+                    type: boolean
+                  jobUID:
+                    description: jobUID is the exact externally managed Job envelope
+                      for the single Pod.
+                    type: string
+                  leaseUID:
+                    description: leaseUID is the exact per-node Lease incarnation
+                      acquired by this session.
+                    type: string
+                  namespaceUID:
+                    description: namespaceUID fences the operator-provisioned common
+                      lock/workload namespace.
+                    type: string
+                  operationID:
+                    description: operationID correlates the approval, helper and audit
+                      events.
+                    type: string
+                  podUID:
+                    description: podUID is recovered only from an exact matching single-attempt
+                      Pod.
+                    type: string
+                  released:
+                    description: released is set only after Pod absence and UID-fenced
+                      Lease deletion.
+                    type: boolean
+                  result:
+                    description: result is the observed terminal Pod outcome, not
+                      a claim of kernel verification.
+                    enum:
+                    - succeeded
+                    - failed
+                    - interrupted
+                    - unknown
+                    type: string
+                  resultAudited:
+                    description: resultAudited records a durable audit receipt for
+                      the observed result.
+                    type: boolean
+                required:
+                - activeDeadlineSeconds
+                - namespaceUID
+                - operationID
+                type: object
               observedGeneration:
                 description: ObservedGeneration reflects the generation of the most
                   recently observed DebugSession.
@@ -4086,6 +4190,80 @@ spec:
                           namespaceLabels are labels applied to created namespaces.
                           Only used when createIfNotExists=true.
                         type: object
+                    type: object
+                  nodeMaintenance:
+                    description: nodeMaintenance enables a fixed, exact-tuple executor
+                      instead of a rendered Pod template.
+                    properties:
+                      action:
+                        description: action is the one executor operation enabled
+                          by this profile.
+                        enum:
+                        - neighbor-replace
+                        - bridge-fdb-replace
+                        type: string
+                      allowedTargets:
+                        description: allowedTargets is an exact allowlist, not a selector
+                          or wildcard.
+                        items:
+                          description: NodeMaintenanceTarget identifies exactly one
+                            kernel table entry on one Node incarnation.
+                          properties:
+                            bridge:
+                              description: bridge is the exact master bridge for an
+                                FDB operation.
+                              maxLength: 15
+                              type: string
+                            entryMAC:
+                              description: entryMAC is the canonical lowercase colon-delimited
+                                six-byte MAC.
+                              pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+                              type: string
+                            interface:
+                              description: interface is the neighbour interface or
+                                bridge FDB port.
+                              maxLength: 15
+                              type: string
+                            neighborAddress:
+                              description: neighborAddress is a canonical individual
+                                IP, never a prefix.
+                              maxLength: 45
+                              type: string
+                            targetNode:
+                              description: targetNode is the exact Kubernetes Node
+                                name.
+                              maxLength: 253
+                              type: string
+                            targetNodeUID:
+                              description: targetNodeUID prevents execution against
+                                a replaced Node.
+                              maxLength: 128
+                              type: string
+                            vlan:
+                              description: vlan is required only for an FDB operation.
+                              format: int32
+                              maximum: 4094
+                              minimum: 1
+                              type: integer
+                          required:
+                          - entryMAC
+                          - interface
+                          - targetNode
+                          - targetNodeUID
+                          type: object
+                        maxItems: 128
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      image:
+                        description: image must be an immutable node-maintenance helper
+                          image.
+                        pattern: ^.+@sha256:[a-f0-9]{64}$
+                        type: string
+                    required:
+                    - action
+                    - allowedTargets
+                    - image
                     type: object
                   notification:
                     description: notification configures notification settings for

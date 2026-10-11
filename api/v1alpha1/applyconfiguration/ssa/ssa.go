@@ -244,6 +244,17 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	}
 
 	result := ac.DebugSessionStatus()
+	if s := status.NodeMaintenance; s != nil {
+		maintenance := ac.NodeMaintenanceStatus().
+			WithOperationID(s.OperationID).WithNamespaceUID(s.NamespaceUID).WithLeaseUID(s.LeaseUID).WithJobUID(s.JobUID).
+			WithJobCreateAttempted(s.JobCreateAttempted).
+			WithPodUID(s.PodUID).WithCreateAttempted(s.CreateAttempted).WithActiveDeadlineSeconds(s.ActiveDeadlineSeconds).
+			WithResultAudited(s.ResultAudited).WithReleased(s.Released)
+		if s.Result != "" {
+			maintenance.WithResult(s.Result)
+		}
+		result.WithNodeMaintenance(maintenance)
+	}
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
@@ -999,6 +1010,18 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 	}
 
 	result := ac.DebugSessionTemplateSpec()
+	if profile := t.NodeMaintenance; profile != nil {
+		maintenance := ac.DebugSessionNodeMaintenance().WithAction(profile.Action).WithImage(profile.Image)
+		for _, target := range profile.AllowedTargets {
+			value := ac.NodeMaintenanceTarget().WithTargetNode(target.TargetNode).WithTargetNodeUID(target.TargetNodeUID).
+				WithInterface(target.Interface).WithEntryMAC(target.EntryMAC).WithNeighborAddress(target.NeighborAddress).WithBridge(target.Bridge)
+			if target.VLAN != nil {
+				value.WithVLAN(*target.VLAN)
+			}
+			maintenance.WithAllowedTargets(value)
+		}
+		result.WithNodeMaintenance(maintenance)
+	}
 	if t.ArtifactCollection != nil {
 		collection := ac.DebugSessionArtifactCollection().WithAllowedRecipes(t.ArtifactCollection.AllowedRecipes...)
 		if ref := t.ArtifactCollection.UploadCABundleRef; ref != nil {

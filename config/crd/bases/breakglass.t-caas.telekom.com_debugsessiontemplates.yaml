@@ -2333,6 +2333,79 @@ spec:
                       Only used when createIfNotExists=true.
                     type: object
                 type: object
+              nodeMaintenance:
+                description: nodeMaintenance enables a fixed, exact-tuple executor
+                  instead of a rendered Pod template.
+                properties:
+                  action:
+                    description: action is the one executor operation enabled by this
+                      profile.
+                    enum:
+                    - neighbor-replace
+                    - bridge-fdb-replace
+                    type: string
+                  allowedTargets:
+                    description: allowedTargets is an exact allowlist, not a selector
+                      or wildcard.
+                    items:
+                      description: NodeMaintenanceTarget identifies exactly one kernel
+                        table entry on one Node incarnation.
+                      properties:
+                        bridge:
+                          description: bridge is the exact master bridge for an FDB
+                            operation.
+                          maxLength: 15
+                          type: string
+                        entryMAC:
+                          description: entryMAC is the canonical lowercase colon-delimited
+                            six-byte MAC.
+                          pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
+                          type: string
+                        interface:
+                          description: interface is the neighbour interface or bridge
+                            FDB port.
+                          maxLength: 15
+                          type: string
+                        neighborAddress:
+                          description: neighborAddress is a canonical individual IP,
+                            never a prefix.
+                          maxLength: 45
+                          type: string
+                        targetNode:
+                          description: targetNode is the exact Kubernetes Node name.
+                          maxLength: 253
+                          type: string
+                        targetNodeUID:
+                          description: targetNodeUID prevents execution against a
+                            replaced Node.
+                          maxLength: 128
+                          type: string
+                        vlan:
+                          description: vlan is required only for an FDB operation.
+                          format: int32
+                          maximum: 4094
+                          minimum: 1
+                          type: integer
+                      required:
+                      - entryMAC
+                      - interface
+                      - targetNode
+                      - targetNodeUID
+                      type: object
+                    maxItems: 128
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  image:
+                    description: image must be an immutable node-maintenance helper
+                      image.
+                    pattern: ^.+@sha256:[a-f0-9]{64}$
+                    type: string
+                required:
+                - action
+                - allowedTargets
+                - image
+                type: object
               notification:
                 description: notification configures notification settings for debug
                   sessions using this template.

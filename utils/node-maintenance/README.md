@@ -47,6 +47,13 @@ All three helpers reject duplicate options, including repeated identical or
 empty values, before execution; node-recovery preflight does not silently
 replace an earlier target, interface, evidence directory, or confirmation.
 
+The typed DebugSession executor also fixes `BREAKGLASS_ACTION_DEADLINE_UNIX`.
+When supplied, this absolute deadline must be a future integer Unix timestamp;
+network repair checks it before preflight and immediately before mutation.
+It cannot extend the immutable session approval. See the
+[controller contract](../../docs/node-maintenance-controller.md) for the
+fixed Job, independent approval, live Node UID and per-node Lease fences.
+
 Every mutating repair and kexec validation additionally requires
 `BREAKGLASS_APPROVAL_ID` and an exact `BREAKGLASS_APPROVED_ACTION` match.
 Network repair also requires the controller-owned

@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+# Rendering fixture only: replace identities, Node UID and verified image digest.
+cluster:
+  clusterID: supported-cluster
+  tenant: example-tenant
+  environment: development
+  kubeconfigSecretRef:
+    name: example-kubeconfig
+    namespace: default
+nodeMaintenanceTemplates:
+  - name: exact-neighbor-repair-example
+    spec:
+      mode: workload
+      targetNamespace: breakglass-node-maintenance
+      allowed:
+        users: [requester@example.invalid]
+        clusters: [supported-cluster]
+      approvers:
+        users: [independent-approver@example.invalid]
+      requestReason:
+        mandatory: true
+      constraints:
+        maxDuration: 5m
+        defaultDuration: 5m
+      nodeMaintenance:
+        action: neighbor-replace
+        image: registry.example.invalid/node-maintenance@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        allowedTargets:
+          - targetNode: supported-node
+            targetNodeUID: replace-with-live-node-uid
+            interface: eth0
+            neighborAddress: 192.0.2.2
+            entryMAC: "02:00:00:00:00:02"
