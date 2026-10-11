@@ -93,7 +93,7 @@ func TestAuditResourceIdentityAndCompleteAuthenticatedGroups(t *testing.T) {
 	svc.enrichResourceIdentity(ctx, event)
 	require.Equal(t, []string{"/team/approvers", "operators", "system:authenticated"}, event.Actor.Groups)
 	require.Equal(t, "session-uid", event.Target.UID)
-	require.Equal(t, "cluster-uid", event.Target.ClusterUID)
+	require.Empty(t, event.Target.ClusterUID, "a session cluster name cannot identify its original ClusterConfig")
 	require.Equal(t, "session-uid", event.RequestContext.SessionUID)
 	require.Equal(t, "session-uid", event.RequestContext.DebugSessionUID)
 	require.Equal(t, "original-escalation-uid", event.RequestContext.EscalationUID)
@@ -196,7 +196,7 @@ func TestSessionContextCapturesOwnerWithoutResourceLookup(t *testing.T) {
 	require.Equal(t, "debug", rc.DebugSessionName)
 }
 
-func TestSessionIdentityUsesExplicitClusterConfigReference(t *testing.T) {
+func TestRetainedSessionDoesNotCorrelateRecreatedClusterConfig(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
 	session := &breakglassv1alpha1.BreakglassSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "test", UID: "source"},
@@ -208,12 +208,14 @@ func TestSessionIdentityUsesExplicitClusterConfigReference(t *testing.T) {
 		WithObjects(session, cluster, referenced).Build(), nil, zap.NewNop(), "test")
 	event := &Event{Target: Target{Kind: "BreakglassSession", Name: "session", Namespace: "test", UID: "source"}}
 	svc.enrichResourceIdentity(context.Background(), event)
-	require.Equal(t, "correct", event.Target.ClusterUID)
-	duplicate := referenced.DeepCopy()
-	duplicate.Namespace, duplicate.UID = "another", "ambiguous"
-	duplicate.ResourceVersion = ""
-	require.NoError(t, svc.client.Create(context.Background(), duplicate))
-	event.Target.ClusterUID = ""
+	require.Empty(t, event.Target.ClusterUID, "an explicit name reference is not an immutable UID fence")
+	require.NoError(t, svc.client.Delete(context.Background(), referenced))
+	replacement := referenced.DeepCopy()
+	replacement.UID, replacement.ResourceVersion = "replacement", ""
+	require.NoError(t, svc.client.Create(context.Background(), replacement))
 	svc.enrichResourceIdentity(context.Background(), event)
-	require.Empty(t, event.Target.ClusterUID, "global duplicate names must remain uncorrelated")
+	require.Empty(t, event.Target.ClusterUID, "retained sessions must not acquire the replacement config UID")
+	event.Target.ClusterUID = "observed-original-uid"
+	svc.enrichResourceIdentity(context.Background(), event)
+	require.Equal(t, "observed-original-uid", event.Target.ClusterUID, "preserve identity captured by an object-bearing emitter")
 }
