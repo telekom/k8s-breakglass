@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -667,10 +669,90 @@ func TestNodeMaintenanceCleanupRetainsMismatchedLeaseNodeUID(t *testing.T) {
 				if !persisted {
 					require.NoError(t, c.patchMaintenanceStatus(t.Context(), ds, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.LeaseUID = "" }))
 				}
+
 				require.ErrorContains(t, c.cleanupMaintenance(t.Context(), ds), "Lease Node identity")
 				require.NoError(t, spoke.Get(t.Context(), key, lease))
 				require.False(t, ds.Status.NodeMaintenance.Released)
 			})
 		}
 	}
+}
+
+func TestNodeMaintenanceApprovalUsesImmutableBindingSnapshot(t *testing.T) {
+	c, ds, _, _ := maintenanceFixture(t)
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "maintenance-binding", Namespace: "default"},
+		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "template"},
+			Clusters:    []string{"spoke"},
+			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"snapshot-approver"}, Groups: []string{"snapshot-approvers"}},
+		},
+	}
+	raw, err := json.Marshal(binding.Spec)
+	require.NoError(t, err)
+	ds.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.ResolvedBinding = &breakglassv1alpha1.ResolvedBindingRef{Name: binding.Name, Namespace: binding.Namespace}
+	ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+	require.True(t, breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(ds.Status))
+	binding.Spec.Approvers = &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"new-approver"}, Groups: []string{"new-approvers"}}
+	require.NoError(t, c.client.Create(t.Context(), binding))
+	api := NewDebugSessionAPIController(zap.NewNop().Sugar(), c.client, nil, nil)
+	for _, tc := range []struct {
+		user   string
+		groups []string
+		want   bool
+	}{
+		{"snapshot-approver", nil, true},
+		{"group-approver", []string{"snapshot-approvers"}, true},
+		{"new-approver", nil, false},
+		{"group-approver", []string{"new-approvers"}, false},
+	} {
+		require.Equal(t, tc.want, api.isIdentityAuthorizedToApprove(t.Context(), ds, debugSessionReadIdentity{
+			username: tc.user, groups: tc.groups, provider: ds.Spec.IdentityProviderName, issuer: ds.Spec.IdentityProviderIssuer, legacyAllowed: true,
+		}))
+	}
+	require.NoError(t, c.client.Delete(t.Context(), binding))
+	require.True(t, api.isIdentityAuthorizedToApprove(t.Context(), ds, debugSessionReadIdentity{
+		username: "snapshot-approver", provider: ds.Spec.IdentityProviderName, issuer: ds.Spec.IdentityProviderIssuer, legacyAllowed: true,
+	}), "the immutable approval snapshot is not replaced by a live binding read")
+	ds.Status.ResolvedBindingSpec = nil
+	require.False(t, api.isIdentityAuthorizedToApprove(t.Context(), ds, debugSessionReadIdentity{
+		username: "snapshot-approver", provider: ds.Spec.IdentityProviderName, issuer: ds.Spec.IdentityProviderIssuer, legacyAllowed: true,
+	}))
+}
+
+func TestNodeMaintenanceCancelledContenderHasNoExecutionReceipt(t *testing.T) {
+	c, first, spoke, sink := maintenanceFixture(t)
+	require.NoError(t, c.deployMaintenance(t.Context(), first))
+	second := first.DeepCopy()
+	second.Name = "maintenance-contender"
+	second.UID = "contender-uid"
+	second.ResourceVersion = ""
+	second.Status.NodeMaintenance = nil
+	require.NoError(t, c.client.Create(t.Context(), second))
+	require.NoError(t, c.client.Status().Update(t.Context(), second))
+	require.ErrorIs(t, c.deployMaintenance(t.Context(), second), errNodeMaintenanceBusy)
+	require.NoError(t, c.cleanupMaintenance(t.Context(), second))
+	require.True(t, second.Status.NodeMaintenance.Released)
+	require.Empty(t, second.Status.NodeMaintenance.Result)
+	require.False(t, second.Status.NodeMaintenance.ResultAudited)
+	require.Len(t, sink.Events(), 1, "contenders never had execution intent and must not emit executor results")
+	require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{
+		Name: maintenanceIdentity(first.Spec.NodeMaintenance.TargetNode), Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+	}, &coordinationv1.Lease{}))
+}
+
+func TestNodeMaintenanceReplacedJobCannotBeReceipted(t *testing.T) {
+	c, ds, spoke, sink := maintenanceFixture(t)
+	require.NoError(t, c.deployMaintenance(t.Context(), ds))
+	job := &batchv1.Job{}
+	key := client.ObjectKey{Name: ds.Status.NodeMaintenance.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+	require.NoError(t, spoke.Get(t.Context(), key, job))
+	job.UID = "replacement-job"
+	require.NoError(t, spoke.Update(t.Context(), job))
+	require.ErrorContains(t, c.cleanupMaintenance(t.Context(), ds), "Job identity")
+	require.Len(t, sink.Events(), 1)
+	require.Empty(t, ds.Status.NodeMaintenance.Result)
+	require.False(t, ds.Status.NodeMaintenance.Released)
 }

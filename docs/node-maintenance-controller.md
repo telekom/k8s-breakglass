@@ -83,6 +83,8 @@ These are operator substitution markers, not usable published image/group/Node
 claims. Also configure `allowed` and a mandatory `requestReason` for your policy.
 Binding-level approvers may replace the template set, but must remain nonempty
 and cannot configure `autoApproveFor`. Auto-approval is never permitted.
+Maintenance approval uses the captured immutable binding approvers, not a live
+binding edit made after the request reached PendingApproval.
 
 `POST /debugSessions` accepts `nodeMaintenance` using the same typed object as
 `DebugSession.spec.nodeMaintenance`, alongside the existing template, cluster,
@@ -161,6 +163,9 @@ Node and namespace identity; the expiry observation permits the original elapsed
 deadline only so expiry can be recorded, never to execute another mutation.
 Cleanup rechecks credentials before its result receipt and verifies the Lease's
 Node UID annotation even when recovering an unpersisted Lease UID.
+It resolves Job/Lease ownership before result delivery. A cancelled contender
+with no execution intent receives no executor result receipt and never deletes
+the other session's Lease.
 
 Successful execution terminates the session; failed/interrupted execution
 fails/expires it. A dedicated finalizer retains cleanup responsibility after

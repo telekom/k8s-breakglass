@@ -176,6 +176,8 @@ func (c *DebugSessionController) maintenanceLiveFence(ctx context.Context, ds *b
 	if !reflect.DeepEqual(live.Spec.NodeMaintenance, ds.Spec.NodeMaintenance) ||
 		!reflect.DeepEqual(live.Status.Approval, ds.Status.Approval) ||
 		!reflect.DeepEqual(live.Status.ResolvedTemplate, ds.Status.ResolvedTemplate) ||
+		!reflect.DeepEqual(live.Status.ResolvedBinding, ds.Status.ResolvedBinding) ||
+		!reflect.DeepEqual(live.Status.ResolvedBindingSpec, ds.Status.ResolvedBindingSpec) ||
 		!reflect.DeepEqual(live.Status.NodeMaintenance, ds.Status.NodeMaintenance) {
 		return fmt.Errorf("maintenance request or executor inventory changed before target write")
 	}
@@ -651,6 +653,45 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 	}
 	pod := &corev1.Pod{}
 	key := ctrlclient.ObjectKey{Name: status.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+	leaseKey := ctrlclient.ObjectKey{Name: maintenanceIdentity(ds.Spec.NodeMaintenance.TargetNode), Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+	lease := &coordinationv1.Lease{}
+	if err := target.Get(ctx, leaseKey, lease); err == nil {
+		if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != status.OperationID {
+			if status.LeaseUID == "" && !status.JobCreateAttempted && !status.CreateAttempted {
+				return c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.Released = true })
+			}
+			return fmt.Errorf("maintenance cleanup Lease holder changed")
+		}
+		if lease.UID == "" || !lease.DeletionTimestamp.IsZero() ||
+			lease.Annotations["breakglass.t-caas.telekom.com/node-uid"] != ds.Spec.NodeMaintenance.TargetNodeUID ||
+			(status.LeaseUID != "" && status.LeaseUID != string(lease.UID)) {
+			return fmt.Errorf("maintenance cleanup Lease Node identity changed")
+		}
+		if status.LeaseUID == "" {
+			if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.LeaseUID = string(lease.UID) }); err != nil {
+				return err
+			}
+			status = ds.Status.NodeMaintenance
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	}
+	job := &batchv1.Job{}
+	if err := target.Get(ctx, key, job); err == nil {
+		if !matchesMaintenanceJob(ds, job) {
+			return fmt.Errorf("maintenance cleanup Job identity is unresolved")
+		}
+		if status.JobUID == "" {
+			if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.JobUID = string(job.UID) }); err != nil {
+				return err
+			}
+			status = ds.Status.NodeMaintenance
+		}
+	} else if !apierrors.IsNotFound(err) {
+		return err
+	} else if status.JobCreateAttempted && status.JobUID == "" {
+		return fmt.Errorf("maintenance Job create outcome is unknown; retaining node Lease")
+	}
 	if err := target.Get(ctx, key, pod); err == nil {
 		if !matchesMaintenancePod(ds, pod) {
 			return fmt.Errorf("maintenance cleanup Pod identity is unresolved")
@@ -681,13 +722,13 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 	} else if !apierrors.IsNotFound(err) {
 		return err
 	}
-	if status.Result == "" {
+	if status.CreateAttempted && status.Result == "" {
 		if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.Result = "unknown" }); err != nil {
 			return err
 		}
 		status = ds.Status.NodeMaintenance
 	}
-	if !status.ResultAudited {
+	if status.CreateAttempted && !status.ResultAudited {
 		if err := configurationFence(); err != nil {
 			return err
 		}
@@ -726,7 +767,7 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 	} else if status.CreateAttempted && status.PodUID == "" {
 		return fmt.Errorf("maintenance create outcome is unknown; retaining node Lease")
 	}
-	job := &batchv1.Job{}
+	job = &batchv1.Job{}
 	if err := target.Get(ctx, key, job); err == nil {
 		if !matchesMaintenanceJob(ds, job) {
 			return fmt.Errorf("maintenance cleanup Job identity is unresolved")
@@ -749,8 +790,7 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		return fmt.Errorf("maintenance Job create outcome is unknown; retaining node Lease")
 	}
 	// The external Job manager never replaces a Pod, and both UIDs are now absent.
-	lease := &coordinationv1.Lease{}
-	leaseKey := ctrlclient.ObjectKey{Name: maintenanceIdentity(ds.Spec.NodeMaintenance.TargetNode), Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}
+	lease = &coordinationv1.Lease{}
 	if err := target.Get(ctx, leaseKey, lease); err == nil {
 		if status.LeaseUID == "" {
 			if lease.Spec.HolderIdentity == nil || *lease.Spec.HolderIdentity != status.OperationID {

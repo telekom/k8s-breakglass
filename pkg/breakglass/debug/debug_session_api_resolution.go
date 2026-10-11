@@ -2,6 +2,7 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -611,6 +612,30 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 		c.log.Infow("Blocking self-approval attempt",
 			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail, "approver", identity.username, "approverEmail", identity.email)
 		return false
+	}
+	if session.Spec.NodeMaintenance != nil {
+		if session.Status.ResolvedTemplate == nil ||
+			!breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(session.Status) {
+			return false
+		}
+		approvers := session.Status.ResolvedTemplate.Approvers
+		if session.Spec.BindingRef != nil {
+			ref := session.Status.ResolvedBinding
+			if ref == nil || ref.Name != session.Spec.BindingRef.Name || ref.Namespace != session.Spec.BindingRef.Namespace {
+				return false
+			}
+			var snapshot breakglassv1alpha1.DebugSessionClusterBindingSpec
+			if err := json.Unmarshal(session.Status.ResolvedBindingSpec.Raw, &snapshot); err != nil {
+				return false
+			}
+			if snapshot.Approvers != nil {
+				approvers = snapshot.Approvers
+			}
+		}
+		if approvers == nil || approvers.AutoApproveFor != nil {
+			return false
+		}
+		return a.approverSetAuthorizes(session, approvers, identity, "immutableMaintenanceSnapshot")
 	}
 
 	// First try the exact binding that granted this session. Binding-level approvers
