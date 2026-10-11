@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// The overlap here is intentional. It is separate from the downstream403
-// caused by failed GroupSync credentials with the correct firstline owner.
+// The overlap here is intentional. It is separate from the downstream 403
+// caused by failed GroupSync credentials with the correct first-line owner.
 func TestEscalationExplicitSelectionWithOverlappingGrants(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	requester := helpers.TestUsers.SecurityRequester
