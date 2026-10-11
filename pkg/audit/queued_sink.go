@@ -694,12 +694,13 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 // may synchronously fall back to the underlying sink when a queue is full or
 // its circuit is open.
 func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
+	var errs []error
 	for _, event := range events {
 		if err := qs.Write(ctx, event); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // WriteBatch broadcasts the batch to all queued sinks in parallel. Per-sink

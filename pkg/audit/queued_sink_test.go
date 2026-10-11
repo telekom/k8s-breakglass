@@ -213,7 +213,7 @@ func TestIsolatedMultiSink_WriteBatchMatchesSensitiveErrorPropagation(t *testing
 	}, time.Second, 10*time.Millisecond, "second event was not queued")
 
 	err := ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionValidated}})
-	assert.NoError(t, err)
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
 
 	err = ims.WriteBatch(context.Background(), []*Event{{Type: EventSessionRevoked}})
 	assert.Error(t, err)

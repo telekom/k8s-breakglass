@@ -155,8 +155,8 @@ func TestQueuedBlockingEnqueueHonorsCallerDeadline(t *testing.T) {
 	require.NoError(t, qs.Write(context.Background(), &Event{ID: "second"}))
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
-	require.ErrorIs(t, qs.Write(ctx, &Event{ID: "third"}), context.DeadlineExceeded)
-	require.Equal(t, int64(1), qs.Health().DroppedEvents)
+	require.ErrorIs(t, qs.WriteBatch(ctx, []*Event{{ID: "third"}, {ID: "fourth"}}), context.DeadlineExceeded)
+	require.Equal(t, int64(2), qs.Health().DroppedEvents)
 }
 
 func TestIsolatedBlockingEnqueuePropagatesOrdinaryDeadline(t *testing.T) {
