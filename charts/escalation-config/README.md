@@ -665,6 +665,8 @@ generic executor overrides or approval bypasses. Use
 image/Node/identity configuration. Existing `debugSessionBindings` can bind these
 templates to independent approvers and supported clusters, without auto-approval
 or namespace/variable/scheduling overrides.
+Run `bash charts/escalation-config/ci/test-node-maintenance.sh` for strict fixture
+linting and exact rendered fields/default-off assertions; the Helm CI runs it.
 See [the controller contract](../../docs/node-maintenance-controller.md) for
 target namespace, external Job manager, audit and support prerequisites.
 

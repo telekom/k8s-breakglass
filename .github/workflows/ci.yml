@@ -452,6 +452,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y python3-yaml
           bash charts/escalation-config/ci/test-debug-target-namespaces.sh
+      - name: Validate default-off typed node-maintenance template rendering
+        run: bash charts/escalation-config/ci/test-node-maintenance.sh
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
