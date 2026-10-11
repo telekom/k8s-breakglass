@@ -215,7 +215,8 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	return m
 }
 
-// Emit sends an audit event asynchronously (non-blocking for non-sensitive events).
+// Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
+// waits for capacity up to WriteTimeout or the caller's context deadline.
 // Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
 // queue is full, which may block up to WriteTimeout.
 func (m *Manager) Emit(ctx context.Context, event *Event) {

@@ -595,8 +595,8 @@ func NewIsolatedMultiSink(sinks []Sink, cfg QueuedSinkConfig, logger *zap.Logger
 	}
 }
 
-// Write broadcasts the event to all queued sinks. Ordinary events are
-// enqueued without waiting; sensitive events may synchronously fall back to
+// Write broadcasts the event to all queued sinks. Per-sink DropOnFull=false
+// waits for capacity up to the write or caller deadline; sensitive events may fall back to
 // the underlying sink when a queue is full or its circuit is open.
 func (ims *IsolatedMultiSink) Write(ctx context.Context, event *Event) error {
 	return ims.WriteBatch(ctx, []*Event{event})
@@ -702,8 +702,9 @@ func (qs *QueuedSink) WriteBatch(ctx context.Context, events []*Event) error {
 	return nil
 }
 
-// WriteBatch broadcasts the batch to all queued sinks. Ordinary events are
-// enqueued without waiting; sensitive events may synchronously fall back to
+// WriteBatch broadcasts the batch to all queued sinks in parallel. Per-sink
+// DropOnFull=false waits for capacity up to the write or caller deadline;
+// sensitive events may synchronously fall back to
 // the underlying sinks when a queue is full or a circuit is open.
 func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) error {
 	var wg sync.WaitGroup
