@@ -159,6 +159,27 @@ func TestQueuedBlockingEnqueueHonorsCallerDeadline(t *testing.T) {
 	require.Equal(t, int64(1), qs.Health().DroppedEvents)
 }
 
+func TestIsolatedBlockingEnqueuePropagatesOrdinaryDeadline(t *testing.T) {
+	block, started := make(chan struct{}), make(chan struct{})
+	sink := newQueuedMockSink("isolated-blocking")
+	sink.blockFirst, sink.firstStarted = block, started
+	cfg := retryTestConfig()
+	cfg.QueueSize, cfg.DropOnFull, cfg.BatchSize = 1, false, 1
+	isolated := NewIsolatedMultiSink([]Sink{sink}, cfg, zap.NewNop())
+	t.Cleanup(func() { close(block); require.NoError(t, isolated.Close()) })
+	require.NoError(t, isolated.Write(context.Background(), &Event{ID: "first", Type: EventResourceGet}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("sink worker did not start")
+	}
+	require.NoError(t, isolated.Write(context.Background(), &Event{ID: "second", Type: EventResourceGet}))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, isolated.WriteBatch(ctx, []*Event{{ID: "third", Type: EventResourceGet}}), context.DeadlineExceeded)
+	require.Equal(t, int64(1), isolated.Health()[0].DroppedEvents)
+}
+
 func TestPerSinkDeliveryConfiguration(t *testing.T) {
 	first := queuedConfig(nil)
 	second := queuedConfig(&breakglassv1alpha1.AuditQueueConfig{

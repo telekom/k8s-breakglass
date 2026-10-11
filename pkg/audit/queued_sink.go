@@ -714,7 +714,7 @@ func (ims *IsolatedMultiSink) WriteBatch(ctx context.Context, events []*Event) e
 		go func() {
 			defer wg.Done()
 			for _, event := range events {
-				if err := qs.Write(ctx, event); err != nil && IsSensitiveEvent(event.Type) {
+				if err := qs.Write(ctx, event); err != nil {
 					errs[i] = errors.Join(errs[i], err)
 				}
 			}
