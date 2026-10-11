@@ -372,9 +372,10 @@ func legacyDuplicateCleanupAuditEvent(session *breakglassv1alpha1.BreakglassSess
 		},
 		RequestContext: &audit.RequestContext{SessionName: session.Name},
 		Details: map[string]interface{}{
-			"reason":        "duplicateCleanup",
-			"terminalState": string(session.Status.State),
-			"grantedGroup":  session.Spec.GrantedGroup,
+			"ticketSystemID": session.Spec.TicketSystemID,
+			"reason":         "duplicateCleanup",
+			"terminalState":  string(session.Status.State),
+			"grantedGroup":   session.Spec.GrantedGroup,
 		},
 	}
 }

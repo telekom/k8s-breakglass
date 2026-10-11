@@ -894,7 +894,7 @@ func TestLegacyDuplicateCleanupPendingDeliveryKeepsItsTruthfulEvent(t *testing.T
 	legacyTime := metav1.NewTime(time.Unix(250, 0))
 	session := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "legacy", Namespace: "breakglass", UID: "legacy-uid"},
-		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin"},
+		Spec:       breakglassv1alpha1.BreakglassSessionSpec{Cluster: "cluster", User: "user", GrantedGroup: "admin", TicketSystemID: "arbitrary <reference>\nü"},
 		Status: breakglassv1alpha1.BreakglassSessionStatus{
 			State: breakglassv1alpha1.SessionStateWithdrawn,
 			Conditions: []metav1.Condition{{
@@ -914,6 +914,7 @@ func TestLegacyDuplicateCleanupPendingDeliveryKeepsItsTruthfulEvent(t *testing.T
 	event := recorder.events[0]
 	assert.Equal(t, audit.EventSessionWithdrawn, event.Type)
 	assert.Equal(t, "duplicate-cleanup/legacy-uid", event.ID)
+	assert.Equal(t, session.Spec.TicketSystemID, event.Details["ticketSystemID"])
 	assert.True(t, event.Timestamp.Equal(legacyTime.Time))
 	assert.Equal(t, "duplicateCleanup", event.Details["reason"])
 	assert.Equal(t, string(breakglassv1alpha1.SessionStateWithdrawn), event.Details["terminalState"])
