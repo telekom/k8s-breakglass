@@ -566,8 +566,14 @@ func TestEscalationAPIReadinessFiltering(t *testing.T) {
 		WithEscalatedGroup("system:unready-admins").
 		WithLabels(helpers.E2ELabelsWithFeature("escalation-readiness-test")).
 		Build()
-	// Add an invalid IDP reference to force Readiness to be False
-	unreadyEsc.Spec.AllowedIdentityProviders = []string{"non-existent-idp"}
+	// Keep requester discovery eligible while a missing approver IDP forces unready status.
+	var providers breakglassv1alpha1.IdentityProviderList
+	require.NoError(t, cli.List(ctx, &providers))
+	require.NotEmpty(t, providers.Items)
+	for _, provider := range providers.Items {
+		unreadyEsc.Spec.AllowedIdentityProvidersForRequests = append(unreadyEsc.Spec.AllowedIdentityProvidersForRequests, provider.Name)
+	}
+	unreadyEsc.Spec.AllowedIdentityProvidersForApprovers = []string{"non-existent-idp"}
 	cleanup.Add(unreadyEsc)
 	require.NoError(t, cli.Create(ctx, unreadyEsc))
 
