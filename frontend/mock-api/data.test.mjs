@@ -5,12 +5,27 @@ import {
   createDebugSession,
   createSessionFromRequest,
   findDebugSession,
+  findSession,
   identityProviderConfig,
   listSessions,
   MOCK_APPROVER_GROUPS,
   rejectDebugSession,
   runtimeConfig,
 } from "./data.mjs";
+
+test("mock requests preserve omitted, empty and freeform ticket references", () => {
+  const omitted = createSessionFromRequest();
+  assert.equal(Object.hasOwn(omitted.spec, "ticketSystemID"), false);
+  for (const ticketSystemID of ["", "generic 雪\nreference"]) {
+    const session = createSessionFromRequest({ ticketSystemID });
+    assert.equal(session.spec.ticketSystemID, ticketSystemID);
+    assert.equal(findSession(session.metadata.name).spec.ticketSystemID, ticketSystemID);
+    assert.equal(
+      listSessions({ name: session.metadata.name })[0].spec.ticketSystemID,
+      ticketSystemID,
+    );
+  }
+});
 
 test("generic mock identities and clusters stay consistent across request flows", () => {
   const session = createSessionFromRequest();

@@ -1357,6 +1357,7 @@ function baseSession({
   state = "Pending",
   expiresInMinutes = 120,
   requestReason = "Hotfix rollout",
+  ticketSystemID,
   approverGroups = MOCK_APPROVER_GROUPS,
   approvers = [CURRENT_USER_EMAIL, "backup.approver@breakglass.dev"],
   approvedBy = [],
@@ -1399,6 +1400,9 @@ function baseSession({
   };
   if (requestReason !== undefined) {
     spec.requestReason = requestReason;
+  }
+  if (ticketSystemID !== undefined) {
+    spec.ticketSystemID = ticketSystemID;
   }
   if (scheduledStartTime) {
     spec.scheduledStartTime = scheduledStartTime;
@@ -1818,6 +1822,7 @@ export function createSessionFromRequest(body = {}) {
     cluster: body.cluster || "production-eu",
     group: body.group || "platform-emergency",
     requestReason: body.reason || "Local mock request",
+    ticketSystemID: body.ticketSystemID,
     duration: secondsToDuration(durationSeconds),
     approverGroups: body.approverGroups || MOCK_APPROVER_GROUPS,
     approvers: body.approvers || [CURRENT_USER_EMAIL],
