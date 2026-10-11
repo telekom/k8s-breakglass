@@ -10,6 +10,9 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +28,7 @@ import (
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -34,14 +38,22 @@ import (
 // Exercise the real OIDC, approval, deployment and kubelet exec paths, without
 // creating an escalation or BreakglassSession for the requester.
 func TestDebugSessionIdentityOnlyWorkflow(t *testing.T) {
+	runDebugSessionIdentityWorkflow(t, helpers.TestUsers.PlatformIdentityRequester, helpers.TestUsers.UnauthorizedUser, false)
+}
+
+func TestDebugSessionWithoutBaselinePodRBACWorkflow(t *testing.T) {
+	runDebugSessionIdentityWorkflow(t, helpers.TestUsers.UnauthorizedUser, helpers.TestUsers.PlatformIdentityRequester, true)
+}
+
+func runDebugSessionIdentityWorkflow(t *testing.T, requester, outsider helpers.TestUser, noBaselinePodRBAC bool) {
+	t.Helper()
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	ctx := s.Ctx
-	requester := helpers.TestUsers.PlatformIdentityRequester
 	approver := helpers.TestUsers.DebugSessionApprover
 	token := s.TC.OIDCProvider().GetTokenForUser(t, ctx, requester)
 	requesterAPI := NewDebugSessionAPIClient(token)
 	approverAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, approver))
-	outsiderAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.UnauthorizedUser))
+	outsiderAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, outsider))
 
 	var grants breakglassv1alpha1.BreakglassSessionList
 	require.NoError(t, s.Client.List(ctx, &grants))
@@ -156,7 +168,7 @@ spec:
 		Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
 			TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
 			Clusters:    []string{s.Cluster},
-			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"dttcaas-platform_poweruser"}},
+			Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: requester.Groups},
 			Approvers:   &breakglassv1alpha1.DebugSessionApprovers{Users: []string{requester.Email, approver.Email}},
 		},
 	}
@@ -266,6 +278,35 @@ spec:
 	kube, err := kubernetes.NewForConfig(userConfig)
 	require.NoError(t, err)
 	pod := active.Status.AllowedPods[0]
+	if noBaselinePodRBAC {
+		_, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, "non-session-pod", metav1.GetOptions{})
+		require.True(t, apierrors.IsForbidden(err), "persona must have no baseline pod GET, got %v", err)
+		_, err = kube.CoreV1().Pods(pod.Namespace).List(ctx, metav1.ListOptions{})
+		require.True(t, apierrors.IsForbidden(err), "session must not grant namespace-wide pod list, got %v", err)
+	}
+	ownPod, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{})
+	require.NoError(t, err, "named pod GET preflight must work without baseline pod RBAC")
+	require.Equal(t, pod.UID, string(ownPod.UID))
+	if noBaselinePodRBAC {
+		dir := helpers.GenerateUniqueName(".debug-pod-rbac")
+		require.NoError(t, os.MkdirAll(dir, 0o700))
+		t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+		configPath := filepath.Join(dir, "kubeconfig")
+		require.NoError(t, clientcmd.WriteToFile(clientcmdapi.Config{
+			Clusters: map[string]*clientcmdapi.Cluster{"target": {
+				Server: userConfig.Host, CertificateAuthority: userConfig.CAFile,
+				CertificateAuthorityData: userConfig.CAData, InsecureSkipTLSVerify: userConfig.Insecure, TLSServerName: userConfig.ServerName,
+			}},
+			AuthInfos:      map[string]*clientcmdapi.AuthInfo{"requester": {Token: userConfig.BearerToken}},
+			Contexts:       map[string]*clientcmdapi.Context{"target": {Cluster: "target", AuthInfo: "requester"}},
+			CurrentContext: "target",
+		}, configPath))
+		require.NoError(t, os.Chmod(configPath, 0o600))
+		output, err := exec.CommandContext(ctx, "kubectl", "--kubeconfig", configPath, "--request-timeout=30s",
+			"exec", "-n", pod.Namespace, pod.Name, "-c", "debug", "--", "echo", "no-baseline-exec").CombinedOutput()
+		require.NoError(t, err, "%s", output)
+		require.Contains(t, string(output), "no-baseline-exec")
+	}
 	execRequest := kube.CoreV1().RESTClient().Post().Namespace(pod.Namespace).Resource("pods").
 		Name(pod.Name).SubResource("exec").VersionedParams(&corev1.PodExecOptions{
 		Container: "debug", Command: []string{"sh", "-c", "echo identity-only-exec; echo \"$SESSION_UID\""}, Stdout: true, Stderr: true,
@@ -314,6 +355,9 @@ spec:
 
 	attach := func(active *breakglassv1alpha1.DebugSession) (string, error) {
 		pod := active.Status.AllowedPods[0]
+		if _, err := kube.CoreV1().Pods(pod.Namespace).Get(ctx, pod.Name, metav1.GetOptions{}); err != nil {
+			return "", err
+		}
 		request := kube.CoreV1().RESTClient().Post().Namespace(pod.Namespace).Resource("pods").
 			Name(pod.Name).SubResource("attach").VersionedParams(&corev1.PodAttachOptions{
 			Container: "debug", Stdin: true, Stdout: true, Stderr: true,

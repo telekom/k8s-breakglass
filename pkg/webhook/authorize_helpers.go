@@ -346,12 +346,12 @@ func (wc *WebhookController) loadSessionsAndGroups(c *gin.Context, s *authorizeS
 // checkEarlyDebugSession checks if a pod operation is allowed by a debug session
 // before deny-policy evaluation. Returns handled=true if an allow response was written.
 // This must be checked BEFORE deny policy evaluation to ensure debug sessions work correctly.
-// Supports exec, attach, portforward, and log subresources based on AllowedPodOperations config.
+// Supports named pod GET preflights and configured exec, attach, portforward, and log subresources.
 func (wc *WebhookController) checkEarlyDebugSession(c *gin.Context, s *authorizeState) bool {
 	s.phases.StartPhase() // Start debug_session phase (may be brief if no check needed)
 	if s.sar.Spec.ResourceAttributes != nil {
 		ra := s.sar.Spec.ResourceAttributes
-		if ra.Resource == "pods" && isDebugSessionSubresource(ra.Subresource) && ra.Name != "" {
+		if isDebugSessionPodRequest(ra) {
 			if debugSession, debugReason := wc.findDebugSessionAccessForAuthorizeState(s, ra); debugSession != nil {
 				if terminalRecordingRequired(debugSession, ra.Subresource) {
 					s.allowed = false

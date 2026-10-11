@@ -583,6 +583,7 @@ This maintains backward compatibility with existing debug session templates.
 ### Security Notes
 
 - The webhook enforces operation restrictions by checking the pod subresource (`exec`, `attach`, `log`, `portforward`) against the session's `AllowedPodOperations`.
+- Active session owners and participants can also `get` a named pod recorded in `status.allowedPods`, including its live UID, namespace, and cluster. This permits the pod lookup that `kubectl exec` and `kubectl attach` perform before connecting, without requiring baseline pod-read RBAC. This metadata lookup does not enable a disabled subresource operation. It does not grant pod `list`, `watch`, mutations, or access to other pods.
 - `kubectl cp` uses the exec subresource internally (it runs tar in the container). Therefore, `kubectl cp` requires `exec: true` to function. If exec is disabled, all `kubectl cp` operations will be blocked.
 - The webhook operates at the subresource level and cannot distinguish between different commands executed via exec.
 - For pod operations, the webhook re-reads the named Pod and requires its UID to match the UID recorded in `status.allowedPods`; deleting and recreating a directly managed Pod with the same name is therefore denied. Pods recreated by the recorded DaemonSet or Deployment workload are admitted only after their owner and Pod template lineage is verified.
@@ -2065,18 +2066,19 @@ even when terminal recording is disabled. Invalid values produce one field error
 - Verify session is in `Active` state
 - Check `allowedPods` in status
 - Ensure pod is `ready: true`
-- Verify RBAC permissions on target cluster
+- Use the pod name and namespace recorded in `status.allowedPods`. Baseline pod-read RBAC is not required for that named pod; namespace-wide `list` and `watch` still require separate permissions.
+- Verify the requester/participant identity and provider match and the session has not expired or terminated
 
 ## Interaction with Deny Policies
 
-Active debug sessions take precedence over [deny policies](deny-policy.md) for pod-level operations. When the authorization webhook processes a `SubjectAccessReview` for `exec`, `attach`, `portforward`, or `log` on a specific pod, it checks for matching debug sessions **before** evaluating deny policies.
+Active debug sessions take precedence over [deny policies](deny-policy.md) for pod-level operations. When the authorization webhook processes a `SubjectAccessReview` for a named pod `get` (empty subresource), or for `exec`, `attach`, `portforward`, or `log` on a specific pod, it checks for matching debug sessions **before** evaluating deny policies.
 
 This means:
 
 - An active debug session participant can exec into their allowed pods even if a `DenyPolicy` would normally block exec operations.
-- The bypass applies **only** to pods listed in `status.allowedPods` and operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
+- The bypass applies **only** to pods listed in `status.allowedPods` with matching live UID, namespace, and cluster. It permits named pod `get` and subresource operations resolved in `status.allowedPodOperations` (derived from the template/binding configuration).
 - Participants with `status.participants[].leftAt` set no longer receive this bypass.
-- All other operations (e.g., `get`, `delete`, `create` on non-pod resources) still go through normal deny policy evaluation.
+- All other operations (including pod `list`, `watch`, `delete`, and `get` on unrelated pods or non-pod resources) still go through normal deny policy evaluation.
 
 This is intentional — debug sessions represent pre-approved, time-limited troubleshooting access. The security boundary is enforced at session creation time through `DebugSessionTemplate` constraints:
 

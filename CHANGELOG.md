@@ -50,6 +50,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the smaller of the configured idle timeout and requested duration into the
   session, preserving admission constraints and the requested hard expiry.
   Reject negative custom durations instead of treating them as omitted.
+- Allow named debug-pod GET preflights for active DebugSession owners and
+  participants so `kubectl exec` and `kubectl attach` work without baseline
+  pod-read RBAC. Reuse the session's live pod UID, namespace, cluster, identity,
+  and expiry fences; never grant namespace-wide list/watch or unrelated pod access.
 - Retry same-session auxiliary server-side apply conflicts from fresh activation
   and resource identity fences instead of failing the DebugSession. Conflicts
   do not bypass required resources, approval, expiry or replacement UID checks.

@@ -370,8 +370,7 @@ func (wc *WebhookController) findDebugSessionAccessForProviderInNamespace(ctx co
 }
 
 func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Context, username, clusterName, issuer, provider string, providerLookupOK, providerFence bool, sessionNamespace string, ra *authorizationv1.ResourceAttributes, reqLog *zap.SugaredLogger) (*breakglassv1alpha1.DebugSession, string) {
-	// Only check for pods with supported subresources
-	if ra == nil || ra.Resource != "pods" || !isDebugSessionSubresource(ra.Subresource) {
+	if !isDebugSessionPodRequest(ra) {
 		return nil, ""
 	}
 
@@ -474,7 +473,7 @@ func (wc *WebhookController) findDebugSessionAccessForIdentity(ctx context.Conte
 		}
 
 		// Check if the specific operation is allowed by this session's AllowedPodOperations
-		if !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+		if ra.Subresource != "" && !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
 			reqLog.Debugw("Debug session found but operation not allowed",
 				"session", ds.Name,
 				"pod", fmt.Sprintf("%s/%s", ra.Namespace, ra.Name),
@@ -593,7 +592,7 @@ func (wc *WebhookController) liveDebugSessionAccessForProvider(ctx context.Conte
 }
 
 func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context, username, issuer, provider string, providerLookupOK, providerFence bool, clusterName string, ra *authorizationv1.ResourceAttributes, namespace, name, uid string) (bool, string) {
-	if wc.sesManager == nil || ra == nil || namespace == "" || name == "" {
+	if wc.sesManager == nil || !isDebugSessionPodRequest(ra) || namespace == "" || name == "" {
 		return false, ""
 	}
 	if ctx == nil {
@@ -625,7 +624,7 @@ func (wc *WebhookController) liveDebugSessionAccessIdentity(ctx context.Context,
 			break
 		}
 	}
-	if !podAllowed || !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource) {
+	if !podAllowed || (ra.Subresource != "" && !ds.Status.AllowedPodOperations.IsOperationAllowed(ra.Subresource)) {
 		return false, ""
 	}
 	if terminalRecordingRequired(&ds, ra.Subresource) {
@@ -1638,6 +1637,13 @@ func (wc *WebhookController) SetPodFetchFn(f PodFetchFunction) {
 // This is primarily used for testing to inject mock namespace labels.
 func (wc *WebhookController) SetNamespaceLabelsFetchFn(f NamespaceLabelsFetchFunction) {
 	wc.namespaceLabelsFetchFn = f
+}
+
+// isDebugSessionPodRequest includes the named pod GET used by kubectl before
+// connecting to a pod, but never namespace-wide list/watch or pod mutations.
+func isDebugSessionPodRequest(ra *authorizationv1.ResourceAttributes) bool {
+	return ra != nil && ra.Group == "" && ra.Resource == "pods" && ra.Namespace != "" && ra.Name != "" &&
+		((ra.Subresource == "" && ra.Verb == "get") || isDebugSessionSubresource(ra.Subresource))
 }
 
 // isDebugSessionSubresource returns true if the subresource can be controlled by debug sessions.
