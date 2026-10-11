@@ -230,6 +230,13 @@ spec:
 		require.Error(t, err)
 		require.Equal(t, http.StatusForbidden, status, "ClusterConfig.blockSelfApproval=%t must not relax debug approval", blocked)
 	}
+	require.Eventually(t, func() bool {
+		var current breakglassv1alpha1.ClusterConfig
+		if s.Client.Get(ctx, clusterKey, &current) != nil {
+			return false
+		}
+		return current.Status.ObservedGeneration == current.Generation
+	}, helpers.WaitForStateTimeout, time.Second, "observe fixture config updates before the deployment resource-version fence")
 	approverAPI.AuthToken = s.TC.OIDCProvider().GetTokenForUser(t, ctx, approver)
 	status, err = approverAPI.ApproveDebugSession(ctx, t, session.Name, "peer approval")
 	require.NoError(t, err)
