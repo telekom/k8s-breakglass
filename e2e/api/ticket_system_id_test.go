@@ -23,6 +23,9 @@ import (
 
 func TestTicketSystemIDAuditRoundTrip(t *testing.T) {
 	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	if !helpers.IsAuditWebhookTestEnabled() {
+		t.Skip("Audit webhook tests disabled via E2E_SKIP_AUDIT_WEBHOOK_TESTS=true")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cli := helpers.GetClient(t)
