@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Accept session requests shorter than their escalation's idle timeout. Copy
   the smaller of the configured idle timeout and requested duration into the
   session, preserving admission constraints and the requested hard expiry.
+  Reject negative custom durations instead of treating them as omitted.
 - Retry same-session auxiliary server-side apply conflicts from fresh activation
   and resource identity fences instead of failing the DebugSession. Conflicts
   do not bypass required resources, approval, expiry or replacement UID checks.

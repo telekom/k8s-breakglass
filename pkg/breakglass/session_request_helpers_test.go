@@ -372,8 +372,22 @@ func TestHandleRequestBreakglassSession_ShortDurationIdleTimeout(t *testing.T) {
 			c.Set("groups", []string{"responders"})
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
+	controller.sessionCreationLimiter.Stop()
+	controller.sessionCreationLimiter = nil
 	engine := gin.New()
 	require.NoError(t, controller.Register(engine.Group("/breakglassSessions", controller.Handlers()...)))
+	for _, duration := range []int64{-1, 59, 7201} {
+		body, err := json.Marshal(BreakglassSessionRequest{
+			Clustername: "test-cluster", GroupName: "admin", EscalationName: "emergency", Duration: duration,
+		})
+		require.NoError(t, err)
+		response := httptest.NewRecorder()
+		engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(body)))
+		require.Equal(t, http.StatusUnprocessableEntity, response.Code, "duration %d: %s", duration, response.Body.String())
+		var sessions breakglassv1alpha1.BreakglassSessionList
+		require.NoError(t, cli.List(t.Context(), &sessions))
+		require.Empty(t, sessions.Items, "invalid duration must not create a full-length session")
+	}
 	request := httptest.NewRequest(http.MethodPost, "/breakglassSessions",
 		bytes.NewBufferString(`{"cluster":"test-cluster","group":"admin","escalationName":"emergency","duration":1200,"reason":"Fresh emergency authorization cycle"}`))
 	response := httptest.NewRecorder()

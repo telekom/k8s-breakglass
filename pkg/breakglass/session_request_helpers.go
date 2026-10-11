@@ -663,7 +663,7 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		"clusterHasIDPRestriction", clusterHasIDPRestriction)
 
 	// Validate and apply custom duration if provided
-	if request.Duration > 0 {
+	if request.Duration != 0 {
 		// Parse max allowed duration from string (e.g., "1h", "3600s", "7d")
 		d, err := breakglassv1alpha1.ParseDuration(matchedEsc.Spec.MaxValidFor)
 		if err != nil {
