@@ -218,9 +218,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := rq.GetObjectKind().GroupVersionKind()
+			priorIntents := len(ds.Status.DeployedResources)
 			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: rq.Name, Namespace: rq.Namespace, Source: "debug-resourcequota", CreateOperationID: operationID,
 			})
+			freshIntent := resourceIndex == priorIntents
 			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist resource quota intent: %w", err)
 			}
@@ -228,7 +230,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			if err := createOrRecoverTargetObject(ctx, targetClient, rq, ds); err != nil {
-				return fmt.Errorf("failed to apply resource quota: %w", err)
+				return fmt.Errorf("failed to apply resource quota: %w", c.retireRejectedDeployedResourceIntent(ctx, ds, resourceIndex, freshIntent, err))
 			}
 			rqUID, err := captureResourceUID(ctx, targetClient, rq)
 			if err != nil {
@@ -257,9 +259,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			gvk := pdb.GetObjectKind().GroupVersionKind()
+			priorIntents := len(ds.Status.DeployedResources)
 			resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 				APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: pdb.Name, Namespace: pdb.Namespace, Source: "debug-pdb", CreateOperationID: operationID,
 			})
+			freshIntent := resourceIndex == priorIntents
 			if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 				return fmt.Errorf("failed to persist PDB intent: %w", err)
 			}
@@ -267,7 +271,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 				return err
 			}
 			if err := createOrRecoverTargetObject(ctx, targetClient, pdb, ds); err != nil {
-				return fmt.Errorf("failed to apply pod disruption budget: %w", err)
+				return fmt.Errorf("failed to apply pod disruption budget: %w", c.retireRejectedDeployedResourceIntent(ctx, ds, resourceIndex, freshIntent, err))
 			}
 			pdbUID, err := captureResourceUID(ctx, targetClient, pdb)
 			if err != nil {
@@ -325,9 +329,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 	if err != nil {
 		return fmt.Errorf("failed to stamp workload create operation: %w", err)
 	}
+	priorIntents := len(ds.Status.DeployedResources)
 	resourceIndex := upsertDeployedResourceIntent(ds, breakglassv1alpha1.DeployedResourceRef{
 		APIVersion: gvk.GroupVersion().String(), Kind: gvk.Kind, Name: workload.GetName(), Namespace: targetNs, Source: "debug-pod", CreateOperationID: operationID,
 	})
+	freshIntent := resourceIndex == priorIntents
 	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 		return fmt.Errorf("failed to persist workload intent: %w", err)
 	}
@@ -335,7 +341,7 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		return err
 	}
 	if err := createOrRecoverTargetObject(ctx, targetClient, workload, ds); err != nil {
-		return fmt.Errorf("failed to apply workload: %w", err)
+		return fmt.Errorf("failed to apply workload: %w", c.retireRejectedDeployedResourceIntent(ctx, ds, resourceIndex, freshIntent, err))
 	}
 
 	workloadUID, err := captureResourceUID(ctx, targetClient, workload)
@@ -387,6 +393,28 @@ func upsertDeployedResourceIntent(ds *breakglassv1alpha1.DebugSession, desired b
 	}
 	ds.Status.DeployedResources = append(ds.Status.DeployedResources, desired)
 	return len(ds.Status.DeployedResources) - 1
+}
+
+// retireRejectedDeployedResourceIntent drops a fresh create intent whose
+// Create the API definitively rejected (for example an admission denial), so
+// cleanup does not report a never-created resource as residual. Intents left
+// by an earlier attempt stay unresolved: an ambiguous create may have committed.
+func (c *DebugSessionController) retireRejectedDeployedResourceIntent(ctx context.Context, ds *breakglassv1alpha1.DebugSession, index int, fresh bool, createErr error) error {
+	if !fresh || !isTrackedCreateRejected(createErr) {
+		return createErr
+	}
+	ds.Status.DeployedResources = slices.Delete(ds.Status.DeployedResources, index, index+1)
+	return c.persistRejectedCreateOutcome(ctx, ds, createErr)
+}
+
+func (c *DebugSessionController) persistRejectedCreateOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, createErr error) error {
+	if c.client == nil {
+		return createErr
+	}
+	if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+		return errors.Join(createErr, fmt.Errorf("persist rejected create outcome: %w", err))
+	}
+	return createErr
 }
 
 type debugSessionStatusConflict struct{ err error }
@@ -920,7 +948,9 @@ func (c *DebugSessionController) deployPodTemplateResource(
 		Created:           true,
 		CreateOperationID: operationID,
 	}
+	priorIntents := len(ds.Status.PodTemplateResourceStatuses)
 	statusIndex := upsertPodTemplateResourceIntent(ds, status)
+	freshIntent := statusIndex == priorIntents
 	if c.client != nil {
 		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
 			return fmt.Errorf("failed to persist pod template resource intent: %w", err)
@@ -936,6 +966,10 @@ func (c *DebugSessionController) deployPodTemplateResource(
 	// session must never be adopted.
 	obj.SetManagedFields(nil)
 	if err := applyOwnedTrackedResource(ctx, targetClient, obj, ds); err != nil {
+		if freshIntent && isTrackedCreateRejected(err) {
+			ds.Status.PodTemplateResourceStatuses = slices.Delete(ds.Status.PodTemplateResourceStatuses, statusIndex, statusIndex+1)
+			err = c.persistRejectedCreateOutcome(ctx, ds, err)
+		}
 		return fmt.Errorf("apply pod template resource failed: %w", err)
 	}
 	// Record the target UID as the durable outcome.

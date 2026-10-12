@@ -54,6 +54,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A DebugSession whose workload, ResourceQuota, PodDisruptionBudget or
+  pod-template resource is definitively rejected on create (for example an
+  admission webhook denial) no longer reports that never-created resource as a
+  `CleanupFailed` residual. The session still fails with the admission denial
+  in its message. Ambiguous creates (timeouts) remain tracked for cleanup.
 - Diagnostic artifact cleanup now deletes collector Jobs with background
   propagation. Previously the `batch/v1` legacy orphan default left each
   collector Pod behind (`Succeeded`, no owner reference) after the Job was

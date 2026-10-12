@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"strings"
@@ -311,7 +312,11 @@ func applyOwnedTrackedResource(ctx context.Context, target client.Client, obj cl
 
 func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj client.Object, session *breakglassv1alpha1.DebugSession, createErr error) error {
 	if !apierrors.IsAlreadyExists(createErr) && !isAmbiguousCreateError(createErr) {
-		return fmt.Errorf("create tracked resource: %w", createErr)
+		err := fmt.Errorf("create tracked resource: %w", createErr)
+		if apierrors.IsBadRequest(createErr) || apierrors.IsInvalid(createErr) || apierrors.IsForbidden(createErr) || apierrors.IsUnauthorized(createErr) {
+			return &trackedCreateRejectedError{err: err}
+		}
+		return err
 	}
 	if session == nil || session.UID == "" {
 		return fmt.Errorf("cannot recover tracked resource without a session UID: %w", createErr)
@@ -353,6 +358,19 @@ func recoverTrackedCreateResult(ctx context.Context, target client.Client, obj c
 	obj.SetUID(existing.GetUID())
 	obj.SetResourceVersion(existing.GetResourceVersion())
 	return nil
+}
+
+// trackedCreateRejectedError means the API explicitly rejected this Create
+// (for example an admission denial), so the object was never persisted.
+// Transport failures and recovery errors never carry this evidence.
+type trackedCreateRejectedError struct{ err error }
+
+func (e *trackedCreateRejectedError) Error() string { return e.err.Error() }
+func (e *trackedCreateRejectedError) Unwrap() error { return e.err }
+
+func isTrackedCreateRejected(err error) bool {
+	var rejected *trackedCreateRejectedError
+	return errors.As(err, &rejected)
 }
 
 func stampCreateOperation(obj client.Object, session *breakglassv1alpha1.DebugSession) (string, error) {
