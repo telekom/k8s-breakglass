@@ -19,6 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -277,6 +278,41 @@ func TestCleanupRemovesOnlyProvenResources(t *testing.T) {
 	require.Empty(t, current.Status.Resources)
 	require.Error(t, spoke.Get(context.Background(), client.ObjectKeyFromObject(secret), &corev1.Secret{}))
 	require.Error(t, spoke.Get(context.Background(), client.ObjectKeyFromObject(job), &batchv1.Job{}))
+}
+
+func TestCleanupDeletesCollectorResourcesWithBackgroundPropagation(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, batchv1.AddToScheme(scheme))
+	artifact := artifactForValidation()
+	artifact.Spec.TargetClusterUID = "cluster-uid"
+	artifact.Status.TargetCluster = "spoke"
+	artifact.Status.TargetNamespace = "target"
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "upload", Namespace: "target", UID: types.UID("secret-uid")}}
+	job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "collect", Namespace: "target", UID: types.UID("job-uid")}}
+	artifact.Status.Resources = []breakglassv1alpha1.ArtifactResourceReference{{Kind: "Secret", Namespace: "target", Name: "upload", UID: string(secret.UID), OperationID: "artifact-uid/secret"}, {Kind: "Job", Namespace: "target", Name: "collect", UID: string(job.UID), OperationID: "artifact-uid/job"}}
+	hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&artifact).WithStatusSubresource(&breakglassv1alpha1.DebugSessionArtifact{}).Build()
+	deletes := map[string]*client.DeleteOptions{}
+	spoke := fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret, job).WithInterceptorFuncs(interceptor.Funcs{
+		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+			options := &client.DeleteOptions{}
+			options.ApplyOptions(opts)
+			deletes[fmt.Sprintf("%T", obj)] = options
+			return c.Delete(ctx, obj, opts...)
+		},
+	}).Build()
+	provider := &testTargetProvider{client: spoke, config: &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{UID: types.UID("cluster-uid")}}}
+	reconciler := &Reconciler{Client: hub, LiveReader: hub, ClusterProvider: provider}
+	require.NoError(t, reconciler.cleanupSpokeResources(context.Background(), &artifact))
+	jobDelete := deletes["*v1.Job"]
+	require.NotNil(t, jobDelete, "collector Job must be deleted")
+	// Without an explicit policy the API server orphans batch/v1 Job Pods.
+	require.NotNil(t, jobDelete.PropagationPolicy, "collector Job delete must set a propagation policy")
+	require.Equal(t, metav1.DeletePropagationBackground, *jobDelete.PropagationPolicy)
+	require.NotNil(t, jobDelete.Preconditions)
+	require.Equal(t, job.UID, *jobDelete.Preconditions.UID)
+	require.NotNil(t, deletes["*v1.Secret"], "upload Secret must be deleted")
 }
 
 func TestPersistResourceIntentRejectsTerminalArtifactButRecordsExistingUID(t *testing.T) {

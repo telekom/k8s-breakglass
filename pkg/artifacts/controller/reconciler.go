@@ -638,7 +638,9 @@ func (reconciler *Reconciler) cleanupSpokeResources(ctx context.Context, object 
 		}
 		liveResourceVersion := resource.GetResourceVersion()
 		uid := types.UID(reference.UID)
-		if err := targetClient.Delete(ctx, resource, &ctrlclient.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &liveResourceVersion}}); err != nil && !apierrors.IsNotFound(err) {
+		// batch/v1 Jobs default to orphaning their Pods; propagate so collector Pods are garbage-collected.
+		propagation := metav1.DeletePropagationBackground
+		if err := targetClient.Delete(ctx, resource, &ctrlclient.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid, ResourceVersion: &liveResourceVersion}, PropagationPolicy: &propagation}); err != nil && !apierrors.IsNotFound(err) {
 			return fmt.Errorf("delete spoke artifact resource %s/%s: %w", reference.Namespace, reference.Name, err)
 		}
 		if err := targetClient.Get(ctx, key, resource); err == nil {
