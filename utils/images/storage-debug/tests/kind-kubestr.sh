@@ -98,7 +98,7 @@ docker exec "${CLUSTER}-control-plane" ctr --namespace k8s.io images inspect "$l
 
 "$KUBECTL_BIN" create namespace "$NAMESPACE" >/dev/null
 "$KUBECTL_BIN" label namespace "$NAMESPACE" \
-    pod-security.kubernetes.io/enforce=baseline \
+    pod-security.kubernetes.io/enforce=restricted \
     pod-security.kubernetes.io/audit=restricted \
     pod-security.kubernetes.io/warn=restricted >/dev/null
 "$KUBECTL_BIN" create namespace "$SENTINEL_NAMESPACE" >/dev/null

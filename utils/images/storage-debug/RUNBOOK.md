@@ -44,6 +44,12 @@ fixes are needed, then scan the exact built digest before publication.
 4. Deploy a non-interactive Job (`allowExec: false`) from the signed immutable
    storage-debug digest. Inject that same digest as
    `STORAGE_DEBUG_WORKLOAD_IMAGE` and the namespace through the Downward API.
+   Also inject the runner Pod's `metadata.name` and `metadata.uid` as
+   `STORAGE_DEBUG_OWNER_POD_NAME` and `STORAGE_DEBUG_OWNER_POD_UID` through
+   the Downward API, so the runner owns kubestr's PVC, ConfigMap and fio Pod
+   and garbage collection removes them if kubestr is killed. If the image
+   needs registry credentials, set `STORAGE_DEBUG_IMAGE_PULL_SECRETS` to
+   provider-owned Secret names in the session namespace.
 5. Use `plan` first if reviewing a new profile. Run one of `performance`,
    `snapshot-restore`, `snapshot-source-clone`, or `block-volume` with typed
    class selections. Never pass through arbitrary kubestr flags.

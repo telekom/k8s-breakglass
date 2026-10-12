@@ -58,6 +58,8 @@ contract:
   provider_owned:
     - namespace
     - workload-image-digest
+    - runner-owner-identity
+    - image-pull-secrets
     - service-account
     - rbac
     - admission-policy

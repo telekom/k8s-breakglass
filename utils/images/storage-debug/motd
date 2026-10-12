@@ -17,6 +17,7 @@ Internal: /usr/share/breakglass/runbooks/internal (optional read-only mount)
 Defaults: 16 MiB, 5 seconds, 5 ioping requests. Configure STORAGE_TEST_PATH
 and the STORAGE_TEST_* variables for a generic mount appropriate to your pod.
 Cluster workflows require POD_NAMESPACE and an immutable provider-owned
-STORAGE_DEBUG_WORKLOAD_IMAGE. They never accept a user-selected command,
+STORAGE_DEBUG_WORKLOAD_IMAGE; inject STORAGE_DEBUG_OWNER_POD_NAME/UID via the
+Downward API so kubestr's objects are owned by the runner Pod. They never accept a user-selected command,
 image, namespace, ServiceAccount, capability, or RBAC object.
 Internal runbook bundles are documentation only: never source or execute them.

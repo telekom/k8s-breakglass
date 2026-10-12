@@ -39,6 +39,8 @@ operations:
 fixed:
   childImage: immutable-provider-owned-digest
   namespace: downward-api
+  childOwner: downward-api-runner-pod-name-and-uid
+  childImagePullSecrets: provider-owned-optional
   cleanup: true
   runAsUser: 65532
   upstreamRunbookRoot: /usr/share/breakglass/runbooks/upstream/storage-diagnostics

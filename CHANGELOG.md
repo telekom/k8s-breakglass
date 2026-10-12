@@ -59,6 +59,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admission webhook denial) no longer reports that never-created resource as a
   `CleanupFailed` residual. The session still fails with the admission denial
   in its message. Ambiguous creates (timeouts) remain tracked for cleanup.
+- The storage-debug image patches kubestr so its fio child Pod runs non-root
+  (UID/GID 65532, `fsGroup` 65532, RuntimeDefault seccomp, all capabilities
+  dropped, no ServiceAccount token) and passes restricted Pod Security
+  admission. With `STORAGE_DEBUG_OWNER_POD_NAME`/`STORAGE_DEBUG_OWNER_POD_UID`
+  the runner Pod owns the generated PVC, ConfigMap and Pod, so they are
+  garbage-collected when the session ends even if kubestr is killed;
+  `STORAGE_DEBUG_IMAGE_PULL_SECRETS` is copied to the fio Pod.
+
 - Diagnostic artifact cleanup now deletes collector Jobs with background
   propagation. Previously the `batch/v1` legacy orphan default left each
   collector Pod behind (`Succeeded`, no owner reference) after the Job was
