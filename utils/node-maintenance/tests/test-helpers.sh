@@ -64,6 +64,18 @@ assert_neighbor_literal_rejected_before_network() {
 assert_neighbor_literal_accepted 192.0.2.2 -4
 assert_neighbor_literal_accepted 2001:db8::2 -6
 assert_neighbor_literal_accepted ::1 -6
+
+# Controller deadlines derive from time.Duration-bounded session expiry and
+# can exceed the 10-digit Unix timestamp range after 2286-11-20.
+BREAKGLASS_ACTION_DEADLINE_UNIX=10000000000 sh -c '. "$1"; validate_action_deadline' sh "$root_dir/lib/common.sh" \
+	|| fail "11-digit future action deadline was rejected"
+pass "11-digit future action deadline is accepted"
+# shellcheck disable=SC2016
+assert_rejected "12-digit action deadline" "exceeds the bounded timestamp format" \
+	env BREAKGLASS_ACTION_DEADLINE_UNIX=100000000000 sh -c '. "$1"; validate_action_deadline' sh "$root_dir/lib/common.sh"
+# shellcheck disable=SC2016
+assert_rejected "expired action deadline" "approved action deadline expired" \
+	env BREAKGLASS_ACTION_DEADLINE_UNIX=1 sh -c '. "$1"; validate_action_deadline' sh "$root_dir/lib/common.sh"
 for invalid_neighbor in example.com 192.0.2.256 192.0.2.01 192.0.2 2001:db8:::1 2001:db8::1::2 2001:db8:1; do
 	assert_neighbor_literal_rejected_before_network "$invalid_neighbor"
 done

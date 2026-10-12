@@ -196,7 +196,7 @@ validate_action_deadline() {
 	case "$action_deadline" in
 		*[!0-9]*) die "BREAKGLASS_ACTION_DEADLINE_UNIX must be an exact Unix timestamp" ;;
 	esac
-	[ "${#action_deadline}" -le 10 ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX exceeds the bounded timestamp format"
+	[ "${#action_deadline}" -le 11 ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX exceeds the bounded timestamp format"
 	[ "$action_deadline" -gt "$(date +%s)" ] || die "approved action deadline expired; no repair was attempted"
 }
 
