@@ -857,6 +857,72 @@ func TestNodeMaintenanceDeletionDuringActivationReleasesHubConnectionLease(t *te
 	require.True(t, apierrors.IsNotFound(spoke.Get(t.Context(), client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: maintenanceIdentity("node-a")}, &coordinationv1.Lease{})))
 }
 
+func TestNodeMaintenancePendingValidationSeparatesTargetOutageFromInvalidRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		setup       func(*DebugSessionController, client.Client)
+		unavailable bool
+		status      int
+	}{
+		{name: "matching node", status: http.StatusOK},
+		{name: "node absent", setup: func(_ *DebugSessionController, spoke client.Client) {
+			require.NoError(t, spoke.Delete(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}))
+		}, status: http.StatusBadRequest},
+		{name: "node uid mismatch", setup: func(_ *DebugSessionController, spoke client.Client) {
+			node := &corev1.Node{}
+			require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
+			require.NoError(t, spoke.Delete(t.Context(), node))
+			require.NoError(t, spoke.Create(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a", UID: "replacement"}}))
+		}, status: http.StatusBadRequest},
+		{name: "target client unavailable", setup: func(c *DebugSessionController, _ client.Client) {
+			c.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return nil, errors.New("dial target: connection refused") }
+		}, unavailable: true, status: http.StatusServiceUnavailable},
+		{name: "node read timeout", setup: func(c *DebugSessionController, spoke client.Client) {
+			c.targetClientFactory = func(_ *rest.Config) (client.Client, error) {
+				return interceptor.NewClient(spoke.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*corev1.Node); ok {
+						return apierrors.NewTimeoutError("node read timed out", 1)
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				}}), nil
+			}
+		}, unavailable: true, status: http.StatusServiceUnavailable},
+		{name: "node read forbidden", setup: func(c *DebugSessionController, spoke client.Client) {
+			c.targetClientFactory = func(_ *rest.Config) (client.Client, error) {
+				return interceptor.NewClient(spoke.(client.WithWatch), interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*corev1.Node); ok {
+						return apierrors.NewForbidden(corev1.Resource("nodes"), key.Name, errors.New("rbac"))
+					}
+					return cl.Get(ctx, key, obj, opts...)
+				}}), nil
+			}
+		}, unavailable: true, status: http.StatusServiceUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, spoke, _ := maintenanceFixture(t)
+			if tc.setup != nil {
+				tc.setup(c, spoke)
+			}
+			template := &breakglassv1alpha1.DebugSessionTemplate{Spec: *ds.Status.ResolvedTemplate.DeepCopy()}
+			err := c.validateMaintenancePending(t.Context(), ds, template, nil)
+			if tc.status == http.StatusOK {
+				require.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			require.Equal(t, tc.unavailable, errors.Is(err, errMaintenanceTargetUnavailable), err.Error())
+
+			recorder := httptest.NewRecorder()
+			ginCtx, _ := gin.CreateTestContext(recorder)
+			respondMaintenanceValidationError(ginCtx, zap.NewNop().Sugar(), err)
+			require.Equal(t, tc.status, recorder.Code, recorder.Body.String())
+			if tc.unavailable {
+				require.NotContains(t, recorder.Body.String(), "connection refused", "target internals must not leak to the requester")
+			}
+		})
+	}
+}
+
 func TestNodeMaintenancePreCreateFailureDoesNotRecordUnknownOutcome(t *testing.T) {
 	for _, stage := range []string{"job", "pod"} {
 		for _, followUp := range []string{"retry", "cleanup"} {

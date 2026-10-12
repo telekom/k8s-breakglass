@@ -1389,7 +1389,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 	if template.Spec.NodeMaintenance != nil {
 		validator := NewDebugSessionController(c.log, c.client, c.ccProvider).WithAPIReader(authorizationReader)
 		if err := validator.validateMaintenancePending(apiCtx, session, template, resolvedBinding); err != nil {
-			apiresponses.RespondBadRequest(ctx, err.Error())
+			respondMaintenanceValidationError(ctx, c.log, err)
 			return
 		}
 	}

@@ -14,9 +14,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
+	"go.uber.org/zap"
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,6 +35,10 @@ import (
 )
 
 var errNodeMaintenanceBusy = errors.New("node-maintenance Lease is held by another session")
+
+// errMaintenanceTargetUnavailable marks failures to reach or read the target
+// cluster, as opposed to a request that does not match the live Node.
+var errMaintenanceTargetUnavailable = errors.New("node-maintenance target cluster is unavailable")
 
 const maintenanceFinalizer = "breakglass.t-caas.telekom.com/node-maintenance-cleanup"
 const maintenanceJobManager = "breakglass.t-caas.telekom.com/node-maintenance"
@@ -131,7 +138,10 @@ func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *brea
 func validateMaintenanceNode(ctx context.Context, target ctrlclient.Reader, request *breakglassv1alpha1.NodeMaintenanceTarget) error {
 	node := &corev1.Node{}
 	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: request.TargetNode}, node); err != nil {
-		return fmt.Errorf("read exact maintenance Node: %w", err)
+		if apierrors.IsNotFound(err) {
+			return fmt.Errorf("read exact maintenance Node: %w", err)
+		}
+		return fmt.Errorf("%w: read exact maintenance Node: %w", errMaintenanceTargetUnavailable, err)
 	}
 	if string(node.UID) != request.TargetNodeUID || !node.DeletionTimestamp.IsZero() {
 		return fmt.Errorf("maintenance Node UID changed or Node is being deleted")
@@ -154,11 +164,11 @@ func (c *DebugSessionController) validateMaintenancePending(ctx context.Context,
 	}
 	target, fence, release, err := c.maintenanceClient(ctx, ds)
 	if err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errMaintenanceTargetUnavailable, err)
 	}
 	defer release()
 	if err := fence(); err != nil {
-		return err
+		return fmt.Errorf("%w: %w", errMaintenanceTargetUnavailable, err)
 	}
 	return validateMaintenanceNode(ctx, target, ds.Spec.NodeMaintenance)
 }
@@ -871,4 +881,18 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		return err
 	}
 	return c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.Released = true })
+}
+
+// respondMaintenanceValidationError keeps a request that does not match the
+// live target a client error, while an unreachable or unreadable target cluster
+// is reported as a retryable 503.
+func respondMaintenanceValidationError(ctx *gin.Context, log *zap.SugaredLogger, err error) {
+	if errors.Is(err, errMaintenanceTargetUnavailable) {
+		if log != nil {
+			log.Warnw("Node-maintenance target validation unavailable", "error", err)
+		}
+		apiresponses.RespondServiceUnavailable(ctx, "node-maintenance target cluster")
+		return
+	}
+	apiresponses.RespondBadRequest(ctx, err.Error())
 }
