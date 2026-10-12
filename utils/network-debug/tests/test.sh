@@ -434,6 +434,7 @@ run_trace_fixture() {
 		NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
 		NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
 		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+		NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="${trace_fixture_stop_timeout:-2}" \
 		PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace \
 			--duration 1 --events "$trace_fixture_events" --output trace.log
 }
@@ -602,6 +603,94 @@ run_trace_fixture 3 >"$trace_fixture/limit-summary"
 grep -Fx 'event_count 3' "$trace_fixture/limit-summary" >/dev/null
 test "$(wc -l <"$trace_fixture/work/trace.log" | tr -d ' ')" -eq 3
 test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# Reaching the event limit makes pwru detach its kprobes, which can outlast
+# the trace duration on real kernels. The stop grace covers that detach, so a
+# natural exit after the duration deadline is still a bounded completion.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+trap '' INT TERM
+sleep 2
+exit 1
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-slow-detach-within-grace'
+rm -f "$trace_fixture/work/trace.log"
+trace_fixture_stop_timeout=5 run_trace_fixture 3 >"$trace_fixture/slow-detach-summary"
+grep -Fx 'event_count 3' "$trace_fixture/slow-detach-summary" >/dev/null
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+# When detach outlasts even the grace, the forced stop is accepted only with
+# pwru's exact event-limit marker, the attach/detach lifecycle, and exactly
+# that many tuples.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-stopped-during-detach'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_fixture 3 >"$trace_fixture/limit-stopped-summary"
+grep -Fx 'event_count 3' "$trace_fixture/limit-stopped-summary" >/dev/null
+test "$(wc -l <"$trace_fixture/work/trace.log" | tr -d ' ')" -eq 3
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-stopped-evidence-mismatch'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/limit-stopped-mismatch-summary" 2>"$trace_fixture/limit-stopped-mismatch-error"; then
+	printf '%s\n' 'trace accepted a forced detach stop whose evidence did not match the limit marker' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=2' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-stopped-false-marker'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/limit-stopped-false-summary" 2>"$trace_fixture/limit-stopped-false-error"; then
+	printf '%s\n' 'trace accepted a forced detach stop with a marker for a different event limit' >&2
+	exit 1
+fi
+grep -Fx 'net-debug: pwru exited with status 137' "$trace_fixture/limit-stopped-false-error" >/dev/null
+test ! -e "$trace_fixture/work/trace.log"
+
+test_context='trace-stop-timeout-bound'
+if trace_fixture_stop_timeout=121 run_trace_fixture 3 >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted a stop grace above 120 seconds' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
 
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh

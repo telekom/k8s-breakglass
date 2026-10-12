@@ -67,10 +67,12 @@ absence checks even after failure or interruption.
 The real-tool proof runs `pwru --backend kprobe` with a native event-line bound
 and an independent regular-file size bound. An owned `setsid` process group
 receives SIGINT at the trace duration and forces SIGKILL after the bounded
-`NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace period (15 seconds by default).
+`NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace period (60 seconds by default,
+at most 120), which covers kprobe detach on real kernels.
 A still-running container is a failed proof and is cleaned up only when its
 invocation ownership is verified.
 If KILL is required, the wrapper accepts the controlled stop only after pwru
-has logged attach, signal, and detach lifecycle records without an error-level
-diagnostic and the bounded output contains packet tuples; missing lifecycle or
+has logged attach, signal (or its exact event-limit marker with exactly that
+many tuples), and detach lifecycle records without an error-level diagnostic
+and the bounded output contains packet tuples; missing lifecycle or
 empty output remains a failure.

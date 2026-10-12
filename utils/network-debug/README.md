@@ -205,14 +205,19 @@ privileged fallback is permitted.
 If the watchdog must force KILL at the duration plus grace deadline, the
 wrapper accepts that controlled stop only when pwru logged its attach,
 signal, and detach lifecycle without an error-level diagnostic and the bounded
-output contains packet tuples. A missing lifecycle or empty output remains a
-failure.
+output contains packet tuples. pwru that already reached `--events` and was
+stopped while still detaching is accepted the same way, but only with its
+exact `Printed events ... count=<events>` marker and exactly that many tuples.
+A missing lifecycle or empty output remains a failure.
 The `pwru` portion requires readable `/sys/kernel/btf/vmlinux`, debugfs,
 tracefs, securityfs, and BPF/PERFMON support. Local macOS/Windows Docker Desktop or a
 non-kind Kubernetes context is not a substitute for that job.
 
 Graceful `pwru` shutdown is bounded by `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS`
-(15 seconds by default) after the primary duration. The wrapper sends INT via
+(60 seconds by default, at most 120) after the primary duration. Detaching
+thousands of kprobes takes 40-55 seconds on real 6.x kernels, both after INT
+and after pwru reaches its event limit, so a shorter grace kills a complete
+trace mid-detach. The wrapper sends INT via
 the process-group watchdog and then forces KILL at that deadline; a still-running
 container is removed only after the run-ownership checks.
 
