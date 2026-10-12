@@ -58,7 +58,9 @@ func TestRejectedCreateIntentIsNotReportedAsCleanupResidual(t *testing.T) {
 			configure: func(tpl *breakglassv1alpha1.DebugSessionTemplate) {
 				tpl.Spec.PodDisruptionBudget = &breakglassv1alpha1.DebugPDBConfig{Enabled: true, MinAvailable: &maxPods}
 			},
-			reject:    func(obj client.Object) bool { return obj.GetObjectKind().GroupVersionKind().Kind == "PodDisruptionBudget" },
+			reject: func(obj client.Object) bool {
+				return obj.GetObjectKind().GroupVersionKind().Kind == "PodDisruptionBudget"
+			},
 			createErr: apierrors.NewForbidden(schema.GroupResource{Group: "policy", Resource: "poddisruptionbudgets"}, "pdb", errors.New(denial)),
 			resolved:  true,
 		},
