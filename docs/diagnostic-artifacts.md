@@ -83,7 +83,8 @@ expiry before each spoke write. Because Kubernetes owner references do not
 perform garbage collection across clusters, the hub status stores the exact
 spoke resource UIDs and resource versions. Cleanup deletes only those exact
 objects and leaves a replacement with the same name untouched; an outage or
-resource finalizer keeps the artifact finalizer pending for retry.
+resource finalizer keeps the artifact finalizer pending for retry. Deletes use
+background propagation so collector Pods are garbage-collected with their Job.
 
 Uploads are staged in a bounded private file and validated against the exact
 recipe manifest, output set, archive framing, size, and SHA-256 digest before

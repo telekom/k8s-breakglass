@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Diagnostic artifact cleanup now deletes collector Jobs with background
+  propagation. Previously the `batch/v1` legacy orphan default left each
+  collector Pod behind (`Succeeded`, no owner reference) after the Job was
+  removed on session termination or expiry.
 - `kubectl debug` pod copies no longer inherit ephemeral containers from the
   source pod. Previously a pod copy failed with an internal error when the
   source pod had received an ephemeral debug container, because the API server
