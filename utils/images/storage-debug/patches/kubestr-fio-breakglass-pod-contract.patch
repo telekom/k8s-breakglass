@@ -1,0 +1,180 @@
+diff --git a/pkg/fio/breakglass_test.go b/pkg/fio/breakglass_test.go
+new file mode 100644
+index 0000000..c5ae634
+--- /dev/null
++++ b/pkg/fio/breakglass_test.go
+@@ -0,0 +1,63 @@
++package fio
++
++import (
++	"context"
++	"testing"
++
++	"k8s.io/client-go/kubernetes/fake"
++)
++
++func TestBreakglassFioPodContract(t *testing.T) {
++	t.Setenv("STORAGE_DEBUG_OWNER_POD_NAME", "runner")
++	t.Setenv("STORAGE_DEBUG_OWNER_POD_UID", "0f8d3c1e-0000-4000-8000-000000000001")
++	t.Setenv("STORAGE_DEBUG_IMAGE_PULL_SECRETS", "registry, ,mirror")
++	stepper := &fioStepper{cli: fake.NewSimpleClientset(), podReady: &fakePodReadyChecker{}}
++	ctx := context.Background()
++
++	pvc, err := stepper.createPVC(ctx, "fast", "4Gi", "ns")
++	if err != nil {
++		t.Fatal(err)
++	}
++	cm, err := stepper.loadConfigMap(ctx, &RunFIOArgs{Namespace: "ns"})
++	if err != nil {
++		t.Fatal(err)
++	}
++	pod, err := stepper.createPod(ctx, "pvc", "cm", "file", "ns", nil, "image@sha256:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	for kind, refs := range map[string]int{"pvc": len(pvc.OwnerReferences), "configmap": len(cm.OwnerReferences), "pod": len(pod.OwnerReferences)} {
++		if refs != 1 {
++			t.Fatalf("%s owner references = %d, want 1", kind, refs)
++		}
++	}
++	owner := pod.OwnerReferences[0]
++	if owner.Kind != "Pod" || owner.Name != "runner" || string(owner.UID) != "0f8d3c1e-0000-4000-8000-000000000001" {
++		t.Fatalf("unexpected owner %+v", owner)
++	}
++	if got := pod.Spec.ImagePullSecrets; len(got) != 2 || got[0].Name != "registry" || got[1].Name != "mirror" {
++		t.Fatalf("unexpected pull secrets %+v", got)
++	}
++	sc, csc := pod.Spec.SecurityContext, pod.Spec.Containers[0].SecurityContext
++	if sc == nil || *sc.RunAsUser != 65532 || *sc.FSGroup != 65532 || !*sc.RunAsNonRoot || sc.SeccompProfile == nil {
++		t.Fatalf("unexpected pod security context %+v", sc)
++	}
++	if csc == nil || *csc.AllowPrivilegeEscalation || len(csc.Capabilities.Drop) != 1 || csc.Capabilities.Drop[0] != "ALL" {
++		t.Fatalf("unexpected container security context %+v", csc)
++	}
++	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
++		t.Fatal("fio pod must not mount a ServiceAccount token")
++	}
++}
++
++func TestBreakglassFioWithoutOwnerEnv(t *testing.T) {
++	t.Setenv("STORAGE_DEBUG_OWNER_POD_NAME", "")
++	t.Setenv("STORAGE_DEBUG_OWNER_POD_UID", "")
++	t.Setenv("STORAGE_DEBUG_IMAGE_PULL_SECRETS", "")
++	if refs := breakglassOwnerReferences(); refs != nil {
++		t.Fatalf("owner references without env = %+v", refs)
++	}
++	if secrets := breakglassImagePullSecrets(); secrets != nil {
++		t.Fatalf("pull secrets without env = %+v", secrets)
++	}
++}
+diff --git a/pkg/fio/fio.go b/pkg/fio/fio.go
+index 514641e..be07492 100644
+--- a/pkg/fio/fio.go
++++ b/pkg/fio/fio.go
+@@ -6,6 +6,7 @@ import (
+ 	"fmt"
+ 	"os"
+ 	"path/filepath"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/briandowns/spinner"
+@@ -17,6 +18,7 @@ import (
+ 	"k8s.io/apimachinery/pkg/api/resource"
+ 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+ 	"k8s.io/apimachinery/pkg/labels"
++	"k8s.io/apimachinery/pkg/types"
+ 	"k8s.io/client-go/kubernetes"
+ )
+ 
+@@ -227,6 +229,7 @@ func (s *fioStepper) loadConfigMap(ctx context.Context, args *RunFIOArgs) (*v1.C
+ 	// create
+ 	configMap.GenerateName = KubestrFIOJobGenName
+ 	configMap.Labels = map[string]string{CreatedByFIOLabel: "true"}
++	configMap.OwnerReferences = breakglassOwnerReferences()
+ 	cm, err := s.cli.CoreV1().ConfigMaps(args.Namespace).Create(ctx, configMap, metav1.CreateOptions{})
+ 	if err != nil {
+ 		return nil, err
+@@ -241,7 +244,8 @@ func (s *fioStepper) createPVC(ctx context.Context, storageclass, size, namespac
+ 	}
+ 	pvc := &v1.PersistentVolumeClaim{
+ 		ObjectMeta: metav1.ObjectMeta{
+-			GenerateName: PVCGenerateName,
++			GenerateName:    PVCGenerateName,
++			OwnerReferences: breakglassOwnerReferences(),
+ 		},
+ 		Spec: v1.PersistentVolumeClaimSpec{
+ 			StorageClassName: &storageclass,
+@@ -264,6 +268,36 @@ func (s *fioStepper) deletePVC(ctx context.Context, pvcName, namespace string) e
+ 	return s.cli.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvcName, metav1.DeleteOptions{})
+ }
+ 
++var (
++	fioPodID                    int64 = 65532
++	fioPodRunAsNonRoot                = true
++	fioPodNoPrivilegeEscalation       = false
++	fioPodAutomountToken              = false
++)
++
++// breakglassOwnerReferences makes the runner Pod own every generated object,
++// so Kubernetes garbage collection removes them when the session deletes the
++// runner even if kubestr is killed before its deferred cleanup runs.
++func breakglassOwnerReferences() []metav1.OwnerReference {
++	name, uid := os.Getenv("STORAGE_DEBUG_OWNER_POD_NAME"), os.Getenv("STORAGE_DEBUG_OWNER_POD_UID")
++	if name == "" || uid == "" {
++		return nil
++	}
++	return []metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: name, UID: types.UID(uid)}}
++}
++
++// breakglassImagePullSecrets passes the runner's registry credentials to the
++// fio Pod, which otherwise uses the namespace's default ServiceAccount.
++func breakglassImagePullSecrets() []v1.LocalObjectReference {
++	var refs []v1.LocalObjectReference
++	for _, name := range strings.Split(os.Getenv("STORAGE_DEBUG_IMAGE_PULL_SECRETS"), ",") {
++		if name = strings.TrimSpace(name); name != "" {
++			refs = append(refs, v1.LocalObjectReference{Name: name})
++		}
++	}
++	return refs
++}
++
+ func (s *fioStepper) createPod(ctx context.Context, pvcName, configMapName, testFileName, namespace string, nodeSelector map[string]string, image string) (*v1.Pod, error) {
+ 	if pvcName == "" || configMapName == "" || testFileName == "" {
+ 		return nil, fmt.Errorf("create pod missing required arguments")
+@@ -275,8 +309,9 @@ func (s *fioStepper) createPod(ctx context.Context, pvcName, configMapName, test
+ 
+ 	pod := &v1.Pod{
+ 		ObjectMeta: metav1.ObjectMeta{
+-			GenerateName: PodGenerateName,
+-			Namespace:    namespace,
++			GenerateName:    PodGenerateName,
++			Namespace:       namespace,
++			OwnerReferences: breakglassOwnerReferences(),
+ 		},
+ 		Spec: v1.PodSpec{
+ 			Containers: []v1.Container{{
+@@ -288,7 +323,23 @@ func (s *fioStepper) createPod(ctx context.Context, pvcName, configMapName, test
+ 					{Name: "config-map", MountPath: ConfigMapMountPath},
+ 				},
+ 				Image: image,
++				SecurityContext: &v1.SecurityContext{
++					AllowPrivilegeEscalation: &fioPodNoPrivilegeEscalation,
++					Capabilities:             &v1.Capabilities{Drop: []v1.Capability{"ALL"}},
++				},
+ 			}},
++			// Breakglass: the provider image runs as 65532, so a freshly
++			// provisioned root-owned volume must be group-writable for fio.
++			// The fio Pod never needs Kubernetes API credentials.
++			AutomountServiceAccountToken: &fioPodAutomountToken,
++			ImagePullSecrets:             breakglassImagePullSecrets(),
++			SecurityContext: &v1.PodSecurityContext{
++				RunAsNonRoot:   &fioPodRunAsNonRoot,
++				RunAsUser:      &fioPodID,
++				RunAsGroup:     &fioPodID,
++				FSGroup:        &fioPodID,
++				SeccompProfile: &v1.SeccompProfile{Type: v1.SeccompProfileTypeRuntimeDefault},
++			},
+ 			Volumes: []v1.Volume{
+ 				{
+ 					Name: "persistent-storage",

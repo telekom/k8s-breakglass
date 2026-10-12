@@ -123,6 +123,28 @@ if POD_NAMESPACE=incident-123 STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
     echo "performance accepted an out-of-contract PVC size" >&2
     exit 1
 fi
+POD_NAMESPACE=incident-123 STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
+    STORAGE_DEBUG_OWNER_POD_NAME=runner-abc STORAGE_DEBUG_OWNER_POD_UID=0f8d3c1e-0000-4000-8000-000000000001 \
+    STORAGE_DEBUG_IMAGE_PULL_SECRETS=registry,mirror \
+    "$dispatcher" plan performance --storage-class fast-csi >/dev/null
+if POD_NAMESPACE=incident-123 STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
+    STORAGE_DEBUG_OWNER_POD_NAME=runner-abc STORAGE_DEBUG_OWNER_POD_UID='not-a-uid' \
+    "$dispatcher" plan performance --storage-class fast-csi >/dev/null 2>&1; then
+    echo "performance accepted an invalid owner Pod UID" >&2
+    exit 1
+fi
+if POD_NAMESPACE=incident-123 STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
+    STORAGE_DEBUG_OWNER_POD_UID=0f8d3c1e-0000-4000-8000-000000000001 \
+    "$dispatcher" plan performance --storage-class fast-csi >/dev/null 2>&1; then
+    echo "performance accepted an owner UID without a Pod name" >&2
+    exit 1
+fi
+if POD_NAMESPACE=incident-123 STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
+    STORAGE_DEBUG_IMAGE_PULL_SECRETS='Bad_Secret' \
+    "$dispatcher" plan performance --storage-class fast-csi >/dev/null 2>&1; then
+    echo "performance accepted an invalid pull Secret name" >&2
+    exit 1
+fi
 if POD_NAMESPACE='incident/other' STORAGE_DEBUG_WORKLOAD_IMAGE="$immutable_image" \
     "$dispatcher" plan block-volume --storage-class fast-csi >/dev/null 2>&1; then
     echo "cluster operation accepted an invalid namespace" >&2

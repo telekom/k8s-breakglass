@@ -200,7 +200,7 @@ for denied in \
 done
 
 docker exec "${CLUSTER}-control-plane" sh -c \
-    "mkdir -p /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chown 65532:65532 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chmod 0755 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
+    "mkdir -p /var/local/${RUN_ID} /var/local/${RUN_ID}-attached && chown 0:0 /var/local/${RUN_ID} && chown 65532:65532 /var/local/${RUN_ID}-attached && chmod 0755 /var/local/${RUN_ID} /var/local/${RUN_ID}-attached"
 "$KUBECTL_BIN" apply -f - >/dev/null <<YAML
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -219,9 +219,17 @@ spec:
   accessModes: ["ReadWriteOnce"]
   persistentVolumeReclaimPolicy: Retain
   storageClassName: ${STORAGE_CLASS}
-  hostPath:
+  # A root-owned local volume proves the fio child Pod's fsGroup makes a fresh
+  # volume writable for the non-root provider image (hostPath ignores fsGroup).
+  local:
     path: /var/local/${RUN_ID}
-    type: Directory
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values: ["${CLUSTER}-control-plane"]
 ---
 apiVersion: v1
 kind: PersistentVolume
@@ -389,6 +397,14 @@ spec:
                   fieldPath: metadata.namespace
             - name: STORAGE_DEBUG_WORKLOAD_IMAGE
               value: ${loaded_ref}
+            - name: STORAGE_DEBUG_OWNER_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: STORAGE_DEBUG_OWNER_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
           securityContext:
             runAsNonRoot: true
             runAsUser: 65532
@@ -422,7 +438,7 @@ for _ in $(seq 1 180); do
 done
 [ -n "$child_pod" ] || fail "did not observe the real kubestr fio child Pod"
 
-"$KUBECTL_BIN" get pod "$child_pod" --namespace "$NAMESPACE" -o json | jq -e --arg image "$loaded_ref" '
+"$KUBECTL_BIN" get pod "$child_pod" --namespace "$NAMESPACE" -o json | jq -e --arg image "$loaded_ref" --arg job "$JOB" '
   (.spec.hostNetwork // false) == false and
   (.spec.hostPID // false) == false and
   (.spec.hostIPC // false) == false and
@@ -435,6 +451,16 @@ done
   ) and
   (.spec.containers | length == 1) and
   .spec.containers[0].image == $image and
+  .spec.automountServiceAccountToken == false and
+  (.metadata.ownerReferences | length) == 1 and
+  .metadata.ownerReferences[0].kind == "Pod" and
+  (.metadata.ownerReferences[0].name | startswith($job + "-")) and
+  .spec.securityContext.runAsNonRoot == true and
+  .spec.securityContext.runAsUser == 65532 and
+  .spec.securityContext.fsGroup == 65532 and
+  .spec.securityContext.seccompProfile.type == "RuntimeDefault" and
+  .spec.containers[0].securityContext.allowPrivilegeEscalation == false and
+  .spec.containers[0].securityContext.capabilities.drop == ["ALL"] and
   (.spec.containers[0].securityContext.privileged // false) == false and
   ((.spec.containers[0].securityContext.capabilities.add // []) | length) == 0
 ' >/dev/null || fail "kubestr child Pod escaped the expected image/namespace/volume/capability boundary"

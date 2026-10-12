@@ -65,6 +65,19 @@ The same immutable image is used for kubestr's child Pods. Do not use
 kubestr's unpinned upstream default (`ghcr.io/kastenhq/kubestr:latest`). The
 Job has a 600-second outer bound; kubestr v0.4.49 applies its own five-minute
 operation context and performs its built-in cleanup.
+The image applies `patches/kubestr-fio-breakglass-pod-contract.patch` to
+kubestr (verified by the patch's unit test during the image build):
+
+- the fio child Pod runs as UID/GID 65532 with `fsGroup: 65532`, RuntimeDefault
+  seccomp, no privilege escalation, all capabilities dropped and no
+  ServiceAccount token, so a freshly provisioned root-owned volume is writable
+  and the Pod passes restricted admission;
+- with `STORAGE_DEBUG_OWNER_POD_NAME` and `STORAGE_DEBUG_OWNER_POD_UID` (from
+  the Downward API `metadata.name`/`metadata.uid`), the runner Pod owns the
+  generated PVC, ConfigMap and Pod, so garbage collection removes them when
+  the session deletes the runner, even if kubestr is killed first;
+- `STORAGE_DEBUG_IMAGE_PULL_SECRETS` (comma-separated Secret names in
+  `POD_NAMESPACE`) is copied to the fio Pod's `imagePullSecrets`.
 
 The default Kind integration proves only `performance`/`default-fio` with a
 disposable no-provisioner volume. Kind does not provide a CSI snapshot driver

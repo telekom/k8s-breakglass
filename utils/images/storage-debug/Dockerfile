@@ -12,8 +12,13 @@ ARG X_TEXT_VERSION=v0.42.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
 # x/crypto is patched in the module graph; only require its version if linked.
+# kubestr creates the fio Pod without a security context, registry credentials
+# or an owner. The patch runs it as the image user with fsGroup, passes the
+# runner's pull secrets and makes the runner Pod own every generated object.
+COPY patches/kubestr-fio-breakglass-pod-contract.patch /src/patches/
 RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenhq/kubestr.git /src/kubestr \
     && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
+    && git -C /src/kubestr apply /src/patches/kubestr-fio-breakglass-pod-contract.patch \
     && go -C /src/kubestr get \
         github.com/moby/spdystream@v0.5.1 \
         "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
@@ -21,6 +26,7 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
         golang.org/x/oauth2@v0.27.0 \
         "golang.org/x/text@${X_TEXT_VERSION}" \
     && go -C /src/kubestr mod tidy \
+    && go -C /src/kubestr test -mod=mod ./pkg/fio/ \
     && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
     && test -x /out/kubestr \
     && go version -m /out/kubestr > /out/kubestr-build-info \
