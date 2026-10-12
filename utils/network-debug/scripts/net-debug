@@ -523,12 +523,17 @@ trace_command() {
 			# event-limit marker and been killed while still detaching; that
 			# stop is accepted only when the evidence holds exactly that many
 			# tuples (checked below via limit_completed).
+			# Evaluate the limit marker independently of the signal marker: the
+			# watchdog can interrupt pwru while it detaches after reaching its
+			# limit, and the exact tuple count must still be enforced then. A
+			# limit marker for any other count is inconsistent and fails closed.
 			stop_marker=false
-			if grep -E ' INFO Received signal, exiting program\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1; then
-				stop_marker=true
-			elif [ "$completion_count" = "$events" ]; then
+			if [ "$completion_count" = "$events" ]; then
 				stop_marker=true
 				limit_completed=true
+			elif [ -z "$completion_count" ] && \
+				grep -E ' INFO Received signal, exiting program\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1; then
+				stop_marker=true
 			fi
 			if [ ! -e "$TRACE_TIMED_OUT_FILE" ] || [ "$stop_marker" != true ] || \
 				! grep -E ' INFO Attaching kprobes via=kprobe$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \

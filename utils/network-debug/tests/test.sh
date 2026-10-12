@@ -685,6 +685,70 @@ fi
 grep -Fx 'net-debug: pwru exited with status 137' "$trace_fixture/limit-stopped-false-error" >/dev/null
 test ! -e "$trace_fixture/work/trace.log"
 
+# The watchdog may interrupt pwru while it detaches after its event limit,
+# leaving both markers (emitted directly: a shell fixture cannot trap the INT
+# that its background launch ignores). The exact limit count must still be enforced, and a
+# limit marker for a different count fails closed.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+printf '%s\n' '2026/08/27 20:00:01 INFO Received signal, exiting program..' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-and-signal-evidence-mismatch'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/limit-signal-mismatch-summary" 2>"$trace_fixture/limit-signal-mismatch-error"; then
+	printf '%s\n' 'trace accepted a limit-and-signal stop whose evidence did not match the limit marker' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=2' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+printf '%s\n' '2026/08/27 20:00:01 INFO Received signal, exiting program..' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-signal-with-false-limit-marker'
+rm -f "$trace_fixture/work/trace.log"
+if run_trace_fixture 3 >"$trace_fixture/signal-false-limit-summary" 2>"$trace_fixture/signal-false-limit-error"; then
+	printf '%s\n' 'trace accepted a signal stop carrying a limit marker for a different event limit' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/work/trace.log"
+
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' '10.0.0.1:12345 -> 10.0.0.2:80' '10.0.0.1:12346 -> 10.0.0.2:80' '10.0.0.1:12347 -> 10.0.0.2:80'
+printf '%s\n' '2026/08/27 20:00:00 INFO Attaching kprobes via=kprobe' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Printed events, exiting program.. count=3' >&2
+printf '%s\n' '2026/08/27 20:00:00 INFO Detaching kprobes...' >&2
+printf '%s\n' '2026/08/27 20:00:01 INFO Received signal, exiting program..' >&2
+trap '' INT TERM
+while :; do sleep 300; done
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+test_context='trace-limit-and-signal-exact'
+rm -f "$trace_fixture/work/trace.log"
+run_trace_fixture 3 >"$trace_fixture/limit-signal-summary"
+grep -Fx 'event_count 3' "$trace_fixture/limit-signal-summary" >/dev/null
+test "$(wc -l <"$trace_fixture/work/trace.log" | tr -d ' ')" -eq 3
+test -z "$(find "$trace_fixture/work" -maxdepth 1 -name '.net-debug.*' -print -quit)"
+rm -f "$trace_fixture/work/trace.log"
+
 test_context='trace-stop-timeout-bound'
 if trace_fixture_stop_timeout=121 run_trace_fixture 3 >/dev/null 2>&1; then
 	printf '%s\n' 'trace accepted a stop grace above 120 seconds' >&2
