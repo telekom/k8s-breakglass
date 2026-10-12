@@ -1377,8 +1377,10 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 		copyPod.Spec.Containers = append(copyPod.Spec.Containers, debugContainer)
 	}
 
-	// Reset status-related fields
+	// Reset status-related fields. Ephemeral containers injected into the
+	// source pod cannot be set on create and would make the copy invalid.
 	copyPod.Spec.NodeName = ""
+	copyPod.Spec.EphemeralContainers = nil
 	copyPod.ResourceVersion = ""
 	copyPod.UID = ""
 

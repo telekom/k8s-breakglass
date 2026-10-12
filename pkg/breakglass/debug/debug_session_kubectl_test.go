@@ -2985,6 +2985,57 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	})
 }
 
+func TestKubectlDebugHandler_CreatePodCopyDropsSourceEphemeralContainers(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	targetNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}}
+	sourceNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}}
+	sourcePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "production", UID: "pod-app-uid"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "app", Image: "myapp:v1"}},
+			EphemeralContainers: []corev1.EphemeralContainer{{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "debugger-earlier", Image: "busybox:latest"},
+				TargetContainerName:      "app",
+			}},
+		},
+	}
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-session-12345678", Namespace: "default", UID: "session-copy-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "test-user@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: func() *metav1.Time {
+				at := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+				return &at
+			}(),
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{
+					PodCopy: &breakglassv1alpha1.PodCopyConfig{Enabled: true, TargetNamespace: "debug-copies", TTL: "1h"},
+				},
+			},
+		},
+	}
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sourcePod, targetNs, sourceNs).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+		WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{
+		clients: map[string]ctrlclient.Client{"test-cluster": targetClient},
+	})
+
+	pod, err := handler.CreatePodCopy(context.Background(), session, "production", "app-pod", "busybox:latest", "test-user@example.com")
+	require.NoError(t, err)
+	assert.Empty(t, pod.Spec.EphemeralContainers, "API servers reject pods that set ephemeral containers on create")
+
+	stored := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(pod), stored))
+	assert.Empty(t, stored.Spec.EphemeralContainers)
+
+	source := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(sourcePod), source))
+	require.Len(t, source.Spec.EphemeralContainers, 1, "source pod must not be modified")
+}
+
 func TestKubectlDebugHandler_CreatePodCopyPreservesLiveStatusFromStaleSession(t *testing.T) {
 	scheme := newKubectlTestScheme()
 	ctx := context.Background()

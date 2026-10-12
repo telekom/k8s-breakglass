@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `kubectl debug` pod copies no longer inherit ephemeral containers from the
+  source pod. Previously a pod copy failed with an internal error when the
+  source pod had received an ephemeral debug container, because the API server
+  rejects `spec.ephemeralContainers` on create.
 - DebugSession lifecycle audit events emitted by the API and the reconciler
   `debug_session.started` event now carry the observed DebugSession UID in
   `target.uid` and the session request context (`sessionUID`,
