@@ -1702,9 +1702,10 @@ const (
 
 // motdProfileScript prints the exported MOTD once per exec session. POSIX sh,
 // ash and dash read it through ENV on interactive start; bash runs it through
-// PROMPT_COMMAND. Non-interactive commands (kubectl exec -- cmd) never read it.
+// PROMPT_COMMAND. Non-interactive commands (kubectl exec -- cmd) never read it,
+// and the stdout TTY check keeps forced-interactive pipelines (sh -ic cmd > f) clean.
 const motdProfileScript = `# Breakglass DebugSession message of the day (managed by the controller).
-if [ -z "${BREAKGLASS_MOTD_SHOWN-}" ] && [ -n "${BREAKGLASS_MOTD-}" ]; then
+if [ -z "${BREAKGLASS_MOTD_SHOWN-}" ] && [ -n "${BREAKGLASS_MOTD-}" ] && [ -t 1 ]; then
   BREAKGLASS_MOTD_SHOWN=1
   export BREAKGLASS_MOTD_SHOWN
   printf '%s\n' "$BREAKGLASS_MOTD"

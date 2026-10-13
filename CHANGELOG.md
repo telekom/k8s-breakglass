@@ -20,8 +20,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DebugSessionClusterBinding` and `BreakglassEscalation`. The UI shows it when
   requesting and on session details; a binding MOTD replaces the template MOTD.
   Debug workload containers receive `BREAKGLASS_MOTD` and
-  `BREAKGLASS_RUNBOOK_URL`, and every interactive `kubectl exec` shell (`sh`,
-  `ash`, `dash`, `bash`) prints them once through a read-only downward API
+  `BREAKGLASS_RUNBOOK_URL`, and every interactive `kubectl exec -it` shell (`sh`,
+  `ash`, `dash`, `bash`) prints them once on its terminal through a read-only downward API
   hook at `/etc/breakglass-motd/profile.sh`. See `docs/debug-session.md#message-of-the-day`. The
   `escalation-config` chart accepts `escalations[].motd`,
   `escalations[].annotations` and `debugSessionBindings[].motd`; the

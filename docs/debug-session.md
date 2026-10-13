@@ -442,8 +442,12 @@ or init container. Two container variables start it:
   netshoot), `dash` and bash running as `sh`;
 - `PROMPT_COMMAND=. /etc/breakglass-motd/profile.sh` for `bash`.
 
-Non-interactive commands (`kubectl exec <pod> -- cmd`) and nested shells do not
-print it again. A template that sets its own `ENV` or `PROMPT_COMMAND` keeps
+The hook prints only when stdout is a terminal, so non-interactive commands
+(`kubectl exec <pod> -- cmd`, `kubectl exec -i <pod> -- sh -ic cmd > file`)
+keep their output unchanged, and nested shells do not print it again. Bash
+reads no rc file for this, so image `~/.bashrc` or `/etc/bash.bashrc` files
+need not be writable or changed; an rc file that overwrites `PROMPT_COMMAND`
+suppresses the hook in bash, while `sh` still prints it. A template that sets its own `ENV` or `PROMPT_COMMAND` keeps
 its value, so that shell does not print the MOTD; other shells such as `zsh`
 read neither variable. Templates without a workload, such as
 node-maintenance templates, show the MOTD in the UI only.

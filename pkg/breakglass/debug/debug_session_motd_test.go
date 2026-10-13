@@ -5,6 +5,7 @@ package debug
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -88,7 +89,8 @@ func TestInjectMOTDMountsReadOnlyShellHook(t *testing.T) {
 func ptrTo[T any](v T) *T { return &v }
 
 // TestMOTDProfileScriptInShells runs the hook the way interactive exec shells
-// do: POSIX sh, dash and ash through ENV, bash through PROMPT_COMMAND.
+// do: POSIX sh, dash and ash through ENV, bash through PROMPT_COMMAND, with
+// stdout on a terminal as with kubectl exec -it.
 func TestMOTDProfileScriptInShells(t *testing.T) {
 	dir := t.TempDir()
 	profile := filepath.Join(dir, motdProfileFile)
@@ -99,15 +101,29 @@ func TestMOTDProfileScriptInShells(t *testing.T) {
 		"BREAKGLASS_RUNBOOK_URL=https://example.com/rb#x",
 		"ENV=" + profile, "PROMPT_COMMAND=. " + profile,
 	}
-	run := func(t *testing.T, env []string, name string, args ...string) string {
+	run := func(t *testing.T, tty bool, env []string, name string, args ...string) string {
 		t.Helper()
 		cmd := exec.Command(name, args...)
 		cmd.Env = env
 		cmd.Dir = dir
 		cmd.Stdin = strings.NewReader("sh -i </dev/null\nexit\n")
-		out, err := cmd.Output()
-		require.NoError(t, err)
-		return string(out)
+		if !tty {
+			out, err := cmd.Output()
+			require.NoError(t, err)
+			return string(out)
+		}
+		master, slave := openTestPTY(t)
+		defer master.Close()
+		cmd.Stdout = slave
+		require.NoError(t, cmd.Start())
+		require.NoError(t, slave.Close())
+		read := make(chan string, 1)
+		go func() {
+			out, _ := io.ReadAll(master) // EIO once the shell closed the terminal
+			read <- strings.ReplaceAll(string(out), "\r\n", "\n")
+		}()
+		require.NoError(t, cmd.Wait())
+		return <-read
 	}
 	shells := map[string][]string{"sh": {"-i"}, "dash": {"-i"}, "bash": {"--norc", "--noprofile", "-i"}, "busybox": {"sh", "-i"}}
 	found := 0
@@ -116,15 +132,23 @@ func TestMOTDProfileScriptInShells(t *testing.T) {
 			continue
 		}
 		found++
+		nonInteractive := append(args[:len(args)-1:len(args)-1], "-c", "echo scripted")
 		t.Run(name, func(t *testing.T) {
-			out := run(t, motdEnv, name, args...)
-			assert.Equal(t, 1, strings.Count(out, "Runbook: https://example.com/rb#x"), "printed exactly once, also with nested shells: %q", out)
-			assert.Contains(t, out, "Purpose: diag")
-
-			out = run(t, motdEnv, name, append(args[:len(args)-1:len(args)-1], "-c", "echo scripted")...)
+			out := run(t, false, motdEnv, name, nonInteractive...)
 			assert.Equal(t, "scripted\n", out, "non-interactive exec commands must not print the MOTD")
 
-			out = run(t, append(slices.Clone(motdEnv), "BREAKGLASS_MOTD="), name, args...)
+			out = run(t, false, motdEnv, name, args...)
+			assert.NotContains(t, out, "Runbook:", "an interactive shell whose stdout is not a terminal must not print the MOTD")
+
+			out = run(t, false, motdEnv, name, append(slices.Clone(args), "-c", "echo scripted")...)
+			assert.True(t, strings.HasSuffix(out, "scripted\n"), out)
+			assert.NotContains(t, out, "Runbook:", "forced-interactive pipelines (sh -ic cmd > file) must stay clean")
+
+			out = run(t, true, motdEnv, name, args...)
+			assert.Equal(t, 1, strings.Count(out, "Runbook: https://example.com/rb#x"), "printed exactly once, also with nested shells: %q", out)
+			assert.Contains(t, out, "Purpose: diag\nTerminate: bgctl\n")
+
+			out = run(t, true, append(slices.Clone(motdEnv), "BREAKGLASS_MOTD="), name, args...)
 			assert.NotContains(t, out, "Runbook:", "no MOTD, no banner")
 		})
 	}
