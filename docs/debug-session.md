@@ -1627,7 +1627,7 @@ apiVersion: breakglass.t-caas.telekom.com/v1alpha1
 kind: DebugSessionClusterBinding
 metadata:
   name: ops-debug-nonprd
-  namespace: breakglass
+  namespace: breakglass-system
 spec:
   templateRef:
     name: ops-node-debug
