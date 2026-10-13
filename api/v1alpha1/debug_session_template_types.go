@@ -485,27 +485,27 @@ type DebugSessionNotificationConfig struct {
 	// enabled enables/disables notifications for debug sessions.
 	// +optional
 	// +kubebuilder:default=true
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled bool `json:"enabled"`
 
 	// notifyOnRequest sends notifications when a session is requested.
 	// +optional
 	// +kubebuilder:default=true
-	NotifyOnRequest bool `json:"notifyOnRequest,omitempty"`
+	NotifyOnRequest bool `json:"notifyOnRequest"`
 
 	// notifyOnApproval sends notifications when a session is approved/rejected.
 	// +optional
 	// +kubebuilder:default=true
-	NotifyOnApproval bool `json:"notifyOnApproval,omitempty"`
+	NotifyOnApproval bool `json:"notifyOnApproval"`
 
 	// notifyOnExpiry sends notifications when a session is about to expire.
 	// +optional
 	// +kubebuilder:default=true
-	NotifyOnExpiry bool `json:"notifyOnExpiry,omitempty"`
+	NotifyOnExpiry bool `json:"notifyOnExpiry"`
 
 	// notifyOnTermination sends notifications when a session is terminated.
 	// +optional
 	// +kubebuilder:default=true
-	NotifyOnTermination bool `json:"notifyOnTermination,omitempty"`
+	NotifyOnTermination bool `json:"notifyOnTermination"`
 
 	// additionalRecipients are extra email addresses to notify (beyond requester/approvers).
 	// +optional
@@ -555,7 +555,7 @@ type DebugApprovalReasonConfig struct {
 	// mandatoryForRejection requires a reason specifically for rejections.
 	// +optional
 	// +kubebuilder:default=true
-	MandatoryForRejection bool `json:"mandatoryForRejection,omitempty"`
+	MandatoryForRejection bool `json:"mandatoryForRejection"`
 
 	// minLength is the minimum character length for the reason.
 	// +optional
@@ -592,12 +592,12 @@ type DebugResourceQuotaConfig struct {
 	// enforceResourceRequests requires resource requests on all containers.
 	// +optional
 	// +kubebuilder:default=true
-	EnforceResourceRequests bool `json:"enforceResourceRequests,omitempty"`
+	EnforceResourceRequests bool `json:"enforceResourceRequests"`
 
 	// enforceResourceLimits requires resource limits on all containers.
 	// +optional
 	// +kubebuilder:default=true
-	EnforceResourceLimits bool `json:"enforceResourceLimits,omitempty"`
+	EnforceResourceLimits bool `json:"enforceResourceLimits"`
 }
 
 // DebugPDBConfig configures PodDisruptionBudget settings.
@@ -672,7 +672,7 @@ type EphemeralContainersConfig struct {
 	// requireNonRoot requires ephemeral containers to run as non-root.
 	// +optional
 	// +kubebuilder:default=true
-	RequireNonRoot bool `json:"requireNonRoot,omitempty"`
+	RequireNonRoot bool `json:"requireNonRoot"`
 }
 
 // NodeDebugConfig configures node-level debugging.
@@ -700,12 +700,12 @@ type HostNamespacesConfig struct {
 	// hostNetwork enables host network namespace sharing.
 	// +optional
 	// +kubebuilder:default=true
-	HostNetwork bool `json:"hostNetwork,omitempty"`
+	HostNetwork bool `json:"hostNetwork"`
 
 	// hostPID enables host PID namespace sharing.
 	// +optional
 	// +kubebuilder:default=true
-	HostPID bool `json:"hostPID,omitempty"`
+	HostPID bool `json:"hostPID"`
 
 	// hostIPC enables host IPC namespace sharing.
 	// +optional
@@ -1158,7 +1158,7 @@ type DebugSessionAuditConfig struct {
 	// enabled enables audit logging for debug sessions.
 	// +optional
 	// +kubebuilder:default=true
-	Enabled bool `json:"enabled,omitempty"`
+	Enabled bool `json:"enabled"`
 
 	// destinations specifies where audit events are sent.
 	// +optional
@@ -1179,7 +1179,7 @@ type DebugSessionAuditConfig struct {
 	// enableShellHistory enables shell command history capture.
 	// +optional
 	// +kubebuilder:default=true
-	EnableShellHistory bool `json:"enableShellHistory,omitempty"`
+	EnableShellHistory bool `json:"enableShellHistory"`
 }
 
 // AuditDestination specifies where audit events are sent.

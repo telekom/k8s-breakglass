@@ -54,6 +54,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A DebugSession now keeps an explicit `false` from its template for booleans
+  whose CRD default is `true`. Examples are
+  `kubectlDebug.ephemeralContainers.requireNonRoot`,
+  `nodeDebug.hostNamespaces.hostNetwork`/`hostPID`, the notification, audit and
+  approval-reason flags, and the resource-quota enforcement flags. Before this
+  fix, `omitempty` dropped the `false` when the template was copied into
+  `status.resolvedTemplate`, and the API server set the field back to `true`.
+  Because of that, templates with `requireNonRoot: false` rejected every
+  root-with-`NET_RAW` packet-capture container.
 - A DebugSession whose workload, ResourceQuota, PodDisruptionBudget or
   pod-template resource is definitively rejected on create (for example an
   admission webhook denial) no longer reports that never-created resource as a
