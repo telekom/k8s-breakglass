@@ -600,6 +600,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationAllowed
   map:
     fields:
+    - name: clusterSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
     - name: clusters
       type:
         list:

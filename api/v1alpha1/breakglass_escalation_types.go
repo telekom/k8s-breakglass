@@ -304,6 +304,11 @@ type BreakglassEscalationAllowed struct {
 	// Admission validates glob syntax with path.Match. Runtime matching for stored escalations uses filepath.Match semantics on the controller OS.
 	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
+	// clusterSelector restricts targets to ClusterConfig labels matching this selector.
+	// It is ANDed with allowed.clusters or clusterConfigRefs; name patterns never bypass it.
+	// A missing or ambiguous ClusterConfig fails closed. Empty selectors are not allowed.
+	// +optional
+	ClusterSelector *metav1.LabelSelector `json:"clusterSelector,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
 	// Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.

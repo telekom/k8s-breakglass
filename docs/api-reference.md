@@ -707,6 +707,13 @@ Each resource includes `spec.displayName`, the human-readable UI/CLI label
 response resolves it to `metadata.name`. Resource identifiers and existing
 JSON fields are unchanged.
 
+For policies with `spec.allowed.clusterSelector`, discovery ANDs the selector
+with stored cluster-name patterns using target ClusterConfig metadata labels.
+The response copy resolves `spec.allowed.clusters` to sorted concrete matching
+targets (ready targets only when `activeOnly=true`) so older UI/CLI clients
+cannot offer the wrong stage variant. Stored policies are unchanged. Missing,
+ambiguous or unmatched targets never appear; read errors fail closed.
+
 ```json
 [
   {

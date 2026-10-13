@@ -1,5 +1,12 @@
 # Escalation Config Helm Chart
 
+Escalations may set `allowed.clusterSelector` to AND a non-empty Kubernetes
+label selector with cluster-name patterns. It matches ClusterConfig metadata
+labels, not hub labels. Missing/ambiguous targets fail closed. Use complementary
+In/NotIn selectors to partition target-stage approval policy without wildcard
+name patterns bypassing the selector. See
+[target cluster label restriction](../../docs/breakglass-escalation.md#target-cluster-label-restriction).
+
 Helm chart for deploying BreakglassEscalation and ClusterConfig custom resources to the breakglass system.
 
 ## Overview

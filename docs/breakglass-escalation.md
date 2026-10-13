@@ -47,6 +47,29 @@ spec:
   denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
 ```
 
+## Target cluster label restriction
+
+`spec.allowed.clusterSelector` is an optional non-empty Kubernetes label
+selector over the target **ClusterConfig metadata labels**. It is an AND
+restriction on the existing `allowed.clusters` / `clusterConfigRefs` name
+patterns, not an alternative OR grant. Missing, ambiguous or unreadable target
+ClusterConfigs and invalid selectors fail closed. Omission preserves legacy
+name-pattern matching.
+
+Discovery resolves selector-bearing escalations to concrete matching
+`spec.allowed.clusters` in its response copy (ready clusters only when
+`activeOnly=true`). This keeps existing UI/CLI target selection correct without
+changing the stored escalation, wildcard patterns or selectors. No matching or
+ambiguous targets means the selector-bearing escalation is hidden.
+
+To partition a mixed-stage hub, stamp a trusted stage label on each
+ClusterConfig and use two escalations with identical rights: `In [dev, ref, tst]`
+with `blockSelfApproval: false`, and `NotIn [dev, ref, tst]` with
+`blockSelfApproval: true`. Kubernetes NotIn includes missing labels, so unknown
+or unlabeled targets select only the blocked variant. Keep independent
+first-line approvers on the blocked variant. Never use a hub's own stage to
+choose policy for all of its targets.
+
 ## Display name
 
 The optional `spec.displayName` labels the escalation in the UI and CLI and

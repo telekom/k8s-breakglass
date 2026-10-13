@@ -753,6 +753,11 @@ func (in *BreakglassEscalationAllowed) DeepCopyInto(out *BreakglassEscalationAll
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.ClusterSelector != nil {
+		in, out := &in.ClusterSelector, &out.ClusterSelector
+		*out = new(v1.LabelSelector)
+		(*in).DeepCopyInto(*out)
+	}
 	if in.Groups != nil {
 		in, out := &in.Groups, &out.Groups
 		*out = make([]string, len(*in))

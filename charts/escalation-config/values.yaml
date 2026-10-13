@@ -203,7 +203,13 @@ escalations: []
   #     groups:
   #       - dev
   #       - senior-ops
-  #     # Note: 'allowed.users' is NOT a valid field - only 'allowed.groups' and 'allowed.clusters' are supported.
+  #     # Optional AND restriction on ClusterConfig metadata labels (never OR).
+  #     # clusterSelector:
+  #     #   matchExpressions:
+  #     #     - key: breakglass.t-caas.telekom.com/environment
+  #     #       operator: NotIn
+  #     #       values: [dev, ref, tst]
+  #     # Note: 'allowed.users' is NOT a valid field.
   #     # Users are authorized based on group membership only.
   #   escalatedGroup: breakglass-create-all
   #   approvers:

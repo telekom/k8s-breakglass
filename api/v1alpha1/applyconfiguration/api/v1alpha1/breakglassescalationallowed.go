@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/client-go/applyconfigurations/meta/v1"
+)
+
 // BreakglassEscalationAllowedApplyConfiguration represents a declarative configuration of the BreakglassEscalationAllowed type for use
 // with apply.
 //
@@ -21,6 +25,10 @@ type BreakglassEscalationAllowedApplyConfiguration struct {
 	// Use "*" to match all clusters (global escalation).
 	// Admission validates glob syntax with path.Match. Runtime matching for stored escalations uses filepath.Match semantics on the controller OS.
 	Clusters []string `json:"clusters,omitempty"`
+	// clusterSelector restricts targets to ClusterConfig labels matching this selector.
+	// It is ANDed with allowed.clusters or clusterConfigRefs; name patterns never bypass it.
+	// A missing or ambiguous ClusterConfig fails closed. Empty selectors are not allowed.
+	ClusterSelector *v1.LabelSelectorApplyConfiguration `json:"clusterSelector,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
 	// Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.
@@ -40,6 +48,14 @@ func (b *BreakglassEscalationAllowedApplyConfiguration) WithClusters(values ...s
 	for i := range values {
 		b.Clusters = append(b.Clusters, values[i])
 	}
+	return b
+}
+
+// WithClusterSelector sets the ClusterSelector field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ClusterSelector field is set to the value of the last call.
+func (b *BreakglassEscalationAllowedApplyConfiguration) WithClusterSelector(value *v1.LabelSelectorApplyConfiguration) *BreakglassEscalationAllowedApplyConfiguration {
+	b.ClusterSelector = value
 	return b
 }
 

@@ -1101,6 +1101,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through the `storage-diagnostics` dispatcher and removes a stale network job
   build reference to a non-existent kubestr fixture path.
 
+### Added
+
+- Escalation `allowed.clusterSelector` restricts cluster-name patterns by target
+  ClusterConfig labels, including request/approval lookups and active discovery.
+  Complementary stage selectors allow different self-approval policies for
+  production and non-production targets on one hub; missing or ambiguous
+  ClusterConfigs fail closed.
+
 ## [0.1.0-rc.8] - 2026-08-22
 
 ### Added

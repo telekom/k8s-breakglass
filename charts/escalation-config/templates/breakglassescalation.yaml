@@ -25,6 +25,10 @@ spec:
   {{- $allowed := required "escalations[].allowed is required" $esc.allowed }}
   {{- $allowedGroups := required "escalations[].allowed.groups is required" $allowed.groups }}
   allowed:
+    {{- with $allowed.clusterSelector }}
+    clusterSelector:
+{{ toYaml . | indent 6 }}
+    {{- end }}
     {{- if $allowed.clusters }}
     clusters:
 {{ toYaml $allowed.clusters | indent 6 }}
