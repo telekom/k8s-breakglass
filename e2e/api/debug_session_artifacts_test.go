@@ -249,12 +249,26 @@ spec:
 					output, logErr := exec.CommandContext(ctx, "kubectl", "-n", negative.Namespace, "logs", "job/"+negative.Name, "-c", "uploader").CombinedOutput()
 					require.NoError(t, logErr, string(output))
 					require.Contains(t, string(output), "certificate signed by unknown authority")
+					require.NoError(t, s.Client.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground)))
+					require.EventuallyWithT(t, func(c *assert.CollectT) {
+						var pods corev1.PodList
+						require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(negative.Namespace), client.MatchingLabels{"job-name": negative.Name}))
+						require.Empty(c, pods.Items, "negative-CA fixture must clean up its own failed Pod")
+						require.True(c, apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKeyFromObject(negative), &batchv1.Job{})))
+					}, helpers.WaitForStateTimeout, time.Second)
 					caNegativeProven = true
 				}
 				require.NotNil(t, job.Spec.Template.Spec.SecurityContext.FSGroup)
 				pods := &corev1.PodList{}
 				require.NoError(t, s.Client.List(ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))
 				require.Len(t, pods.Items, 1)
+				require.Equal(t, corev1.PodSucceeded, pods.Items[0].Status.Phase)
+				require.Equal(t, object.Spec.ArtifactID, pods.Items[0].Labels["breakglass.t-caas.telekom.com/artifact"])
+				require.Equal(t, string(active.UID), pods.Items[0].Labels["breakglass.t-caas.telekom.com/session-uid"])
+				owner := metav1.GetControllerOf(&pods.Items[0])
+				require.NotNil(t, owner)
+				require.Equal(t, "Job", owner.Kind)
+				require.Equal(t, job.UID, owner.UID)
 				admitted := pods.Items[0].Spec
 				require.Equal(t, image, admitted.InitContainers[0].Image)
 				require.Equal(t, image, admitted.Containers[0].Image)
@@ -511,6 +525,14 @@ spec:
 			return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		}, helpers.WaitForStateTimeout, time.Second)
 	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var pods corev1.PodList
+		require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
+			"breakglass.t-caas.telekom.com/artifact":    first.Spec.ArtifactID,
+			"breakglass.t-caas.telekom.com/session-uid": string(active.UID),
+		}))
+		require.Empty(c, pods.Items, "deleted collector Job must not leave completed or orphan Pods")
+	}, helpers.WaitForStateTimeout, time.Second)
 	remaining := files()
 	require.Len(t, remaining, len(baseline)+1)
 	require.NotEqual(t, afterFirst, remaining)
@@ -535,6 +557,13 @@ spec:
 			return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		}, helpers.WaitForStateTimeout, time.Second)
 	}
+	require.EventuallyWithT(t, func(c *assert.CollectT) {
+		var pods corev1.PodList
+		require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
+			"breakglass.t-caas.telekom.com/session-uid": string(active.UID),
+		}))
+		require.Empty(c, pods.Items, "terminal session must leave zero collector Pods, even when ownerReferences are gone")
+	}, helpers.WaitForStateTimeout, time.Second)
 	// Keep authentication valid when checking authorization after the real expiry wait.
 	requester.AuthToken = tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.SecurityRequester)
 	require.Equal(t, http.StatusNotFound, status(requester, http.MethodGet, endpoint+"/"+control.Spec.ArtifactID, nil, ""))

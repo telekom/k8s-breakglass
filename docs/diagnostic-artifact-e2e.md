@@ -87,6 +87,12 @@ reading the retained control artifact, then verifies provider and tracked Job/
 Secret cleanup. Local object files must remain mode 0600 and UID/GID 65532; S3
 inventory includes all versions and delete markers so hidden versions cannot
 masquerade as successful cleanup.
+Each collection must first observe a Succeeded collector Pod with the exact
+artifact ID, session UID and Job controller UID. Artifact deletion must remove
+those Pods as well as the Job; termination, natural expiry and session deletion
+must leave zero collector Pods for the session UID. These inventories do not
+filter by owner reference or Pod phase, so a completed Pod orphaned by Job
+deletion cannot masquerade as successful cleanup.
 Permission checks run while both local objects are available, not while cleanup
 can remove files between inventory and `stat`. Expiry cases request five-minute
 sessions and wait for their real deadline; they never move an Active session's
@@ -139,6 +145,8 @@ to finish. This does not change readiness gating for the controller API service.
 
 Compilation and lint are local checks only. Actual container, storage, admitted
 Pod and lifecycle behavior requires the named Kind CI matrix to pass.
+This fixture currently runs only in Single-Cluster E2E. The Multi-Cluster E2E
+job does not install it; its success is not artifact collector acceptance.
 
 ## Failure injection
 

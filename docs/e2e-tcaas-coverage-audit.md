@@ -84,6 +84,30 @@ These tests are not removed: their narrow unit/integration assertions remain
 valuable. They are explicitly not counted as evidence for the T-CaaS
 create/approve/authorize path.
 
+## Identity and collector lifecycle acceptance
+
+`TestDebugSessionIdentityOnlyWorkflow` and
+`TestDebugSessionWithoutBaselinePodRBACWorkflow` run through the real OIDC,
+approval, kubelet exec and attach paths in both Single- and Multi-Cluster E2E.
+They require natural expiry, zero workload/auxiliary/RBAC/config resources and
+retention cleanup. After termination and expiry, new native exec and attach
+streams must return Forbidden, not merely fail because their Pod is gone.
+The second persona also proves named Pod GET and real `kubectl exec` without
+baseline Pod RBAC, while unrelated Pod GET and namespace-wide list remain denied.
+
+`TestEscalationExplicitSelectionWithOverlappingGrants` exercises two eligible
+same-grant policies with different approvers, deterministic ambiguity with no
+grant creation, rejection of an ineligible named policy, and the selected
+policy's name/UID owner approval fence. Both normal topology jobs run it.
+
+`TestDebugSessionArtifactCollectorE2E` requires observed completed collector
+Pods and zero surviving Pods after artifact deletion or session cleanup,
+including Pods whose owner reference disappeared. It runs both recipes against
+local and S3 storage, but currently only in the Single-Cluster E2E job.
+Multi-cluster collector execution remains a genuine fixture/transport gap.
+Upstream Kind coverage does not establish production Kyverno admission,
+published-image acceptance, downstream TIND acceptance or live acceptance.
+
 ## Related upstream PRs
 
 * [PR #1297](https://github.com/telekom/k8s-breakglass/pull/1297) registers

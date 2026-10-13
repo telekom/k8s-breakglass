@@ -388,10 +388,36 @@ spec:
 	output, err := attach(active)
 	require.NoError(t, err)
 	require.Contains(t, output, "identity-only-attach:probe", "real bearer-only attach must exchange data")
+	assertRevoked := func(endedPod breakglassv1alpha1.AllowedPodRef) {
+		t.Helper()
+		userConfig.BearerToken = s.TC.OIDCProvider().GetTokenForUser(t, ctx, requester)
+		for _, subresource := range []string{"exec", "attach"} {
+			request := kube.CoreV1().RESTClient().Post().Namespace(endedPod.Namespace).Resource("pods").
+				Name(endedPod.Name).SubResource(subresource)
+			if subresource == "exec" {
+				request = request.VersionedParams(&corev1.PodExecOptions{
+					Container: "debug", Command: []string{"echo", "revoked-session"}, Stdout: true, Stderr: true,
+				}, scheme.ParameterCodec)
+			} else {
+				request = request.VersionedParams(&corev1.PodAttachOptions{
+					Container: "debug", Stdout: true, Stderr: true,
+				}, scheme.ParameterCodec)
+			}
+			executor, err := remotecommand.NewSPDYExecutor(userConfig, http.MethodPost, request.URL())
+			require.NoError(t, err)
+			streamCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			var stdout, stderr bytes.Buffer
+			err = executor.StreamWithContext(streamCtx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr})
+			cancel()
+			require.Error(t, err)
+			require.Contains(t, strings.ToLower(err.Error()), "forbidden", "terminal %s must deny authorization, not merely return pod not found", subresource)
+		}
+	}
 	status, err = requesterAPI.TerminateDebugSession(ctx, t, session.Name)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 	waitForNoDebugResources(t, ctx, admin, session.Name)
+	assertRevoked(pod)
 
 	// Canonical catalogue profiles explicitly disable attach. A new short lease
 	// also proves natural expiry without changing status or timestamps.
@@ -416,10 +442,12 @@ spec:
 	require.Error(t, err)
 	require.Contains(t, strings.ToLower(err.Error()), "forbidden", "attach=false must deny a real native attach")
 	require.NotNil(t, expiring.Status.ExpiresAt)
+	expiringPod := expiring.Status.AllowedPods[0]
 	expiresAt := expiring.Status.ExpiresAt.Time
 	expiring = helpers.WaitForDebugSessionState(t, ctx, s.Client, expiring.Name, expiring.Namespace, breakglassv1alpha1.DebugSessionStateExpired, 3*time.Minute)
 	require.False(t, time.Now().Before(expiresAt), "natural expiry must follow the real lease, never a patched timestamp")
 	waitForNoDebugResources(t, ctx, admin, expiring.Name)
+	assertRevoked(expiringPod)
 	for _, ended := range []*breakglassv1alpha1.DebugSession{session, expiring} {
 		require.Eventually(t, func() bool {
 			err := s.Client.Get(ctx, client.ObjectKeyFromObject(ended), &breakglassv1alpha1.DebugSession{})
