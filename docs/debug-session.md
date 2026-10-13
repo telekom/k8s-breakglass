@@ -400,6 +400,38 @@ the observed generation, pod-template reference resolution, active session
 usage, and clusters made available through active
 `DebugSessionClusterBinding` resources.
 
+### Message of the day
+
+Templates may set `spec.motd` to tell requesters and participants what the
+session is for, what they may do, which safety rules apply and how to end it:
+
+```yaml
+spec:
+  motd:
+    message: |
+      Purpose: read-only node diagnostics for onboarding.
+      Allowed: inspect host state; no configuration changes.
+      Safety: reports may contain licence data; delete local copies after use.
+      Terminate: Debug Sessions > session > Terminate, or
+      `bgctl debug session terminate <session>`.
+    runbookURL: https://example.com/runbooks/node-diagnostics#procedure
+```
+
+`message` is plain text (1-4096 characters, line breaks preserved).
+`runbookURL` is optional, must be an `https://` URL and is at most 2048
+characters. A `DebugSessionClusterBinding` `spec.motd` replaces the template
+MOTD as a whole, so persona-specific guidance is not mixed with the shared
+template text. The effective MOTD is snapshotted with the session
+(`status.resolvedTemplate` / `status.resolvedBindingSpec`).
+
+The UI shows the effective MOTD on the session request form and on the session
+details page. The controller exports it to every regular container of the debug
+workload (Pod, DaemonSet, Deployment or Job) as `BREAKGLASS_MOTD` and
+`BREAKGLASS_RUNBOOK_URL`, replacing template variables of the same name. The
+`kubectl exec` command offered on the details page prints both values before it
+starts the shell. Templates without a workload, such as node-maintenance
+templates, show the MOTD in the UI only.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.

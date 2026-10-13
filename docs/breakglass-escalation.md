@@ -76,6 +76,23 @@ The Helm Chart Lint job runs `charts/escalation-config/ci/test-escalation-names.
 including `Hashed64CharacterName`, `HashedLongProviderName`, and
 `DistinctHashesBeyondTruncationBoundary`.
 
+## Message of the day
+
+The optional `spec.motd` shows operator guidance in the request dialog of the
+escalation card: purpose, allowed actions, safety notes and how to drop or
+withdraw the session. `message` is plain text (1-4096 characters, line breaks
+preserved); `runbookURL` is an optional `https://` link (at most 2048
+characters) shown below the message.
+
+```yaml
+spec:
+  motd:
+    message: |
+      Purpose: emergency cluster-admin access for incident handling.
+      Terminate: Sessions > Drop, or `bgctl session drop <session>`.
+    runbookURL: https://example.com/runbooks/emergency#procedure
+```
+
 ## Required Fields
 
 ### escalatedGroup

@@ -264,6 +264,12 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	DeprecationMessage string `json:"deprecationMessage,omitempty"`
 
+	// motd is guidance shown before and during a session: purpose, allowed
+	// actions, safety notes, how to terminate, and a runbook link. A binding
+	// motd replaces it.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
+
 	// expirationBehavior controls what happens when a session expires.
 	// "notify-only" is a deprecated alias that requests an expiry notification;
 	// it still expires the session, revokes access, and starts resource cleanup.

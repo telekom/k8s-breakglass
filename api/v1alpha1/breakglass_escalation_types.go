@@ -62,6 +62,12 @@ type BreakglassEscalationSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	DisplayName string `json:"displayName,omitempty"`
 
+	// motd is guidance shown when requesting and using this escalation:
+	// purpose, allowed actions, safety notes, how to drop the session, and a
+	// runbook link.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
+
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
 	// approvers specifies who is allowed to approve this escalation.

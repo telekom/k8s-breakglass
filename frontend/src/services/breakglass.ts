@@ -4,6 +4,7 @@ import { createAuthenticatedApiClient } from "@/services/httpClient";
 
 import type AuthService from "@/services/auth";
 import type { ActiveBreakglass, AvailableBreakglass, Breakglass, SessionCR } from "@/model/breakglass";
+import type { MessageOfTheDay } from "@/model/motd";
 
 function normalizeList<T>(value: unknown): T[] {
   if (Array.isArray(value)) {
@@ -105,6 +106,7 @@ export default class BreakglassService {
                 description: ((spec.approvalReason as Record<string, unknown>).description || "") as string,
               }
             : undefined,
+          motd: toMotd(spec.motd),
         };
         if (clusters.length === 0) {
           output.push({ ...basePartial, cluster: "" });
@@ -579,4 +581,14 @@ function hasApprovers(appr: Record<string, unknown>): boolean {
   const users = Array.isArray(appr.users) ? appr.users : [];
   const groups = Array.isArray(appr.groups) ? appr.groups : [];
   return users.length + groups.length > 0;
+}
+
+function toMotd(value: unknown): MessageOfTheDay | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const motd = value as Record<string, unknown>;
+  if (typeof motd.message !== "string" || !motd.message) return undefined;
+  return {
+    message: motd.message,
+    runbookURL: typeof motd.runbookURL === "string" ? motd.runbookURL : undefined,
+  };
 }

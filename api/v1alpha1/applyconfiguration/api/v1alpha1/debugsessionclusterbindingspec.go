@@ -28,6 +28,9 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	DisplayNamePrefix *string `json:"displayNamePrefix,omitempty"`
 	// description provides additional context about this binding.
 	Description *string `json:"description,omitempty"`
+	// motd replaces the template motd for sessions created through this binding,
+	// for example to link a persona-specific runbook.
+	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
 	// templateRef references a single DebugSessionTemplate by name.
 	// Mutually exclusive with templateSelector.
 	TemplateRef *TemplateReferenceApplyConfiguration `json:"templateRef,omitempty"`
@@ -135,6 +138,14 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithDisplayNamePrefix
 // If called multiple times, the Description field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithDescription(value string) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.Description = &value
+	return b
+}
+
+// WithMOTD sets the MOTD field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MOTD field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMOTD(value *MessageOfTheDayApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.MOTD = value
 	return b
 }
 

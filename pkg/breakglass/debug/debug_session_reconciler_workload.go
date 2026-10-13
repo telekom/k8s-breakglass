@@ -563,6 +563,11 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 	if err != nil {
 		return nil, nil, err
 	}
+	var bindingSpec *breakglassv1alpha1.DebugSessionClusterBindingSpec
+	if binding != nil {
+		bindingSpec = &binding.Spec
+	}
+	injectMOTDEnv(&renderResult.PodSpec, breakglassv1alpha1.EffectiveDebugSessionMOTD(&template.Spec, bindingSpec))
 	restrictedCatalogue, _, err := restrictedCatalogueProfile(template, podTemplate)
 	if err != nil {
 		return nil, nil, err
@@ -1677,3 +1682,27 @@ func extractJSONValueForPod(raw []byte) string {
 }
 
 // PodTemplateRenderResult contains the result of rendering a multi-document pod template.
+
+const (
+	motdEnvName       = "BREAKGLASS_MOTD"
+	runbookURLEnvName = "BREAKGLASS_RUNBOOK_URL"
+)
+
+// injectMOTDEnv exports the effective MOTD to every regular container so that
+// an interactive shell can print it (for example via the UI exec command).
+// Controller values replace template-provided variables of the same name.
+func injectMOTDEnv(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) {
+	if spec == nil || motd == nil {
+		return
+	}
+	values := []corev1.EnvVar{{Name: motdEnvName, Value: motd.Message}}
+	if motd.RunbookURL != "" {
+		values = append(values, corev1.EnvVar{Name: runbookURLEnvName, Value: motd.RunbookURL})
+	}
+	for i := range spec.Containers {
+		env := slices.DeleteFunc(spec.Containers[i].Env, func(e corev1.EnvVar) bool {
+			return e.Name == motdEnvName || e.Name == runbookURLEnvName
+		})
+		spec.Containers[i].Env = append(env, values...)
+	}
+}

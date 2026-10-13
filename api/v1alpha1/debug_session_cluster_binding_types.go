@@ -63,6 +63,11 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
+	// motd replaces the template motd for sessions created through this binding,
+	// for example to link a persona-specific runbook.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
+
 	// templateRef references a single DebugSessionTemplate by name.
 	// Mutually exclusive with templateSelector.
 	// +optional

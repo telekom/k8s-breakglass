@@ -230,6 +230,30 @@ spec:
                   this escalation will be active for after it is approved.
                 pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                 type: string
+              motd:
+                description: |-
+                  motd is guidance shown when requesting and using this escalation:
+                  purpose, allowed actions, safety notes, how to drop the session, and a
+                  runbook link.
+                properties:
+                  message:
+                    description: |-
+                      message is plain text shown verbatim (line breaks preserved) in the UI and
+                      exported to debug workload containers as BREAKGLASS_MOTD.
+                    maxLength: 4096
+                    minLength: 1
+                    type: string
+                  runbookURL:
+                    description: |-
+                      runbookURL links the runbook section for this action. It is rendered as a
+                      link in the UI and exported to debug workload containers as
+                      BREAKGLASS_RUNBOOK_URL.
+                    maxLength: 2048
+                    pattern: ^https://[^\s]+$
+                    type: string
+                required:
+                - message
+                type: object
               notificationExclusions:
                 description: |-
                   notificationExclusions allows excluding specific users or groups from receiving email notifications for this escalation.
