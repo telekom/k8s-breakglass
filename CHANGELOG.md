@@ -59,8 +59,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kubectlDebug.ephemeralContainers.requireNonRoot`,
   `nodeDebug.hostNamespaces.hostNetwork`/`hostPID`, the notification, audit and
   approval-reason flags, and the resource-quota enforcement flags. Before this
-  fix, `omitempty` dropped the `false` when the template was copied into
-  `status.resolvedTemplate`, and the API server set the field back to `true`.
+  fix, the status merge patch that copies the template into
+  `status.resolvedTemplate` dropped the `false` (the fields use `omitempty`),
+  and the API server set the field back to `true`. The status patch now sends
+  these `false` values explicitly; the API types are unchanged, so clients
+  that omit a field still get the documented `true` default.
   Because of that, templates with `requireNonRoot: false` rejected every
   root-with-`NET_RAW` packet-capture container.
 - A DebugSession whose workload, ResourceQuota, PodDisruptionBudget or

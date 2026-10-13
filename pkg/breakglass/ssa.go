@@ -74,7 +74,8 @@ func ApplyDebugSessionStatus(ctx context.Context, c client.Client, session *brea
 	}
 	base := current.DeepCopy()
 	current.Status = desiredStatus
-	if err := c.Status().Patch(ctx, current, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+	patch := withResolvedTemplateFalseValues(client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}), current.Status.ResolvedTemplate)
+	if err := c.Status().Patch(ctx, current, patch); err != nil {
 		return fmt.Errorf("apply DebugSession %s/%s status: %w", session.Namespace, session.Name, err)
 	}
 	session.Status = current.Status
@@ -132,7 +133,8 @@ func PatchDebugSessionStatusWithReader(
 		patched.Status.ObservedGeneration = patched.Generation
 	}
 
-	if err := c.Status().Patch(ctx, patched, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{})); err != nil {
+	patch := withResolvedTemplateFalseValues(client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}), patched.Status.ResolvedTemplate)
+	if err := c.Status().Patch(ctx, patched, patch); err != nil {
 		return fmt.Errorf("patch DebugSession %s/%s status with optimistic lock: %w", session.Namespace, session.Name, err)
 	}
 	session.Status = patched.Status
