@@ -390,6 +390,7 @@ spec:
 	require.Contains(t, output, "identity-only-attach:probe", "real bearer-only attach must exchange data")
 	assertRevoked := func(endedPod breakglassv1alpha1.AllowedPodRef) {
 		t.Helper()
+		userConfig.BearerToken = s.TC.OIDCProvider().GetTokenForUser(t, ctx, requester)
 		for _, subresource := range []string{"exec", "attach"} {
 			request := kube.CoreV1().RESTClient().Post().Namespace(endedPod.Namespace).Resource("pods").
 				Name(endedPod.Name).SubResource(subresource)
