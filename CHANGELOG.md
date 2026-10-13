@@ -39,6 +39,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `escalation-config` chart accepts `escalations[].motd`,
   `escalations[].annotations` and `debugSessionBindings[].motd`; the
   `debug-session-catalogue` chart accepts `profiles[].motd`.
+  Kubernetes expands container environment values, so in the shell MOTD a
+  `$(NAME)` reference to a variable visible to the container (template `env`,
+  `envFrom` or service variables) prints that variable's value and `$$` prints
+  `$`, while the UI shows the text unchanged. Avoid `$(` and `$$` in MOTD text.
+- Escalation `allowed.clusterSelector` restricts cluster-name patterns by target
+  ClusterConfig labels, including request/approval lookups and active discovery.
+  Complementary stage selectors allow different self-approval policies for
+  production and non-production targets on one hub; missing or ambiguous
+  ClusterConfigs fail closed. Upgrade note: the selector restricts only the
+  escalations that set it. A selector-free legacy escalation with
+  `allowed.clusters: ["*"]` and `blockSelfApproval: false` still allows
+  self-approval on production targets. Retire such escalations or give them a
+  stage selector before relying on the stage partition. RBAC on ClusterConfig
+  labels becomes a trust anchor: whoever can change those labels can move a
+  target between the self-approval and the blocked escalation. See
+  `docs/breakglass-escalation.md#target-cluster-label-restriction`.
 - Typed node-maintenance DebugSessions (disabled by default) run one fixed,
   template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
   exact Node after independent approval. Each target Node is serialized by a
@@ -1111,14 +1127,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Catalogue utility integration now runs storage image mounted-volume checks
   through the `storage-diagnostics` dispatcher and removes a stale network job
   build reference to a non-existent kubestr fixture path.
-
-### Added
-
-- Escalation `allowed.clusterSelector` restricts cluster-name patterns by target
-  ClusterConfig labels, including request/approval lookups and active discovery.
-  Complementary stage selectors allow different self-approval policies for
-  production and non-production targets on one hub; missing or ambiguous
-  ClusterConfigs fail closed.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

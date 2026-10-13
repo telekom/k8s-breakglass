@@ -70,6 +70,13 @@ or unlabeled targets select only the blocked variant. Keep independent
 first-line approvers on the blocked variant. Never use a hub's own stage to
 choose policy for all of its targets.
 
+The selector restricts only the escalations that set it. A selector-free legacy
+escalation with `allowed.clusters: ["*"]` and `blockSelfApproval: false` still
+allows self-approval on production targets, so retire it or give it a stage
+selector before relying on the partition. Whoever can change ClusterConfig
+labels can move a target between the two variants, so restrict RBAC on
+ClusterConfig labels like any other access-policy change.
+
 ## Display name
 
 The optional `spec.displayName` labels the escalation in the UI and CLI and

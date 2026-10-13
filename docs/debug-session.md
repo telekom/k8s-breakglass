@@ -428,6 +428,11 @@ The UI shows the effective MOTD on the session request form and on the session
 details page. The controller exports it to every regular container of the debug
 workload (Pod, DaemonSet, Deployment or Job) as `BREAKGLASS_MOTD` and
 `BREAKGLASS_RUNBOOK_URL`, replacing template variables of the same name.
+Kubernetes expands container environment values, so in the shell MOTD of debug
+workloads, node debug pods and pod-copy debuggers a `$(NAME)` reference to a
+variable visible to the container (template `env`, `envFrom` or service
+variables) prints that variable's value and `$$` prints `$`, while the UI shows
+the text unchanged. Avoid `$(` and `$$` in MOTD text.
 
 Every interactive shell opened with `kubectl exec -it <pod> -- sh` (or `bash`)
 prints the MOTD and runbook link once before the first prompt, including the
