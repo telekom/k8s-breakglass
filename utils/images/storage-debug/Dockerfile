@@ -1,7 +1,9 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kubestr-builder
+# Build natively and cross-compile: running the Go toolchain under QEMU for
+# foreign targets takes long enough to exhaust CI job timeouts.
+FROM --platform=$BUILDPLATFORM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kubestr-builder
 
 ARG TARGETARCH
 ARG KUBESTR_VERSION=v0.4.49
@@ -26,7 +28,7 @@ RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenh
         golang.org/x/oauth2@v0.27.0 \
         "golang.org/x/text@${X_TEXT_VERSION}" \
     && go -C /src/kubestr mod tidy \
-    && go -C /src/kubestr test -mod=mod ./pkg/fio/ \
+    && GOARCH="$(go env GOHOSTARCH)" go -C /src/kubestr test -mod=mod ./pkg/fio/ \
     && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
     && test -x /out/kubestr \
     && go version -m /out/kubestr > /out/kubestr-build-info \
