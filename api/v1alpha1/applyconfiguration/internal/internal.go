@@ -2610,6 +2610,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
       default: true
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployInputType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
@@ -3525,6 +3528,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
     - name: targetNamespace
       type:
         scalar: string

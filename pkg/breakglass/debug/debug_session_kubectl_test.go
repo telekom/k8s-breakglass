@@ -1112,6 +1112,80 @@ func TestKubectlDebugHandler_InjectEphemeralContainerSecurityContextFence(t *tes
 	}
 }
 
+func TestEffectiveEphemeralSecurityContext(t *testing.T) {
+	requested := &corev1.SecurityContext{
+		RunAsUser:              ptrInt64Value(0),
+		ReadOnlyRootFilesystem: boolPtr(false),
+		Capabilities:           &corev1.Capabilities{Add: []corev1.Capability{"NET_RAW"}},
+	}
+
+	session := newEphemeralOperationTestSession()
+	got, err := effectiveEphemeralSecurityContext(session, requested)
+	require.NoError(t, err)
+	assert.Same(t, requested, got, "without a template securityContext the request is used unchanged")
+
+	session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext = &corev1.SecurityContext{
+		ReadOnlyRootFilesystem: boolPtr(true),
+	}
+	got, err = effectiveEphemeralSecurityContext(session, requested)
+	require.NoError(t, err)
+	assert.Equal(t, &corev1.SecurityContext{
+		RunAsUser:              ptrInt64Value(0),
+		ReadOnlyRootFilesystem: boolPtr(true),
+		Capabilities:           &corev1.Capabilities{Add: []corev1.Capability{"NET_RAW"}},
+	}, got, "template fields win, unset template fields keep the request value")
+	assert.False(t, *requested.ReadOnlyRootFilesystem, "the request is not mutated")
+
+	got, err = effectiveEphemeralSecurityContext(session, nil)
+	require.NoError(t, err)
+	assert.Equal(t, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext, got)
+}
+
+func TestKubectlDebugHandler_InjectEphemeralContainerTemplateSecurityContext(t *testing.T) {
+	tests := []struct {
+		name      string
+		template  *corev1.SecurityContext
+		wantError bool
+	}{
+		{name: "read-only root filesystem is enforced", template: &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true)}},
+		{name: "template cannot exceed allowPrivileged", template: &corev1.SecurityContext{Privileged: boolPtr(true)}, wantError: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scheme := newKubectlTestScheme()
+			session := newEphemeralOperationTestSession()
+			session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext = test.template
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+				Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+			}).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl ctrlclient.Client, _ string, obj ctrlclient.Object, _ ...ctrlclient.SubResourceUpdateOption) error {
+				return cl.Update(ctx, obj)
+			}}).Build()
+			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+			requested := &corev1.SecurityContext{RunAsUser: ptrInt64Value(0), ReadOnlyRootFilesystem: boolPtr(false)}
+
+			err := handler.InjectEphemeralContainer(context.Background(), session, "default", "target", "debugger", "busybox:latest", []string{"sh"}, requested, "test-user@example.com")
+
+			storedPod := &corev1.Pod{}
+			require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Name: "target", Namespace: "default"}, storedPod))
+			if test.wantError {
+				var operationErr *kubectlDebugOperationError
+				require.ErrorAs(t, err, &operationErr)
+				assert.Equal(t, kubectlDebugOperationErrorPolicy, operationErr.kind)
+				assert.Empty(t, storedPod.Spec.EphemeralContainers)
+				return
+			}
+			require.NoError(t, err)
+			require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+			assert.Equal(t, &corev1.SecurityContext{RunAsUser: ptrInt64Value(0), ReadOnlyRootFilesystem: boolPtr(true)},
+				storedPod.Spec.EphemeralContainers[0].SecurityContext)
+		})
+	}
+}
+
+func ptrInt64Value(value int64) *int64 { return &value }
+
 func newEphemeralOperationTestSession() *breakglassv1alpha1.DebugSession {
 	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
 	return &breakglassv1alpha1.DebugSession{
@@ -2826,10 +2900,41 @@ func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 		assert.Equal(t, "debugger", pod.Spec.Containers[1].Name)
 		assert.Equal(t, "busybox:latest", pod.Spec.Containers[1].Image)
 		assert.Empty(t, pod.Spec.Containers[1].ImagePullPolicy)
+		assert.Nil(t, pod.Spec.Containers[1].SecurityContext, "no template securityContext keeps the previous behavior")
 
 		// Check labels
 		assert.Equal(t, testSession.Name, pod.Labels[DebugSessionLabelKey])
 		assert.Equal(t, "true", pod.Labels["breakglass.telekom.com/debug-copy"])
+	})
+
+	t.Run("template security context is set on the debug container only", func(t *testing.T) {
+		hardened := testSession.DeepCopy()
+		hardened.Status.ResolvedTemplate.KubectlDebug.PodCopy.SecurityContext = &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   boolPtr(true),
+			RunAsNonRoot:             boolPtr(true),
+			AllowPrivilegeEscalation: boolPtr(false),
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		}
+		hardenedHub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(hardened).
+			WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+		sourcePod := testPod.DeepCopy()
+		sourcePod.Spec.Containers[0].SecurityContext = &corev1.SecurityContext{ReadOnlyRootFilesystem: boolPtr(true), RunAsNonRoot: boolPtr(true)}
+		hardenedTarget := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sourcePod, testNs.DeepCopy(), productionNs.DeepCopy()).Build()
+		hardenedHandler := newTestKubectlDebugHandler(hardenedHub, &mockClientProvider{
+			clients: map[string]ctrlclient.Client{"test-cluster": hardenedTarget},
+		})
+
+		pod, err := hardenedHandler.CreatePodCopy(context.Background(), hardened, "production", "app-pod", "busybox:latest", "test-user@example.com")
+
+		require.NoError(t, err)
+		require.Len(t, pod.Spec.Containers, 2)
+		assert.Equal(t, sourcePod.Spec.Containers[0].SecurityContext, pod.Spec.Containers[0].SecurityContext,
+			"copied application containers keep their own security context")
+		assert.Equal(t, hardened.Status.ResolvedTemplate.KubectlDebug.PodCopy.SecurityContext, pod.Spec.Containers[1].SecurityContext)
+		created := &corev1.Pod{}
+		require.NoError(t, hardenedTarget.Get(context.Background(), ctrlclient.ObjectKeyFromObject(pod), created))
+		require.NotNil(t, created.Spec.Containers[1].SecurityContext)
+		assert.True(t, *created.Spec.Containers[1].SecurityContext.ReadOnlyRootFilesystem)
 	})
 
 	t.Run("pod copy disabled", func(t *testing.T) {

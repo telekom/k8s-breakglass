@@ -1380,6 +1380,50 @@ When `allowPrivileged` is `false`, requests with
 `securityContext.privileged: true` are rejected. The template's allowlist is
 not a reason to expose image or command selection to an untrusted caller.
 
+#### Template security context
+
+Clients such as `kubectl debug` profiles do not set every field that
+cluster admission policies require, for example `readOnlyRootFilesystem`.
+Set `securityContext` on the template to enforce such fields:
+
+```yaml
+kubectlDebug:
+  ephemeralContainers:
+    enabled: true
+    securityContext:
+      readOnlyRootFilesystem: true
+  podCopy:
+    enabled: true
+    securityContext:
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+```
+
+- `ephemeralContainers.securityContext`: every top-level field set here
+  replaces the requested value as a whole. Objects are not merged: a template
+  `capabilities` or `seccompProfile` replaces the requested one completely, so a
+  template `capabilities: {drop: [ALL]}` also removes a requested
+  `capabilities.add`. Fields not set here keep the request value, so a request
+  can still add, for example, `runAsUser: 0` and `NET_RAW` when the template
+  allows them. The controller validates the result against `allowPrivileged`,
+  `maxCapabilities` and `requireNonRoot`. The CRD rejects a template
+  `securityContext` that sets `privileged` or `allowPrivilegeEscalation` without
+  `allowPrivileged`.
+- `podCopy.securityContext`: set on the `debugger` container that the controller
+  adds to the copy. The copied application containers keep their own security
+  context. Without it, the debugger has no security context and policies that
+  require one reject the copy.
+
+Both fields are optional. When they are unset, the behavior is unchanged. To
+roll back, remove the field from the template; new requests then use the
+previous behavior. Already injected ephemeral containers and existing copies
+keep the security context they were created with.
+
 #### Namespace Filtering with Labels
 
 The `allowedNamespaces` and `deniedNamespaces` fields support label selectors for dynamic namespace matching:
