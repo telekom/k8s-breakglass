@@ -73,6 +73,14 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// approvers configures approval workflow for debug session requests.
 	// If omitted, sessions are auto-approved for users in the allowed groups.
 	Approvers *DebugSessionApproversApplyConfiguration `json:"approvers,omitempty"`
+	// blockSelfApproval controls whether the session requester may approve or
+	// reject their own DebugSession when they are also a configured approver.
+	// If omitted (nil), the secure default applies and self-approval is blocked;
+	// ClusterConfig blockSelfApproval=false does not relax DebugSession approval.
+	// Set to false to allow self-approval, for example on non-production
+	// templates. A DebugSessionClusterBinding can override this value.
+	// nodeMaintenance templates must not set it to false.
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 	// constraints defines session duration and usage limits.
 	Constraints *DebugSessionConstraintsApplyConfiguration `json:"constraints,omitempty"`
 	// targetNamespace specifies the namespace where debug pods are deployed.
@@ -303,6 +311,14 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithAllowed(value *DebugSes
 // If called multiple times, the Approvers field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithApprovers(value *DebugSessionApproversApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.Approvers = value
+	return b
+}
+
+// WithBlockSelfApproval sets the BlockSelfApproval field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BlockSelfApproval field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithBlockSelfApproval(value bool) *DebugSessionTemplateSpecApplyConfiguration {
+	b.BlockSelfApproval = &value
 	return b
 }
 

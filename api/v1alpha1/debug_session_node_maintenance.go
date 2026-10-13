@@ -89,6 +89,9 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if spec.Approvers == nil || len(spec.Approvers.Users)+len(spec.Approvers.Groups) == 0 || spec.Approvers.AutoApproveFor != nil {
 		return fmt.Errorf("nodeMaintenance requires explicit independent approvers without auto-approval")
 	}
+	if spec.BlockSelfApproval != nil && !*spec.BlockSelfApproval {
+		return fmt.Errorf("nodeMaintenance requires blocked self-approval")
+	}
 	if spec.Constraints == nil || spec.Constraints.MaxDuration == "" {
 		return fmt.Errorf("nodeMaintenance requires an explicit bounded maxDuration")
 	}

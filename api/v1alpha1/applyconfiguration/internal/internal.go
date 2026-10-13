@@ -1690,6 +1690,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: boolean
+    - name: blockSelfApproval
+      type:
+        scalar: boolean
     - name: clusterSelector
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
@@ -2241,6 +2244,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AuxiliaryResource
           elementRelationship: atomic
+    - name: blockSelfApproval
+      type:
+        scalar: boolean
     - name: constraints
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionConstraints

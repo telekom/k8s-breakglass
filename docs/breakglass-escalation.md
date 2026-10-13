@@ -380,6 +380,10 @@ also supplies cluster-level `allowedApproverDomains` unless the escalation
 sets its own domain allowlist. Approval checks fail closed when the cluster
 name resolves to multiple `ClusterConfig` resources.
 
+DebugSessions do not use this escalation setting. They resolve
+`blockSelfApproval` from their binding and template and default to blocked; see
+[DebugSession self-approval](debug-session.md#self-approval-blockselfapproval).
+
 ### Session Limits
 
 Control the maximum number of concurrent active sessions via this escalation. These limits help prevent resource exhaustion and enforce organizational policies for different escalation tiers (e.g., platform vs. tenant).

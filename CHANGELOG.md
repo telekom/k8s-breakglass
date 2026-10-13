@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `kprobe-multi` requires CAP_SYSLOG to read kallsyms and fails closed
   without it. Defaults are unchanged; the trace summary now also names the
   `backend` used.
+- Optional `blockSelfApproval` on `DebugSessionTemplate` and
+  `DebugSessionClusterBinding` controls whether a requester who is also a
+  configured approver may approve or reject their own DebugSession. The binding
+  value overrides the template value, as an escalation overrides its
+  `ClusterConfig`. When both are unset, self-approval stays blocked exactly as
+  before: DebugSessions deliberately do not inherit `ClusterConfig`
+  `blockSelfApproval: false`, which the escalation-config chart renders
+  explicitly, so upgrading does not loosen any install. Set `false` on
+  non-production bindings to allow ops/platform self-approval and leave
+  production unset or `true`. Node-maintenance templates reject `false` and always
+  require an independent approver. See
+  `docs/debug-session.md#self-approval-blockselfapproval`.
 - Typed node-maintenance DebugSessions (disabled by default) run one fixed,
   template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
   exact Node after independent approval. Each target Node is serialized by a

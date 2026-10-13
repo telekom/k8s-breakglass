@@ -234,6 +234,21 @@ Exact entries are trimmed and matched case-insensitively. Entries containing
 glob metacharacters (`*`, `?`, or `[]`) are trimmed and matched with
 case-sensitive glob semantics.
 
+### blockSelfApproval
+
+Overrides the template's `blockSelfApproval` for sessions created via this
+binding. Unset inherits the template value; if both are unset, the requester
+cannot approve or reject their own session. `ClusterConfig.spec.blockSelfApproval`
+is not inherited. Set `false` to let a requester who is also an approver approve
+their own session (for example on non-production clusters) and `true` to block
+it regardless of the template. Node-maintenance templates reject `false`. The
+field applies even when the binding does not set `approvers`. See
+[Self-approval](debug-session.md#self-approval-blockselfapproval).
+
+```yaml
+blockSelfApproval: false
+```
+
 ### impersonation
 
 Configure ServiceAccount impersonation:
@@ -910,6 +925,7 @@ When a binding is found (explicit or auto-discovered), its configuration is merg
 | **schedulingOptions** | Full replacement: binding takes precedence |
 | **impersonation** | Full replacement: binding takes precedence |
 | **approvers** | Full replacement: binding takes precedence |
+| **blockSelfApproval** | Binding value if set, else template value, else `true` |
 | **requiredAuxiliaryResourceCategories** | Additive: both template and binding categories required |
 
 #### Extra deploy variable narrowing
