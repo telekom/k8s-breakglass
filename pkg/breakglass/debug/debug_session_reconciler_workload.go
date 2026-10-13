@@ -1855,12 +1855,16 @@ func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay, 
 	if motd.RunbookURL != "" {
 		values = append(values, corev1.EnvVar{Name: runbookURLEnvName, Value: motd.RunbookURL})
 	}
+	// Reuse our own hook volume; never replace a template or copied volume
+	// that other containers, including init containers, may still mount.
+	hookFieldPath := "metadata.annotations['" + motdProfileAnnotation + "']"
+	isHookVolume := func(v corev1.Volume) bool {
+		return v.DownwardAPI != nil && len(v.DownwardAPI.Items) == 1 &&
+			v.DownwardAPI.Items[0].FieldRef != nil && v.DownwardAPI.Items[0].FieldRef.FieldPath == hookFieldPath
+	}
 	volumeName := motdVolumeName
-	if len(containers) > 0 {
-		// Keep volumes that untouched containers may still mount.
-		for i := 1; slices.ContainsFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volumeName }); i++ {
-			volumeName = fmt.Sprintf("%s-%d", motdVolumeName, i)
-		}
+	for i := 1; slices.ContainsFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volumeName && !isHookVolume(v) }); i++ {
+		volumeName = fmt.Sprintf("%s-%d", motdVolumeName, i)
 	}
 	hooks := []corev1.EnvVar{
 		{Name: "ENV", Value: motdProfilePath},
@@ -1892,7 +1896,7 @@ func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay, 
 		VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
 			Items: []corev1.DownwardAPIVolumeFile{{
 				Path:     motdProfileFile,
-				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + motdProfileAnnotation + "']"},
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: hookFieldPath},
 			}},
 		}},
 	})

@@ -72,6 +72,7 @@ func TestInjectMOTDMountsReadOnlyShellHook(t *testing.T) {
 		Volumes: []corev1.Volume{{Name: "data"}, {Name: motdVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
 	}
 	injectMOTD(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "m"})
+	injectMOTD(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "m"})
 
 	c := spec.Containers[0]
 	assert.Contains(t, c.Env, corev1.EnvVar{Name: "ENV", Value: "/custom/env"}, "a template ENV is kept")
@@ -80,12 +81,13 @@ func TestInjectMOTDMountsReadOnlyShellHook(t *testing.T) {
 	assert.NotContains(t, c.Env, corev1.EnvVar{Name: "BREAKGLASS_MOTD_SHOWN", Value: "1"}, "templates cannot suppress the MOTD")
 	assert.Equal(t, []corev1.VolumeMount{
 		{Name: "data", MountPath: "/data"},
-		{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true},
+		{Name: motdVolumeName + "-1", MountPath: motdMountPath, ReadOnly: true},
 	}, c.VolumeMounts)
-	require.Len(t, spec.Volumes, 2)
+	require.Len(t, spec.Volumes, 3, "re-injection reuses the hook volume")
 	assert.Equal(t, "data", spec.Volumes[0].Name)
-	hook := spec.Volumes[1]
-	assert.Equal(t, motdVolumeName, hook.Name)
+	assert.Equal(t, corev1.Volume{Name: motdVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, spec.Volumes[1], "a template volume with the reserved name is kept")
+	hook := spec.Volumes[2]
+	assert.Equal(t, motdVolumeName+"-1", hook.Name)
 	require.NotNil(t, hook.DownwardAPI, "downward API volumes are allowed by restricted Pod Security")
 	require.Len(t, hook.DownwardAPI.Items, 1)
 	assert.Equal(t, motdProfileFile, hook.DownwardAPI.Items[0].Path)
@@ -235,6 +237,46 @@ spec:
 			assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true})
 		})
 	}
+}
+
+func TestBuildWorkloadMOTDKeepsReservedTemplateVolume(t *testing.T) {
+	controller, session, template, _ := newDeploymentFenceFixture(t)
+	session.UID = "session-uid"
+	template.Spec.WorkloadType = breakglassv1alpha1.DebugWorkloadJob
+	template.Spec.PodTemplateString = ""
+	template.Spec.MOTD = &breakglassv1alpha1.MessageOfTheDay{Message: "template"}
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{Spec: breakglassv1alpha1.DebugPodTemplateSpec{TemplateString: `apiVersion: batch/v1
+kind: Job
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: seed
+          image: busybox
+          volumeMounts:
+            - name: breakglass-motd
+              mountPath: /seed
+      containers:
+        - name: debug
+          image: busybox
+          volumeMounts:
+            - name: breakglass-motd
+              mountPath: /data
+      volumes:
+        - name: breakglass-motd
+          emptyDir: {}
+`}}
+	workload, _, err := controller.buildWorkload(session, template, nil, podTemplate, "target")
+	require.NoError(t, err)
+	job, ok := workload.(*batchv1.Job)
+	require.True(t, ok)
+	spec := job.Spec.Template.Spec
+	assert.Contains(t, spec.Volumes, corev1.Volume{Name: motdVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}, "the template volume is not replaced")
+	assert.Equal(t, []corev1.VolumeMount{{Name: motdVolumeName, MountPath: "/seed"}}, spec.InitContainers[0].VolumeMounts)
+	assert.Contains(t, spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: "/data"})
+	assertMOTDHook(t, spec.Containers[0], "template", motdVolumeName+"-1")
+	assert.True(t, slices.ContainsFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == motdVolumeName+"-1" && v.DownwardAPI != nil }))
 }
 
 func motdKubectlSession(name string, kd *breakglassv1alpha1.KubectlDebugConfig, bindingMOTD *breakglassv1alpha1.MessageOfTheDay) *breakglassv1alpha1.DebugSession {
