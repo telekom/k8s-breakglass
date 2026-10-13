@@ -3360,6 +3360,9 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		assert.Equal(t, "debugger", pod.Spec.Containers[0].Name)
 		assert.Equal(t, "busybox:stable", pod.Spec.Containers[0].Image)
 		assert.True(t, *pod.Spec.Containers[0].SecurityContext.Privileged)
+		require.NotNil(t, pod.Spec.AutomountServiceAccountToken)
+		assert.False(t, *pod.Spec.AutomountServiceAccountToken, "privileged node debug pod must not mount a ServiceAccount token")
+		assert.Empty(t, pod.Spec.ServiceAccountName)
 
 		// Check host root mount
 		require.Len(t, pod.Spec.Volumes, 1)

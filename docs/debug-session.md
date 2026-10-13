@@ -1377,6 +1377,12 @@ Node-debug pods are created in the debug session's resolved
 `spec.targetNamespace` first, then the template `targetNamespace`, and finally
 the default `breakglass-debug` namespace.
 
+Node-debug pods set `automountServiceAccountToken: false`. The privileged
+debugger only needs the node, so no namespace ServiceAccount token is mounted
+for anyone with host access to read. Use a template-defined workload with an
+explicit dedicated ServiceAccount when a diagnostic genuinely needs the
+Kubernetes API.
+
 ### Pod Copy Debugging
 
 Allow creating debug copies of pods:
@@ -1822,7 +1828,8 @@ The wire request carries a node name. Resolve it from a controller-owned,
 allowlisted scheduling policy and verify the target at admission; a requester
 must not be able to select an arbitrary node. This page intentionally provides
 no free-form request example. The current implementation creates a privileged
-pod with host namespaces and a read-write `/host` host-path; expose this
+pod with host namespaces, a read-write `/host` host-path and no mounted
+ServiceAccount token; expose this
 endpoint only through a separately reviewed, short-lived node-maintenance
 profile and admission policy.
 

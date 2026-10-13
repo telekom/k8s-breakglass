@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- Node-debug pods created through `createNodeDebugPod` (kubectl-debug node
+  mode) now set `automountServiceAccountToken: false`. The privileged debugger
+  has host access and never used the Kubernetes API, so a mounted namespace
+  ServiceAccount token was only an exposure. Diagnostic-artifact collector Jobs
+  and node-maintenance executors already disabled token automount.
+
 - Update MongoDB Go Driver v2 to 2.9.2 to fix CVE-2026-81521
   (`Client.BulkWrite` namespace handling) and CVE-2026-107325
   (`bson.RawArray.Validate` malformed-length panic).

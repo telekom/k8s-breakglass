@@ -1612,6 +1612,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 			HostPID:       hostPID,
 			HostIPC:       hostIPC,
 			RestartPolicy: corev1.RestartPolicyNever,
+			// The privileged debugger only needs the node; a mounted token would
+			// hand the namespace ServiceAccount to anyone with host access.
+			AutomountServiceAccountToken: boolPtr(false),
 			Containers: []corev1.Container{
 				{
 					Name:    "debugger",
