@@ -10,7 +10,9 @@ import (
 
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/apimachinery/pkg/labels"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 
@@ -240,9 +242,11 @@ func (em *EscalationManager) GetClusterBreakglassEscalations(ctx context.Context
 	em.getLogger().Debugw("Fetching cluster BreakglassEscalations", "cluster", cluster)
 	metrics.APIEndpointRequests.WithLabelValues("GetClusterBreakglassEscalations").Inc()
 
-	return em.GetBreakglassEscalationsWithFilter(ctx, func(be breakglassv1alpha1.BreakglassEscalation) bool {
-		return escalationMatchesCluster(be, cluster)
-	})
+	escalations, err := em.GetAllBreakglassEscalations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return em.filterEscalationsForCluster(ctx, escalations, cluster)
 }
 
 // matchesGlobPattern checks if a pattern matches a value using filepath.Match glob semantics.
@@ -266,9 +270,45 @@ func clusterMatchesPatterns(cluster string, patterns []string) bool {
 // escalationMatchesCluster checks if an escalation applies to a given cluster.
 // Both Allowed.Clusters and ClusterConfigRefs are checked with glob pattern support.
 // Empty values in both fields means the escalation applies to no clusters (use "*" for global).
-func escalationMatchesCluster(be breakglassv1alpha1.BreakglassEscalation, cluster string) bool {
-	return clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) ||
-		clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs)
+func escalationMatchesCluster(be breakglassv1alpha1.BreakglassEscalation, cluster string, clusterLabels ...map[string]string) bool {
+	if !clusterMatchesPatterns(cluster, be.Spec.Allowed.Clusters) &&
+		!clusterMatchesPatterns(cluster, be.Spec.ClusterConfigRefs) {
+		return false
+	}
+	if be.Spec.Allowed.ClusterSelector == nil {
+		return true
+	}
+	if len(clusterLabels) == 0 {
+		return false
+	}
+	selector, err := metav1.LabelSelectorAsSelector(be.Spec.Allowed.ClusterSelector)
+	return err == nil && !selector.Empty() && selector.Matches(labels.Set(clusterLabels[0]))
+}
+
+func (em *EscalationManager) filterEscalationsForCluster(ctx context.Context, escalations []breakglassv1alpha1.BreakglassEscalation, cluster string) ([]breakglassv1alpha1.BreakglassEscalation, error) {
+	var clusterLabels []map[string]string
+	for _, escalation := range escalations {
+		if escalation.Spec.Allowed.ClusterSelector != nil &&
+			(clusterMatchesPatterns(cluster, escalation.Spec.Allowed.Clusters) ||
+				clusterMatchesPatterns(cluster, escalation.Spec.ClusterConfigRefs)) {
+			cc, err := breakglass.NewClusterConfigManager(em.Client).GetClusterConfigByName(ctx, cluster)
+			if apierrors.IsNotFound(err) {
+				break
+			}
+			if err != nil {
+				return nil, fmt.Errorf("resolve ClusterConfig for escalation selector: %w", err)
+			}
+			clusterLabels = append(clusterLabels, cc.Labels)
+			break
+		}
+	}
+	result := make([]breakglassv1alpha1.BreakglassEscalation, 0, len(escalations))
+	for _, escalation := range escalations {
+		if escalationMatchesCluster(escalation, cluster, clusterLabels...) {
+			result = append(result, escalation)
+		}
+	}
+	return result, nil
 }
 
 // getOIDCPrefixes retrieves OIDC prefixes from config, returning nil on error.
@@ -318,17 +358,13 @@ func (em *EscalationManager) GetClusterGroupBreakglassEscalations(ctx context.Co
 		log.Debugw("Fetched escalation candidates with group index", "cluster", cluster, "candidateCount", len(collected))
 	}
 
-	// Filter collected by cluster matching and groups using shared helpers
+	collected, err = em.filterEscalationsForCluster(ctx, collected, cluster)
+	if err != nil {
+		return nil, err
+	}
+	// Filter collected by groups using shared helpers
 	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
-		if !escalationMatchesCluster(be, cluster) {
-			log.Debugw("Escalation skipped: cluster mismatch",
-				"escalation", be.Name,
-				"allowedClusters", be.Spec.Allowed.Clusters,
-				"clusterConfigRefs", be.Spec.ClusterConfigRefs,
-				"requestedCluster", cluster)
-			continue
-		}
 		if groupsMatch(groups, be.Spec.Allowed.Groups, oidcPrefixes) {
 			out = append(out, be)
 		} else {
@@ -368,14 +404,16 @@ func (em *EscalationManager) GetClusterGroupTargetBreakglassEscalation(ctx conte
 		log.Debugw("Fetched escalation candidates with target-group index", "cluster", cluster, "targetGroupHint", system.RedactGroupName(targetGroup), "candidateCount", len(collected))
 	}
 
-	// Filter collected by cluster and allowed groups using shared helpers
+	var err error
+	collected, err = em.filterEscalationsForCluster(ctx, collected, cluster)
+	if err != nil {
+		return nil, err
+	}
+	// Filter collected by allowed groups using shared helpers
 	oidcPrefixes := em.getOIDCPrefixes()
 	out := make([]breakglassv1alpha1.BreakglassEscalation, 0)
 	for _, be := range collected {
 		if be.Spec.EscalatedGroup != targetGroup {
-			continue
-		}
-		if !escalationMatchesCluster(be, cluster) {
 			continue
 		}
 		if groupsMatch(userGroups, be.Spec.Allowed.Groups, oidcPrefixes) {

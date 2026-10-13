@@ -226,6 +226,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.MailProviderSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("MailProviderStatus"):
 		return &apiv1alpha1.MailProviderStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("MessageOfTheDay"):
+		return &apiv1alpha1.MessageOfTheDayApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NameCollision"):
 		return &apiv1alpha1.NameCollisionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NamespaceConstraints"):

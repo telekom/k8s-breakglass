@@ -62,6 +62,55 @@ spec:
               allowed:
                 description: allowed specifies who is allowed to use this escalation.
                 properties:
+                  clusterSelector:
+                    description: |-
+                      clusterSelector restricts targets to ClusterConfig labels matching this selector.
+                      It is ANDed with allowed.clusters or clusterConfigRefs; name patterns never bypass it.
+                      A missing or ambiguous ClusterConfig fails closed. Empty selectors are not allowed.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
                   clusters:
                     description: |-
                       clusters is a list of clusters this escalation can be used for.
@@ -230,6 +279,29 @@ spec:
                   this escalation will be active for after it is approved.
                 pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                 type: string
+              motd:
+                description: |-
+                  motd is guidance shown when requesting and using this escalation:
+                  purpose, allowed actions, safety notes, how to drop the session, and a
+                  runbook link. It is shown in the UI only; escalations have no workload.
+                properties:
+                  message:
+                    description: |-
+                      message is plain text shown verbatim in the UI, with line breaks
+                      preserved.
+                    maxLength: 4096
+                    minLength: 1
+                    type: string
+                  runbookURL:
+                    description: |-
+                      runbookURL links the runbook section for this action. It is rendered as a
+                      link in the UI.
+                    maxLength: 2048
+                    pattern: ^https://[^\s]+$
+                    type: string
+                required:
+                - message
+                type: object
               notificationExclusions:
                 description: |-
                   notificationExclusions allows excluding specific users or groups from receiving email notifications for this escalation.

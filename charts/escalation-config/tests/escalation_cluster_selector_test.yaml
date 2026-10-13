@@ -1,0 +1,39 @@
+suite: Escalation target label restriction
+templates:
+  - templates/breakglassescalation.yaml
+values:
+  - ../ci/test-values.yaml
+tests:
+  - it: preserves the selector alongside wildcard cluster names
+    set:
+      escalations:
+        - name: ops-prd
+          allowed:
+            clusters: ["*"]
+            groups: [ops]
+            clusterSelector:
+              matchExpressions:
+                - key: breakglass.t-caas.telekom.com/environment
+                  operator: NotIn
+                  values: [dev, ref, tst]
+          escalatedGroup: platform
+          approvers: {groups: [flm]}
+          blockSelfApproval: true
+    asserts:
+      - equal: {path: spec.allowed.clusters, value: ["*"]}
+      - equal:
+          path: spec.allowed.clusterSelector.matchExpressions
+          value:
+            - key: breakglass.t-caas.telekom.com/environment
+              operator: NotIn
+              values: [dev, ref, tst]
+      - equal: {path: spec.blockSelfApproval, value: true}
+  - it: preserves legacy rendering when the selector is absent
+    set:
+      escalations:
+        - name: ops
+          allowed: {clusters: ["*"], groups: [ops]}
+          escalatedGroup: platform
+          approvers: {groups: [flm]}
+    asserts:
+      - notExists: {path: spec.allowed.clusterSelector}

@@ -600,6 +600,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.BreakglassEscalationAllowed
   map:
     fields:
+    - name: clusterSelector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
     - name: clusters
       type:
         list:
@@ -707,6 +710,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: 1h
+    - name: motd
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.MessageOfTheDay
     - name: notificationExclusions
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
@@ -1751,6 +1757,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: maxActiveSessionsTotal
       type:
         scalar: numeric
+    - name: motd
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.MessageOfTheDay
     - name: namespaceConstraints
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
@@ -2300,6 +2309,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionTemplateMode
       default: workload
+    - name: motd
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.MessageOfTheDay
     - name: namespaceConstraints
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceConstraints
@@ -3164,6 +3176,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: observedGeneration
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.MessageOfTheDay
+  map:
+    fields:
+    - name: message
+      type:
+        scalar: string
+    - name: runbookURL
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NameCollision
   map:
     fields:

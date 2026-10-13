@@ -2155,6 +2155,30 @@ spec:
                 - kubectl-debug
                 - hybrid
                 type: string
+              motd:
+                description: |-
+                  motd is guidance shown before and during a session: purpose, allowed
+                  actions, safety notes, how to terminate, and a runbook link. A binding
+                  motd replaces it. The effective motd is exported to every debug workload
+                  container as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
+                properties:
+                  message:
+                    description: |-
+                      message is plain text shown verbatim in the UI, with line breaks
+                      preserved.
+                    maxLength: 4096
+                    minLength: 1
+                    type: string
+                  runbookURL:
+                    description: |-
+                      runbookURL links the runbook section for this action. It is rendered as a
+                      link in the UI.
+                    maxLength: 2048
+                    pattern: ^https://[^\s]+$
+                    type: string
+                required:
+                - message
+                type: object
               namespaceConstraints:
                 description: |-
                   namespaceConstraints defines where debug pods can be deployed.

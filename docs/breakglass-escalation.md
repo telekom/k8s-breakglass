@@ -47,6 +47,29 @@ spec:
   denyPolicyRefs: ["deny-policy-1", "deny-policy-2"]
 ```
 
+## Target cluster label restriction
+
+`spec.allowed.clusterSelector` is an optional non-empty Kubernetes label
+selector over the target **ClusterConfig metadata labels**. It is an AND
+restriction on the existing `allowed.clusters` / `clusterConfigRefs` name
+patterns, not an alternative OR grant. Missing, ambiguous or unreadable target
+ClusterConfigs and invalid selectors fail closed. Omission preserves legacy
+name-pattern matching.
+
+Discovery resolves selector-bearing escalations to concrete matching
+`spec.allowed.clusters` in its response copy (ready clusters only when
+`activeOnly=true`). This keeps existing UI/CLI target selection correct without
+changing the stored escalation, wildcard patterns or selectors. No matching or
+ambiguous targets means the selector-bearing escalation is hidden.
+
+To partition a mixed-stage hub, stamp a trusted stage label on each
+ClusterConfig and use two escalations with identical rights: `In [dev, ref, tst]`
+with `blockSelfApproval: false`, and `NotIn [dev, ref, tst]` with
+`blockSelfApproval: true`. Kubernetes NotIn includes missing labels, so unknown
+or unlabeled targets select only the blocked variant. Keep independent
+first-line approvers on the blocked variant. Never use a hub's own stage to
+choose policy for all of its targets.
+
 ## Display name
 
 The optional `spec.displayName` labels the escalation in the UI and CLI and
@@ -75,6 +98,23 @@ server rejects a 254-character label.
 The Helm Chart Lint job runs `charts/escalation-config/ci/test-escalation-names.sh`,
 including `Hashed64CharacterName`, `HashedLongProviderName`, and
 `DistinctHashesBeyondTruncationBoundary`.
+
+## Message of the day
+
+The optional `spec.motd` shows operator guidance in the request dialog of the
+escalation card: purpose, allowed actions, safety notes and how to drop or
+withdraw the session. `message` is plain text (1-4096 characters, line breaks
+preserved); `runbookURL` is an optional `https://` link (at most 2048
+characters) shown below the message.
+
+```yaml
+spec:
+  motd:
+    message: |
+      Purpose: emergency cluster-admin access for incident handling.
+      Terminate: Sessions > Drop, or `bgctl session drop <session>`.
+    runbookURL: https://example.com/runbooks/emergency#procedure
+```
 
 ## Required Fields
 

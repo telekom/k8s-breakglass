@@ -79,6 +79,40 @@ describe("BreakglassService", () => {
       },
     );
 
+    it("maps a valid escalation motd and drops malformed ones", async () => {
+      mockGet.mockImplementation((url: string) =>
+        Promise.resolve({
+          data:
+            url === "/breakglassEscalations"
+              ? [
+                  {
+                    metadata: { name: "with-motd" },
+                    spec: {
+                      escalatedGroup: "ops",
+                      allowed: { clusters: ["prod"], groups: ["dev"] },
+                      motd: { message: "Purpose: ops", runbookURL: "https://example.com/rb#ops" },
+                    },
+                  },
+                  {
+                    metadata: { name: "malformed" },
+                    spec: {
+                      escalatedGroup: "ro",
+                      allowed: { clusters: ["prod"], groups: ["dev"] },
+                      motd: { message: 1 },
+                    },
+                  },
+                ]
+              : [],
+        }),
+      );
+      const result = await service.getBreakglasses();
+      expect(result.find((b) => b.escalationName === "with-motd")?.motd).toEqual({
+        message: "Purpose: ops",
+        runbookURL: "https://example.com/rb#ops",
+      });
+      expect(result.find((b) => b.escalationName === "malformed")?.motd).toBeUndefined();
+    });
+
     it("rethrows when escalations API fails", async () => {
       // fetchAvailableEscalations is private, but it's called by getBreakglasses
       // Simulate a network error on the escalations endpoint

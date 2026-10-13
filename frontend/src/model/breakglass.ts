@@ -1,3 +1,5 @@
+import type { MessageOfTheDay } from "@/model/motd";
+
 export interface Breakglass extends AvailableBreakglass, ActiveBreakglass {}
 
 export interface AvailableBreakglass {
@@ -16,6 +18,8 @@ export interface AvailableBreakglass {
   requestReason?: { mandatory?: boolean; description?: string };
   // optional reason configuration shown to approvers
   approvalReason?: { mandatory?: boolean; description?: string };
+  // optional operator guidance with runbook link
+  motd?: MessageOfTheDay;
 }
 
 export interface ActiveBreakglass {

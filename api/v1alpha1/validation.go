@@ -141,6 +141,15 @@ func ValidateBreakglassEscalation(escalation *BreakglassEscalation) *ValidationR
 		result.Errors = append(result.Errors, validateIdentifierFormat(cluster, allowedClustersPath.Index(i))...)
 	}
 	result.Errors = append(result.Errors, validateClusterGlobPatterns(escalation.Spec.Allowed.Clusters, allowedClustersPath)...)
+	if escalation.Spec.Allowed.ClusterSelector != nil {
+		selectorPath := specPath.Child("allowed", "clusterSelector")
+		selector, err := metav1.LabelSelectorAsSelector(escalation.Spec.Allowed.ClusterSelector)
+		if err != nil {
+			result.Errors = append(result.Errors, field.Invalid(selectorPath, escalation.Spec.Allowed.ClusterSelector, err.Error()))
+		} else if selector.Empty() {
+			result.Errors = append(result.Errors, field.Invalid(selectorPath, escalation.Spec.Allowed.ClusterSelector, "empty selector is not allowed"))
+		}
+	}
 
 	// Validate approvers
 	approverGroupsPath := specPath.Child("approvers").Child("groups")

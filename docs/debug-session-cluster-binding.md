@@ -333,6 +333,21 @@ spec:
   disabled: false
 ```
 
+### Message of the day
+
+`spec.motd` (`message`, optional `runbookURL`) replaces the template MOTD for
+sessions created through this binding. Use it to link persona-specific
+runbooks. See [Debug Sessions: Message of the day](debug-session.md#message-of-the-day).
+
+```yaml
+spec:
+  motd:
+    message: |
+      Purpose: tenant read-only diagnostics.
+      Terminate: Debug Sessions > session > Terminate.
+    runbookURL: https://example.com/runbooks/tenant#debug-sessions
+```
+
 ### Session Metadata
 
 Labels and annotations to apply to created sessions:

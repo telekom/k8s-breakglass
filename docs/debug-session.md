@@ -400,6 +400,62 @@ the observed generation, pod-template reference resolution, active session
 usage, and clusters made available through active
 `DebugSessionClusterBinding` resources.
 
+### Message of the day
+
+Templates may set `spec.motd` to tell requesters and participants what the
+session is for, what they may do, which safety rules apply and how to end it:
+
+```yaml
+spec:
+  motd:
+    message: |
+      Purpose: read-only node diagnostics for onboarding.
+      Allowed: inspect host state; no configuration changes.
+      Safety: reports may contain licence data; delete local copies after use.
+      Terminate: Debug Sessions > session > Terminate, or
+      `bgctl debug session terminate <session>`.
+    runbookURL: https://example.com/runbooks/node-diagnostics#procedure
+```
+
+`message` is plain text (1-4096 characters, line breaks preserved).
+`runbookURL` is optional, must be an `https://` URL and is at most 2048
+characters. A `DebugSessionClusterBinding` `spec.motd` replaces the template
+MOTD as a whole, so persona-specific guidance is not mixed with the shared
+template text. The effective MOTD is snapshotted with the session
+(`status.resolvedTemplate` / `status.resolvedBindingSpec`).
+
+The UI shows the effective MOTD on the session request form and on the session
+details page. The controller exports it to every regular container of the debug
+workload (Pod, DaemonSet, Deployment or Job) as `BREAKGLASS_MOTD` and
+`BREAKGLASS_RUNBOOK_URL`, replacing template variables of the same name.
+
+Every interactive shell opened with `kubectl exec -it <pod> -- sh` (or `bash`)
+prints the MOTD and runbook link once before the first prompt, including the
+command offered on the details page. The controller mounts a small hook
+read-only at `/etc/breakglass-motd/profile.sh` through a downward API volume
+(the script travels in the pod annotation
+`breakglass.t-caas.telekom.com/motd-profile`), so it works with
+`readOnlyRootFilesystem` and restricted Pod Security, and needs no ConfigMap
+or init container. Two container variables start it:
+
+- `ENV=/etc/breakglass-motd/profile.sh` for POSIX `sh`, `ash` (busybox,
+  netshoot), `dash` and bash running as `sh`;
+- `PROMPT_COMMAND=. /etc/breakglass-motd/profile.sh` for `bash`.
+
+The hook prints only when stdout is a terminal, so non-interactive commands
+(`kubectl exec <pod> -- cmd`, `kubectl exec -i <pod> -- sh -ic cmd > file`)
+keep their output unchanged, and nested shells do not print it again. Bash
+reads no rc file for this, so image `~/.bashrc` or `/etc/bash.bashrc` files
+need not be writable or changed; an rc file that overwrites `PROMPT_COMMAND`
+suppresses the hook in bash, while `sh` still prints it. A template that sets its own `ENV` or `PROMPT_COMMAND` keeps
+its value, so that shell does not print the MOTD; other shells such as `zsh`
+read neither variable. Node debug pods and the `debugger` container of pod
+copies created through the kubectl-debug API get the same hook from the
+session's approved snapshots; copied application containers stay unchanged.
+Ephemeral containers cannot mount volumes, so `kubectl debug` sessions and
+templates without a workload, such as node-maintenance templates, show the
+MOTD in the UI only.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.

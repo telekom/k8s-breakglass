@@ -19,6 +19,11 @@ profiles:
     intent: workload-diagnostics
     displayName: Custom read-only profile
     description: A custom restricted profile proving list extensibility.
+    motd:
+      message: |-
+        Purpose: custom read-only checks.
+        Terminate: end the session in the UI.
+      runbookURL: https://example.com/runbooks/custom#read-only
     enabled: true
     elevated: false
     imageKey: custom

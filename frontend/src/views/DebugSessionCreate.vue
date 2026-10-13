@@ -5,7 +5,7 @@ import { useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { debug } from "@/services/logger";
 import DebugSessionService from "@/services/debugSession";
-import { EmptyState, PageHeader, LoadingState } from "@/components/common";
+import { EmptyState, PageHeader, LoadingState, MotdNotice } from "@/components/common";
 import ClusterSelectGrid from "@/components/debug-session/ClusterSelectGrid.vue";
 import BindingOptionsGrid from "@/components/debug-session/BindingOptionsGrid.vue";
 import SessionConfigForm from "@/components/debug-session/SessionConfigForm.vue";
@@ -220,6 +220,17 @@ const hasMultipleBindings = computed(() => {
 });
 
 // Get the currently selected binding option (or undefined if no bindings)
+// A binding motd replaces the template motd, matching the controller.
+const effectiveMotd = computed(() => {
+  if (selectedBindingOption.value) {
+    return selectedBindingOption.value.motd;
+  }
+  if (form.cluster) {
+    return selectedClusterDetail.value?.motd || selectedTemplate.value?.motd;
+  }
+  return selectedTemplate.value?.motd;
+});
+
 const selectedBindingOption = computed((): BindingOption | undefined => {
   if (bindingOptions.value.length === 0) return undefined;
   return bindingOptions.value[form.selectedBindingIndex] || bindingOptions.value[0];
@@ -866,6 +877,8 @@ function handleTemplateChange(ev: Event) {
         :selected-index="form.selectedBindingIndex"
         @update:selected-index="form.selectedBindingIndex = $event"
       />
+
+      <MotdNotice :motd="effectiveMotd" />
 
       <!-- Scheduling, Namespace, and Session Details -->
       <SessionConfigForm

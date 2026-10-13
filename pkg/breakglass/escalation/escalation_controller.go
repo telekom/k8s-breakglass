@@ -3,6 +3,7 @@ package escalation
 import (
 	"context"
 	"net/http"
+	"slices"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -121,9 +122,14 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	escalations = breakglass.FilterEscalationsByIdentityProvider(escalations, c.GetString("identity_provider_name"))
 
 	clusterReadiness := map[string]bool{}
-	if activeOnly {
+	clusterLabels := map[string]map[string]string{}
+	hasClusterSelector := false
+	for _, esc := range escalations {
+		hasClusterSelector = hasClusterSelector || esc.Spec.Allowed.ClusterSelector != nil
+	}
+	if activeOnly || hasClusterSelector {
 		var readinessErr error
-		clusterReadiness, readinessErr = ec.clusterConfigReadiness(c.Request.Context())
+		clusterReadiness, readinessErr = ec.clusterConfigReadiness(c.Request.Context(), clusterLabels)
 		if readinessErr != nil {
 			reqLog.Errorw("Failed to load ClusterConfig readiness for active escalations", "error", readinessErr)
 			metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
@@ -141,19 +147,15 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	// Apply cluster and activeOnly filters
 	for _, esc := range escalations {
-		// Filter by cluster if specified
-		if clusterFilter != "" {
-			if !escalationMatchesCluster(esc, clusterFilter) {
-				continue
-			}
+		if clusterFilter != "" && esc.Spec.Allowed.ClusterSelector == nil && !escalationMatchesCluster(esc, clusterFilter) {
+			continue
 		}
-
 		// Filter by active status if requested
 		if activeOnly {
 			if !isEscalationReady(&esc) {
 				continue
 			}
-			if !escalationHasReadyCluster(esc, clusterFilter, clusterReadiness) {
+			if !escalationHasReadyCluster(esc, clusterFilter, clusterReadiness, clusterLabels) {
 				continue
 			}
 		}
@@ -167,6 +169,24 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	// Filter out hidden groups from the response - they should not be visible to users in the UI
 	for i := range response {
+		if response[i].Spec.Allowed.ClusterSelector != nil {
+			// Existing UI/CLI clients understand concrete clusters, not selectors.
+			// Resolve this response copy without changing the stored policy.
+			response[i].Spec.Allowed.Clusters = nil
+			for clusterName, targetLabels := range clusterLabels {
+				if clusterFilter != "" && !clusterMatchesPatterns(clusterName, []string{clusterFilter}) {
+					continue
+				}
+				if activeOnly && !clusterReadiness[clusterName] {
+					continue
+				}
+				if escalationMatchesCluster(filtered[i], clusterName, targetLabels) {
+					response[i].Spec.Allowed.Clusters = append(response[i].Spec.Allowed.Clusters, clusterName)
+				}
+			}
+			slices.Sort(response[i].Spec.Allowed.Clusters)
+			response[i].Spec.ClusterConfigRefs = nil
+		}
 		if len(response[i].Spec.Approvers.HiddenFromUI) > 0 {
 			// Build set of hidden items for quick lookup
 			hiddenSet := make(map[string]bool)
@@ -198,6 +218,9 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		}
 	}
 
+	response = slices.DeleteFunc(response, func(esc breakglassv1alpha1.BreakglassEscalation) bool {
+		return esc.Spec.Allowed.ClusterSelector != nil && len(esc.Spec.Allowed.Clusters) == 0
+	})
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
 	items := dropK8sInternalFieldsEscalationList(response)
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
@@ -211,7 +234,7 @@ func (b *BreakglassEscalationController) Handlers() []gin.HandlerFunc {
 	return []gin.HandlerFunc{b.middleware}
 }
 
-func (ec *BreakglassEscalationController) clusterConfigReadiness(ctx context.Context) (map[string]bool, error) {
+func (ec *BreakglassEscalationController) clusterConfigReadiness(ctx context.Context, clusterLabels ...map[string]map[string]string) (map[string]bool, error) {
 	readiness := map[string]bool{}
 	if ec == nil || ec.manager == nil || ec.manager.Client == nil {
 		return readiness, nil
@@ -225,16 +248,22 @@ func (ec *BreakglassEscalationController) clusterConfigReadiness(ctx context.Con
 		cc := &list.Items[i]
 		if _, exists := readiness[cc.Name]; exists {
 			readiness[cc.Name] = false
+			if len(clusterLabels) > 0 {
+				delete(clusterLabels[0], cc.Name)
+			}
 			continue
 		}
 		readiness[cc.Name] = breakglass.IsClusterConfigReady(cc)
+		if len(clusterLabels) > 0 {
+			clusterLabels[0][cc.Name] = cc.Labels
+		}
 	}
 	return readiness, nil
 }
 
-func escalationHasReadyCluster(esc breakglassv1alpha1.BreakglassEscalation, clusterFilter string, readiness map[string]bool) bool {
+func escalationHasReadyCluster(esc breakglassv1alpha1.BreakglassEscalation, clusterFilter string, readiness map[string]bool, clusterLabels ...map[string]map[string]string) bool {
 	if len(readiness) == 0 {
-		return true
+		return esc.Spec.Allowed.ClusterSelector == nil
 	}
 
 	matchedKnownCluster := false
@@ -242,14 +271,20 @@ func escalationHasReadyCluster(esc breakglassv1alpha1.BreakglassEscalation, clus
 		if clusterFilter != "" && !clusterMatchesPatterns(clusterName, []string{clusterFilter}) {
 			continue
 		}
-		if escalationMatchesCluster(esc, clusterName) {
+		var targetLabels []map[string]string
+		if len(clusterLabels) > 0 {
+			if value, exists := clusterLabels[0][clusterName]; exists {
+				targetLabels = append(targetLabels, value)
+			}
+		}
+		if escalationMatchesCluster(esc, clusterName, targetLabels...) {
 			matchedKnownCluster = true
 			if ready {
 				return true
 			}
 		}
 	}
-	return !matchedKnownCluster
+	return !matchedKnownCluster && esc.Spec.Allowed.ClusterSelector == nil
 }
 
 func NewBreakglassEscalationController(log *zap.SugaredLogger,

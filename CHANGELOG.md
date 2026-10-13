@@ -28,6 +28,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   production unset or `true`. Node-maintenance templates reject `false` and always
   require an independent approver. See
   `docs/debug-session.md#self-approval-blockselfapproval`.
+- Optional `spec.motd` (`message`, `runbookURL`) on `DebugSessionTemplate`,
+  `DebugSessionClusterBinding` and `BreakglassEscalation`. The UI shows it when
+  requesting and on session details; a binding MOTD replaces the template MOTD.
+  Debug workload containers receive `BREAKGLASS_MOTD` and
+  `BREAKGLASS_RUNBOOK_URL`, and every interactive `kubectl exec -it` shell (`sh`,
+  `ash`, `dash`, `bash`) in a debug workload, node debug pod or pod-copy debugger
+  prints them once on its terminal through a read-only downward API
+  hook at `/etc/breakglass-motd/profile.sh`. See `docs/debug-session.md#message-of-the-day`. The
+  `escalation-config` chart accepts `escalations[].motd`,
+  `escalations[].annotations` and `debugSessionBindings[].motd`; the
+  `debug-session-catalogue` chart accepts `profiles[].motd`.
 - Typed node-maintenance DebugSessions (disabled by default) run one fixed,
   template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
   exact Node after independent approval. Each target Node is serialized by a
@@ -1100,6 +1111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Catalogue utility integration now runs storage image mounted-volume checks
   through the `storage-diagnostics` dispatcher and removes a stale network job
   build reference to a non-existent kubestr fixture path.
+
+### Added
+
+- Escalation `allowed.clusterSelector` restricts cluster-name patterns by target
+  ClusterConfig labels, including request/approval lookups and active discovery.
+  Complementary stage selectors allow different self-approval policies for
+  production and non-production targets on one hub; missing or ambiguous
+  ClusterConfigs fail closed.
 
 ## [0.1.0-rc.8] - 2026-08-22
 
