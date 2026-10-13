@@ -1380,6 +1380,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 			return nil, err
 		}
 		injectPodMOTD(copyPod, motd, debugContainer.Name)
+		injectToolbox(&copyPod.Spec, sessionToolbox(ds), debugContainer.Name)
 	}
 
 	// Reset status-related fields. Ephemeral containers injected into the
@@ -1662,6 +1663,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 		return nil, err
 	}
 	injectPodMOTD(debugPod, motd)
+	injectToolbox(&debugPod.Spec, sessionToolbox(ds))
 
 	// Re-read the target Node and Namespace, then the ClusterConfig, then the
 	// live session, before every create attempt. No target read may occur

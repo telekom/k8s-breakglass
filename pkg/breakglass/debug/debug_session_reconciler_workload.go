@@ -695,6 +695,12 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 	if err != nil {
 		return nil, nil, err
 	}
+	// Restricted catalogue profiles allow only emptyDir, configMap and
+	// downwardAPI volumes and give no shell, so they never get a toolbox.
+	if restrictedCatalogue && template.Spec.Toolbox != nil {
+		return nil, nil, fmt.Errorf("restricted catalogue profiles cannot mount a toolbox")
+	}
+	injectToolbox(&renderResult.PodSpec, template.Spec.Toolbox)
 
 	labels := map[string]string{
 		DebugSessionLabelKey:           ds.Name,

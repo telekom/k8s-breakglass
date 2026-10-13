@@ -281,6 +281,11 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	MOTD *MessageOfTheDay `json:"motd,omitempty"`
 
+	// toolbox mounts a read-only OCI image with runbooks, helper scripts and
+	// CLIs into the interactive containers of the session.
+	// +optional
+	Toolbox *DebugSessionToolbox `json:"toolbox,omitempty"`
+
 	// expirationBehavior controls what happens when a session expires.
 	// "notify-only" is a deprecated alias that requests an expiry notification;
 	// it still expires the session, revokes access, and starts resource cleanup.
