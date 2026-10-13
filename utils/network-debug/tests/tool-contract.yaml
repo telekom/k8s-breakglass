@@ -33,6 +33,8 @@ checks:
     operation: bounded-image-owned-host-netns-trace
     tools: [net-debug, pwru]
     requirements: [host-network-namespace, hostPID, linux-kernel, kernel-btf, debugfs, tracefs, securityfs, CAP_BPF, CAP_PERFMON, CAP_NET_ADMIN, CAP_SYS_RESOURCE, CAP_SYS_PTRACE, writable-work-mount]
+    optionalRequirements: {backend-kprobe-multi: [CAP_SYSLOG]}
+    options: [backend-kprobe, backend-kprobe-multi, all-kmods, meta]
     bounds: {durationSeconds: [1, 60], events: [1, 10000], filterCharacters: 256}
 bounded:
   commandTimeoutSeconds: 20

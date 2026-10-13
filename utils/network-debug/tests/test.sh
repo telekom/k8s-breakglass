@@ -348,6 +348,59 @@ if TRACE_PRIVATE=true NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" \
 	printf '%s\n' 'trace accepted a private PID and mount namespace' >&2
 	exit 1
 fi
+# Full-node visibility options: the kprobe-multi backend needs CAP_SYSLOG to
+# read kallsyms, --meta adds the NETNS column, and --all-kmods covers module
+# functions. The fixture records the exact pwru argv.
+cat >"$trace_fixture/bin/pwru" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >"$PWRU_ARGS_FILE"
+printf '%s\n' '0xffff 1 <empty>:0 4026533068 0 eth0:3 0x0800 1500 60 10.0.0.1:12345->10.0.0.2:80(tcp) ip_rcv'
+EOF
+chmod +x "$trace_fixture/bin/pwru"
+trace_visibility() {
+	NETWORK_DEBUG_WORK_DIR="$trace_fixture/work" PWRU_ARGS_FILE="$trace_fixture/pwru.args" \
+		NETWORK_DEBUG_BTF_PATH="$trace_fixture/status" NETWORK_DEBUG_DEBUGFS_PATH="$trace_fixture/debug" \
+		NETWORK_DEBUG_TRACEFS_PATH="$trace_fixture/trace" NETWORK_DEBUG_SECURITYFS_PATH="$trace_fixture/security" \
+		NETWORK_DEBUG_MOUNTINFO_PATH="$trace_fixture/mountinfo" NETWORK_DEBUG_CAPABILITY_FILE="$trace_fixture/status" \
+		PATH="$trace_fixture/bin:/usr/bin:/bin" sh "$root/scripts/net-debug" trace --duration 1 --events 1 "$@"
+}
+test_context='trace-kprobe-multi-requires-syslog'
+printf 'CapEff: c001081000\n' >"$trace_fixture/status"
+rm -f "$trace_fixture/work/trace.log" "$trace_fixture/pwru.args"
+if trace_visibility --backend kprobe-multi >/dev/null 2>"$trace_fixture/syslog-error"; then
+	printf '%s\n' 'trace accepted kprobe-multi without CAP_SYSLOG' >&2
+	exit 1
+fi
+grep -F 'SYSLOG' "$trace_fixture/syslog-error" >/dev/null
+test ! -e "$trace_fixture/pwru.args"
+test_context='trace-unknown-backend-rejected'
+if trace_visibility --backend fentry >/dev/null 2>&1; then
+	printf '%s\n' 'trace accepted an unknown backend' >&2
+	exit 1
+fi
+test ! -e "$trace_fixture/pwru.args"
+test_context='trace-full-visibility-options'
+printf 'CapEff: c401081000\n' >"$trace_fixture/status"
+trace_visibility --backend kprobe-multi --all-kmods --meta --filter 'host 10.0.0.2' >"$trace_fixture/visibility-summary"
+grep -Fx 'backend kprobe-multi' "$trace_fixture/visibility-summary" >/dev/null
+case "$(cat "$trace_fixture/pwru.args")" in
+	'--backend kprobe-multi --output-meta=true --output-tuple --timestamp none --output-limit-lines 1 --ready-file '*' --all-kmods -- host 10.0.0.2') ;;
+	*) printf 'unexpected visibility pwru argv: %s\n' "$(cat "$trace_fixture/pwru.args")" >&2; exit 1 ;;
+esac
+grep -F '4026533068' "$trace_fixture/work/trace.log" >/dev/null
+test_context='trace-default-options-unchanged'
+rm -f "$trace_fixture/work/trace.log" "$trace_fixture/pwru.args"
+trace_visibility >"$trace_fixture/default-summary"
+grep -Fx 'backend kprobe' "$trace_fixture/default-summary" >/dev/null
+case "$(cat "$trace_fixture/pwru.args")" in
+	'--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines 1 --ready-file '*) ;;
+	*) printf 'unexpected default pwru argv: %s\n' "$(cat "$trace_fixture/pwru.args")" >&2; exit 1 ;;
+esac
+case "$(cat "$trace_fixture/pwru.args")" in
+	*--all-kmods*|*' -- '*) printf '%s\n' 'default trace added kmods or a filter' >&2; exit 1 ;;
+esac
+rm -f "$trace_fixture/work/trace.log" "$trace_fixture/pwru.args"
 cat >"$trace_fixture/bin/pwru" <<'EOF'
 #!/bin/sh
 set -eu

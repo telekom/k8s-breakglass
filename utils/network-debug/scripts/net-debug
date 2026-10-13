@@ -231,7 +231,7 @@ capability_present() {
 	status_file=${NETWORK_DEBUG_CAPABILITY_FILE:-/proc/self/status}
 	cap=$1
 	case "$cap" in
-		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_PTRACE) bit=19 ;; SYS_RESOURCE) bit=24 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
+		NET_RAW) bit=13 ;; NET_ADMIN) bit=12 ;; SYS_PTRACE) bit=19 ;; SYS_RESOURCE) bit=24 ;; SYSLOG) bit=34 ;; PERFMON) bit=38 ;; BPF) bit=39 ;;
 		*) return 1 ;;
 	esac
 	hex=$(awk '/^CapEff:/ {print $2}' "$status_file" 2>/dev/null || true)
@@ -285,6 +285,11 @@ trace_prerequisites() {
 	for capability in NET_ADMIN BPF PERFMON SYS_RESOURCE SYS_PTRACE; do
 		capability_present "$capability" || usage_error "required capability $capability is unavailable"
 	done
+	# kprobe-multi resolves attach addresses from /proc/kallsyms, which the
+	# default kptr_restrict=1 zeroes for callers without CAP_SYSLOG.
+	if [ "$backend" = kprobe-multi ]; then
+		capability_present SYSLOG || usage_error 'required capability SYSLOG is unavailable for --backend kprobe-multi'
+	fi
 	# /proc/1 is the host init only when the trace pod uses hostPID. Requiring
 	# the namespace identity to match is an actual kernel check; a caller cannot
 	# satisfy it by setting an environment variable. Trace runbooks therefore
@@ -312,21 +317,28 @@ trace_prerequisites() {
 
 trace_command() {
 	umask 077
-	duration=60 events=1000 filter='' output=trace.log
+	duration=60 events=1000 filter='' output=trace.log backend=kprobe all_kmods=false meta=false
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 			--duration|-d) [ "$#" -ge 2 ] || usage_error 'missing duration'; duration=$2; shift 2 ;;
 			--events|--lines|--max-events|--max-lines|--line-limit|--limit|-e) [ "$#" -ge 2 ] || usage_error 'missing event limit'; events=$2; shift 2 ;;
 			--filter|-f) [ "$#" -ge 2 ] || usage_error 'missing filter'; filter=$2; shift 2 ;;
 			--output|--output-file|-o) [ "$#" -ge 2 ] || usage_error 'missing output'; output=$2; shift 2 ;;
+			--backend) [ "$#" -ge 2 ] || usage_error 'missing backend'; backend=$2; shift 2 ;;
+			--all-kmods) all_kmods=true; shift ;;
+			--meta) meta=true; shift ;;
 			--help|-h)
-				printf '%s\n' 'Usage: net-debug trace [--duration SEC] [--events N] [--filter EXPR] [--output FILE]'
+				printf '%s\n' 'Usage: net-debug trace [--duration SEC] [--events N] [--filter EXPR] [--output FILE] [--backend kprobe|kprobe-multi] [--all-kmods] [--meta]'
 				return 0 ;;
 			*) usage_error "unknown trace option: $1" ;;
 		esac
 	done
 	bounded_integer "$duration" 1 60 duration
 	bounded_integer "$events" 1 "$MAX_TRACE_EVENTS" events
+	case "$backend" in
+		kprobe|kprobe-multi) ;;
+		*) usage_error 'backend must be kprobe or kprobe-multi' ;;
+	esac
 	validate_filter "$filter"
 	validate_output "$output"
 	trace_prerequisites
@@ -371,21 +383,22 @@ trace_command() {
 	# directory so a workload sharing /work cannot forge readiness by creating a
 	# predictable top-level file.
 	READY_FILE=$STAGING_DIR/ready
-	# Interface metadata is optional for this tuple-only contract. Disabling it
-	# avoids pwru's best-effort walk of every host PID/netns, which requires
-	# broader namespace privileges and can consume the complete trace duration
-	# before the kprobes begin listening.
-	if [ -n "$filter" ]; then
-		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" -- "$filter" \
-			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
-	else
-		# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
-		setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru \
-			--backend kprobe --output-meta=false --output-tuple --timestamp none --output-limit-lines "$events" --ready-file "$READY_FILE" \
-			>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
+	# pwru traces every network namespace; it has no netns filter here. --meta
+	# adds the NETNS, MARK, IFACE, PROTO, MTU and LEN columns so tuples can be
+	# attributed to a pod or the host. Without CAP_SYS_ADMIN pwru cannot enter
+	# other namespaces to resolve interface names and prints the ifindex only.
+	# --all-kmods also attaches to skb functions of loaded kernel modules.
+	set -- --backend "$backend" --output-meta="$meta" --output-tuple --timestamp none \
+		--output-limit-lines "$events" --ready-file "$READY_FILE"
+	if [ "$all_kmods" = true ]; then
+		set -- "$@" --all-kmods
 	fi
+	if [ -n "$filter" ]; then
+		set -- "$@" -- "$filter"
+	fi
+	# shellcheck disable=SC2016 # $1/$@ are intentionally expanded by the child shell.
+	setsid sh -c 'pid_file=$1; status_file=$2; max_blocks=$3; printf "%s\\n" "$$" >"$pid_file"; ulimit -f "$max_blocks"; shift 3; "$@"; status=$?; printf "%s\\n" "$status" >"$status_file"; exit "$status"' sh "$TRACE_PID_FILE" "$TRACE_STATUS_FILE" "$max_trace_blocks" pwru "$@" \
+		>"$TEMP_EVIDENCE" 2>"$TEMP_DIAGNOSTICS" &
 	LAUNCH_PID=$!
 	TRACE_PID=''
 	# setsid may fork when its caller is already a process-group leader. The
@@ -536,7 +549,7 @@ trace_command() {
 				stop_marker=true
 			fi
 			if [ ! -e "$TRACE_TIMED_OUT_FILE" ] || [ "$stop_marker" != true ] || \
-				! grep -E ' INFO Attaching kprobes via=kprobe$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
+				! grep -E " INFO Attaching kprobes via=$backend\$" "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
 				! grep -E ' INFO Detaching kprobes\.\.\.$' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1 || \
 				grep -E -i '(^|[[:space:]])(error|erro|fatal)([[:space:]:]|$)|level=(error|fatal)|panic:' "$TEMP_DIAGNOSTICS" >/dev/null 2>&1; then
 				printf 'net-debug: pwru exited with status %s\n' "$status" >&2
@@ -575,8 +588,8 @@ trace_command() {
 	ln "$TEMP_TUPLES" "$destination" || usage_error 'output was created concurrently'
 	rm -f "$TEMP_EVIDENCE" "$TEMP_TUPLES"
 	cleanup_stage
-	printf 'trace\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
-		"$duration" "$events" "$count" "$hash" "$output"
+	printf 'trace\nbackend %s\nduration %s\nevent_limit %s\nevent_count %s\nsha256 %s\nfile %s\n' \
+		"$backend" "$duration" "$events" "$count" "$hash" "$output"
 }
 
 help() {

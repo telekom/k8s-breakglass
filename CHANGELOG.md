@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
+  `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
+  the NETNS inode of the host or Pod namespace, module skb functions are
+  traced, and kprobe detach takes about a second instead of 40-70 seconds.
+  `kprobe-multi` requires CAP_SYSLOG to read kallsyms and fails closed
+  without it. Defaults are unchanged; the trace summary now also names the
+  `backend` used.
 - Typed node-maintenance DebugSessions (disabled by default) run one fixed,
   template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
   exact Node after independent approval. Each target Node is serialized by a

@@ -63,9 +63,11 @@ image:
     - PERFMON
     - SYS_RESOURCE
     - SYS_PTRACE
+    - SYSLOG
   operationCapabilities:
     selectedPodCapture: [NET_RAW]
     hostNamespaceTrace: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE]
+    hostNamespaceTraceKprobeMulti: [BPF, PERFMON, NET_ADMIN, SYS_RESOURCE, SYS_PTRACE, SYSLOG]
   droppedCapabilities:
     hostNamespaceTrace: [NET_RAW]
 provenance:
