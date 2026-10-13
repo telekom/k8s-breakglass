@@ -36,6 +36,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -2130,6 +2131,114 @@ func TestDebugSessionAPIApproveReject(t *testing.T) {
 		status, _ := approverClient.RejectDebugSession(ctx, t, "nonexistent-session", "Test")
 		assert.Equal(t, http.StatusNotFound, status, "Should return 404 for nonexistent session")
 	})
+}
+
+// TestDebugSessionAPISelfApprovalOverride verifies the DebugSession
+// blockSelfApproval precedence end to end: binding override, then template,
+// then the secure default (blocked).
+func TestDebugSessionAPISelfApprovalOverride(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	clusterName := helpers.GetTestClusterName()
+	namespace := helpers.GetTestNamespace()
+	requester := helpers.TestUsers.DebugSessionRequester
+
+	podTemplateName := helpers.GenerateUniqueName("e2e-selfappr-pod")
+	podTemplate := &breakglassv1alpha1.DebugPodTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: podTemplateName, Labels: helpers.E2ELabelsWithFeature("self-approval")},
+		Spec: breakglassv1alpha1.DebugPodTemplateSpec{
+			DisplayName: "Self Approval Test Pod",
+			Template: &breakglassv1alpha1.DebugPodSpec{
+				Spec: breakglassv1alpha1.DebugPodSpecInner{
+					Containers: []corev1.Container{{Name: "debug", Image: "busybox:latest", Command: []string{"sleep", "infinity"}}},
+				},
+			},
+		},
+	}
+	cleanup.Add(podTemplate)
+	require.NoError(t, cli.Create(ctx, podTemplate))
+
+	// setup creates a template and a binding whose approver group contains the
+	// requester, so only blockSelfApproval decides the outcome.
+	setup := func(templateBlock, bindingBlock *bool) string {
+		templateName := helpers.GenerateUniqueName("e2e-selfappr-tmpl")
+		template := &breakglassv1alpha1.DebugSessionTemplate{
+			ObjectMeta: metav1.ObjectMeta{Name: templateName, Labels: helpers.E2ELabelsWithFeature("self-approval")},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				DisplayName:       "Self Approval Test Session",
+				TargetNamespace:   "default",
+				PodTemplateRef:    &breakglassv1alpha1.DebugPodTemplateReference{Name: podTemplateName},
+				BlockSelfApproval: templateBlock,
+			},
+		}
+		cleanup.Add(template)
+		require.NoError(t, cli.Create(ctx, template))
+		binding := &breakglassv1alpha1.DebugSessionClusterBinding{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      helpers.GenerateUniqueName("e2e-selfappr-bind"),
+				Namespace: namespace,
+				Labels:    helpers.E2ELabelsWithFeature("self-approval"),
+			},
+			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				TemplateRef:       &breakglassv1alpha1.TemplateReference{Name: templateName},
+				Clusters:          []string{clusterName},
+				Allowed:           &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"*"}, Groups: []string{"*"}},
+				Approvers:         &breakglassv1alpha1.DebugSessionApprovers{Groups: requester.Groups},
+				BlockSelfApproval: bindingBlock,
+			},
+		}
+		cleanup.Add(binding)
+		require.NoError(t, cli.Create(ctx, binding))
+		return templateName
+	}
+
+	tc := helpers.NewTestContext(t, ctx).WithClient(cli, namespace)
+	requesterClient := NewDebugSessionAPIClient(tc.OIDCProvider().GetToken(t, ctx, requester.Username, requester.Password))
+
+	for _, c := range []struct {
+		name          string
+		templateBlock *bool
+		bindingBlock  *bool
+		wantStatus    int
+	}{
+		{name: "DefaultBlocks", wantStatus: http.StatusForbidden},
+		{name: "BindingFalseAllows", bindingBlock: ptr.To(false), wantStatus: http.StatusOK},
+		{name: "TemplateFalseAllows", templateBlock: ptr.To(false), wantStatus: http.StatusOK},
+		{name: "BindingTrueOverridesTemplateFalse", templateBlock: ptr.To(false), bindingBlock: ptr.To(true), wantStatus: http.StatusForbidden},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			templateName := setup(c.templateBlock, c.bindingBlock)
+			time.Sleep(helpers.CachePropagationDelay)
+
+			session, createStatus, err := requesterClient.CreateDebugSession(ctx, t, DebugSessionCreateRequest{
+				TemplateRef:       templateName,
+				Cluster:           clusterName,
+				RequestedDuration: "30m",
+				Reason:            "Testing blockSelfApproval",
+			})
+			require.NoError(t, err, "CreateDebugSession should succeed")
+			require.Equal(t, http.StatusCreated, createStatus)
+			cleanup.Add(&breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: session.Name, Namespace: session.Namespace}})
+
+			helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
+				breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForConditionTimeout)
+
+			status, err := requesterClient.ApproveDebugSession(ctx, t, session.Name, "self-approval")
+			require.Equal(t, c.wantStatus, status, "unexpected self-approval status: %v", err)
+			if c.wantStatus != http.StatusOK {
+				return
+			}
+			var approved breakglassv1alpha1.DebugSession
+			require.NoError(t, cli.Get(ctx, ctrlclient.ObjectKey{Name: session.Name, Namespace: session.Namespace}, &approved))
+			require.NotNil(t, approved.Status.Approval)
+			require.NotNil(t, approved.Status.Approval.ApprovedAt)
+		})
+	}
 }
 
 // TestDebugSessionAPIRenew tests session renewal functionality

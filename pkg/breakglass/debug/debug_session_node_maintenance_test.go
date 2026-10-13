@@ -368,6 +368,13 @@ func TestNodeMaintenanceCannotOverrideApprovalBinding(t *testing.T) {
 	binding.Spec.Approvers.Users = []string{"approver"}
 	binding.Spec.Approvers.AutoApproveFor = &breakglassv1alpha1.AutoApproveConfig{Groups: []string{"*"}}
 	require.Error(t, maintenanceApprovers(template, binding))
+
+	selfApproval := &breakglassv1alpha1.DebugSessionClusterBinding{Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+		BlockSelfApproval: ptr.To(false),
+	}}
+	require.ErrorContains(t, maintenanceApprovers(template, selfApproval), "blocked self-approval")
+	selfApproval.Spec.BlockSelfApproval = ptr.To(true)
+	require.NoError(t, maintenanceApprovers(template, selfApproval))
 }
 
 func TestNodeMaintenanceRejectsIdleTimeoutBeforeExecution(t *testing.T) {

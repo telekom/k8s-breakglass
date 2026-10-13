@@ -28,6 +28,10 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	DisplayNamePrefix *string `json:"displayNamePrefix,omitempty"`
 	// description provides additional context about this binding.
 	Description *string `json:"description,omitempty"`
+	// motd replaces the template motd for sessions created through this binding,
+	// for example to link a persona-specific runbook. It is then exported to
+	// the debug workload containers as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
+	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
 	// templateRef references a single DebugSessionTemplate by name.
 	// Mutually exclusive with templateSelector.
 	TemplateRef *TemplateReferenceApplyConfiguration `json:"templateRef,omitempty"`
@@ -45,6 +49,14 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	// approvers specifies who can approve sessions created via this binding.
 	// REPLACES the template's approvers for matched clusters.
 	Approvers *DebugSessionApproversApplyConfiguration `json:"approvers,omitempty"`
+	// blockSelfApproval overrides the template's blockSelfApproval for sessions
+	// created via this binding. If omitted (nil), the template value is used;
+	// if both are omitted, self-approval is blocked. Set to false to allow the
+	// requester to approve or reject their own session (for example on
+	// non-production clusters) and true to block it regardless of the template.
+	// Sessions for nodeMaintenance templates reject false and always block
+	// self-approval.
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 	// schedulingConstraints defines mandatory scheduling rules.
 	// These constraints are ADDED to the template's constraints and cannot be overridden.
 	SchedulingConstraints *SchedulingConstraintsApplyConfiguration `json:"schedulingConstraints,omitempty"`
@@ -138,6 +150,14 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithDescription(value
 	return b
 }
 
+// WithMOTD sets the MOTD field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MOTD field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMOTD(value *MessageOfTheDayApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.MOTD = value
+	return b
+}
+
 // WithTemplateRef sets the TemplateRef field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
 // If called multiple times, the TemplateRef field is set to the value of the last call.
@@ -185,6 +205,14 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithAllowed(value *De
 // If called multiple times, the Approvers field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithApprovers(value *DebugSessionApproversApplyConfiguration) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.Approvers = value
+	return b
+}
+
+// WithBlockSelfApproval sets the BlockSelfApproval field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BlockSelfApproval field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithBlockSelfApproval(value bool) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.BlockSelfApproval = &value
 	return b
 }
 

@@ -18,13 +18,25 @@ metadata:
     {{- include "escalation-config.labels" $ | nindent 4 }}
   name: {{ $name | quote }}
   namespace: {{ $.Release.Namespace }}
+  {{- with $esc.annotations }}
+  annotations:
+{{ toYaml . | indent 4 }}
+  {{- end }}
 spec:
   {{- if $displayName }}
   displayName: {{ $displayName | quote }}
   {{- end }}
+  {{- with $esc.motd }}
+  motd:
+{{ toYaml . | indent 4 }}
+  {{- end }}
   {{- $allowed := required "escalations[].allowed is required" $esc.allowed }}
   {{- $allowedGroups := required "escalations[].allowed.groups is required" $allowed.groups }}
   allowed:
+    {{- with $allowed.clusterSelector }}
+    clusterSelector:
+{{ toYaml . | indent 6 }}
+    {{- end }}
     {{- if $allowed.clusters }}
     clusters:
 {{ toYaml $allowed.clusters | indent 6 }}

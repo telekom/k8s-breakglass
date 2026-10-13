@@ -584,7 +584,8 @@ func (c *DebugSessionAPIController) newDebugSessionApprovalAuthorizer() *debugSe
 
 // isUserAuthorizedToApprove checks if the user is authorized to approve/reject a debug session
 // The user must be in one of the approver groups/users defined in the session's template or binding.
-// Additionally, the requester of the session is not allowed to self-approve.
+// Additionally, the requester may only approve their own session when the
+// resolved blockSelfApproval setting is explicitly false.
 func (c *DebugSessionAPIController) isUserAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, username string, userGroupsInterface interface{}) bool {
 	return c.isUserIdentityAuthorizedToApprove(ctx, session, username, "", userGroupsInterface)
 }
@@ -602,18 +603,40 @@ func (c *DebugSessionAPIController) isIdentityAuthorizedToApprove(ctx context.Co
 	return c.newDebugSessionApprovalAuthorizer().isIdentityAuthorizedToApprove(ctx, session, identity)
 }
 
+// resolveDebugSessionBlockSelfApproval resolves the effective self-approval
+// policy: binding override, then template value, then the secure default
+// (blocked). ClusterConfig blockSelfApproval is deliberately not consulted:
+// DebugSessions have always blocked self-approval, and chart-managed
+// ClusterConfigs render blockSelfApproval=false explicitly, so inheriting it
+// would silently relax existing installs.
+func resolveDebugSessionBlockSelfApproval(templateValue *bool, binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+	if binding != nil && binding.Spec.BlockSelfApproval != nil {
+		return *binding.Spec.BlockSelfApproval
+	}
+	if templateValue != nil {
+		return *templateValue
+	}
+	return true
+}
+
 func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) bool {
 	c := a.controller
 	if !debugSessionApprovalIdentityMatches(session, identity) {
 		return false
 	}
-	// Block self-approval: the user who requested the session cannot approve it
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
+	isRequester := debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail)
+	denySelfApproval := func(source string) bool {
 		c.log.Infow("Blocking self-approval attempt",
-			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail, "approver", identity.username, "approverEmail", identity.email)
+			"session", session.Name, "requester", session.Spec.RequestedBy, "requesterEmail", session.Spec.RequestedByEmail,
+			"approver", identity.username, "approverEmail", identity.email, "policySource", source)
 		return false
 	}
 	if session.Spec.NodeMaintenance != nil {
+		// Node maintenance mutates node networking and always requires an
+		// independent approver, regardless of blockSelfApproval.
+		if isRequester {
+			return denySelfApproval("nodeMaintenance")
+		}
 		if session.Status.ResolvedTemplate == nil ||
 			!breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(session.Status) {
 			return false
@@ -641,9 +664,11 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 	// First try the exact binding that granted this session. Binding-level approvers
 	// are scoped to that binding and must not bleed across sibling bindings that
 	// happen to match the same template and cluster.
+	var binding *breakglassv1alpha1.DebugSessionClusterBinding
 	if session.Spec.BindingRef != nil {
 		key := ctrlclient.ObjectKey{Name: session.Spec.BindingRef.Name, Namespace: session.Spec.BindingRef.Namespace}
-		binding, err := a.getBinding(ctx, key)
+		var err error
+		binding, err = a.getBinding(ctx, key)
 		if err != nil {
 			c.log.Warnw("Could not fetch recorded binding while checking debug session approval authorization",
 				"session", session.Name, "binding", key.String(), "error", err)
@@ -654,27 +679,48 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 				"session", session.Name, "binding", key.String())
 			return false
 		}
-		if binding.Spec.Approvers != nil {
-			return a.approverSetAuthorizes(session, binding.Spec.Approvers, identity, "binding")
-		}
 	}
 
-	// If template has no resolved approvers info in status, fall back to fetching template
-	if session.Status.ResolvedTemplate == nil || session.Status.ResolvedTemplate.Approvers == nil {
-		// Fetch the template to check approvers
+	bindingDecidesSelfApproval := binding != nil && binding.Spec.BlockSelfApproval != nil
+	if binding != nil && binding.Spec.Approvers != nil && (!isRequester || bindingDecidesSelfApproval) {
+		if isRequester && *binding.Spec.BlockSelfApproval {
+			return denySelfApproval("binding")
+		}
+		return a.approverSetAuthorizes(session, binding.Spec.Approvers, identity, "binding")
+	}
+
+	// Prefer the template snapshot recorded at creation; fall back to fetching
+	// the template when there is no snapshot or it carries no approvers that
+	// are needed (fail closed on error).
+	useBindingApprovers := binding != nil && binding.Spec.Approvers != nil
+	resolved := session.Status.ResolvedTemplate
+	var templateBlockSelfApproval *bool
+	var templateApprovers *breakglassv1alpha1.DebugSessionApprovers
+	source := "resolvedTemplate"
+	if resolved != nil {
+		templateBlockSelfApproval = resolved.BlockSelfApproval
+		templateApprovers = resolved.Approvers
+	}
+	if resolved == nil || (!useBindingApprovers && templateApprovers == nil) {
 		template, err := a.getTemplate(ctx, session.Spec.TemplateRef)
 		if err != nil {
-			// If we can't fetch template, deny approval (fail closed for security)
 			c.log.Errorw("Could not fetch template to check approvers, denying approval",
 				"session", session.Name, "template", session.Spec.TemplateRef, "error", err)
 			return false
 		}
-
-		return a.approverSetAuthorizes(session, template.Spec.Approvers, identity, "template")
+		if resolved == nil {
+			templateBlockSelfApproval = template.Spec.BlockSelfApproval
+		}
+		templateApprovers = template.Spec.Approvers
+		source = "template"
 	}
-
-	// Use resolved template from status
-	return a.approverSetAuthorizes(session, session.Status.ResolvedTemplate.Approvers, identity, "resolvedTemplate")
+	if isRequester && resolveDebugSessionBlockSelfApproval(templateBlockSelfApproval, binding) {
+		return denySelfApproval(source)
+	}
+	if useBindingApprovers {
+		return a.approverSetAuthorizes(session, binding.Spec.Approvers, identity, "binding")
+	}
+	return a.approverSetAuthorizes(session, templateApprovers, identity, source)
 }
 
 // approverSetAuthorizes decides whether identity may approve under the given
@@ -756,9 +802,6 @@ func (c *DebugSessionAPIController) canActOnDebugSessionApproval(
 		return false
 	}
 	if identity.username == "" {
-		return false
-	}
-	if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 		return false
 	}
 	if authorizer == nil {

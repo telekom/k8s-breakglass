@@ -1325,6 +1325,61 @@ describe("DebugSessionCreate", () => {
     });
   });
 
+  describe("message of the day", () => {
+    it("shows the effective MOTD for the selected template, cluster and binding", async () => {
+      const templates = defaultTemplates();
+      Object.assign(templates[0]!, {
+        motd: { message: "Template guidance", runbookURL: "https://runbooks.example.com/t" },
+      });
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        templateDisplayName: "Standard Debug",
+        clusters: [
+          {
+            name: "prod-east",
+            displayName: "Production East",
+            motd: { message: "Primary binding guidance", runbookURL: "https://runbooks.example.com/primary" },
+            bindingOptions: [
+              {
+                bindingRef: { name: "primary", namespace: "default" },
+                motd: { message: "Primary binding guidance", runbookURL: "https://runbooks.example.com/primary" },
+              },
+              {
+                bindingRef: { name: "persona", namespace: "default" },
+                motd: { message: "Persona binding guidance", runbookURL: "https://runbooks.example.com/persona" },
+              },
+            ],
+          },
+          { name: "prod-west", displayName: "Production West" },
+        ],
+      });
+
+      const wrapper = await createWrapper(templates);
+      const vm = wrapper.vm as unknown as { goToStep2: () => void; form: { cluster: string } };
+      const message = () => wrapper.find('[data-testid="motd-message"]');
+      const link = () => wrapper.find('[data-testid="motd-runbook-link"]').attributes("href");
+
+      vm.goToStep2();
+      await flushPromises();
+      expect(message().text()).toBe("Template guidance");
+
+      vm.form.cluster = "prod-east";
+      await flushPromises();
+      expect(message().text()).toBe("Primary binding guidance");
+      expect(link()).toBe("https://runbooks.example.com/primary");
+
+      await wrapper.findAll('[data-testid="binding-option-card"]')[1]!.trigger("click");
+      await flushPromises();
+      expect(message().text()).toBe("Persona binding guidance");
+      expect(link()).toBe("https://runbooks.example.com/persona");
+
+      vm.form.cluster = "prod-west";
+      await flushPromises();
+      expect(message().text()).toBe("Template guidance");
+      expect(link()).toBe("https://runbooks.example.com/t");
+    });
+  });
+
   describe("submit validation", () => {
     it("does not submit when namespace violates allowed patterns", async () => {
       mockGetTemplateClusters.mockResolvedValue({

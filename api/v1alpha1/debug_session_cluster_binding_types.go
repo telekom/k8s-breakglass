@@ -63,6 +63,12 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	Description string `json:"description,omitempty"`
 
+	// motd replaces the template motd for sessions created through this binding,
+	// for example to link a persona-specific runbook. It is then exported to
+	// the debug workload containers as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
+
 	// templateRef references a single DebugSessionTemplate by name.
 	// Mutually exclusive with templateSelector.
 	// +optional
@@ -91,6 +97,16 @@ type DebugSessionClusterBindingSpec struct {
 	// REPLACES the template's approvers for matched clusters.
 	// +optional
 	Approvers *DebugSessionApprovers `json:"approvers,omitempty"`
+
+	// blockSelfApproval overrides the template's blockSelfApproval for sessions
+	// created via this binding. If omitted (nil), the template value is used;
+	// if both are omitted, self-approval is blocked. Set to false to allow the
+	// requester to approve or reject their own session (for example on
+	// non-production clusters) and true to block it regardless of the template.
+	// Sessions for nodeMaintenance templates reject false and always block
+	// self-approval.
+	// +optional
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 
 	// schedulingConstraints defines mandatory scheduling rules.
 	// These constraints are ADDED to the template's constraints and cannot be overridden.

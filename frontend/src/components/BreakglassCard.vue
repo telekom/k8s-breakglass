@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import DisabledReason from "@/components/common/DisabledReason.vue";
 import HintTooltip from "@/components/common/HintTooltip.vue";
+import MotdNotice from "@/components/common/MotdNotice.vue";
 import { computed, ref, useId, watch } from "vue";
 import { pushError } from "@/services/toast";
 import { format24HourWithTZ } from "@/utils/dateTime";
@@ -667,6 +668,8 @@ function drop() {
         </div>
       </div>
     </div>
+
+    <MotdNotice :motd="breakglass.motd" />
 
     <div class="reason-field">
       <scale-text-field

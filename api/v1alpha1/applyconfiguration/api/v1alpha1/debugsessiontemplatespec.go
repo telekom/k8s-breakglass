@@ -73,6 +73,14 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// approvers configures approval workflow for debug session requests.
 	// If omitted, sessions are auto-approved for users in the allowed groups.
 	Approvers *DebugSessionApproversApplyConfiguration `json:"approvers,omitempty"`
+	// blockSelfApproval controls whether the session requester may approve or
+	// reject their own DebugSession when they are also a configured approver.
+	// If omitted (nil), the secure default applies and self-approval is blocked;
+	// ClusterConfig blockSelfApproval=false does not relax DebugSession approval.
+	// Set to false to allow self-approval, for example on non-production
+	// templates. A DebugSessionClusterBinding can override this value.
+	// nodeMaintenance templates must not set it to false.
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
 	// constraints defines session duration and usage limits.
 	Constraints *DebugSessionConstraintsApplyConfiguration `json:"constraints,omitempty"`
 	// targetNamespace specifies the namespace where debug pods are deployed.
@@ -128,6 +136,11 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// deprecationMessage explains why this template is deprecated and suggests alternatives.
 	// Only displayed when deprecated is true.
 	DeprecationMessage *string `json:"deprecationMessage,omitempty"`
+	// motd is guidance shown before and during a session: purpose, allowed
+	// actions, safety notes, how to terminate, and a runbook link. A binding
+	// motd replaces it. The effective motd is exported to every debug workload
+	// container as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
+	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
 	// expirationBehavior controls what happens when a session expires.
 	// "notify-only" is a deprecated alias that requests an expiry notification;
 	// it still expires the session, revokes access, and starts resource cleanup.
@@ -303,6 +316,14 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithAllowed(value *DebugSes
 // If called multiple times, the Approvers field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithApprovers(value *DebugSessionApproversApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.Approvers = value
+	return b
+}
+
+// WithBlockSelfApproval sets the BlockSelfApproval field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the BlockSelfApproval field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithBlockSelfApproval(value bool) *DebugSessionTemplateSpecApplyConfiguration {
+	b.BlockSelfApproval = &value
 	return b
 }
 
@@ -496,6 +517,14 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithDeprecated(value bool) 
 // If called multiple times, the DeprecationMessage field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithDeprecationMessage(value string) *DebugSessionTemplateSpecApplyConfiguration {
 	b.DeprecationMessage = &value
+	return b
+}
+
+// WithMOTD sets the MOTD field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MOTD field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithMOTD(value *MessageOfTheDayApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.MOTD = value
 	return b
 }
 

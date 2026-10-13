@@ -13,3 +13,4 @@ export { default as TimelineGrid } from "./TimelineGrid.vue";
 export { default as ActionButton } from "./ActionButton.vue";
 export { default as DisabledReason } from "./DisabledReason.vue";
 export { default as HintTooltip } from "./HintTooltip.vue";
+export { default as MotdNotice } from "./MotdNotice.vue";

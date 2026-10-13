@@ -5,7 +5,8 @@ import { useRoute, useRouter } from "vue-router";
 import { AuthKey } from "@/keys";
 import { useUser } from "@/services/auth";
 import DebugSessionService from "@/services/debugSession";
-import { PageHeader, LoadingState, EmptyState, HintTooltip } from "@/components/common";
+import { PageHeader, LoadingState, EmptyState, HintTooltip, MotdNotice } from "@/components/common";
+import { debugPodExecCommand, effectiveSessionMotd } from "@/utils/motd";
 import { statusDescriptionFor } from "@/utils/statusStyles";
 import { pushError, pushSuccess } from "@/services/toast";
 import { formatDateTime, formatRelativeTime, useClipboard } from "@/composables";
@@ -24,7 +25,7 @@ function podKey(pod: DebugPodInfo): string {
 }
 
 function getExecCommand(pod: DebugPodInfo): string {
-  return `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
+  return debugPodExecCommand(pod);
 }
 
 function copyExecCommand(pod: DebugPodInfo) {
@@ -114,6 +115,7 @@ const approveDialogOpen = ref(false);
 const approveReason = ref("");
 const approving = ref(false);
 const approvalReasonConfig = computed(() => session.value?.spec.approvalReasonConfig);
+const sessionMotd = computed(() => effectiveSessionMotd(session.value));
 const approvalReasonValid = computed(() => {
   const reason = approveReason.value.trim();
   if (!reason) return !approvalReasonConfig.value?.mandatory;
@@ -563,6 +565,7 @@ function hasPodIssues(pod: DebugPodInfo): boolean {
     </EmptyState>
 
     <template v-else-if="session">
+      <MotdNotice :motd="sessionMotd" />
       <div class="details-grid" data-testid="details-grid">
         <!-- Status Section -->
         <div class="detail-card status-card" data-testid="status-card">
