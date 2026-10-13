@@ -15,12 +15,11 @@ package v1alpha1
 // participants: purpose, allowed actions, safety notes and how to end the
 // session, plus a link to the runbook that governs the action.
 type MessageOfTheDayApplyConfiguration struct {
-	// message is plain text shown verbatim (line breaks preserved) in the UI and
-	// exported to debug workload containers as BREAKGLASS_MOTD.
+	// message is plain text shown verbatim in the UI, with line breaks
+	// preserved.
 	Message *string `json:"message,omitempty"`
 	// runbookURL links the runbook section for this action. It is rendered as a
-	// link in the UI and exported to debug workload containers as
-	// BREAKGLASS_RUNBOOK_URL.
+	// link in the UI.
 	RunbookURL *string `json:"runbookURL,omitempty"`
 }
 

@@ -266,7 +266,8 @@ type DebugSessionTemplateSpec struct {
 
 	// motd is guidance shown before and during a session: purpose, allowed
 	// actions, safety notes, how to terminate, and a runbook link. A binding
-	// motd replaces it.
+	// motd replaces it. The effective motd is exported to every debug workload
+	// container as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
 	// +optional
 	MOTD *MessageOfTheDay `json:"motd,omitempty"`
 

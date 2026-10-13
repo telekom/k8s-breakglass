@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `BREAKGLASS_RUNBOOK_URL`, and the UI exec command prints them before the
   shell starts. See `docs/debug-session.md#message-of-the-day`. The
   `escalation-config` chart accepts `escalations[].motd`,
-  `escalations[].annotations` and `debugSessionBindings[].motd`.
+  `escalations[].annotations` and `debugSessionBindings[].motd`; the
+  `debug-session-catalogue` chart accepts `profiles[].motd`.
 - Typed node-maintenance DebugSessions (disabled by default) run one fixed,
   template-allowlisted `neighbor-replace` or `bridge-fdb-replace` action on an
   exact Node after independent approval. Each target Node is serialized by a

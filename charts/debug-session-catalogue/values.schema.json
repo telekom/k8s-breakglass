@@ -63,6 +63,16 @@
         "intent": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "minLength": 1, "maxLength": 63 },
         "displayName": { "type": "string", "minLength": 1, "maxLength": 128 },
         "description": { "type": "string", "minLength": 1, "maxLength": 1000 },
+        "motd": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Message of the day shown in the UI and exported to the debug workload as BREAKGLASS_MOTD/BREAKGLASS_RUNBOOK_URL.",
+          "properties": {
+            "message": { "type": "string", "minLength": 1, "maxLength": 4096 },
+            "runbookURL": { "type": "string", "maxLength": 2048, "pattern": "^https://[^\\s]+$" }
+          },
+          "required": ["message"]
+        },
         "enabled": { "type": "boolean" },
         "elevated": { "type": "boolean" },
         "requiredElevation": { "type": "boolean" },

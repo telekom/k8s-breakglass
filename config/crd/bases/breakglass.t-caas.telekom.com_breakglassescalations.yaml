@@ -234,20 +234,19 @@ spec:
                 description: |-
                   motd is guidance shown when requesting and using this escalation:
                   purpose, allowed actions, safety notes, how to drop the session, and a
-                  runbook link.
+                  runbook link. It is shown in the UI only; escalations have no workload.
                 properties:
                   message:
                     description: |-
-                      message is plain text shown verbatim (line breaks preserved) in the UI and
-                      exported to debug workload containers as BREAKGLASS_MOTD.
+                      message is plain text shown verbatim in the UI, with line breaks
+                      preserved.
                     maxLength: 4096
                     minLength: 1
                     type: string
                   runbookURL:
                     description: |-
                       runbookURL links the runbook section for this action. It is rendered as a
-                      link in the UI and exported to debug workload containers as
-                      BREAKGLASS_RUNBOOK_URL.
+                      link in the UI.
                     maxLength: 2048
                     pattern: ^https://[^\s]+$
                     type: string

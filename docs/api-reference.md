@@ -1284,6 +1284,10 @@ Deployment or DaemonSet.
       "hidden": false,
       "deprecated": false,
       "deprecationMessage": "",
+      "motd": {
+        "message": "Purpose: bounded workload diagnostics.\nTerminate: end the session in the UI.",
+        "runbookURL": "https://runbooks.example.com/debug#standard-debug"
+      },
       "schedulingOptions": {
         "required": false,
         "options": [
@@ -1369,6 +1373,11 @@ for readiness. Approved binding aliases are rechecked against the current full
 config snapshot before activation; a newly ambiguous or shadowed alias cannot
 create a workload.
 
+`motd` is the template's `spec.motd` (message of the day: `message` and
+optional `runbookURL`) and is omitted when unset. Clients show it before a
+cluster is selected; the cluster endpoint returns the effective MOTD per
+selection.
+
 ### Get Debug Session Template
 
 ```http
@@ -1441,6 +1450,10 @@ variable-policy recovery data is not included in session REST responses.
         "namespace": "breakglass",
         "displayName": "SRE Production Access"
       },
+      "motd": {
+        "message": "Purpose: SRE production network checks.\nTerminate: end the session in the UI.",
+        "runbookURL": "https://runbooks.example.com/debug#sre-production"
+      },
       "constraints": {
         "maxDuration": "2h",
         "defaultDuration": "30m",
@@ -1490,6 +1503,8 @@ variable-policy recovery data is not included in session REST responses.
 | `clusters[].displayName` | string | Human-readable cluster name |
 | `clusters[].environment` | string | Cluster environment (production, staging, etc.) |
 | `clusters[].bindingRef` | object | Reference to the visible `DebugSessionClusterBinding` providing access |
+| `clusters[].motd` | object | Effective message of the day (`message`, optional `runbookURL`): the primary binding's `spec.motd` when set, otherwise the template's; omitted when neither is set |
+| `clusters[].bindingOptions[].motd` | object | Effective message of the day for that binding option, with the same precedence; a selected option's MOTD replaces the cluster's |
 | `clusters[].constraints` | object | Resolved session constraints (from binding or template) |
 | `clusters[].schedulingOptions` | object | Available scheduling options for node selection |
 | `clusters[].namespaceConstraints` | object | Namespace restrictions and defaults |

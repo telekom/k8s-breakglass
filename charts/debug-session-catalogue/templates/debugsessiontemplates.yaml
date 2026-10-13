@@ -25,6 +25,10 @@ metadata:
 spec:
   displayName: {{ required (printf "profiles[%s].displayName is required" $profile.name) $profile.displayName | quote }}
   description: {{ required (printf "profiles[%s].description is required" $profile.name) $profile.description | quote }}
+  {{- with $profile.motd }}
+  motd:
+{{ toYaml . | indent 4 }}
+  {{- end }}
   mode: workload
   {{- with $profile.artifactCollection }}
   artifactCollection:

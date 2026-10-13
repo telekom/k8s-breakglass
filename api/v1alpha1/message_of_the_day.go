@@ -7,15 +7,14 @@ package v1alpha1
 // participants: purpose, allowed actions, safety notes and how to end the
 // session, plus a link to the runbook that governs the action.
 type MessageOfTheDay struct {
-	// message is plain text shown verbatim (line breaks preserved) in the UI and
-	// exported to debug workload containers as BREAKGLASS_MOTD.
+	// message is plain text shown verbatim in the UI, with line breaks
+	// preserved.
 	// +kubebuilder:validation:MinLength=1
 	// +kubebuilder:validation:MaxLength=4096
 	Message string `json:"message"`
 
 	// runbookURL links the runbook section for this action. It is rendered as a
-	// link in the UI and exported to debug workload containers as
-	// BREAKGLASS_RUNBOOK_URL.
+	// link in the UI.
 	// +optional
 	// +kubebuilder:validation:MaxLength=2048
 	// +kubebuilder:validation:Pattern=`^https://[^\s]+$`

@@ -17,7 +17,7 @@ type BreakglassEscalationSpecApplyConfiguration struct {
 	DisplayName *string `json:"displayName,omitempty"`
 	// motd is guidance shown when requesting and using this escalation:
 	// purpose, allowed actions, safety notes, how to drop the session, and a
-	// runbook link.
+	// runbook link. It is shown in the UI only; escalations have no workload.
 	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
 	// allowed specifies who is allowed to use this escalation.
 	Allowed *BreakglassEscalationAllowedApplyConfiguration `json:"allowed,omitempty"`
