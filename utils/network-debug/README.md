@@ -81,9 +81,16 @@ opt-in flags extend what the evidence shows:
 - `--backend kprobe-multi` attaches and detaches in about a second instead of
   40-70 seconds, and resolves function names. It needs CAP_SYSLOG to read
   `/proc/kallsyms` under the default `kptr_restrict=1`, and the wrapper fails
-  closed without it.
+  closed without it. kprobe-multi needs kernel 5.18 or later built with
+  `CONFIG_FPROBE` and `CONFIG_FUNCTION_TRACER`.
 - `--all-kmods` also traces skb functions of loaded kernel modules (for
   example bridge, veth, nf_*, vxlan), using their `/sys/kernel/btf/<module>`.
+  Combined with kprobe-multi it also needs kernel support for multi-kprobe
+  attachment to module functions (upstream 6.2, possibly missing on older
+  stable kernels). pwru then fails to attach and the trace exits non-zero.
+  Fall back to `--backend kprobe --all-kmods --meta`, which works on any
+  kernel the default backend supports but detaches in 40-70 seconds, so the
+  workload stop grace must cover that.
 
 The image runs as root because packet capture and eBPF tracing require kernel
 access. Grant only the network namespace and Linux capabilities needed for the
