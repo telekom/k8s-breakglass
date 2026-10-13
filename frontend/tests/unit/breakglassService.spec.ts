@@ -95,7 +95,11 @@ describe("BreakglassService", () => {
                   },
                   {
                     metadata: { name: "malformed" },
-                    spec: { escalatedGroup: "ro", allowed: { clusters: ["prod"], groups: ["dev"] }, motd: { message: 1 } },
+                    spec: {
+                      escalatedGroup: "ro",
+                      allowed: { clusters: ["prod"], groups: ["dev"] },
+                      motd: { message: 1 },
+                    },
                   },
                 ]
               : [],

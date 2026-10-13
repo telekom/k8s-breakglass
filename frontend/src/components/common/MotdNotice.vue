@@ -27,7 +27,14 @@ const runbookURL = computed(() => {
 </script>
 
 <template>
-  <scale-notification v-if="motd?.message" class="motd-notice" variant="informational" :heading="heading" opened data-testid="motd-notice">
+  <scale-notification
+    v-if="motd?.message"
+    class="motd-notice"
+    variant="informational"
+    :heading="heading"
+    opened
+    data-testid="motd-notice"
+  >
     <div slot="text" class="motd-notice__content">
       <p class="motd-notice__message" data-testid="motd-message">{{ motd.message }}</p>
       <p v-if="runbookURL" class="motd-notice__runbook">

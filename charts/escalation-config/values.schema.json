@@ -1,6 +1,24 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "definitions": {
+    "messageOfTheDay": {
+      "additionalProperties": false,
+      "description": "Message of the day shown in the UI and injected into debug workloads.",
+      "properties": {
+        "message": {
+          "maxLength": 4096,
+          "minLength": 1,
+          "type": "string"
+        },
+        "runbookURL": {
+          "maxLength": 2048,
+          "pattern": "^https://[^\\s]+$",
+          "type": "string"
+        }
+      },
+      "required": ["message"],
+      "type": "object"
+    },
     "kubectlDebugNamespaceSelectorTerm": {
       "additionalProperties": false,
       "anyOf": [
@@ -357,6 +375,9 @@
               "type": "string"
             },
             "type": "object"
+          },
+          "motd": {
+            "$ref": "#/definitions/messageOfTheDay"
           },
           "approvalReason": {
             "properties": {
@@ -912,6 +933,15 @@
       "description": "List of BreakglassEscalation resources to create.",
       "items": {
         "properties": {
+          "annotations": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object"
+          },
+          "motd": {
+            "$ref": "#/definitions/messageOfTheDay"
+          },
           "displayName": {
             "description": "Human-readable UI/CLI name. Defaults to the original name when shortened, otherwise metadata.name.",
             "maxLength": 253,

@@ -48,10 +48,18 @@ describe("motd utilities", () => {
   it("prefers the binding motd over the template motd", () => {
     const template = { message: "template" };
     const binding = { message: "binding" };
-    expect(effectiveSessionMotd(session({ state: "Active", resolvedTemplate: { motd: template } } as DebugSession["status"]))).toBe(template);
     expect(
       effectiveSessionMotd(
-        session({ state: "Active", resolvedTemplate: { motd: template }, resolvedBindingSpec: { motd: binding } } as DebugSession["status"]),
+        session({ state: "Active", resolvedTemplate: { motd: template } } as DebugSession["status"]),
+      ),
+    ).toBe(template);
+    expect(
+      effectiveSessionMotd(
+        session({
+          state: "Active",
+          resolvedTemplate: { motd: template },
+          resolvedBindingSpec: { motd: binding },
+        } as DebugSession["status"]),
       ),
     ).toBe(binding);
     expect(effectiveSessionMotd(null)).toBeUndefined();

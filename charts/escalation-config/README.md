@@ -181,6 +181,9 @@ escalations:
 | `approvalTimeout` | Auto-expire pending requests | - |
 | `requestReason.mandatory` | Require reason for requests | `false` |
 | `requestReason.description` | Reason field description | - |
+| `annotations` | Annotations on the BreakglassEscalation | - |
+| `motd.message` | Message of the day shown when requesting and on the session | - |
+| `motd.runbookURL` | HTTPS runbook link shown with the message | - |
 | `blockSelfApproval` | Prevent self-approval | `false` |
 | `disableNotifications` | Disable email notifications | `false` |
 | `clusterConfigRefs` | Alternative to `allowed.clusters` | - |
@@ -369,6 +372,8 @@ debugSessionBindings:
 | `allowedPodOperations.logs` | Allow kubectl logs | `false` |
 | `allowedPodOperations.portForward` | Allow kubectl port-forward | `true` |
 | `requestReason.mandatory` | Require reason for requests | `false` |
+| `motd.message` | Message of the day; replaces the template MOTD | - |
+| `motd.runbookURL` | HTTPS runbook link shown with the message | - |
 | `maxActiveSessionsPerUser` | Max concurrent sessions per user | - |
 | `maxActiveSessionsTotal` | Max total concurrent sessions | - |
 | `priority` | UI ordering priority | - |
