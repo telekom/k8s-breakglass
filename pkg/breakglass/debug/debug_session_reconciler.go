@@ -1065,7 +1065,10 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		mode = breakglassv1alpha1.DebugSessionModeWorkload
 	}
 
-	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid {
+	// kubectl-debug sessions create their pods on demand, but auxiliary
+	// resources such as per-session admission exceptions must exist first.
+	kubectlDebugAuxiliary := mode == breakglassv1alpha1.DebugSessionModeKubectlDebug && c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
+	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid || kubectlDebugAuxiliary {
 		var deployErr error
 		if template.Spec.NodeMaintenance != nil {
 			if err := maintenanceApprovers(template, binding); err != nil {
@@ -1082,6 +1085,14 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+			}
+			if errors.Is(err, errPolicyExceptionNotAdmitted) {
+				log.Infow("Workload denied while PolicyException propagates; requeueing", "error", err)
+				ds.Status.Message = "Waiting for PolicyException admission"
+				if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: policyExceptionAdmissionInterval}, nil
 			}
 			if isDebugSessionDeploymentConflict(err) {
 				return ctrl.Result{}, err

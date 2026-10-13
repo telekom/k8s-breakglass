@@ -1166,6 +1166,8 @@ retroactively annotate or roll existing Pods.
 
 1. **Creation**: Auxiliary resources are created before debug pods start when `createBefore: true` (the default), or after the debug workload is applied when `createBefore: false`
 2. **Cleanup**: Resources are deleted when the session ends when `deleteAfter: true` (the default), and retained when `deleteAfter: false`
+3. **kubectl-debug mode**: Sessions with `mode: kubectl-debug` have no controller workload. Both phases are deployed when the session activates, before any debug pod can be requested, and cleaned up like workload-mode resources.
+4. **Kyverno PolicyExceptions**: Kyverno loads new exceptions with a short delay. When a session created a `kyverno.io` or `policies.kyverno.io` `PolicyException`, an admission-webhook denial of the workload create within 30 seconds of the exception's first `createdAt` requeues activation (status message `Waiting for PolicyException admission`) instead of failing the session. `kubectl-debug` node pod requests retry within the same window. Other errors are not retried.
 
 ### Failure Policies
 
@@ -1433,6 +1435,12 @@ Node-debug pods are created in the debug session's resolved
 `spec.targetNamespace` first, then the template `targetNamespace`, and finally
 the default `breakglass-debug` namespace.
 
+Node-debug pods set `automountServiceAccountToken: false`. The privileged
+debugger only needs the node, so no namespace ServiceAccount token is mounted
+for anyone with host access to read. Use a template-defined workload with an
+explicit dedicated ServiceAccount when a diagnostic genuinely needs the
+Kubernetes API.
+
 ### Pod Copy Debugging
 
 Allow creating debug copies of pods:
@@ -1640,7 +1648,60 @@ The approval workflow:
 3. Approver approves/rejects → State: `Active` or `Failed`
 4. Session runs until expiry or termination
 
-Approval and rejection handlers block requester self-approval by comparing both the authenticated username and email against `spec.requestedBy` and `spec.requestedByEmail`. A requester remains blocked even when they also belong to an approver group.
+Approval and rejection handlers block requester self-approval by default by comparing both the authenticated username and email against `spec.requestedBy` and `spec.requestedByEmail`. A requester remains blocked even when they also belong to an approver group.
+
+#### Self-approval (`blockSelfApproval`)
+
+`DebugSessionTemplate.spec.blockSelfApproval` and
+`DebugSessionClusterBinding.spec.blockSelfApproval` are optional booleans that
+decide whether a requester who is also a configured approver may approve or
+reject their own DebugSession:
+
+| Binding | Template | Effective |
+|---------|----------|-----------|
+| `true` / `false` | any | binding value |
+| unset | `true` / `false` | template value |
+| unset | unset | `true` (self-approval blocked) |
+
+The resolution mirrors the escalation `blockSelfApproval` override, except for
+the inherited default: DebugSessions never inherit a `false` from
+`ClusterConfig.spec.blockSelfApproval`. That field is a plain boolean that the
+escalation-config chart renders as `false` explicitly, so inheriting it would
+silently allow self-approval on existing installs. When both values are unset,
+self-approval stays blocked, matching the behaviour before this field existed.
+A `ClusterConfig` with `blockSelfApproval: true` therefore blocks as well,
+and an explicit template or binding `false` still overrides it, just as an
+escalation override does.
+
+Typical environment split: leave production bindings unset (or set `true`),
+and set `blockSelfApproval: false` only on bindings that target non-production
+clusters. Prefer the binding over the template when a template is shared across
+environments.
+
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionClusterBinding
+metadata:
+  name: ops-debug-nonprd
+  namespace: breakglass-system
+spec:
+  templateRef:
+    name: ops-node-debug
+  clusterSelector:
+    matchLabels:
+      environment: dev
+  approvers:
+    groups: ["platform-ops"]
+  blockSelfApproval: false  # platform-ops may approve their own sessions
+```
+
+The requester must still match the effective approver set; `false` only lifts
+the requester exclusion. Approval uses the template snapshot recorded when the
+session was created and the binding's current value, so relaxing a live
+template does not relax pending sessions created from it. Node-maintenance
+templates (`spec.nodeMaintenance`) always require an independent approver:
+admission rejects `blockSelfApproval: false` on them, session creation rejects a
+binding that sets `false`, and the approve handler blocks the requester.
 
 When a session is created through a `DebugSessionClusterBinding`, approval and rejection use the approvers from the recorded `spec.bindingRef`. Other bindings that match the same template or cluster do not grant approval for that session.
 
@@ -1692,7 +1753,8 @@ Once all clients use the new controller, remove debug-only escalations that
 existed solely to mint those grant groups. Escalations for ordinary API access
 are unaffected. Existing active DebugSessions retain their lifecycle.
 
-DebugSession four-eyes and self-approval checks remain unchanged.
+DebugSession four-eyes and self-approval checks remain unchanged; see
+[Self-approval](#self-approval-blockselfapproval) for the explicit opt-out.
 
 TDI and TDG are separate provider scopes when both are configured. Each profile
 has its own issuer and approver route; a TDG approver cannot approve a TDI
@@ -1878,7 +1940,8 @@ The wire request carries a node name. Resolve it from a controller-owned,
 allowlisted scheduling policy and verify the target at admission; a requester
 must not be able to select an arbitrary node. This page intentionally provides
 no free-form request example. The current implementation creates a privileged
-pod with host namespaces and a read-write `/host` host-path; expose this
+pod with host namespaces, a read-write `/host` host-path and no mounted
+ServiceAccount token; expose this
 endpoint only through a separately reviewed, short-lived node-maintenance
 profile and admission policy.
 

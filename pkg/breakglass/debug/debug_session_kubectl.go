@@ -1617,6 +1617,9 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 			HostPID:       hostPID,
 			HostIPC:       hostIPC,
 			RestartPolicy: corev1.RestartPolicyNever,
+			// The privileged debugger only needs the node; a mounted token would
+			// hand the namespace ServiceAccount to anyone with host access.
+			AutomountServiceAccountToken: boolPtr(false),
 			Containers: []corev1.Container{
 				{
 					Name:    "debugger",
@@ -1660,51 +1663,64 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 	injectPodMOTD(debugPod, motd)
 
-	// Re-read the target Node and complete its identity checks before the final
-	// authorization fence. No target read may occur after the live session check.
-	freshNode := &corev1.Node{}
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, freshNode); err != nil {
-		return nil, fmt.Errorf("failed to re-read node %s before debug pod creation: %w", nodeName, err)
-	}
-	if node.UID == "" || freshNode.UID == "" || node.UID != freshNode.UID {
-		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
-	}
-	if node.ResourceVersion != "" && freshNode.ResourceVersion != "" && freshNode.ResourceVersion != node.ResourceVersion {
-		return nil, kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
-	}
-	for k, v := range nd.NodeSelector {
-		if nodeVal, exists := freshNode.Labels[k]; !exists || nodeVal != v {
-			return nil, kubectlDebugPolicyErrorf("node %s no longer matches required selector %s=%s", nodeName, k, v)
+	// Re-read the target Node and Namespace, then the ClusterConfig, then the
+	// live session, before every create attempt. No target read may occur
+	// after the live session check.
+	fenceCreate := func() error {
+		freshNode := &corev1.Node{}
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: nodeName}, freshNode); err != nil {
+			return fmt.Errorf("failed to re-read node %s before debug pod creation: %w", nodeName, err)
 		}
-	}
-	if constraints := ds.Spec.ResolvedSchedulingConstraints; constraints != nil && !nodeMatchesResolvedConstraintsForNode(freshNode, constraints) {
-		return nil, kubectlDebugPolicyErrorf("node %s no longer matches required scheduling constraints", nodeName)
-	}
-	freshTargetNamespace := &corev1.Namespace{}
-	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, freshTargetNamespace); err != nil {
-		return nil, fmt.Errorf("failed to re-read node debug namespace %s before pod creation: %w", namespace, err)
-	}
-	if freshTargetNamespace.UID == "" || freshTargetNamespace.UID != targetNamespace.UID {
-		return nil, kubectlDebugPolicyErrorf("node debug namespace %s changed during pod authorization", namespace)
-	}
-	if !namespaceAllowedForDebugPod(namespace, freshTargetNamespace.Labels, template.NamespaceConstraints) {
-		return nil, kubectlDebugPolicyErrorf("namespace %s is no longer allowed for node debug", namespace)
-	}
+		if node.UID == "" || freshNode.UID == "" || node.UID != freshNode.UID {
+			return kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
+		}
+		if node.ResourceVersion != "" && freshNode.ResourceVersion != "" && freshNode.ResourceVersion != node.ResourceVersion {
+			return kubectlDebugPolicyErrorf("node %s changed during debug pod authorization", nodeName)
+		}
+		for k, v := range nd.NodeSelector {
+			if nodeVal, exists := freshNode.Labels[k]; !exists || nodeVal != v {
+				return kubectlDebugPolicyErrorf("node %s no longer matches required selector %s=%s", nodeName, k, v)
+			}
+		}
+		if constraints := ds.Spec.ResolvedSchedulingConstraints; constraints != nil && !nodeMatchesResolvedConstraintsForNode(freshNode, constraints) {
+			return kubectlDebugPolicyErrorf("node %s no longer matches required scheduling constraints", nodeName)
+		}
+		freshTargetNamespace := &corev1.Namespace{}
+		if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Name: namespace}, freshTargetNamespace); err != nil {
+			return fmt.Errorf("failed to re-read node debug namespace %s before pod creation: %w", namespace, err)
+		}
+		if freshTargetNamespace.UID == "" || freshTargetNamespace.UID != targetNamespace.UID {
+			return kubectlDebugPolicyErrorf("node debug namespace %s changed during pod authorization", namespace)
+		}
+		if !namespaceAllowedForDebugPod(namespace, freshTargetNamespace.Labels, template.NamespaceConstraints) {
+			return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for node debug", namespace)
+		}
 
-	// Validate all target configuration and policy inputs first. The uncached
-	// session fence below is then the last slow operation before the create.
-	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+		// Validate all target configuration and policy inputs first. The uncached
+		// session fence below is then the last slow operation before the create.
+		if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
+			return err
+		}
+		live, err := h.liveSessionForMutation(ctx, ds, user)
+		if err != nil {
+			return err
+		}
+		ds = live
+		return nil
+	}
+	if err := fenceCreate(); err != nil {
 		return nil, err
 	}
-	live, err = h.liveSessionForMutation(ctx, ds, user)
-	if err != nil {
-		return nil, err
-	}
-	ds = live
 
 	// Create the pod using Create (not SSA). The explicit NodeName binds this
 	// mutation to the re-read node identity; target admission remains authoritative.
-	if err := targetClient.Create(ctx, debugPod); err != nil {
+	createPod := func() error { return targetClient.Create(ctx, debugPod) }
+	if deadline, ok := policyExceptionAdmissionDeadline(ds.Status.AuxiliaryResourceStatuses); ok {
+		err = createUntilAdmitted(ctx, deadline, createPod, fenceCreate)
+	} else {
+		err = createPod()
+	}
+	if err != nil {
 		h.recoverAmbiguousCreatedPod(ctx, targetClient, debugPod, err)
 		return nil, fmt.Errorf("failed to create node debug pod: %w", err)
 	}

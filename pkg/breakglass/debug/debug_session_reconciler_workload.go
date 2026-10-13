@@ -203,6 +203,10 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		return nil
 	}
 
+	if template.Spec.Mode == breakglassv1alpha1.DebugSessionModeKubectlDebug {
+		return c.deployKubectlDebugAuxiliaryResources(ctx, ds, template, binding, targetClient, targetNs, fence)
+	}
+
 	// Deploy ResourceQuota if configured
 	if template.Spec.ResourceQuota != nil {
 		rq, rqErr := c.buildResourceQuota(ds, template, binding, targetNs)
@@ -341,7 +345,11 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		return err
 	}
 	if err := createOrRecoverTargetObject(ctx, targetClient, workload, ds); err != nil {
-		return fmt.Errorf("failed to apply workload: %w", c.retireRejectedDeployedResourceIntent(ctx, ds, resourceIndex, freshIntent, err))
+		err = c.retireRejectedDeployedResourceIntent(ctx, ds, resourceIndex, freshIntent, err)
+		if _, open := policyExceptionAdmissionDeadline(ds.Status.AuxiliaryResourceStatuses); open && isAdmissionWebhookDenial(err) {
+			return fmt.Errorf("%w: %w", errPolicyExceptionNotAdmitted, err)
+		}
+		return fmt.Errorf("failed to apply workload: %w", err)
 	}
 
 	workloadUID, err := captureResourceUID(ctx, targetClient, workload)
@@ -374,6 +382,29 @@ func (c *DebugSessionController) deployDebugResources(ctx context.Context, ds *b
 		}
 	}
 
+	return nil
+}
+
+// deployKubectlDebugAuxiliaryResources deploys both auxiliary phases for a
+// kubectl-debug session. There is no controller workload; debug pods are
+// created later through the API and are covered by the createBefore phase.
+func (c *DebugSessionController) deployKubectlDebugAuxiliaryResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, targetClient ctrlclient.Client, targetNs string, fence func() error) error {
+	if c.auxiliaryMgr == nil || len(template.Spec.AuxiliaryResources) == 0 {
+		return nil
+	}
+	startAuxiliaryStatusTracking(ds, true)
+	for _, createBefore := range []bool{true, false} {
+		if err := fence(); err != nil {
+			return err
+		}
+		statuses, err := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, &template.Spec, binding, targetClient, targetNs, createBefore, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
+		ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryStatuses(ds.Status.AuxiliaryResourceStatuses, statuses)
+		if err != nil {
+			return fmt.Errorf("failed to deploy auxiliary resources for kubectl-debug session: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -444,6 +475,93 @@ func applyDebugSessionDeploymentStatus(ctx context.Context, c ctrlclient.Client,
 // createOrRecoverTargetObject never adopts a resource owned by another session.
 // A same-session object is recovered only when its immutable session marker
 // matches, allowing retries after a lost response without changing its spec.
+// policyExceptionAdmissionWindow bounds how long a create denied by an
+// admission webhook is retried after the session created a Kyverno
+// PolicyException. Kyverno admits through an informer cache, so a just-created
+// exception is not applied to admission requests for a few seconds. The window
+// is measured from the exception's first createdAt. Workload creates requeue
+// the session; kubectl-debug pod creation retries inline.
+var (
+	policyExceptionAdmissionWindow   = 30 * time.Second
+	policyExceptionAdmissionInterval = time.Second
+)
+
+// errPolicyExceptionNotAdmitted marks a workload create denied by admission
+// while a session-created PolicyException may still be propagating.
+var errPolicyExceptionNotAdmitted = errors.New("waiting for PolicyException admission")
+
+func createdKyvernoPolicyException(statuses []breakglassv1alpha1.AuxiliaryResourceStatus) bool {
+	isException := func(apiVersion, kind string) bool {
+		group, _, _ := strings.Cut(apiVersion, "/")
+		return kind == "PolicyException" && (group == "kyverno.io" || group == "policies.kyverno.io")
+	}
+	for _, status := range statuses {
+		if status.Created && isException(status.APIVersion, status.Kind) {
+			return true
+		}
+		for _, additional := range status.AdditionalResources {
+			if isException(additional.APIVersion, additional.Kind) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// isAdmissionWebhookDenial reports a definitive validating-webhook denial; such
+// a create committed nothing and is safe to repeat with the same operation ID.
+func isAdmissionWebhookDenial(err error) bool {
+	var status apierrors.APIStatus
+	if !errors.As(err, &status) {
+		return false
+	}
+	message := status.Status().Message
+	return strings.Contains(message, "admission webhook") && strings.Contains(message, "denied the request")
+}
+
+// policyExceptionAdmissionDeadline returns the end of the admission window of
+// the newest Kyverno PolicyException created by the session, if it is still open.
+func policyExceptionAdmissionDeadline(statuses []breakglassv1alpha1.AuxiliaryResourceStatus) (time.Time, bool) {
+	var newest time.Time
+	for _, status := range statuses {
+		if status.Deleted || status.CreatedAt == nil || !createdKyvernoPolicyException([]breakglassv1alpha1.AuxiliaryResourceStatus{status}) {
+			continue
+		}
+		createdAt, err := time.Parse(time.RFC3339, *status.CreatedAt)
+		if err == nil && createdAt.After(newest) {
+			newest = createdAt
+		}
+	}
+	if newest.IsZero() {
+		return time.Time{}, false
+	}
+	deadline := newest.Add(policyExceptionAdmissionWindow)
+	return deadline, time.Now().Before(deadline)
+}
+
+// createUntilAdmitted retries webhook denials until a PolicyException created
+// before the object reaches the admission cache or the deadline passes. Any
+// other error, a fence failure or context cancellation stops immediately; the
+// last denial is returned unchanged.
+func createUntilAdmitted(ctx context.Context, deadline time.Time, create func() error, fence func() error) error {
+	for {
+		err := create()
+		if err == nil || !isAdmissionWebhookDenial(err) || !time.Now().Add(policyExceptionAdmissionInterval).Before(deadline) {
+			return err
+		}
+		timer := time.NewTimer(policyExceptionAdmissionInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return errors.Join(err, ctx.Err())
+		case <-timer.C:
+		}
+		if fenceErr := fence(); fenceErr != nil {
+			return errors.Join(err, fenceErr)
+		}
+	}
+}
+
 func createOrRecoverTargetObject(ctx context.Context, targetClient ctrlclient.Client, obj ctrlclient.Object, session *breakglassv1alpha1.DebugSession) error {
 	if err := targetClient.Create(ctx, obj); err == nil {
 		return nil
@@ -523,6 +641,10 @@ func mergeAuxiliaryStatuses(current, updates []breakglassv1alpha1.AuxiliaryResou
 		}
 		if update.UID == "" {
 			update.UID = previous.UID
+		}
+		// Keep the first creation time across redeploys of the same resource.
+		if previous.CreatedAt != nil && !previous.Deleted && previous.ResourceName == update.ResourceName {
+			update.CreatedAt = previous.CreatedAt
 		}
 		children := append([]breakglassv1alpha1.AdditionalResourceRef(nil), previous.AdditionalResources...)
 		for _, next := range update.AdditionalResources {

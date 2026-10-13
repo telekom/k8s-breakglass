@@ -97,6 +97,9 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	}
 	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec))
 	require.Empty(t, ValidateDebugSessionTemplate(&DebugSessionTemplate{Spec: spec}).Errors)
+	blocked := spec.DeepCopy()
+	blocked.BlockSelfApproval = kptr.To(true)
+	require.NoError(t, ValidateNodeMaintenanceTemplate(blocked))
 	for _, tc := range []struct {
 		name   string
 		mutate func(*DebugSessionTemplateSpec)
@@ -112,6 +115,7 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 		{"hybrid", func(s *DebugSessionTemplateSpec) { s.Mode = DebugSessionModeHybrid }},
 		{"empty allowlist", func(s *DebugSessionTemplateSpec) { s.NodeMaintenance.AllowedTargets = nil }},
 		{"idle timeout", func(s *DebugSessionTemplateSpec) { s.Constraints.IdleTimeout = "1m" }},
+		{"self approval allowed", func(s *DebugSessionTemplateSpec) { s.BlockSelfApproval = kptr.To(false) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := spec.DeepCopy()

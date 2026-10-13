@@ -2183,6 +2183,11 @@ func (in *DebugSessionClusterBindingSpec) DeepCopyInto(out *DebugSessionClusterB
 		*out = new(DebugSessionApprovers)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.BlockSelfApproval != nil {
+		in, out := &in.BlockSelfApproval, &out.BlockSelfApproval
+		*out = new(bool)
+		**out = **in
+	}
 	if in.SchedulingConstraints != nil {
 		in, out := &in.SchedulingConstraints, &out.SchedulingConstraints
 		*out = new(SchedulingConstraints)
@@ -2828,6 +2833,11 @@ func (in *DebugSessionTemplateSpec) DeepCopyInto(out *DebugSessionTemplateSpec) 
 		in, out := &in.Approvers, &out.Approvers
 		*out = new(DebugSessionApprovers)
 		(*in).DeepCopyInto(*out)
+	}
+	if in.BlockSelfApproval != nil {
+		in, out := &in.BlockSelfApproval, &out.BlockSelfApproval
+		*out = new(bool)
+		**out = **in
 	}
 	if in.Constraints != nil {
 		in, out := &in.Constraints, &out.Constraints

@@ -2630,6 +2630,98 @@ func TestKubectlDebugHandler_PrivilegedWritesFenceClusterConfig(t *testing.T) {
 	}
 }
 
+func TestCreateNodeDebugPodRefencesClusterConfigBeforePolicyExceptionRetry(t *testing.T) {
+	shortPolicyExceptionWindow(t, time.Minute)
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry-fence-session", Namespace: "default", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, TargetNamespace: "breakglass-debug",
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}},
+			},
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+				Kind: "PolicyException", APIVersion: "policies.kyverno.io/v1", Created: true, CreatedAt: &createdAt,
+			}},
+		},
+	}
+	events := []string{}
+	creates := 0
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "debug-namespace-uid"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(context.Context, ctrlclient.WithWatch, ctrlclient.Object, ...ctrlclient.CreateOption) error {
+			creates++
+			events = append(events, "target-write")
+			return webhookDenial()
+		},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	provider := &mockClientProvider{
+		clients:       map[string]ctrlclient.Client{"test-cluster": targetClient},
+		events:        &events,
+		validateErr:   errors.New("ClusterConfig default/test-cluster spec changed"),
+		validateErrAt: 2,
+	}
+	handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, provider)
+
+	_, err := handler.CreateNodeDebugPod(context.Background(), session.DeepCopy(), "worker-1", "operator@example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "target cluster configuration changed")
+	assert.Equal(t, 1, creates, "a changed ClusterConfig must stop the admission retry before another create")
+	assert.Equal(t, []string{"validate-cluster-config", "target-write", "validate-cluster-config"}, events)
+}
+
+func TestCreateNodeDebugPodRefencesNamespaceBeforePolicyExceptionRetry(t *testing.T) {
+	shortPolicyExceptionWindow(t, time.Minute)
+	scheme := newKubectlTestScheme()
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	createdAt := time.Now().UTC().Format(time.RFC3339)
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "retry-namespace-session", Namespace: "default", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode: breakglassv1alpha1.DebugSessionModeKubectlDebug, TargetNamespace: "breakglass-debug",
+				KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}},
+			},
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+				Kind: "PolicyException", APIVersion: "policies.kyverno.io/v1", Created: true, CreatedAt: &createdAt,
+			}},
+		},
+	}
+	creates := 0
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "debug-namespace-uid"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+	).WithInterceptorFuncs(interceptor.Funcs{
+		Create: func(ctx context.Context, c ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+			if _, ok := obj.(*corev1.Pod); !ok {
+				return c.Create(ctx, obj, opts...)
+			}
+			creates++
+			ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug"}}
+			require.NoError(t, c.Delete(ctx, ns))
+			require.NoError(t, c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "replaced-namespace-uid"}}))
+			return webhookDenial()
+		},
+	}).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	provider := &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}}
+	handler := newTestKubectlDebugHandlerWithReader(hubClient, hubClient, provider)
+
+	_, err := handler.CreateNodeDebugPod(context.Background(), session.DeepCopy(), "worker-1", "operator@example.com")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "node debug namespace breakglass-debug changed")
+	assert.Equal(t, 1, creates, "a replaced debug namespace must stop the admission retry before another create")
+}
+
 func TestKubectlDebugHandler_CreatePodCopy(t *testing.T) {
 	scheme := newKubectlTestScheme()
 
@@ -3360,6 +3452,9 @@ func TestKubectlDebugHandler_CreateNodeDebugPod(t *testing.T) {
 		assert.Equal(t, "debugger", pod.Spec.Containers[0].Name)
 		assert.Equal(t, "busybox:stable", pod.Spec.Containers[0].Image)
 		assert.True(t, *pod.Spec.Containers[0].SecurityContext.Privileged)
+		require.NotNil(t, pod.Spec.AutomountServiceAccountToken)
+		assert.False(t, *pod.Spec.AutomountServiceAccountToken, "privileged node debug pod must not mount a ServiceAccount token")
+		assert.Empty(t, pod.Spec.ServiceAccountName)
 
 		// Check host root mount
 		require.Len(t, pod.Spec.Volumes, 1)
@@ -4385,4 +4480,65 @@ func TestAllowedPodUnknownUIDDoesNotReplaceKnownIdentity(t *testing.T) {
 	status := &breakglassv1alpha1.DebugSessionStatus{AllowedPods: []breakglassv1alpha1.AllowedPodRef{original}}
 	addAllowedPodIfMissing(status, breakglassv1alpha1.AllowedPodRef{Namespace: "default", Name: "target"})
 	require.Equal(t, []breakglassv1alpha1.AllowedPodRef{original}, status.AllowedPods)
+}
+
+func TestKubectlDebugHandler_CreateNodeDebugPodRetriesFreshPolicyExceptionDenial(t *testing.T) {
+	for _, scenario := range []struct {
+		name      string
+		createdAt time.Duration
+		creates   int
+		wantErr   bool
+	}{
+		{name: "fresh exception is retried", createdAt: -time.Second, creates: 3},
+		{name: "settled exception denial is final", createdAt: -time.Hour, creates: 1, wantErr: true},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			shortPolicyExceptionWindow(t, 30*time.Second)
+			scheme := newKubectlTestScheme()
+			expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+			createdAt := time.Now().UTC().Add(scenario.createdAt).Format(time.RFC3339)
+			session := &breakglassv1alpha1.DebugSession{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-exception-session", Namespace: "default", UID: "node-exception-session-uid"},
+				Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+				Status: breakglassv1alpha1.DebugSessionStatus{
+					State:     breakglassv1alpha1.DebugSessionStateActive,
+					ExpiresAt: &expiresAt,
+					ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+						Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+						TargetNamespace: "breakglass-debug",
+						KubectlDebug:    &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}},
+					},
+					AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+						Name: "node-debug-policy-exception", Kind: "PolicyException", APIVersion: "policies.kyverno.io/v1", Created: true, CreatedAt: &createdAt,
+					}},
+				},
+			}
+			hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).
+				WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+			creates := 0
+			targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "namespace-uid"}},
+				&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+			).WithInterceptorFuncs(interceptor.Funcs{
+				Create: func(ctx context.Context, cl ctrlclient.WithWatch, obj ctrlclient.Object, opts ...ctrlclient.CreateOption) error {
+					creates++
+					if creates < 3 {
+						return webhookDenial()
+					}
+					return cl.Create(ctx, obj, opts...)
+				},
+			}).Build()
+			handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+			pod, err := handler.CreateNodeDebugPod(context.Background(), session, "worker-1", "operator@example.com")
+			assert.Equal(t, scenario.creates, creates)
+			if scenario.wantErr {
+				require.Error(t, err)
+				assert.True(t, isAdmissionWebhookDenial(err))
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, pod)
+		})
+	}
 }

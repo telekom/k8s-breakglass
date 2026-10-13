@@ -238,6 +238,16 @@ spec:
                   auxiliaryResourceOverrides enables or disables specific auxiliary resource categories.
                   Categories in requiredAuxiliaryResourceCategories cannot be disabled.
                 type: object
+              blockSelfApproval:
+                description: |-
+                  blockSelfApproval overrides the template's blockSelfApproval for sessions
+                  created via this binding. If omitted (nil), the template value is used;
+                  if both are omitted, self-approval is blocked. Set to false to allow the
+                  requester to approve or reject their own session (for example on
+                  non-production clusters) and true to block it regardless of the template.
+                  Sessions for nodeMaintenance templates reject false and always block
+                  self-approval.
+                type: boolean
               clusterSelector:
                 description: |-
                   clusterSelector matches clusters by labels on ClusterConfig resources.

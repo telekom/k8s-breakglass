@@ -439,3 +439,85 @@ func TestDeployDebugResourcesRejectsIdleExpiryBeforeWrite(t *testing.T) {
 	require.NoError(t, target.List(context.Background(), &deployments))
 	require.Empty(t, deployments.Items)
 }
+
+func TestActivateKubectlDebugSessionDeploysAuxiliaryResources(t *testing.T) {
+	c, ds, template, target := newDeploymentFenceFixture(t)
+	c.auxiliaryMgr = newTestAuxiliaryResourceManager()
+	template.Spec = breakglassv1alpha1.DebugSessionTemplateSpec{
+		Mode:         breakglassv1alpha1.DebugSessionModeKubectlDebug,
+		KubectlDebug: &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}},
+		AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{
+			{Name: "exception", Category: "policy-exceptions", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true), FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ printf \"before-%s\" .session.uid | yamlQuote }}\n"},
+			{Name: "after", Category: "policy-exceptions", CreateBefore: kptr.To(false), DeleteAfter: kptr.To(true), FailurePolicy: breakglassv1alpha1.AuxiliaryResourceFailurePolicyFail, TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: after\n"},
+		},
+		RequiredAuxiliaryResourceCategories: []string{"policy-exceptions"},
+	}
+	ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+	ds.Status.ResolvedTemplateIdentityCaptured = true
+	ds.Status.ResolvedBindingSnapshotCaptured = true
+	ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	require.NoError(t, c.client.Status().Update(context.Background(), ds))
+
+	_, err := c.activateSession(context.Background(), ds, template, nil)
+	require.NoError(t, err)
+	require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, ds.Status.State, ds.Status.Message)
+	for _, name := range []string{"before-session-uid", "after"} {
+		require.NoError(t, target.Get(context.Background(), client.ObjectKey{Namespace: "breakglass-debug", Name: name}, &corev1.ConfigMap{}), name)
+	}
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, c.client.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.Len(t, persisted.Status.AuxiliaryResourceStatuses, 2)
+	require.True(t, cleanupNeedsTargetCluster(persisted))
+	require.Empty(t, persisted.Status.DeployedResources)
+	deployments := &appsv1.DeploymentList{}
+	require.NoError(t, target.List(context.Background(), deployments))
+	require.Empty(t, deployments.Items)
+}
+
+func TestActivateSessionRequeuesWorkloadDeniedWhilePolicyExceptionPropagates(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		age     time.Duration
+		requeue bool
+	}{
+		{name: "fresh exception", requeue: true},
+		{name: "window closed", age: -time.Minute},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, ds, template, target := newDeploymentFenceFixture(t)
+			creates := 0
+			c.targetClientFactory = func(_ *rest.Config) (client.Client, error) {
+				return interceptor.NewClient(target.(client.WithWatch), interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+					if obj.GetName() == ds.Name {
+						creates++
+						return webhookDenial()
+					}
+					return cl.Create(ctx, obj, opts...)
+				}}), nil
+			}
+			createdAt := time.Now().Add(tc.age).UTC().Format(time.RFC3339)
+			ds.Status.AuxiliaryResourceStatuses = []breakglassv1alpha1.AuxiliaryResourceStatus{{
+				Name: "exception", Kind: "PolicyException", APIVersion: "policies.kyverno.io/v1",
+				ResourceName: "debug-node-session-uid", Namespace: "t-caas-security", Created: true, CreatedAt: &createdAt,
+			}}
+			ds.Status.ResolvedTemplate = template.Spec.DeepCopy()
+			ds.Status.ResolvedTemplateIdentityCaptured = true
+			ds.Status.ResolvedBindingSnapshotCaptured = true
+			ds.Status.State = breakglassv1alpha1.DebugSessionStatePending
+			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+			require.NoError(t, c.client.Status().Update(context.Background(), ds))
+
+			result, err := c.activateSession(context.Background(), ds, template, nil)
+			require.NoError(t, err)
+			require.Equal(t, 1, creates, "the reconciler must not block on retries")
+			if tc.requeue {
+				require.Equal(t, policyExceptionAdmissionInterval, result.RequeueAfter)
+				require.Equal(t, breakglassv1alpha1.DebugSessionStatePending, ds.Status.State)
+				require.Equal(t, "Waiting for PolicyException admission", ds.Status.Message)
+				return
+			}
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, ds.Status.State)
+		})
+	}
+}

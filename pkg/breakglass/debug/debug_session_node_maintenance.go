@@ -89,6 +89,9 @@ func maintenanceApprovers(template *breakglassv1alpha1.DebugSessionTemplate, bin
 	if !debugSessionApproversConfigured(approvers) || approvers.AutoApproveFor != nil {
 		return fmt.Errorf("nodeMaintenance requires explicit independent approvers without auto-approval")
 	}
+	if !resolveDebugSessionBlockSelfApproval(template.Spec.BlockSelfApproval, binding) {
+		return fmt.Errorf("nodeMaintenance requires blocked self-approval")
+	}
 	if binding != nil && (binding.Spec.NamespaceConstraints != nil || len(binding.Spec.ExtraDeployVariables) != 0 ||
 		len(binding.Spec.AuxiliaryResourceOverrides) != 0 || len(binding.Spec.RequiredAuxiliaryResourceCategories) != 0 ||
 		binding.Spec.SchedulingConstraints != nil || binding.Spec.SchedulingOptions != nil || binding.Spec.Impersonation != nil) {
