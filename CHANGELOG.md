@@ -48,9 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Limit `BreakglassSession.spec.ticketSystemID` to 256 characters. The CRD
   schema, session request API (`422 Unprocessable Entity`), `bgctl session
   request --ticket-system-id` and the request dialog reject longer values. The
-  reference stays optional, audit-only and otherwise unvalidated. Sessions
-  stored by v0.3.0-rc.10 with a longer reference rely on CRD validation
-  ratcheting (Kubernetes 1.30+ default) for later updates.
+  reference stays optional, audit-only and otherwise unvalidated. Upgrading
+  from v0.3.0-rc.10: Kubernetes 1.30+ ratchets unchanged values; on older hubs,
+  updates to the main resource of sessions with a longer reference (for
+  example metadata or finalizer changes) are rejected because the immutable
+  spec cannot be shortened; `/status` updates are unaffected. Let such sessions
+  expire or delete them before applying the CRD.
 - Keep DebugSession discovery and creation independent of escalation grants.
   Optional, deprecated grant aliases can add cluster-scoped discoverability for
   configured allowlist groups, but never authorize creation or pod operations.

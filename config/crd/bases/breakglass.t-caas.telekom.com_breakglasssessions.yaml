@@ -183,9 +183,10 @@ spec:
               ticketSystemID:
                 description: |-
                   ticketSystemID is an optional, freeform ticket reference supplied by the
-                  requester for correlation and audit. It is not validated or an authorization
-                  credential, and does not replace requestReason or approval requirements.
-                  At most MaxTicketSystemIDLength (256) characters.
+                  requester for correlation and audit. Apart from the length limit of
+                  MaxTicketSystemIDLength (256) characters it has no format validation. It is
+                  not an authorization credential and does not replace requestReason or
+                  approval requirements.
                 maxLength: 256
                 type: string
               user:
