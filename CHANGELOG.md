@@ -59,13 +59,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   admission webhook denial) no longer reports that never-created resource as a
   `CleanupFailed` residual. The session still fails with the admission denial
   in its message. Ambiguous creates (timeouts) remain tracked for cleanup.
-- network-debug `net-debug trace` no longer fails complete pwru traces on
-  real 6.x kernels, where detaching thousands of kprobes takes 40-55 seconds.
-  The default `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace rises from 15 to
-  60 seconds (maximum 120), and a forced stop during detach after pwru reached
-  its event limit is accepted only with the exact `count=<events>` marker and
-  exactly that many tuples.
-
 - Diagnostic artifact cleanup now deletes collector Jobs with background
   propagation. Previously the `batch/v1` legacy orphan default left each
   collector Pod behind (`Succeeded`, no owner reference) after the Job was
@@ -131,6 +124,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requesters' real identity groups before upgrading, and remove debug-only
   prerequisite escalations afterwards; see
   [the migration guide](docs/debug-session.md#migration-from-escalation-grant-authorization).
+
+- network-debug `net-debug trace` no longer fails complete pwru traces on
+  real 6.x kernels, where detaching thousands of kprobes takes 40-55 seconds.
+  The default `NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS` grace rises from 15 to
+  60 seconds (maximum 120), and a forced stop during detach after pwru reached
+  its event limit is accepted only with the exact `count=<events>` marker and
+  exactly that many tuples.
 
 ### Changed
 
