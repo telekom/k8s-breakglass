@@ -40,6 +40,7 @@ type DebugSessionTemplateResponse struct {
 	Hidden                bool                                        `json:"hidden,omitempty"`
 	Deprecated            bool                                        `json:"deprecated,omitempty"`
 	DeprecationMessage    string                                      `json:"deprecationMessage,omitempty"`
+	MOTD                  *breakglassv1alpha1.MessageOfTheDay         `json:"motd,omitempty"`
 	HasAvailableClusters  bool                                        `json:"hasAvailableClusters"`            // True if at least one cluster is available for this template
 	AvailableClusterCount int                                         `json:"availableClusterCount,omitempty"` // Number of clusters user can deploy to
 }
@@ -182,6 +183,7 @@ type AvailableClusterDetail struct {
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
 	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
+	MOTD                          *breakglassv1alpha1.MessageOfTheDay         `json:"motd,omitempty"`
 	Status                        *ClusterStatusInfo                          `json:"status,omitempty"`
 }
 
@@ -201,6 +203,7 @@ type BindingOption struct {
 	ApprovalReason                *breakglass.ReasonConfigInfo                `json:"approvalReason,omitempty"`
 	Notification                  *NotificationConfigInfo                     `json:"notification,omitempty"`
 	ExtraDeployVariables          []ExtraDeployVariableResponse               `json:"extraDeployVariables"`
+	MOTD                          *breakglassv1alpha1.MessageOfTheDay         `json:"motd,omitempty"`
 }
 
 // BindingReference identifies the binding that enabled access
@@ -604,6 +607,7 @@ func (c *DebugSessionAPIController) buildTemplateResponse(
 		Hidden:                template.Spec.Hidden,
 		Deprecated:            template.Spec.Deprecated,
 		DeprecationMessage:    template.Spec.DeprecationMessage,
+		MOTD:                  template.Spec.MOTD,
 		HasAvailableClusters:  availableClusterCount > 0,
 		AvailableClusterCount: availableClusterCount,
 	}
@@ -1098,6 +1102,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.Impersonation = c.resolveImpersonation(template, nil)
 		detail.Approval = c.resolveApproval(template, nil, cc, approvalGroups)
 		detail.RequiredAuxResourceCategories = c.resolveRequiredAuxResourceCategories(template, nil)
+		detail.MOTD = template.Spec.MOTD
 		return detail
 	}
 
@@ -1122,6 +1127,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 			RequestReason:                 c.resolveRequestReason(template, binding),
 			ApprovalReason:                c.resolveApprovalReason(template, binding),
 			Notification:                  c.resolveNotification(template, binding),
+			MOTD:                          breakglassv1alpha1.EffectiveDebugSessionMOTD(&template.Spec, &binding.Spec),
 		}
 		effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, binding.Spec.ExtraDeployVariables)
 		if err == nil {
@@ -1149,6 +1155,7 @@ func (c *DebugSessionAPIController) buildClusterDetailWithBindings(template *bre
 		detail.RequestReason = c.resolveRequestReason(template, primaryBinding)
 		detail.ApprovalReason = c.resolveApprovalReason(template, primaryBinding)
 		detail.Notification = c.resolveNotification(template, primaryBinding)
+		detail.MOTD = breakglassv1alpha1.EffectiveDebugSessionMOTD(&template.Spec, &primaryBinding.Spec)
 		if effectiveVariables, err := breakglassv1alpha1.EffectiveExtraDeployVariables(template.Spec.ExtraDeployVariables, primaryBinding.Spec.ExtraDeployVariables); err == nil {
 			detail.ExtraDeployVariables = extraDeployVariableResponses(filterExtraDeployVariablesForRequester(effectiveVariables, requester))
 		}

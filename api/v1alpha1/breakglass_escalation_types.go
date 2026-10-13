@@ -62,6 +62,12 @@ type BreakglassEscalationSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	DisplayName string `json:"displayName,omitempty"`
 
+	// motd is guidance shown when requesting and using this escalation:
+	// purpose, allowed actions, safety notes, how to drop the session, and a
+	// runbook link. It is shown in the UI only; escalations have no workload.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
+
 	// allowed specifies who is allowed to use this escalation.
 	Allowed BreakglassEscalationAllowed `json:"allowed"`
 	// approvers specifies who is allowed to approve this escalation.
@@ -304,6 +310,11 @@ type BreakglassEscalationAllowed struct {
 	// Admission validates glob syntax with path.Match. Runtime matching for stored escalations uses filepath.Match semantics on the controller OS.
 	// +kubebuilder:validation:MaxItems=50
 	Clusters []string `json:"clusters,omitempty"`
+	// clusterSelector restricts targets to ClusterConfig labels matching this selector.
+	// It is ANDed with allowed.clusters or clusterConfigRefs; name patterns never bypass it.
+	// A missing or ambiguous ClusterConfig fails closed. Empty selectors are not allowed.
+	// +optional
+	ClusterSelector *metav1.LabelSelector `json:"clusterSelector,omitempty"`
 	// groups is a list of groups this escalation can be used by.
 	// Supports exact string matching. Globbing (wildcards) and regex patterns are not yet supported.
 	// Future enhancement: Consider adding globbing (e.g., "admin-*") or regex support for group name matching.

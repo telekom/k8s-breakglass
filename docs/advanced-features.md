@@ -153,6 +153,11 @@ When `blockSelfApproval: true`:
 - Helps enforce compliance and audit requirements
 - Returns HTTP 403 if requester tries to self-approve
 
+DebugSessions use their own `blockSelfApproval` on `DebugSessionTemplate` and
+`DebugSessionClusterBinding` (binding, then template). When both are unset,
+DebugSession self-approval stays blocked; it does not inherit a cluster-level
+`false`. See [DebugSession self-approval](debug-session.md#self-approval-blockselfapproval).
+
 ## Allowed Approver Domains
 
 Restrict approvers to specific email domains (multi-tenant or domain segregation).

@@ -121,6 +121,11 @@ when "custom"
   expect(pod_by_profile.keys.sort == %w[custom-readonly direct-image], "custom fixture profiles were not rendered")
   expect(value_at(pod_by_profile.fetch("custom-readonly"), "spec", "template", "spec", "containers").first["image"] == "busybox:1.36.1", "custom image was not rendered")
   expect(value_at(pod_by_profile.fetch("direct-image"), "spec", "template", "spec", "containers").first["image"] == "busybox:1.36.1", "direct image was not rendered")
+  expect(value_at(session_by_profile.fetch("custom-readonly"), "spec", "motd") == {
+    "message" => "Purpose: custom read-only checks.\nTerminate: end the session in the UI.",
+    "runbookURL" => "https://example.com/runbooks/custom#read-only"
+  }, "profile motd was not rendered")
+  expect(!value_at(session_by_profile.fetch("direct-image"), "spec").key?("motd"), "motd must be omitted when unset")
 when "all"
   expected = %w[workload-diagnostics network-diagnostics storage-diagnostics dump-access cluster-validation]
   expect(session_by_profile.keys == expected, "all-enabled profiles must preserve the declared intent order")

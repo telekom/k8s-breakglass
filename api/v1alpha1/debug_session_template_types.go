@@ -161,6 +161,16 @@ type DebugSessionTemplateSpec struct {
 	// +optional
 	Approvers *DebugSessionApprovers `json:"approvers,omitempty"`
 
+	// blockSelfApproval controls whether the session requester may approve or
+	// reject their own DebugSession when they are also a configured approver.
+	// If omitted (nil), the secure default applies and self-approval is blocked;
+	// ClusterConfig blockSelfApproval=false does not relax DebugSession approval.
+	// Set to false to allow self-approval, for example on non-production
+	// templates. A DebugSessionClusterBinding can override this value.
+	// nodeMaintenance templates must not set it to false.
+	// +optional
+	BlockSelfApproval *bool `json:"blockSelfApproval,omitempty"`
+
 	// constraints defines session duration and usage limits.
 	// +optional
 	Constraints *DebugSessionConstraints `json:"constraints,omitempty"`
@@ -263,6 +273,13 @@ type DebugSessionTemplateSpec struct {
 	// Only displayed when deprecated is true.
 	// +optional
 	DeprecationMessage string `json:"deprecationMessage,omitempty"`
+
+	// motd is guidance shown before and during a session: purpose, allowed
+	// actions, safety notes, how to terminate, and a runbook link. A binding
+	// motd replaces it. The effective motd is exported to every debug workload
+	// container as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
+	// +optional
+	MOTD *MessageOfTheDay `json:"motd,omitempty"`
 
 	// expirationBehavior controls what happens when a session expires.
 	// "notify-only" is a deprecated alias that requests an expiry notification;

@@ -1250,6 +1250,28 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 	err = helpers.WaitForPodReady(ctx, cli, targetPod.Namespace, targetPod.Name, defaultTimeout)
 	require.NoError(t, err, "Failed to wait for source pod to be ready")
 
+	require.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(targetPod), targetPod))
+	targetPod.Spec.EphemeralContainers = []corev1.EphemeralContainer{{
+		EphemeralContainerCommon: corev1.EphemeralContainerCommon{
+			Name:    "existing-debugger",
+			Image:   "busybox:latest",
+			Command: []string{"sleep", "300"},
+		},
+	}}
+	require.NoError(t, cli.SubResource("ephemeralcontainers").Update(ctx, targetPod),
+		"Failed to inject a pre-existing source ephemeral container")
+	require.Eventually(t, func() bool {
+		if err := cli.Get(ctx, client.ObjectKeyFromObject(targetPod), targetPod); err != nil {
+			return false
+		}
+		for _, container := range targetPod.Status.EphemeralContainerStatuses {
+			if container.Name == "existing-debugger" && container.State.Running != nil {
+				return true
+			}
+		}
+		return false
+	}, defaultTimeout, defaultInterval, "source ephemeral container must actually run before copying")
+
 	// Ensure debug-copies namespace exists
 	debugCopiesNs := &corev1.Namespace{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1315,20 +1337,25 @@ func TestDebugSession_E2E_PodCopy(t *testing.T) {
 		DebugImage: helpers.GetTmuxDebugImage(),
 	})
 
-	if err != nil {
-		t.Logf("Pod copy creation failed: %v", err)
-	} else {
-		t.Logf("Pod copy created: %s/%s", copyResult.CopyNamespace, copyResult.CopyName)
-
-		// Clean up the copy
-		copyPod := &corev1.Pod{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      copyResult.CopyName,
-				Namespace: copyResult.CopyNamespace,
-			},
-		}
-		defer func() { _ = cli.Delete(ctx, copyPod) }()
+	require.NoError(t, err, "Pod copy must succeed with a pre-existing source ephemeral container")
+	require.NotEmpty(t, copyResult.CopyName)
+	require.Equal(t, "debug-copies", copyResult.CopyNamespace)
+	copyPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      copyResult.CopyName,
+			Namespace: copyResult.CopyNamespace,
+		},
 	}
+	defer func() { _ = cli.Delete(ctx, copyPod) }()
+	require.NoError(t, helpers.WaitForPodReady(ctx, cli, copyPod.Namespace, copyPod.Name, defaultTimeout))
+	require.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(copyPod), copyPod))
+	require.Empty(t, copyPod.Spec.EphemeralContainers, "a pod CREATE must not replay source ephemeral containers")
+	require.NotEqual(t, targetPod.UID, copyPod.UID)
+	require.NoError(t, cli.Get(ctx, client.ObjectKeyFromObject(targetPod), targetPod))
+	require.Len(t, targetPod.Spec.EphemeralContainers, 1, "copying must not mutate the source pod")
+	require.NoError(t, api.TerminateDebugSession(ctx, t, session.Name))
+	require.NoError(t, helpers.WaitForResourceDeleted(ctx, cli, client.ObjectKeyFromObject(copyPod), copyPod, defaultTimeout),
+		"termination must delete the real debug copy before test cleanup")
 }
 
 // D-017: DebugSession kubectl-debug node debug pod

@@ -15,6 +15,10 @@ package v1alpha1
 type BreakglassEscalationSpecApplyConfiguration struct {
 	// displayName is the human-readable name shown in the UI and CLI; defaults to metadata.name.
 	DisplayName *string `json:"displayName,omitempty"`
+	// motd is guidance shown when requesting and using this escalation:
+	// purpose, allowed actions, safety notes, how to drop the session, and a
+	// runbook link. It is shown in the UI only; escalations have no workload.
+	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
 	// allowed specifies who is allowed to use this escalation.
 	Allowed *BreakglassEscalationAllowedApplyConfiguration `json:"allowed,omitempty"`
 	// approvers specifies who is allowed to approve this escalation.
@@ -102,6 +106,14 @@ func BreakglassEscalationSpec() *BreakglassEscalationSpecApplyConfiguration {
 // If called multiple times, the DisplayName field is set to the value of the last call.
 func (b *BreakglassEscalationSpecApplyConfiguration) WithDisplayName(value string) *BreakglassEscalationSpecApplyConfiguration {
 	b.DisplayName = &value
+	return b
+}
+
+// WithMOTD sets the MOTD field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MOTD field is set to the value of the last call.
+func (b *BreakglassEscalationSpecApplyConfiguration) WithMOTD(value *MessageOfTheDayApplyConfiguration) *BreakglassEscalationSpecApplyConfiguration {
+	b.MOTD = value
 	return b
 }
 

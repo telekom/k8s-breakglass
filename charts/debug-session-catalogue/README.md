@@ -206,6 +206,10 @@ The node-maintenance profiles document the future per-session `targetNode`,
 currently rejects enablement because those controller-owned values are not
 available from Helm. No user-supplied substitute is accepted.
 
+A profile may set `motd` (`message`, optional https `runbookURL`); it is
+rendered as the template's `spec.motd`, shown in the UI and exported to the
+debug workload as `BREAKGLASS_MOTD` / `BREAKGLASS_RUNBOOK_URL`.
+
 The chart rejects map-shaped profiles, duplicate or invalid names, unresolved
 image references, and enabled profiles that require elevation without an
 explicit `elevated: true` opt-in.

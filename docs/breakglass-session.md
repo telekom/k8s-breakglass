@@ -644,6 +644,14 @@ All session activities are logged for compliance and troubleshooting.
 - **Approver Access**: Ensure approvers can access the system
 - **Notification Setup**: Check if notifications are working
 
+`TestEscalationExplicitSelectionWithOverlappingGrants` exercises two eligible
+policies sharing a granted group in both Single- and Multi-Cluster E2E. Each
+policy is explicitly selected in turn; the created session must retain that
+policy's exact name and UID, deny the other policy's approver, accept its own
+approver and become Expired after requester drop. Unselected ambiguous requests
+and explicitly named ineligible policies must not create a grant. This covers
+requester choice without unioning approvers or relaxing the owner fence.
+
 ## Related Resources
 
 - [BreakglassEscalation](./breakglass-escalation.md) - Escalation policies

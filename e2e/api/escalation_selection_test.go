@@ -61,17 +61,29 @@ func TestEscalationExplicitSelectionWithOverlappingGrants(t *testing.T) {
 		require.NotEqual(t, group, session.Spec.GrantedGroup, "ambiguous/ineligible requests must not create a grant")
 	}
 
-	req.EscalationName = firstline.Name
-	session, err := api.CreateSessionAndWaitForPending(s.Ctx, t, req, helpers.WaitForStateTimeout)
-	require.NoError(t, err)
-	s.Cleanup.Add(session)
-	owner := metav1.GetControllerOf(session)
-	require.NotNil(t, owner)
-	require.Equal(t, firstline.Name, owner.Name)
-	require.Equal(t, firstline.UID, owner.UID)
-	require.ErrorContains(t, s.TC.ClientForUser(wrongPeer).ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace), "status=403")
-	helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
-	require.NoError(t, s.TC.ClientForUser(peer).ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace))
-	helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
-	require.NoError(t, api.DropSessionViaAPI(s.Ctx, t, session.Name, session.Namespace))
+	for _, selected := range []struct {
+		policy        *breakglassv1alpha1.BreakglassEscalation
+		approver      helpers.TestUser
+		otherApprover helpers.TestUser
+	}{
+		{firstline, peer, wrongPeer},
+		{platform, wrongPeer, peer},
+	} {
+		t.Run(selected.policy.Name, func(t *testing.T) {
+			req.EscalationName = selected.policy.Name
+			session, err := api.CreateSessionAndWaitForPending(s.Ctx, t, req, helpers.WaitForStateTimeout)
+			require.NoError(t, err)
+			s.Cleanup.Add(session)
+			owner := metav1.GetControllerOf(session)
+			require.NotNil(t, owner)
+			require.Equal(t, selected.policy.Name, owner.Name)
+			require.Equal(t, selected.policy.UID, owner.UID)
+			require.ErrorContains(t, s.TC.ClientForUser(selected.otherApprover).ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace), "status=403")
+			helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStatePending, helpers.WaitForStateTimeout)
+			require.NoError(t, s.TC.ClientForUser(selected.approver).ApproveSessionViaAPI(s.Ctx, t, session.Name, session.Namespace))
+			helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStateApproved, helpers.WaitForStateTimeout)
+			require.NoError(t, api.DropSessionViaAPI(s.Ctx, t, session.Name, session.Namespace))
+			helpers.WaitForSessionState(t, s.Ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.SessionStateExpired, helpers.WaitForStateTimeout)
+		})
+	}
 }

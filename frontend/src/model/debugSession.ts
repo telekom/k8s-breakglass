@@ -2,6 +2,8 @@
  * Debug Session types for the frontend
  */
 
+import type { MessageOfTheDay } from "@/model/motd";
+
 // Debug Session states - matches backend api/v1alpha1/debug_session_types.go
 export type DebugSessionState =
   "Pending" | "PendingApproval" | "Active" | "Expired" | "Terminated" | "Failed" | "Rejected";
@@ -111,6 +113,7 @@ export interface DebugSessionTemplateResponse {
   hasAvailableClusters: boolean; // True if at least one cluster is available for deployment
   availableClusterCount?: number; // Number of clusters user can deploy to
   extraDeployVariables?: ExtraDeployVariable[]; // User-configurable variables
+  motd?: MessageOfTheDay; // Template guidance; a binding motd replaces it
 }
 
 // Scheduling options for debug sessions
@@ -196,6 +199,8 @@ export interface DebugSession {
     rejectionReason?: string;
     workloadName?: string;
     workloadNamespace?: string;
+    resolvedTemplate?: { motd?: MessageOfTheDay };
+    resolvedBindingSpec?: { motd?: MessageOfTheDay };
   };
 }
 
@@ -332,6 +337,7 @@ export interface AvailableClusterDetail {
   approval?: ApprovalInfo;
   status?: ClusterStatusInfo;
   extraDeployVariables?: ExtraDeployVariable[];
+  motd?: MessageOfTheDay; // Effective guidance of the default binding
 }
 
 // A single binding option with its resolved configuration
@@ -349,6 +355,7 @@ export interface BindingOption {
   approvalReason?: ReasonConfigInfo;
   notification?: NotificationConfigInfo;
   extraDeployVariables?: ExtraDeployVariable[];
+  motd?: MessageOfTheDay; // Effective guidance for this binding
 }
 
 // Reference to the cluster binding that provides access

@@ -27,6 +27,10 @@ spec:
   {{- if $binding.description }}
   description: {{ $binding.description | quote }}
   {{- end }}
+  {{- with $binding.motd }}
+  motd:
+{{ toYaml . | indent 4 }}
+  {{- end }}
 
   {{- /* Template reference (mutually exclusive with templateSelector) */}}
   {{- if $binding.templateRef }}
