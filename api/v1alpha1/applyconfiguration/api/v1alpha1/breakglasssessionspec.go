@@ -43,6 +43,7 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	// ticketSystemID is an optional, freeform ticket reference supplied by the
 	// requester for correlation and audit. It is not validated or an authorization
 	// credential, and does not replace requestReason or approval requirements.
+	// At most MaxTicketSystemIDLength (256) characters.
 	TicketSystemID *string `json:"ticketSystemID,omitempty"`
 	// scheduledStartTime optionally specifies when this session should become active.
 	// If not set or zero, session activates immediately upon approval.

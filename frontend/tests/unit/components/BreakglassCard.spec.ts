@@ -86,6 +86,24 @@ describe("BreakglassCard request reason validation", () => {
     expect(requests?.[0]?.[3]).toBe(ticketSystemID);
   });
   it.each([
+    { ticketSystemID: "ü".repeat(256), submitted: true },
+    { ticketSystemID: "\u{1F6A8}".repeat(256), submitted: true },
+    { ticketSystemID: "a".repeat(257), submitted: false },
+  ])("limits the ticket reference to 256 characters (submitted: $submitted)", async ({ ticketSystemID, submitted }) => {
+    const wrapper = mount(BreakglassCard, {
+      props: { breakglass: makeBreakglass({ requestReason: { mandatory: false } }), time: Date.now() },
+      global: { stubs: SCALE_STUBS },
+    });
+    await wrapper.find('[data-testid="request-access-button"]').trigger("click");
+    const field = wrapper.get('[data-testid="ticket-system-id-input"]');
+    const input = field.element as HTMLInputElement;
+    input.value = ticketSystemID;
+    input.dispatchEvent(new CustomEvent("scale-change", { bubbles: true, detail: { value: ticketSystemID } }));
+    await nextTick();
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    expect(wrapper.emitted("request")?.length ?? 0).toBe(submitted ? 1 : 0);
+  });
+  it.each([
     { displayName: "Production admin", escalationName: "admin-a1b2c3d4", expected: "Production admin" },
     { displayName: "", escalationName: "admin-a1b2c3d4", expected: "admin-a1b2c3d4" },
     { displayName: undefined, escalationName: "admin-a1b2c3d4", expected: "admin-a1b2c3d4" },

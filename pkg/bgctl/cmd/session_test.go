@@ -8,8 +8,11 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/config"
@@ -174,6 +177,54 @@ func TestSessionRequestCommand_requestsSession_whenFlagsValid(t *testing.T) {
 	require.NoError(t, json.Unmarshal(buf.Bytes(), &session))
 	require.Equal(t, "session-new", session.Name)
 	require.Equal(t, "admins", session.Spec.GrantedGroup)
+}
+
+func TestSessionRequestCommand_ticketSystemIDLength(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		ticket    string
+		wantError bool
+	}{
+		{name: "max length multibyte accepted", ticket: strings.Repeat("ü", breakglassv1alpha1.MaxTicketSystemIDLength)},
+		{name: "over max length rejected", ticket: strings.Repeat("a", breakglassv1alpha1.MaxTicketSystemIDLength+1), wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests.Add(1)
+				var req struct {
+					TicketSystemID string `json:"ticketSystemID"`
+				}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				assert.Equal(t, tc.ticket, req.TicketSystemID)
+				w.Header().Set("Content-Type", "application/json")
+				assert.NoError(t, json.NewEncoder(w).Encode(breakglassv1alpha1.BreakglassSession{
+					ObjectMeta: metav1.ObjectMeta{Name: "session-new"},
+				}))
+			}))
+			defer server.Close()
+
+			root := NewRootCommand(Config{OutputWriter: &bytes.Buffer{}})
+			root.SetArgs([]string{
+				"--server", server.URL, "--token", "test-token", "--output", "json",
+				"session", "request", "--cluster", "prod-cluster", "--group", "admins",
+				"--user", "alice@example.com", "--ticket-system-id", tc.ticket,
+			})
+
+			err := root.Execute()
+
+			if tc.wantError {
+				require.ErrorContains(t, err, "--ticket-system-id must be at most 256 characters")
+				require.Zero(t, requests.Load(), "over-length reference must not reach the API")
+				return
+			}
+			require.NoError(t, err)
+			require.EqualValues(t, 1, requests.Load())
+		})
+	}
 }
 
 func TestConfigViewCommand_writesConfig_whenConfigExists(t *testing.T) {

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode/utf8"
+
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
 
 type ClusterUserGroup struct {
@@ -28,6 +30,7 @@ type BreakglassSessionRequest struct {
 	// Max 500 characters, sanitized on server-side to prevent injection attacks.
 	Reason string `json:"reason,omitempty"`
 	// TicketSystemID is an optional audit-only reference, preserved verbatim.
+	// Max breakglassv1alpha1.MaxTicketSystemIDLength characters; not otherwise validated.
 	TicketSystemID string `json:"ticketSystemID,omitempty"`
 	// Duration is the requested duration in seconds. Must not exceed the escalation's maxValidFor.
 	// Optional; if not provided, uses escalation's maxValidFor.
@@ -53,6 +56,16 @@ func (r *BreakglassSessionRequest) SanitizeReason() error {
 		return fmt.Errorf("reason must be at most %d characters", MaxReasonLength)
 	}
 	r.Reason = SanitizeReasonText(r.Reason)
+	return nil
+}
+
+// ValidateTicketSystemID rejects references longer than
+// breakglassv1alpha1.MaxTicketSystemIDLength characters. The value is otherwise
+// preserved verbatim and not validated.
+func (r *BreakglassSessionRequest) ValidateTicketSystemID() error {
+	if utf8.RuneCountInString(r.TicketSystemID) > breakglassv1alpha1.MaxTicketSystemIDLength {
+		return fmt.Errorf("ticketSystemID must be at most %d characters", breakglassv1alpha1.MaxTicketSystemIDLength)
+	}
 	return nil
 }
 

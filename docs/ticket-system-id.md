@@ -18,7 +18,10 @@ Session creation optionally accepts a freeform `ticketSystemID` string:
 ```
 
 The value is preserved verbatim in `BreakglassSession.spec.ticketSystemID`.
-There is no required format, regex, length policy or external ticket lookup.
+It is limited to 256 characters (Unicode code points); longer values are
+rejected with `422 Unprocessable Entity` by the API, by the CRD schema
+(`maxLength: 256`), by `bgctl` before sending, and by the request dialog.
+There is no required format, regex or external ticket lookup.
 Omitting it preserves existing behavior. This is an **unverified, audit-only
 reference**, not an authorization credential, approval, or proof of an incident.
 Existing authentication, authorization, reason and approval policies still apply.

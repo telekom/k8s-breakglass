@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -304,6 +305,9 @@ reason when the escalation policy requires one.`,
   bgctl session request --cluster prod --group read-only --duration 3600
   bgctl session request -C prod -g platform-admin --scheduled-start <RFC3339_TIMESTAMP>`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if utf8.RuneCountInString(ticketSystemID) > breakglassv1alpha1.MaxTicketSystemIDLength {
+				return fmt.Errorf("--ticket-system-id must be at most %d characters", breakglassv1alpha1.MaxTicketSystemIDLength)
+			}
 			rt, err := getRuntime(cmd)
 			if err != nil {
 				return err
@@ -345,7 +349,7 @@ reason when the escalation policy requires one.`,
 	cmd.Flags().StringVar(&escalationName, "escalation", "", "Escalation resource name (required when several eligible policies grant this group)")
 	cmd.Flags().StringVarP(&user, "user", "u", "", "User identifier (defaults to token user)")
 	cmd.Flags().StringVarP(&reason, "reason", "r", "", "Reason for request")
-	cmd.Flags().StringVar(&ticketSystemID, "ticket-system-id", "", "Optional freeform ticket system ID (audit only; not validated)")
+	cmd.Flags().StringVar(&ticketSystemID, "ticket-system-id", "", "Optional freeform ticket system ID, max 256 characters (audit only; not otherwise validated)")
 	cmd.Flags().Int64VarP(&duration, "duration", "d", 0, "Requested duration in seconds")
 	cmd.Flags().StringVarP(&scheduled, "scheduled-start", "S", "", "Scheduled start time (RFC3339)")
 	_ = cmd.MarkFlagRequired("cluster")

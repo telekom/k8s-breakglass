@@ -77,6 +77,9 @@ watch(
 );
 
 const reasonCharLimit = 1024;
+// Mirrors breakglassv1alpha1.MaxTicketSystemIDLength in Unicode code points; enforced on submit
+// because native maxlength counts UTF-16 units.
+const ticketSystemIDCharLimit = 256;
 const reasonCharCount = computed(() => requestReason.value.length);
 
 const minDateTime = computed(() => {
@@ -415,6 +418,11 @@ function request() {
     return;
   }
 
+  if (Array.from(ticketSystemID.value).length > ticketSystemIDCharLimit) {
+    pushError(`Ticket system ID must be at most ${ticketSystemIDCharLimit} characters`);
+    return;
+  }
+
   const sanitizedReason = sanitizeReason(requestReason.value);
 
   emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value, ticketSystemID.value);
@@ -666,7 +674,7 @@ function drop() {
         data-testid="ticket-system-id-input"
         label="Ticket system ID"
         :value="ticketSystemID"
-        helper-text="Optional reference for the audit trail. Not validated."
+        :helper-text="`Optional reference for the audit trail, max ${ticketSystemIDCharLimit} characters. Not otherwise validated.`"
         @scale-change="ticketSystemID = extractScaleValue($event)"
       />
       <scale-textarea

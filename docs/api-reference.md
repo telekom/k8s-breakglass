@@ -275,6 +275,7 @@ Authorization: Bearer <token>
 - JSON bodies must contain exactly one JSON object; trailing data is rejected
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
+- `ticketSystemID` must be at most 256 characters.
 - `user` must match the authenticated identity in the request token; mismatches are rejected.
 - `duration` optionally requests a session lifetime in integer seconds, at least
   `60` and no greater than the selected escalation's `maxValidFor`. Omitted or
@@ -301,8 +302,9 @@ Authorization: Bearer <token>
   with the exact policy owner rather than a same-name replacement.
 
 **Optional audit reference:** `ticketSystemID` is freeform, optional and stored
-verbatim in `spec.ticketSystemID`. It has no required, pattern or length
-validation and does not affect authorization or approval eligibility. The UI
+verbatim in `spec.ticketSystemID`. It is limited to 256 characters (longer
+values return `422 Unprocessable Entity`); there is no required or pattern
+validation and it does not affect authorization or approval eligibility. The UI
 shows it to approvers as unverified; lifecycle audit events include it as
 `details.ticketSystemID`, and session creation includes it in structured logs.
 The immutable spec retains the reference through status transitions. This is

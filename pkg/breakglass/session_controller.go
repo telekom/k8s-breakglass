@@ -258,6 +258,11 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 		apiresponses.RespondUnprocessableEntity(c, "invalid reason: "+err.Error())
 		return
 	}
+	if err := request.ValidateTicketSystemID(); err != nil {
+		reqLog.With("error", err).Warn("Ticket system ID validation failed")
+		apiresponses.RespondUnprocessableEntity(c, err.Error())
+		return
+	}
 
 	ctx := c.Request.Context()
 	cug := ClusterUserGroup{

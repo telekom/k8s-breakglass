@@ -72,6 +72,10 @@ const (
 	SessionStateWaitingForScheduledTime BreakglassSessionState = "WaitingForScheduledTime"
 )
 
+// MaxTicketSystemIDLength is the maximum number of characters accepted in
+// BreakglassSessionSpec.TicketSystemID. Keep in sync with its MaxLength marker.
+const MaxTicketSystemIDLength = 256
+
 // BreakglassSessionSpec defines the desired state of BreakglassSession.
 type BreakglassSessionSpec struct {
 	// cluster is the name of the cluster the session is valid for.
@@ -121,7 +125,9 @@ type BreakglassSessionSpec struct {
 	// ticketSystemID is an optional, freeform ticket reference supplied by the
 	// requester for correlation and audit. It is not validated or an authorization
 	// credential, and does not replace requestReason or approval requirements.
+	// At most MaxTicketSystemIDLength (256) characters.
 	// +optional
+	// +kubebuilder:validation:MaxLength=256
 	TicketSystemID string `json:"ticketSystemID,omitempty"`
 
 	// scheduledStartTime optionally specifies when this session should become active.
