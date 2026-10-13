@@ -65,13 +65,7 @@ describe("motd utilities", () => {
     expect(effectiveSessionMotd(null)).toBeUndefined();
   });
 
-  it("prints the exported motd before the shell only when present", () => {
-    const pod = { name: "pod", namespace: "ns" };
-    expect(debugPodExecCommand(pod)).toBe("kubectl exec -it pod -n ns -- /bin/sh");
-    const withMotd = debugPodExecCommand(pod, true);
-    expect(withMotd).toMatch(/^kubectl exec -it pod -n ns -- \/bin\/sh -c '/);
-    expect(withMotd).toContain('"$BREAKGLASS_MOTD"');
-    expect(withMotd).toContain('"$BREAKGLASS_RUNBOOK_URL"');
-    expect(withMotd).toMatch(/exec \/bin\/sh'$/);
+  it("offers a plain interactive shell; the mounted hook prints the motd", () => {
+    expect(debugPodExecCommand({ name: "pod", namespace: "ns" })).toBe("kubectl exec -it pod -n ns -- /bin/sh");
   });
 });

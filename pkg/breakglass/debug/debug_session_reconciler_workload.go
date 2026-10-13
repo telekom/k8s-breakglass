@@ -567,7 +567,8 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 	if binding != nil {
 		bindingSpec = &binding.Spec
 	}
-	injectMOTDEnv(&renderResult.PodSpec, breakglassv1alpha1.EffectiveDebugSessionMOTD(&template.Spec, bindingSpec))
+	motd := breakglassv1alpha1.EffectiveDebugSessionMOTD(&template.Spec, bindingSpec)
+	injectMOTD(&renderResult.PodSpec, motd)
 	restrictedCatalogue, _, err := restrictedCatalogueProfile(template, podTemplate)
 	if err != nil {
 		return nil, nil, err
@@ -616,6 +617,9 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		annotations = make(map[string]string)
 	}
 	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
+	if motd != nil {
+		annotations[motdProfileAnnotation] = motdProfileScript
+	}
 	if restrictedCatalogue {
 		if err := validateRestrictedCatalogueAnnotations(annotations); err != nil {
 			return nil, nil, err
@@ -1686,12 +1690,38 @@ func extractJSONValueForPod(raw []byte) string {
 const (
 	motdEnvName       = "BREAKGLASS_MOTD"
 	runbookURLEnvName = "BREAKGLASS_RUNBOOK_URL"
+
+	// motdProfileAnnotation carries motdProfileScript on the pod template; a
+	// downward API volume projects it read-only into every regular container.
+	motdProfileAnnotation = "breakglass.t-caas.telekom.com/motd-profile"
+	motdVolumeName        = "breakglass-motd"
+	motdMountPath         = "/etc/breakglass-motd"
+	motdProfileFile       = "profile.sh"
+	motdProfilePath       = motdMountPath + "/" + motdProfileFile
 )
 
-// injectMOTDEnv exports the effective MOTD to every regular container so that
-// an interactive shell can print it (for example via the UI exec command).
-// Controller values replace template-provided variables of the same name.
-func injectMOTDEnv(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) {
+// motdProfileScript prints the exported MOTD once per exec session. POSIX sh,
+// ash and dash read it through ENV on interactive start; bash runs it through
+// PROMPT_COMMAND. Non-interactive commands (kubectl exec -- cmd) never read it.
+const motdProfileScript = `# Breakglass DebugSession message of the day (managed by the controller).
+if [ -z "${BREAKGLASS_MOTD_SHOWN-}" ] && [ -n "${BREAKGLASS_MOTD-}" ]; then
+  BREAKGLASS_MOTD_SHOWN=1
+  export BREAKGLASS_MOTD_SHOWN
+  printf '%s\n' "$BREAKGLASS_MOTD"
+  if [ -n "${BREAKGLASS_RUNBOOK_URL-}" ]; then printf 'Runbook: %s\n' "$BREAKGLASS_RUNBOOK_URL"; fi
+  printf '\n'
+fi
+`
+
+var motdControllerEnvNames = []string{motdEnvName, runbookURLEnvName, "BREAKGLASS_MOTD_SHOWN"}
+
+// injectMOTD exports the effective MOTD to every regular container and mounts
+// the shell hook that prints it when an interactive shell starts, so plain
+// `kubectl exec -it <pod> -- sh` (or bash) shows it. The hook arrives through a
+// read-only downward API volume and works with readOnlyRootFilesystem.
+// Controller values replace template-provided MOTD variables; template ENV or
+// PROMPT_COMMAND values are kept, so such shells skip the hook.
+func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) {
 	if spec == nil || motd == nil {
 		return
 	}
@@ -1699,10 +1729,35 @@ func injectMOTDEnv(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDa
 	if motd.RunbookURL != "" {
 		values = append(values, corev1.EnvVar{Name: runbookURLEnvName, Value: motd.RunbookURL})
 	}
-	for i := range spec.Containers {
-		env := slices.DeleteFunc(spec.Containers[i].Env, func(e corev1.EnvVar) bool {
-			return e.Name == motdEnvName || e.Name == runbookURLEnvName
-		})
-		spec.Containers[i].Env = append(env, values...)
+	hooks := []corev1.EnvVar{
+		{Name: "ENV", Value: motdProfilePath},
+		{Name: "PROMPT_COMMAND", Value: ". " + motdProfilePath},
 	}
+	for i := range spec.Containers {
+		c := &spec.Containers[i]
+		env := slices.DeleteFunc(c.Env, func(e corev1.EnvVar) bool {
+			return slices.Contains(motdControllerEnvNames, e.Name) || slices.Contains(hooks, e)
+		})
+		env = append(env, values...)
+		for _, hook := range hooks {
+			if !slices.ContainsFunc(env, func(e corev1.EnvVar) bool { return e.Name == hook.Name }) {
+				env = append(env, hook)
+			}
+		}
+		c.Env = env
+		c.VolumeMounts = slices.DeleteFunc(c.VolumeMounts, func(m corev1.VolumeMount) bool {
+			return m.Name == motdVolumeName || m.MountPath == motdMountPath
+		})
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true})
+	}
+	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == motdVolumeName })
+	spec.Volumes = append(spec.Volumes, corev1.Volume{
+		Name: motdVolumeName,
+		VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
+			Items: []corev1.DownwardAPIVolumeFile{{
+				Path:     motdProfileFile,
+				FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.annotations['" + motdProfileAnnotation + "']"},
+			}},
+		}},
+	})
 }

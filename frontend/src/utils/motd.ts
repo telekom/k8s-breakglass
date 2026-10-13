@@ -11,15 +11,9 @@ export function effectiveSessionMotd(session?: DebugSession | null): MessageOfTh
 }
 
 /**
- * kubectl exec command for a debug pod. With a motd, the shell first prints the
- * BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL values the controller exported.
+ * kubectl exec command for a debug pod. The controller mounts a shell hook, so
+ * the interactive shell itself prints the session motd on start.
  */
-export function debugPodExecCommand(pod: Pick<DebugPodInfo, "name" | "namespace">, withMotd = false): string {
-  const base = `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
-  if (!withMotd) {
-    return base;
-  }
-  const banner =
-    'printf "%s\\n" "$BREAKGLASS_MOTD"; [ -z "$BREAKGLASS_RUNBOOK_URL" ] || printf "Runbook: %s\\n" "$BREAKGLASS_RUNBOOK_URL"; echo; exec /bin/sh';
-  return `${base} -c '${banner}'`;
+export function debugPodExecCommand(pod: Pick<DebugPodInfo, "name" | "namespace">): string {
+  return `kubectl exec -it ${pod.name} -n ${pod.namespace} -- /bin/sh`;
 }

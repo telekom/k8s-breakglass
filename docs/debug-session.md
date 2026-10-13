@@ -427,10 +427,26 @@ template text. The effective MOTD is snapshotted with the session
 The UI shows the effective MOTD on the session request form and on the session
 details page. The controller exports it to every regular container of the debug
 workload (Pod, DaemonSet, Deployment or Job) as `BREAKGLASS_MOTD` and
-`BREAKGLASS_RUNBOOK_URL`, replacing template variables of the same name. The
-`kubectl exec` command offered on the details page prints both values before it
-starts the shell. Templates without a workload, such as node-maintenance
-templates, show the MOTD in the UI only.
+`BREAKGLASS_RUNBOOK_URL`, replacing template variables of the same name.
+
+Every interactive shell opened with `kubectl exec -it <pod> -- sh` (or `bash`)
+prints the MOTD and runbook link once before the first prompt, including the
+command offered on the details page. The controller mounts a small hook
+read-only at `/etc/breakglass-motd/profile.sh` through a downward API volume
+(the script travels in the pod annotation
+`breakglass.t-caas.telekom.com/motd-profile`), so it works with
+`readOnlyRootFilesystem` and restricted Pod Security, and needs no ConfigMap
+or init container. Two container variables start it:
+
+- `ENV=/etc/breakglass-motd/profile.sh` for POSIX `sh`, `ash` (busybox,
+  netshoot), `dash` and bash running as `sh`;
+- `PROMPT_COMMAND=. /etc/breakglass-motd/profile.sh` for `bash`.
+
+Non-interactive commands (`kubectl exec <pod> -- cmd`) and nested shells do not
+print it again. A template that sets its own `ENV` or `PROMPT_COMMAND` keeps
+its value, so that shell does not print the MOTD; other shells such as `zsh`
+read neither variable. Templates without a workload, such as
+node-maintenance templates, show the MOTD in the UI only.
 
 ## Allowed Pod Operations
 

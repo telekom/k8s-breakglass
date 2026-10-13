@@ -5,6 +5,11 @@ package debug
 
 import (
 	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestInjectMOTDEnvReplacesTemplateValues(t *testing.T) {
+func TestInjectMOTDReplacesTemplateValues(t *testing.T) {
 	spec := &corev1.PodSpec{
 		Containers: []corev1.Container{
 			{Name: "shell", Env: []corev1.EnvVar{{Name: "KEEP", Value: "1"}, {Name: motdEnvName, Value: "spoofed"}}},
@@ -24,28 +29,114 @@ func TestInjectMOTDEnvReplacesTemplateValues(t *testing.T) {
 		},
 		InitContainers: []corev1.Container{{Name: "init"}},
 	}
-	injectMOTDEnv(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "Purpose: test\nTerminate: bgctl", RunbookURL: "https://example.com/rb#x"})
+	injectMOTD(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "Purpose: test\nTerminate: bgctl", RunbookURL: "https://example.com/rb#x"})
 
-	assert.Equal(t, []corev1.EnvVar{
+	hooks := []corev1.EnvVar{{Name: "ENV", Value: motdProfilePath}, {Name: "PROMPT_COMMAND", Value: ". " + motdProfilePath}}
+	assert.Equal(t, append([]corev1.EnvVar{
 		{Name: "KEEP", Value: "1"},
 		{Name: motdEnvName, Value: "Purpose: test\nTerminate: bgctl"},
 		{Name: runbookURLEnvName, Value: "https://example.com/rb#x"},
-	}, spec.Containers[0].Env)
-	assert.Equal(t, []corev1.EnvVar{
+	}, hooks...), spec.Containers[0].Env)
+	assert.Equal(t, append([]corev1.EnvVar{
 		{Name: motdEnvName, Value: "Purpose: test\nTerminate: bgctl"},
 		{Name: runbookURLEnvName, Value: "https://example.com/rb#x"},
-	}, spec.Containers[1].Env)
+	}, hooks...), spec.Containers[1].Env)
 	assert.Empty(t, spec.InitContainers[0].Env, "init containers have no interactive shell")
+	assert.Empty(t, spec.InitContainers[0].VolumeMounts)
 
-	injectMOTDEnv(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "no link"})
-	assert.Equal(t, []corev1.EnvVar{{Name: "KEEP", Value: "1"}, {Name: motdEnvName, Value: "no link"}}, spec.Containers[0].Env,
+	injectMOTD(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "no link"})
+	assert.Equal(t, append([]corev1.EnvVar{{Name: "KEEP", Value: "1"}, {Name: motdEnvName, Value: "no link"}}, hooks...), spec.Containers[0].Env,
 		"a re-render without a runbook URL must not keep a stale one")
+	assert.Len(t, spec.Volumes, 1, "re-injection must not duplicate the hook volume")
+	assert.Len(t, spec.Containers[0].VolumeMounts, 1)
 }
 
-func TestInjectMOTDEnvWithoutMOTDKeepsSpec(t *testing.T) {
+func TestInjectMOTDMountsReadOnlyShellHook(t *testing.T) {
+	spec := &corev1.PodSpec{
+		Containers: []corev1.Container{{
+			Name: "shell",
+			Env:  []corev1.EnvVar{{Name: "ENV", Value: "/custom/env"}, {Name: "BREAKGLASS_MOTD_SHOWN", Value: "1"}},
+			VolumeMounts: []corev1.VolumeMount{
+				{Name: "data", MountPath: "/data"},
+				{Name: "spoof", MountPath: motdMountPath},
+			},
+			SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: ptrTo(true)},
+		}},
+		Volumes: []corev1.Volume{{Name: "data"}, {Name: motdVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+	}
+	injectMOTD(spec, &breakglassv1alpha1.MessageOfTheDay{Message: "m"})
+
+	c := spec.Containers[0]
+	assert.Contains(t, c.Env, corev1.EnvVar{Name: "ENV", Value: "/custom/env"}, "a template ENV is kept")
+	assert.NotContains(t, c.Env, corev1.EnvVar{Name: "ENV", Value: motdProfilePath})
+	assert.Contains(t, c.Env, corev1.EnvVar{Name: "PROMPT_COMMAND", Value: ". " + motdProfilePath})
+	assert.NotContains(t, c.Env, corev1.EnvVar{Name: "BREAKGLASS_MOTD_SHOWN", Value: "1"}, "templates cannot suppress the MOTD")
+	assert.Equal(t, []corev1.VolumeMount{
+		{Name: "data", MountPath: "/data"},
+		{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true},
+	}, c.VolumeMounts)
+	require.Len(t, spec.Volumes, 2)
+	assert.Equal(t, "data", spec.Volumes[0].Name)
+	hook := spec.Volumes[1]
+	assert.Equal(t, motdVolumeName, hook.Name)
+	require.NotNil(t, hook.DownwardAPI, "downward API volumes are allowed by restricted Pod Security")
+	require.Len(t, hook.DownwardAPI.Items, 1)
+	assert.Equal(t, motdProfileFile, hook.DownwardAPI.Items[0].Path)
+	assert.Equal(t, "metadata.annotations['"+motdProfileAnnotation+"']", hook.DownwardAPI.Items[0].FieldRef.FieldPath)
+}
+
+func ptrTo[T any](v T) *T { return &v }
+
+// TestMOTDProfileScriptInShells runs the hook the way interactive exec shells
+// do: POSIX sh, dash and ash through ENV, bash through PROMPT_COMMAND.
+func TestMOTDProfileScriptInShells(t *testing.T) {
+	dir := t.TempDir()
+	profile := filepath.Join(dir, motdProfileFile)
+	require.NoError(t, os.WriteFile(profile, []byte(motdProfileScript), 0o444))
+	motdEnv := []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + dir,
+		"BREAKGLASS_MOTD=Purpose: diag\nTerminate: bgctl",
+		"BREAKGLASS_RUNBOOK_URL=https://example.com/rb#x",
+		"ENV=" + profile, "PROMPT_COMMAND=. " + profile,
+	}
+	run := func(t *testing.T, env []string, name string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command(name, args...)
+		cmd.Env = env
+		cmd.Dir = dir
+		cmd.Stdin = strings.NewReader("sh -i </dev/null\nexit\n")
+		out, err := cmd.Output()
+		require.NoError(t, err)
+		return string(out)
+	}
+	shells := map[string][]string{"sh": {"-i"}, "dash": {"-i"}, "bash": {"--norc", "--noprofile", "-i"}, "busybox": {"sh", "-i"}}
+	found := 0
+	for name, args := range shells {
+		if _, err := exec.LookPath(name); err != nil {
+			continue
+		}
+		found++
+		t.Run(name, func(t *testing.T) {
+			out := run(t, motdEnv, name, args...)
+			assert.Equal(t, 1, strings.Count(out, "Runbook: https://example.com/rb#x"), "printed exactly once, also with nested shells: %q", out)
+			assert.Contains(t, out, "Purpose: diag")
+
+			out = run(t, motdEnv, name, append(args[:len(args)-1:len(args)-1], "-c", "echo scripted")...)
+			assert.Equal(t, "scripted\n", out, "non-interactive exec commands must not print the MOTD")
+
+			out = run(t, append(slices.Clone(motdEnv), "BREAKGLASS_MOTD="), name, args...)
+			assert.NotContains(t, out, "Runbook:", "no MOTD, no banner")
+		})
+	}
+	if found == 0 {
+		t.Skip("no POSIX shell available")
+	}
+}
+
+func TestInjectMOTDWithoutMOTDKeepsSpec(t *testing.T) {
 	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "shell"}}}
-	injectMOTDEnv(spec, nil)
-	injectMOTDEnv(nil, &breakglassv1alpha1.MessageOfTheDay{Message: "x"})
+	injectMOTD(spec, nil)
+	injectMOTD(nil, &breakglassv1alpha1.MessageOfTheDay{Message: "x"})
 	assert.Empty(t, spec.Containers[0].Env)
 }
 
@@ -110,6 +201,8 @@ spec:
 			require.True(t, ok)
 			assert.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: motdEnvName, Value: "logs-only job"})
 			assert.Contains(t, job.Spec.Template.Spec.Containers[0].Env, corev1.EnvVar{Name: runbookURLEnvName, Value: "https://example.com/rb#job"})
+			assert.Equal(t, motdProfileScript, job.Spec.Template.Annotations[motdProfileAnnotation], "the downward API volume reads the hook from the pod template")
+			assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true})
 		})
 	}
 }

@@ -25,7 +25,7 @@ function podKey(pod: DebugPodInfo): string {
 }
 
 function getExecCommand(pod: DebugPodInfo): string {
-  return debugPodExecCommand(pod, Boolean(sessionMotd.value));
+  return debugPodExecCommand(pod);
 }
 
 function copyExecCommand(pod: DebugPodInfo) {
