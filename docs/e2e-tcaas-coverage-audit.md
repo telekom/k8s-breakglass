@@ -103,8 +103,10 @@ policy's name/UID owner approval fence. Both normal topology jobs run it.
 `TestDebugSessionArtifactCollectorE2E` requires observed completed collector
 Pods and zero surviving Pods after artifact deletion or session cleanup,
 including Pods whose owner reference disappeared. It runs both recipes against
-local and S3 storage, but currently only in the Single-Cluster E2E job.
-Multi-cluster collector execution remains a genuine fixture/transport gap.
+local and S3 storage in Single- and Multi-Cluster E2E. The multi-cluster matrix
+must execute workloads/collectors and authorization negatives on the real
+spoke while keeping reservations and provider storage on the hub; it must not
+fall back to hub-only execution.
 Upstream Kind coverage does not establish production Kyverno admission,
 published-image acceptance, downstream TIND acceptance or live acceptance.
 

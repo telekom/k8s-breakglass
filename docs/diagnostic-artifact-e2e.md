@@ -1,6 +1,6 @@
 # Diagnostic artifact E2E acceptance
 
-The single-cluster API E2E lane must exercise the complete `system-summary.v1` and `crashdump-collection.v1`
+The single- and multi-cluster API E2E lanes must exercise the complete `system-summary.v1` and `crashdump-collection.v1`
 paths: an API-created active DebugSession and ConnectionLease, collection against
 an approved Pod, a controller-created collector Job, HTTPS upload, authenticated
 download, and cleanup. The lane uses an immutable digest for the test collector
@@ -145,8 +145,25 @@ to finish. This does not change readiness gating for the controller API service.
 
 Compilation and lint are local checks only. Actual container, storage, admitted
 Pod and lifecycle behavior requires the named Kind CI matrix to pass.
-This fixture currently runs only in Single-Cluster E2E. The Multi-Cluster E2E
-job does not install it; its success is not artifact collector acceptance.
+
+## Real hub/spoke execution
+
+The Multi-Cluster E2E job runs the same local/S3 lifecycle matrices with
+`-tags=e2e,multicluster` and `E2E_CLUSTER_NAME=spoke-cluster-a`. Reservations,
+signing keys, provider credentials and provider storage stay on the hub;
+workload Pods, collector Jobs, scoped upload-token Secrets and upload CA
+references are inspected through the real spoke client. The test requires a
+different API-server address, no hub owner references on spoke Jobs, and no
+same-named collector Job on the hub. Requester create/patch/delete negatives
+also execute against the spoke, not the hub.
+
+The disposable fixture imports the immutable collector image and synthetic
+crashdump source into both hub and spoke nodes. A spoke Service/EndpointSlice
+routes the unchanged private-CA TLS name to the hub's NodePort; certificate
+verification remains enabled. Only the public upload CA is projected into the
+spoke's administrator-created ConfigMap or Secret. No TLS private key, signer
+key or provider credential is copied there. Native acceptance still requires
+the exact-head Multi-Cluster job to pass; compilation is not acceptance.
 
 ## Failure injection
 
