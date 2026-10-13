@@ -689,92 +689,113 @@ if [ "$PWRU_READY" = true ]; then
 		[ "$resource_status" -eq 1 ] || requirement "could not verify public trace container cleanup"
 	fi
 
-	# Whole-node visibility contract: the kprobe-multi backend needs CAP_SYSLOG
-	# to read kallsyms, --all-kmods needs every module BTF file, and --meta must
-	# publish the NETNS column. This reuses the owned fixture and container name.
-	printf '%s\n' 'Checking kprobe-multi, module, and metadata trace visibility' >&2
+	# Whole-node visibility contract: kprobe-multi needs CAP_SYSLOG to read
+	# kallsyms, --all-kmods needs every module BTF file, and --meta must publish
+	# the NETNS column. kprobe-multi also needs kernel FPROBE support; when the
+	# runner kernel reports it as unsupported, require that the trace fails
+	# closed and prove the documented kprobe fallback instead. This reuses the
+	# owned fixture and container name.
 	PWRU_VIS_ARGS=("${PWRU_RUN_ARGS[@]}" --cap-add SYSLOG
 		--mount "type=bind,src=/sys/kernel/btf,dst=/sys/kernel/btf,readonly")
-	if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
-		requirement "refusing to reuse an existing pwru visibility container named $PWRU_CONTAINER"
-	fi
-	trace_start_status=0
-	docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
-		-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
-		-e NETWORK_DEBUG_PWRU_REQUIRE_READY=true \
-		-e NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS="$PWRU_STARTUP_MARGIN" \
-		"${PWRU_VIS_ARGS[@]}" --network host "$IMAGE" trace \
-			--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
-			--backend kprobe-multi --all-kmods --meta \
-		>"$WORK_DIR/trace-vis-start.log" 2>&1 || trace_start_status=$?
-	[ "$trace_start_status" -eq 0 ] || requirement "could not start kprobe-multi visibility trace"
-	PWRU_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$PWRU_CONTAINER") || requirement "could not capture owned pwru visibility container ID"
-	PWRU_CONTAINER_CREATED=true
-	trace_ready=false
-	for _ in $(seq 1 $((PWRU_STARTUP_MARGIN * 4))); do
-		trace_ready_marker=$(docker_call exec "$PWRU_CONTAINER" sh -c \
-			'find /work -mindepth 2 -maxdepth 2 -type f -name ready -path "/work/.net-debug.*/ready" -print -quit' 2>/dev/null || true)
-		if [ -n "$trace_ready_marker" ]; then
-			trace_ready=true
-			break
+	vis_proved=false
+	for vis_backend in kprobe-multi kprobe; do
+		printf 'Checking %s, module, and metadata trace visibility\n' "$vis_backend" >&2
+		if docker_call inspect "$PWRU_CONTAINER" >/dev/null 2>&1; then
+			requirement "refusing to reuse an existing pwru visibility container named $PWRU_CONTAINER"
 		fi
-		trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null || true)
-		[ "$trace_state" = exited ] && break
-		sleep 0.25
+		trace_start_status=0
+		docker_call run --detach --name "$PWRU_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
+			-e NETWORK_DEBUG_PWRU_STOP_TIMEOUT_SECONDS="$PWRU_STOP_TIMEOUT" \
+			-e NETWORK_DEBUG_PWRU_REQUIRE_READY=true \
+			-e NETWORK_DEBUG_PWRU_STARTUP_TIMEOUT_SECONDS="$PWRU_STARTUP_MARGIN" \
+			"${PWRU_VIS_ARGS[@]}" --network host "$IMAGE" trace \
+				--duration "$TRACE_DURATION" --events "$TRACE_EVENTS" --filter 'tcp port 18080' --output trace.log \
+				--backend "$vis_backend" --all-kmods --meta \
+			>"$WORK_DIR/trace-vis-start.log" 2>&1 || trace_start_status=$?
+		[ "$trace_start_status" -eq 0 ] || requirement "could not start $vis_backend visibility trace"
+		PWRU_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$PWRU_CONTAINER") || requirement "could not capture owned pwru visibility container ID"
+		PWRU_CONTAINER_CREATED=true
+		trace_ready=false
+		for _ in $(seq 1 $((PWRU_STARTUP_MARGIN * 4))); do
+			trace_ready_marker=$(docker_call exec "$PWRU_CONTAINER" sh -c \
+				'find /work -mindepth 2 -maxdepth 2 -type f -name ready -path "/work/.net-debug.*/ready" -print -quit' 2>/dev/null || true)
+			if [ -n "$trace_ready_marker" ]; then
+				trace_ready=true
+				break
+			fi
+			trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null || true)
+			[ "$trace_state" = exited ] && break
+			sleep 0.25
+		done
+		if [ "$trace_ready" != true ]; then
+			trace_vis_logs=$(docker_call logs "$PWRU_CONTAINER" 2>&1 || true)
+			trace_state=$(docker_call inspect --format '{{.State.Status}}' "$PWRU_CONTAINER" 2>/dev/null || true)
+			trace_exit=$(docker_call inspect --format '{{.State.ExitCode}}' "$PWRU_CONTAINER" 2>/dev/null || true)
+			if [ "$vis_backend" = kprobe-multi ] && [ "$trace_state" = exited ] && [ "$trace_exit" != 0 ] && \
+				printf '%s\n' "$trace_vis_logs" | grep -F 'bpf_link_kprobe_multi not supported' >/dev/null; then
+				printf '%s\n' 'kprobe-multi is unsupported by this runner kernel; the trace failed closed, proving the kprobe fallback' >&2
+				pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "unsupported kprobe-multi trace container cleanup failed"
+				PWRU_CONTAINER_CREATED=false
+				continue
+			fi
+			printf '%s\n' "$trace_vis_logs" >&2
+			requirement "$vis_backend visibility trace did not reach pwru readiness"
+		fi
+		# Generate the bounded loopback requests from the already
+		# capability-bounded trace container; it shares the host network
+		# namespace with the fixture.
+		docker_call exec "$PWRU_CONTAINER" sh -ec '
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
+			curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
+		' >/dev/null 2>&1 || requirement "$vis_backend visibility traffic request failed"
+		trace_wait_status=0
+		trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
+		if [ "$trace_wait_status" -ne 0 ]; then
+			docker_call logs "$PWRU_CONTAINER" >&2 || true
+			if pwru_validate_owner "$PWRU_CONTAINER"; then
+				docker_call kill --signal KILL "${PWRU_CONTAINER_ID:-$PWRU_CONTAINER}" >/dev/null 2>&1 || true
+			fi
+			requirement "$vis_backend visibility trace exceeded its bounded wait"
+		fi
+		trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read $vis_backend visibility summary"
+		case "$trace_exit" in 0|130|141|143) ;; *)
+			printf '%s\n' "$trace_summary" >&2
+			requirement "$vis_backend visibility trace exited unsuccessfully: $trace_exit"
+			;;
+		esac
+		printf '%s\n' "$trace_summary" >"$WORK_DIR/trace-vis-summary.txt"
+		grep -Fx "backend $vis_backend" "$WORK_DIR/trace-vis-summary.txt" >/dev/null || requirement "visibility summary does not report the $vis_backend backend"
+		grep -E '^sha256 [0-9a-f]{64}$' "$WORK_DIR/trace-vis-summary.txt" >/dev/null || requirement "visibility summary missing SHA-256"
+		docker_call cp "$PWRU_CONTAINER:/work/trace.log" "$WORK_DIR/trace-vis.log" >/dev/null || requirement "visibility trace did not produce evidence"
+		vis_tuples=$(grep -Fc -- '->' "$WORK_DIR/trace-vis.log" || true)
+		# --meta prints the network namespace inode (4026531840 upward) per event.
+		vis_netns=$(grep -Ec -- '(^|[[:space:]])40265[0-9]{5}[[:space:]].*->' "$WORK_DIR/trace-vis.log" || true)
+		# The Docker host namespace has NAT rules, so loopback packets traverse
+		# conntrack. When conntrack is a loaded module, its functions prove that
+		# --all-kmods attached through module BTF.
+		vis_module=skipped
+		if [ -e /sys/kernel/btf/nf_conntrack ]; then
+			vis_module=$(grep -Ec -- '->.*(nf_conntrack|ipv4_conntrack|nf_confirm|nf_ct_)' "$WORK_DIR/trace-vis.log" || true)
+		fi
+		printf 'visibility trace diagnostics: backend=%s tuples=%s netns_lines=%s module_lines=%s\n' \
+			"$vis_backend" "$vis_tuples" "$vis_netns" "$vis_module" >&2
+		[ "$vis_tuples" -gt 0 ] || requirement "visibility trace has no packet tuple"
+		[ "$vis_netns" -gt 0 ] || requirement "visibility trace has no NETNS metadata column"
+		if [ "$vis_module" != skipped ] && [ "$vis_module" -eq 0 ]; then
+			requirement "visibility trace has no module function although nf_conntrack BTF is loaded"
+		fi
+		pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "visibility trace container cleanup failed"
+		PWRU_CONTAINER_CREATED=false
+		if docker_resource_id_exists "$DOCKER_BIN" container "$PWRU_CONTAINER_ID"; then
+			requirement "visibility trace container survived cleanup"
+		else
+			resource_status=$?
+			[ "$resource_status" -eq 1 ] || requirement "could not verify visibility trace container cleanup"
+		fi
+		vis_proved=true
+		break
 	done
-	if [ "$trace_ready" != true ]; then
-		docker_call logs "$PWRU_CONTAINER" >&2 || true
-		requirement "kprobe-multi visibility trace did not reach pwru readiness"
-	fi
-	# Generate the bounded loopback requests from the already capability-bounded
-	# trace container; it shares the host network namespace with the fixture.
-	docker_call exec "$PWRU_CONTAINER" sh -ec '
-		curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
-		curl --fail --silent --show-error --max-time 2 http://127.0.0.1:18080/ >/dev/null
-	' >/dev/null 2>&1 || requirement "kprobe-multi visibility traffic request failed"
-	trace_wait_status=0
-	trace_exit=$(timeout --foreground "${PWRU_TIMEOUT}s" docker wait "$PWRU_CONTAINER" 2>/dev/null) || trace_wait_status=$?
-	if [ "$trace_wait_status" -ne 0 ]; then
-		docker_call logs "$PWRU_CONTAINER" >&2 || true
-		if pwru_validate_owner "$PWRU_CONTAINER"; then
-			docker_call kill --signal KILL "${PWRU_CONTAINER_ID:-$PWRU_CONTAINER}" >/dev/null 2>&1 || true
-		fi
-		requirement "kprobe-multi visibility trace exceeded its bounded wait"
-	fi
-	trace_summary=$(docker_call logs "$PWRU_CONTAINER") || requirement "could not read kprobe-multi visibility summary"
-	case "$trace_exit" in 0|130|141|143) ;; *)
-		printf '%s\n' "$trace_summary" >&2
-		requirement "kprobe-multi visibility trace exited unsuccessfully: $trace_exit"
-		;;
-	esac
-	printf '%s\n' "$trace_summary" >"$WORK_DIR/trace-vis-summary.txt"
-	grep -Fx 'backend kprobe-multi' "$WORK_DIR/trace-vis-summary.txt" >/dev/null || requirement "visibility summary does not report the kprobe-multi backend"
-	grep -E '^sha256 [0-9a-f]{64}$' "$WORK_DIR/trace-vis-summary.txt" >/dev/null || requirement "visibility summary missing SHA-256"
-	docker_call cp "$PWRU_CONTAINER:/work/trace.log" "$WORK_DIR/trace-vis.log" >/dev/null || requirement "visibility trace did not produce evidence"
-	vis_tuples=$(grep -Fc -- '->' "$WORK_DIR/trace-vis.log" || true)
-	# --meta prints the network namespace inode (4026531840 upward) per event.
-	vis_netns=$(grep -Ec -- '(^|[[:space:]])40265[0-9]{5}[[:space:]].*->' "$WORK_DIR/trace-vis.log" || true)
-	# The Docker host namespace has NAT rules, so loopback packets traverse
-	# conntrack. When conntrack is a loaded module, its functions prove that
-	# --all-kmods attached through module BTF.
-	vis_module=skipped
-	if [ -e /sys/kernel/btf/nf_conntrack ]; then
-		vis_module=$(grep -Ec -- '->.*(nf_conntrack|ipv4_conntrack|nf_confirm|nf_ct_)' "$WORK_DIR/trace-vis.log" || true)
-	fi
-	printf 'visibility trace diagnostics: tuples=%s netns_lines=%s module_lines=%s\n' "$vis_tuples" "$vis_netns" "$vis_module" >&2
-	[ "$vis_tuples" -gt 0 ] || requirement "visibility trace has no packet tuple"
-	[ "$vis_netns" -gt 0 ] || requirement "visibility trace has no NETNS metadata column"
-	if [ "$vis_module" != skipped ] && [ "$vis_module" -eq 0 ]; then
-		requirement "visibility trace has no module function although nf_conntrack BTF is loaded"
-	fi
-	pwru_force_remove "$PWRU_CONTAINER" 15 || requirement "visibility trace container cleanup failed"
-	PWRU_CONTAINER_CREATED=false
-	if docker_resource_id_exists "$DOCKER_BIN" container "$PWRU_CONTAINER_ID"; then
-		requirement "visibility trace container survived cleanup"
-	else
-		resource_status=$?
-		[ "$resource_status" -eq 1 ] || requirement "could not verify visibility trace container cleanup"
-	fi
+	[ "$vis_proved" = true ] || requirement "no trace backend proved module and metadata visibility"
 fi
 
 
