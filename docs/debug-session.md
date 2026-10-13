@@ -449,8 +449,12 @@ reads no rc file for this, so image `~/.bashrc` or `/etc/bash.bashrc` files
 need not be writable or changed; an rc file that overwrites `PROMPT_COMMAND`
 suppresses the hook in bash, while `sh` still prints it. A template that sets its own `ENV` or `PROMPT_COMMAND` keeps
 its value, so that shell does not print the MOTD; other shells such as `zsh`
-read neither variable. Templates without a workload, such as
-node-maintenance templates, show the MOTD in the UI only.
+read neither variable. Node debug pods and the `debugger` container of pod
+copies created through the kubectl-debug API get the same hook from the
+session's approved snapshots; copied application containers stay unchanged.
+Ephemeral containers cannot mount volumes, so `kubectl debug` sessions and
+templates without a workload, such as node-maintenance templates, show the
+MOTD in the UI only.
 
 ## Allowed Pod Operations
 

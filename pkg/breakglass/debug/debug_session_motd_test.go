@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +21,11 @@ import (
 	"go.uber.org/zap/zaptest"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
 func TestInjectMOTDReplacesTemplateValues(t *testing.T) {
@@ -229,4 +235,108 @@ spec:
 			assert.Contains(t, job.Spec.Template.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true})
 		})
 	}
+}
+
+func motdKubectlSession(name string, kd *breakglassv1alpha1.KubectlDebugConfig, bindingMOTD *breakglassv1alpha1.MessageOfTheDay) *breakglassv1alpha1.DebugSession {
+	expiresAt := metav1.NewTime(time.Now().UTC().Add(time.Hour))
+	ds := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default", UID: types.UID(name + "-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "operator@example.com"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:     breakglassv1alpha1.DebugSessionStateActive,
+			ExpiresAt: &expiresAt,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
+				Mode:            breakglassv1alpha1.DebugSessionModeKubectlDebug,
+				TargetNamespace: "breakglass-debug",
+				KubectlDebug:    kd,
+				MOTD:            &breakglassv1alpha1.MessageOfTheDay{Message: "template motd"},
+			},
+		},
+	}
+	if bindingMOTD != nil {
+		raw, _ := json.Marshal(breakglassv1alpha1.DebugSessionClusterBindingSpec{MOTD: bindingMOTD})
+		ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: raw}
+	}
+	return ds
+}
+
+func assertMOTDHook(t *testing.T, c corev1.Container, motd, volume string) {
+	t.Helper()
+	env := map[string]string{}
+	for _, e := range c.Env {
+		env[e.Name] = e.Value
+	}
+	assert.Equal(t, motd, env[motdEnvName])
+	assert.Equal(t, motdProfilePath, env["ENV"])
+	assert.Contains(t, c.VolumeMounts, corev1.VolumeMount{Name: volume, MountPath: motdMountPath, ReadOnly: true})
+}
+
+func TestNodeDebugPodGetsSessionMOTD(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	runbook := &breakglassv1alpha1.MessageOfTheDay{Message: "binding motd", RunbookURL: "https://example.com/rb#node"}
+	session := motdKubectlSession("node-motd-session", &breakglassv1alpha1.KubectlDebugConfig{NodeDebug: &breakglassv1alpha1.NodeDebugConfig{Enabled: true}}, runbook)
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-debug", UID: "namespace-uid"}},
+		&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", UID: "node-uid"}},
+	).Build()
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	pod, err := handler.CreateNodeDebugPod(context.Background(), session, "worker-1", "operator@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, motdProfileScript, pod.Annotations[motdProfileAnnotation])
+	assert.Equal(t, string(session.UID), pod.Annotations[sourceSessionUIDAnnotation])
+	require.Len(t, pod.Spec.Containers, 1)
+	assertMOTDHook(t, pod.Spec.Containers[0], "binding motd", motdVolumeName)
+	assert.Contains(t, pod.Spec.Containers[0].Env, corev1.EnvVar{Name: runbookURLEnvName, Value: runbook.RunbookURL})
+	assert.True(t, slices.ContainsFunc(pod.Spec.Volumes, func(v corev1.Volume) bool { return v.Name == motdVolumeName && v.DownwardAPI != nil }))
+}
+
+func TestPodCopyMOTDOnlyInDebugger(t *testing.T) {
+	scheme := newKubectlTestScheme()
+	session := motdKubectlSession("copy-motd-session", &breakglassv1alpha1.KubectlDebugConfig{
+		PodCopy: &breakglassv1alpha1.PodCopyConfig{Enabled: true, TargetNamespace: "debug-copies", TTL: "1h"},
+	}, nil)
+	sourcePod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "app-pod", Namespace: "production", UID: "pod-app-uid"},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{
+				Name: "app", Image: "myapp:v1", Env: []corev1.EnvVar{{Name: "ENV", Value: "production"}},
+				VolumeMounts: []corev1.VolumeMount{{Name: motdVolumeName, MountPath: "/etc/app"}},
+			}},
+			Volumes: []corev1.Volume{{Name: motdVolumeName, VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}}}},
+		},
+	}
+	otherPod := sourcePod.DeepCopy()
+	otherPod.Name, otherPod.UID = "other-pod", "pod-other-uid"
+	targetClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(sourcePod, otherPod,
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "debug-copies", UID: "debug-copies-uid"}},
+		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "production"}},
+	).Build()
+	hubClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	handler := newTestKubectlDebugHandler(hubClient, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": targetClient}})
+
+	pod, err := handler.CreatePodCopy(context.Background(), session, "production", "app-pod", "busybox:latest", "operator@example.com")
+	require.NoError(t, err)
+	require.Len(t, pod.Spec.Containers, 2)
+	assert.Equal(t, sourcePod.Spec.Containers[0], pod.Spec.Containers[0], "copied application containers stay unchanged")
+	assertMOTDHook(t, pod.Spec.Containers[1], "template motd", motdVolumeName+"-1")
+	assert.Equal(t, motdProfileScript, pod.Annotations[motdProfileAnnotation])
+	assert.Contains(t, pod.Spec.Volumes, sourcePod.Spec.Volumes[0], "copied application volumes stay unchanged")
+	assert.True(t, slices.ContainsFunc(pod.Spec.Volumes, func(v corev1.Volume) bool { return v.Name == motdVolumeName+"-1" && v.DownwardAPI != nil }))
+
+	noImage, err := handler.CreatePodCopy(context.Background(), session, "production", "other-pod", "", "operator@example.com")
+	require.NoError(t, err)
+	assert.NotContains(t, noImage.Annotations, motdProfileAnnotation)
+	assert.Equal(t, sourcePod.Spec.Volumes, noImage.Spec.Volumes)
+}
+
+func TestSessionMOTDRejectsCorruptBindingSnapshot(t *testing.T) {
+	ds := motdKubectlSession("bad", nil, nil)
+	ds.Status.ResolvedBindingSpec = &apiextensionsv1.JSON{Raw: []byte("{")}
+	_, err := sessionMOTD(ds)
+	require.Error(t, err)
+	motd, err := sessionMOTD(&breakglassv1alpha1.DebugSession{})
+	require.NoError(t, err)
+	assert.Nil(t, motd)
 }

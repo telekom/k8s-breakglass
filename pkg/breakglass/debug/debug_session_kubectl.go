@@ -1375,6 +1375,11 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 			Stdin:   true,
 		}
 		copyPod.Spec.Containers = append(copyPod.Spec.Containers, debugContainer)
+		motd, err := sessionMOTD(ds)
+		if err != nil {
+			return nil, err
+		}
+		injectPodMOTD(copyPod, motd, debugContainer.Name)
 	}
 
 	// Reset status-related fields. Ephemeral containers injected into the
@@ -1648,6 +1653,12 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 			},
 		},
 	}
+
+	motd, err := sessionMOTD(ds)
+	if err != nil {
+		return nil, err
+	}
+	injectPodMOTD(debugPod, motd)
 
 	// Re-read the target Node and complete its identity checks before the final
 	// authorization fence. No target read may occur after the live session check.

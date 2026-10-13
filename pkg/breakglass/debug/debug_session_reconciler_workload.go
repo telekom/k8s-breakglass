@@ -1721,8 +1721,11 @@ var motdControllerEnvNames = []string{motdEnvName, runbookURLEnvName, "BREAKGLAS
 // `kubectl exec -it <pod> -- sh` (or bash) shows it. The hook arrives through a
 // read-only downward API volume and works with readOnlyRootFilesystem.
 // Controller values replace template-provided MOTD variables; template ENV or
-// PROMPT_COMMAND values are kept, so such shells skip the hook.
-func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) {
+// PROMPT_COMMAND values are kept, so such shells skip the hook. When container
+// names are given, only those containers receive the hook (pod copies keep the
+// copied application containers unchanged). The caller must also set
+// motdProfileAnnotation on the pod.
+func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay, containers ...string) {
 	if spec == nil || motd == nil {
 		return
 	}
@@ -1730,12 +1733,22 @@ func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) 
 	if motd.RunbookURL != "" {
 		values = append(values, corev1.EnvVar{Name: runbookURLEnvName, Value: motd.RunbookURL})
 	}
+	volumeName := motdVolumeName
+	if len(containers) > 0 {
+		// Keep volumes that untouched containers may still mount.
+		for i := 1; slices.ContainsFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volumeName }); i++ {
+			volumeName = fmt.Sprintf("%s-%d", motdVolumeName, i)
+		}
+	}
 	hooks := []corev1.EnvVar{
 		{Name: "ENV", Value: motdProfilePath},
 		{Name: "PROMPT_COMMAND", Value: ". " + motdProfilePath},
 	}
 	for i := range spec.Containers {
 		c := &spec.Containers[i]
+		if len(containers) > 0 && !slices.Contains(containers, c.Name) {
+			continue
+		}
 		env := slices.DeleteFunc(c.Env, func(e corev1.EnvVar) bool {
 			return slices.Contains(motdControllerEnvNames, e.Name) || slices.Contains(hooks, e)
 		})
@@ -1747,13 +1760,13 @@ func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) 
 		}
 		c.Env = env
 		c.VolumeMounts = slices.DeleteFunc(c.VolumeMounts, func(m corev1.VolumeMount) bool {
-			return m.Name == motdVolumeName || m.MountPath == motdMountPath
+			return m.Name == volumeName || m.MountPath == motdMountPath
 		})
-		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: motdVolumeName, MountPath: motdMountPath, ReadOnly: true})
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: volumeName, MountPath: motdMountPath, ReadOnly: true})
 	}
-	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == motdVolumeName })
+	spec.Volumes = slices.DeleteFunc(spec.Volumes, func(v corev1.Volume) bool { return v.Name == volumeName })
 	spec.Volumes = append(spec.Volumes, corev1.Volume{
-		Name: motdVolumeName,
+		Name: volumeName,
 		VolumeSource: corev1.VolumeSource{DownwardAPI: &corev1.DownwardAPIVolumeSource{
 			Items: []corev1.DownwardAPIVolumeFile{{
 				Path:     motdProfileFile,
@@ -1761,4 +1774,32 @@ func injectMOTD(spec *corev1.PodSpec, motd *breakglassv1alpha1.MessageOfTheDay) 
 			}},
 		}},
 	})
+}
+
+// sessionMOTD returns the effective MOTD from the session's approved template
+// and binding snapshots.
+func sessionMOTD(ds *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.MessageOfTheDay, error) {
+	if ds == nil || ds.Status.ResolvedTemplate == nil {
+		return nil, nil
+	}
+	var binding *breakglassv1alpha1.DebugSessionClusterBindingSpec
+	if ds.Status.ResolvedBindingSpec != nil {
+		binding = &breakglassv1alpha1.DebugSessionClusterBindingSpec{}
+		if err := json.Unmarshal(ds.Status.ResolvedBindingSpec.Raw, binding); err != nil {
+			return nil, fmt.Errorf("decode approved binding snapshot: %w", err)
+		}
+	}
+	return breakglassv1alpha1.EffectiveDebugSessionMOTD(ds.Status.ResolvedTemplate, binding), nil
+}
+
+// injectPodMOTD adds the MOTD hook and its annotation to a controller-built pod.
+func injectPodMOTD(pod *corev1.Pod, motd *breakglassv1alpha1.MessageOfTheDay, containers ...string) {
+	if pod == nil || motd == nil {
+		return
+	}
+	injectMOTD(&pod.Spec, motd, containers...)
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	pod.Annotations[motdProfileAnnotation] = motdProfileScript
 }
