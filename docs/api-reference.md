@@ -1110,6 +1110,7 @@ POST /api/debugSessions
 | `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
 | `nodeMaintenance` | object | Conditional | Exact operator-allowlisted Node name/UID and neighbour or FDB tuple, required only for a typed maintenance template. No action/image/command overrides. See [the complete contract](node-maintenance-controller.md#template-and-typed-request). |
+| `admissionRecipe` | object | Conditional | `targets`: 1 to 16 entries, each equal to an allowlist entry of a typed admission recipe template (`kind`, `apiVersion`, `name`, `webhook`). Required only for such a template; no field, value or patch input. See [Typed admission recipes](admission-recipes.md#request). |
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request. Required when the effective template or binding `requestReason.mandatory` is `true`; enforced after sanitization with configured `minLength` and `maxLength`. |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |

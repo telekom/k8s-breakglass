@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Proposal: typed admission recipes (policy audit switch, webhook fail-open)
 
-Status: proposal. Target: a later 0.3.0 release candidate.
+Status: implemented (`DebugSessionTemplate.spec.admissionRecipe`). Target: a later 0.3.0 release candidate.
 
 ## Problem
 
@@ -52,30 +52,23 @@ reverted, and deleting the target object at session end would be wrong.
 - Changing a policy's rules, match constraints or exceptions.
 - Persisting a change beyond the session; persistent changes go through GitOps.
 
-## API sketch
+## API
+
+The implementation follows this proposal; the user documentation is
+[Typed admission recipes](../admission-recipes.md).
 
 ```yaml
 # DebugSessionTemplate (administrator)
 spec:
-  mode: workload            # no pod template, no workload: like nodeMaintenance
   constraints:
-    maxDuration: 30m        # hard cap for the revert deadline
+    maxDuration: 30m        # required, at most 2h; no idleTimeout, no renewal
   admissionRecipe:
     action: policy-audit    # or: webhook-fail-open
+    flux: true              # see "GitOps controllers"
     allowedTargets:
-      # policy-audit: one policy object per entry
-      - apiVersion: policies.kyverno.io/v1   # the version served by the installed Kyverno
-        kind: ValidatingPolicy
-        name: require-pod-probes
-      # webhook-fail-open: one webhook of one configuration per entry
-      - kind: ValidatingWebhookConfiguration
-        name: ingress-nginx-admission
-        webhook: validate.nginx.ingress.kubernetes.io
-    deniedTargetSelector:   # refused at apply time even if allowlisted
-      matchExpressions:
-        - {key: categories, operator: In, values: [platform-critical]}
-    gitOps:
-      flux: true            # see "GitOps controllers"
+      - {kind: ValidatingPolicy, apiVersion: policies.kyverno.io/v1, name: require-pod-probes}
+    deniedTargetLabels:     # RE2, full label value; refused live even if allowlisted
+      - {key: categories, valuePattern: '(.+_)?(platform-)?critical(_.+)?'}
 ```
 
 ```json
@@ -85,60 +78,57 @@ spec:
   "cluster": "prod-cluster-01",
   "requestedDuration": "20m",
   "reason": "INC123: require-pod-probes blocks the hotfix rollout",
-  "admissionRecipe": {"targets": [{"kind": "ValidatingPolicy", "name": "require-pod-probes"}]}
+  "admissionRecipe": {"targets": [{"kind": "ValidatingPolicy", "apiVersion": "policies.kyverno.io/v1", "name": "require-pod-probes"}]}
 }
 ```
 
-Validation: every requested target must equal an allowlist entry; duplicates,
-unknown fields and empty lists are rejected. The action is never a request
-field.
+Every requested target must equal an allowlist entry; duplicates, unknown
+fields, generic workload inputs and empty lists are rejected. The action is
+never a request field. A label *selector* was considered for denied targets,
+but category labels such as `critical_psa_platform-best-practices` combine
+several tokens in one value, so the denial is a full-match regular expression
+per label key.
 
 ### Actions
 
 | Action | Field transition | Revert |
 | --- | --- | --- |
-| `policy-audit` | Kyverno `ValidatingPolicy`/`ImageValidatingPolicy`: `spec.validationActions` from a set containing `Deny` to `[Audit]`. Legacy `ClusterPolicy`: `spec.validationFailureAction` `Enforce` → `Audit` (and per-rule overrides). | Restore the recorded original value. |
-| `webhook-fail-open` | `webhooks[name=<webhook>].failurePolicy` `Fail` (or unset, which means `Fail`) → `Ignore` on the named Validating/MutatingWebhookConfiguration. | Restore the original value (`Fail` or unset). |
+| `policy-audit` | Kyverno `ValidatingPolicy` (`policies.kyverno.io`): `spec.validationActions` that contains `Deny` → `[Audit]`. Legacy `ClusterPolicy` is out of scope. | Restore the recorded original list. |
+| `webhook-fail-open` | `webhooks[name=<webhook>].failurePolicy` `Fail` (or unset, which means `Fail`) → `Ignore` on the named Validating/MutatingWebhookConfiguration. | Restore `Fail`. |
 
 The recipe refuses a target whose current value is not the expected starting
-value (already `Audit`/`Ignore`): there is nothing to revert, and two
-sessions must not own the same field.
+value (already `Audit`/`Ignore`), and a target that another session's
+annotation already owns.
 
 ## Lifecycle
 
-1. **Approve.** Normal DebugSession approval. The binding approvers are
-   captured immutably, as for `nodeMaintenance`.
-2. **Apply** (session becomes Active). For each target, in one reconcile:
-   - re-read the target on the spoke; refuse if it matches
-     `deniedTargetSelector` or does not have the expected starting value;
-   - patch with an optimistic `resourceVersion` precondition: set the field,
-     set annotations `breakglass.t-caas.telekom.com/recipe-session` (session
-     UID) and `breakglass.t-caas.telekom.com/recipe-original` (JSON of the
-     original value), and, if enabled, the GitOps annotation;
-   - record `{target, original, applied, resourceVersion}` in
-     `status.admissionRecipe` on the hub before reporting success.
-3. **Watch.** Every reconcile (and at least every minute) re-reads each
-   target. If the field no longer equals the applied value, or the session
-   annotation is gone: set condition `RecipeDrift=True`, emit an Event and an
-   audit event, increment `breakglass_admission_recipe_drift_total{action}`.
-   Do not re-apply.
-4. **Revert** at the first of: terminal state, `status.expiresAt`, template
-   `maxDuration`. For each target: if the field still equals the applied
-   value and the session annotation matches, restore the original and remove
-   the annotations; otherwise leave it (drift already reported) and record
-   `RevertSkipped` with the reason. Revert failures are retried with backoff
-   and stay visible in status and metrics
-   (`breakglass_admission_recipe_revert_pending`).
-5. **Restart safety.** On start and periodically, the controller lists
-   objects carrying `recipe-session` on every spoke and reverts every target
-   whose session is terminal, missing or past `expiresAt`. The spoke
-   annotation, not controller memory, is the source of truth, so a crash
-   between apply and status write still reverts.
-
-Apply happens only after approval, so a rejected or withdrawn request never
-changes a target. A hub DebugSession that is deleted directly has no
-finalizer; the restart sweep finds its targets by the spoke annotation and
-reverts them.
+1. **Approve.** Always an independent approver (the requester cannot approve
+   in any stage, no auto-approval); binding approvers are captured
+   immutably, as for `nodeMaintenance`.
+2. **Apply** (session becomes Active). A revert finalizer is added first and
+   a synchronous `applied` audit event is emitted before any write. For each
+   target: re-read it, re-check denied labels, owner and starting value,
+   persist `{original, applied, state: applying}` in `status.admissionRecipe`,
+   re-validate the live session approval, then update the object with its
+   read `resourceVersion`, setting the field and the annotations
+   `breakglass.t-caas.telekom.com/admission-recipe-session` (session UID) and
+   `.../admission-recipe-expires-at`.
+3. **Watch.** Every 30 seconds each target is re-read. If the field or the
+   session annotation changed, the target becomes `drifted`, a synchronous
+   `drift` audit event is emitted and
+   `breakglass_admission_recipe_operations_total{operation="drift"}`
+   increases. The recipe never re-applies.
+4. **Revert** on terminate, failure, hard expiry and deletion of the session
+   (the finalizer holds the session until the revert is done). A target that
+   still carries the session annotation and the applied value gets its
+   original back; a drifted target keeps its value and only loses the
+   annotations (`revert-skipped`). A synchronous `reverted` audit event
+   follows. Failures are retried and stay visible in the `CleanupFailed`
+   condition.
+5. **Restart safety.** The hub status records the intent and original value
+   before every write, and the spoke annotation shows whether the write
+   happened. A restarted controller therefore marks an interrupted target
+   applied or not-applied and reverts it; no cluster-wide sweep is needed.
 
 ## GitOps controllers
 
@@ -162,15 +152,35 @@ healthy again; that counts as drift and is the desired end state.
 ## Security
 
 - The requester never gets RBAC on the target objects.
-- The spoke identity needs `get`/`patch` on the allowlisted kinds, which
-  deployments can scope with `resourceNames`, and cluster-wide `list` on the
-  same kinds for the restart sweep (`list` cannot be scoped by name).
-- `deniedTargetSelector` is evaluated on the live object, so a policy that
-  gains the protected label after the template was written is still refused.
+- The spoke identity needs `get` and `update` on the allowlisted kinds, which
+  deployments can scope with `resourceNames`.
+- `deniedTargetLabels` is evaluated on the live object, so a policy that
+  gains a protected label after the template was written is still refused.
 - Audit: apply, revert, drift and refusal are synchronous durable audit
   events with requester, approver, target, original and applied value, like
   the node-maintenance receipts. Deployments can alert on them (for example a
-  security operations rule on every `admission_recipe.applied`).
+  security operations rule on every `debug_session.admission_recipe.applied`).
+
+## Example deployment (T-CaaS)
+
+The T-CaaS platform decided these lists for its own templates:
+
+- **policy-audit:** only non-critical Kyverno policies. Every policy whose
+  `categories` label contains the token `critical` or `platform-critical`
+  (the `platform-critical` and `critical` folders, for example
+  `protect-platform-namespaces`, `protect-platform-resources`,
+  `require-owner-label`, `disallow-host-path`, `disallow-host-namespaces`,
+  `prevent-cr8escape`, `restrict-binding-clusteradmin`) is excluded by the
+  allowlist and by `deniedTargetLabels` with
+  `valuePattern: '(.+_)?(platform-)?critical(_.+)?'`.
+- **webhook-fail-open:** allowed for the Kyverno resource validating and
+  mutating webhooks, `ingress-nginx-admission`, the cert-manager validating
+  webhook (never its mutating or conversion webhooks), the MetalLB and
+  FRR-K8s validating webhooks, and the OpenTelemetry operator validation
+  webhook. Never for the auth-operator namespace and binder webhooks, the
+  Breakglass webhook, Cluster API and provider webhooks, CNI/IPAM/host
+  network webhooks (coil, network-operator, netplan, whereabouts),
+  vSphere CSI, or any mutating webhook.
 
 ## Tests
 
@@ -189,6 +199,8 @@ healthy again; that counts as drift and is the desired end state.
 
 - **Cluster-admin escalation plus runbook.** No revert, no allowlist, no
   receipt. This is the current state.
+- **Spoke-wide restart sweep.** Not needed: intent is persisted before each
+  write and a finalizer holds the session until the revert.
 - **Standing in-cluster reverter (CronJob).** Needs a second image and
   standing patch rights on the spoke, and cannot see the hub session state.
 - **Auxiliary resources.** Create/delete only; a policy exception instead of

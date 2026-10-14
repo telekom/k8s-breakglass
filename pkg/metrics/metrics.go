@@ -550,6 +550,12 @@ var (
 		Name: "breakglass_auxiliary_resource_deployments_total",
 		Help: "Total number of auxiliary resources deployed",
 	}, []string{"cluster", "category", "status"})
+	// AdmissionRecipeOperations counts admission recipe target operations
+	// (operation: apply, revert, drift; result: success, failure, skipped).
+	AdmissionRecipeOperations = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "breakglass_admission_recipe_operations_total",
+		Help: "Total number of admission recipe target operations",
+	}, []string{"cluster", "action", "operation", "result"})
 	AuxiliaryResourceCleanups = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_auxiliary_resource_cleanups_total",
 		Help: "Total number of auxiliary resources cleaned up",
@@ -807,6 +813,7 @@ func init() {
 	// Register auxiliary resource metrics
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceDeployments)
 	ctrlmetrics.Registry.MustRegister(AuxiliaryResourceCleanups)
+	ctrlmetrics.Registry.MustRegister(AdmissionRecipeOperations)
 	ctrlmetrics.Registry.MustRegister(ClusterBindingsResolved)
 
 	// Register audit metrics

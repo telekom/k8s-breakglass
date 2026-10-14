@@ -71,6 +71,52 @@ spec:
           spec:
             description: DebugSessionSpec defines the desired state of DebugSession.
             properties:
+              admissionRecipe:
+                description: admissionRecipe is a typed target selection matched against
+                  the template allowlist.
+                properties:
+                  targets:
+                    description: targets must each equal an allowlist entry of the
+                      template.
+                    items:
+                      description: AdmissionRecipeTarget names exactly one object
+                        (and webhook) on the spoke.
+                      properties:
+                        apiVersion:
+                          description: |-
+                            apiVersion is the served version of a ValidatingPolicy (policies.kyverno.io/<version>).
+                            It must be empty for webhook configurations (always admissionregistration.k8s.io/v1).
+                          maxLength: 63
+                          type: string
+                        kind:
+                          description: |-
+                            kind is ValidatingPolicy for policy-audit, or ValidatingWebhookConfiguration
+                            or MutatingWebhookConfiguration for webhook-fail-open.
+                          enum:
+                          - ValidatingPolicy
+                          - ValidatingWebhookConfiguration
+                          - MutatingWebhookConfiguration
+                          type: string
+                        name:
+                          description: name is the exact cluster-scoped object name.
+                          maxLength: 253
+                          type: string
+                        webhook:
+                          description: webhook is the exact webhook name inside the
+                            configuration (webhook-fail-open only).
+                          maxLength: 253
+                          type: string
+                      required:
+                      - kind
+                      - name
+                      type: object
+                    maxItems: 16
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - targets
+                type: object
               approvalReasonConfig:
                 description: |-
                   approvalReasonConfig is a snapshot of the template's approvalReason configuration at session creation time.
@@ -1093,6 +1139,92 @@ spec:
                   operations.
                 format: int64
                 type: integer
+              admissionRecipe:
+                description: admissionRecipe tracks the applied admission changes
+                  until they are reverted.
+                properties:
+                  operationID:
+                    description: operationID correlates audit events.
+                    type: string
+                  reverted:
+                    description: reverted is set after every target was reverted or
+                      skipped and audited.
+                    type: boolean
+                  targets:
+                    description: targets records each target's original value and
+                      state.
+                    items:
+                      description: AdmissionRecipeTargetStatus is the per-target inventory.
+                      properties:
+                        applied:
+                          description: applied is the JSON value written by the executor.
+                          type: string
+                        message:
+                          description: message explains refusals, drift and skipped
+                            reverts.
+                          type: string
+                        original:
+                          description: original is the JSON value of the field before
+                            the change.
+                          type: string
+                        originalAnnotations:
+                          additionalProperties:
+                            type: string
+                          description: |-
+                            originalAnnotations records the previous values of the Flux annotations
+                            that the executor sets ("" = absent).
+                          type: object
+                        state:
+                          description: state is the last known state.
+                          enum:
+                          - applying
+                          - applied
+                          - drifted
+                          - reverted
+                          - revert-skipped
+                          - not-applied
+                          type: string
+                        target:
+                          description: target is the exact allowlisted target.
+                          properties:
+                            apiVersion:
+                              description: |-
+                                apiVersion is the served version of a ValidatingPolicy (policies.kyverno.io/<version>).
+                                It must be empty for webhook configurations (always admissionregistration.k8s.io/v1).
+                              maxLength: 63
+                              type: string
+                            kind:
+                              description: |-
+                                kind is ValidatingPolicy for policy-audit, or ValidatingWebhookConfiguration
+                                or MutatingWebhookConfiguration for webhook-fail-open.
+                              enum:
+                              - ValidatingPolicy
+                              - ValidatingWebhookConfiguration
+                              - MutatingWebhookConfiguration
+                              type: string
+                            name:
+                              description: name is the exact cluster-scoped object
+                                name.
+                              maxLength: 253
+                              type: string
+                            webhook:
+                              description: webhook is the exact webhook name inside
+                                the configuration (webhook-fail-open only).
+                              maxLength: 253
+                              type: string
+                          required:
+                          - kind
+                          - name
+                          type: object
+                      required:
+                      - state
+                      - target
+                      type: object
+                    type: array
+                    x-kubernetes-list-type: atomic
+                required:
+                - operationID
+                type: object
               allowedPodOperations:
                 description: |-
                   allowedPodOperations caches the resolved pod operations from the template.
@@ -2020,6 +2152,90 @@ spec:
                           type: string
                       type: object
                     type: array
+                  admissionRecipe:
+                    description: |-
+                      admissionRecipe enables a controller-executed, automatically reverted
+                      admission change (policy audit switch or webhook fail-open) instead of a workload.
+                    properties:
+                      action:
+                        description: action selects the fixed field transition.
+                        enum:
+                        - policy-audit
+                        - webhook-fail-open
+                        type: string
+                      allowedTargets:
+                        description: allowedTargets is an exact allowlist, not a selector
+                          or wildcard.
+                        items:
+                          description: AdmissionRecipeTarget names exactly one object
+                            (and webhook) on the spoke.
+                          properties:
+                            apiVersion:
+                              description: |-
+                                apiVersion is the served version of a ValidatingPolicy (policies.kyverno.io/<version>).
+                                It must be empty for webhook configurations (always admissionregistration.k8s.io/v1).
+                              maxLength: 63
+                              type: string
+                            kind:
+                              description: |-
+                                kind is ValidatingPolicy for policy-audit, or ValidatingWebhookConfiguration
+                                or MutatingWebhookConfiguration for webhook-fail-open.
+                              enum:
+                              - ValidatingPolicy
+                              - ValidatingWebhookConfiguration
+                              - MutatingWebhookConfiguration
+                              type: string
+                            name:
+                              description: name is the exact cluster-scoped object
+                                name.
+                              maxLength: 253
+                              type: string
+                            webhook:
+                              description: webhook is the exact webhook name inside
+                                the configuration (webhook-fail-open only).
+                              maxLength: 253
+                              type: string
+                          required:
+                          - kind
+                          - name
+                          type: object
+                        maxItems: 64
+                        minItems: 1
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      deniedTargetLabels:
+                        description: |-
+                          deniedTargetLabels refuses a live target when one of its labels matches,
+                          even if it is allowlisted. Evaluated on the spoke immediately before the write.
+                        items:
+                          description: AdmissionRecipeDeniedLabel refuses targets
+                            whose label value matches valuePattern.
+                          properties:
+                            key:
+                              description: key is the exact label key.
+                              maxLength: 317
+                              type: string
+                            valuePattern:
+                              description: valuePattern is an RE2 regular expression
+                                matched against the full label value.
+                              maxLength: 256
+                              type: string
+                          required:
+                          - key
+                          - valuePattern
+                          type: object
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      flux:
+                        description: |-
+                          flux also sets the per-object Flux annotations that stop helm-controller
+                          drift correction and kustomize-controller apply/prune for the window.
+                        type: boolean
+                    required:
+                    - action
+                    - allowedTargets
+                    type: object
                   affinityOverrides:
                     description: affinityOverrides adds or replaces affinity rules
                       from the pod template.

@@ -251,6 +251,22 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		return ctrl.Result{}, err
 	}
 
+	if !ds.DeletionTimestamp.IsZero() && hasAdmissionRecipeFinalizer(ds) {
+		// Never drop a session that may still own a widened admission field.
+		if err := c.revertAdmissionRecipe(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+		if c.connectionLeases != nil {
+			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+			if err := c.connectionLeases.RevokeUnrecordedSessionLeases(ctx, ds); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+		return ctrl.Result{}, c.removeAdmissionRecipeFinalizer(ctx, ds)
+	}
+
 	if !ds.DeletionTimestamp.IsZero() && hasMaintenanceFinalizer(ds) {
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
@@ -432,6 +448,12 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if err := c.validateMaintenancePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		return c.failSession(ctx, ds, fmt.Sprintf("invalid node-maintenance request: %v", err))
 	}
+	if err := c.validateAdmissionRecipePending(ctx, ds, effectiveTemplate, binding); err != nil {
+		if errors.Is(err, errMaintenanceTargetUnavailable) {
+			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
+		}
+		return c.failSession(ctx, ds, fmt.Sprintf("invalid admission recipe request: %v", err))
+	}
 	// Failure retention uses an existing approved snapshot, or the effective
 	// constraints just resolved for a request that has no snapshot yet.
 	if err := c.ensureTerminalRecordingConfigured(template); err != nil {
@@ -573,6 +595,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	}
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.NodeMaintenance != nil {
 		return c.handleMaintenanceActive(ctx, ds)
+	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.AdmissionRecipe != nil {
+		return c.handleAdmissionRecipeActive(ctx, ds)
 	}
 
 	// Resolve any target mutation whose status outcome was interrupted by a
@@ -785,6 +810,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 // anything that was deployed to the spoke cluster.
 func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
+		return true
+	}
+	if ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted {
 		return true
 	}
 	if utils.DebugSessionHasActionableDeployedResources(ds) ||
@@ -1026,6 +1054,15 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 			return ctrl.Result{}, err
 		}
 	}
+	if template.Spec.AdmissionRecipe != nil {
+		// The revert finalizer must exist before any target write.
+		if !ds.DeletionTimestamp.IsZero() {
+			return ctrl.Result{}, nil
+		}
+		if err := c.ensureAdmissionRecipeFinalizer(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
+	}
 	if c.connectionLeases != nil && c.ccProvider != nil {
 		_, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
 		if err != nil {
@@ -1075,6 +1112,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 				return c.failSession(ctx, ds, err.Error())
 			}
 			deployErr = c.deployMaintenance(ctx, ds)
+		} else if template.Spec.AdmissionRecipe != nil {
+			if err := admissionRecipeApprovers(template, binding); err != nil {
+				return c.failSession(ctx, ds, err.Error())
+			}
+			deployErr = c.applyAdmissionRecipe(ctx, ds)
 		} else {
 			deployErr = c.deployDebugResources(ctx, ds, template)
 		}
@@ -1116,8 +1158,11 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		bindingOps = binding.Spec.AllowedPodOperations
 	}
 	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
-	if template.Spec.NodeMaintenance != nil {
+	if template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil {
 		ds.Status.AllowedPodOperations = maintenancePodOperations()
+	}
+	if template.Spec.AdmissionRecipe != nil {
+		ds.Status.Message = "Admission recipe applied: " + admissionRecipeTargetsDescription(ds.Spec.AdmissionRecipe.Targets)
 	}
 
 	// Add the requesting user as owner participant
@@ -1794,7 +1839,7 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	if template != nil && template.Spec.NodeMaintenance != nil {
+	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.AdmissionRecipe != nil) {
 		return true
 	}
 	// Binding approvers replace template approvers when the field is present,

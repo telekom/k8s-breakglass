@@ -20,6 +20,9 @@ import (
 type DebugSessionTemplateSpecApplyConfiguration struct {
 	// nodeMaintenance enables a fixed, exact-tuple executor instead of a rendered Pod template.
 	NodeMaintenance *DebugSessionNodeMaintenanceApplyConfiguration `json:"nodeMaintenance,omitempty"`
+	// admissionRecipe enables a controller-executed, automatically reverted
+	// admission change (policy audit switch or webhook fail-open) instead of a workload.
+	AdmissionRecipe *DebugSessionAdmissionRecipeApplyConfiguration `json:"admissionRecipe,omitempty"`
 	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
 	ArtifactCollection *DebugSessionArtifactCollectionApplyConfiguration `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
@@ -168,6 +171,14 @@ func DebugSessionTemplateSpec() *DebugSessionTemplateSpecApplyConfiguration {
 // If called multiple times, the NodeMaintenance field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithNodeMaintenance(value *DebugSessionNodeMaintenanceApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.NodeMaintenance = value
+	return b
+}
+
+// WithAdmissionRecipe sets the AdmissionRecipe field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AdmissionRecipe field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAdmissionRecipe(value *DebugSessionAdmissionRecipeApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.AdmissionRecipe = value
 	return b
 }
 

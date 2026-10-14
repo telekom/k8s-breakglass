@@ -62,6 +62,77 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: uid
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeDeniedLabel
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: valuePattern
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeRequest
+  map:
+    fields:
+    - name: targets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeStatus
+  map:
+    fields:
+    - name: operationID
+      type:
+        scalar: string
+    - name: reverted
+      type:
+        scalar: boolean
+    - name: targets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTargetStatus
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: webhook
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTargetStatus
+  map:
+    fields:
+    - name: applied
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: original
+      type:
+        scalar: string
+    - name: originalAnnotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: state
+      type:
+        scalar: string
+    - name: target
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
   map:
     fields:
@@ -1415,6 +1486,27 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: status
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAdmissionRecipe
+  map:
+    fields:
+    - name: action
+      type:
+        scalar: string
+    - name: allowedTargets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+          elementRelationship: atomic
+    - name: deniedTargetLabels
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeDeniedLabel
+          elementRelationship: atomic
+    - name: flux
+      type:
+        scalar: boolean
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAllowed
   map:
     fields:
@@ -2009,6 +2101,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionSpec
   map:
     fields:
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeRequest
     - name: approvalReasonConfig
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
@@ -2096,6 +2191,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: activityCount
       type:
         scalar: numeric
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeStatus
     - name: allowedPodOperations
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
@@ -2243,6 +2341,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: io.k8s.api.core.v1.Toleration
           elementRelationship: atomic
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAdmissionRecipe
     - name: affinityOverrides
       type:
         namedType: io.k8s.api.core.v1.Affinity
