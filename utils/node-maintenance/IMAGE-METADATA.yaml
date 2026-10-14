@@ -11,15 +11,16 @@ image:
     digest: sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
   dependencyLock: deps.lock
   user: "0:0 (controller-selected operation only)"
-  capabilities: [NET_ADMIN]
+  capabilities: [NET_ADMIN, SYS_BOOT]
   operationCapabilities:
     node-recovery: []
     network-repair: [NET_ADMIN]
     network-repair-preview: []
     kexec-recovery-validate: []
+    kexec-recovery: [SYS_BOOT]
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX
-    operation: network-repair
+    operation: [network-repair, kexec-recovery]
     checks: [before-preflight, before-mutation]
   runbooks: /usr/share/breakglass/runbooks/upstream/node-maintenance
   internalRunbookMount: /usr/share/breakglass/runbooks/internal

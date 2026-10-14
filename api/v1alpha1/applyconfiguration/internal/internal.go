@@ -1920,6 +1920,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: image
       type:
         scalar: string
+    - name: kexec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceKexec
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
   map:
     fields:
@@ -3302,12 +3305,39 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceKexec
+  map:
+    fields:
+    - name: cmdlineSHA256
+      type:
+        scalar: string
+    - name: drainTimeoutSeconds
+      type:
+        scalar: numeric
+    - name: hostPath
+      type:
+        scalar: string
+    - name: initrdSHA256
+      type:
+        scalar: string
+    - name: kernelSHA256
+      type:
+        scalar: string
+    - name: profile
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceStatus
   map:
     fields:
     - name: activeDeadlineSeconds
       type:
         scalar: numeric
+    - name: bootID
+      type:
+        scalar: string
+    - name: cordonedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: createAttempted
       type:
         scalar: boolean

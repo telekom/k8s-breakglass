@@ -1500,6 +1500,13 @@ run_kexec_validation() {
 	output_file="$fixture_dir/output"
 	mount_spec="type=bind,source=$recovery_dir,destination=/recovery"
 	[ "$mount_access" = writable ] || mount_spec="$mount_spec,readonly"
+	# Execution always carries a controller deadline unless a case tests its absence.
+	deadline_env=${kexec_deadline:-$(($(date +%s) + 3600))}
+	[ "$deadline_env" != none ] || deadline_env=
+	set -- --mount "$mount_spec" "$image" "$@"
+	if [ -n "${kexec_termination_log:-}" ]; then
+		set -- --mount "type=bind,source=$kexec_termination_log,destination=/dev/termination-log" "$@"
+	fi
 	set +e
 	"$docker_bin" run \
 		--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME=node-a \
@@ -1511,11 +1518,12 @@ run_kexec_validation() {
 		--env BREAKGLASS_KEXEC_KERNEL_SHA256="$expected_kernel" \
 		--env BREAKGLASS_KEXEC_INITRD_SHA256="$expected_initrd" \
 		--env BREAKGLASS_KEXEC_CMDLINE_SHA256="$expected_cmdline" \
+		--env BREAKGLASS_KEXEC_BOOT_ID="${kexec_boot_id:-}" \
+		--env BREAKGLASS_ACTION_DEADLINE_UNIX="$deadline_env" \
 		--network none --read-only --cap-drop ALL \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
-		--mount "$mount_spec" \
-		"$image" "$@" >"$output_file" 2>&1
+		"$@" >"$output_file" 2>&1
 	actual_exit=$?
 	set -e
 	cat "$output_file"
@@ -1822,6 +1830,80 @@ grep -q 'does not match requested action' "$fixture_dir/output" || fail 'kexec a
 assert_volume_path_absent fake-kexec-executed
 destroy_fixture
 pass 'kexec validation requires an independent exact approved action binding'
+
+# Execution is only ever attempted with every capability dropped and the
+# builtin seccomp profile, so the kernel refuses kexec_file_load and the runner
+# can never reboot. These cases prove the fail-closed path after validation.
+host_boot_id=$(cat /proc/sys/kernel/random/boot_id)
+kexec_boot_id=$host_boot_id
+kexec_termination_log=$tmp_dir/kexec-termination-log
+: >"$kexec_termination_log"
+chmod 0666 "$kexec_termination_log"
+run_kexec_validation kexec-execute-denied 1 readonly kexec-recovery rescue-a \
+	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
+	kexec-recovery --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+execute_bundle=$(bundle_from_output "$fixture_dir/output")
+execute_host_bundle=$(copy_bundle "$fixture_dir/output" "$execute_bundle")
+assert_kexec_outcome "$execute_host_bundle/validation-result.txt" provider-inputs-verified false absent
+assert_metadata_value "$execute_host_bundle/metadata" execution_result failed
+assert_metadata_value "$execute_host_bundle/metadata" boot_id_before "$host_boot_id"
+grep -q 'kexec_file_load' "$execute_host_bundle/action-kexec.txt" \
+	|| fail 'denied kexec did not record the refused kexec_file_load'
+grep -q '"event":"kexec-requested"' "$execute_host_bundle/events.jsonl" \
+	|| fail 'kexec execution did not record its request event before acting'
+[ "$(cat /proc/sys/kernel/random/boot_id)" = "$host_boot_id" ] || fail 'runner boot ID changed'
+[ "$(cat "$kexec_termination_log")" = "$(printf 'kexec_loaded=0\nboot_id=%s' "$host_boot_id")" ] \
+	|| fail 'failed kexec execution did not report kexec_loaded=0 and its boot ID in its termination message'
+rm -f "$kexec_termination_log"
+kexec_termination_log=
+destroy_fixture
+pass 'kexec execution verifies inputs, records the request, fails closed without SYS_BOOT, and reports no loaded kernel'
+
+kexec_boot_id=00000000-0000-4000-8000-000000000000
+run_kexec_validation guard-kexec-boot-id-mismatch 1 readonly kexec-recovery rescue-a \
+	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
+	kexec-recovery --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+boot_mismatch_bundle=$(bundle_from_output "$fixture_dir/output")
+boot_mismatch_host_bundle=$(copy_bundle "$fixture_dir/output" "$boot_mismatch_bundle")
+grep -q 'boot ID changed since approval' "$boot_mismatch_host_bundle/action-kexec.txt" \
+	|| fail 'kexec boot ID mismatch did not refuse before loading'
+destroy_fixture
+pass 'kexec execution refuses a node incarnation other than the approved boot ID'
+
+kexec_boot_id=$host_boot_id
+kexec_deadline=1
+run_kexec_validation guard-kexec-expired-deadline 2 readonly kexec-recovery rescue-a \
+	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
+	kexec-recovery --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+grep -q 'approved action deadline expired' "$fixture_dir/output" || fail 'expired kexec deadline produced no denial'
+if grep -q 'executing kexec' "$fixture_dir/output"; then
+	fail 'expired kexec deadline still invoked kexec-action'
+fi
+destroy_fixture
+kexec_deadline=
+pass 'kexec execution refuses to start after the approved action deadline'
+
+kexec_deadline=none
+run_kexec_validation guard-kexec-missing-deadline 2 readonly kexec-recovery rescue-a \
+	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
+	kexec-recovery --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+grep -q 'BREAKGLASS_ACTION_DEADLINE_UNIX is required' "$fixture_dir/output" || fail 'missing kexec deadline produced no denial'
+destroy_fixture
+kexec_deadline=
+pass 'kexec execution requires the controller deadline'
+
+kexec_boot_id=
+run_kexec_validation guard-kexec-missing-boot-id 2 readonly kexec-recovery rescue-a \
+	"$kernel_digest" "$initrd_digest" "$cmdline_digest" \
+	kexec-recovery --target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+grep -q 'BREAKGLASS_KEXEC_BOOT_ID is required' "$fixture_dir/output" || fail 'missing kexec boot ID produced no denial'
+destroy_fixture
+pass 'kexec execution requires the controller-bound boot ID'
 
 run_command guard-missing-confirmation 2 none neighbor-replace network-repair --target-node node-a --interface lo \
 	--action neighbor-replace --neighbor-address 192.0.2.2 --entry-mac 02:00:00:00:00:02 --evidence-dir /evidence

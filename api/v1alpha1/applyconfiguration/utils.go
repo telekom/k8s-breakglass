@@ -240,6 +240,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.NamespaceSelectorTermApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeDebugConfig"):
 		return &apiv1alpha1.NodeDebugConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceKexec"):
+		return &apiv1alpha1.NodeMaintenanceKexecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceStatus"):
 		return &apiv1alpha1.NodeMaintenanceStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceTarget"):

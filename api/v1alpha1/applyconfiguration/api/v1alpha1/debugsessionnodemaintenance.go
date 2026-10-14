@@ -24,6 +24,9 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// the same exact tuple preflight and records the entry it would replace,
 	// but has no NET_ADMIN capability and never mutates the kernel table.
 	DryRun *bool `json:"dryRun,omitempty"`
+	// kexec pins the provider recovery bundle for a kexec-recovery profile.
+	// It is required for kexec-recovery and forbidden for every other action.
+	Kexec *NodeMaintenanceKexecApplyConfiguration `json:"kexec,omitempty"`
 }
 
 // DebugSessionNodeMaintenanceApplyConfiguration constructs a declarative configuration of the DebugSessionNodeMaintenance type for use with
@@ -66,5 +69,13 @@ func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithAllowedTargets(value
 // If called multiple times, the DryRun field is set to the value of the last call.
 func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithDryRun(value bool) *DebugSessionNodeMaintenanceApplyConfiguration {
 	b.DryRun = &value
+	return b
+}
+
+// WithKexec sets the Kexec field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Kexec field is set to the value of the last call.
+func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithKexec(value *NodeMaintenanceKexecApplyConfiguration) *DebugSessionNodeMaintenanceApplyConfiguration {
+	b.Kexec = value
 	return b
 }

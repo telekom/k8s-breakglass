@@ -6,9 +6,10 @@ SPDX-License-Identifier: CC-BY-4.0
 # Typed node-maintenance sessions
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
-fixed executor. It is absent by default. Only `neighbor-replace` and
-`bridge-fdb-replace` are supported, optionally as a preview; this does **not** enable broad flushes, link
-cycling, kexec, arbitrary host commands, traffic mirroring or CRA.
+fixed executor. It is absent by default. Only `neighbor-replace`,
+`bridge-fdb-replace` and `kexec-recovery` are supported, each optionally as a
+preview; this does **not** enable broad flushes, link cycling, a
+caller-selected kernel, arbitrary host commands, traffic mirroring or CRA.
 
 ## Operator prerequisites
 
@@ -19,7 +20,9 @@ cycling, kexec, arbitrary host commands, traffic mirroring or CRA.
 - Give the controller's existing privileged ClusterConfig identity permission
   to read Nodes/namespaces and create/read/delete Jobs, Pods and coordination Leases,
   and update Job status,
-  in that namespace. Requesters must not have Pod, Lease or session-status write
+  in that namespace. For `kexec-recovery` it additionally needs to get and
+  patch Nodes, list Pods in all namespaces and create `pods/eviction`.
+  Requesters must not have Pod, Lease or session-status write
   access. Do not impersonate a requester for this executor.
 - Requests must use the authenticated HTTP API. Directly created CRs without its
   durable authenticated-requester provenance cannot reach maintenance approval
@@ -156,6 +159,83 @@ after one second instead of failing it. A denial after the window fails the
 session. Cleanup deletes them after the Pod and Job are
 proven absent and before the Lease is released.
 
+### Kexec recovery profiles
+
+`action: kexec-recovery` reboots one drained worker Node into a provider-owned
+recovery kernel. The allowlist entries carry only `targetNode` and
+`targetNodeUID`; interface and tuple fields are rejected. The profile pins the
+bundle:
+
+```yaml
+  constraints:
+    maxDuration: 30m   # at least drainTimeoutSeconds + 300s
+  nodeMaintenance:
+    action: kexec-recovery
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    kexec:
+      profile: provider-recovery
+      hostPath: /var/lib/provider/recovery   # holds kernel, initrd, cmdline
+      kernelSHA256: <64 hex>
+      initrdSHA256: <64 hex>
+      cmdlineSHA256: <64 hex>
+      drainTimeoutSeconds: 600
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+```
+
+With `dryRun: true` the profile only runs `kexec-recovery-validate`: no
+capabilities, RuntimeDefault seccomp, no host PID, no cordon and no drain.
+Publish it as a separately approved validation template.
+
+For execution the controller rejects Nodes labelled
+`node-role.kubernetes.io/control-plane` or `node-role.kubernetes.io/master`,
+then, after acquiring the node Lease and before any auxiliary resource or
+executor exists:
+
+1. records the Node boot ID and `cordonedAt` in the session status;
+2. cordons the Node and marks the cordon with the
+   `breakglass.t-caas.telekom.com/maintenance-cordon` annotation set to the
+   operation ID (a Node that is already cordoned keeps its foreign cordon);
+3. evicts every Pod on the Node like `kubectl drain --ignore-daemonsets
+   --delete-emptydir-data --force`: DaemonSet, mirror, terminated and
+   `breakglass-node-maintenance` Pods stay, PodDisruptionBudgets are honoured
+   through the Eviction API with the observed Pod UID as a precondition (a
+   same-name replacement on another Node is never evicted), and the session
+   waits with the message "Draining Node before kexec-recovery";
+4. fails the session without an executor once `drainTimeoutSeconds` has
+   passed, even if the last Pod left after the deadline, or when the boot ID
+   changes during the drain.
+
+The executor Pod adds only `SYS_BOOT`, uses the host PID namespace and an
+unconfined seccomp profile (both required by the kernel interfaces), never the
+host network, and mounts `hostPath` read-only at `/recovery`. Its memory limit
+is 1Gi because it loads sealed in-memory copies of the verified files. It tolerates the
+cordon and NotReady/unreachable taints so the receipt survives the reboot. Its
+admission exception, if any, belongs in the per-session auxiliary resources.
+
+A successful kexec kills the executor, so the result is decided by the Node,
+not by the Pod phase. On a Ready Node a terminated executor whose termination
+message reports `kexec_loaded=0` and the approved `boot_id` is `failed`, even
+if the Node rebooted later for another reason. Otherwise a new boot ID is
+`succeeded`; it proves a reboot, not which kernel booted. A kill, eviction or
+Pod deadline can stop the executor between loading and rebooting, so a
+terminated executor without that proof is not `failed`. Anything else is `interrupted` at expiry or `unknown`
+at cleanup. Cleanup uncordons the Node only
+when this operation owns the cordon and the outcome is `succeeded` or `failed`,
+or when no executor was created. An unproven reboot leaves the Node cordoned
+with its annotation for an operator; remove it with `kubectl uncordon` and
+`kubectl annotate node NODE breakglass.t-caas.telekom.com/maintenance-cordon-`
+after checking the console and, if `/sys/kernel/kexec_loaded` is `1`, unloading
+the image with `kexec -u` or rebooting. Audit events also carry `bootID`.
+
+Cleanup deletes the executor Pod and waits until it is gone before it releases
+the node Lease, the session finalizer and the cordon. If the recovery kernel
+does not start kubelet, the Pod stays `Terminating` and cleanup waits. After
+the console shows that the executor no longer runs (the Node runs the recovery
+kernel or is powered off), remove the Pod with
+`kubectl -n breakglass-node-maintenance delete pod OPERATION_ID --force --grace-period=0`.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
@@ -170,7 +250,7 @@ session UID. API-server atomic Create and UID/resourceVersion-fenced Delete
 arbitrate ownership; **Lease age alone never permits takeover**. A contender
 remains PendingApproval with an exclusive-Lease wait message and no executor.
 
-The single Pod has:
+The single network-repair Pod has (see above for the kexec Pod):
 
 - exact `nodeName`, `hostNetwork: true`, no host PID/IPC;
 - root UID/GID, NET_ADMIN only, all other capabilities dropped;
@@ -234,7 +314,7 @@ Run the focused unit and snapshot tests:
 
 ```sh
 go test ./api/v1alpha1 ./api/v1alpha1/applyconfiguration/ssa ./pkg/breakglass/debug \
-  -run '^TestNodeMaintenance' -count=1
+  -run '^Test(NodeMaintenance|Kexec)' -count=1
 ```
 
 `bash hack/node-maintenance-controller-kind.sh` creates an owned disposable Kind
@@ -248,8 +328,13 @@ Cancellation uses the actual terminate HTTP handler; expiry exercises the
 controller's terminal reconciliation and verifies Job/Pod/Lease removal.
 Expiry uses an original 60-second requested duration so slow CI API round trips
 can finish activation before the unchanged deadline; cleanup waits are bounded.
-CI runs neighbour and FDB acceptance in independent disposable-cluster lanes;
-the default local command runs both.
+The kexec lane (`NODE_MAINTENANCE_KIND_ACTION=kexec`) stages a disposable
+recovery bundle on the Kind node: validation must succeed without capabilities,
+cordon or reboot, a wrong kernel digest must fail closed, and an execution
+request for the control-plane Node must be refused before any cordon. A real
+kexec needs a disposable worker VM and is not part of CI.
+CI runs neighbour, FDB and kexec acceptance in independent disposable-cluster
+lanes; the default local command runs neighbour and FDB.
 OIDC middleware and audit delivery are test fixtures, not a claim of live IdP,
 production support or external recording validation. The script uses immutable Docker IDs for its Kind node, registry (including
 anonymous volumes) and image cleanup; it never deletes a replacement by name.

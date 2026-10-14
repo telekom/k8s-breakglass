@@ -23,6 +23,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	policyv1 "k8s.io/api/policy/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -35,6 +36,14 @@ import (
 )
 
 var errNodeMaintenanceBusy = errors.New("node-maintenance Lease is held by another session")
+
+// errNodeMaintenanceDraining requeues a kexec-recovery session while the
+// cordoned Node still runs evictable Pods within the drain timeout.
+var errNodeMaintenanceDraining = errors.New("draining Node before kexec-recovery")
+
+// maintenanceCordonAnnotation marks a cordon owned by one operation. Cleanup
+// uncordons only a Node that carries its own operation ID.
+const maintenanceCordonAnnotation = "breakglass.t-caas.telekom.com/maintenance-cordon"
 
 // errMaintenanceTargetUnavailable marks failures to reach or read the target
 // cluster, as opposed to a request that does not match the live Node.
@@ -138,7 +147,13 @@ func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *brea
 	return target, fence, release, nil
 }
 
-func validateMaintenanceNode(ctx context.Context, target ctrlclient.Reader, request *breakglassv1alpha1.NodeMaintenanceTarget) error {
+// kexecExecutes reports whether a profile reboots its Node rather than only
+// validating the recovery bundle.
+func kexecExecutes(profile *breakglassv1alpha1.DebugSessionNodeMaintenance) bool {
+	return profile != nil && profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery && !profile.DryRun
+}
+
+func validateMaintenanceNode(ctx context.Context, target ctrlclient.Reader, profile *breakglassv1alpha1.DebugSessionNodeMaintenance, request *breakglassv1alpha1.NodeMaintenanceTarget) error {
 	node := &corev1.Node{}
 	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: request.TargetNode}, node); err != nil {
 		if apierrors.IsNotFound(err) {
@@ -148,6 +163,13 @@ func validateMaintenanceNode(ctx context.Context, target ctrlclient.Reader, requ
 	}
 	if string(node.UID) != request.TargetNodeUID || !node.DeletionTimestamp.IsZero() {
 		return fmt.Errorf("maintenance Node UID changed or Node is being deleted")
+	}
+	if kexecExecutes(profile) {
+		_, controlPlane := node.Labels["node-role.kubernetes.io/control-plane"]
+		_, master := node.Labels["node-role.kubernetes.io/master"]
+		if controlPlane || master {
+			return fmt.Errorf("kexec-recovery never reboots a control-plane Node")
+		}
 	}
 	return nil
 }
@@ -173,7 +195,7 @@ func (c *DebugSessionController) validateMaintenancePending(ctx context.Context,
 	if err := fence(); err != nil {
 		return fmt.Errorf("%w: %w", errMaintenanceTargetUnavailable, err)
 	}
-	return validateMaintenanceNode(ctx, target, ds.Spec.NodeMaintenance)
+	return validateMaintenanceNode(ctx, target, template.Spec.NodeMaintenance, ds.Spec.NodeMaintenance)
 }
 
 func (c *DebugSessionController) maintenanceFence(ctx context.Context, ds *breakglassv1alpha1.DebugSession, target ctrlclient.Reader, configurationFence func() error) error {
@@ -212,7 +234,7 @@ func (c *DebugSessionController) maintenanceLiveFence(ctx context.Context, ds *b
 		!reflect.DeepEqual(live.Status.NodeMaintenance, ds.Status.NodeMaintenance) {
 		return fmt.Errorf("maintenance request or executor inventory changed before target write")
 	}
-	if err := validateMaintenanceNode(ctx, target, live.Spec.NodeMaintenance); err != nil {
+	if err := validateMaintenanceNode(ctx, target, live.Status.ResolvedTemplate.NodeMaintenance, live.Spec.NodeMaintenance); err != nil {
 		return err
 	}
 	namespace := &corev1.Namespace{}
@@ -293,6 +315,14 @@ func acquireMaintenanceLease(ctx context.Context, target ctrlclient.Client, ds *
 // image. Optional segments are appended only when set, so tuples without a VRF
 // or preview stay byte-identical to the original executor contract.
 func maintenanceTuple(profile *breakglassv1alpha1.DebugSessionNodeMaintenance, target *breakglassv1alpha1.NodeMaintenanceTarget) string {
+	if kexec := profile.Kexec; profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery && kexec != nil {
+		tuple := fmt.Sprintf("target_node=%s&action=%s&recovery_profile=%s&kernel_sha256=%s&initrd_sha256=%s&cmdline_sha256=%s",
+			target.TargetNode, profile.Action, kexec.Profile, kexec.KernelSHA256, kexec.InitrdSHA256, kexec.CmdlineSHA256)
+		if profile.DryRun {
+			tuple += "&dry_run=true"
+		}
+		return tuple
+	}
 	vlan := ""
 	if target.VLAN != nil {
 		vlan = strconv.Itoa(int(*target.VLAN))
@@ -311,6 +341,9 @@ func maintenanceTuple(profile *breakglassv1alpha1.DebugSessionNodeMaintenance, t
 // The external Job manager creates exactly one Pod, never replaying a lost mutation.
 func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	profile, target, status := ds.Status.ResolvedTemplate.NodeMaintenance, ds.Spec.NodeMaintenance, ds.Status.NodeMaintenance
+	if profile.Action == breakglassv1alpha1.NodeMaintenanceActionKexecRecovery {
+		return kexecPod(ds)
+	}
 	seconds := status.ActiveDeadlineSeconds
 	args := []string{"network-repair", "--target-node", target.TargetNode, "--interface", target.Interface, "--action", profile.Action,
 		"--entry-mac", target.EntryMAC, "--confirm", "NETWORK-REPAIR", "--evidence-dir", "/evidence"}
@@ -356,6 +389,80 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 					{Name: "BREAKGLASS_APPROVED_NETWORK_REQUEST", Value: maintenanceTuple(profile, target)},
 					{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 				},
+			}},
+		},
+	}
+}
+
+// kexecPod validates the pinned recovery bundle from a read-only hostPath. A
+// dryRun profile has no capabilities. Execution adds only SYS_BOOT, joins the
+// host PID namespace because reboot(LINUX_REBOOT_CMD_KEXEC) is refused in a
+// child PID namespace, and runs unconfined because runtime-default seccomp
+// profiles deny kexec_file_load. It never uses the host network.
+func kexecPod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
+	profile, target, status := ds.Status.ResolvedTemplate.NodeMaintenance, ds.Spec.NodeMaintenance, ds.Status.NodeMaintenance
+	kexec := profile.Kexec
+	command, confirmation, action := "kexec-recovery-validate", "KEXEC-RECOVERY-VALIDATE", "kexec-recovery-validate"
+	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
+	seccomp := corev1.SeccompProfileTypeRuntimeDefault
+	memoryLimit := resource.MustParse("128Mi")
+	env := []corev1.EnvVar{
+		{Name: "BREAKGLASS_NODE_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "spec.nodeName"}}},
+		{Name: "BREAKGLASS_OPERATION_ID", Value: status.OperationID},
+		{Name: "BREAKGLASS_RECORDING_ID", Value: status.OperationID},
+		{Name: "BREAKGLASS_APPROVAL_ID", Value: status.OperationID},
+		{Name: "BREAKGLASS_KEXEC_PROFILE", Value: kexec.Profile},
+		{Name: "BREAKGLASS_KEXEC_KERNEL_SHA256", Value: kexec.KernelSHA256},
+		{Name: "BREAKGLASS_KEXEC_INITRD_SHA256", Value: kexec.InitrdSHA256},
+		{Name: "BREAKGLASS_KEXEC_CMDLINE_SHA256", Value: kexec.CmdlineSHA256},
+		{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
+	}
+	if !profile.DryRun {
+		command, confirmation, action = "kexec-recovery", "KEXEC-RECOVERY", "kexec-recovery"
+		capabilities.Add = []corev1.Capability{"SYS_BOOT"}
+		seccomp = corev1.SeccompProfileTypeUnconfined
+		env = append(env, corev1.EnvVar{Name: "BREAKGLASS_KEXEC_BOOT_ID", Value: status.BootID})
+		// The executor loads sealed in-memory copies of the verified kernel
+		// (at most 256Mi) and initrd (at most 512Mi).
+		memoryLimit = resource.MustParse("1Gi")
+	}
+	env = append(env, corev1.EnvVar{Name: "BREAKGLASS_APPROVED_ACTION", Value: action})
+	// The executor runs on its own cordoned Node and must survive the reboot
+	// as the receipt of this single attempt, so NotReady never evicts it.
+	var tolerations []corev1.Toleration
+	if !profile.DryRun {
+		tolerations = []corev1.Toleration{
+			{Key: corev1.TaintNodeUnschedulable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoSchedule},
+			{Key: corev1.TaintNodeNotReady, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+			{Key: corev1.TaintNodeUnreachable, Operator: corev1.TolerationOpExists, Effect: corev1.TaintEffectNoExecute},
+		}
+	}
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: status.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+			Labels:      map[string]string{DebugSessionLabelKey: ds.Name},
+			Annotations: map[string]string{"breakglass.t-caas.telekom.com/session-uid": string(ds.UID), "breakglass.t-caas.telekom.com/node-uid": target.TargetNodeUID}},
+		Spec: corev1.PodSpec{
+			NodeName: target.TargetNode, HostPID: !profile.DryRun, DNSPolicy: corev1.DNSDefault, Tolerations: tolerations,
+			RestartPolicy: corev1.RestartPolicyNever, AutomountServiceAccountToken: ptr.To(false), EnableServiceLinks: ptr.To(false),
+			ActiveDeadlineSeconds: ptr.To(status.ActiveDeadlineSeconds), TerminationGracePeriodSeconds: ptr.To(int64(1)),
+			SecurityContext: &corev1.PodSecurityContext{RunAsUser: ptr.To(int64(0)), RunAsGroup: ptr.To(int64(0)),
+				SeccompProfile: &corev1.SeccompProfile{Type: seccomp}},
+			Volumes: []corev1.Volume{
+				{Name: "evidence", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{SizeLimit: ptr.To(resource.MustParse("32Mi"))}}},
+				{Name: "recovery", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: kexec.HostPath, Type: ptr.To(corev1.HostPathDirectory)}}},
+			},
+			Containers: []corev1.Container{{
+				Name: "node-maintenance", Image: profile.Image, ImagePullPolicy: corev1.PullIfNotPresent,
+				Command: []string{"/usr/local/bin/node-maintenance"},
+				Args: []string{command, "--target-node", target.TargetNode, "--recovery-profile", kexec.Profile,
+					"--evidence-dir", "/evidence", "--confirm", confirmation},
+				SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false),
+					ReadOnlyRootFilesystem: ptr.To(true), Capabilities: capabilities},
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
+					Limits: corev1.ResourceList{corev1.ResourceMemory: memoryLimit}},
+				VolumeMounts: []corev1.VolumeMount{{Name: "evidence", MountPath: "/evidence"},
+					{Name: "recovery", MountPath: "/recovery", ReadOnly: true}},
+				Env: env,
 			}},
 		},
 	}
@@ -457,7 +564,8 @@ func matchesMaintenancePod(ds *breakglassv1alpha1.DebugSession, pod *corev1.Pod)
 	if pod.UID == "" || pod.Annotations["breakglass.t-caas.telekom.com/session-uid"] != string(ds.UID) ||
 		pod.Annotations["breakglass.t-caas.telekom.com/node-uid"] != ds.Spec.NodeMaintenance.TargetNodeUID ||
 		(ds.Status.NodeMaintenance.PodUID != "" && string(pod.UID) != ds.Status.NodeMaintenance.PodUID) ||
-		pod.Spec.NodeName != expected.Spec.NodeName || !pod.Spec.HostNetwork || pod.Spec.HostPID || pod.Spec.HostIPC ||
+		pod.Spec.NodeName != expected.Spec.NodeName || pod.Spec.HostNetwork != expected.Spec.HostNetwork ||
+		pod.Spec.HostPID != expected.Spec.HostPID || pod.Spec.HostIPC ||
 		pod.Spec.RestartPolicy != corev1.RestartPolicyNever || !reflect.DeepEqual(pod.Spec.AutomountServiceAccountToken, expected.Spec.AutomountServiceAccountToken) ||
 		!reflect.DeepEqual(pod.Spec.ActiveDeadlineSeconds, expected.Spec.ActiveDeadlineSeconds) ||
 		len(pod.Spec.InitContainers) != 0 || len(pod.Spec.EphemeralContainers) != 0 ||
@@ -501,7 +609,8 @@ func (c *DebugSessionController) auditMaintenance(ctx context.Context, ds *break
 			"approvalID": status.OperationID, "approvedBy": ds.Status.Approval.ApprovedBy,
 			"approvedAt": ds.Status.Approval.ApprovedAt, "nodeUID": ds.Spec.NodeMaintenance.TargetNodeUID,
 			"tuple": maintenanceTuple(profile, ds.Spec.NodeMaintenance), "image": profile.Image, "dryRun": profile.DryRun,
-			"podUID": status.PodUID, "jobUID": status.JobUID, "leaseUID": status.LeaseUID, "result": status.Result},
+			"podUID": status.PodUID, "jobUID": status.JobUID, "leaseUID": status.LeaseUID, "result": status.Result,
+			"bootID": status.BootID},
 	}
 	if c.auditService != nil {
 		return c.auditService.EmitSync(ctx, event)
@@ -556,6 +665,9 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 			return err
 		}
 	}
+	if err := c.prepareKexecNode(ctx, ds, target, fence); err != nil {
+		return err
+	}
 	if err := c.deployMaintenanceAuxiliaryResources(ctx, ds, target, fence); err != nil {
 		return err
 	}
@@ -607,6 +719,202 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 		if err := c.patchMaintenanceStatus(ctx, ds, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.PodUID = string(pod.UID) }); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// prepareKexecNode records the Node boot ID, cordons the Node and evicts its
+// Pods before a kexec-recovery executor exists, following kubectl drain with
+// --ignore-daemonsets --delete-emptydir-data --force: DaemonSet and mirror
+// Pods stay, PodDisruptionBudgets are honoured, and the drain is bounded by
+// drainTimeoutSeconds. A timeout fails the session before any executor is
+// created, so cleanup returns the Node to service.
+func (c *DebugSessionController) prepareKexecNode(ctx context.Context, ds *breakglassv1alpha1.DebugSession, target ctrlclient.Client, fence func() error) error {
+	profile := ds.Status.ResolvedTemplate.NodeMaintenance
+	if !kexecExecutes(profile) || ds.Status.NodeMaintenance.CreateAttempted {
+		return nil
+	}
+	node := &corev1.Node{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.NodeMaintenance.TargetNode}, node); err != nil {
+		return err
+	}
+	if string(node.UID) != ds.Spec.NodeMaintenance.TargetNodeUID {
+		return fmt.Errorf("maintenance Node UID changed")
+	}
+	operation := ds.Status.NodeMaintenance.OperationID
+	if ds.Status.NodeMaintenance.BootID == "" {
+		if node.Status.NodeInfo.BootID == "" {
+			return fmt.Errorf("kexec-recovery requires the Node to report its boot ID")
+		}
+		if err := c.patchMaintenanceStatus(ctx, ds, func(status *breakglassv1alpha1.NodeMaintenanceStatus) {
+			status.BootID = node.Status.NodeInfo.BootID
+			status.CordonedAt = ptr.To(metav1.Now())
+		}); err != nil {
+			return err
+		}
+	} else if node.Status.NodeInfo.BootID != ds.Status.NodeMaintenance.BootID {
+		return fmt.Errorf("the Node rebooted while it was being drained; kexec-recovery was not executed")
+	}
+	if !node.Spec.Unschedulable {
+		if err := fence(); err != nil {
+			return err
+		}
+		base := node.DeepCopy()
+		node.Spec.Unschedulable = true
+		if node.Annotations == nil {
+			node.Annotations = map[string]string{}
+		}
+		node.Annotations[maintenanceCordonAnnotation] = operation
+		if err := target.Patch(ctx, node, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+			return fmt.Errorf("cordon Node: %w", err)
+		}
+	}
+	timeout := time.Duration(profile.Kexec.DrainTimeoutSeconds) * time.Second
+	expired := func() bool {
+		cordoned := ds.Status.NodeMaintenance.CordonedAt
+		return cordoned != nil && time.Since(cordoned.Time) > timeout
+	}
+	if expired() {
+		return fmt.Errorf("drain did not finish within %s; kexec-recovery was not executed", timeout)
+	}
+	pods := &corev1.PodList{}
+	if err := target.List(ctx, pods, ctrlclient.MatchingFields{"spec.nodeName": node.Name}); err != nil {
+		return fmt.Errorf("list Pods on Node: %w", err)
+	}
+	remaining := 0
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.Spec.NodeName != node.Name || pod.Namespace == breakglassv1alpha1.NodeMaintenanceNamespace ||
+			pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+			continue
+		}
+		if _, mirror := pod.Annotations[corev1.MirrorPodAnnotationKey]; mirror {
+			continue
+		}
+		if owner := metav1.GetControllerOf(pod); owner != nil && owner.Kind == "DaemonSet" {
+			continue
+		}
+		remaining++
+		if !pod.DeletionTimestamp.IsZero() {
+			continue
+		}
+		if expired() {
+			break
+		}
+		if err := fence(); err != nil {
+			return err
+		}
+		// The UID precondition stops a same-name replacement on another Node
+		// from being evicted; a conflict is re-listed on the next pass.
+		eviction := &policyv1.Eviction{ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
+			DeleteOptions: &metav1.DeleteOptions{Preconditions: metav1.NewUIDPreconditions(string(pod.UID))}}
+		if err := target.SubResource("eviction").Create(ctx, pod, eviction); err != nil &&
+			!apierrors.IsNotFound(err) && !apierrors.IsTooManyRequests(err) && !apierrors.IsConflict(err) {
+			return fmt.Errorf("evict Pod %s/%s: %w", pod.Namespace, pod.Name, err)
+		}
+	}
+	// A drain that only completed after its deadline still fails: the
+	// approval covered a bounded disruption window, not a late reboot.
+	if expired() {
+		return fmt.Errorf("drain did not finish within %s; %d Pods remained and kexec-recovery was not executed", timeout, remaining)
+	}
+	if remaining == 0 {
+		return nil
+	}
+	return errNodeMaintenanceDraining
+}
+
+// kexecOutcome is decided only on a Ready Node. A terminated executor that
+// reported no loaded kexec image in the approved boot is a proven failure,
+// even if the Node rebooted later for another reason. Otherwise a new boot ID
+// proves a reboot (not which kernel booted) and counts as success. A kill, an
+// eviction or a deadline can stop the executor between load and reboot, so
+// any other termination stays unresolved and keeps the Node cordoned.
+func kexecOutcome(status *breakglassv1alpha1.NodeMaintenanceStatus, node *corev1.Node, pod *corev1.Pod) string {
+	if status.BootID == "" || node == nil || !maintenanceNodeReady(node) {
+		return ""
+	}
+	unloaded, executorBootID := kexecTermination(pod)
+	if unloaded && executorBootID == status.BootID {
+		return "failed"
+	}
+	if node.Status.NodeInfo.BootID != "" && node.Status.NodeInfo.BootID != status.BootID {
+		return "succeeded"
+	}
+	// The Node reported no new boot (checked above), so an executor
+	// image that reports no boot ID failed closed in the approved boot.
+	if unloaded && executorBootID == "" {
+		return "failed"
+	}
+	return ""
+}
+
+// kexecTermination reports whether a terminated executor container wrote
+// kexec_loaded=0 as its termination message, and the boot_id it reported.
+func kexecTermination(pod *corev1.Pod) (unloaded bool, bootID string) {
+	if pod == nil || (pod.Status.Phase != corev1.PodFailed && pod.Status.Phase != corev1.PodSucceeded) {
+		return false, ""
+	}
+	for _, container := range pod.Status.ContainerStatuses {
+		if container.Name != "node-maintenance" || container.State.Terminated == nil {
+			continue
+		}
+		for _, line := range strings.Split(container.State.Terminated.Message, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "kexec_loaded=0" {
+				unloaded = true
+			}
+			if value, ok := strings.CutPrefix(line, "boot_id="); ok {
+				bootID = value
+			}
+		}
+	}
+	return unloaded, bootID
+}
+
+func maintenanceNodeReady(node *corev1.Node) bool {
+	for _, condition := range node.Status.Conditions {
+		if condition.Type == corev1.NodeReady {
+			return condition.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// readKexecNode returns the exact target Node, or nil when it is unavailable.
+func readKexecNode(ctx context.Context, target ctrlclient.Reader, ds *breakglassv1alpha1.DebugSession) *corev1.Node {
+	node := &corev1.Node{}
+	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.NodeMaintenance.TargetNode}, node); err != nil ||
+		string(node.UID) != ds.Spec.NodeMaintenance.TargetNodeUID || !node.DeletionTimestamp.IsZero() {
+		return nil
+	}
+	return node
+}
+
+// uncordonKexecNode returns the Node to service only when this operation
+// owns the cordon and the outcome is proven. An unknown or interrupted kexec
+// keeps the Node cordoned with the operation annotation for an operator.
+func uncordonKexecNode(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, fence func() error) error {
+	status := ds.Status.NodeMaintenance
+	if !kexecExecutes(ds.Status.ResolvedTemplate.NodeMaintenance) || status.CordonedAt == nil ||
+		(status.CreateAttempted && status.Result != "succeeded" && status.Result != "failed") {
+		return nil
+	}
+	node := readKexecNode(ctx, target, ds)
+	if node == nil {
+		return fmt.Errorf("kexec-recovery Node is unavailable; retaining its cordon")
+	}
+	if node.Annotations[maintenanceCordonAnnotation] != status.OperationID {
+		return nil
+	}
+	if err := fence(); err != nil {
+		return err
+	}
+	base := node.DeepCopy()
+	node.Spec.Unschedulable = false
+	delete(node.Annotations, maintenanceCordonAnnotation)
+	if err := target.Patch(ctx, node, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil {
+		return fmt.Errorf("uncordon Node: %w", err)
 	}
 	return nil
 }
@@ -675,6 +983,11 @@ func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds
 		result = "succeeded"
 	case corev1.PodFailed:
 		result = "failed"
+	}
+	if kexecExecutes(ds.Status.ResolvedTemplate.NodeMaintenance) {
+		// A successful kexec kills the executor, so the Pod phase alone
+		// cannot distinguish a reboot from a failed helper.
+		result = kexecOutcome(ds.Status.NodeMaintenance, readKexecNode(ctx, target, ds), pod)
 	}
 	if result == "" && !isDebugSessionExpired(ds, time.Now().UTC()) {
 		return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil
@@ -818,6 +1131,9 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		} else if pod.Status.Phase == corev1.PodFailed {
 			observed = "failed"
 		}
+		if kexecExecutes(ds.Status.ResolvedTemplate.NodeMaintenance) {
+			observed = kexecOutcome(status, readKexecNode(ctx, target, ds), pod)
+		}
 		if observed != "" && status.Result == "" {
 			if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) {
 				current.PodUID = string(pod.UID)
@@ -829,6 +1145,14 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		}
 	} else if !apierrors.IsNotFound(err) {
 		return err
+	} else if kexecExecutes(ds.Status.ResolvedTemplate.NodeMaintenance) && status.CreateAttempted && status.Result == "" {
+		// A new boot ID still proves the reboot when the executor Pod is gone.
+		if observed := kexecOutcome(status, readKexecNode(ctx, target, ds), nil); observed != "" {
+			if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.Result = observed }); err != nil {
+				return err
+			}
+			status = ds.Status.NodeMaintenance
+		}
 	}
 	if status.CreateAttempted && status.Result == "" {
 		if err := c.patchMaintenanceStatus(ctx, ds, func(current *breakglassv1alpha1.NodeMaintenanceStatus) { current.Result = "unknown" }); err != nil {
@@ -913,6 +1237,9 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		if cleanupErr != nil {
 			return cleanupErr
 		}
+	}
+	if err := uncordonKexecNode(ctx, target, ds, configurationFence); err != nil {
+		return err
 	}
 	// The external Job manager never replaces a Pod, and both UIDs are now absent.
 	lease = &coordinationv1.Lease{}

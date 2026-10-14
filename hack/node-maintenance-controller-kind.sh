@@ -186,6 +186,19 @@ docker exec "$node_id" sh -eu -c '
 	bridge fdb replace 02:00:00:00:00:02 dev bg1551b master static vlan 100
 	bridge fdb replace 02:00:00:00:00:09 dev bg1551b master static vlan 101
 '
+# A disposable recovery bundle that is only hashed and never loaded: Kind
+# nodes are control planes, so the kexec lane proves validation and refusal.
+recovery_dir=/var/lib/bg1551-recovery
+kexec_sha256=$(docker exec "$node_id" sh -eu -c "
+	[ ! -e $recovery_dir ] || { echo 'Fixture recovery bundle collision' >&2; exit 1; }
+	mkdir -m 0755 $recovery_dir
+	printf 'disposable kernel\\n' > $recovery_dir/kernel
+	printf 'disposable initrd\\n' > $recovery_dir/initrd
+	printf 'console=ttyS0\\n' > $recovery_dir/cmdline
+	for file in kernel initrd cmdline; do sha256sum $recovery_dir/\$file | cut -d' ' -f1; done | paste -sd,
+")
+[[ "$kexec_sha256" =~ ^[a-f0-9]{64},[a-f0-9]{64},[a-f0-9]{64}$ ]] || { echo "Invalid recovery bundle digests" >&2; exit 1; }
+NODE_MAINTENANCE_KIND_KEXEC_SHA256="$kexec_sha256" \
 NODE_MAINTENANCE_KIND_KUBECONFIG="$PWD/$proof_dir/kubeconfig" \
 NODE_MAINTENANCE_KIND_NODE="$node" \
 NODE_MAINTENANCE_KIND_CONTAINER_ID="$node_id" \

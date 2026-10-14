@@ -4,10 +4,11 @@ SPDX-License-Identifier: Apache-2.0
 Kubernetes node-maintenance image
 
 Supported operations are fixed: node-recovery (read-only), exact-entry
-network-repair, and kexec-recovery-validate (validation only; never execution).
+network-repair, kexec-recovery-validate (validation only), and kexec-recovery
+(controller-drained reboot into a digest-pinned provider bundle).
 Controller-owned node, full repair-tuple approval, operation, and recording
 bindings are required. No broad neighbor/FDB flush, caller command, argument, path, image,
-unrestricted shell, kexec execution, or general-purpose toolbox is supported.
+unrestricted shell, caller-selected kernel, or general-purpose toolbox is supported.
 Read the generic runbooks in
 /usr/share/breakglass/runbooks/upstream/node-maintenance/ before use.
 An optional deployment-specific, read-only OCI runbook bundle may be mounted

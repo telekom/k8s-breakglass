@@ -148,13 +148,15 @@ spec:
                     maxLength: 15
                     type: string
                   entryMAC:
-                    description: entryMAC is the canonical lowercase colon-delimited
-                      six-byte MAC.
+                    description: |-
+                      entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
+                      required for network repair and forbidden for kexec-recovery.
                     pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
                     type: string
                   interface:
-                    description: interface is the neighbour interface or bridge FDB
-                      port.
+                    description: |-
+                      interface is the neighbour interface or bridge FDB port. It is required
+                      for network repair and forbidden for kexec-recovery.
                     maxLength: 15
                     type: string
                   neighborAddress:
@@ -184,8 +186,6 @@ spec:
                     maxLength: 15
                     type: string
                 required:
-                - entryMAC
-                - interface
                 - targetNode
                 - targetNodeUID
                 type: object
@@ -1701,6 +1701,18 @@ spec:
                     format: int64
                     minimum: 1
                     type: integer
+                  bootID:
+                    description: |-
+                      bootID is the Node boot ID observed before a kexec-recovery executor
+                      was created. A different boot ID on a Ready Node proves the reboot.
+                    maxLength: 128
+                    type: string
+                  cordonedAt:
+                    description: |-
+                      cordonedAt is when this operation cordoned the Node for kexec-recovery.
+                      It bounds the drain and marks the cordon as owned by this operation.
+                    format: date-time
+                    type: string
                   createAttempted:
                     description: createAttempted is persisted before calling Create.
                       Never retry a missing Pod.
@@ -4241,6 +4253,7 @@ spec:
                         enum:
                         - neighbor-replace
                         - bridge-fdb-replace
+                        - kexec-recovery
                         type: string
                       allowedTargets:
                         description: allowedTargets is an exact allowlist, not a selector
@@ -4255,13 +4268,15 @@ spec:
                               maxLength: 15
                               type: string
                             entryMAC:
-                              description: entryMAC is the canonical lowercase colon-delimited
-                                six-byte MAC.
+                              description: |-
+                                entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
+                                required for network repair and forbidden for kexec-recovery.
                               pattern: ^([0-9a-f]{2}:){5}[0-9a-f]{2}$
                               type: string
                             interface:
-                              description: interface is the neighbour interface or
-                                bridge FDB port.
+                              description: |-
+                                interface is the neighbour interface or bridge FDB port. It is required
+                                for network repair and forbidden for kexec-recovery.
                               maxLength: 15
                               type: string
                             neighborAddress:
@@ -4292,8 +4307,6 @@ spec:
                               maxLength: 15
                               type: string
                           required:
-                          - entryMAC
-                          - interface
                           - targetNode
                           - targetNodeUID
                           type: object
@@ -4312,6 +4325,54 @@ spec:
                           image.
                         pattern: ^.+@sha256:[a-f0-9]{64}$
                         type: string
+                      kexec:
+                        description: |-
+                          kexec pins the provider recovery bundle for a kexec-recovery profile.
+                          It is required for kexec-recovery and forbidden for every other action.
+                        properties:
+                          cmdlineSHA256:
+                            description: cmdlineSHA256 is the exact lowercase SHA-256
+                              of the cmdline file.
+                            pattern: ^[a-f0-9]{64}$
+                            type: string
+                          drainTimeoutSeconds:
+                            description: |-
+                              drainTimeoutSeconds bounds cordon and eviction before execution. On
+                              timeout the controller uncordons the Node and fails without executing.
+                            format: int32
+                            maximum: 3600
+                            minimum: 30
+                            type: integer
+                          hostPath:
+                            description: |-
+                              hostPath is the absolute provider-owned node directory holding exactly
+                              kernel, initrd and cmdline. It is mounted read-only at /recovery.
+                            maxLength: 255
+                            pattern: ^/[A-Za-z0-9._/-]+$
+                            type: string
+                          initrdSHA256:
+                            description: initrdSHA256 is the exact lowercase SHA-256
+                              of the initrd.
+                            pattern: ^[a-f0-9]{64}$
+                            type: string
+                          kernelSHA256:
+                            description: kernelSHA256 is the exact lowercase SHA-256
+                              of the kernel image.
+                            pattern: ^[a-f0-9]{64}$
+                            type: string
+                          profile:
+                            description: profile is the provider recovery profile
+                              name recorded in evidence.
+                            pattern: ^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$
+                            type: string
+                        required:
+                        - cmdlineSHA256
+                        - drainTimeoutSeconds
+                        - hostPath
+                        - initrdSHA256
+                        - kernelSHA256
+                        - profile
+                        type: object
                     required:
                     - action
                     - allowedTargets

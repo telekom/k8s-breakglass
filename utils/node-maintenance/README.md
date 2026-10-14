@@ -15,7 +15,14 @@ targeted incident interfaces:
   `link-cycle`, `restart-autonegotiation`, `neighbor-replace`, or
   `bridge-fdb-replace`;
 * `kexec-recovery-validate` validates fixed provider-owned recovery files and
-  digests. It never loads or executes a kernel.
+  digests. It never loads or executes a kernel;
+* `kexec-recovery` repeats that validation, re-checks the approved Node boot ID
+  and the controller deadline, then copies each file into a sealed private
+  memfd, verifies the copied bytes and loads exactly those with
+  `kexec_file_load` before rebooting into them. It re-checks the deadline before
+  loading and before rebooting. On any failure it unloads the kernel and exits
+  non-zero, and every exit reports `kexec_loaded=0|1|unknown` as the
+  termination message; a successful kexec never returns.
 
 The `node-recovery` preflight invokes `ethtool` against the exact controller-
 selected interface and records its result as `ethtool.txt`; the integration
@@ -29,8 +36,10 @@ before mutation. The mutation helper resolves the approved names once, then
 addresses links, neighbors, and FDB ports by kernel ifindex. It revalidates the
 exact bridge master ifindex immediately around an FDB request. There is no
 caller-selected shell, command, command argument,
-path, recovery image, route, or sysctl interface. The image has no kexec
-executable, package manager, compiler, packet capture tool, or port scanner.
+path, recovery image, route, or sysctl interface. The image has no general
+`kexec` tool, package manager, compiler, packet capture tool, or port scanner;
+the fixed `kexec-action` helper accepts only the three verified `/recovery`
+files and an approved boot ID.
 
 The former `flush-neighbors` operation is intentionally unavailable. Use the
 intent-specific `network-repair --action neighbor-replace` for one approved
@@ -151,16 +160,20 @@ or action-irrelevant options are rejected instead of ignored.
 Use separate immutable workloads and pin this image by digest. All contexts
 run with a read-only root, `allowPrivilegeEscalation: false`, RuntimeDefault
 seccomp, and capabilities dropped. Add only `NET_ADMIN` for `network-repair`;
-`node-recovery` and `kexec-recovery-validate` add none. Blanket privileged
-mode, `SYS_BOOT`, host PID, and host-root mounts are outside this contract.
+`node-recovery` and `kexec-recovery-validate` add none. Only `kexec-recovery`
+adds `SYS_BOOT`, and it needs the host PID namespace (the kernel refuses a kexec
+reboot from a child PID namespace) and an unconfined seccomp profile (runtime
+default profiles deny `kexec_file_load`). Blanket privileged mode, host
+network for kexec, and host-root mounts are outside this contract.
 
 Kexec validation consumes only a distinct read-only `/recovery` mount with
 fixed files `kernel`, `initrd`, and `cmdline`. Exact provider profile and
 SHA-256 values come from immutable controller fields. The validator does not
-evaluate cmdline contents or establish bootability. Kernel signature,
-lockdown/measured-boot compatibility, device quiescence, rollback, health
-checking, and execution remain unresolved provider responsibilities documented
-in [`runbooks/kexec-recovery-validation.md`](runbooks/kexec-recovery-validation.md).
+evaluate cmdline contents or establish bootability. Kernel signature and
+lockdown/measured-boot compatibility, the bundle itself and its rollback remain
+provider responsibilities. The typed controller drains the Node before
+`kexec-recovery` and proves the reboot by a new boot ID; see
+[`runbooks/kexec-recovery-validation.md`](runbooks/kexec-recovery-validation.md).
 
 The Alpine runtime contains `/bin/sh` because the fixed helpers are POSIX
 scripts. An entrypoint override is an external admission-policy boundary, not

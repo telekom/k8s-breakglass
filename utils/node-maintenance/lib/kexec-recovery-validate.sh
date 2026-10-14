@@ -16,15 +16,50 @@ kernel_max_bytes=268435456
 initrd_max_bytes=536870912
 cmdline_max_bytes=4096
 
-usage() {
-	cat >&2 <<'EOF'
-Usage:
-  kexec-recovery-validate --target-node NODE --recovery-profile PROFILE \
-    --evidence-dir /evidence[/SAFE_CHILD] --confirm KEXEC-RECOVERY-VALIDATE
+# One script serves both commands so validation and execution share every
+# input check. Only the kexec-recovery name may load and execute a kernel.
+case "${0##*/}" in
+	kexec-recovery)
+		mode_action=kexec-recovery
+		mode_confirmation=KEXEC-RECOVERY
+		;;
+	*)
+		mode_action=kexec-recovery-validate
+		mode_confirmation=KEXEC-RECOVERY-VALIDATE
+		;;
+esac
 
-This command only validates provider-owned files at the fixed read-only paths
-/recovery/kernel, /recovery/initrd, and /recovery/cmdline against immutable
-controller-provided SHA-256 digests. It never loads or executes a kernel.
+# The controller keeps the Node cordoned unless a terminated executor proves
+# that no kexec image is left loaded, so every exit reports the kernel state
+# and the boot it ran in.
+# shellcheck disable=SC2317 # invoked only by the EXIT trap
+record_kexec_state() {
+	[ "$mode_action" = kexec-recovery ] || return 0
+	[ -w /dev/termination-log ] || return 0
+	kexec_state=$(cat /sys/kernel/kexec_loaded 2>/dev/null || true)
+	case "$kexec_state" in
+		0 | 1) ;;
+		*) kexec_state=unknown ;;
+	esac
+	# The boot ID lets the controller tell a refusal in the approved boot from
+	# a kubelet re-run of the executor after the kexec.
+	current_boot_id=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || true)
+	printf 'kexec_loaded=%s\nboot_id=%s\n' "$kexec_state" "$current_boot_id" >/dev/termination-log || true
+}
+trap 'record_kexec_state' EXIT
+
+usage() {
+	cat >&2 <<EOF
+Usage:
+  $mode_action --target-node NODE --recovery-profile PROFILE \
+    --evidence-dir /evidence[/SAFE_CHILD] --confirm $mode_confirmation
+
+kexec-recovery-validate only validates provider-owned files at the fixed
+read-only paths /recovery/kernel, /recovery/initrd, and /recovery/cmdline
+against immutable controller-provided SHA-256 digests. kexec-recovery runs the
+same validation and then loads exactly those verified files and reboots into
+them; it requires the controller-bound boot ID, SYS_BOOT, and the host PID
+namespace, and refuses to run after the approved action deadline.
 EOF
 }
 
@@ -146,9 +181,15 @@ done
 
 validate_target "$target_node"
 validate_value "recovery profile" "$profile"
-validate_confirmation KEXEC-RECOVERY-VALIDATE "$confirmation"
+validate_confirmation "$mode_confirmation" "$confirmation"
 validate_recording_context
-validate_approved_action kexec-recovery-validate
+validate_approved_action "$mode_action"
+if [ "$mode_action" = kexec-recovery ]; then
+	boot_id=${BREAKGLASS_KEXEC_BOOT_ID:-}
+	validate_value "BREAKGLASS_KEXEC_BOOT_ID" "$boot_id"
+	[ -n "${BREAKGLASS_ACTION_DEADLINE_UNIX:-}" ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX is required for kexec-recovery"
+	validate_action_deadline
+fi
 
 provider_profile=${BREAKGLASS_KEXEC_PROFILE:-}
 kernel_sha256=${BREAKGLASS_KEXEC_KERNEL_SHA256:-}
@@ -170,20 +211,23 @@ initrd_bytes=$asset_bytes
 validate_recovery_file cmdline "$cmdline_path" "$cmdline_max_bytes"
 cmdline_bytes=$asset_bytes
 
-operation_tuple_digest=$(sha256_text "target_node=$target_node&action=kexec-recovery-validate&recovery_profile=$profile&kernel_sha256=$kernel_sha256&initrd_sha256=$initrd_sha256&cmdline_sha256=$cmdline_sha256&confirmation=$confirmation")
+operation_tuple_digest=$(sha256_text "target_node=$target_node&action=$mode_action&recovery_profile=$profile&kernel_sha256=$kernel_sha256&initrd_sha256=$initrd_sha256&cmdline_sha256=$cmdline_sha256&confirmation=$confirmation")
 prepare_evidence_dir "$evidence_dir"
 acquire_operation_lock "$evidence_dir" "$operation_tuple_digest"
-trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true' EXIT
+trap 'cleanup_evidence_temporary_candidates || true; release_operation_lock || true; record_kexec_state' EXIT
 assert_no_active_legacy_locks || die "an older node-maintenance operation is active or requires migration"
 cleanup_evidence_temporary_candidates || die "cannot clean stale evidence temporary files"
-bundle=$(new_bundle "$evidence_dir" kexec-recovery-validate)
-write_metadata "$bundle/metadata" kexec-recovery-validate "$target_node" not-applicable validation-only
+bundle=$(new_bundle "$evidence_dir" "$mode_action")
+if [ "$mode_action" = kexec-recovery ]; then
+	write_metadata "$bundle/metadata" "$mode_action" "$target_node" not-applicable kexec-execute
+else
+	write_metadata "$bundle/metadata" "$mode_action" "$target_node" not-applicable validation-only
+fi
 {
 	printf 'recovery_profile=%s\n' "$profile"
 	printf 'kernel_path=%s\nkernel_bytes=%s\n' "$kernel_path" "$kernel_bytes"
 	printf 'initrd_path=%s\ninitrd_bytes=%s\n' "$initrd_path" "$initrd_bytes"
 	printf 'cmdline_path=%s\ncmdline_bytes=%s\n' "$cmdline_path" "$cmdline_bytes"
-	printf 'execution_performed=false\n'
 } | append_evidence "$bundle/metadata"
 record_event operation-started accepted
 
@@ -208,7 +252,7 @@ for digest_label in kernel initrd cmdline; do
 done
 
 if [ "$verification_failed" = true ]; then
-	printf 'validation_result=verification-failed\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	printf 'execution_performed=false\nvalidation_result=verification-failed\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
 	printf 'validation_result=verification-failed\nexecution_performed=false\n' | write_evidence "$bundle/validation-result.txt"
 	record_event operation-completed verification-failed
 	printf 'Recovery input verification failed; kexec was not executed. Evidence: %s\n' "$bundle" >&2
@@ -216,14 +260,42 @@ if [ "$verification_failed" = true ]; then
 fi
 
 if [ "$digest_mismatch" = true ]; then
-	printf 'validation_result=digest-mismatch\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	printf 'execution_performed=false\nvalidation_result=digest-mismatch\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
 	printf 'validation_result=digest-mismatch\nexecution_performed=false\n' | write_evidence "$bundle/validation-result.txt"
 	record_event operation-completed validation-failed
 	printf 'Recovery inputs were rejected; kexec was not executed. Evidence: %s\n' "$bundle" >&2
 	exit 1
 fi
 
-	printf 'validation_result=provider-inputs-verified\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+if [ "$mode_action" = kexec-recovery-validate ]; then
+	printf 'execution_performed=false\nvalidation_result=provider-inputs-verified\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
 	printf 'validation_result=provider-inputs-verified\nexecution_performed=false\nprovider_executor_required=true\n' | write_evidence "$bundle/validation-result.txt"
-record_event operation-completed validated-not-executed
-printf 'Provider-owned recovery inputs matched their immutable digests; kexec was NOT executed. Evidence: %s\n' "$bundle"
+	record_event operation-completed validated-not-executed
+	printf 'Provider-owned recovery inputs matched their immutable digests; kexec was NOT executed. Evidence: %s\n' "$bundle"
+	exit 0
+fi
+
+# kexec-action re-hashes the opened descriptors, re-checks the boot ID and the
+# deadline before loading and before rebooting, and unloads the kernel on every
+# failure. A successful kexec never returns.
+validate_action_deadline
+printf 'validation_result=provider-inputs-verified\nexecution_requested_at_utc=%s\nboot_id_before=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$boot_id" | append_evidence "$bundle/metadata"
+record_event kexec-requested accepted
+printf 'Provider-owned recovery inputs verified; executing kexec on %s now. Evidence: %s\n' "$target_node" "$bundle"
+# Copying and hashing up to 768 MiB can outlast the 10-second evidence bound,
+# so the approved deadline bounds kexec-action instead. kexec-action ignores
+# SIGTERM from the kernel load on, so the timeout cannot interrupt load, sync
+# and reboot; before the load a timeout leaves nothing loaded.
+# shellcheck disable=SC2154 # action_deadline is set by validate_action_deadline in common.sh
+[ -n "$action_deadline" ] || die "BREAKGLASS_ACTION_DEADLINE_UNIX is required to execute kexec; kexec was not executed"
+capture_timeout_seconds=$((action_deadline - $(date +%s)))
+[ "$capture_timeout_seconds" -gt 0 ] || die "approved action deadline expired; kexec was not executed"
+set +e
+capture "$bundle/action-kexec.txt" kexec-action "$boot_id" "$kernel_sha256" "$initrd_sha256" "$cmdline_sha256" "$action_deadline"
+action_status=$?
+set -e
+printf 'execution_performed=false\nexecution_result=failed\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+printf 'validation_result=provider-inputs-verified\nexecution_performed=false\nexecution_result=failed\n' | write_evidence "$bundle/validation-result.txt"
+record_event operation-completed kexec-failed
+printf 'kexec did not take place (exit %s); any loaded kernel was unloaded and the node keeps running. Evidence: %s\n' "$action_status" "$bundle" >&2
+exit 1

@@ -253,6 +253,12 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 		if s.Result != "" {
 			maintenance.WithResult(s.Result)
 		}
+		if s.BootID != "" {
+			maintenance.WithBootID(s.BootID)
+		}
+		if s.CordonedAt != nil {
+			maintenance.WithCordonedAt(*s.CordonedAt)
+		}
 		result.WithNodeMaintenance(maintenance)
 	}
 	if status.ConnectionLease != nil {
@@ -1025,6 +1031,11 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 		}
 		if profile.DryRun {
 			maintenance.WithDryRun(true)
+		}
+		if k := profile.Kexec; k != nil {
+			maintenance.WithKexec(ac.NodeMaintenanceKexec().WithProfile(k.Profile).WithHostPath(k.HostPath).
+				WithKernelSHA256(k.KernelSHA256).WithInitrdSHA256(k.InitrdSHA256).WithCmdlineSHA256(k.CmdlineSHA256).
+				WithDrainTimeoutSeconds(k.DrainTimeoutSeconds))
 		}
 		result.WithNodeMaintenance(maintenance)
 	}

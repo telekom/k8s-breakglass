@@ -11,6 +11,15 @@ COPY cmd/network-action/ ./
 RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
       go build -trimpath -ldflags='-s -w' -o /out/network-action .
 
+FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kexec-action-builder
+
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY cmd/kexec-action/ ./
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+      go build -trimpath -ldflags='-s -w' -o /out/kexec-action .
+
 # The manifest digest is pinned so every architecture starts from the same
 # reviewed Alpine release. BuildKit resolves the selected architecture.
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
@@ -31,10 +40,12 @@ RUN apk add --no-cache \
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
 COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
+COPY --from=kexec-action-builder /out/kexec-action /usr/local/sbin/kexec-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery-validate
+COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery
 COPY MOTD /etc/motd
 COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
 COPY runbooks/network-repair.md /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
@@ -43,9 +54,11 @@ COPY runbooks/kexec-recovery-validation.md /usr/share/breakglass/runbooks/upstre
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/sbin/network-action \
+        /usr/local/sbin/kexec-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
         /usr/local/libexec/node-maintenance/kexec-recovery-validate \
+        /usr/local/libexec/node-maintenance/kexec-recovery \
     && chmod 0444 /usr/local/libexec/node-maintenance/common.sh /etc/motd \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md \
@@ -56,7 +69,7 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
     && chmod 0755 /usr/share/breakglass/runbooks/internal
 
 LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
-      org.opencontainers.image.description="Allowlisted, evidence-producing node network repair and recovery preflight helpers" \
+      org.opencontainers.image.description="Allowlisted, evidence-producing node network repair, recovery preflight, and kexec recovery helpers" \
       org.opencontainers.image.source="https://github.com/telekom/k8s-breakglass" \
       org.opencontainers.image.documentation="https://github.com/telekom/k8s-breakglass/blob/main/docs/node-maintenance.md" \
       org.opencontainers.image.licenses="Apache-2.0" \
@@ -65,14 +78,14 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate" \
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
-      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN"
+      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight
-# context, a separate NET_ADMIN-only repair context, and a no-capability kexec
-# validation context. The image has no kexec executable or SYS_BOOT capability;
+# context, a separate NET_ADMIN-only repair context, a no-capability kexec
+# validation context, and a separate SYS_BOOT-only kexec execution context.
 # privileged is not part of this contract. The dispatcher rejects every other
 # helper name.
 # hadolint ignore=DL3002

@@ -173,3 +173,72 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	resolved.Constraints.IdleTimeout = "1m"
 	require.ErrorContains(t, ValidateNodeMaintenanceSession(resolved, &request), "idleTimeout")
 }
+
+func kexecTestProfile() *DebugSessionNodeMaintenance {
+	return &DebugSessionNodeMaintenance{
+		Action: NodeMaintenanceActionKexecRecovery, Image: "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64),
+		AllowedTargets: []NodeMaintenanceTarget{{TargetNode: "node-a", TargetNodeUID: "node-uid"}},
+		Kexec: &NodeMaintenanceKexec{Profile: "provider-recovery", HostPath: "/var/lib/provider/recovery",
+			KernelSHA256: strings.Repeat("1", 64), InitrdSHA256: strings.Repeat("2", 64), CmdlineSHA256: strings.Repeat("3", 64),
+			DrainTimeoutSeconds: 300},
+	}
+}
+
+func TestNodeMaintenanceKexecTargetsOnlyAnExactNode(t *testing.T) {
+	profile := kexecTestProfile()
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid"}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &target))
+	for name, mutate := range map[string]func(*NodeMaintenanceTarget){
+		"other node":   func(v *NodeMaintenanceTarget) { v.TargetNode = "node-b" },
+		"replaced uid": func(v *NodeMaintenanceTarget) { v.TargetNodeUID = "replacement" },
+		"interface":    func(v *NodeMaintenanceTarget) { v.Interface = "eth0" },
+		"mac":          func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" },
+		"address":      func(v *NodeMaintenanceTarget) { v.NeighborAddress = "192.0.2.2" },
+		"bridge":       func(v *NodeMaintenanceTarget) { v.Bridge = "br0" },
+		"vlan":         func(v *NodeMaintenanceTarget) { v.VLAN = kptr.To(int32(100)) },
+		"vrf":          func(v *NodeMaintenanceTarget) { v.VRF = "vrf-red" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := target
+			mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+}
+
+func TestNodeMaintenanceKexecProfileIsPinned(t *testing.T) {
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid"}
+	for name, mutate := range map[string]func(*DebugSessionNodeMaintenance){
+		"missing bundle":     func(p *DebugSessionNodeMaintenance) { p.Kexec = nil },
+		"relative path":      func(p *DebugSessionNodeMaintenance) { p.Kexec.HostPath = "var/lib/recovery" },
+		"root path":          func(p *DebugSessionNodeMaintenance) { p.Kexec.HostPath = "/" },
+		"parent traversal":   func(p *DebugSessionNodeMaintenance) { p.Kexec.HostPath = "/var/lib/../../etc" },
+		"unclean path":       func(p *DebugSessionNodeMaintenance) { p.Kexec.HostPath = "/var/lib//recovery/" },
+		"uppercase digest":   func(p *DebugSessionNodeMaintenance) { p.Kexec.KernelSHA256 = strings.Repeat("A", 64) },
+		"short digest":       func(p *DebugSessionNodeMaintenance) { p.Kexec.InitrdSHA256 = "abc" },
+		"missing digest":     func(p *DebugSessionNodeMaintenance) { p.Kexec.CmdlineSHA256 = "" },
+		"bad profile":        func(p *DebugSessionNodeMaintenance) { p.Kexec.Profile = "Provider Recovery" },
+		"short drain":        func(p *DebugSessionNodeMaintenance) { p.Kexec.DrainTimeoutSeconds = 5 },
+		"unbounded drain":    func(p *DebugSessionNodeMaintenance) { p.Kexec.DrainTimeoutSeconds = 7200 },
+		"bundle on repair":   func(p *DebugSessionNodeMaintenance) { p.Action = "neighbor-replace" },
+		"unsupported action": func(p *DebugSessionNodeMaintenance) { p.Action = "reboot" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			profile := kexecTestProfile()
+			mutate(profile)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &target))
+		})
+	}
+}
+
+func TestNodeMaintenanceKexecDurationCoversDrainAndReturn(t *testing.T) {
+	spec := DebugSessionTemplateSpec{
+		TargetNamespace: NodeMaintenanceNamespace, Approvers: &DebugSessionApprovers{Groups: []string{"platform-emergency"}},
+		Constraints: &DebugSessionConstraints{MaxDuration: "10m"}, NodeMaintenance: kexecTestProfile(),
+	}
+	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec))
+	spec.Constraints.MaxDuration = "9m"
+	require.ErrorContains(t, ValidateNodeMaintenanceTemplate(&spec), "maxDuration must cover")
+	spec.NodeMaintenance.DryRun = true
+	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec), "a validate-only profile never drains or reboots")
+}

@@ -13,9 +13,11 @@ independent approvals, per-node Leases and cleanup, see
 The standalone [`utils/node-maintenance`](../utils/node-maintenance/) image is
 for a narrowly scoped node-network incident workflow. It supports a read-only
 `node-recovery` preflight, exact-entry neighbor and bridge-FDB repair alongside
-the interface actions, and fail-closed `kexec-recovery-validate`. The kexec
-interface verifies fixed provider-owned read-only files and immutable digests;
-it cannot execute or claim bootability. It is not a
+the interface actions, fail-closed `kexec-recovery-validate`, and
+controller-driven `kexec-recovery`. The kexec interfaces verify fixed
+provider-owned read-only files and immutable digests; only the separately
+approved `kexec-recovery` loads and executes them, and neither claims
+bootability. It is not a
 replacement for a host-debug image and intentionally does not document an
 unrestricted shell or ship a general-purpose network toolbox.
 
@@ -94,11 +96,10 @@ operational maintenance profile.
 
 The controller remains responsible for pinning the image by digest, enforcing
 one active workload per node, expiring approvals independently, bounding pod
-and evidence-volume lifetimes, and recording cleanup. An actual kexec executor
-is deliberately unresolved: a provider must separately define immutable
-signed assets, platform/kernel compatibility, lockdown and measured-boot
-policy, health/rollback behavior, node quiescence, its own approval, and a
-bounded cleanup contract before execution can be considered.
+and evidence-volume lifetimes, and recording cleanup. For `kexec-recovery`
+the typed controller also drains the Node and proves the reboot; a provider
+still owns the signed bundle, platform/kernel compatibility, lockdown and
+measured-boot policy, and the bundle's rollback.
 
 Network mutations use pinned kernel ifindexes. Linux does not expose an atomic
 FDB add that also asserts the expected master ifindex, a persistent netdevice

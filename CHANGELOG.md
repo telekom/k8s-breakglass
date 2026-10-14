@@ -72,6 +72,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before releasing the node Lease. Their templates can bind to the approved
   Node through `.target.nodeName` and `.target.nodeUID`. Broad neighbour or FDB
   flushes remain rejected.
+- Node-maintenance templates support `action: kexec-recovery` with a pinned
+  `kexec` bundle (host path, kernel/initrd/cmdline SHA-256, drain timeout).
+  A `dryRun` profile only validates the bundle. Execution refuses control-plane
+  Nodes, records the boot ID, cordons and drains the Node through the Eviction
+  API, then runs the new `kexec-recovery` helper with `SYS_BOOT` only, which
+  loads the verified descriptors with `kexec_file_load` and reboots. A failure
+  counts as proven only when the executor reports `kexec_loaded=0` in the
+  approved boot; otherwise a new boot ID on a Ready Node counts as success (it
+  proves a reboot, not which kernel booted). Anything else keeps the Node
+  cordoned.
+  `allowedTargets[].interface` and `entryMAC` are now optional in the schema
+  and remain required by validation for network repair.
 - Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
   `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
   Explicit labels override matching chart defaults. Empty maps preserve current

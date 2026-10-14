@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v9",
+  "contractVersion": "node-maintenance.integration/v10",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -25,7 +25,8 @@
       "node-recovery": {"capabilitiesAdd": []},
       "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]},
       "network-repair-preview": {"capabilitiesAdd": [], "execution": false},
-      "kexec-recovery-validate": {"capabilitiesAdd": [], "execution": false}
+      "kexec-recovery-validate": {"capabilitiesAdd": [], "execution": false},
+      "kexec-recovery": {"capabilitiesAdd": ["SYS_BOOT"], "hostPID": true, "seccompProfile": "unconfined", "integrationRunsWithCapabilitiesAdd": [], "execution": "fail-closed-only"}
     }
   },
   "controllerBindings": {
@@ -126,6 +127,11 @@
     "kexec-digest-mismatch",
     "kexec-caller-selected-path",
     "kexec-writable-mount",
+    "kexec-execute-without-sys-boot",
+    "kexec-boot-id-mismatch",
+    "kexec-expired-deadline",
+    "kexec-missing-deadline",
+    "kexec-missing-boot-id",
     "unknown-dispatch-command"
   ]
 }

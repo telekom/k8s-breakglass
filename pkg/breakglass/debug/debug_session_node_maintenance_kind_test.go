@@ -44,7 +44,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 	nodeName, image := os.Getenv("NODE_MAINTENANCE_KIND_NODE"), os.Getenv("NODE_MAINTENANCE_KIND_IMAGE")
 	containerID := os.Getenv("NODE_MAINTENANCE_KIND_CONTAINER_ID")
 	actionFilter := os.Getenv("NODE_MAINTENANCE_KIND_ACTION")
-	require.Contains(t, []string{"", "neighbor", "fdb"}, actionFilter)
+	require.Contains(t, []string{"", "neighbor", "fdb", "kexec"}, actionFilter)
 	require.Regexp(t, "^[0-9a-f]{64}$", containerID)
 	require.True(t, strings.HasPrefix(nodeName, "node-maintenance-proof-") && strings.HasSuffix(nodeName, "-control-plane"))
 	require.Contains(t, image, "@sha256:")
@@ -125,28 +125,48 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		// contention, cancellation and expiry lifecycle of the full lanes.
 		focused bool
 		target  breakglassv1alpha1.NodeMaintenanceTarget
+		kexec   *breakglassv1alpha1.NodeMaintenanceKexec
+		// helperFails expects the fixed helper to reject its pinned inputs.
+		helperFails bool
 	}{
 		// The preview runs first so the stale fixture entry is still present.
-		{"preview", "neighbor", "neighbor-replace", true, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}},
-		{"neighbor", "neighbor", "neighbor-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}},
-		{"vrf", "neighbor", "neighbor-replace", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551v", VRF: "bg1551vrf", NeighborAddress: "198.51.100.2", EntryMAC: "02:00:00:00:00:02"}},
-		{"fdb", "fdb", "bridge-fdb-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}},
+		{"preview", "neighbor", "neighbor-replace", true, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
+		{"neighbor", "neighbor", "neighbor-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
+		{"vrf", "neighbor", "neighbor-replace", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551v", VRF: "bg1551vrf", NeighborAddress: "198.51.100.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
+		{"fdb", "fdb", "bridge-fdb-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}, nil, false},
+		// The single Kind Node is the control plane: validation reads the
+		// pinned bundle without privilege, a wrong digest fails closed, and
+		// a reboot request for that Node is refused before any cordon.
+		{"kexec-validate", "kexec", breakglassv1alpha1.NodeMaintenanceActionKexecRecovery, true, true, breakglassv1alpha1.NodeMaintenanceTarget{}, kindKexec(""), false},
+		{"kexec-digest-mismatch", "kexec", breakglassv1alpha1.NodeMaintenanceActionKexecRecovery, true, true, breakglassv1alpha1.NodeMaintenanceTarget{}, kindKexec(strings.Repeat("0", 64)), true},
+		{"kexec-control-plane", "kexec", breakglassv1alpha1.NodeMaintenanceActionKexecRecovery, false, true, breakglassv1alpha1.NodeMaintenanceTarget{}, kindKexec(""), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if actionFilter != "" && actionFilter != tc.lane {
 				t.Skip("the other exact repair action runs in its independent CI lane")
 			}
+			if actionFilter == "" && tc.lane == "kexec" {
+				t.Skip("kexec cases need the recovery bundle staged by the kexec lane")
+			}
+			if tc.lane == "kexec" {
+				require.NotNil(t, tc.kexec, "the kexec lane must stage NODE_MAINTENANCE_KIND_KEXEC_SHA256")
+			}
 			tc.target.TargetNode, tc.target.TargetNodeUID = nodeName, string(node.UID)
+			maxDuration := "5m"
+			if tc.kexec != nil {
+				maxDuration = "10m"
+			}
 			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "maintenance-" + tc.name},
 				Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
 					TargetNamespace: breakglassv1alpha1.NodeMaintenanceNamespace,
 					Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"requester@example.com"}, Clusters: []string{cc.Name}},
 					Approvers:       &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
-					Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "5m", DefaultDuration: "5m"},
+					Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: maxDuration, DefaultDuration: "5m"},
 					NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: tc.action, Image: image, DryRun: tc.dryRun,
-						AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{tc.target}},
+						AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{tc.target}, Kexec: tc.kexec},
 				}}
 			require.NoError(t, hub.Create(ctx, template))
+			rejection := ""
 			requestSession := func(target breakglassv1alpha1.NodeMaintenanceTarget, duration string, expectedStatus int, overrides ...func(*CreateDebugSessionRequest)) *breakglassv1alpha1.DebugSession {
 				t.Helper()
 				input := CreateDebugSessionRequest{
@@ -167,6 +187,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 				approver = previousActor
 				require.Equal(t, expectedStatus, response.Code, response.Body.String())
 				if expectedStatus != http.StatusCreated {
+					rejection = response.Body.String()
 					return nil
 				}
 				var created DebugSessionDetailResponse
@@ -184,6 +205,15 @@ func TestNodeMaintenanceKind(t *testing.T) {
 				reconcile(session)
 				return session
 			}
+			if tc.kexec != nil && !tc.dryRun {
+				requestSession(tc.target, "5m", http.StatusBadRequest)
+				require.Contains(t, rejection, "control-plane")
+				live := &corev1.Node{}
+				require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, live))
+				require.False(t, live.Spec.Unschedulable, "a refused kexec never cordons")
+				require.NotContains(t, live.Annotations, maintenanceCordonAnnotation)
+				return
+			}
 			if tc.focused {
 				session := createSession("approved", tc.target)
 				approver = "requester@example.com"
@@ -198,12 +228,27 @@ func TestNodeMaintenanceKind(t *testing.T) {
 					if err := hub.Get(ctx, key, pod); err != nil {
 						return false
 					}
+					if tc.helperFails {
+						return pod.Status.Phase == corev1.PodFailed
+					}
 					if pod.Status.Phase == corev1.PodFailed {
 						t.Fatalf("fixed helper failed: %#v", pod.Status.ContainerStatuses)
 					}
 					return pod.Status.Phase == corev1.PodSucceeded
 				}, 90*time.Second, time.Second)
-				if tc.dryRun {
+				expected := "succeeded"
+				if tc.kexec != nil {
+					container := pod.Spec.Containers[0]
+					require.Empty(t, container.SecurityContext.Capabilities.Add, "validation runs without SYS_BOOT")
+					require.False(t, pod.Spec.HostPID)
+					live := &corev1.Node{}
+					require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, live))
+					require.False(t, live.Spec.Unschedulable, "validation never cordons")
+					require.Equal(t, node.Status.NodeInfo.BootID, live.Status.NodeInfo.BootID, "validation never reboots")
+					if tc.helperFails {
+						expected = "failed"
+					}
+				} else if tc.dryRun {
 					require.Empty(t, pod.Spec.Containers[0].SecurityContext.Capabilities.Add, "a preview runs without NET_ADMIN")
 					require.Equal(t, "02:00:00:00:00:03", neighborMACs("bg1551n")["192.0.2.2"], "a preview never changes the entry")
 				} else {
@@ -212,7 +257,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 					require.Equal(t, "02:00:00:00:00:09", macs["198.51.100.9"], "VRF decoy unchanged")
 				}
 				reconcile(session)
-				require.Equal(t, "succeeded", session.Status.NodeMaintenance.Result)
+				require.Equal(t, expected, session.Status.NodeMaintenance.Result)
 				require.True(t, session.Status.NodeMaintenance.ResultAudited)
 				require.Eventually(t, func() bool {
 					err := controller.cleanupResources(ctx, session)
@@ -342,4 +387,18 @@ func TestNodeMaintenanceKind(t *testing.T) {
 			}, &coordinationv1.Lease{})))
 		})
 	}
+}
+
+// kindKexec pins the disposable recovery bundle that the kexec lane stages on
+// the Kind node. An explicit kernel digest replaces the staged one.
+func kindKexec(kernel string) *breakglassv1alpha1.NodeMaintenanceKexec {
+	digests := strings.Split(os.Getenv("NODE_MAINTENANCE_KIND_KEXEC_SHA256"), ",")
+	if len(digests) != 3 {
+		return nil
+	}
+	if kernel == "" {
+		kernel = digests[0]
+	}
+	return &breakglassv1alpha1.NodeMaintenanceKexec{Profile: "kind-recovery", HostPath: "/var/lib/bg1551-recovery",
+		KernelSHA256: kernel, InitrdSHA256: digests[1], CmdlineSHA256: digests[2], DrainTimeoutSeconds: 30}
 }

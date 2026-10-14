@@ -4,13 +4,13 @@ SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 SPDX-License-Identifier: CC-BY-4.0
 -->
 
-# Kexec recovery input validation
+# Kexec recovery input validation and execution
 
-This procedure verifies an immutable provider recovery bundle. It does not
-load a kernel, call kexec, reboot, or claim that the bundle will boot. Generic
-kexec execution is intentionally unavailable because kernel signatures,
-lockdown, measured boot, crash-kernel reservations, device quiescence, and
-rollback are platform-specific safety decisions.
+`kexec-recovery-validate` verifies an immutable provider recovery bundle. It
+does not load a kernel, call kexec, reboot, or claim that the bundle will boot.
+`kexec-recovery` is the separately approved execution of the same bundle; see
+[Execution](#execution). Kernel signatures, lockdown, measured boot and the
+bundle's own rollback remain platform-specific provider decisions.
 
 Obtain an approval dedicated to `kexec-recovery-validate`; approval of node
 preflight or network repair does not authorize it. The controller-owned
@@ -60,8 +60,44 @@ successfully calculated but differs from its controller-provided value.
 captured, read, or parsed. Both outcomes preserve
 `execution_performed=false`; neither authorizes a recovery execution.
 
-Any eventual executor is an unresolved provider responsibility. It needs its
-own separately approved immutable workload, kernel/platform compatibility and
-signature policy, boot-health and rollback contract, node exclusivity, bounded
-timeout, complete recording, and cleanup. Do not add that executor by passing
-commands, arguments, paths, or images to this validation helper.
+## Execution
+
+`kexec-recovery` needs its own approval and runs only from the typed
+node-maintenance controller (`nodeMaintenance.action: kexec-recovery`), never
+from a hand-written workload. Before the executor exists the controller records
+the Node boot ID, cordons the Node and evicts its Pods within
+`drainTimeoutSeconds`. The executor then receives, in addition to the
+validation inputs:
+
+* `BREAKGLASS_APPROVED_ACTION=kexec-recovery` and `--confirm KEXEC-RECOVERY`;
+* `BREAKGLASS_KEXEC_BOOT_ID`, the boot ID recorded before the drain;
+* `BREAKGLASS_ACTION_DEADLINE_UNIX`, the session expiry.
+
+It runs with `SYS_BOOT` only, the host PID namespace and an unconfined seccomp
+profile. After the digest checks it verifies the deadline and records a
+`kexec-requested` event. The fixed `kexec-action` helper re-reads
+`/proc/sys/kernel/random/boot_id`, copies each file into a sealed private
+memfd while hashing it, loads exactly those verified copies with
+`kexec_file_load` (a later write to the host file cannot change them), confirms
+`/sys/kernel/kexec_loaded`, syncs and reboots with `LINUX_REBOOT_CMD_KEXEC`.
+It re-checks the approved deadline immediately before the load and again before
+the reboot, unloading the kernel if the deadline passed. The reboot works
+like `kexec -e`: user space is not shut down cleanly, which is why the Node is
+drained first. On any failure it unloads the kernel, records
+`execution_result=failed` and exits 1 while the Node keeps running. On every
+exit the executor writes `kexec_loaded=0|1|unknown` from
+`/sys/kernel/kexec_loaded` and the current `boot_id` to `/dev/termination-log`.
+
+The controller decides the outcome only on a Ready Node: a terminated executor
+that reported `kexec_loaded=0` in the approved boot is `failed`; otherwise a
+new boot ID is `succeeded`, which proves a reboot, not which kernel booted. An
+executor killed without that report may have left a kernel loaded, so its
+outcome stays unknown.
+Evidence in `/evidence` is lost with a successful reboot; the audited result
+and boot IDs are the receipt. Cleanup uncordons the Node only for a proven
+outcome. An unknown or interrupted kexec leaves the Node cordoned with the
+`breakglass.t-caas.telekom.com/maintenance-cordon` annotation for an operator
+to inspect, for example through the out-of-band console; if
+`/sys/kernel/kexec_loaded` is `1`, unload it with `kexec -u` or reboot before
+uncordoning. Do not add another
+executor by passing commands, arguments, paths, or images to these helpers.

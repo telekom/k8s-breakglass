@@ -130,6 +130,29 @@ assert_rejected 'kexec validation rejects caller-selected paths' "unsupported op
 assert_rejected_with_message 'duplicate kexec option is rejected before provider validation' '--target-node may be supplied only once' "$kexec_validate" \
 	--target-node node-a --target-node node-a --recovery-profile rescue-a \
 	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
+# The image installs the same script as kexec-recovery; the name selects execution.
+mkdir -p "$tmp_dir/kexec-bin"
+ln -s "$root_dir/lib/common.sh" "$tmp_dir/kexec-bin/common.sh"
+ln -s "$kexec_validate" "$tmp_dir/kexec-bin/kexec-recovery"
+kexec_execute="$tmp_dir/kexec-bin/kexec-recovery"
+assert_rejected 'kexec execution rejects the validation-only confirmation' "confirmation must be exactly 'KEXEC-RECOVERY'" "$kexec_execute" \
+	--target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
+BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=kexec-recovery-validate \
+	assert_rejected 'kexec execution requires an execution approval, not a validation approval' "controller-approved action 'kexec-recovery-validate' does not match requested action 'kexec-recovery'" "$kexec_execute" \
+	--target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=kexec-recovery \
+	assert_rejected 'kexec execution requires the controller-bound boot ID' 'BREAKGLASS_KEXEC_BOOT_ID is required' "$kexec_execute" \
+	--target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY
+BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=kexec-recovery \
+	assert_rejected 'kexec validation never accepts an execution approval' "controller-approved action 'kexec-recovery' does not match requested action 'kexec-recovery-validate'" "$kexec_validate" \
+	--target-node node-a --recovery-profile rescue-a \
+	--evidence-dir /evidence --confirm KEXEC-RECOVERY-VALIDATE
 BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
 	BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION=link-cycle \
 	assert_rejected 'controller action binding mismatch is rejected' "controller-approved action 'link-cycle' does not match requested action 'neighbor-replace'" "$network_repair" \

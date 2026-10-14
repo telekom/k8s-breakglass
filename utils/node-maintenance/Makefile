@@ -19,7 +19,7 @@ test:
 	./tests/test-evidence-bundle-contract.sh
 	./tests/test-immutable-container-capture-contract.sh
 	./tests/test-volume-attachment-contract.sh
-	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action
+	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action ./cmd/kexec-action
 
 integration:
 	./tests/integration.sh
