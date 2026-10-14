@@ -1914,6 +1914,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceTarget
           elementRelationship: atomic
+    - name: dryRun
+      type:
+        scalar: boolean
     - name: image
       type:
         scalar: string
@@ -3359,6 +3362,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: vlan
       type:
         scalar: numeric
+    - name: vrf
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NotificationExclusions
   map:
     fields:

@@ -63,6 +63,8 @@ jobs:
           printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
           chmod +x kind kubectl
           echo "$PWD" >> "$GITHUB_PATH"
+      - name: Load the VRF kernel module for the exact VRF fixtures
+        run: sudo modprobe vrf || { sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe vrf; }
       - name: Prove controller, approval flow, exact tuple and node Lease
         env:
           NODE_MAINTENANCE_KIND_ACTION: ${{ matrix.action }}

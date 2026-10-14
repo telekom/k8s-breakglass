@@ -262,6 +262,12 @@ type AuxiliaryResourceTargetContext struct {
 
 	// ClusterName is the ClusterConfig name.
 	ClusterName string `json:"clusterName"`
+
+	// NodeName is the approved Node of a nodeMaintenance session.
+	NodeName string `json:"nodeName,omitempty"`
+
+	// NodeUID is the approved Node UID of a nodeMaintenance session.
+	NodeUID string `json:"nodeUID,omitempty"`
 }
 
 // AuxiliaryResourceTemplateContext contains template information.

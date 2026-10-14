@@ -28,6 +28,11 @@ type DebugSessionNodeMaintenance struct {
 	// +kubebuilder:validation:MaxItems=128
 	// +listType=atomic
 	AllowedTargets []NodeMaintenanceTarget `json:"allowedTargets"`
+	// dryRun makes every session of this profile a preview: the executor runs
+	// the same exact tuple preflight and records the entry it would replace,
+	// but has no NET_ADMIN capability and never mutates the kernel table.
+	// +optional
+	DryRun bool `json:"dryRun,omitempty"`
 }
 
 // NodeMaintenanceTarget identifies exactly one kernel table entry on one Node incarnation.
@@ -57,6 +62,11 @@ type NodeMaintenanceTarget struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=4094
 	VLAN *int32 `json:"vlan,omitempty"`
+	// vrf optionally binds a neighbour operation to the exact VRF device that
+	// must be the interface master. It is never valid for an FDB operation.
+	// +optional
+	// +kubebuilder:validation:MaxLength=15
+	VRF string `json:"vrf,omitempty"`
 }
 
 var maintenanceInterfacePattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
@@ -80,11 +90,13 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 		spec.PodOverrides != nil || len(spec.ExtraDeployVariables) != 0 || spec.AffinityOverrides != nil ||
 		len(spec.AdditionalTolerations) != 0 || spec.SchedulingConstraints != nil || spec.SchedulingOptions != nil ||
 		spec.KubectlDebug != nil || spec.NamespaceConstraints != nil || spec.Impersonation != nil ||
-		spec.TerminalSharing != nil || spec.ArtifactCollection != nil || len(spec.AuxiliaryResources) != 0 ||
-		len(spec.AuxiliaryResourceDefaults) != 0 || len(spec.RequiredAuxiliaryResourceCategories) != 0 ||
-		spec.PodDisruptionBudget != nil || spec.ResourceQuota != nil ||
+		spec.TerminalSharing != nil || spec.ArtifactCollection != nil ||
+		len(spec.AuxiliaryResourceDefaults) != 0 || spec.PodDisruptionBudget != nil || spec.ResourceQuota != nil ||
 		(spec.Audit != nil && spec.Audit.EnableTerminalRecording) {
 		return fmt.Errorf("nodeMaintenance cannot use generic workload, scheduling, interactive or auxiliary overrides")
+	}
+	if err := validateNodeMaintenanceAuxiliaryResources(spec); err != nil {
+		return err
 	}
 	if spec.Approvers == nil || len(spec.Approvers.Users)+len(spec.Approvers.Groups) == 0 || spec.Approvers.AutoApproveFor != nil {
 		return fmt.Errorf("nodeMaintenance requires explicit independent approvers without auto-approval")
@@ -108,6 +120,32 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
 	}
 	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
+}
+
+// validateNodeMaintenanceAuxiliaryResources admits only resources that are
+// always deployed before the executor and deleted with it, such as a
+// per-session admission PolicyException. Requesters and bindings cannot
+// select, add or retain them.
+func validateNodeMaintenanceAuxiliaryResources(spec *DebugSessionTemplateSpec) error {
+	required := map[string]bool{}
+	for _, category := range spec.RequiredAuxiliaryResourceCategories {
+		required[category] = true
+	}
+	used := map[string]bool{}
+	for _, resource := range spec.AuxiliaryResources {
+		if resource.CreateBefore == nil || !*resource.CreateBefore || (resource.DeleteAfter != nil && !*resource.DeleteAfter) ||
+			resource.Optional || (resource.FailurePolicy != "" && resource.FailurePolicy != AuxiliaryResourceFailurePolicyFail) ||
+			resource.Category == "" || !required[resource.Category] {
+			return fmt.Errorf("nodeMaintenance auxiliary resources must be required, createBefore, deleteAfter and fail closed")
+		}
+		used[resource.Category] = true
+	}
+	for category := range required {
+		if !used[category] {
+			return fmt.Errorf("nodeMaintenance required auxiliary category %q has no resources", category)
+		}
+	}
+	return nil
 }
 
 // ValidateNodeMaintenanceSession forbids request-side alternate executor inputs.
@@ -154,11 +192,15 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 			address.IsMulticast() || address.IsUnspecified() || address.Is4In6() || target.Bridge != "" || target.VLAN != nil {
 			return fmt.Errorf("neighbor-replace requires an exact canonical IP/MAC/interface and no bridge or VLAN")
 		}
+		if target.VRF != "" && (!maintenanceInterfacePattern.MatchString(target.VRF) || target.VRF == "." ||
+			target.VRF == ".." || target.VRF == target.Interface) {
+			return fmt.Errorf("neighbor-replace vrf must be the exact VRF device of the interface")
+		}
 	case "bridge-fdb-replace":
 		if !maintenanceInterfacePattern.MatchString(target.Bridge) || target.Bridge == "." || target.Bridge == ".." ||
-			target.Bridge == target.Interface || target.NeighborAddress != "" ||
+			target.Bridge == target.Interface || target.NeighborAddress != "" || target.VRF != "" ||
 			target.VLAN == nil || *target.VLAN < 1 || *target.VLAN > 4094 {
-			return fmt.Errorf("bridge-fdb-replace requires exact bridge/port/MAC/VLAN and no neighbour IP")
+			return fmt.Errorf("bridge-fdb-replace requires exact bridge/port/MAC/VLAN and no neighbour IP or VRF")
 		}
 	default:
 		return fmt.Errorf("unsupported node-maintenance action %q", action)
@@ -192,7 +234,8 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 			target.VLAN != nil && allowed.VLAN != nil && *target.VLAN == *allowed.VLAN
 		if target.TargetNode == allowed.TargetNode && target.TargetNodeUID == allowed.TargetNodeUID &&
 			target.Interface == allowed.Interface && target.EntryMAC == allowed.EntryMAC &&
-			target.NeighborAddress == allowed.NeighborAddress && target.Bridge == allowed.Bridge && vlanMatches {
+			target.NeighborAddress == allowed.NeighborAddress && target.Bridge == allowed.Bridge &&
+			target.VRF == allowed.VRF && vlanMatches {
 			return nil
 		}
 	}

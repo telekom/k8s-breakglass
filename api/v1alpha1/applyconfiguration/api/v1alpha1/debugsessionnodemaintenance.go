@@ -20,6 +20,10 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	Image *string `json:"image,omitempty"`
 	// allowedTargets is an exact allowlist, not a selector or wildcard.
 	AllowedTargets []NodeMaintenanceTargetApplyConfiguration `json:"allowedTargets,omitempty"`
+	// dryRun makes every session of this profile a preview: the executor runs
+	// the same exact tuple preflight and records the entry it would replace,
+	// but has no NET_ADMIN capability and never mutates the kernel table.
+	DryRun *bool `json:"dryRun,omitempty"`
 }
 
 // DebugSessionNodeMaintenanceApplyConfiguration constructs a declarative configuration of the DebugSessionNodeMaintenance type for use with
@@ -54,5 +58,13 @@ func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithAllowedTargets(value
 		}
 		b.AllowedTargets = append(b.AllowedTargets, *values[i])
 	}
+	return b
+}
+
+// WithDryRun sets the DryRun field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DryRun field is set to the value of the last call.
+func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithDryRun(value bool) *DebugSessionNodeMaintenanceApplyConfiguration {
+	b.DryRun = &value
 	return b
 }

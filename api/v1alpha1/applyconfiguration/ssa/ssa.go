@@ -1018,7 +1018,13 @@ func DebugSessionTemplateSpecFrom(t *breakglassv1alpha1.DebugSessionTemplateSpec
 			if target.VLAN != nil {
 				value.WithVLAN(*target.VLAN)
 			}
+			if target.VRF != "" {
+				value.WithVRF(target.VRF)
+			}
 			maintenance.WithAllowedTargets(value)
+		}
+		if profile.DryRun {
+			maintenance.WithDryRun(true)
 		}
 		result.WithNodeMaintenance(maintenance)
 	}

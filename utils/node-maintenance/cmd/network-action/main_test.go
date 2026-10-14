@@ -16,6 +16,7 @@ func TestParseRequestAcceptsOnlyFixedShapes(t *testing.T) {
 		{name: "restart autonegotiation", args: []string{"restart-autonegotiation", "8"}},
 		{name: "IPv4 neighbor", args: []string{"neighbor-replace", "9", "4", "192.0.2.10", "02:00:00:00:00:10"}},
 		{name: "IPv6 neighbor", args: []string{"neighbor-replace", "10", "6", "2001:db8::10", "02:00:00:00:00:11"}},
+		{name: "VRF-bound neighbor", args: []string{"neighbor-replace", "9", "4", "192.0.2.10", "02:00:00:00:00:10", "13"}},
 		{name: "bridge FDB", args: []string{"bridge-fdb-replace", "11", "12", "02:00:00:00:00:12", "4094"}},
 	}
 	for _, test := range tests {
@@ -49,6 +50,15 @@ func TestParseRequestPreservesTypedBoundaries(t *testing.T) {
 	if fdbRequest.vlan != maximumVLAN {
 		t.Fatalf("maximum VLAN = %d, want %d", fdbRequest.vlan, maximumVLAN)
 	}
+
+	vrfRequest, err := parseRequest([]string{"neighbor-replace", "9", "4", "192.0.2.10", "02:00:00:00:00:10", "13"})
+	if err != nil || vrfRequest.masterIfindex != 13 {
+		t.Fatalf("VRF ifindex = %d (%v), want 13", vrfRequest.masterIfindex, err)
+	}
+	plainRequest, err := parseRequest([]string{"neighbor-replace", "9", "4", "192.0.2.10", "02:00:00:00:00:10"})
+	if err != nil || plainRequest.masterIfindex != 0 {
+		t.Fatalf("unbound neighbor master ifindex = %d (%v), want 0", plainRequest.masterIfindex, err)
+	}
 }
 
 func TestParseRequestRejectsExpansionAndInvalidIdentity(t *testing.T) {
@@ -64,6 +74,9 @@ func TestParseRequestRejectsExpansionAndInvalidIdentity(t *testing.T) {
 		{name: "wrong family", args: []string{"neighbor-replace", "2", "5", "192.0.2.1", "02:00:00:00:00:01"}},
 		{name: "family mismatch", args: []string{"neighbor-replace", "2", "6", "192.0.2.1", "02:00:00:00:00:01"}},
 		{name: "multicast MAC", args: []string{"neighbor-replace", "2", "4", "192.0.2.1", "01:00:00:00:00:01"}},
+		{name: "same interface and VRF", args: []string{"neighbor-replace", "2", "4", "192.0.2.1", "02:00:00:00:00:01", "2"}},
+		{name: "zero VRF ifindex", args: []string{"neighbor-replace", "2", "4", "192.0.2.1", "02:00:00:00:00:01", "0"}},
+		{name: "extra neighbor argument", args: []string{"neighbor-replace", "2", "4", "192.0.2.1", "02:00:00:00:00:01", "3", "4"}},
 		{name: "same port and master", args: []string{"bridge-fdb-replace", "3", "3", "02:00:00:00:00:01", "100"}},
 		{name: "master ifindex overflow", args: []string{"bridge-fdb-replace", "3", "2147483648", "02:00:00:00:00:01", "100"}},
 		{name: "VLAN zero", args: []string{"bridge-fdb-replace", "3", "4", "02:00:00:00:00:01", "0"}},

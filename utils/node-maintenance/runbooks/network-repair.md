@@ -35,6 +35,8 @@ network-repair \
   --action neighbor-replace \
   --neighbor-address IP_ADDRESS \
   --entry-mac MAC_ADDRESS \
+  [--vrf VRF_NAME] \
+  [--dry-run] \
   --evidence-dir /evidence \
   --confirm NETWORK-REPAIR
 
@@ -45,9 +47,23 @@ network-repair \
   --action bridge-fdb-replace \
   --entry-mac MAC_ADDRESS \
   --vlan VLAN_ID \
+  [--dry-run] \
   --evidence-dir /evidence \
   --confirm NETWORK-REPAIR
 ```
+
+`--vrf` binds a neighbor replacement to the VRF device that is the exact
+master of the interface; preflight rejects any other VRF and resolves the
+neighbor route inside that VRF. The executor pins the VRF ifindex and
+re-proves the interface master immediately before and after the replace. `--dry-run` runs every validation and
+preflight capture for an exact replace action, records `dry_run=true`,
+`action_performed=false`, and a `previewed` completion event, and never calls
+the mutating action. A preview needs no capability beyond the read-only
+captures. Both options are part of the approved tuple (`&vrf=` and
+`&dry_run=true`, appended only when set), so a preview approval cannot execute
+a mutation and an approval without a VRF cannot be used for a VRF-bound
+repair. A request without `--vrf` keeps the legacy behavior and does not check
+the interface master.
 
 The immutable controller template must inject `BREAKGLASS_NODE_NAME` from
 Downward API `spec.nodeName`, unique operation/recording/approval identifiers,
@@ -67,7 +83,7 @@ the volume root or selected safe child.
 The tuple is separately bounded at 1 KiB so Kubernetes-valid 253-byte node
 names remain usable; this bound is not a caller input. Linux interface and
 bridge names are limited to 15 bytes, so the largest public network-repair
-tuple is 442 bytes; the 1 KiB serialized-input limit is defense in depth for
+tuple is 442 bytes, or 475 bytes with the optional VRF and preview segments; the 1 KiB serialized-input limit is defense in depth for
 controller-provided data, not a caller choice.
 
 Run with `hostNetwork: true`, a read-only root, RuntimeDefault seccomp,

@@ -289,13 +289,23 @@ func acquireMaintenanceLease(ctx context.Context, target ctrlclient.Client, ds *
 	return lease, nil
 }
 
-func maintenanceTuple(action string, target *breakglassv1alpha1.NodeMaintenanceTarget) string {
+// maintenanceTuple must match validate_approved_network_request in the helper
+// image. Optional segments are appended only when set, so tuples without a VRF
+// or preview stay byte-identical to the original executor contract.
+func maintenanceTuple(profile *breakglassv1alpha1.DebugSessionNodeMaintenance, target *breakglassv1alpha1.NodeMaintenanceTarget) string {
 	vlan := ""
 	if target.VLAN != nil {
 		vlan = strconv.Itoa(int(*target.VLAN))
 	}
-	return fmt.Sprintf("target_node=%s&interface=%s&action=%s&neighbor_address=%s&bridge=%s&entry_mac=%s&vlan=%s&confirmation=NETWORK-REPAIR",
-		target.TargetNode, target.Interface, action, target.NeighborAddress, target.Bridge, target.EntryMAC, vlan)
+	tuple := fmt.Sprintf("target_node=%s&interface=%s&action=%s&neighbor_address=%s&bridge=%s&entry_mac=%s&vlan=%s",
+		target.TargetNode, target.Interface, profile.Action, target.NeighborAddress, target.Bridge, target.EntryMAC, vlan)
+	if target.VRF != "" {
+		tuple += "&vrf=" + target.VRF
+	}
+	if profile.DryRun {
+		tuple += "&dry_run=true"
+	}
+	return tuple + "&confirmation=NETWORK-REPAIR"
 }
 
 // The external Job manager creates exactly one Pod, never replaying a lost mutation.
@@ -306,8 +316,17 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 		"--entry-mac", target.EntryMAC, "--confirm", "NETWORK-REPAIR", "--evidence-dir", "/evidence"}
 	if profile.Action == "neighbor-replace" {
 		args = append(args, "--neighbor-address", target.NeighborAddress)
+		if target.VRF != "" {
+			args = append(args, "--vrf", target.VRF)
+		}
 	} else {
 		args = append(args, "--bridge", target.Bridge, "--vlan", strconv.Itoa(int(*target.VLAN)))
+	}
+	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_ADMIN"}}
+	if profile.DryRun {
+		// A preview only reads kernel tables, so it never holds NET_ADMIN.
+		args = append(args, "--dry-run")
+		capabilities.Add = nil
 	}
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: status.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
@@ -324,7 +343,7 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 				Name: "node-maintenance", Image: profile.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 				Command: []string{"/usr/local/bin/node-maintenance"}, Args: args,
 				SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false),
-					ReadOnlyRootFilesystem: ptr.To(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_ADMIN"}}},
+					ReadOnlyRootFilesystem: ptr.To(true), Capabilities: capabilities},
 				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
 					Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("128Mi")}},
 				VolumeMounts: []corev1.VolumeMount{{Name: "evidence", MountPath: "/evidence"}},
@@ -334,7 +353,7 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 					{Name: "BREAKGLASS_RECORDING_ID", Value: status.OperationID},
 					{Name: "BREAKGLASS_APPROVAL_ID", Value: status.OperationID},
 					{Name: "BREAKGLASS_APPROVED_ACTION", Value: profile.Action},
-					{Name: "BREAKGLASS_APPROVED_NETWORK_REQUEST", Value: maintenanceTuple(profile.Action, target)},
+					{Name: "BREAKGLASS_APPROVED_NETWORK_REQUEST", Value: maintenanceTuple(profile, target)},
 					{Name: "BREAKGLASS_ACTION_DEADLINE_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 				},
 			}},
@@ -406,7 +425,10 @@ func (c *DebugSessionController) ensureMaintenanceJob(ctx context.Context, targe
 			return c.rollbackMaintenanceCreateMarker(ctx, ds, err, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.JobCreateAttempted = false })
 		}
 		job = maintenanceJob(ds)
-		if err := target.Create(ctx, job); err != nil {
+		if err := admitMaintenanceCreate(ds, target.Create(ctx, job)); err != nil {
+			if isAdmissionWebhookDenial(err) {
+				return c.rollbackMaintenanceCreateMarker(ctx, ds, err, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.JobCreateAttempted = false })
+			}
 			if getErr := target.Get(ctx, key, job); getErr != nil {
 				return errors.Join(err, getErr)
 			}
@@ -478,7 +500,7 @@ func (c *DebugSessionController) auditMaintenance(ctx context.Context, ds *break
 		Details: map[string]interface{}{"sessionUID": string(ds.UID), "operationID": status.OperationID,
 			"approvalID": status.OperationID, "approvedBy": ds.Status.Approval.ApprovedBy,
 			"approvedAt": ds.Status.Approval.ApprovedAt, "nodeUID": ds.Spec.NodeMaintenance.TargetNodeUID,
-			"tuple": maintenanceTuple(profile.Action, ds.Spec.NodeMaintenance), "image": profile.Image,
+			"tuple": maintenanceTuple(profile, ds.Spec.NodeMaintenance), "image": profile.Image, "dryRun": profile.DryRun,
 			"podUID": status.PodUID, "jobUID": status.JobUID, "leaseUID": status.LeaseUID, "result": status.Result},
 	}
 	if c.auditService != nil {
@@ -534,6 +556,9 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 			return err
 		}
 	}
+	if err := c.deployMaintenanceAuxiliaryResources(ctx, ds, target, fence); err != nil {
+		return err
+	}
 	if err := c.ensureMaintenanceJob(ctx, target, ds, fence); err != nil {
 		return err
 	}
@@ -566,7 +591,10 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 		pod = maintenancePod(ds)
 		pod.Labels["breakglass.t-caas.telekom.com/maintenance-operation"] = ds.Status.NodeMaintenance.OperationID
 		pod.OwnerReferences = maintenancePodOwners(ds)
-		if err := target.Create(ctx, pod); err != nil {
+		if err := admitMaintenanceCreate(ds, target.Create(ctx, pod)); err != nil {
+			if isAdmissionWebhookDenial(err) {
+				return c.rollbackMaintenanceCreateMarker(ctx, ds, err, func(status *breakglassv1alpha1.NodeMaintenanceStatus) { status.CreateAttempted = false })
+			}
 			if getErr := target.Get(ctx, key, pod); getErr != nil {
 				return errors.Join(err, getErr)
 			}
@@ -581,6 +609,43 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 		}
 	}
 	return nil
+}
+
+// deployMaintenanceAuxiliaryResources creates the template's required
+// createBefore resources, typically a per-session admission PolicyException,
+// before the Job envelope.
+func (c *DebugSessionController) deployMaintenanceAuxiliaryResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession, target ctrlclient.Client, fence func() error) error {
+	if len(ds.Status.ResolvedTemplate.AuxiliaryResources) == 0 {
+		return nil
+	}
+	if c.auxiliaryMgr == nil {
+		return fmt.Errorf("nodeMaintenance auxiliary resources require the auxiliary resource manager")
+	}
+	startAuxiliaryStatusTracking(ds, true)
+	if err := fence(); err != nil {
+		return err
+	}
+	statuses, err := c.auxiliaryMgr.DeployAuxiliaryResourcesForPhaseWithFenceAndPersist(ctx, ds, ds.Status.ResolvedTemplate, nil, target,
+		breakglassv1alpha1.NodeMaintenanceNamespace, true, fence, func(status breakglassv1alpha1.AuxiliaryResourceStatus) error {
+			return c.persistAuxiliaryStatus(ctx, ds, status)
+		})
+	ds.Status.AuxiliaryResourceStatuses = mergeAuxiliaryStatuses(ds.Status.AuxiliaryResourceStatuses, statuses)
+	if err != nil {
+		return fmt.Errorf("failed to deploy maintenance auxiliary resources: %w", err)
+	}
+	return nil
+}
+
+// admitMaintenanceCreate marks a webhook denial of the Job or Pod while a
+// PolicyException created by the session may still be propagating, so
+// activateSession requeues instead of failing. The window comes from the
+// persisted creation time, so it never extends across reconciles. A denied
+// create committed nothing, so callers roll back its create marker.
+func admitMaintenanceCreate(ds *breakglassv1alpha1.DebugSession, err error) error {
+	if _, open := policyExceptionAdmissionDeadline(ds.Status.AuxiliaryResourceStatuses); open && isAdmissionWebhookDenial(err) {
+		return fmt.Errorf("%w: %w", errPolicyExceptionNotAdmitted, err)
+	}
+	return err
 }
 
 func (c *DebugSessionController) handleMaintenanceActive(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
@@ -831,6 +896,23 @@ func (c *DebugSessionController) cleanupMaintenance(ctx context.Context, ds *bre
 		return err
 	} else if status.JobCreateAttempted && status.JobUID == "" {
 		return fmt.Errorf("maintenance Job create outcome is unknown; retaining node Lease")
+	}
+	// Remove the per-session exception only after the executor is gone and
+	// before the node lock is released.
+	if hasOutstandingAuxiliaryResources(ds) {
+		if c.auxiliaryMgr == nil {
+			return fmt.Errorf("maintenance auxiliary cleanup requires the auxiliary resource manager")
+		}
+		if err := configurationFence(); err != nil {
+			return err
+		}
+		cleanupErr := c.auxiliaryMgr.CleanupAuxiliaryResources(ctx, ds, target)
+		if err := applyDebugSessionDeploymentStatus(ctx, c.client, ds); err != nil {
+			return errors.Join(cleanupErr, err)
+		}
+		if cleanupErr != nil {
+			return cleanupErr
+		}
 	}
 	// The external Job manager never replaces a Pod, and both UIDs are now absent.
 	lease = &coordinationv1.Lease{}

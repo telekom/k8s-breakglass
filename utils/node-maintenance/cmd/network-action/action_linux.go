@@ -91,11 +91,14 @@ func execute(request actionRequest) error {
 		}
 		fmt.Printf("ifindex=%d auto_negotiation=restarted\n", request.ifindex)
 	case actionNeighborReplace:
-		if _, err := connection.getLink(request.ifindex); err != nil {
-			return fmt.Errorf("resolve pinned ifindex %d: %w", request.ifindex, err)
+		if err := connection.checkNeighborVRF(request); err != nil {
+			return err
 		}
 		if err := connection.replaceNeighbor(request); err != nil {
 			return fmt.Errorf("replace neighbor on pinned ifindex %d: %w", request.ifindex, err)
+		}
+		if err := connection.checkNeighborVRF(request); err != nil {
+			return fmt.Errorf("pinned ifindex %d changed VRF during neighbor request: %w", request.ifindex, err)
 		}
 		fmt.Printf("ifindex=%d neighbor=%s mac=%s state=reachable\n", request.ifindex, request.address, request.mac)
 	case actionBridgeFDBReplace:
@@ -123,6 +126,29 @@ func execute(request actionRequest) error {
 		fmt.Printf("port_ifindex=%d master_ifindex=%d mac=%s vlan=%d state=static\n", request.ifindex, request.masterIfindex, request.mac, request.vlan)
 	default:
 		return fmt.Errorf("internal unsupported action %q", request.action)
+	}
+	return nil
+}
+
+// checkNeighborVRF resolves the pinned interface and, for a VRF-bound request,
+// proves that it is still enslaved to the pinned VRF device.
+func (connection *routeNetlink) checkNeighborVRF(request actionRequest) error {
+	link, err := connection.getLink(request.ifindex)
+	if err != nil {
+		return fmt.Errorf("resolve pinned ifindex %d: %w", request.ifindex, err)
+	}
+	if request.masterIfindex == 0 {
+		return nil
+	}
+	vrf, err := connection.getLink(request.masterIfindex)
+	if err != nil {
+		return fmt.Errorf("resolve pinned VRF ifindex %d: %w", request.masterIfindex, err)
+	}
+	if vrf.kind != "vrf" {
+		return fmt.Errorf("pinned VRF ifindex %d is not a VRF", request.masterIfindex)
+	}
+	if link.master != request.masterIfindex {
+		return fmt.Errorf("pinned ifindex %d is attached to master ifindex %d, not approved VRF ifindex %d", request.ifindex, link.master, request.masterIfindex)
 	}
 	return nil
 }

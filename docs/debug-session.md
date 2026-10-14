@@ -1144,6 +1144,7 @@ Auxiliary resource templates support Go templating with [Sprig functions](https:
 | `.session.cluster` | Target cluster name |
 | `.session.requestedBy` | Requesting user |
 | `.target.namespace` | Target namespace for debug pods |
+| `.target.nodeName`, `.target.nodeUID` | Approved Node name and UID of a `nodeMaintenance` session (allowlist-matched); empty otherwise |
 | `.session.reason` | Session request reason |
 | `.template.name` | Template name |
 
@@ -1353,6 +1354,15 @@ Response includes per-cluster details:
 ## Kubectl Debug Configuration
 
 ### Ephemeral Containers
+
+`TestDebugSessionEphemeralRootNETRAWBindingFence` exercises an explicitly
+elevated `requireNonRoot: false` profile through the native API in both
+single-cluster and hub/spoke acceptance. It asserts that the resolved status
+retains false before injection, requires independent approval, rejects a
+protected source namespace without modifying its Pod, and executes the
+injected container with UID 0 and exactly `NET_RAW` effective capability.
+Termination must prevent another injection. This regression does not relax
+restricted profiles: their non-root/default capability contract remains intact.
 
 Allow injecting ephemeral containers into running pods. If the session expires
 after the durable operation intent is recorded but before the target update,

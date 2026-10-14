@@ -177,6 +177,12 @@ spec:
                     maximum: 4094
                     minimum: 1
                     type: integer
+                  vrf:
+                    description: |-
+                      vrf optionally binds a neighbour operation to the exact VRF device that
+                      must be the interface master. It is never valid for an FDB operation.
+                    maxLength: 15
+                    type: string
                 required:
                 - entryMAC
                 - interface
@@ -4279,6 +4285,12 @@ spec:
                               maximum: 4094
                               minimum: 1
                               type: integer
+                            vrf:
+                              description: |-
+                                vrf optionally binds a neighbour operation to the exact VRF device that
+                                must be the interface master. It is never valid for an FDB operation.
+                              maxLength: 15
+                              type: string
                           required:
                           - entryMAC
                           - interface
@@ -4289,6 +4301,12 @@ spec:
                         minItems: 1
                         type: array
                         x-kubernetes-list-type: atomic
+                      dryRun:
+                        description: |-
+                          dryRun makes every session of this profile a preview: the executor runs
+                          the same exact tuple preflight and records the entry it would replace,
+                          but has no NET_ADMIN capability and never mutates the kernel table.
+                        type: boolean
                       image:
                         description: image must be an immutable node-maintenance helper
                           image.

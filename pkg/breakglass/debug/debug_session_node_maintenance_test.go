@@ -157,7 +157,7 @@ func TestNodeMaintenanceApprovedExecutionAndCleanup(t *testing.T) {
 	require.Equal(t, job.UID, metav1.GetControllerOf(pod).UID)
 	require.Contains(t, pod.Spec.Containers[0].Args, "192.0.2.2")
 	require.Len(t, sink.Events(), 1)
-	require.Equal(t, maintenanceTuple("neighbor-replace", ds.Spec.NodeMaintenance), sink.Events()[0].Details["tuple"])
+	require.Equal(t, maintenanceTuple(ds.Status.ResolvedTemplate.NodeMaintenance, ds.Spec.NodeMaintenance), sink.Events()[0].Details["tuple"])
 	require.NoError(t, c.deployMaintenance(t.Context(), ds), "reconcile must reuse the same Pod, never replay")
 	require.Len(t, sink.Events(), 1)
 	pod.Status.Phase = corev1.PodSucceeded

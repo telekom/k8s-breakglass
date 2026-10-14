@@ -15,6 +15,7 @@ image:
   operationCapabilities:
     node-recovery: []
     network-repair: [NET_ADMIN]
+    network-repair-preview: []
     kexec-recovery-validate: []
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX

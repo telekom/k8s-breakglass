@@ -31,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -55,6 +56,17 @@ func testArtifactRecipeLifecycle(t *testing.T, recipe, cleanup string) {
 	require.Contains(t, []string{"local", "s3"}, backend, "backend must be selected explicitly")
 	require.Contains(t, image, "@sha256:", "run e2e/fixtures/artifacts/setup.sh first")
 	ctx, ns := s.Ctx, s.Namespace
+	targetConfig := helpers.GetConfig(t)
+	if os.Getenv("E2E_MULTI_CLUSTER") == "true" {
+		spoke := helpers.GetSpokeAKubeconfig()
+		require.NotEmpty(t, spoke, "multi-cluster collector fixture requires the spoke kubeconfig")
+		var err error
+		targetConfig, err = clientcmd.BuildConfigFromFlags("", spoke)
+		require.NoError(t, err)
+		require.NotEqual(t, helpers.GetConfig(t).Host, targetConfig.Host, "collector execution must use a real spoke")
+	}
+	targetClient, err := client.New(targetConfig, client.Options{Scheme: s.Client.Scheme()})
+	require.NoError(t, err)
 	caRef := &breakglassv1alpha1.ArtifactUploadCABundleReference{Kind: "Secret", Name: "artifact-e2e-tls", Key: "ca.crt"}
 	// ConfigMap and Secret projection both exercise the production uploader.
 	if recipe == artifactarchive.SystemSummaryRecipe {
@@ -62,14 +74,15 @@ func testArtifactRecipeLifecycle(t *testing.T, recipe, cleanup string) {
 		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: "breakglass-system", Name: caRef.Name}, &secret))
 		caRef.Kind, caRef.Name = "ConfigMap", fmt.Sprintf("artifact-upload-ca-%d", time.Now().UnixNano())
 		ca := &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: caRef.Name}, Data: map[string]string{caRef.Key: string(secret.Data[caRef.Key])}}
-		require.NoError(t, s.Client.Create(ctx, ca))
-		t.Cleanup(func() { _ = s.Client.Delete(ctx, ca) })
-	} else if ns != "breakglass-system" {
+		require.NoError(t, targetClient.Create(ctx, ca))
+		t.Cleanup(func() { _ = targetClient.Delete(ctx, ca) })
+	} else if ns != "breakglass-system" || os.Getenv("E2E_MULTI_CLUSTER") == "true" {
 		var secret corev1.Secret
 		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: "breakglass-system", Name: caRef.Name}, &secret))
+		caRef.Name = fmt.Sprintf("artifact-upload-ca-%d", time.Now().UnixNano())
 		ca := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: caRef.Name}, Data: map[string][]byte{caRef.Key: secret.Data[caRef.Key]}}
-		require.NoError(t, s.Client.Create(ctx, ca))
-		t.Cleanup(func() { _ = s.Client.Delete(ctx, ca) })
+		require.NoError(t, targetClient.Create(ctx, ca))
+		t.Cleanup(func() { _ = targetClient.Delete(ctx, ca) })
 	}
 	tc := helpers.NewTestContext(t, ctx)
 	requester := helpers.NewAPIClientWithAuth(tc.OIDCProvider().GetTokenForUser(t, ctx, helpers.TestUsers.SecurityRequester))
@@ -132,7 +145,7 @@ spec:
 	pod := active.Status.AllowedPods[0]
 	require.NotEmpty(t, pod.UID)
 	var target corev1.Pod
-	require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, &target))
+	require.NoError(t, targetClient.Get(ctx, client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, &target))
 	request := helpers.DebugSessionArtifactRequest{Recipe: recipe, PodNamespace: pod.Namespace, PodName: pod.Name}
 	expected := artifactarchive.Expected{Recipe: recipe, RecipeVersion: 1, Inputs: artifactarchive.Inputs{MaxArchiveBytes: 16777216}, SessionNamespace: sessionNamespace, SessionName: session.Name, SessionUID: string(active.UID), RedactionProfile: "credential-text.v1", RedactionVersion: 1}
 	if recipe == artifactarchive.SystemSummaryRecipe {
@@ -195,7 +208,11 @@ spec:
 			t.Logf("collector artifact %s UID=%s state=%s revision=%d resources=%+v", object.Name, object.UID, object.Status.State, object.Status.LifecycleRevision, object.Status.Resources)
 			for _, ref := range object.Status.Resources {
 				if ref.Kind == "Job" {
-					output, err := exec.CommandContext(ctx, "kubectl", "-n", ref.Namespace, "logs", "job/"+ref.Name, "--all-containers=true", "--tail=40").CombinedOutput()
+					args := []string{"-n", ref.Namespace, "logs", "job/" + ref.Name, "--all-containers=true", "--tail=40"}
+					if os.Getenv("E2E_MULTI_CLUSTER") == "true" {
+						args = append([]string{"--kubeconfig", helpers.GetSpokeAKubeconfig()}, args...)
+					}
+					output, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
 					t.Logf("collector Job %s logs (error=%v):\n%s", ref.Name, err, output)
 				}
 			}
@@ -216,10 +233,15 @@ spec:
 			require.NotEmpty(t, ref.UID)
 			if ref.Kind == "Job" {
 				var job batchv1.Job
-				require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &job))
+				require.NoError(t, targetClient.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &job))
 				require.Equal(t, ref.UID, string(job.UID))
+				if os.Getenv("E2E_MULTI_CLUSTER") == "true" {
+					require.Empty(t, job.OwnerReferences, "spoke Job must not carry a hub owner reference")
+					require.True(t, apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKeyFromObject(&job), &batchv1.Job{})),
+						"collector Job must exist on the spoke, not silently fall back to the hub")
+				}
 				require.Eventually(t, func() bool {
-					_ = s.Client.Get(ctx, client.ObjectKeyFromObject(&job), &job)
+					_ = targetClient.Get(ctx, client.ObjectKeyFromObject(&job), &job)
 					return job.Status.Succeeded == 1
 				}, helpers.WaitForStateTimeout, time.Second)
 				require.Equal(t, image, job.Spec.Template.Spec.InitContainers[0].Image)
@@ -239,28 +261,32 @@ spec:
 					})
 					require.NoError(t, buildErr)
 					negative.OwnerReferences = nil
-					require.NoError(t, s.Client.Create(ctx, negative))
+					require.NoError(t, targetClient.Create(ctx, negative))
 					t.Cleanup(func() {
-						_ = s.Client.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground))
+						_ = targetClient.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground))
 					})
 					require.Eventually(t, func() bool {
-						return s.Client.Get(ctx, client.ObjectKeyFromObject(negative), negative) == nil && negative.Status.Failed == 1
+						return targetClient.Get(ctx, client.ObjectKeyFromObject(negative), negative) == nil && negative.Status.Failed == 1
 					}, 150*time.Second, time.Second, "upload without private CA must fail, never bypass verification")
-					output, logErr := exec.CommandContext(ctx, "kubectl", "-n", negative.Namespace, "logs", "job/"+negative.Name, "-c", "uploader").CombinedOutput()
+					args := []string{"-n", negative.Namespace, "logs", "job/" + negative.Name, "-c", "uploader"}
+					if os.Getenv("E2E_MULTI_CLUSTER") == "true" {
+						args = append([]string{"--kubeconfig", helpers.GetSpokeAKubeconfig()}, args...)
+					}
+					output, logErr := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
 					require.NoError(t, logErr, string(output))
 					require.Contains(t, string(output), "certificate signed by unknown authority")
-					require.NoError(t, s.Client.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground)))
+					require.NoError(t, targetClient.Delete(ctx, negative, client.PropagationPolicy(metav1.DeletePropagationForeground)))
 					require.EventuallyWithT(t, func(c *assert.CollectT) {
 						var pods corev1.PodList
-						require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(negative.Namespace), client.MatchingLabels{"job-name": negative.Name}))
+						require.NoError(c, targetClient.List(ctx, &pods, client.InNamespace(negative.Namespace), client.MatchingLabels{"job-name": negative.Name}))
 						require.Empty(c, pods.Items, "negative-CA fixture must clean up its own failed Pod")
-						require.True(c, apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKeyFromObject(negative), &batchv1.Job{})))
+						require.True(c, apierrors.IsNotFound(targetClient.Get(ctx, client.ObjectKeyFromObject(negative), &batchv1.Job{})))
 					}, helpers.WaitForStateTimeout, time.Second)
 					caNegativeProven = true
 				}
 				require.NotNil(t, job.Spec.Template.Spec.SecurityContext.FSGroup)
 				pods := &corev1.PodList{}
-				require.NoError(t, s.Client.List(ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))
+				require.NoError(t, targetClient.List(ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))
 				require.Len(t, pods.Items, 1)
 				require.Equal(t, corev1.PodSucceeded, pods.Items[0].Status.Phase)
 				require.Equal(t, object.Spec.ArtifactID, pods.Items[0].Labels["breakglass.t-caas.telekom.com/artifact"])
@@ -324,7 +350,7 @@ spec:
 				}
 			} else if ref.Kind == "Secret" {
 				var secret corev1.Secret
-				require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &secret))
+				require.NoError(t, targetClient.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &secret))
 				require.Equal(t, ref.UID, string(secret.UID))
 				token = string(secret.Data["token"])
 			}
@@ -364,9 +390,9 @@ spec:
 		return &object, data, token
 	}
 	first, data, token := collect()
-	assertArtifactRequesterCannotForge(t, s, first)
+	assertArtifactRequesterCannotForge(t, s, targetClient, targetConfig, first)
 	if cleanup == "terminate" {
-		assertArtifactArchiveRejections(t, s, requester, sessionNamespace, session.Name, request, data, status)
+		assertArtifactArchiveRejections(t, s, targetClient, requester, sessionNamespace, session.Name, request, data, status)
 	}
 	afterFirst := files()
 	require.Len(t, afterFirst, len(baseline)+1)
@@ -522,12 +548,12 @@ spec:
 			obj = &corev1.Secret{}
 		}
 		require.Eventually(t, func() bool {
-			return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
+			return apierrors.IsNotFound(targetClient.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		}, helpers.WaitForStateTimeout, time.Second)
 	}
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		var pods corev1.PodList
-		require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
+		require.NoError(c, targetClient.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
 			"breakglass.t-caas.telekom.com/artifact":    first.Spec.ArtifactID,
 			"breakglass.t-caas.telekom.com/session-uid": string(active.UID),
 		}))
@@ -554,12 +580,12 @@ spec:
 			obj = &batchv1.Job{}
 		}
 		require.Eventually(t, func() bool {
-			return apierrors.IsNotFound(s.Client.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
+			return apierrors.IsNotFound(targetClient.Get(ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		}, helpers.WaitForStateTimeout, time.Second)
 	}
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		var pods corev1.PodList
-		require.NoError(c, s.Client.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
+		require.NoError(c, targetClient.List(ctx, &pods, client.InNamespace(ns), client.MatchingLabels{
 			"breakglass.t-caas.telekom.com/session-uid": string(active.UID),
 		}))
 		require.Empty(c, pods.Items, "terminal session must leave zero collector Pods, even when ownerReferences are gone")
@@ -579,9 +605,9 @@ spec:
 
 // Use the same requester identity/groups as the authenticated collection API.
 // Labels never grant permission to mutate the controller execution namespace.
-func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, artifact *breakglassv1alpha1.DebugSessionArtifact) {
+func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, targetClient client.Client, targetConfig *rest.Config, artifact *breakglassv1alpha1.DebugSessionArtifact) {
 	t.Helper()
-	config := rest.CopyConfig(helpers.GetConfig(t))
+	config := rest.CopyConfig(targetConfig)
 	user := helpers.TestUsers.SecurityRequester
 	groups := append(append([]string(nil), user.Groups...), "system:authenticated")
 	config.Impersonate = rest.ImpersonationConfig{UserName: user.Email, Groups: groups}
@@ -593,11 +619,11 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 		if ref.Kind == "Job" {
 			obj = &batchv1.Job{}
 		}
-		require.NoError(t, s.Client.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
+		require.NoError(t, targetClient.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, obj))
 		objects = append(objects, obj)
 		if ref.Kind == "Job" {
 			pods := &corev1.PodList{}
-			require.NoError(t, s.Client.List(s.Ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))
+			require.NoError(t, targetClient.List(s.Ctx, pods, client.InNamespace(ref.Namespace), client.MatchingLabels{"job-name": ref.Name}))
 			require.Len(t, pods.Items, 1)
 			objects = append(objects, &pods.Items[0])
 		}
@@ -623,14 +649,14 @@ func assertArtifactRequesterCannotForge(t *testing.T, s *helpers.TestSetup, arti
 	// without pretending that a fake CRD proves downstream policy execution.
 	for _, verb := range []string{"create", "patch", "delete"} {
 		review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{User: user.Email, Groups: groups, ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: artifact.Namespace, Group: "kyverno.io", Resource: "policyexceptions", Verb: verb}}}
-		require.NoError(t, s.Client.Create(s.Ctx, review))
+		require.NoError(t, targetClient.Create(s.Ctx, review))
 		require.False(t, review.Status.Allowed)
 	}
 }
 
 // Hold only the disposable uploader's HTTPS edge while exercising the actual
 // Breakglass upload handler with each freshly issued single-artifact token.
-func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *helpers.APIClient, sessionNamespace, session string, request helpers.DebugSessionArtifactRequest, source []byte, status func(*helpers.APIClient, string, string, []byte, string) int) {
+func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, targetClient client.Client, api *helpers.APIClient, sessionNamespace, session string, request helpers.DebugSessionArtifactRequest, source []byte, status func(*helpers.APIClient, string, string, []byte, string) int) {
 	t.Helper()
 	fixture := func(args ...string) {
 		base := []string{"-n", s.Namespace, "exec", "deployment/breakglass-manager", "-c", "artifact-tls", "--"}
@@ -655,7 +681,7 @@ func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *he
 					for _, ref := range item.Status.Resources {
 						if ref.Kind == "Secret" && ref.UID != "" {
 							var secret corev1.Secret
-							if s.Client.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &secret) == nil && string(secret.UID) == ref.UID {
+							if targetClient.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, &secret) == nil && string(secret.UID) == ref.UID {
 								uploadToken = string(secret.Data["token"])
 							}
 						}
@@ -687,8 +713,16 @@ func assertArtifactArchiveRejections(t *testing.T, s *helpers.TestSetup, api *he
 			if ref.Kind == "Job" {
 				resource = &batchv1.Job{}
 			}
-			require.True(t, apierrors.IsNotFound(s.Client.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, resource)))
+			require.True(t, apierrors.IsNotFound(targetClient.Get(s.Ctx, client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, resource)))
 		}
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			var pods corev1.PodList
+			require.NoError(c, targetClient.List(s.Ctx, &pods, client.InNamespace(s.Namespace), client.MatchingLabels{
+				"breakglass.t-caas.telekom.com/artifact":    object.Spec.ArtifactID,
+				"breakglass.t-caas.telekom.com/session-uid": object.Spec.SessionRef.UID,
+			}))
+			require.Empty(c, pods.Items, "archive rejection probe must leave zero collector Pods on the execution cluster")
+		}, helpers.WaitForStateTimeout, time.Second)
 	}
 	fixture("rm", "-f", "/artifacts/pause-uploads")
 }

@@ -63,8 +63,15 @@ func parseRequest(args []string) (actionRequest, error) {
 		}
 		request.ifindex = ifindex
 	case actionNeighborReplace:
-		if len(args) != 5 {
-			return request, errors.New("neighbor-replace requires exactly IFINDEX FAMILY ADDRESS MAC")
+		if len(args) != 5 && len(args) != 6 {
+			return request, errors.New("neighbor-replace requires exactly IFINDEX FAMILY ADDRESS MAC [VRF_IFINDEX]")
+		}
+		if len(args) == 6 {
+			vrfIfindex, err := parsePositiveUint32("VRF ifindex", args[5], maximumIfindex)
+			if err != nil {
+				return request, err
+			}
+			request.masterIfindex = vrfIfindex
 		}
 		ifindex, err := parsePositiveUint32("ifindex", args[1], maximumIfindex)
 		if err != nil {
@@ -81,6 +88,9 @@ func parseRequest(args []string) (actionRequest, error) {
 		mac, err := parseUnicastMAC(args[4])
 		if err != nil {
 			return request, err
+		}
+		if ifindex == request.masterIfindex {
+			return request, errors.New("interface and VRF ifindexes must be different")
 		}
 		request.ifindex = ifindex
 		request.family = family

@@ -63,6 +63,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and hub connection lease when the session is deleted. Execution intent and
   result are audited through synchronous durable delivery. See
   `docs/node-maintenance-controller.md`.
+- Node-maintenance templates can bind a neighbour replacement to an exact VRF
+  (`allowedTargets[].vrf`) and can be published as capability-free previews
+  (`nodeMaintenance.dryRun`). Both are part of the approved tuple, so a preview
+  approval never executes a mutation. Maintenance templates may also declare
+  required `createBefore` auxiliary resources, such as a per-session Kyverno
+  PolicyException, which the controller creates before the executor and removes
+  before releasing the node Lease. Their templates can bind to the approved
+  Node through `.target.nodeName` and `.target.nodeUID`. Broad neighbour or FDB
+  flushes remain rejected.
 - Escalation-config chart 0.4.2 accepts `clusterConfig.labels` and
   `clusterConfig.annotations`, merging scoped metadata into plain Helm output.
   Explicit labels override matching chart defaults. Empty maps preserve current

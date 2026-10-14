@@ -27,6 +27,9 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	Bridge *string `json:"bridge,omitempty"`
 	// vlan is required only for an FDB operation.
 	VLAN *int32 `json:"vlan,omitempty"`
+	// vrf optionally binds a neighbour operation to the exact VRF device that
+	// must be the interface master. It is never valid for an FDB operation.
+	VRF *string `json:"vrf,omitempty"`
 }
 
 // NodeMaintenanceTargetApplyConfiguration constructs a declarative configuration of the NodeMaintenanceTarget type for use with
@@ -88,5 +91,13 @@ func (b *NodeMaintenanceTargetApplyConfiguration) WithBridge(value string) *Node
 // If called multiple times, the VLAN field is set to the value of the last call.
 func (b *NodeMaintenanceTargetApplyConfiguration) WithVLAN(value int32) *NodeMaintenanceTargetApplyConfiguration {
 	b.VLAN = &value
+	return b
+}
+
+// WithVRF sets the VRF field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the VRF field is set to the value of the last call.
+func (b *NodeMaintenanceTargetApplyConfiguration) WithVRF(value string) *NodeMaintenanceTargetApplyConfiguration {
+	b.VRF = &value
 	return b
 }

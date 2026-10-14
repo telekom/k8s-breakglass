@@ -7,7 +7,7 @@ SPDX-License-Identifier: CC-BY-4.0
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace` and
-`bridge-fdb-replace` are supported; this does **not** enable broad flushes, link
+`bridge-fdb-replace` are supported, optionally as a preview; this does **not** enable broad flushes, link
 cycling, kexec, arbitrary host commands, traffic mirroring or CRA.
 
 ## Operator prerequisites
@@ -46,8 +46,8 @@ cycling, kexec, arbitrary host commands, traffic mirroring or CRA.
 ## Template and typed request
 
 Create a workload-mode template with **no** `workloadType`, Pod template,
-variables, overrides, scheduling choices, impersonation, auxiliary resources,
-artifact recipes or interactive sharing. The executor constructs a fixed Job
+variables, overrides, scheduling choices, impersonation, auxiliary resource
+defaults or requester selections, artifact recipes or interactive sharing. The executor constructs a fixed Job
 and exactly one UID-owned Pod instead of rendering a caller-controlled workload.
 The Job sets `managedBy: breakglass.t-caas.telekom.com/node-maintenance`, requiring
 Kubernetes 1.32+ with `JobManagedBy` enabled. The built-in Job controller therefore
@@ -108,6 +108,10 @@ duration and reason fields:
 }
 ```
 
+For a neighbour in a VRF, add `vrf` with the exact VRF device that is the
+master of `interface`; the helper rejects any other master and resolves the
+neighbour route inside that VRF. `vrf` is valid only for `neighbor-replace`.
+
 For `bridge-fdb-replace`, use `bridge`, `interface` (the exact bridge port),
 `entryMAC`, and integer `vlan` (1–4094); omit `neighborAddress`. Neighbour requests
 must omit `bridge` and `vlan`. MACs/IPs must be canonical and MACs nonzero unicast;
@@ -115,6 +119,42 @@ IPv4-mapped IPv6 neighbour addresses, CIDRs, wildcards,
 alternate interfaces/UIDs and unknown free-text fields are rejected. Every
 request field must equal an entry in the template's allowlist. Action/image are
 template-owned, never requester inputs.
+
+### Preview profiles
+
+`nodeMaintenance.dryRun: true` turns a template into a preview of the same
+exact tuple. The helper runs every validation and preflight capture, records
+`dry_run=true`, `action_performed=false` and a `previewed` event, and never
+calls the mutating action. The preview Pod drops all capabilities and adds
+none. The canonical tuple carries `&dry_run=true` (and `&vrf=` when set), so a
+preview approval cannot execute a mutation and an execution approval cannot be
+replayed as a preview. Because the flag is template-owned, operators publish a
+preview template and a separately approved execution template for the same
+allowlist; requesters cannot toggle it.
+
+### Per-session admission exceptions
+
+A maintenance template may declare `auxiliaryResources` that must exist before
+the executor, for example a per-session Kyverno `PolicyException` that admits
+only this session's Job and Pod. Every resource must set `createBefore: true`,
+must not be optional or `deleteAfter: false`, must use `failurePolicy: fail`
+(or omit it), and must name a category listed in
+`requiredAuxiliaryResourceCategories`; every required category must contain at
+least one resource. `auxiliaryResourceDefaults`, requester
+`selectedAuxiliaryResources` and binding overrides remain rejected. The
+resource kind is not restricted, so RBAC on `DebugSessionTemplate` decides who
+may add resources that a maintenance session creates.
+
+The controller renders and creates these resources on the target cluster after
+acquiring the node Lease and before the Job. Templates can bind such a
+resource to the approved Node with `.target.nodeName` and `.target.nodeUID`.
+Kyverno loads new exceptions asynchronously, so while a
+`PolicyException` created by the session is younger than the admission window
+of workload sessions, an admission-webhook denial of the Job or Pod rolls back
+its create marker (a denied create committed nothing) and requeues the session
+after one second instead of failing it. A denial after the window fails the
+session. Cleanup deletes them after the Pod and Job are
+proven absent and before the Lease is released.
 
 ## Approval, execution and cleanup
 
@@ -202,6 +242,8 @@ cluster and local registry, builds the real helper and uses its manifest digest.
 It exercises the controller and existing approval HTTP flow against the real
 API server: unapproved/self-approved/mismatched-UID denial, Lease contention,
 exact neighbour/FDB mutation with decoy preservation, audit outcome and cleanup.
+The neighbour lane also runs a capability-free preview that must leave the
+stale entry unchanged and an exact VRF neighbour replacement with a decoy.
 Cancellation uses the actual terminate HTTP handler; expiry exercises the
 controller's terminal reconciliation and verifies Job/Pod/Lease removal.
 Expiry uses an original 60-second requested duration so slow CI API round trips

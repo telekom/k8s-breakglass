@@ -107,16 +107,33 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		require.NoError(t, json.Unmarshal(output, &records))
 		return records
 	}
+	neighborMACs := func(device string) map[string]string {
+		t.Helper()
+		macs := map[string]string{}
+		for _, entry := range dockerJSON("ip", "-j", "neigh", "show", "dev", device) {
+			address, _ := entry["dst"].(string)
+			macs[address], _ = entry["lladdr"].(string)
+		}
+		return macs
+	}
 	for _, tc := range []struct {
 		name   string
+		lane   string
 		action string
-		target breakglassv1alpha1.NodeMaintenanceTarget
+		dryRun bool
+		// focused cases prove one executor property without repeating the
+		// contention, cancellation and expiry lifecycle of the full lanes.
+		focused bool
+		target  breakglassv1alpha1.NodeMaintenanceTarget
 	}{
-		{"neighbor", "neighbor-replace", breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}},
-		{"fdb", "bridge-fdb-replace", breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}},
+		// The preview runs first so the stale fixture entry is still present.
+		{"preview", "neighbor", "neighbor-replace", true, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}},
+		{"neighbor", "neighbor", "neighbor-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}},
+		{"vrf", "neighbor", "neighbor-replace", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551v", VRF: "bg1551vrf", NeighborAddress: "198.51.100.2", EntryMAC: "02:00:00:00:00:02"}},
+		{"fdb", "fdb", "bridge-fdb-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if actionFilter != "" && actionFilter != tc.name {
+			if actionFilter != "" && actionFilter != tc.lane {
 				t.Skip("the other exact repair action runs in its independent CI lane")
 			}
 			tc.target.TargetNode, tc.target.TargetNodeUID = nodeName, string(node.UID)
@@ -126,7 +143,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 					Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"requester@example.com"}, Clusters: []string{cc.Name}},
 					Approvers:       &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
 					Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "5m", DefaultDuration: "5m"},
-					NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: tc.action, Image: image,
+					NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: tc.action, Image: image, DryRun: tc.dryRun,
 						AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{tc.target}},
 				}}
 			require.NoError(t, hub.Create(ctx, template))
@@ -166,6 +183,42 @@ func TestNodeMaintenanceKind(t *testing.T) {
 				session := requestSession(target, duration, http.StatusCreated)
 				reconcile(session)
 				return session
+			}
+			if tc.focused {
+				session := createSession("approved", tc.target)
+				approver = "requester@example.com"
+				approve(session, http.StatusForbidden)
+				approver = "approver@example.com"
+				approve(session, http.StatusOK)
+				reconcile(session)
+				require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, session.Status.State, session.Status.Message)
+				key := client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.NodeMaintenance.OperationID}
+				pod := &corev1.Pod{}
+				require.Eventually(t, func() bool {
+					if err := hub.Get(ctx, key, pod); err != nil {
+						return false
+					}
+					if pod.Status.Phase == corev1.PodFailed {
+						t.Fatalf("fixed helper failed: %#v", pod.Status.ContainerStatuses)
+					}
+					return pod.Status.Phase == corev1.PodSucceeded
+				}, 90*time.Second, time.Second)
+				if tc.dryRun {
+					require.Empty(t, pod.Spec.Containers[0].SecurityContext.Capabilities.Add, "a preview runs without NET_ADMIN")
+					require.Equal(t, "02:00:00:00:00:03", neighborMACs("bg1551n")["192.0.2.2"], "a preview never changes the entry")
+				} else {
+					macs := neighborMACs(tc.target.Interface)
+					require.Equal(t, tc.target.EntryMAC, macs["198.51.100.2"], "exact VRF neighbour repaired")
+					require.Equal(t, "02:00:00:00:00:09", macs["198.51.100.9"], "VRF decoy unchanged")
+				}
+				reconcile(session)
+				require.Equal(t, "succeeded", session.Status.NodeMaintenance.Result)
+				require.True(t, session.Status.NodeMaintenance.ResultAudited)
+				require.Eventually(t, func() bool {
+					err := controller.cleanupResources(ctx, session)
+					return err == nil && session.Status.NodeMaintenance.Released
+				}, 90*time.Second, time.Second)
+				return
 			}
 			mismatched := *tc.target.DeepCopy()
 			mismatched.TargetNodeUID = "replacement-uid"
@@ -223,12 +276,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 				return pod.Status.Phase == corev1.PodSucceeded
 			}, 90*time.Second, time.Second)
 			if tc.action == "neighbor-replace" {
-				entries := dockerJSON("ip", "-j", "neigh", "show", "dev", "bg1551n")
-				macs := map[string]string{}
-				for _, entry := range entries {
-					address, _ := entry["dst"].(string)
-					macs[address], _ = entry["lladdr"].(string)
-				}
+				macs := neighborMACs("bg1551n")
 				require.Equal(t, tc.target.EntryMAC, macs["192.0.2.2"])
 				require.Equal(t, "02:00:00:00:00:09", macs["192.0.2.9"])
 			} else {

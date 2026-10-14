@@ -58,6 +58,15 @@ Kind execution before they count as acceptance. Compilation or static review
 alone does not close these gaps. See [Authorization resilience E2E](./authorization-resilience-e2e.md)
 for cache-window semantics, restoration and the real outage positive/negative controls.
 
+`TestTicketSystemIDValidationBoundary` exercises the live API and CRD admission:
+257 Unicode characters return HTTP 422 without creating a session; 256 characters
+are accepted, and a direct over-length CRD create is Invalid.
+`TestTicketSystemIDAuditRoundTrip` checks omitted, arbitrary and 256-character
+references in immutable session spec and request/approval audit receipts.
+The reference remains optional and recorded only; these checks do not validate
+an incident against an external ticket system. `pkg/bgctl/cmd` independently
+checks that an over-length `--ticket-system-id` never reaches the API.
+
 ## Tests that bypass production wiring
 
 * `pkg/webhook/authorize_helpers_test.go:96-103` and `:131-141` assign
@@ -103,8 +112,10 @@ policy's name/UID owner approval fence. Both normal topology jobs run it.
 `TestDebugSessionArtifactCollectorE2E` requires observed completed collector
 Pods and zero surviving Pods after artifact deletion or session cleanup,
 including Pods whose owner reference disappeared. It runs both recipes against
-local and S3 storage, but currently only in the Single-Cluster E2E job.
-Multi-cluster collector execution remains a genuine fixture/transport gap.
+local and S3 storage in Single- and Multi-Cluster E2E. The multi-cluster matrix
+must execute workloads/collectors and authorization negatives on the real
+spoke while keeping reservations and provider storage on the hub; it must not
+fall back to hub-only execution.
 Upstream Kind coverage does not establish production Kyverno admission,
 published-image acceptance, downstream TIND acceptance or live acceptance.
 

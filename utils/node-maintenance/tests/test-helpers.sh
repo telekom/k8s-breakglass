@@ -209,4 +209,50 @@ if BREAKGLASS_APPROVED_NETWORK_REQUEST="$invalid_approved_tuple" sh -c '
 fi
 pass 'forged controller-approved network tuple is rejected'
 
+BREAKGLASS_NODE_NAME=node-a
+export BREAKGLASS_NODE_NAME
+assert_rejected 'broad neighbor table flush is not allowlisted' "action 'neighbor-flush' is not allowlisted" "$network_repair" \
+	--target-node node-a --interface eth0 --action neighbor-flush --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'broad bridge FDB flush is not allowlisted' "action 'bridge-fdb-flush' is not allowlisted" "$network_repair" \
+	--target-node node-a --interface eth0 --action bridge-fdb-flush --bridge br0 --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'VRF is rejected for bridge FDB repair' 'bridge-fdb-replace does not accept a VRF' "$network_repair" \
+	--target-node node-a --interface eth0 --action bridge-fdb-replace --bridge br0 --entry-mac 02:00:00:00:00:02 --vlan 100 \
+	--vrf vrf-red --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'VRF is rejected for link actions' "action 'link-cycle' does not accept entry-target options" "$network_repair" \
+	--target-node node-a --interface eth0 --action link-cycle --vrf vrf-red --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'VRF must differ from the interface' 'VRF and interface must be different' "$network_repair" \
+	--target-node node-a --interface eth0 --action neighbor-replace --neighbor-address 192.0.2.2 --entry-mac 02:00:00:00:00:02 \
+	--vrf eth0 --evidence-dir /evidence --confirm NETWORK-REPAIR
+assert_rejected 'preview is limited to exact replace actions' '--dry-run is supported only for exact replace actions' "$network_repair" \
+	--target-node node-a --interface eth0 --action link-cycle --dry-run --evidence-dir /evidence --confirm NETWORK-REPAIR
+
+assert_network_tuple() {
+	name=$1
+	want=$2
+	approved=$3
+	shift 3
+	if BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved" sh -c '. "$1"; shift; validate_approved_network_request "$@"' sh \
+		"$root_dir/lib/common.sh" "$@" >"$tmp_dir/stdout" 2>"$tmp_dir/stderr"; then
+		[ "$want" = accepted ] || fail "$name was accepted"
+	else
+		[ "$want" = rejected ] || fail "$name was rejected: $(cat "$tmp_dir/stderr")"
+	fi
+	pass "$name"
+}
+neighbor_tuple='target_node=node-a&interface=eth0&action=neighbor-replace&neighbor_address=192.0.2.2&bridge=&entry_mac=02:00:00:00:00:02&vlan='
+assert_network_tuple 'legacy tuple without VRF or preview is unchanged' accepted "$neighbor_tuple&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR
+assert_network_tuple 'VRF-bound tuple is accepted for the same VRF' accepted "$neighbor_tuple&vrf=vrf-red&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-red false
+assert_network_tuple 'VRF-bound tuple is rejected for another VRF' rejected "$neighbor_tuple&vrf=vrf-red&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-blue false
+assert_network_tuple 'VRF-less approval cannot run inside a VRF' rejected "$neighbor_tuple&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-red false
+assert_network_tuple 'preview approval cannot execute a mutation' rejected "$neighbor_tuple&dry_run=true&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR "" false
+assert_network_tuple 'mutation approval cannot be replayed as a preview' rejected "$neighbor_tuple&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR "" true
+assert_network_tuple 'preview tuple is accepted for a preview' accepted "$neighbor_tuple&vrf=vrf-red&dry_run=true&confirmation=NETWORK-REPAIR" \
+	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-red true
+
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

@@ -4,15 +4,19 @@
 set -euo pipefail
 # shellcheck source=e2e/lib/common.sh
 source "$(dirname -- "${BASH_SOURCE[0]}")/../../lib/common.sh"
-# This script modifies only the disposable single-cluster E2E fixture.
-: "${GITHUB_ENV:?run in the single-cluster CI job}"
-: "${KUBECONFIG:?source the single-cluster e2e environment first}"
+# This script modifies only the disposable Kind E2E fixture.
+: "${GITHUB_ENV:?run in the E2E CI job}"
+: "${KUBECONFIG:?source the e2e environment first}"
 ns=breakglass-system
 cluster=${CLUSTER_NAME:-breakglass-hub}
 work="$PWD/.artifact-fixture-$$"
 mkdir -m 0700 "$work"
 trap 'rm -rf "$work"' EXIT
 nodes=$(kind get nodes --name "$cluster")
+if [[ "${E2E_MULTI_CLUSTER:-false}" == "true" ]]; then
+ : "${E2E_SPOKE_A_KUBECONFIG:?source the multi-cluster e2e environment first}"
+ nodes="$nodes $(kind get nodes --name spoke-cluster-a)"
+fi
 test -n "$nodes"
 # Fresh keys belong only to this disposable fixture and are never logged.
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=artifact-kind-ca -keyout "$work/ca.key" -out "$work/ca.crt" >/dev/null 2>&1
@@ -134,6 +138,41 @@ spec:
     - port: 8444
       targetPort: 8444
 YAML
+if [[ "${E2E_MULTI_CLUSTER:-false}" == "true" ]]; then
+ # Spoke Pods use the same verified TLS name, routed to the hub's NodePort.
+ # No hub TLS private key, signing key or provider credential leaves the hub.
+ kubectl -n "$ns" patch service artifact-e2e --type=merge -p '{"spec":{"type":"NodePort","ports":[{"port":8444,"targetPort":8444,"nodePort":30444}]}}'
+ hub_ip=$(docker inspect -f '{{(index .NetworkSettings.Networks "kind").IPAddress}}' "$cluster-control-plane")
+ test -n "$hub_ip"
+ kubectl --kubeconfig "$E2E_SPOKE_A_KUBECONFIG" -n "$ns" apply -f - <<YAML
+apiVersion: v1
+kind: Service
+metadata:
+  name: artifact-e2e
+spec:
+  ports:
+    - name: https
+      port: 8444
+      targetPort: 30444
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: artifact-e2e-hub
+  labels:
+    kubernetes.io/service-name: artifact-e2e
+    endpointslice.kubernetes.io/managed-by: artifact-e2e-fixture
+addressType: IPv4
+ports:
+  - name: https
+    protocol: TCP
+    port: 30444
+endpoints:
+  - addresses: ["$hub_ip"]
+    conditions:
+      ready: true
+YAML
+fi
 kubectl -n "$ns" apply -f - <<'YAML'
 apiVersion: v1
 kind: Service

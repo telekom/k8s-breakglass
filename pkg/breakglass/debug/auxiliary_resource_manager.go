@@ -457,6 +457,13 @@ func (m *AuxiliaryResourceManager) buildRenderContext(
 		ctx.Session.ApprovedBy = session.Status.Approval.ApprovedBy
 	}
 
+	// The typed tuple was matched against the template allowlist before any
+	// auxiliary resource is deployed, so templates can bind to the exact Node.
+	if template != nil && template.NodeMaintenance != nil && session.Spec.NodeMaintenance != nil {
+		ctx.Target.NodeName = session.Spec.NodeMaintenance.TargetNode
+		ctx.Target.NodeUID = session.Spec.NodeMaintenance.TargetNodeUID
+	}
+
 	if session.Status.ExpiresAt != nil {
 		ctx.Session.ExpiresAt = session.Status.ExpiresAt.Format(time.RFC3339)
 	}

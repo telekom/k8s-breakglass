@@ -267,7 +267,7 @@ destroy_fixture() {
 approved_network_request() {
 	[ "$1" = network-repair ] || { printf '%s' not-a-network-repair; return; }
 	shift
-	target='' interface='' action='' neighbor='' bridge='' mac='' vlan='' confirmation=''
+	target='' interface='' action='' neighbor='' bridge='' mac='' vlan='' vrf='' dry_run='' confirmation=''
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 			--target-node) target=$2; shift 2 ;;
@@ -277,13 +277,16 @@ approved_network_request() {
 			--bridge) bridge=$2; shift 2 ;;
 			--entry-mac) mac=$2; shift 2 ;;
 			--vlan) vlan=$2; shift 2 ;;
+			--vrf) vrf=$2; shift 2 ;;
+			--dry-run) dry_run=true; shift ;;
 			--confirm) confirmation=$2; shift 2 ;;
 			--evidence-dir) shift 2 ;;
 			*) shift ;;
 		esac
 	done
-	printf 'target_node=%s&interface=%s&action=%s&neighbor_address=%s&bridge=%s&entry_mac=%s&vlan=%s&confirmation=%s' \
-		"$target" "$interface" "$action" "$neighbor" "$bridge" "$mac" "$vlan" "$confirmation"
+	printf 'target_node=%s&interface=%s&action=%s&neighbor_address=%s&bridge=%s&entry_mac=%s&vlan=%s%s%s&confirmation=%s' \
+		"$target" "$interface" "$action" "$neighbor" "$bridge" "$mac" "$vlan" \
+		"${vrf:+&vrf=$vrf}" "${dry_run:+&dry_run=true}" "$confirmation"
 }
 
 run_command() {
@@ -953,6 +956,8 @@ run_network_fixture() {
 	new_fixture "$label"
 	bridge_test_mode=0
 	bridge_mount_arg=
+	vrf_test_mode=0
+	case "$label" in *-vrf*) vrf_test_mode=1 ;; esac
 	if [ "$label" = guard-fdb-vlan-output-quota ]; then
 		bridge_test_mode=1
 		bridge_wrapper="$tmp_dir/fake-bridge"
@@ -976,6 +981,8 @@ run_network_fixture() {
 	fi
 	output_file="$fixture_dir/output"
 	set +e
+	# The fixture script expands its variables inside the container.
+	# shellcheck disable=SC2016
 	"$docker_bin" run \
 		--name "$container_name" --user 0 --env BREAKGLASS_NODE_NAME=node-a \
 		--env BREAKGLASS_OPERATION_ID="operation-$label" \
@@ -984,6 +991,7 @@ run_network_fixture() {
 		--env BREAKGLASS_APPROVED_ACTION="$approved_action" \
 		--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
 		--env NODE_MAINTENANCE_TEST_BRIDGE_OUTPUT_QUOTA="$bridge_test_mode" \
+		--env NODE_MAINTENANCE_TEST_VRF="$vrf_test_mode" \
 		--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
@@ -1006,6 +1014,18 @@ run_network_fixture() {
 			ip link set fdbpeer up
 			bridge vlan add dev fdb0 vid 100
 			bridge vlan add dev br0 vid 100 self
+			if [ "$NODE_MAINTENANCE_TEST_VRF" = 1 ]; then
+				ip link add vrf-red type vrf table 10
+				ip link set vrf-red up
+				ip link add vrf-blue type vrf table 20
+				ip link set vrf-blue up
+				ip link add vrfport0 type veth peer name vrfpeer
+				ip link set vrfport0 master vrf-red
+				ip address add 198.51.100.1/24 dev vrfport0
+				ip link set vrfport0 up
+				ip link set vrfpeer up
+				ip neigh replace 198.51.100.2 lladdr 02:00:00:00:00:ff nud permanent dev vrfport0
+			fi
 			exec /usr/local/bin/node-maintenance "$@"
 		' fixture "$@" >"$output_file" 2>&1
 	actual_exit=$?
@@ -1042,6 +1062,58 @@ printf '%s\n' "$lock_record" | grep -Fqx 'approval_id=approval-repair-neighbor-r
 	|| fail 'operation lock record omitted the exact approval identity'
 destroy_fixture
 pass 'neighbor-replace changes only the exact requested entry and binds its lock record to the approval tuple'
+
+run_network_fixture preview-neighbor-replace 0 neighbor-replace network-repair \
+	--target-node node-a --interface repair0 --action neighbor-replace \
+	--neighbor-address 192.0.2.2 --entry-mac 02:00:00:00:00:02 --dry-run \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+preview_bundle=$(bundle_from_output "$fixture_dir/output")
+preview_host_bundle=$(copy_bundle "$fixture_dir/output" "$preview_bundle")
+assert_capture_statuses "$preview_host_bundle" before-neighbor-route.txt before-neighbor-entry.txt
+[ ! -e "$preview_host_bundle/action-neighbor-replace.txt" ] || fail 'neighbor-replace preview invoked the mutating network action'
+[ ! -e "$preview_host_bundle/after-neighbor-entry.txt" ] || fail 'neighbor-replace preview recorded a post-mutation capture'
+grep -q '^dry_run=true$' "$preview_host_bundle/metadata" || fail 'neighbor-replace preview did not record dry_run=true'
+grep -q '^action_performed=false$' "$preview_host_bundle/metadata" || fail 'neighbor-replace preview did not record that no action ran'
+grep -q '"result":"previewed"' "$preview_host_bundle/events.jsonl" || fail 'neighbor-replace preview completion event is missing'
+destroy_fixture
+pass 'neighbor-replace preview validates and captures the exact entry without changing it'
+
+run_network_fixture preview-bridge-fdb-replace 0 bridge-fdb-replace network-repair \
+	--target-node node-a --interface fdb0 --bridge br0 --action bridge-fdb-replace \
+	--entry-mac 02:00:00:00:01:02 --vlan 100 --dry-run \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+fdb_preview_bundle=$(bundle_from_output "$fixture_dir/output")
+fdb_preview_host_bundle=$(copy_bundle "$fixture_dir/output" "$fdb_preview_bundle")
+assert_capture_statuses "$fdb_preview_host_bundle" before-bridge.txt before-bridge-vlan.txt before-fdb-entry.txt
+[ ! -e "$fdb_preview_host_bundle/action-bridge-fdb-replace.txt" ] || fail 'bridge-fdb-replace preview invoked the mutating network action'
+grep -q '"result":"previewed"' "$fdb_preview_host_bundle/events.jsonl" || fail 'bridge-fdb-replace preview completion event is missing'
+destroy_fixture
+pass 'bridge-fdb-replace preview validates the exact bridge, port, and VLAN without changing the FDB'
+
+run_network_fixture repair-neighbor-replace-vrf 0 neighbor-replace network-repair \
+	--target-node node-a --interface vrfport0 --action neighbor-replace \
+	--neighbor-address 198.51.100.2 --entry-mac 02:00:00:00:00:02 --vrf vrf-red \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+vrf_bundle=$(bundle_from_output "$fixture_dir/output")
+vrf_host_bundle=$(copy_bundle "$fixture_dir/output" "$vrf_bundle")
+assert_capture_statuses "$vrf_host_bundle" before-vrf.txt before-neighbor-route.txt before-neighbor-entry.txt \
+	action-neighbor-replace.txt after-neighbor-entry.txt
+grep -Eq '^198\.51\.100\.2 +lladdr +02:00:00:00:00:02 ' "$vrf_host_bundle/after-neighbor-entry.txt" \
+	|| fail 'VRF neighbor-replace did not replace the exact requested entry'
+grep -q '^vrf=vrf-red$' "$vrf_host_bundle/metadata" || fail 'VRF neighbor-replace did not record its VRF'
+destroy_fixture
+pass 'neighbor-replace binds the exact VRF of the enslaved interface'
+
+run_network_fixture guard-neighbor-replace-wrong-vrf nonzero neighbor-replace network-repair \
+	--target-node node-a --interface vrfport0 --action neighbor-replace \
+	--neighbor-address 198.51.100.2 --entry-mac 02:00:00:00:00:02 --vrf vrf-blue \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+grep -q "is not enslaved to exact VRF device 'vrf-blue'" "$fixture_dir/output" || fail 'wrong-VRF neighbor-replace was not rejected by preflight'
+wrong_vrf_bundle=$(bundle_from_output "$fixture_dir/output")
+wrong_vrf_host_bundle=$(copy_bundle "$fixture_dir/output" "$wrong_vrf_bundle")
+[ ! -e "$wrong_vrf_host_bundle/action-neighbor-replace.txt" ] || fail 'wrong-VRF neighbor-replace invoked the mutating network action'
+destroy_fixture
+pass 'neighbor-replace rejects a VRF that is not the exact master of the interface'
 
 # 63 + 1 + 63 + 1 + 63 + 1 + 61 = a real 253-byte RFC 1123 subdomain.
 max_node=$(awk 'BEGIN { for (label = 1; label <= 4; label++) { limit = (label == 4 ? 61 : 63); for (i = 0; i < limit; i++) printf "n"; if (label < 4) printf "." } }')

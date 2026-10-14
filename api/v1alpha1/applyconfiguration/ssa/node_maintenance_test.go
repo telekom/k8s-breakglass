@@ -17,9 +17,9 @@ func TestNodeMaintenanceSnapshotRoundTrip(t *testing.T) {
 	status := &breakglassv1alpha1.DebugSessionStatus{
 		ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{
 			NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{
-				Action: "bridge-fdb-replace", Image: "registry.example/helper@sha256:" + strings.Repeat("a", 64),
+				Action: "bridge-fdb-replace", Image: "registry.example/helper@sha256:" + strings.Repeat("a", 64), DryRun: true,
 				AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{{TargetNode: "node-a", TargetNodeUID: "node-uid",
-					Interface: "port0", Bridge: "br0", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}},
+					Interface: "port0", Bridge: "br0", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100)), VRF: "vrf-blue"}},
 			},
 		},
 		NodeMaintenance: &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "operation", NamespaceUID: "ns-uid",

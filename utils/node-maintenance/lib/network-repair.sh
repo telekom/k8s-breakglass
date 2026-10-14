@@ -21,8 +21,13 @@ Allowed actions:
   restart-autonegotiation    Ask IFACE to restart auto-negotiation.
   neighbor-replace           Replace one exact IP-to-MAC neighbor entry.
     requires --neighbor-address IP --entry-mac MAC
+    optional --vrf VRF when IFACE is enslaved to exactly that VRF device
   bridge-fdb-replace         Replace one exact bridge FDB entry.
     requires --bridge BRIDGE --entry-mac MAC --vlan VLAN
+
+--dry-run (replace actions only) runs every validation and preflight capture,
+records what would be replaced, and never changes the entry. There is no flush
+action: broad ARP, neighbor, or FDB flushes are rejected as not allowlisted.
 
 The controller must independently bind BREAKGLASS_APPROVED_ACTION to the
 requested action and provide operation, approval, and recording identifiers.
@@ -36,6 +41,8 @@ neighbor_address=
 bridge_name=
 entry_mac=
 vlan=
+vrf=
+dry_run=false
 evidence_dir=
 confirmation=
 target_node_seen=false
@@ -45,6 +52,8 @@ neighbor_address_seen=false
 bridge_name_seen=false
 entry_mac_seen=false
 vlan_seen=false
+vrf_seen=false
+dry_run_seen=false
 evidence_dir_seen=false
 confirmation_seen=false
 while [ "$#" -gt 0 ]; do
@@ -56,6 +65,8 @@ while [ "$#" -gt 0 ]; do
 		--bridge) [ "$bridge_name_seen" = false ] || die "--bridge may be supplied only once"; [ "$#" -ge 2 ] || die "--bridge needs a value"; bridge_name_seen=true; bridge_name=$2; shift 2 ;;
 		--entry-mac) [ "$entry_mac_seen" = false ] || die "--entry-mac may be supplied only once"; [ "$#" -ge 2 ] || die "--entry-mac needs a value"; entry_mac_seen=true; entry_mac=$2; shift 2 ;;
 		--vlan) [ "$vlan_seen" = false ] || die "--vlan may be supplied only once"; [ "$#" -ge 2 ] || die "--vlan needs a value"; vlan_seen=true; vlan=$2; shift 2 ;;
+		--vrf) [ "$vrf_seen" = false ] || die "--vrf may be supplied only once"; [ "$#" -ge 2 ] || die "--vrf needs a value"; vrf_seen=true; vrf=$2; shift 2 ;;
+		--dry-run) [ "$dry_run_seen" = false ] || die "--dry-run may be supplied only once"; dry_run_seen=true; dry_run=true; shift ;;
 		--evidence-dir) [ "$evidence_dir_seen" = false ] || die "--evidence-dir may be supplied only once"; [ "$#" -ge 2 ] || die "--evidence-dir needs a value"; evidence_dir_seen=true; evidence_dir=$2; shift 2 ;;
 		--confirm) [ "$confirmation_seen" = false ] || die "--confirm may be supplied only once"; [ "$#" -ge 2 ] || die "--confirm needs a value"; confirmation_seen=true; confirmation=$2; shift 2 ;;
 		-h|--help) usage; exit 0 ;;
@@ -70,19 +81,25 @@ validate_confirmation NETWORK-REPAIR "$confirmation"
 
 case "$action" in
 	link-cycle|restart-autonegotiation)
-		[ "$neighbor_address_seen$bridge_name_seen$entry_mac_seen$vlan_seen" = falsefalsefalsefalse ] || die "action '$action' does not accept entry-target options"
+		[ "$neighbor_address_seen$bridge_name_seen$entry_mac_seen$vlan_seen$vrf_seen" = falsefalsefalsefalsefalse ] || die "action '$action' does not accept entry-target options"
+		[ "$dry_run_seen" = false ] || die "--dry-run is supported only for exact replace actions"
 		;;
 	neighbor-replace)
 		[ "$neighbor_address_seen$entry_mac_seen" = truetrue ] || die "neighbor-replace requires --neighbor-address and --entry-mac"
 		[ "$bridge_name_seen$vlan_seen" = falsefalse ] || die "neighbor-replace does not accept bridge or VLAN targets"
 		validate_neighbor_address "$neighbor_address"
 		validate_mac_address "neighbor MAC" "$entry_mac"
+		if [ "$vrf_seen" = true ]; then
+			validate_linux_interface "VRF" "$vrf"
+			[ "$vrf" != "$interface" ] || die "VRF and interface must be different"
+		fi
 		;;
 	bridge-fdb-replace)
 		[ "$bridge_name_seen" = true ] || die "bridge is required"
 		[ "$entry_mac_seen" = true ] || die "entry MAC is required"
 		[ "$vlan_seen" = true ] || die "VLAN is required"
 		[ "$neighbor_address_seen" = false ] || die "bridge-fdb-replace does not accept a neighbor address"
+		[ "$vrf_seen" = false ] || die "bridge-fdb-replace does not accept a VRF"
 		validate_linux_interface "bridge" "$bridge_name"
 		[ "$bridge_name" != "$interface" ] || die "bridge and port interface must be different"
 		validate_mac_address "FDB MAC" "$entry_mac"
@@ -93,7 +110,7 @@ esac
 
 validate_recording_context
 validate_approved_action "$action"
-validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation"
+validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation" "$vrf" "$dry_run"
 validate_action_deadline
 prepare_evidence_dir "$evidence_dir"
 acquire_operation_lock "$evidence_dir" "$APPROVED_NETWORK_REQUEST_DIGEST"
@@ -108,6 +125,8 @@ write_metadata "$bundle/metadata" network-repair "$target_node" "$interface" "$a
 	[ -z "$bridge_name" ] || printf 'bridge=%s\n' "$bridge_name"
 	[ -z "$entry_mac" ] || printf 'entry_mac=%s\n' "$entry_mac"
 	[ -z "$vlan" ] || printf 'vlan=%s\n' "$vlan"
+	[ -z "$vrf" ] || printf 'vrf=%s\n' "$vrf"
+	printf 'dry_run=%s\n' "$dry_run"
 } | append_evidence "$bundle/metadata"
 record_event operation-started accepted
 
@@ -124,7 +143,20 @@ case "$action" in
 	neighbor-replace)
 		# Set by validate_neighbor_address in the sourced common contract.
 		# shellcheck disable=SC2153
-		if ! capture "$bundle/before-neighbor-route.txt" ip "$NEIGHBOR_FAMILY" route get "$neighbor_address" dev "$interface"; then
+		if [ -n "$vrf" ]; then
+			master_path=$(readlink -f "/sys/class/net/$interface/master" 2>/dev/null || true)
+			if [ "${master_path##*/}" != "$vrf" ] || ! capture "$bundle/before-vrf.txt" ip -details link show dev "$vrf" ||
+				! grep -F ' vrf table ' "$bundle/before-vrf.txt" >/dev/null; then
+				record_event operation-completed preflight-failed
+				die "interface '$interface' is not enslaved to exact VRF device '$vrf'; no repair was attempted (evidence: $bundle)"
+			fi
+			vrf_ifindex=$(pin_interface_ifindex "$vrf")
+			if ! capture "$bundle/before-neighbor-route.txt" ip "$NEIGHBOR_FAMILY" route get "$neighbor_address" vrf "$vrf" ||
+				! grep -F " dev $interface " "$bundle/before-neighbor-route.txt" >/dev/null; then
+				record_event operation-completed preflight-failed
+				die "neighbor '$neighbor_address' is not reachable through exact interface '$interface' in VRF '$vrf'; no repair was attempted (evidence: $bundle)"
+			fi
+		elif ! capture "$bundle/before-neighbor-route.txt" ip "$NEIGHBOR_FAMILY" route get "$neighbor_address" dev "$interface"; then
 			record_event operation-completed preflight-failed
 			die "neighbor '$neighbor_address' is not reachable through exact interface '$interface'; no repair was attempted (evidence: $bundle)"
 		fi
@@ -174,6 +206,13 @@ esac
 
 printf 'Target: %s\nInterface: %s\nAction: %s\nEvidence: %s\n' \
 	"$target_node" "$interface" "$action" "$bundle"
+if [ "$dry_run" = true ]; then
+	assert_safe_bundle "$bundle"
+	printf 'action_performed=false\ncompleted_at_utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | append_evidence "$bundle/metadata"
+	record_event operation-completed previewed
+	printf 'Preview only: the exact entry above would be replaced; nothing was changed (evidence: %s)\n' "$bundle"
+	exit 0
+fi
 printf 'Confirmation and controller action binding accepted. Applying one allowlisted action...\n'
 
 validate_action_deadline
@@ -191,7 +230,12 @@ case "$action" in
 		# Set by validate_neighbor_address in the sourced common contract.
 		# shellcheck disable=SC2153
 		neighbor_family=${NEIGHBOR_FAMILY#-}
-		capture "$bundle/action-neighbor-replace.txt" network-action neighbor-replace "$interface_ifindex" "$neighbor_family" "$neighbor_address" "$entry_mac"
+		if [ -n "$vrf" ]; then
+			# network-action re-proves the pinned VRF master around the replace.
+			capture "$bundle/action-neighbor-replace.txt" network-action neighbor-replace "$interface_ifindex" "$neighbor_family" "$neighbor_address" "$entry_mac" "$vrf_ifindex"
+		else
+			capture "$bundle/action-neighbor-replace.txt" network-action neighbor-replace "$interface_ifindex" "$neighbor_family" "$neighbor_address" "$entry_mac"
+		fi
 		action_status=$?
 		;;
 	bridge-fdb-replace)

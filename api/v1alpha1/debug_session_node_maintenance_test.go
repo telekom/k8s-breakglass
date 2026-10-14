@@ -40,6 +40,7 @@ func TestNodeMaintenanceExactAllowlist(t *testing.T) {
 				{"wildcard", func(v *NodeMaintenanceTarget) { v.Interface = "*" }},
 				{"free text", func(v *NodeMaintenanceTarget) { v.Interface = "eth0;reboot" }},
 				{"broad prefix", func(v *NodeMaintenanceTarget) { v.NeighborAddress = "192.0.2.0/24" }},
+				{"added vrf", func(v *NodeMaintenanceTarget) { v.VRF = "vrf-red" }},
 			} {
 				t.Run(change.name, func(t *testing.T) {
 					request := *tc.target.DeepCopy()
@@ -62,6 +63,23 @@ func TestNodeMaintenanceExactAllowlist(t *testing.T) {
 	require.Error(t, ValidateNodeMaintenanceRequest(nil, &neighbor))
 	require.NoError(t, ValidateNodeMaintenanceRequest(nil, nil))
 	require.Error(t, ValidateNodeMaintenanceTarget("flush-neighbors", &neighbor))
+	require.Error(t, ValidateNodeMaintenanceTarget("neighbor-flush", &neighbor))
+	require.Error(t, ValidateNodeMaintenanceTarget("bridge-fdb-flush", &fdb))
+}
+
+func TestNodeMaintenanceVRFTupleIsExact(t *testing.T) {
+	inVRF := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: "192.0.2.2", VRF: "vrf-red"}
+	profile := &DebugSessionNodeMaintenance{Action: "neighbor-replace", Image: "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64), AllowedTargets: []NodeMaintenanceTarget{inVRF}}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &inVRF))
+	for name, vrf := range map[string]string{"omitted": "", "other": "vrf-blue", "same as interface": "eth0", "free text": "vrf;ip", "wildcard": "*"} {
+		t.Run(name, func(t *testing.T) {
+			request := *inVRF.DeepCopy()
+			request.VRF = vrf
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+	fdb := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "port0", Bridge: "br0", EntryMAC: inVRF.EntryMAC, VLAN: kptr.To(int32(100)), VRF: "vrf-red"}
+	require.ErrorContains(t, ValidateNodeMaintenanceTarget("bridge-fdb-replace", &fdb), "VRF")
 }
 
 // The fixed executor helper accepts only plain IPv4 or IPv6 literals, so
@@ -100,6 +118,12 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	blocked := spec.DeepCopy()
 	blocked.BlockSelfApproval = kptr.To(true)
 	require.NoError(t, ValidateNodeMaintenanceTemplate(blocked))
+	spec.AuxiliaryResources = []AuxiliaryResource{{
+		Name: "policy-exception", Category: "policy-exceptions", CreateBefore: kptr.To(true), DeleteAfter: kptr.To(true),
+		FailurePolicy: AuxiliaryResourceFailurePolicyFail, TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: debug-{{ .session.uid }}\n",
+	}}
+	spec.RequiredAuxiliaryResourceCategories = []string{"policy-exceptions"}
+	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec), "a required createBefore exception is allowed")
 	for _, tc := range []struct {
 		name   string
 		mutate func(*DebugSessionTemplateSpec)
@@ -116,6 +140,19 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 		{"empty allowlist", func(s *DebugSessionTemplateSpec) { s.NodeMaintenance.AllowedTargets = nil }},
 		{"idle timeout", func(s *DebugSessionTemplateSpec) { s.Constraints.IdleTimeout = "1m" }},
 		{"self approval allowed", func(s *DebugSessionTemplateSpec) { s.BlockSelfApproval = kptr.To(false) }},
+		{"auxiliary after workload", func(s *DebugSessionTemplateSpec) { s.AuxiliaryResources[0].CreateBefore = kptr.To(false) }},
+		{"auxiliary retained", func(s *DebugSessionTemplateSpec) { s.AuxiliaryResources[0].DeleteAfter = kptr.To(false) }},
+		{"auxiliary optional", func(s *DebugSessionTemplateSpec) { s.AuxiliaryResources[0].Optional = true }},
+		{"auxiliary ignore failure", func(s *DebugSessionTemplateSpec) {
+			s.AuxiliaryResources[0].FailurePolicy = AuxiliaryResourceFailurePolicyIgnore
+		}},
+		{"auxiliary not required", func(s *DebugSessionTemplateSpec) { s.RequiredAuxiliaryResourceCategories = nil }},
+		{"auxiliary user default", func(s *DebugSessionTemplateSpec) {
+			s.AuxiliaryResourceDefaults = map[string]bool{"policy-exceptions": true}
+		}},
+		{"required category without resources", func(s *DebugSessionTemplateSpec) {
+			s.RequiredAuxiliaryResourceCategories = append(s.RequiredAuxiliaryResourceCategories, "network-policies")
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			changed := spec.DeepCopy()
@@ -125,6 +162,9 @@ func TestNodeMaintenanceTemplateAndRequestIsolation(t *testing.T) {
 	}
 	request := DebugSessionSpec{NodeMaintenance: &target}
 	require.NoError(t, ValidateNodeMaintenanceSession(&spec, &request))
+	request.SelectedAuxiliaryResources = []string{"policy-exception"}
+	require.Error(t, ValidateNodeMaintenanceSession(&spec, &request))
+	request.SelectedAuxiliaryResources = nil
 	request.NodeSelector = map[string]string{"node": "other"}
 	require.Error(t, ValidateNodeMaintenanceSession(&spec, &request))
 	// A binding-merged idle timeout in the resolved snapshot is rejected as well.

@@ -1719,6 +1719,30 @@ func TestBuildRenderContext_VarsAndMetadata(t *testing.T) {
 	assert.NotEmpty(t, ctx.Now)
 }
 
+func TestBuildRenderContext_NodeMaintenanceTarget(t *testing.T) {
+	mgr := newTestAuxiliaryResourceManager()
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "repair", UID: "session-uid"},
+		Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "c1", NodeMaintenance: &breakglassv1alpha1.NodeMaintenanceTarget{
+			TargetNode: "worker-1", TargetNodeUID: "node-uid-1"}},
+	}
+	maintenance := &breakglassv1alpha1.DebugSessionTemplateSpec{
+		NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: "neighbor-replace"}}
+
+	ctx := mgr.buildRenderContext(session, maintenance, nil, breakglassv1alpha1.NodeMaintenanceNamespace, nil)
+	assert.Equal(t, "worker-1", ctx.Target.NodeName)
+	assert.Equal(t, "node-uid-1", ctx.Target.NodeUID)
+	rendered, err := mgr.renderTemplate([]byte(`node: {{ .target.nodeName | yamlQuote }}
+uid: {{ .target.nodeUID | yamlQuote }}`), ctx)
+	require.NoError(t, err)
+	assert.Equal(t, "node: \"worker-1\"\nuid: \"node-uid-1\"", string(rendered))
+
+	// A requester-supplied tuple never reaches a template without a typed profile.
+	ctx = mgr.buildRenderContext(session, &breakglassv1alpha1.DebugSessionTemplateSpec{}, nil, "target-ns", nil)
+	assert.Empty(t, ctx.Target.NodeName)
+	assert.Empty(t, ctx.Target.NodeUID)
+}
+
 func TestCheckAuxiliaryResourcesReadiness_NoResources(t *testing.T) {
 	mgr := newTestAuxiliaryResourceManager()
 

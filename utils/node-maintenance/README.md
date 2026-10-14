@@ -67,7 +67,8 @@ total and 63-byte per-label limits; the complete canonical tuple has its own
 fixed 1 KiB bound so a valid maximum-length Node name is not rejected by a
 per-value limit. Linux interface and bridge names are
 independently limited to 15 bytes, so the largest accepted public
-network-repair tuple is 442 bytes; the 1 KiB ceiling is defense in depth for
+network-repair tuple is 442 bytes, or 475 bytes with the optional VRF and
+preview segments; the 1 KiB ceiling is defense in depth for
 controller-provided serialized data.
 Preflight, each network action, kexec validation, and any future provider
 executor need independent approval decisions; approval for one must never be
@@ -128,7 +129,7 @@ node-recovery \
 
 network-repair \
   --target-node NODE --interface IFACE --action neighbor-replace \
-  --neighbor-address IP --entry-mac MAC \
+  --neighbor-address IP --entry-mac MAC [--vrf VRF] [--dry-run] \
   --evidence-dir /evidence --confirm NETWORK-REPAIR
 
 network-repair \

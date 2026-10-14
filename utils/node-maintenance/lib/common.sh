@@ -23,7 +23,8 @@ evidence_max_bytes=393216
 # The canonical network approval has 88 literal delimiter/key bytes. Its
 # largest public request is 442 bytes: a 253-byte Node name, a 15-byte Linux
 # interface, neighbor-replace, a 39-byte IPv6 literal, a 17-byte MAC, and the
-# fixed confirmation. Keep a fixed, explicit 1 KiB serialized-input ceiling as
+# fixed confirmation. The optional "&vrf=" segment (at most 20 bytes) and
+# "&dry_run=true" (13 bytes) raise that to 475 bytes. Keep a fixed, explicit 1 KiB serialized-input ceiling as
 # a separate malformed-controller-data guard rather than applying the generic
 # per-value limit to the canonical tuple itself.
 approved_network_request_max_bytes=1024
@@ -209,10 +210,17 @@ validate_approved_network_request() {
 	requested_mac=$6
 	requested_vlan=$7
 	requested_confirmation=$8
+	requested_vrf=${9:-}
+	requested_dry_run=${10:-false}
 	approved_request=${BREAKGLASS_APPROVED_NETWORK_REQUEST:-}
 	[ -n "$approved_request" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST is required"
 	[ "${#approved_request}" -le "$approved_network_request_max_bytes" ] || die "BREAKGLASS_APPROVED_NETWORK_REQUEST exceeds the fixed ${approved_network_request_max_bytes}-byte limit"
-	expected_request="target_node=$requested_target&interface=$requested_interface&action=$requested_action&neighbor_address=$requested_neighbor&bridge=$requested_bridge&entry_mac=$requested_mac&vlan=$requested_vlan&confirmation=$requested_confirmation"
+	# Optional segments mirror the controller serializer: they are present only
+	# when set, so tuples without a VRF or preview stay byte-identical.
+	expected_request="target_node=$requested_target&interface=$requested_interface&action=$requested_action&neighbor_address=$requested_neighbor&bridge=$requested_bridge&entry_mac=$requested_mac&vlan=$requested_vlan"
+	[ -z "$requested_vrf" ] || expected_request="$expected_request&vrf=$requested_vrf"
+	[ "$requested_dry_run" != true ] || expected_request="$expected_request&dry_run=true"
+	expected_request="$expected_request&confirmation=$requested_confirmation"
 	[ "$approved_request" = "$expected_request" ] || die "controller-approved network request does not exactly match the requested tuple"
 	# Consumed by the network-repair caller after this file is sourced.
 	# shellcheck disable=SC2034

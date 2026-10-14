@@ -1,5 +1,5 @@
 {
-  "contractVersion": "node-maintenance.integration/v8",
+  "contractVersion": "node-maintenance.integration/v9",
   "imageContext": "utils/node-maintenance",
   "network": {
     "mode": "none",
@@ -7,6 +7,7 @@
     "hostNetworkMutation": false,
     "disposableVethNeighborFixture": true,
     "disposableVLANBridgeFixture": true,
+    "disposableVRFNeighborFixture": true,
     "untouchedNeighborInterfaceAndAddressDecoys": true,
     "untouchedFDBBridgeMACAndVLANDecoys": true,
     "kindExactTupleReplacement": true,
@@ -23,6 +24,7 @@
     "contexts": {
       "node-recovery": {"capabilitiesAdd": []},
       "network-repair": {"capabilitiesAdd": ["NET_ADMIN"]},
+      "network-repair-preview": {"capabilitiesAdd": [], "execution": false},
       "kexec-recovery-validate": {"capabilitiesAdd": [], "execution": false}
     }
   },
@@ -36,6 +38,7 @@
     "approvedNetworkRequestEnvironment": "BREAKGLASS_APPROVED_NETWORK_REQUEST",
     "approvedNetworkRequestMaxBytes": 1024,
     "approvedNetworkRequestFields": ["target_node", "interface", "action", "neighbor_address", "bridge", "entry_mac", "vlan", "confirmation"],
+    "approvedNetworkRequestOptionalFields": ["vrf", "dry_run"],
     "lockRecordTupleDigest": "sha256",
     "exactActionMatch": true,
     "independentApprovalRequired": true
