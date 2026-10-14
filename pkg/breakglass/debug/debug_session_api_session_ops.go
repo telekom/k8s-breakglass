@@ -206,6 +206,10 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, "node-maintenance operations have a fixed deadline and cannot be renewed")
 		return
 	}
+	if session.Spec.AdmissionRecipe != nil {
+		apiresponses.RespondBadRequest(ctx, "admission recipes have a fixed revert deadline and cannot be renewed")
+		return
+	}
 	if isDebugSessionExpired(session, time.Now()) {
 		apiresponses.RespondBadRequest(ctx, "cannot renew expired session")
 		return

@@ -87,6 +87,9 @@ type DebugSessionSpec struct {
 	// nodeMaintenance is a typed request matched against the template's exact allowlist.
 	// +optional
 	NodeMaintenance *NodeMaintenanceTarget `json:"nodeMaintenance,omitempty"`
+	// admissionRecipe is a typed target selection matched against the template allowlist.
+	// +optional
+	AdmissionRecipe *AdmissionRecipeRequest `json:"admissionRecipe,omitempty"`
 	// cluster is the name of the target cluster.
 	// +required
 	Cluster string `json:"cluster"`
@@ -213,6 +216,9 @@ type DebugSessionStatus struct {
 	// nodeMaintenance tracks the fixed executor's durable single-attempt inventory.
 	// +optional
 	NodeMaintenance *NodeMaintenanceStatus `json:"nodeMaintenance,omitempty"`
+	// admissionRecipe tracks the applied admission changes until they are reverted.
+	// +optional
+	AdmissionRecipe *AdmissionRecipeStatus `json:"admissionRecipe,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	// +optional

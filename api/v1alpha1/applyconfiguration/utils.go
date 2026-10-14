@@ -24,6 +24,16 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 	// Group=breakglass.t-caas.telekom.com, Version=v1alpha1
 	case v1alpha1.SchemeGroupVersion.WithKind("AdditionalResourceRef"):
 		return &apiv1alpha1.AdditionalResourceRefApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdmissionRecipeDeniedLabel"):
+		return &apiv1alpha1.AdmissionRecipeDeniedLabelApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdmissionRecipeRequest"):
+		return &apiv1alpha1.AdmissionRecipeRequestApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdmissionRecipeStatus"):
+		return &apiv1alpha1.AdmissionRecipeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdmissionRecipeTarget"):
+		return &apiv1alpha1.AdmissionRecipeTargetApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("AdmissionRecipeTargetStatus"):
+		return &apiv1alpha1.AdmissionRecipeTargetStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodOperations"):
 		return &apiv1alpha1.AllowedPodOperationsApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("AllowedPodRef"):
@@ -122,6 +132,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugResourceQuotaConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSession"):
 		return &apiv1alpha1.DebugSessionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAdmissionRecipe"):
+		return &apiv1alpha1.DebugSessionAdmissionRecipeApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAllowed"):
 		return &apiv1alpha1.DebugSessionAllowedApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionApproval"):
