@@ -495,6 +495,15 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted {
+		if err := c.revertAdmissionRecipe(ctx, ds); err != nil {
+			setCleanupCondition(ds)
+			if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
+				return errors.Join(err, patchErr)
+			}
+			return err
+		}
+	}
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -675,6 +684,18 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 			add(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID)
 		}
 	}
+	if recipe := ds.Status.AdmissionRecipe; recipe != nil && !recipe.Reverted {
+		for _, entry := range recipe.Targets {
+			switch entry.State {
+			case breakglassv1alpha1.AdmissionRecipeTargetApplying, breakglassv1alpha1.AdmissionRecipeTargetApplied, breakglassv1alpha1.AdmissionRecipeTargetDrifted:
+				name := entry.Target.Name
+				if entry.Target.Webhook != "" {
+					name += "#" + entry.Target.Webhook
+				}
+				add(entry.Target.APIVersion, entry.Target.Kind, "", name, "")
+			}
+		}
+	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
 			add(status.APIVersion, status.Kind, status.Namespace, status.ResourceName, status.UID)
@@ -805,6 +826,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
 	if status.NodeMaintenance != nil && !status.NodeMaintenance.Released {
+		return true
+	}
+	if status.AdmissionRecipe != nil && !status.AdmissionRecipe.Reverted {
 		return true
 	}
 	if utils.DebugSessionHasActionableDeployedResources(session) {

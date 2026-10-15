@@ -631,11 +631,11 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 			"approver", identity.username, "approverEmail", identity.email, "policySource", source)
 		return false
 	}
-	if session.Spec.NodeMaintenance != nil {
-		// Node maintenance mutates node networking and always requires an
-		// independent approver, regardless of blockSelfApproval.
+	if session.Spec.NodeMaintenance != nil || session.Spec.AdmissionRecipe != nil {
+		// Node maintenance and admission recipes change cluster-wide behaviour and
+		// always require an independent approver, regardless of blockSelfApproval.
 		if isRequester {
-			return denySelfApproval("nodeMaintenance")
+			return denySelfApproval("typedExecutor")
 		}
 		if session.Status.ResolvedTemplate == nil ||
 			!breakglassv1alpha1.HasCompleteResolvedBindingSnapshot(session.Status) {

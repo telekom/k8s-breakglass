@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed admission recipes: `DebugSessionTemplate.spec.admissionRecipe` with the
+  actions `policy-audit` (Kyverno `ValidatingPolicy` `Deny` → `Audit`) and
+  `webhook-fail-open` (one webhook `failurePolicy` `Fail` → `Ignore`). The
+  controller applies the change for an independently approved session on
+  allowlisted targets only, refuses targets whose live labels match
+  `deniedTargetLabels`, persists the original value before each write, reports
+  drift without overwriting it, and reverts on terminate, failure, expiry and
+  session deletion (finalizer). New synchronous audit events
+  `debug_session.admission_recipe.{applied,drift,reverted}` and metric
+  `breakglass_admission_recipe_operations_total`. Default off; see
+  `docs/admission-recipes.md`.
+
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are
