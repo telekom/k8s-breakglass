@@ -883,7 +883,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 	// For workload or hybrid mode, either podTemplateRef or podTemplateString is required
 	hasPodTemplateRef := template.Spec.PodTemplateRef != nil
 	hasPodTemplateString := template.Spec.PodTemplateString != ""
-	if template.Spec.NodeMaintenance == nil && (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
+	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil && (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
 		result.Errors = append(result.Errors, field.Required(specPath.Child("podTemplateRef"),
 			"either podTemplateRef or podTemplateString is required for workload or hybrid mode"))
 	}
@@ -892,6 +892,7 @@ func ValidateDebugSessionTemplate(template *DebugSessionTemplate) *ValidationRes
 			result.Errors = append(result.Errors, field.Invalid(specPath.Child("nodeMaintenance"), "", err.Error()))
 		}
 	}
+	result.Errors = append(result.Errors, validateHotfixTemplateField(&template.Spec, specPath)...)
 
 	// Validate podTemplateString syntax if present
 	if hasPodTemplateString {

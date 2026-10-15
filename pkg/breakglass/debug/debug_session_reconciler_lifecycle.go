@@ -495,6 +495,15 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if ds.Status.Hotfix != nil && ds.Status.Hotfix.OperationID != "" && !ds.Status.Hotfix.Released {
+		if err := c.cleanupHotfix(ctx, ds); err != nil {
+			setCleanupCondition(ds)
+			if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
+				return errors.Join(err, patchErr)
+			}
+			return err
+		}
+	}
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -805,6 +814,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
 	status := session.Status
 	if status.NodeMaintenance != nil && !status.NodeMaintenance.Released {
+		return true
+	}
+	if status.Hotfix != nil && status.Hotfix.OperationID != "" && !status.Hotfix.Released {
 		return true
 	}
 	if utils.DebugSessionHasActionableDeployedResources(session) {

@@ -62,6 +62,10 @@ jobs:
           sudo mv ./kind /usr/local/bin/kind
       - name: Build image for disposable host-network proof
         run: docker build --pull=false --file utils/node-maintenance/Dockerfile --tag node-maintenance-host-network:ci utils/node-maintenance
+      - name: Exercise the hotfix executor in the real image
+        env:
+          NODE_MAINTENANCE_TEST_IMAGE: node-maintenance-host-network:ci
+        run: make -C utils/node-maintenance hotfix-image
       - name: Exercise exact-node host-network recovery and repair
         env:
           NODE_MAINTENANCE_TEST_IMAGE: node-maintenance-host-network:ci

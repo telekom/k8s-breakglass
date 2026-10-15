@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+#
+# Example alerts for platform hotfix drift (docs/hotfix.md). A hotfix is a
+# bridge until the regular release carries the fix; these alerts keep it
+# visible until it is closed.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: breakglass-hotfix
+  namespace: breakglass-system
+spec:
+  groups:
+    - name: breakglass-hotfix
+      rules:
+        - alert: BreakglassHotfixActive
+          expr: breakglass_hotfix_active == 1
+          labels:
+            severity: warning
+          annotations:
+            summary: "Hotfix {{ $labels.record }} ({{ $labels.type }}) is active on {{ $labels.cluster }}"
+            description: "Close it once the regular release with the fix is rolled out."
+        - alert: BreakglassHotfixExpiring
+          expr: (breakglass_hotfix_expires_timestamp_seconds - time()) < 3 * 86400 and (breakglass_hotfix_expires_timestamp_seconds - time()) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Hotfix {{ $labels.record }} on {{ $labels.cluster }} expires within 3 days"
+            description: "Reconfirm, roll back or close it (four-eyes)."
+        - alert: BreakglassHotfixExpired
+          expr: (breakglass_hotfix_expires_timestamp_seconds - time()) <= 0
+          labels:
+            severity: critical
+          annotations:
+            summary: "Hotfix {{ $labels.record }} on {{ $labels.cluster }} has expired"
+            description: "Expiry never rolls back. Reconfirm, roll back or close it (four-eyes)."
+        - alert: BreakglassHotfixReverted
+          expr: breakglass_hotfix_reverted_nodes > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $value }} nodes lost hotfix {{ $labels.record }} on {{ $labels.cluster }}"
+            description: "The hotfix annotation is gone without a rollback session."
+        - alert: BreakglassHotfixUncovered
+          expr: breakglass_hotfix_uncovered_nodes > 0
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $value }} selected nodes on {{ $labels.cluster }} lack hotfix {{ $labels.record }}"
+            description: "Apply the hotfix to them with a new plan, or close the hotfix."

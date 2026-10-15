@@ -1,0 +1,63 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: CC0-1.0
+
+name: Platform hotfix controller
+on:
+  pull_request:
+    paths:
+      - "api/v1alpha1/**"
+      - "config/crd/**"
+      - "pkg/breakglass/debug/**"
+      - "utils/node-maintenance/**"
+      - "hack/hotfix-controller-kind.sh"
+      - "hack/kind-ownership.sh"
+      - "hack/docker-resource-ownership.sh"
+      - "hack/docker-image-ownership.sh"
+      - ".github/workflows/hotfix-controller.yml"
+  push:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: hotfix-controller-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  kind:
+    name: Hotfix plan, apply and rollback on a real node (Kind)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Regenerate API contracts with repository-pinned tools
+        run: make generate manifests
+      - name: Retain reproducible generated contract
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hotfix-generated-contract
+          retention-days: 1
+          path: |
+            api/v1alpha1/zz_generated.deepcopy.go
+            api/v1alpha1/applyconfiguration/
+            config/crd/bases/
+            config/rbac/role.yaml
+            config/webhook/manifests.yaml
+      - name: Require committed generated contract
+        run: git diff --exit-code
+      - name: Install checksum-verified kind and kubectl
+        run: |
+          mkdir .hotfix-tools
+          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64 --output .hotfix-tools/kind
+          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64.sha256sum --output .hotfix-tools/kind.sha256sum
+          cd .hotfix-tools
+          sed 's/kind-linux-amd64/kind/' kind.sha256sum | sha256sum --check --status
+          curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl --output kubectl
+          curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl.sha256 --output kubectl.sha256
+          printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
+          chmod +x kind kubectl
+          echo "$PWD" >> "$GITHUB_PATH"
+      - name: Prove the hotfix stages, four-eyes approval, executor and record
+        run: bash hack/hotfix-controller-kind.sh

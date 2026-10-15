@@ -481,6 +481,24 @@ var (
 		Help: "Total pod exec/attach requests allowed with security warnings",
 	}, []string{"cluster", "policy"})
 
+	// Platform hotfix drift metrics
+	HotfixActive = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_hotfix_active",
+		Help: "1 while a HotfixRecord is applied on at least one node and not closed",
+	}, []string{"cluster", "type", "record"})
+	HotfixExpiresTimestamp = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_hotfix_expires_timestamp_seconds",
+		Help: "Unix time when an open HotfixRecord must be reconfirmed, rolled back or closed",
+	}, []string{"cluster", "type", "record"})
+	HotfixUncoveredNodes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_hotfix_uncovered_nodes",
+		Help: "Selected nodes of an open HotfixRecord that do not carry the hotfix",
+	}, []string{"cluster", "type", "record"})
+	HotfixRevertedNodes = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_hotfix_reverted_nodes",
+		Help: "Nodes of an open HotfixRecord that lost the hotfix without a rollback session",
+	}, []string{"cluster", "type", "record"})
+
 	// Debug Session metrics
 	DebugSessionsCreated = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "breakglass_debug_sessions_created_total",
@@ -787,6 +805,12 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(PodSecurityFactors)
 	ctrlmetrics.Registry.MustRegister(PodSecurityDenied)
 	ctrlmetrics.Registry.MustRegister(PodSecurityWarnings)
+
+	// Register platform hotfix metrics
+	ctrlmetrics.Registry.MustRegister(HotfixActive)
+	ctrlmetrics.Registry.MustRegister(HotfixExpiresTimestamp)
+	ctrlmetrics.Registry.MustRegister(HotfixUncoveredNodes)
+	ctrlmetrics.Registry.MustRegister(HotfixRevertedNodes)
 
 	// Register debug session metrics
 	ctrlmetrics.Registry.MustRegister(DebugSessionsCreated)
