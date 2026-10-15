@@ -22,7 +22,9 @@ targeted incident interfaces:
   `kexec_file_load` before rebooting into them. It re-checks the deadline before
   loading and before rebooting. On any failure it unloads the kernel and exits
   non-zero, and every exit reports `kexec_loaded=0|1|unknown` as the
-  termination message; a successful kexec never returns.
+  termination message; a successful kexec never returns;
+* `hotfix-action` plans, applies or rolls back one controller-rendered
+  platform hotfix on its node (see [Platform hotfix executor](#platform-hotfix-executor)).
 
 The `node-recovery` preflight invokes `ethtool` against the exact controller-
 selected interface and records its result as `ethtool.txt`; the integration
@@ -164,7 +166,8 @@ seccomp, and capabilities dropped. Add only `NET_ADMIN` for `network-repair`;
 adds `SYS_BOOT`, and it needs the host PID namespace (the kernel refuses a kexec
 reboot from a child PID namespace) and an unconfined seccomp profile (runtime
 default profiles deny `kexec_file_load`). Blanket privileged mode, host
-network for kexec, and host-root mounts are outside this contract.
+network for kexec, and host-root mounts are outside this contract. The
+separately approved host-namespace shape of `hotfix-action` is described below.
 
 Kexec validation consumes only a distinct read-only `/recovery` mount with
 fixed files `kernel`, `initrd`, and `cmdline`. Exact provider profile and
@@ -195,6 +198,161 @@ Upgrades from the short-lived directory-lease implementation may encounter an
 old `.node-maintenance-operation.lock` directory. After proving that no old or
 new maintenance workload is active, remove that obsolete directory once; the
 new implementation creates a persistent regular lock file in its place.
+
+## Platform hotfix executor
+
+`hotfix-action` is the per-node executor of the typed platform hotfix
+(`docs/hotfix.md`). It takes no arguments: the controller renders one JSON
+request into `BREAKGLASS_HOTFIX_REQUEST` with the stage (`plan`, `apply`,
+`rollback`), the payload, the profile allowlists, the planned hashes and the
+session deadline. The executor repeats the API validation that matters on the
+node (path denylist and allowlist, digest and SHA-256 pinning, sed command
+shape, restartable units) so a tampered Pod spec cannot widen it, and writes
+one JSON result to the termination message.
+
+It has two runtime shapes, chosen by the controller:
+
+| Shape | Used for | Contract |
+|---|---|---|
+| Mount-only | `node-file` without restarts | Not privileged, read-only root, capabilities `CHOWN`, `FOWNER`, `DAC_OVERRIDE` only. The target's parent directory is mounted at `/host<dir>` and `/var/lib/breakglass-hotfix` at `/host/var/lib/breakglass-hotfix` (`BREAKGLASS_HOST_ROOT=/host`); for a `url` source also `/etc/ssl/certs` read-only, for the node CA bundle. |
+| Host namespace | `node-deb`, `static-pod-image`, `host-container-image`, any restart | Privileged with host PID. Host tools (`dpkg`, `systemctl`, `crictl`, `ctr`, `nerdctl`) run through `nsenter -t 1` (`BREAKGLASS_HOST_EXEC=nsenter`, `BREAKGLASS_HOST_ROOT=/proc/1/root`). A deb hotfix is root code execution on the node; the four-eyes plan review, pinning and allowlists are the controls. |
+
+Safety rules of the executor:
+
+- Files: every path component is checked with `lstat` and symlinks are
+  refused; only regular files up to 64 MiB. The first pre-image is kept in
+  `/var/lib/breakglass-hotfix/<id>/` with its mode, owner and hashes. The new
+  content is written to a hidden temporary file in the same directory (kubelet
+  ignores dot files in the static Pod directory), synced and renamed, the
+  directory is synced, and the result hash is verified.
+- `sed` runs the image's GNU sed with `--sandbox` on stdin only. Unified
+  diffs are applied in Go without fuzz or offset.
+- Apply refuses a node whose pre-image hash differs from the plan and skips a
+  node that already has the planned result. Rollback restores only from the
+  hotfix backup and only while the file still has the hotfix content.
+- Debs: downloaded over HTTPS with the node's CA bundle and checked by SHA-256
+  before use; `dpkg-deb -f` must match the package and version; `/usr` must
+  be writable; `dpkg --dry-run -i` must pass in the plan. Apply installs with a
+  temporary `policy-rc.d` that denies service starts,
+  `--force-hold --force-confold`, re-asserts previous holds, checks
+  `dpkg --audit` and the installed versions, then restarts only the requested
+  units. Rollback installs `rollbackDebs` and purges packages the hotfix added.
+- Static Pods: the image is pre-pulled with `crictl pull` and must carry the
+  pinned digest; the single `image:` line of the kubeadm manifest is replaced;
+  the executor waits until the static Pod runs the new image ID. For `etcd`,
+  every member must answer and agree on one leader before the change, and
+  again after it.
+- Host containers: the image is pulled into the container's containerd
+  namespace (`ctr ... images pull --hosts-dir /etc/containerd/certs.d`), the
+  image reference file is replaced, the unit is restarted and `nerdctl
+  inspect` must show the new image running. For cra-vsr this interrupts the
+  node's network while the container restarts.
+- Deadlines: each step has a fixed budget (for example 30 s for a file write,
+  10 min for a dpkg transaction, 5 min for a pull) and is never started when
+  that budget no longer fits before the session deadline. Mutating stages
+  ignore SIGTERM; the controller sets the Pod grace period to the remaining
+  deadline. No hotfix step runs under the 10 s capture timeout of the shell
+  helpers.
+
+Plan `nodeDeadlineSeconds` per payload type: a file change needs a few
+seconds; a deb apply needs the downloads (up to 5 min each), up to 10 min for
+dpkg, 1 min for `dpkg --audit` and 2 min per restart; a static Pod needs 5 min
+for the pull and 5 min to come back; a host container needs 5 min for the pull
+and 3 min for the restart. A step that does not fit the remaining time is
+never started. Pulls use `/etc/containerd/certs.d` as the containerd hosts
+directory.
+
+`make test` runs the executor's unit tests (requires GNU sed).
+`make hotfix-image` runs the mount-only shape of the real image against a
+disposable directory.
+
+## Runbook bundle, build, and proof
+
+Built-in runbooks are image-owned at
+`/usr/share/breakglass/runbooks/upstream/node-maintenance/`. A deployment may
+mount a digest-pinned downstream documentation bundle read-only at
+`/usr/share/breakglass/runbooks/internal`; it is never sourced or executed.
+
+`make test` runs fast behavioral denial checks. `make integration` uses a
+Linux Docker daemon and exercises every action in disposable Docker network
+namespaces, including real veth neighbor and VLAN bridge-FDB changes, exact-
+target adversarial cases, every approved-tuple mismatch, interface-name
+replacement, changed bridge membership, an arbitrarily old live lock holder,
+crash release, immutable kexec input checks, recording evidence, and cleanup.
+The proof refuses to skip when its
+Linux/Docker prerequisites are absent.
+
+`make build-multiarch` requests provenance and an SPDX SBOM for amd64/arm64.
+Release automation must sign and attest only an immutable registry digest via
+`make sign DIGEST=...` and `make sbom DIGEST=... SBOM=...`; local targets do
+not push images. Pinned packages are recorded in [`deps.lock`](deps.lock).
+
+## Platform hotfix executor
+
+`hotfix-action` is the per-node executor of the typed platform hotfix
+(`docs/hotfix.md`). It takes no arguments: the controller renders one JSON
+request into `BREAKGLASS_HOTFIX_REQUEST` with the stage (`plan`, `apply`,
+`rollback`), the payload, the profile allowlists, the planned hashes and the
+session deadline. The executor repeats the API validation that matters on the
+node (path denylist and allowlist, digest and SHA-256 pinning, sed command
+shape, restartable units) so a tampered Pod spec cannot widen it, and writes
+one JSON result to the termination message.
+
+It has two runtime shapes, chosen by the controller:
+
+| Shape | Used for | Contract |
+|---|---|---|
+| Mount-only | `node-file` without restarts | Not privileged, read-only root, capabilities `CHOWN`, `FOWNER`, `DAC_OVERRIDE` only. The target's parent directory is mounted at `/host<dir>` and `/var/lib/breakglass-hotfix` at `/host/var/lib/breakglass-hotfix` (`BREAKGLASS_HOST_ROOT=/host`); for a `url` source also `/etc/ssl/certs` read-only, for the node CA bundle. |
+| Host namespace | `node-deb`, `static-pod-image`, `host-container-image`, any restart | Privileged with host PID. Host tools (`dpkg`, `systemctl`, `crictl`, `ctr`, `nerdctl`) run through `nsenter -t 1` (`BREAKGLASS_HOST_EXEC=nsenter`, `BREAKGLASS_HOST_ROOT=/proc/1/root`). A deb hotfix is root code execution on the node; the four-eyes plan review, pinning and allowlists are the controls. |
+
+Safety rules of the executor:
+
+- Files: every path component is checked with `lstat` and symlinks are
+  refused; only regular files up to 64 MiB. The first pre-image is kept in
+  `/var/lib/breakglass-hotfix/<id>/` with its mode, owner and hashes. The new
+  content is written to a hidden temporary file in the same directory (kubelet
+  ignores dot files in the static Pod directory), synced and renamed, the
+  directory is synced, and the result hash is verified.
+- `sed` runs the image's GNU sed with `--sandbox` on stdin only. Unified
+  diffs are applied in Go without fuzz or offset.
+- Apply refuses a node whose pre-image hash differs from the plan and skips a
+  node that already has the planned result. Rollback restores only from the
+  hotfix backup and only while the file still has the hotfix content.
+- Debs: downloaded over HTTPS with the node's CA bundle and checked by SHA-256
+  before use; `dpkg-deb -f` must match the package and version; `/usr` must
+  be writable; `dpkg --dry-run -i` must pass in the plan. Apply installs with a
+  temporary `policy-rc.d` that denies service starts,
+  `--force-hold --force-confold`, re-asserts previous holds, checks
+  `dpkg --audit` and the installed versions, then restarts only the requested
+  units. Rollback installs `rollbackDebs` and purges packages the hotfix added.
+- Static Pods: the image is pre-pulled with `crictl pull` and must carry the
+  pinned digest; the single `image:` line of the kubeadm manifest is replaced;
+  the executor waits until the static Pod runs the new image ID. For `etcd`,
+  every member must answer and agree on one leader before the change, and
+  again after it.
+- Host containers: the image is pulled into the container's containerd
+  namespace (`ctr ... images pull --hosts-dir /etc/containerd/certs.d`), the
+  image reference file is replaced, the unit is restarted and `nerdctl
+  inspect` must show the new image running. For cra-vsr this interrupts the
+  node's network while the container restarts.
+- Deadlines: each step has a fixed budget (for example 30 s for a file write,
+  10 min for a dpkg transaction, 5 min for a pull) and is never started when
+  that budget no longer fits before the session deadline. Mutating stages
+  ignore SIGTERM; the controller sets the Pod grace period to the remaining
+  deadline. No hotfix step runs under the 10 s capture timeout of the shell
+  helpers.
+
+Plan `nodeDeadlineSeconds` per payload type: a file change needs a few
+seconds; a deb apply needs the downloads (up to 5 min each), up to 10 min for
+dpkg, 1 min for `dpkg --audit` and 2 min per restart; a static Pod needs 5 min
+for the pull and 5 min to come back; a host container needs 5 min for the pull
+and 3 min for the restart. A step that does not fit the remaining time is
+never started. Pulls use `/etc/containerd/certs.d` as the containerd hosts
+directory.
+
+`make test` runs the executor's unit tests (requires GNU sed).
+`make hotfix-image` runs the mount-only shape of the real image against a
+disposable directory.
 
 ## Runbook bundle, build, and proof
 

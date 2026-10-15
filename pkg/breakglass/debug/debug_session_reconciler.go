@@ -255,6 +255,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
+		if err := c.cleanupHotfix(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		// activateSession acquires the hub connection lease before the
 		// maintenance executor is deployed, so deletion must release it as the
 		// terminal cleanup paths do. RevokeSession is a no-op when no lease is
@@ -574,6 +577,9 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.NodeMaintenance != nil {
 		return c.handleMaintenanceActive(ctx, ds)
 	}
+	if ds.Status.ResolvedTemplate != nil && ds.Status.ResolvedTemplate.Hotfix != nil {
+		return c.handleHotfixActive(ctx, ds)
+	}
 
 	// Resolve any target mutation whose status outcome was interrupted by a
 	// controller restart or an ambiguous target API response before handling
@@ -787,6 +793,9 @@ func hasTrackedSpokeResources(ds *breakglassv1alpha1.DebugSession) bool {
 	if ds.Status.NodeMaintenance != nil && !ds.Status.NodeMaintenance.Released {
 		return true
 	}
+	if ds.Status.Hotfix != nil && ds.Status.Hotfix.OperationID != "" && !ds.Status.Hotfix.Released {
+		return true
+	}
 	if utils.DebugSessionHasActionableDeployedResources(ds) ||
 		hasOutstandingAuxiliaryResources(ds) ||
 		len(ds.Status.AllowedPods) > 0 {
@@ -993,6 +1002,18 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		return c.failSession(ctx, ds, "group-restricted variable policies require trusted requester group provenance")
 	}
 
+	if (template.Spec.Hotfix == nil) != (ds.Spec.Hotfix == nil) {
+		return c.failSession(ctx, ds, "hotfix sessions need a hotfix template and a typed hotfix request")
+	}
+	if template.Spec.Hotfix != nil {
+		if err := breakglassv1alpha1.ValidateHotfixSession(&template.Spec, &ds.Spec); err != nil {
+			return c.failSession(ctx, ds, err.Error())
+		}
+		if !ds.Status.AuthenticatedUserGroupsCaptured || !maintenanceApproved(ds) {
+			return c.failSession(ctx, ds, "hotfix requires authenticated requester provenance and an independent approval")
+		}
+	}
+
 	// Establish the bounded lease durably before deploying any target resources.
 	// The session remains Pending/PendingApproval during deployment, so API
 	// authorization cannot use the lease until activation completes.
@@ -1015,7 +1036,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	if err := breakglass.ApplyDebugSessionStatus(ctx, c.client, ds); err != nil {
 		return ctrl.Result{}, err
 	}
-	if template.Spec.NodeMaintenance != nil {
+	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil {
 		// Install the cleanup finalizer before acquiring any hub lease: a
 		// deletion in between would otherwise drop the session without running
 		// the finalizer branch that revokes the lease.
@@ -1070,7 +1091,12 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	kubectlDebugAuxiliary := mode == breakglassv1alpha1.DebugSessionModeKubectlDebug && c.auxiliaryMgr != nil && len(template.Spec.AuxiliaryResources) > 0
 	if mode == breakglassv1alpha1.DebugSessionModeWorkload || mode == breakglassv1alpha1.DebugSessionModeHybrid || kubectlDebugAuxiliary {
 		var deployErr error
-		if template.Spec.NodeMaintenance != nil {
+		if template.Spec.Hotfix != nil {
+			// Hotfix executors start in handleActive, batch by batch.
+			if err := maintenanceApprovers(template, binding); err != nil {
+				return c.failSession(ctx, ds, err.Error())
+			}
+		} else if template.Spec.NodeMaintenance != nil {
 			if err := maintenanceApprovers(template, binding); err != nil {
 				return c.failSession(ctx, ds, err.Error())
 			}
@@ -1116,7 +1142,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		bindingOps = binding.Spec.AllowedPodOperations
 	}
 	ds.Status.AllowedPodOperations = breakglassv1alpha1.MergeAllowedPodOperations(template.Spec.AllowedPodOperations, bindingOps)
-	if template.Spec.NodeMaintenance != nil {
+	if template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil {
 		ds.Status.AllowedPodOperations = maintenancePodOperations()
 	}
 
@@ -1794,7 +1820,7 @@ func (c *DebugSessionController) validateSpokeServiceAccount(
 // approvers are used. Approval is required when the effective approver set has
 // users or groups, unless auto-approve conditions are met.
 func (c *DebugSessionController) requiresApproval(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding, ds *breakglassv1alpha1.DebugSession) bool {
-	if template != nil && template.Spec.NodeMaintenance != nil {
+	if template != nil && (template.Spec.NodeMaintenance != nil || template.Spec.Hotfix != nil) {
 		return true
 	}
 	// Binding approvers replace template approvers when the field is present,

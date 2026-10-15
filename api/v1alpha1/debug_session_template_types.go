@@ -70,6 +70,9 @@ type DebugSessionTemplateSpec struct {
 	// nodeMaintenance enables a fixed, exact-tuple executor instead of a rendered Pod template.
 	// +optional
 	NodeMaintenance *DebugSessionNodeMaintenance `json:"nodeMaintenance,omitempty"`
+	// hotfix enables the typed platform hotfix executor instead of a rendered Pod template.
+	// +optional
+	Hotfix *DebugSessionHotfix `json:"hotfix,omitempty"`
 	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
 	// +optional
 	ArtifactCollection *DebugSessionArtifactCollection `json:"artifactCollection,omitempty"`
@@ -1344,7 +1347,7 @@ func validateDebugSessionTemplateSpec(template *DebugSessionTemplate) field.Erro
 	// For workload or hybrid mode, either podTemplateRef or podTemplateString is required
 	hasPodTemplateRef := template.Spec.PodTemplateRef != nil
 	hasPodTemplateString := template.Spec.PodTemplateString != ""
-	if template.Spec.NodeMaintenance == nil && (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
+	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil && (mode == DebugSessionModeWorkload || mode == DebugSessionModeHybrid) && !hasPodTemplateRef && !hasPodTemplateString {
 		allErrs = append(allErrs, field.Required(specPath.Child("podTemplateRef"),
 			"either podTemplateRef or podTemplateString is required for workload or hybrid mode"))
 	}

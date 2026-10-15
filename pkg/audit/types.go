@@ -126,6 +126,10 @@ const (
 	EventDebugSessionCleanupRecovered  EventType = "debug_session.cleanup_recovered"
 	EventDebugSessionMaintenanceIntent EventType = "debug_session.node_maintenance.execution_intent"
 	EventDebugSessionMaintenanceResult EventType = "debug_session.node_maintenance.result"
+	EventDebugSessionHotfixIntent      EventType = "debug_session.hotfix.intent"
+	EventDebugSessionHotfixNodeIntent  EventType = "debug_session.hotfix.node_intent"
+	EventDebugSessionHotfixNodeResult  EventType = "debug_session.hotfix.node_result"
+	EventDebugSessionHotfixResult      EventType = "debug_session.hotfix.result"
 	EventDebugSessionAttached          EventType = "debug_session.attached"
 	EventDebugSessionDetached          EventType = "debug_session.detached"
 	EventDebugSessionCommand           EventType = "debug_session.command"
@@ -514,6 +518,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
 		EventDebugSessionMaintenanceIntent, EventDebugSessionMaintenanceResult,
+		EventDebugSessionHotfixIntent, EventDebugSessionHotfixNodeIntent,
+		EventDebugSessionHotfixNodeResult, EventDebugSessionHotfixResult,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,

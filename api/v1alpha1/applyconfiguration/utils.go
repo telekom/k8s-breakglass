@@ -148,6 +148,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionConnectionLeaseApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionConstraints"):
 		return &apiv1alpha1.DebugSessionConstraintsApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionHotfix"):
+		return &apiv1alpha1.DebugSessionHotfixApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionHotfixRequest"):
+		return &apiv1alpha1.DebugSessionHotfixRequestApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNodeMaintenance"):
 		return &apiv1alpha1.DebugSessionNodeMaintenanceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionNotificationConfig"):
@@ -186,6 +190,40 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.ExtraDeployVariableConstraintApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("HostNamespacesConfig"):
 		return &apiv1alpha1.HostNamespacesConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixDeb"):
+		return &apiv1alpha1.HotfixDebApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixFilePayload"):
+		return &apiv1alpha1.HotfixFilePayloadApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixHostContainer"):
+		return &apiv1alpha1.HotfixHostContainerApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixImagePayload"):
+		return &apiv1alpha1.HotfixImagePayloadApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixNodeSelection"):
+		return &apiv1alpha1.HotfixNodeSelectionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixNodeStatus"):
+		return &apiv1alpha1.HotfixNodeStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPayload"):
+		return &apiv1alpha1.HotfixPayloadApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlan"):
+		return &apiv1alpha1.HotfixPlanApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlannedDiff"):
+		return &apiv1alpha1.HotfixPlannedDiffApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixPlannedNode"):
+		return &apiv1alpha1.HotfixPlannedNodeApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecord"):
+		return &apiv1alpha1.HotfixRecordApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecordNode"):
+		return &apiv1alpha1.HotfixRecordNodeApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecordSession"):
+		return &apiv1alpha1.HotfixRecordSessionApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecordSpec"):
+		return &apiv1alpha1.HotfixRecordSpecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRecordStatus"):
+		return &apiv1alpha1.HotfixRecordStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixRollout"):
+		return &apiv1alpha1.HotfixRolloutApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("HotfixStatus"):
+		return &apiv1alpha1.HotfixStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProvider"):
 		return &apiv1alpha1.IdentityProviderApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("IdentityProviderSpec"):

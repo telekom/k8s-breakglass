@@ -18,6 +18,9 @@ image:
     network-repair-preview: []
     kexec-recovery-validate: []
     kexec-recovery: [SYS_BOOT]
+    hotfix-action-file: [CHOWN, FOWNER, DAC_OVERRIDE]
+    # The host-namespace shape is privileged with host PID instead of capabilities.
+    hotfix-action-host: []
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX
     operation: [network-repair, kexec-recovery]

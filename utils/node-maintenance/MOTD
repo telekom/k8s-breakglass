@@ -6,6 +6,7 @@ Kubernetes node-maintenance image
 Supported operations are fixed: node-recovery (read-only), exact-entry
 network-repair, kexec-recovery-validate (validation only), and kexec-recovery
 (controller-drained reboot into a digest-pinned provider bundle).
+and hotfix-action (one controller-rendered, four-eyes platform hotfix).
 Controller-owned node, full repair-tuple approval, operation, and recording
 bindings are required. No broad neighbor/FDB flush, caller command, argument, path, image,
 unrestricted shell, caller-selected kernel, or general-purpose toolbox is supported.

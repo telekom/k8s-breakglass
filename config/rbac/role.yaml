@@ -97,6 +97,7 @@ rules:
   - debugsessions/status
   - debugsessiontemplates/status
   - denypolicies/status
+  - hotfixrecords/status
   - identityproviders/status
   - mailproviders/status
   verbs:
@@ -122,6 +123,17 @@ rules:
   resources:
   - clusterconfigs
   verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - hotfixrecords
+  verbs:
+  - create
   - get
   - list
   - patch
