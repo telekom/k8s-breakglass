@@ -218,6 +218,33 @@ func TestSendSessionApprovalEmail_WithMailService(t *testing.T) {
 	assert.Contains(t, messages[0].Subject, "test-cluster")
 }
 
+func TestSendSessionApprovalEmail_MappedRequesterEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockMailService := NewMockMailEnqueuer(true)
+	ctrl := &BreakglassSessionController{
+		log:         logger.Sugar(),
+		mailService: mockMailService,
+		config:      config.Config{Frontend: config.Frontend{BrandingName: "Test"}},
+	}
+
+	base := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-approval", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "cluster:provider-user", GrantedGroup: "admin", Cluster: "test-cluster",
+			RequesterUsername: "provider-user",
+		},
+	}
+
+	assert.False(t, ctrl.sendSessionApprovalEmail(logger.Sugar(), base))
+	assert.Empty(t, mockMailService.GetMessages(), "missing persisted email must not enqueue")
+
+	base.Spec.RequesterEmail = "mapped@example.test"
+	assert.True(t, ctrl.sendSessionApprovalEmail(logger.Sugar(), base))
+	messages := mockMailService.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"mapped@example.test"}, messages[0].Recipients)
+}
+
 // TestSendSessionApprovalEmail_WithScheduledTime tests approval email with scheduled session
 func TestSendSessionApprovalEmail_WithScheduledTime(t *testing.T) {
 	cli := fake.NewClientBuilder().WithScheme(Scheme).Build()
@@ -378,6 +405,36 @@ func TestSendSessionRejectionEmail_WithMailService(t *testing.T) {
 	assert.Contains(t, messages[0].Recipients, "user@example.com")
 	assert.Contains(t, messages[0].Subject, "Rejected")
 	assert.Contains(t, messages[0].Subject, "test-cluster")
+}
+
+func TestSendSessionRejectionEmail_MappedRequesterEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t)
+	mockMailService := NewMockMailEnqueuer(true)
+	ctrl := &BreakglassSessionController{
+		log:         logger.Sugar(),
+		mailService: mockMailService,
+		config:      config.Config{Frontend: config.Frontend{BrandingName: "Test"}},
+	}
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-rejection", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "cluster:provider-user", GrantedGroup: "admin", Cluster: "test-cluster",
+			RequesterUsername: "provider-user",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			RejectedAt: metav1.Now(), ApprovalReason: "denied",
+		},
+	}
+
+	ctrl.sendSessionRejectionEmail(logger.Sugar(), session)
+	assert.Empty(t, mockMailService.GetMessages(), "missing persisted email must not enqueue")
+
+	session.Spec.RequesterEmail = "mapped@example.test"
+	ctrl.sendSessionRejectionEmail(logger.Sugar(), session)
+	messages := mockMailService.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"mapped@example.test"}, messages[0].Recipients)
 }
 
 // TestSendSessionRejectionEmail_WithMailServiceDisabled tests when mail service exists but is disabled

@@ -805,6 +805,32 @@ func TestSendSessionIdleExpiredEmail_NilMailService(t *testing.T) {
 	})
 }
 
+func TestSendSessionIdleExpiredEmail_MappedRequesterEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	ctrl := &BreakglassSessionController{
+		log:         logger,
+		mailService: mockMail,
+		config:      config.Config{Frontend: config.Frontend{BrandingName: "Test"}},
+	}
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-idle", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "cluster:provider-user", RequesterUsername: "provider-user",
+			GrantedGroup: "admin", Cluster: "production", IdleTimeout: "10m",
+		},
+	}
+	ctrl.sendSessionIdleExpiredEmail(session)
+	assert.Empty(t, mockMail.GetMessages(), "missing persisted email must not enqueue")
+
+	session.Spec.RequesterEmail = "mapped@example.test"
+	ctrl.sendSessionIdleExpiredEmail(session)
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"mapped@example.test"}, messages[0].Recipients)
+}
+
 func TestSendSessionIdleExpiredEmail_EnqueueError(t *testing.T) {
 	scheme := runtime.NewScheme()
 	err := breakglassv1alpha1.AddToScheme(scheme)

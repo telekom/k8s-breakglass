@@ -211,6 +211,7 @@ The unit tests exercise these supported behaviors and known failure classes:
 | Provider connection | Default/custom discovery, direct JWKS, trusted CA changes, transport/HTTP/JSON errors, missing keys and key rotation |
 | Engine lifecycle | Cache bounds, concurrent creation, eviction, shutdown during creation, nil and repeated close |
 | Requester identity | Provider and issuer scope, subject and username matching, no-email users, legacy compatibility and partial provenance rejection |
+| Notifications | With mail enabled, missing requester email suppresses approval, rejection, idle-expiry and activation messages; persisted email is used instead of the mapped principal |
 | API and UI | Configuration loading, native policy conversion, server-computed ownership, explicit false metadata and legacy fallback |
 
 Run `go test ./pkg/oidc ./pkg/api ./api/v1alpha1 ./pkg/config ./pkg/breakglass`

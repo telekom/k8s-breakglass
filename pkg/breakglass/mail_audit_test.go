@@ -322,6 +322,35 @@ func TestSendSessionActivatedEmail_HappyPath(t *testing.T) {
 	assert.Contains(t, messages[0].Body, "production")
 }
 
+func TestSendSessionActivatedEmail_MappedRequesterEmail(t *testing.T) {
+	logger := zaptest.NewLogger(t).Sugar()
+	mockMail := NewMockMailEnqueuer(true)
+	activator := &ScheduledSessionActivator{
+		log:          logger,
+		mailService:  mockMail,
+		brandingName: "Test",
+	}
+
+	session := breakglassv1alpha1.BreakglassSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-activation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User: "cluster:provider-user", RequesterUsername: "provider-user",
+			GrantedGroup: "admin", Cluster: "production",
+		},
+		Status: breakglassv1alpha1.BreakglassSessionStatus{
+			ActualStartTime: metav1.Now(), ExpiresAt: metav1.NewTime(time.Now().Add(time.Hour)),
+		},
+	}
+	activator.sendSessionActivatedEmail(session)
+	assert.Empty(t, mockMail.GetMessages(), "missing persisted email must not enqueue")
+
+	session.Spec.RequesterEmail = "mapped@example.test"
+	activator.sendSessionActivatedEmail(session)
+	messages := mockMail.GetMessages()
+	require.Len(t, messages, 1)
+	assert.Equal(t, []string{"mapped@example.test"}, messages[0].Recipients)
+}
+
 func TestSendSessionActivatedEmail_DisabledEmail(t *testing.T) {
 	// Tests that no email is sent when email is disabled
 
