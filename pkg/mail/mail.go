@@ -206,30 +206,18 @@ func (s *sender) sendPlainSMTP(receivers []string, subject, body string) error {
 		return fmt.Errorf("DATA command failed: %w", err)
 	}
 
-	// Build email headers and body
-	// Sanitize header values to prevent email header injection attacks
+	// Sanitize values before handing them to the MIME encoder. Using gomail's
+	// encoder keeps untrusted body content out of a hand-built SMTP message.
 	safeSenderName := sanitizeHeaderValue(s.senderName)
 	safeSenderAddress := sanitizeHeaderValue(s.senderAddress)
-	fromHeader := safeSenderAddress
-	if safeSenderName != "" {
-		fromHeader = fmt.Sprintf("%s <%s>", safeSenderName, safeSenderAddress)
-	}
-
-	// Sanitize subject and body before constructing raw MIME message
 	safeSubject := sanitizeHeaderValue(subject)
 	safeBody := sanitizeBodyValue(body)
 
-	msg := fmt.Sprintf("From: %s\r\n"+
-		"Subject: %s\r\n"+
-		"MIME-Version: 1.0\r\n"+
-		"Content-Type: text/html; charset=UTF-8\r\n"+
-		"\r\n"+
-		"%s",
-		fromHeader,
-		safeSubject,
-		safeBody)
-
-	if _, err := wc.Write([]byte(msg)); err != nil {
+	message := gomail.NewMessage()
+	message.SetAddressHeader("From", safeSenderAddress, safeSenderName)
+	message.SetHeader("Subject", safeSubject)
+	message.SetBody("text/html", safeBody)
+	if _, err := message.WriteTo(wc); err != nil {
 		_ = wc.Close()
 		return fmt.Errorf("failed to write message: %w", err)
 	}
