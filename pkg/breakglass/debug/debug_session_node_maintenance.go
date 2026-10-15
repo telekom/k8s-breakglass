@@ -88,26 +88,30 @@ func maintenanceIdentity(value string) string {
 }
 
 func maintenanceApprovers(template *breakglassv1alpha1.DebugSessionTemplate, binding *breakglassv1alpha1.DebugSessionClusterBinding) error {
-	if template.Spec.NodeMaintenance == nil {
+	if template.Spec.NodeMaintenance == nil && template.Spec.Hotfix == nil {
 		return nil
+	}
+	kind := "nodeMaintenance"
+	if template.Spec.Hotfix != nil {
+		kind = "hotfix"
 	}
 	approvers := template.Spec.Approvers
 	if binding != nil && binding.Spec.Approvers != nil {
 		approvers = binding.Spec.Approvers
 	}
 	if !debugSessionApproversConfigured(approvers) || approvers.AutoApproveFor != nil {
-		return fmt.Errorf("nodeMaintenance requires explicit independent approvers without auto-approval")
+		return fmt.Errorf("%s requires explicit independent approvers without auto-approval", kind)
 	}
 	if !resolveDebugSessionBlockSelfApproval(template.Spec.BlockSelfApproval, binding) {
-		return fmt.Errorf("nodeMaintenance requires blocked self-approval")
+		return fmt.Errorf("%s requires blocked self-approval", kind)
 	}
 	if binding != nil && (binding.Spec.NamespaceConstraints != nil || len(binding.Spec.ExtraDeployVariables) != 0 ||
 		len(binding.Spec.AuxiliaryResourceOverrides) != 0 || len(binding.Spec.RequiredAuxiliaryResourceCategories) != 0 ||
 		binding.Spec.SchedulingConstraints != nil || binding.Spec.SchedulingOptions != nil || binding.Spec.Impersonation != nil) {
-		return fmt.Errorf("nodeMaintenance binding cannot introduce namespace, variable, scheduling, impersonation or auxiliary overrides")
+		return fmt.Errorf("%s binding cannot introduce namespace, variable, scheduling, impersonation or auxiliary overrides", kind)
 	}
 	if binding != nil && binding.Spec.Constraints != nil && binding.Spec.Constraints.IdleTimeout != "" {
-		return fmt.Errorf("nodeMaintenance binding cannot introduce an idleTimeout")
+		return fmt.Errorf("%s binding cannot introduce an idleTimeout", kind)
 	}
 	return nil
 }

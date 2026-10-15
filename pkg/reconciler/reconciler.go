@@ -330,6 +330,11 @@ func Setup(
 		}
 		log.Infow("Successfully registered DebugSession reconciler")
 
+		if err := debug.NewHotfixRecordReconciler(log, mgr.GetClient(), ccProvider).SetupWithManager(mgr); err != nil {
+			return fmt.Errorf("failed to setup HotfixRecord reconciler with manager: %w", err)
+		}
+		log.Infow("Successfully registered HotfixRecord reconciler")
+
 		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
 			if err := artifactReconcilers[0].SetupWithManager(mgr); err != nil {
 				return fmt.Errorf("failed to setup DebugSessionArtifact reconciler with manager: %w", err)

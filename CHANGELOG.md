@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Platform hotfix record lifecycle: `reconfirm` and `close` sessions, and a
+  HotfixRecord reconciler that keeps `Expiring`, `Expired`, `Reverted` and
+  `Uncovered` current (alert only, never a rollback), with the metrics
+  `breakglass_hotfix_active`, `breakglass_hotfix_expires_timestamp_seconds`,
+  `breakglass_hotfix_uncovered_nodes`, `breakglass_hotfix_reverted_nodes` and
+  an example PrometheusRule in `config/samples/prometheusrule-hotfix.yaml`.
+- The controller serves the `plan`, `apply` and `rollback` stages of platform
+  hotfix sessions: one single-attempt executor Pod per node, canary and batch
+  layout with control-plane nodes one at a time, health gates (node
+  conditions, control-plane Pods, API server `/readyz`) and soak time, a
+  per-cluster and per-node Lease, synchronous critical audit events, the
+  `HotfixRecord` drift record and node annotations. A failed node, a failed
+  gate, a suspended template or an expiring session stops the rollout.
+- API for typed platform hotfix sessions: `DebugSessionTemplate.spec.hotfix`
+  (operator profile with payload types, path allowlist, restartable units,
+  static Pods, host containers, rollout and lifetime limits, and a `suspended`
+  switch), the `DebugSession.spec.hotfix` stage request
+  (plan, apply, rollback, reconfirm, close) and the `HotfixRecord` drift CRD.
+  Validation covers digest and SHA-256 pinning, HTTPS sources without
+  credentials or query strings, a hard path denylist, sed and unified-diff restrictions,
+  all-at-once reasons, lifetime caps and the plan-hash binding of apply to a
+  reviewed plan. The controller does not serve hotfix sessions yet: it refuses
+  hotfix templates at request time and fails such sessions closed. See
+  `docs/hotfix.md`.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are

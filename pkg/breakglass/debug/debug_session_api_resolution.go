@@ -631,10 +631,13 @@ func (a *debugSessionApprovalAuthorizer) isIdentityAuthorizedToApprove(ctx conte
 			"approver", identity.username, "approverEmail", identity.email, "policySource", source)
 		return false
 	}
-	if session.Spec.NodeMaintenance != nil {
-		// Node maintenance mutates node networking and always requires an
+	if session.Spec.NodeMaintenance != nil || session.Spec.Hotfix != nil {
+		// Node maintenance and hotfixes change nodes and always require an
 		// independent approver, regardless of blockSelfApproval.
 		if isRequester {
+			if session.Spec.Hotfix != nil {
+				return denySelfApproval("hotfix")
+			}
 			return denySelfApproval("nodeMaintenance")
 		}
 		if session.Status.ResolvedTemplate == nil ||

@@ -7,9 +7,14 @@ FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
-COPY cmd/network-action/ ./
+COPY cmd/network-action/ ./network-action/
+COPY cmd/hotfix-action/ ./hotfix-action/
+WORKDIR /src/network-action
 RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
       go build -trimpath -ldflags='-s -w' -o /out/network-action .
+WORKDIR /src/hotfix-action
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+      go build -trimpath -ldflags='-s -w' -o /out/hotfix-action .
 
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kexec-action-builder
 
@@ -36,11 +41,13 @@ RUN apk add --no-cache \
         iproute2=7.0.0-r0 \
         libcrypto3=3.5.8-r0 \
         libssl3=3.5.8-r0 \
+        sed=4.9-r2 \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
 COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
 COPY --from=kexec-action-builder /out/kexec-action /usr/local/sbin/kexec-action
+COPY --from=network-action-builder /out/hotfix-action /usr/local/sbin/hotfix-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
@@ -51,10 +58,12 @@ COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.m
 COPY runbooks/network-repair.md /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
 COPY runbooks/node-recovery-preflight.md /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md
 COPY runbooks/kexec-recovery-validation.md /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md
+COPY runbooks/platform-hotfix.md /usr/share/breakglass/runbooks/upstream/node-maintenance/platform-hotfix.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/sbin/network-action \
         /usr/local/sbin/kexec-action \
+        /usr/local/sbin/hotfix-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
         /usr/local/libexec/node-maintenance/kexec-recovery-validate \
@@ -64,6 +73,7 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/platform-hotfix.md \
     && mkdir -p /evidence /usr/share/breakglass/runbooks/internal \
     && chmod 0700 /evidence \
     && chmod 0755 /usr/share/breakglass/runbooks/internal
@@ -78,9 +88,9 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery" \
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,hotfix-action" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
-      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
+      io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT; hotfix-action: CHOWN,FOWNER,DAC_OVERRIDE or privileged host namespaces"
 
 # The image is root only for the explicitly allowlisted host-network operation.
 # Controller-owned immutable templates must use a no-capabilities preflight

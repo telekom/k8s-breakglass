@@ -87,6 +87,9 @@ type DebugSessionSpec struct {
 	// nodeMaintenance is a typed request matched against the template's exact allowlist.
 	// +optional
 	NodeMaintenance *NodeMaintenanceTarget `json:"nodeMaintenance,omitempty"`
+	// hotfix is a typed platform hotfix stage request matched against the template profile.
+	// +optional
+	Hotfix *DebugSessionHotfixRequest `json:"hotfix,omitempty"`
 	// cluster is the name of the target cluster.
 	// +required
 	Cluster string `json:"cluster"`
@@ -213,6 +216,9 @@ type DebugSessionStatus struct {
 	// nodeMaintenance tracks the fixed executor's durable single-attempt inventory.
 	// +optional
 	NodeMaintenance *NodeMaintenanceStatus `json:"nodeMaintenance,omitempty"`
+	// hotfix records the plan and rollout of a hotfix session.
+	// +optional
+	Hotfix *HotfixStatus `json:"hotfix,omitempty"`
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	// +optional
