@@ -307,7 +307,7 @@ describe("SessionBrowser", () => {
     await flushPromises();
 
     expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["approved"]);
-    expect(wrapper.find('[data-testid="filter-approved-by-me"]').attributes("disabled")).not.toBe("true");
+    expect(wrapper.find('[data-testid="filter-approved-by-me"]').attributes("disabled") ?? "false").toBe("false");
   });
 
   it("uses server ownership metadata for card actions with an opaque username", async () => {
