@@ -872,6 +872,12 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate template")
 		return
 	}
+	if template.Spec.Hotfix != nil {
+		// The hotfix executor is not served by this controller version. Refuse
+		// instead of falling through to generic workload deployment.
+		apiresponses.RespondBadRequest(ctx, "hotfix templates are not supported by this controller version")
+		return
+	}
 	if template.Spec.NodeMaintenance != nil &&
 		(req.SelectedSchedulingOption != "" || len(req.NodeSelector) != 0 || len(req.ExtraDeployValues) != 0 || len(req.InvitedParticipants) != 0) {
 		apiresponses.RespondBadRequest(ctx, "nodeMaintenance accepts only typed tuple parameters, not generic workload overrides")

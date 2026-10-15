@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- API for typed platform hotfix sessions: `DebugSessionTemplate.spec.hotfix`
+  (operator profile with payload types, path allowlist, restartable units,
+  static Pods, host containers, rollout and lifetime limits, and a `suspended`
+  switch), the `DebugSession.spec.hotfix` stage request
+  (plan, apply, rollback, reconfirm, close) and the `HotfixRecord` drift CRD.
+  Validation covers digest and SHA-256 pinning, HTTPS sources without
+  credentials or query strings, a hard path denylist, sed and unified-diff restrictions,
+  all-at-once reasons, lifetime caps and the plan-hash binding of apply to a
+  reviewed plan. The controller does not serve hotfix sessions yet: it refuses
+  hotfix templates at request time and fails such sessions closed. See
+  `docs/hotfix.md`.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are

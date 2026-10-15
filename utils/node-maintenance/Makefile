@@ -11,7 +11,7 @@ VCS_REF ?= $(shell git rev-parse --short HEAD 2>/dev/null || printf unknown)
 BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 OCI_ARCHIVE ?= node-maintenance.oci.tar
 
-.PHONY: test integration immutable-container-capture-contract-test volume-attachment-contract-test kind-host-network kind-load-contract-test evidence-bundle-contract-test build build-multiarch sbom sign
+.PHONY: test integration hotfix-image immutable-container-capture-contract-test volume-attachment-contract-test kind-host-network kind-load-contract-test evidence-bundle-contract-test build build-multiarch sbom sign
 
 test:
 	./tests/test-helpers.sh
@@ -19,10 +19,13 @@ test:
 	./tests/test-evidence-bundle-contract.sh
 	./tests/test-immutable-container-capture-contract.sh
 	./tests/test-volume-attachment-contract.sh
-	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action ./cmd/kexec-action
+	GOCACHE=$${NODE_MAINTENANCE_GOCACHE:-$${TMPDIR:-/tmp}/node-maintenance-go-cache} go test ./cmd/network-action ./cmd/kexec-action ./cmd/hotfix-action
 
 integration:
 	./tests/integration.sh
+
+hotfix-image:
+	./tests/test-hotfix-action-image.sh
 
 kind-host-network:
 	./tests/kind-host-network.sh

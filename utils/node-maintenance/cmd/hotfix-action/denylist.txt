@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+#
+# Hard hotfix path denylist (prefixes). Keep equal to hotfixDeniedPrefixes in
+# api/v1alpha1/debug_session_hotfix.go; TestHotfixDenylistMatchesExecutor checks it.
+/etc/kubernetes/pki/
+/var/lib/kubelet/pki/
+/etc/shadow
+/etc/gshadow
+/etc/sudoers
+/root/
+/proc/
+/sys/
+/dev/
+/run/secrets/
+/var/lib/breakglass-hotfix/
+/var/lib/kyverno/
+/var/lib/breakglass
+/etc/breakglass

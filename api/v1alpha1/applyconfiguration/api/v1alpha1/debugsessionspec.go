@@ -19,6 +19,8 @@ import (
 type DebugSessionSpecApplyConfiguration struct {
 	// nodeMaintenance is a typed request matched against the template's exact allowlist.
 	NodeMaintenance *NodeMaintenanceTargetApplyConfiguration `json:"nodeMaintenance,omitempty"`
+	// hotfix is a typed platform hotfix stage request matched against the template profile.
+	Hotfix *DebugSessionHotfixRequestApplyConfiguration `json:"hotfix,omitempty"`
 	// cluster is the name of the target cluster.
 	Cluster *string `json:"cluster,omitempty"`
 	// templateRef is the name of the DebugSessionTemplate to use.
@@ -95,6 +97,14 @@ func DebugSessionSpec() *DebugSessionSpecApplyConfiguration {
 // If called multiple times, the NodeMaintenance field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithNodeMaintenance(value *NodeMaintenanceTargetApplyConfiguration) *DebugSessionSpecApplyConfiguration {
 	b.NodeMaintenance = value
+	return b
+}
+
+// WithHotfix sets the Hotfix field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Hotfix field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithHotfix(value *DebugSessionHotfixRequestApplyConfiguration) *DebugSessionSpecApplyConfiguration {
+	b.Hotfix = value
 	return b
 }
 
