@@ -203,6 +203,33 @@ Dropping an approved session that is still `WaitingForScheduledTime` follows the
 same audit rule: the session becomes terminal `Expired`, while `approvedAt`,
 `approver`, `approvers`, and `approvalReason` remain intact.
 
+## Requester identity and Kubernetes username
+
+`spec.user` is the exact username used for Kubernetes authorization, including
+any configured prefix or CEL mapping. New API-created sessions also preserve
+the authenticated requester separately:
+
+| Field | Source and purpose |
+| --- | --- |
+| `spec.requesterSubject` | OIDC `sub`, used for ownership within the recorded provider and issuer. |
+| `spec.requesterUsername` | Authenticated API principal, used as the ownership fallback when no subject is available; a cluster-only mapping does not change it. |
+| `spec.requesterEmail` | Standard `email` claim in the authenticated bearer token, used for notifications and display. |
+| `spec.identityProviderName`, `spec.identityProviderIssuer` | Provider provenance used with the requester identity. |
+
+Read `spec.requesterEmail` from the session response to obtain the email when
+`spec.user` is an opaque or prefixed principal. The field can be absent; do not
+derive an address by removing a prefix. Requester fields are recorded by the
+server, not supplied by the session request. See [OIDC identity mapping](oidc-compatibility.md#email-is-independent-from-the-kubernetes-principal)
+for provider claim configuration and missing-email behavior. Existing sessions
+are not rewritten when mappings change.
+
+Administrators with permission to read the session can also retrieve the address
+without handling a bearer token:
+
+```bash
+kubectl get breakglasssession SESSION -n NAMESPACE -o jsonpath='{.spec.requesterEmail}{"\n"}'
+```
+
 ## Resource Definition
 
 ```yaml
@@ -214,7 +241,7 @@ spec:
   # Required: Target cluster
   cluster: "prod-cluster-1"
   
-  # Required: User requesting access
+  # Required: Exact target Kubernetes username (may include an OIDC prefix)
   user: "user@example.com"
   
   # Required: Group to be granted

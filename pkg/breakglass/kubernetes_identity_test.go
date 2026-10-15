@@ -56,3 +56,61 @@ func TestResolveKubernetesUserFailsClosed(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, name)
 }
+
+func TestResolveKubernetesUserRejectsInvalidResolverResults(t *testing.T) {
+	newContext := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+		return c
+	}
+
+	t.Run("nil typed resolver", func(t *testing.T) {
+		c := newContext()
+		c.Set(upstreamoidc.TargetIdentityResolverKey, upstreamoidc.TargetIdentityResolver(nil))
+
+		name, err := ResolveKubernetesUser(c, nil, "", KeycloakIdentityProvider{})
+		require.ErrorContains(t, err, "invalid target identity resolver")
+		require.Empty(t, name)
+	})
+
+	t.Run("resolver returns nil user", func(t *testing.T) {
+		c := newContext()
+		c.Set(upstreamoidc.TargetIdentityResolverKey, upstreamoidc.TargetIdentityResolver(func(context.Context, *breakglassv1alpha1.ClusterConfig, breakglassv1alpha1.UserIdentifierClaimType) (upstreamoidc.TargetIdentity, error) {
+			return upstreamoidc.TargetIdentity{}, nil
+		}))
+
+		name, err := ResolveKubernetesUser(c, nil, "", KeycloakIdentityProvider{})
+		require.ErrorContains(t, err, "empty Kubernetes username")
+		require.Empty(t, name)
+	})
+
+	t.Run("resolver returns empty username", func(t *testing.T) {
+		c := newContext()
+		c.Set(upstreamoidc.TargetIdentityResolverKey, upstreamoidc.TargetIdentityResolver(func(context.Context, *breakglassv1alpha1.ClusterConfig, breakglassv1alpha1.UserIdentifierClaimType) (upstreamoidc.TargetIdentity, error) {
+			return upstreamoidc.TargetIdentity{User: &user.DefaultInfo{}}, nil
+		}))
+
+		name, err := ResolveKubernetesUser(c, nil, "", KeycloakIdentityProvider{})
+		require.ErrorContains(t, err, "empty Kubernetes username")
+		require.Empty(t, name)
+	})
+
+	t.Run("structured cluster without resolver", func(t *testing.T) {
+		c := newContext()
+		cluster := &breakglassv1alpha1.ClusterConfig{Spec: breakglassv1alpha1.ClusterConfigSpec{
+			KubernetesIdentity: &breakglassv1alpha1.KubernetesIdentityConfig{},
+		}}
+
+		name, err := ResolveKubernetesUser(c, cluster, "", KeycloakIdentityProvider{})
+		require.ErrorContains(t, err, "structured identity mapping requires OIDC authentication")
+		require.Empty(t, name)
+	})
+
+	t.Run("fallback claim failure", func(t *testing.T) {
+		c := newContext()
+
+		name, err := ResolveKubernetesUser(c, nil, breakglassv1alpha1.UserIdentifierClaimEmail, KeycloakIdentityProvider{})
+		require.ErrorContains(t, err, "email claim not found in token")
+		require.Empty(t, name)
+	})
+}

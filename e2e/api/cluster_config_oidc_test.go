@@ -29,10 +29,51 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
+	"k8s.io/utils/ptr"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
+
+// TestClusterConfigKubernetesIdentityAdmission exercises the kube-apiserver
+// structured JWT mapping contract through the real CRD admission path. The
+// controller must accept native claim/CEL mappings and reject malformed
+// mappings before reconciliation can use them.
+func TestClusterConfigKubernetesIdentityAdmission(t *testing.T) {
+	s := helpers.SetupTest(t, helpers.WithShortTimeout())
+	validName := helpers.GenerateUniqueName("cc-oidc-native-valid")
+	valid := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: validName, Namespace: s.Namespace, Labels: helpers.E2ETestLabels()},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			ClusterID: "native-oidc-valid", Tenant: "e2e-tenant", Environment: "test", AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: configuredE2EIssuer(), ClientID: "breakglass-controller", Server: "https://kubernetes.default.svc:443"},
+			KubernetesIdentity: &breakglassv1alpha1.KubernetesIdentityConfig{
+				ClaimMappings: apiserverv1.ClaimMappings{
+					Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: ptr.To("tdi_security_oidc:")},
+					Groups:   apiserverv1.PrefixedClaimOrExpression{Expression: "claims.groups"},
+				},
+				ClaimValidationRules: []apiserverv1.ClaimValidationRule{{Claim: "tenant", RequiredValue: "security"}},
+				UserValidationRules:  []apiserverv1.UserValidationRule{{Expression: "user.username.startsWith('tdi_security_oidc:')"}},
+			},
+		},
+	}
+	s.MustCreateResource(valid)
+	var stored breakglassv1alpha1.ClusterConfig
+	require.NoError(t, s.Client.Get(s.Ctx, types.NamespacedName{Name: valid.Name, Namespace: valid.Namespace}, &stored))
+	require.NotNil(t, stored.Spec.KubernetesIdentity)
+	require.Equal(t, "preferred_username", stored.Spec.KubernetesIdentity.ClaimMappings.Username.Claim)
+	require.Equal(t, "claims.groups", stored.Spec.KubernetesIdentity.ClaimMappings.Groups.Expression)
+
+	invalid := valid.DeepCopy()
+	invalid.ObjectMeta = metav1.ObjectMeta{Name: helpers.GenerateUniqueName("cc-oidc-native-invalid"), Namespace: s.Namespace, Labels: helpers.E2ETestLabels()}
+	invalid.Spec.ClusterID = helpers.GenerateUniqueName("native-oidc-invalid")
+	invalid.Spec.KubernetesIdentity.ClaimMappings.Username.Expression = "claims.sub"
+	err := s.Client.Create(s.Ctx, invalid)
+	require.Error(t, err, "native mapping with both claim and expression must be rejected by admission")
+	require.True(t, apierrors.IsInvalid(err), "expected Kubernetes Invalid error for malformed claim mapping: %v", err)
+	require.Contains(t, err.Error(), "claimMappings", "invalid response should identify the mapping field")
+}
 
 // TestClusterConfigOIDCAuthentication tests ClusterConfig resources configured
 // to use OIDC-based authentication instead of kubeconfig secrets.

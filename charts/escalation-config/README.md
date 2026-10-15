@@ -700,3 +700,9 @@ For Kubernetes structured-authentication mappings, set
 and is validated by the controller's upstream Kubernetes validation. Do not
 combine it with the shorthand claim/prefix fields. See
 [OIDC compatibility](../../docs/oidc-compatibility.md) for examples and precedence.
+The Kubernetes principal is independent from requester email: Breakglass reads
+email from the standard `email` claim in the verified bearer access token. The
+OIDC client requests `openid profile email`, but the provider must emit that
+claim in the access token; Breakglass does not fetch UserInfo or derive email
+from a prefixed/custom username. Sessions expose the resulting values as
+`spec.user`, `spec.requesterUsername`, and `spec.requesterEmail`.

@@ -6,6 +6,8 @@ package oidc
 import (
 	"context"
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -80,10 +82,150 @@ func TestAuthenticateUsesKubernetesMappingsAndValidatesToken(t *testing.T) {
 	if got := response.User.GetExtra()["example.com/role"]; len(got) != 1 || got[0] != "operator" {
 		t.Fatalf("unexpected extra: %#v", response.User.GetExtra())
 	}
+	scalarGroups := signToken(t, privateKey, map[string]any{
+		"iss": "https://issuer.example", "aud": "breakglass", "sub": "subject-2",
+		"preferred_username": "scalar", "groups": "admins", "role": "operator",
+		"exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix(),
+	})
+	scalarResponse, err := engine.Authenticate(t.Context(), scalarGroups, policy)
+	if err != nil || len(scalarResponse.User.GetGroups()) != 1 || scalarResponse.User.GetGroups()[0] != "oidc:admins" {
+		t.Fatalf("scalar groups mapping failed: response=%v error=%v", scalarResponse, err)
+	}
 
 	badAudience := signToken(t, privateKey, map[string]any{"iss": "https://issuer.example", "aud": "other", "sub": "x", "preferred_username": "x", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()})
 	if _, err := engine.Authenticate(t.Context(), badAudience, policy); err == nil {
 		t.Fatal("expected audience validation failure")
+	}
+	otherIssuer := signToken(t, privateKey, map[string]any{"iss": "https://other.example", "aud": "breakglass", "sub": "x", "exp": time.Now().Add(time.Minute).Unix()})
+	if response, err := engine.Authenticate(t.Context(), otherIssuer, policy); err == nil || response != nil {
+		t.Fatalf("another issuer must not authenticate: response=%v error=%v", response, err)
+	}
+}
+
+func TestAuthenticateAppliesAudienceAndCELValidationRules(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New(context.Background(), Options{KeySet: &coreosoidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&privateKey.PublicKey}}})
+	defer engine.Close()
+	policy := apiserver.JWTAuthenticator{
+		Issuer: apiserver.Issuer{
+			URL:                 "https://issuer.example",
+			Audiences:           []string{"primary", "secondary"},
+			AudienceMatchPolicy: apiserver.AudienceMatchPolicyMatchAny,
+		},
+		ClaimMappings: apiserver.ClaimMappings{
+			Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("allowed:")},
+		},
+		ClaimValidationRules: []apiserver.ClaimValidationRule{{Expression: "claims.tenant == 'prod'", Message: "tenant must be prod"}},
+		UserValidationRules:  []apiserver.UserValidationRule{{Expression: "user.username.startsWith('allowed:')", Message: "username must be allowed"}},
+	}
+	validClaims := map[string]any{"iss": "https://issuer.example", "aud": "secondary", "sub": "operator", "tenant": "prod", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()}
+	if response, err := engine.Authenticate(t.Context(), signToken(t, privateKey, validClaims), policy); err != nil || response.User.GetName() != "allowed:operator" {
+		t.Fatalf("valid CEL/audience mapping failed: response=%v error=%v", response, err)
+	}
+	validClaims["tenant"] = "dev"
+	if _, err := engine.Authenticate(t.Context(), signToken(t, privateKey, validClaims), policy); err == nil {
+		t.Fatal("expected claim validation failure")
+	}
+	deniedUserPolicy := policy
+	deniedUserPolicy.UserValidationRules = []apiserver.UserValidationRule{{Expression: "user.username.startsWith('other:')", Message: "username must be other"}}
+	validClaims["tenant"] = "prod"
+	if _, err := engine.Authenticate(t.Context(), signToken(t, privateKey, validClaims), deniedUserPolicy); err == nil {
+		t.Fatal("expected user validation failure")
+	}
+}
+
+func TestAuthenticateRejectsMissingAndWrongTypedMappedClaims(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New(context.Background(), Options{KeySet: &coreosoidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&privateKey.PublicKey}}})
+	defer engine.Close()
+	base := func(claims map[string]any) string {
+		claims["iss"] = "https://issuer.example"
+		claims["aud"] = "breakglass"
+		claims["exp"] = time.Now().Add(time.Minute).Unix()
+		claims["iat"] = time.Now().Unix()
+		return signToken(t, privateKey, claims)
+	}
+	tests := []struct {
+		name   string
+		policy apiserver.JWTAuthenticator
+		claims map[string]any
+	}{
+		{name: "missing username", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: stringPtr("")}}}, claims: map[string]any{"sub": "operator"}},
+		{name: "typed username", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: stringPtr("")}}}, claims: map[string]any{"preferred_username": 42}},
+		{name: "typed groups", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}, Groups: apiserver.PrefixedClaimOrExpression{Claim: "groups", Prefix: stringPtr("")}}}, claims: map[string]any{"sub": "operator", "groups": 42}},
+		{name: "missing UID", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}, UID: apiserver.ClaimOrExpression{Claim: "uid"}}}, claims: map[string]any{"sub": "operator"}},
+		{name: "typed UID", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}, UID: apiserver.ClaimOrExpression{Claim: "uid"}}}, claims: map[string]any{"sub": "operator", "uid": 42}},
+		{name: "typed extra", policy: apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}, Extra: []apiserver.ExtraMapping{{Key: "example.com/role", ValueExpression: "claims.role"}}}}, claims: map[string]any{"sub": "operator", "role": 42}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := engine.Authenticate(t.Context(), base(tc.claims), tc.policy); err == nil {
+				t.Fatal("expected mapped claim validation failure")
+			}
+		})
+	}
+}
+
+func TestAuthenticateRejectsUnsupportedSigningAlgorithm(t *testing.T) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := New(context.Background(), Options{
+		KeySet:               &coreosoidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&privateKey.PublicKey}},
+		SupportedSigningAlgs: []string{"ES256"},
+	})
+	defer engine.Close()
+	policy := apiserver.JWTAuthenticator{
+		Issuer:        apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}},
+		ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}},
+	}
+	claims := map[string]any{"iss": "https://issuer.example", "aud": "breakglass", "sub": "operator", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()}
+	if _, err := engine.Authenticate(t.Context(), signToken(t, privateKey, claims), policy); err == nil {
+		t.Fatal("expected unsupported signing algorithm failure")
+	}
+}
+
+func TestAuthenticateSupportsRSAPSSAndECDSASigningFamilies(t *testing.T) {
+	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claims := func() map[string]any {
+		return map[string]any{"iss": "https://issuer.example", "aud": "breakglass", "sub": "operator", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()}
+	}
+	policy := apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}}}
+	for _, tc := range []struct {
+		name   string
+		method jwt.SigningMethod
+		key    any
+		keys   []crypto.PublicKey
+	}{
+		{name: "rsa-pss", method: jwt.SigningMethodPS256, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "ecdsa", method: jwt.SigningMethodES256, key: ecdsaKey, keys: []crypto.PublicKey{&ecdsaKey.PublicKey}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			engine := New(context.Background(), Options{KeySet: &coreosoidc.StaticKeySet{PublicKeys: tc.keys}, SupportedSigningAlgs: []string{tc.method.Alg()}})
+			defer engine.Close()
+			token := jwt.NewWithClaims(tc.method, jwt.MapClaims(claims()))
+			signed, err := token.SignedString(tc.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := engine.Authenticate(t.Context(), signed, policy); err != nil {
+				t.Fatalf("%s token rejected: %v", tc.name, err)
+			}
+		})
 	}
 }
 
@@ -167,15 +309,19 @@ func TestSharedJWKSRefreshSurvivesAuthenticatorEviction(t *testing.T) {
 }
 
 func TestInvalidDiscoveryURLDoesNotMakeOutboundRequest(t *testing.T) {
-	transport := &rotatingJWKS{}
-	engine := New(context.Background(), Options{Client: &http.Client{Transport: transport}})
-	defer engine.Close()
-	policy := apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", DiscoveryURL: "https://issuer.example?unexpected=true", Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}}}
-	if _, err := engine.Authenticate(t.Context(), "invalid-token", policy); err == nil {
-		t.Fatal("expected invalid discovery URL error")
-	}
-	if atomic.LoadInt32(&transport.requests) != 0 {
-		t.Fatal("invalid discovery URL caused an outbound request")
+	for _, discoveryURL := range []string{"://invalid", "https://issuer.example?unexpected=true", "http://issuer.example/discovery", "https://issuer.example/discovery#fragment", "https://issuer.example"} {
+		t.Run(discoveryURL, func(t *testing.T) {
+			transport := &rotatingJWKS{}
+			engine := New(context.Background(), Options{Client: &http.Client{Transport: transport}})
+			t.Cleanup(engine.Close)
+			policy := apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: "https://issuer.example", DiscoveryURL: discoveryURL, Audiences: []string{"breakglass"}}, ClaimMappings: apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}}}
+			if _, err := engine.Authenticate(t.Context(), "invalid-token", policy); err == nil {
+				t.Fatal("expected invalid discovery URL error")
+			}
+			if atomic.LoadInt32(&transport.requests) != 0 {
+				t.Fatal("invalid discovery URL caused an outbound request")
+			}
+		})
 	}
 }
 

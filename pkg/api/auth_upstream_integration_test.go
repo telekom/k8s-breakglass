@@ -10,6 +10,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,7 @@ type signedOIDCServer struct {
 	caPEM  string
 }
 
-func newSignedOIDCServer(t *testing.T) *signedOIDCServer {
+func newSignedOIDCServer(t *testing.T, discoveryPaths ...string) *signedOIDCServer {
 	t.Helper()
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
@@ -45,11 +46,15 @@ func newSignedOIDCServer(t *testing.T) *signedOIDCServer {
 	}}})
 	require.NoError(t, err)
 
+	discoveryPath := "/.well-known/openid-configuration"
+	if len(discoveryPaths) > 0 {
+		discoveryPath = discoveryPaths[0]
+	}
 	var server *httptest.Server
 	server = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
+		case discoveryPath:
 			_ = json.NewEncoder(w).Encode(map[string]string{
 				"issuer":   server.URL,
 				"jwks_uri": server.URL + "/keys",
@@ -120,6 +125,151 @@ func TestAuthMiddlewareUpstreamOIDCMappingOverSignedTLS(t *testing.T) {
 	resp := httptest.NewRecorder()
 	router.ServeHTTP(resp, req)
 	require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+}
+
+func TestAuthMiddlewareUpstreamOIDCStandardClaimsAndRealmGroups(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newSignedOIDCServer(t)
+	cfg := &config.IdentityProviderConfig{
+		Name: "corp", Issuer: s.server.URL, Authority: s.server.URL,
+		ExpectedAudience: "breakglass", CertificateAuthority: s.caPEM,
+		UserIdentifierClaim: "preferred_username", UserIdentifierPrefix: "tdi_security_oidc:",
+	}
+	auth := newUpstreamTestAuth(s, cfg)
+	t.Cleanup(auth.Close)
+	token := s.token(t, s.key, jwt.MapClaims{
+		"iss": s.server.URL, "aud": "breakglass", "sub": "subject-123",
+		"email": "user@example.com", "email_verified": true,
+		"preferred_username": "k834798",
+		"realm_access":       map[string]any{"roles": []any{"ops", "sre", "ops"}},
+		"exp":                time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix(),
+	})
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/identity", func(c *gin.Context) {
+		require.Equal(t, "k834798", c.GetString("username"), "raw preferred_username remains available to legacy API consumers")
+		require.Equal(t, "tdi_security_oidc:k834798", c.GetString("authenticated_username"), "provider mapping is the authenticated API principal")
+		require.Equal(t, "subject-123", c.GetString("user_id"))
+		require.Equal(t, "user@example.com", c.GetString("email"))
+		groups, exists := c.Get("groups")
+		require.True(t, exists)
+		require.Equal(t, []string{"ops", "sre"}, groups)
+		c.Status(http.StatusNoContent)
+	})
+	req := httptest.NewRequest(http.MethodGet, "/identity", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+func TestAuthMiddlewareUpstreamOIDCAdditionalAudience(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newSignedOIDCServer(t)
+	cfg := &config.IdentityProviderConfig{
+		Name: "corp", Issuer: s.server.URL, Authority: s.server.URL,
+		ExpectedAudience: "breakglass", Audiences: []string{"breakglass", "spoke-api"},
+		CertificateAuthority: s.caPEM, UserIdentifierClaim: "employee_id",
+	}
+	auth := newUpstreamTestAuth(s, cfg)
+	t.Cleanup(auth.Close)
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/identity", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request := func(audience string) int {
+		t.Helper()
+		token := s.token(t, s.key, jwt.MapClaims{
+			"iss": s.server.URL, "aud": audience, "employee_id": "employee",
+			"exp": time.Now().Add(time.Minute).Unix(),
+		})
+		req := httptest.NewRequest(http.MethodGet, "/identity", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	require.Equal(t, http.StatusNoContent, request("spoke-api"))
+	require.Equal(t, http.StatusNoContent, request("breakglass"))
+	require.Equal(t, http.StatusUnauthorized, request("unlisted"))
+}
+
+func TestAuthMiddlewareUpstreamOIDCExplicitDiscoveryJWKSAndAlgorithms(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, directJWKS := range []bool{false, true} {
+		name := "discovery override"
+		if directJWKS {
+			name = "direct JWKS without discovery"
+		}
+		t.Run(name, func(t *testing.T) {
+			// The default discovery endpoint returns 404, so ignoring either override fails.
+			s := newSignedOIDCServer(t, "/custom-discovery")
+			cfg := &config.IdentityProviderConfig{
+				Name: "corp", Issuer: s.server.URL, Authority: s.server.URL,
+				ExpectedAudience: "breakglass", SupportedSigningAlgs: []string{"RS256"},
+				CertificateAuthority: s.caPEM, UserIdentifierClaim: "employee_id",
+			}
+			if directJWKS {
+				cfg.JWKSURL = s.server.URL + "/keys"
+			} else {
+				cfg.DiscoveryURL = s.server.URL + "/custom-discovery"
+			}
+			auth := newUpstreamTestAuth(s, cfg)
+			t.Cleanup(auth.Close)
+			token := s.token(t, s.key, jwt.MapClaims{"iss": s.server.URL, "aud": "breakglass", "employee_id": "employee", "exp": time.Now().Add(time.Minute).Unix()})
+			router := gin.New()
+			router.Use(auth.Middleware())
+			router.GET("/identity", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+			request := func() int {
+				t.Helper()
+				req := httptest.NewRequest(http.MethodGet, "/identity", nil)
+				req.Header.Set("Authorization", "Bearer "+token)
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req)
+				return rec.Code
+			}
+			require.Equal(t, http.StatusNoContent, request())
+			cfg.SupportedSigningAlgs = []string{"ES256"}
+			require.Equal(t, http.StatusUnauthorized, request(), "configured signing algorithms must be enforced")
+		})
+	}
+}
+
+func TestAuthMiddlewareUpstreamOIDCStructuredValidationAcceptsAndRejects(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	s := newSignedOIDCServer(t)
+	prefix := "tdi:"
+	cfg := &config.IdentityProviderConfig{
+		Name: "corp", Issuer: s.server.URL, Authority: s.server.URL,
+		ExpectedAudience: "breakglass", CertificateAuthority: s.caPEM,
+		KubernetesIdentity: &apiserver.JWTAuthenticator{
+			Issuer:               apiserver.Issuer{URL: s.server.URL, Audiences: []string{"breakglass"}},
+			ClaimMappings:        apiserver.ClaimMappings{Username: apiserver.PrefixedClaimOrExpression{Claim: "employee_id", Prefix: &prefix}},
+			ClaimValidationRules: []apiserver.ClaimValidationRule{{Expression: "claims.tenant == 'operations'", Message: "operations tenant required"}},
+			UserValidationRules:  []apiserver.UserValidationRule{{Expression: "!user.username.startsWith('tdi:system:')", Message: "reserved username"}},
+		},
+	}
+	auth := newUpstreamTestAuth(s, cfg)
+	t.Cleanup(auth.Close)
+	router := gin.New()
+	router.Use(auth.Middleware())
+	router.GET("/identity", func(c *gin.Context) { c.Status(http.StatusNoContent) })
+	request := func(claims jwt.MapClaims) int {
+		t.Helper()
+		token := s.token(t, s.key, claims)
+		req := httptest.NewRequest(http.MethodGet, "/identity", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	base := jwt.MapClaims{"iss": s.server.URL, "aud": "breakglass", "employee_id": "employee", "tenant": "operations", "exp": time.Now().Add(time.Minute).Unix()}
+	require.Equal(t, http.StatusNoContent, request(base))
+	badTenant := maps.Clone(base)
+	badTenant["tenant"] = "other"
+	require.Equal(t, http.StatusUnauthorized, request(badTenant))
+	badUser := maps.Clone(base)
+	badUser["employee_id"] = "system:admin"
+	require.Equal(t, http.StatusUnauthorized, request(badUser))
 }
 
 func TestOptionalAuthUpstreamOIDCRecordsVerifiedMappedIdentity(t *testing.T) {
@@ -255,8 +405,9 @@ func TestAuthMiddlewareUpstreamOIDCRejectsTimestampAndUnverifiedEmail(t *testing
 	t.Cleanup(auth.Close)
 	for name, claims := range map[string]jwt.MapClaims{
 		"missing expiration": {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": true},
-		"future issued at":  {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": true, "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Add(time.Minute).Unix()},
-		"unverified email":  {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": false, "exp": time.Now().Add(time.Minute).Unix()},
+		"future issued at":   {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": true, "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Add(time.Minute).Unix()},
+		"future not before":  {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": true, "exp": time.Now().Add(2 * time.Minute).Unix(), "iat": time.Now().Unix(), "nbf": time.Now().Add(time.Minute).Unix()},
+		"unverified email":   {"iss": s.server.URL, "aud": "breakglass", "email": "user@example.com", "email_verified": false, "exp": time.Now().Add(time.Minute).Unix()},
 	} {
 		t.Run(name, func(t *testing.T) {
 			token := s.token(t, s.key, claims)

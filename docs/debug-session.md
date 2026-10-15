@@ -1564,8 +1564,11 @@ so a request that reaches the boundary cannot extend or resurrect the lease.
 
 DebugSession creation and participant joins select the Kubernetes identity from
 the authenticated token using `ClusterConfig.spec.userIdentifierClaim`, then the
-global `userIdentifierClaim` (default `email`). Supported policies are `email`,
-`preferred_username`, and `sub`; a missing required claim rejects the request.
+global `userIdentifierClaim` (default `email`). Any non-empty string-valued claim
+supported by the target API server can be selected, including provider-specific
+claims such as `upn` and `employee_id`; a missing required claim rejects the
+request. Structured Kubernetes identity policies can additionally express claim
+mappings and validation rules.
 The API snapshots this value in `spec.requestedByKubernetesUser` and participant
 `kubernetesUser`. API ownership and notification identities remain separate.
 The authorization webhook matches only this exact Kubernetes identity, retaining

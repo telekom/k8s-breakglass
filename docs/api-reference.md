@@ -184,6 +184,13 @@ server from the authenticated provider-aware requester identity. Full
 keep only the ownership flag and `approvedByMe` to avoid repeating approval and
 group lookups for every item.
 
+For new OIDC sessions, `spec.user` is the target Kubernetes username, while
+`spec.requesterUsername` and `spec.requesterSubject` preserve the authenticated
+API identity. Read `spec.requesterEmail` for the separate email address; it is
+absent when the bearer token has no standard `email` claim. These fields are
+also available in the single-session response. See [requester identity](breakglass-session.md#requester-identity-and-kubernetes-username)
+and [email claim configuration](oidc-compatibility.md#email-is-independent-from-the-kubernetes-principal).
+
 ```json
 {
   "items": [

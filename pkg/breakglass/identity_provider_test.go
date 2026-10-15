@@ -299,32 +299,31 @@ func TestKeycloakIdentityProvider_LoggerInjection(t *testing.T) {
 func TestSessionRequesterIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, user, subject, sessionSubject, issuer, sessionIssuer string
+		providerName, sessionProviderName                          string
 		legacy, want                                               bool
 	}{
-		{"subject owner", "oidc:k834798", "sub-1", "sub-1", "https://issuer", "https://issuer", false, true},
-		{"same subject wrong issuer", "oidc:k834798", "sub-1", "sub-1", "https://other", "https://issuer", false, false},
-		{"different subject", "oidc:k834798", "sub-2", "sub-1", "https://issuer", "https://issuer", false, false},
-		{"noninvertible username", "oidc:opaque", "sub-1", "sub-1", "https://issuer", "https://issuer", false, true},
-		{"mapped principal without subject", "oidc:opaque", "", "", "https://issuer", "https://issuer", false, true},
-		{"subject without provenance", "oidc:k834798", "sub-1", "sub-1", "", "", true, false},
-		{"legacy", "k834798", "", "", "", "", true, true},
+		{"subject owner", "oidc:k834798", "sub-1", "sub-1", "https://issuer", "https://issuer", "provider", "provider", false, true},
+		{"same subject wrong issuer", "oidc:k834798", "sub-1", "sub-1", "https://other", "https://issuer", "provider", "provider", false, false},
+		{"same subject wrong provider", "tdi_security_oidc:k834798", "sub-1", "sub-1", "https://issuer", "https://issuer", "other-provider", "provider", false, false},
+		{"different subject", "oidc:k834798", "sub-2", "sub-1", "https://issuer", "https://issuer", "provider", "provider", false, false},
+		{"missing subject", "oidc:k834798", "", "sub-1", "https://issuer", "https://issuer", "provider", "provider", false, false},
+		{"noninvertible username", "oidc:opaque", "sub-1", "sub-1", "https://issuer", "https://issuer", "provider", "provider", false, true},
+		{"mapped principal without subject", "oidc:opaque", "", "", "https://issuer", "https://issuer", "provider", "provider", false, true},
+		{"subject without provenance", "oidc:k834798", "sub-1", "sub-1", "", "", "provider", "", true, false},
+		{"legacy", "k834798", "", "", "", "", "provider", "", true, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c, _ := gin.CreateTestContext(httptest.NewRecorder())
 			c.Set("user_id", tc.subject)
 			c.Set("issuer", tc.issuer)
-			c.Set("identity_provider_name", "provider")
+			c.Set("identity_provider_name", tc.providerName)
 			c.Set("legacy_identity_allowed", tc.legacy)
 			if tc.name == "mapped principal without subject" {
 				c.Set("authenticated_username", tc.user)
 			} else {
 				c.Set("username", tc.user)
 			}
-			identityProviderName := "provider"
-			if tc.name == "legacy" || tc.name == "subject without provenance" {
-				identityProviderName = ""
-			}
-			spec := breakglassv1alpha1.BreakglassSessionSpec{User: tc.user, RequesterSubject: tc.sessionSubject, IdentityProviderIssuer: tc.sessionIssuer, IdentityProviderName: identityProviderName}
+			spec := breakglassv1alpha1.BreakglassSessionSpec{User: tc.user, RequesterSubject: tc.sessionSubject, IdentityProviderIssuer: tc.sessionIssuer, IdentityProviderName: tc.sessionProviderName}
 			if tc.name == "mapped principal without subject" {
 				spec.RequesterUsername = tc.user
 			}
@@ -337,6 +336,13 @@ func TestSessionRequesterIdentity(t *testing.T) {
 }
 
 func TestSessionRequesterEmailDoesNotFallbackMappedPrincipal(t *testing.T) {
+	assert.Equal(t, "mapped@example.test", sessionRequesterEmail(breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:              "oidc:opaque-user",
+			RequesterUsername: "oidc:opaque-user",
+			RequesterEmail:    "mapped@example.test",
+		},
+	}))
 	assert.Empty(t, sessionRequesterEmail(breakglassv1alpha1.BreakglassSession{
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
 			User:              "oidc:opaque-user",
@@ -346,4 +352,51 @@ func TestSessionRequesterEmailDoesNotFallbackMappedPrincipal(t *testing.T) {
 	assert.Equal(t, "legacy@example.test", sessionRequesterEmail(breakglassv1alpha1.BreakglassSession{
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "legacy@example.test"},
 	}))
+}
+
+func TestSessionRequesterUsernameOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		name, current, provider, issuer string
+		legacy, want                    bool
+	}{
+		{"matching mapped username", "mapped-user", "idp-a", "https://issuer.example", false, true},
+		{"different mapped username", "other-user", "idp-a", "https://issuer.example", false, false},
+		{"wrong provider", "mapped-user", "idp-b", "https://issuer.example", false, false},
+		{"legacy provenance rejected", "mapped-user", "", "", false, false},
+		{"legacy provenance allowed", "mapped-user", "", "", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("authenticated_username", tc.current)
+			c.Set("identity_provider_name", tc.provider)
+			c.Set("issuer", tc.issuer)
+			c.Set("legacy_identity_allowed", tc.legacy)
+			spec := breakglassv1alpha1.BreakglassSessionSpec{
+				User:                   "cluster:principal",
+				RequesterUsername:      "mapped-user",
+				IdentityProviderName:   "idp-a",
+				IdentityProviderIssuer: "https://issuer.example",
+			}
+			if tc.provider == "" && tc.issuer == "" {
+				spec.IdentityProviderName = ""
+				spec.IdentityProviderIssuer = ""
+			}
+			require.Equal(t, tc.want, sessionRequesterMatches(c, spec))
+		})
+	}
+}
+
+func TestResolveKubernetesUserPrefixInheritanceAndExplicitDisable(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("email", "alice@example.com")
+	c.Set("user_identifier_prefix", "provider:")
+
+	name, err := ResolveKubernetesUser(c, nil, breakglassv1alpha1.UserIdentifierClaimEmail, KeycloakIdentityProvider{})
+	require.NoError(t, err)
+	require.Equal(t, "provider:alice@example.com", name)
+
+	empty := ""
+	name, err = ResolveKubernetesUser(c, &breakglassv1alpha1.ClusterConfig{Spec: breakglassv1alpha1.ClusterConfigSpec{UserIdentifierPrefix: &empty}}, breakglassv1alpha1.UserIdentifierClaimEmail, KeycloakIdentityProvider{})
+	require.NoError(t, err)
+	require.Equal(t, "alice@example.com", name)
 }

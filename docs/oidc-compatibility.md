@@ -5,10 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 # Kubernetes OIDC identity mapping
 
-Breakglass has two identities to keep distinct: the authenticated requester who
-owns a session, and the username Kubernetes includes in SubjectAccessReviews.
-Changing the Kubernetes username must not change who can withdraw the session,
-approve it, or receive its notification emails.
+Breakglass keeps the authenticated requester principal and the target username
+Kubernetes includes in SubjectAccessReviews distinct. A provider-level claim
+and prefix define the authenticated API principal and the default Kubernetes
+username; a ClusterConfig-only override changes the target username without
+replacing that provider principal. Changing only the target Kubernetes username
+must not change who can withdraw the session, approve it, or receive its
+notification emails.
 
 ## Simple claim and prefix
 
@@ -36,6 +39,59 @@ The shorthand prefix is literal. For legacy API-server flags, translate
 its implicit non-email prefix, explicitly configure the issuer URL followed by
 `#`. This preserves existing unprefixed Breakglass configurations and avoids
 silently changing already-issued grants. The separator is part of the prefix.
+
+## Email is independent from the Kubernetes principal
+
+The username sent to Kubernetes and the email used by Breakglass are separate
+values. Breakglass verifies the presented bearer JWT (normally the OAuth access
+token sent by the frontend) and reads the standard `email` claim from that
+verified token; it does not fetch UserInfo, inspect a browser profile, or
+reverse a prefix/CEL expression to derive an address. Other clients must present
+a bearer token containing the claims they expect Breakglass to use.
+
+The frontend requests `openid profile email`, but requesting the scope alone is
+not enough. The identity provider must put the email claim in the bearer token
+that the client sends to the Breakglass API. For the frontend, configure the
+provider's protocol mapper or access-token claim mapping when it emits email
+only in the ID token or only from UserInfo. Breakglass has no configurable
+alternate email-claim setting.
+
+For a verified token such as:
+
+```json
+{
+  "sub": "7c2f...",
+  "email": "christos.ntogkas@telekom.com",
+  "preferred_username": "k834798"
+}
+```
+
+with `userIdentifierClaim: preferred_username` and
+`userIdentifierPrefix: "tdi_security_oidc:"` on the IdentityProvider, and no
+ClusterConfig override, a new session contains:
+
+```yaml
+spec:
+  user: tdi_security_oidc:k834798
+  requesterUsername: tdi_security_oidc:k834798
+  requesterEmail: christos.ntogkas@telekom.com
+```
+
+`spec.user` is the exact Kubernetes authorization username. The requester
+fields preserve the authenticated API principal and standard email separately,
+so clients can retrieve them from `GET /api/breakglassSessions` or
+`GET /api/breakglassSessions/{name}` without decoding a token. Email is used
+for display and notifications; the requester subject/principal is used for
+ownership when email is absent. Email-domain restrictions require a matching
+standard email claim, and requester notifications are skipped when no usable
+email is present. A custom claim can be the Kubernetes username, but a
+different custom claim cannot currently be configured as the requester email.
+
+To troubleshoot a missing address, inspect the access-token payload locally or
+use the identity provider's token inspector and check whether `email` is
+present there. Decoding a JWT without verifying its signature is for inspection
+only; never use decoded claims to authorize a request, paste bearer tokens into
+logs or tickets, or assume that an ID-token/UserInfo email reaches the API.
 
 ## Structured mappings and validation
 
@@ -78,9 +134,13 @@ For claim-based username or group mappings, explicitly provide `prefix`, even
 when its value is `""`. Expression mappings include their own prefix and cannot
 also specify `claim` or `prefix`.
 
-Kubernetes enforces `email_verified` when using the `email` username claim. CEL
-expressions that use email must satisfy the upstream email-verification
-validation requirements; do not use an expression to bypass those requirements.
+When using the `email` username claim, Kubernetes requires a present
+`email_verified` claim to be Boolean `true`; an absent claim is accepted for
+upstream compatibility. To require explicit verification, including when the
+username comes from another claim, configure a provider claim-validation rule
+with `expression: "claims.?email_verified.orValue(false) == true"`. CEL
+username expressions that use email must also satisfy the upstream
+email-verification validation requirements.
 
 ## Authentication versus target policy
 
@@ -124,8 +184,10 @@ rewrite existing sessions; recreate a session whose Kubernetes identity was
 incorrect at creation.
 
 Tokens without email use their authenticated provider principal for session
-identity and per-user rate limiting. Email-domain restrictions still require
-a real matching email claim, and notification email is skipped when absent.
+ownership and identity matching. The default authenticated rate limiter keys
+these users by issuer, provider name, and authenticated principal. Email-domain
+restrictions still require a real matching email claim, and notification email
+is skipped when absent.
 
 The frontend uses server-computed requester metadata instead of trying to
 reverse username expressions. DebugSession ownership likewise remains separate

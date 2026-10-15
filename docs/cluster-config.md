@@ -787,6 +787,12 @@ spec:
 | `preferred_username` | Uses the `preferred_username` claim | When clusters use username-based authentication |
 | `sub` | Uses the `sub` (subject) claim | When using unique subject identifiers |
 
+The value may also be a provider-specific claim such as `upn` or
+`employee_id`. Custom claims require OIDC target-identity resolution; the
+standard `email` claim remains the independent source for requester email,
+notifications, and email-domain restrictions. See [Kubernetes OIDC identity
+mapping](oidc-compatibility.md#email-is-independent-from-the-kubernetes-principal).
+
 **Important:** The `userIdentifierClaim` value must match the spoke cluster's OIDC username claim configuration:
 
 ```yaml

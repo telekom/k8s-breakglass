@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -240,6 +241,47 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestIdentityProviderLoader_PropagatesNativeOIDCConfiguration(t *testing.T) {
+	prefix := "corp:"
+	idp := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "native-oidc"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			Issuer: "https://issuer.example.com",
+			KubernetesIdentity: &breakglassv1alpha1.KubernetesIdentityConfig{
+				ClaimMappings: apiserverv1.ClaimMappings{
+					Username: apiserverv1.PrefixedClaimOrExpression{Claim: "employee_id", Prefix: &prefix},
+				},
+			},
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:            "https://authority.example.com",
+				JWKSEndpoint:         "https://keys.example.com/jwks",
+				ClientID:             "breakglass",
+				ExpectedAudience:     "breakglass",
+				Audiences:            []string{"spoke-api"},
+				SupportedSigningAlgs: []string{"RS256", "ES256"},
+				DiscoveryURL:         "https://discovery.example.com/.well-known/openid-configuration",
+				CertificateAuthority: "test-ca-pem",
+			},
+		},
+	}
+	loader := NewIdentityProviderLoader(fake.NewClientBuilder().WithScheme(Scheme).WithObjects(idp).Build())
+	got, err := loader.LoadIdentityProviderByName(context.Background(), idp.Name)
+	require.NoError(t, err)
+	require.Equal(t, idp.Spec.Issuer, got.Issuer)
+	require.Equal(t, idp.Spec.OIDC.Authority, got.Authority)
+	require.Equal(t, idp.Spec.OIDC.JWKSEndpoint, got.JWKSURL)
+	require.Equal(t, []string{"breakglass", "spoke-api"}, got.Audiences)
+	require.Equal(t, []string{"RS256", "ES256"}, got.SupportedSigningAlgs)
+	require.Equal(t, idp.Spec.OIDC.DiscoveryURL, got.DiscoveryURL)
+	require.Equal(t, idp.Spec.OIDC.CertificateAuthority, got.CertificateAuthority)
+	require.NotNil(t, got.KubernetesIdentity)
+	require.Equal(t, "employee_id", got.KubernetesIdentity.ClaimMappings.Username.Claim)
+	require.Equal(t, prefix, *got.KubernetesIdentity.ClaimMappings.Username.Prefix)
+	require.Equal(t, got.Issuer, got.KubernetesIdentity.Issuer.URL)
+	require.Equal(t, got.Audiences, got.KubernetesIdentity.Issuer.Audiences)
+	require.Equal(t, got.DiscoveryURL, got.KubernetesIdentity.Issuer.DiscoveryURL)
 }
 
 func TestIdentityProviderLoader_LoadIdentityProviderByName(t *testing.T) {

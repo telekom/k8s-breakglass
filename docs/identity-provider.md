@@ -895,3 +895,9 @@ defaults, followed by the global `userIdentifierClaim` setting when no provider
 mapping exists. It does not modify email addresses, JWT claims,
 or group prefixes. A ClusterConfig can override it, including with an explicit
 empty string to disable it; see [username prefixes](cluster-config.md#kubernetes-username-prefixes).
+
+This prefix changes the Kubernetes authorization principal and the authenticated
+API principal recorded for session ownership. Breakglass continues to read
+requester email from the standard `email` claim in the verified bearer JWT; it
+does not derive email from the prefixed username or fetch UserInfo. See
+[OIDC identity mapping](oidc-compatibility.md#email-is-independent-from-the-kubernetes-principal).

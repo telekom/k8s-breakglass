@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
+import { mount, flushPromises, enableAutoUnmount } from "@vue/test-utils";
 import { createRouter, createMemoryHistory } from "vue-router";
 import { createPinia } from "pinia";
 import { ref } from "vue";
@@ -13,6 +13,10 @@ import SessionBrowser from "@/views/SessionBrowser.vue";
 import { AuthKey } from "@/keys";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
+import { useUser } from "@/services/auth";
+import { wasApprovedBy } from "@/utils/sessionFilters";
+
+enableAutoUnmount(afterEach);
 
 const { mockSearchSessions } = vi.hoisted(() => ({
   mockSearchSessions: vi.fn(),
@@ -89,7 +93,14 @@ describe("SessionBrowser", () => {
   };
 
   beforeEach(() => {
+    // The filter store persists state in sessionStorage; isolate each case so
+    // a debounced name filter from an earlier test cannot narrow this fixture.
+    window.sessionStorage.clear();
     vi.mocked(decideRejectOrWithdraw).mockReturnValue("reject");
+    vi.mocked(useUser).mockReturnValue(
+      ref({ profile: { email: "test@example.com", preferred_username: "testuser" } }) as ReturnType<typeof useUser>,
+    );
+    vi.mocked(wasApprovedBy).mockReturnValue(false);
     mockSearchSessions.mockResolvedValue([
       {
         metadata: { name: "session-1", namespace: "default" },
@@ -145,7 +156,11 @@ describe("SessionBrowser", () => {
           LoadingState: true,
           SessionCard: true,
           "scale-text-field": true,
-          "scale-checkbox": true,
+          "scale-checkbox": {
+            name: "ScaleCheckboxStub",
+            props: { checked: Boolean, disabled: Boolean },
+            template: "<span><slot /></span>",
+          },
           "scale-button": true,
           "scale-dropdown-select": true,
           "scale-dropdown-select-item": true,
@@ -304,7 +319,45 @@ describe("SessionBrowser", () => {
     await flushPromises();
 
     expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["approved"]);
-    expect(wrapper.find('[data-testid="filter-approved-by-me"]').attributes("disabled")).toBeUndefined();
+    const checkbox = wrapper
+      .findAllComponents({ name: "ScaleCheckboxStub" })
+      .find((item) => item.attributes("data-testid") === "filter-approved-by-me");
+    expect(checkbox?.props("disabled")).toBe(false);
+  });
+
+  it("uses server approval metadata without an email and preserves fallback behavior", async () => {
+    vi.mocked(useUser).mockReturnValue(ref({ profile: {} }) as ReturnType<typeof useUser>);
+    vi.mocked(wasApprovedBy).mockReturnValue(true);
+    mockSearchSessions.mockResolvedValueOnce([
+      {
+        metadata: { name: "explicit-true" },
+        approvedByMe: true,
+        spec: { user: "opaque:true" },
+        status: { state: "Approved" },
+      },
+      {
+        metadata: { name: "explicit-false" },
+        approvedByMe: false,
+        spec: { user: "opaque:false" },
+        status: { state: "Approved" },
+      },
+      {
+        metadata: { name: "legacy-fallback" },
+        spec: { user: "legacy:true" },
+        status: { state: "Approved" },
+      },
+    ]);
+
+    const wrapper = await createWrapper();
+    const filters = useSessionBrowserFilters();
+    filters.filters.onlyApprovedByMe = true;
+    await flushPromises();
+
+    expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["explicit-true", "legacy-fallback"]);
+    const checkbox = wrapper
+      .findAllComponents({ name: "ScaleCheckboxStub" })
+      .find((item) => item.attributes("data-testid") === "filter-approved-by-me");
+    expect(checkbox?.props("disabled")).toBe(false);
   });
 
   it("uses server ownership metadata for card actions with an opaque username", async () => {

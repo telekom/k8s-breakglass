@@ -621,7 +621,7 @@ Specifies which OIDC claim to use as the user identifier for session matching. T
 |----------|-------|
 | **Type** | `string` |
 | **Default** | `email` |
-| **Valid Values** | `email`, `preferred_username`, `sub` |
+| **Valid Values** | Any non-empty JWT claim name, such as `email`, `preferred_username`, `sub`, `upn`, or `employee_id` |
 
 ```yaml
 kubernetes:
@@ -630,7 +630,12 @@ kubernetes:
 
 **Purpose**: Controls which JWT claim is used to identify users when creating sessions. This value is stored in `spec.user` of BreakglassSession and must match the claim configured in spoke clusters' OIDC `claimMappings.username.claim`.
 
-**Priority**: ClusterConfig setting > Global config > Default (email)
+**Priority**: ClusterConfig setting > IdentityProvider default > Global config > Default (email)
+
+For Kubernetes structured authentication, configure `kubernetesIdentity` instead;
+it supports the API server's claim mappings, CEL validation rules, and user
+validation rules. The shorthand claim and prefix fields cannot be combined with
+that structured policy.
 
 **Example**:
 

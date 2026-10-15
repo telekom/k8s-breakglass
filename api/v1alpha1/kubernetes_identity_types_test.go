@@ -4,6 +4,7 @@
 package v1alpha1
 
 import (
+	"strings"
 	"testing"
 
 	apiserver "k8s.io/apiserver/pkg/apis/apiserver"
@@ -36,6 +37,13 @@ func TestKubernetesIdentityConfigToJWTAuthenticator(t *testing.T) {
 	}
 }
 
+func TestNilKubernetesIdentityConfigCannotConvert(t *testing.T) {
+	var config *KubernetesIdentityConfig
+	if _, err := config.ToJWTAuthenticator("https://issuer.example", []string{"audience"}); err == nil || !strings.Contains(err.Error(), "nil") {
+		t.Fatalf("ToJWTAuthenticator() error = %v, want nil configuration error", err)
+	}
+}
+
 func TestKubernetesIdentityConfigUsesUpstreamValidation(t *testing.T) {
 	config := &KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
 		Username: apiserverv1.PrefixedClaimOrExpression{Expression: "claims.missing +"},
@@ -45,23 +53,207 @@ func TestKubernetesIdentityConfigUsesUpstreamValidation(t *testing.T) {
 	}
 }
 
+func TestKubernetesIdentityConfigValidationMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		config    KubernetesIdentityConfig
+		wantValid bool
+		wantError string
+	}{
+		{
+			name: "arbitrary claim name",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "urn:example:principal", Prefix: stringPtr("")},
+			}},
+			wantValid: true,
+		},
+		{
+			name: "claim requires prefix field",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username"},
+			}},
+			wantValid: false,
+			wantError: "prefix",
+		},
+		{
+			name: "explicit empty prefix",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: stringPtr("")},
+			}},
+			wantValid: true,
+		},
+		{
+			name: "literal hyphen prefix",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: stringPtr("-")},
+			}},
+			wantValid: true,
+		},
+		{
+			name: "expression cannot set prefix",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Expression: "claims.preferred_username", Prefix: stringPtr("")},
+			}},
+			wantValid: false,
+			wantError: "prefix",
+		},
+		{
+			name: "claim and expression are exclusive",
+			config: KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Expression: "claims.sub", Prefix: stringPtr("")},
+			}},
+			wantValid: false,
+			wantError: "claim",
+		},
+		{
+			name: "duplicate claim validation rules",
+			config: KubernetesIdentityConfig{
+				ClaimMappings:        apiserverv1.ClaimMappings{Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}},
+				ClaimValidationRules: []apiserverv1.ClaimValidationRule{{Claim: "tenant"}, {Claim: "tenant"}},
+			},
+			wantValid: false,
+			wantError: "duplicate",
+		},
+		{
+			name: "empty user validation expression",
+			config: KubernetesIdentityConfig{
+				ClaimMappings:       apiserverv1.ClaimMappings{Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")}},
+				UserValidationRules: []apiserverv1.UserValidationRule{{}},
+			},
+			wantValid: false,
+			wantError: "expression",
+		},
+		{
+			name: "invalid extra key",
+			config: KubernetesIdentityConfig{
+				ClaimMappings: apiserverv1.ClaimMappings{
+					Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")},
+					Extra:    []apiserverv1.ExtraMapping{{Key: "not-namespaced", ValueExpression: "claims.team"}},
+				},
+			},
+			wantValid: false,
+			wantError: "key",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			errs := tt.config.Validate("https://issuer.example", []string{"audience"})
+			if got := len(errs) == 0; got != tt.wantValid {
+				t.Fatalf("Validate() valid=%v, want %v; errors=%v", got, tt.wantValid, errs)
+			}
+			if tt.wantError != "" {
+				var text string
+				for _, err := range errs {
+					text += err.Error() + "\n"
+				}
+				if !strings.Contains(strings.ToLower(text), strings.ToLower(tt.wantError)) {
+					t.Fatalf("Validate() errors %q do not contain %q", text, tt.wantError)
+				}
+			}
+		})
+	}
+}
+
+func TestIdentityProviderOIDCOptionsValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		mutate    func(*IdentityProvider)
+		wantValid bool
+		wantError string
+	}{
+		{
+			name: "additional audiences and signing algorithms",
+			mutate: func(idp *IdentityProvider) {
+				idp.Spec.OIDC.Audiences = []string{"secondary-audience"}
+				idp.Spec.OIDC.SupportedSigningAlgs = []string{"RS256", "ES256"}
+			},
+			wantValid: true,
+		},
+		{
+			name: "empty additional audience",
+			mutate: func(idp *IdentityProvider) {
+				idp.Spec.OIDC.Audiences = []string{""}
+			},
+			wantError: "spec.oidc.audiences[0]",
+		},
+		{
+			name: "duplicate expected audience",
+			mutate: func(idp *IdentityProvider) {
+				idp.Spec.OIDC.Audiences = []string{idp.Spec.OIDC.ExpectedAudience}
+			},
+			wantError: "spec.oidc.audiences[0]",
+		},
+		{
+			name: "empty signing algorithm",
+			mutate: func(idp *IdentityProvider) {
+				idp.Spec.OIDC.SupportedSigningAlgs = []string{""}
+			},
+			wantError: "spec.oidc.supportedSigningAlgs[0]",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			idp := testKubernetesIdentityIDP()
+			tt.mutate(idp)
+			result := ValidateIdentityProvider(idp)
+			if got := result.IsValid(); got != tt.wantValid {
+				t.Fatalf("ValidateIdentityProvider() valid=%v, want %v: %s", got, tt.wantValid, result.ErrorMessage())
+			}
+			if tt.wantError != "" && !strings.Contains(result.ErrorMessage(), tt.wantError) {
+				t.Fatalf("ValidateIdentityProvider() error %q does not contain %q", result.ErrorMessage(), tt.wantError)
+			}
+		})
+	}
+}
+
 func TestStructuredKubernetesIdentityCannotMixShorthand(t *testing.T) {
 	idp := testKubernetesIdentityIDP()
 	idp.Spec.UserIdentifierClaim = UserIdentifierClaimType("employee_id")
 	idp.Spec.KubernetesIdentity = &KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
-		Username: apiserverv1.PrefixedClaimOrExpression{Claim: "employee_id"},
+		Username: apiserverv1.PrefixedClaimOrExpression{Claim: "employee_id", Prefix: stringPtr("")},
 	}}
-	if result := ValidateIdentityProvider(idp); result.IsValid() {
-		t.Fatal("ValidateIdentityProvider() accepted structured and shorthand identity policy")
+	if result := ValidateIdentityProvider(idp); result.IsValid() || !strings.Contains(result.ErrorMessage(), "userIdentifierClaim") {
+		t.Fatalf("ValidateIdentityProvider() conflict result = %s", result.ErrorMessage())
 	}
 
 	cc := testKubernetesIdentityClusterConfig()
 	cc.Spec.UserIdentifierPrefix = stringPtr("prefix:")
 	cc.Spec.KubernetesIdentity = &KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
-		Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub"},
+		Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Prefix: stringPtr("")},
 	}}
-	if result := ValidateClusterConfig(cc); result.IsValid() {
-		t.Fatal("ValidateClusterConfig() accepted structured and shorthand identity policy")
+	if result := ValidateClusterConfig(cc); result.IsValid() || !strings.Contains(result.ErrorMessage(), "userIdentifierPrefix") {
+		t.Fatalf("ValidateClusterConfig() conflict result = %s", result.ErrorMessage())
+	}
+}
+
+func TestKubernetesIdentityConfigDeepCopyDoesNotAlias(t *testing.T) {
+	prefix := "tdi:"
+	original := &KubernetesIdentityConfig{
+		ClaimMappings: apiserverv1.ClaimMappings{
+			Username: apiserverv1.PrefixedClaimOrExpression{Claim: "sub", Prefix: &prefix},
+		},
+		ClaimValidationRules: []apiserverv1.ClaimValidationRule{{Claim: "tenant", RequiredValue: "security"}},
+	}
+	copy := original.DeepCopy()
+	*copy.ClaimMappings.Username.Prefix = "copy:"
+	copy.ClaimValidationRules[0].Claim = "other"
+	if *original.ClaimMappings.Username.Prefix != "tdi:" || original.ClaimValidationRules[0].Claim != "tenant" {
+		t.Fatalf("DeepCopy() aliases mutable nested fields: original=%#v copy=%#v", original, copy)
+	}
+}
+
+func TestLegacyIdentityMappingRemainsValid(t *testing.T) {
+	idp := testKubernetesIdentityIDP()
+	idp.Spec.UserIdentifierClaim = UserIdentifierClaimType("preferred username")
+	idp.Spec.UserIdentifierPrefix = "-"
+	if result := ValidateIdentityProvider(idp); !result.IsValid() {
+		t.Fatalf("ValidateIdentityProvider() rejected legacy mapping: %s", result.ErrorMessage())
+	}
+
+	cluster := testKubernetesIdentityClusterConfig()
+	cluster.Spec.UserIdentifierClaim = UserIdentifierClaimType("upn")
+	if result := ValidateClusterConfig(cluster); !result.IsValid() {
+		t.Fatalf("ValidateClusterConfig() rejected legacy mapping: %s", result.ErrorMessage())
 	}
 }
 
