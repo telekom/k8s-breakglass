@@ -234,11 +234,11 @@ func TestKubernetesIdentityConfigDeepCopyDoesNotAlias(t *testing.T) {
 		},
 		ClaimValidationRules: []apiserverv1.ClaimValidationRule{{Claim: "tenant", RequiredValue: "security"}},
 	}
-	copy := original.DeepCopy()
-	*copy.ClaimMappings.Username.Prefix = "copy:"
-	copy.ClaimValidationRules[0].Claim = "other"
+	cloned := original.DeepCopy()
+	*cloned.ClaimMappings.Username.Prefix = "copy:"
+	cloned.ClaimValidationRules[0].Claim = "other"
 	if *original.ClaimMappings.Username.Prefix != "tdi:" || original.ClaimValidationRules[0].Claim != "tenant" {
-		t.Fatalf("DeepCopy() aliases mutable nested fields: original=%#v copy=%#v", original, copy)
+		t.Fatalf("DeepCopy() aliases mutable nested fields: original=%#v copy=%#v", original, cloned)
 	}
 }
 

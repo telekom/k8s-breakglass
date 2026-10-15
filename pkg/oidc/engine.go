@@ -219,7 +219,7 @@ func (e *Engine) discoveryJWKSURL(ctx context.Context, policy apiserver.JWTAuthe
 	if err != nil {
 		return "", fmt.Errorf("fetch discovery document: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("discovery returned HTTP %d", resp.StatusCode)
 	}

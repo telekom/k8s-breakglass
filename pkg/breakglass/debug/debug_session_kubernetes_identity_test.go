@@ -6,7 +6,6 @@ package debug
 import (
 	"context"
 	"encoding/json"
-	"k8s.io/utils/ptr"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,6 +18,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )

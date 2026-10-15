@@ -843,9 +843,8 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 		userEmail, emailErr = wc.identityProvider.GetUserIdentifier(c, breakglassv1alpha1.UserIdentifierClaimEmail)
 	}
 
-	authIdentifiers := []string{}
 	if includeMine || includeApprovedByMe {
-		authIdentifiers = collectAuthIdentifiers(userEmail, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+		authIdentifiers := collectAuthIdentifiers(userEmail, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
 		if len(authIdentifiers) == 0 {
 			if emailErr != nil {
 				reqLog.Warnw("No authenticated identity claims found for session ownership filtering", "error", emailErr)

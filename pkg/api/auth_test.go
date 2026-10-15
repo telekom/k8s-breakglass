@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -90,28 +89,6 @@ func (s staticIdentityProviderByIssuerLoader) LoadIdentityProviderByIssuer(conte
 		return nil, s.err
 	}
 	return s.cfg, nil
-}
-
-type mutableIdentityProviderByIssuerLoader struct {
-	mu  sync.Mutex
-	cfg *config.IdentityProviderConfig
-	err error
-}
-
-func (m *mutableIdentityProviderByIssuerLoader) LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.err != nil {
-		return nil, m.err
-	}
-	return m.cfg, nil
-}
-
-func (m *mutableIdentityProviderByIssuerLoader) setConfig(cfg *config.IdentityProviderConfig) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.cfg = cfg
-	m.err = nil
 }
 
 func TestAuthHandler_Middleware(t *testing.T) {
@@ -401,16 +378,6 @@ func generateTestCertPEM(t *testing.T) string {
 	})
 
 	return string(certPEM)
-}
-
-// mockRateLimiter is a simple mock for testing rate limiting middleware
-type mockRateLimiter struct {
-	allowed         bool
-	isAuthenticated bool
-}
-
-func (m *mockRateLimiter) Allow(c *gin.Context) (bool, bool) {
-	return m.allowed, m.isAuthenticated
 }
 
 // --- SEC-003: isValidIssuerURL tests ---
