@@ -297,7 +297,10 @@ describe("SessionBrowser", () => {
   });
 
   it("uses server approvedByMe metadata for the list filter", async () => {
-    mockSearchSessions.mockResolvedValueOnce([
+    // The component queries each selected state independently. Return the
+    // fixture for every request so the test exercises the client-side
+    // approvedByMe filter instead of leaving later state queries undefined.
+    mockSearchSessions.mockResolvedValue([
       {
         metadata: { name: "approved" },
         spec: { user: "oidc:opaque" },
