@@ -192,14 +192,18 @@ func TestAuthenticateRejectsUnsupportedSigningAlgorithm(t *testing.T) {
 	}
 }
 
-func TestAuthenticateSupportsRSAPSSAndECDSASigningFamilies(t *testing.T) {
+func TestAuthenticateSupportsAllKubernetesSigningAlgorithms(t *testing.T) {
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ecdsaKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatal(err)
+	ecdsaKeys := make(map[string]*ecdsa.PrivateKey)
+	for name, curve := range map[string]elliptic.Curve{"ES256": elliptic.P256(), "ES384": elliptic.P384(), "ES512": elliptic.P521()} {
+		key, err := ecdsa.GenerateKey(curve, rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ecdsaKeys[name] = key
 	}
 	claims := func() map[string]any {
 		return map[string]any{"iss": "https://issuer.example", "aud": "breakglass", "sub": "operator", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()}
@@ -211,8 +215,15 @@ func TestAuthenticateSupportsRSAPSSAndECDSASigningFamilies(t *testing.T) {
 		key    any
 		keys   []crypto.PublicKey
 	}{
-		{name: "rsa-pss", method: jwt.SigningMethodPS256, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
-		{name: "ecdsa", method: jwt.SigningMethodES256, key: ecdsaKey, keys: []crypto.PublicKey{&ecdsaKey.PublicKey}},
+		{name: "RS256", method: jwt.SigningMethodRS256, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "RS384", method: jwt.SigningMethodRS384, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "RS512", method: jwt.SigningMethodRS512, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "PS256", method: jwt.SigningMethodPS256, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "PS384", method: jwt.SigningMethodPS384, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "PS512", method: jwt.SigningMethodPS512, key: rsaKey, keys: []crypto.PublicKey{&rsaKey.PublicKey}},
+		{name: "ES256", method: jwt.SigningMethodES256, key: ecdsaKeys["ES256"], keys: []crypto.PublicKey{&ecdsaKeys["ES256"].PublicKey}},
+		{name: "ES384", method: jwt.SigningMethodES384, key: ecdsaKeys["ES384"], keys: []crypto.PublicKey{&ecdsaKeys["ES384"].PublicKey}},
+		{name: "ES512", method: jwt.SigningMethodES512, key: ecdsaKeys["ES512"], keys: []crypto.PublicKey{&ecdsaKeys["ES512"].PublicKey}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			engine := New(context.Background(), Options{KeySet: &coreosoidc.StaticKeySet{PublicKeys: tc.keys}, SupportedSigningAlgs: []string{tc.method.Alg()}})

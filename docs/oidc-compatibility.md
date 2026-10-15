@@ -178,8 +178,9 @@ authenticator, rather than additional Kubernetes authentication settings.
 `BreakglassSession.spec.user` remains the exact Kubernetes authorization
 username. New sessions separately record authenticated requester provenance
 and email. Ownership and self-approval checks use that provenance, while email
-notifications use the requester email. Existing sessions without the new
-provenance retain the legacy ownership checks. Configuration changes do not
+notifications use the requester email. Existing sessions with neither a recorded provider name nor issuer retain
+legacy ownership checks only through the trusted single-provider compatibility
+path. Partial provider provenance fails closed. Configuration changes do not
 rewrite existing sessions; recreate a session whose Kubernetes identity was
 incorrect at creation.
 
@@ -197,3 +198,25 @@ duplicate-grant detection retain their existing Kubernetes-username scope.
 See the upstream [authentication reference](https://kubernetes.io/docs/reference/access-authn-authz/authentication/)
 and [AuthenticationConfiguration API](https://kubernetes.io/docs/reference/config-api/apiserver-config.v1/)
 for the mapping language and validation contracts.
+
+## Regression test coverage
+
+The unit tests exercise these supported behaviors and known failure classes:
+
+| Contract | Positive and negative cases |
+| --- | --- |
+| Identity mapping | Arbitrary claims, literal and empty prefixes, provider inheritance, cluster overrides, CEL mappings, missing and wrongly typed claims |
+| Validation | Claim and user rules, invalid expressions and mapping configuration, email verification present/absent/false/wrong type |
+| Token authentication | Accepted and rejected audiences, issuer mismatch, signatures, signing algorithms, expiry and future timestamps |
+| Provider connection | Default/custom discovery, direct JWKS, trusted CA changes, transport/HTTP/JSON errors, missing keys and key rotation |
+| Engine lifecycle | Cache bounds, concurrent creation, eviction, shutdown during creation, nil and repeated close |
+| Requester identity | Provider and issuer scope, subject and username matching, no-email users, legacy compatibility and partial provenance rejection |
+| API and UI | Configuration loading, native policy conversion, server-computed ownership, explicit false metadata and legacy fallback |
+
+Run `go test ./pkg/oidc ./pkg/api ./api/v1alpha1 ./pkg/config ./pkg/breakglass`
+for the backend regression suite. Frontend ownership tests are in
+`frontend/tests/unit/views/SessionBrowser.spec.ts`. The real-cluster OIDC E2E
+flow separately verifies denial before approval, authorization of the exact
+prefixed principal afterward, and denial of the unprefixed username and email.
+Unit case coverage and statement coverage are separate measures; these tests
+do not imply exhaustive coverage of every possible JWT or CEL expression.
