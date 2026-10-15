@@ -14,7 +14,6 @@ import { AuthKey } from "@/keys";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 import { useUser } from "@/services/auth";
-import { wasApprovedBy } from "@/utils/sessionFilters";
 
 enableAutoUnmount(afterEach);
 
@@ -54,9 +53,9 @@ vi.mock("@/services/auth", () => ({
   ),
 }));
 
-vi.mock("@/utils/sessionFilters", () => ({
+vi.mock("@/utils/sessionFilters", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/sessionFilters")>()),
   describeApprover: vi.fn().mockReturnValue("Approved by admin"),
-  wasApprovedBy: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("@/utils/sessionActions", () => ({
@@ -100,7 +99,6 @@ describe("SessionBrowser", () => {
     vi.mocked(useUser).mockReturnValue(
       ref({ profile: { email: "test@example.com", preferred_username: "testuser" } }) as ReturnType<typeof useUser>,
     );
-    vi.mocked(wasApprovedBy).mockReturnValue(false);
     mockSearchSessions.mockResolvedValue([
       {
         metadata: { name: "session-1", namespace: "default" },
@@ -325,9 +323,10 @@ describe("SessionBrowser", () => {
     expect(checkbox?.props("disabled")).toBe(false);
   });
 
-  it("uses server approval metadata without an email and preserves fallback behavior", async () => {
-    vi.mocked(useUser).mockReturnValue(ref({ profile: {} }) as ReturnType<typeof useUser>);
-    vi.mocked(wasApprovedBy).mockReturnValue(true);
+  it.each([false, true])("uses server metadata and legacy fallback with email available: %s", async (hasEmail) => {
+    vi.mocked(useUser).mockReturnValue(
+      ref({ profile: hasEmail ? { email: "admin@example.com" } : {} }) as ReturnType<typeof useUser>,
+    );
     mockSearchSessions.mockResolvedValueOnce([
       {
         metadata: { name: "explicit-true" },
@@ -339,12 +338,12 @@ describe("SessionBrowser", () => {
         metadata: { name: "explicit-false" },
         approvedByMe: false,
         spec: { user: "opaque:false" },
-        status: { state: "Approved" },
+        status: { state: "Approved", approver: "admin@example.com" },
       },
       {
         metadata: { name: "legacy-fallback" },
         spec: { user: "legacy:true" },
-        status: { state: "Approved" },
+        status: { state: "Approved", approver: "admin@example.com" },
       },
     ]);
 
@@ -353,7 +352,9 @@ describe("SessionBrowser", () => {
     filters.filters.onlyApprovedByMe = true;
     await flushPromises();
 
-    expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["explicit-true", "legacy-fallback"]);
+    expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(
+      hasEmail ? ["explicit-true", "legacy-fallback"] : ["explicit-true"],
+    );
     const checkbox = wrapper
       .findAllComponents({ name: "ScaleCheckboxStub" })
       .find((item) => item.attributes("data-testid") === "filter-approved-by-me");

@@ -243,11 +243,6 @@ function isActive(session: SessionCR): boolean {
 }
 
 function approvedByCurrentUser(session: SessionCR): boolean {
-  // The list endpoint resolves approval against the authenticated identity,
-  // which may not have an email (for example, a custom OIDC claim). Prefer
-  // that server result whenever it is present and retain the legacy fallback
-  // for older API responses.
-  if (typeof session.approvedByMe === "boolean") return session.approvedByMe;
   return wasApprovedBy(session, currentUserEmail.value);
 }
 
@@ -356,7 +351,7 @@ async function executeSessionAction(session: SessionCR, action: SessionActionKey
 const visibleSessions = computed(() => {
   let entries = [...sessions.value];
   if (filters.onlyApprovedByMe) {
-    entries = entries.filter(approvedByCurrentUser);
+    entries = entries.filter((session) => wasApprovedBy(session, currentUserEmail.value));
   }
   return entries.sort((a, b) => {
     const aTs = new Date(startedFor(a) || a.metadata?.creationTimestamp || 0).getTime();
