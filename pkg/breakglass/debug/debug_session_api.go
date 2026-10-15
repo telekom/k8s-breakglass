@@ -1407,7 +1407,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 
 	// Check binding session limits if a binding is resolved
 	if resolvedBinding != nil {
-		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, debugSessionReadIdentity{
+		if err := c.checkBindingSessionLimits(apiCtx, resolvedBinding, req.Cluster, debugSessionReadIdentity{
 			username: currentUserStr,
 			email:    userEmail,
 		}); err != nil {

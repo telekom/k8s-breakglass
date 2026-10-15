@@ -383,6 +383,7 @@ debugSessionBindings:
 | `motd.runbookURL` | HTTPS runbook link shown with the message | - |
 | `maxActiveSessionsPerUser` | Max concurrent sessions per user | - |
 | `maxActiveSessionsTotal` | Max total concurrent sessions | - |
+| `maxActiveSessionsPerCluster` | Max concurrent sessions on each target cluster | - |
 | `priority` | UI ordering priority | - |
 | `disabled` | Temporarily disable binding | `false` |
 | `hidden` | Hide from UI | `false` |

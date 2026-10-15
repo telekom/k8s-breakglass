@@ -109,6 +109,11 @@ func debugQuotaPolicyForObjects(s *breakglassv1alpha1.DebugSession, template *br
 		if binding.Spec.MaxActiveSessionsTotal != nil {
 			limits[total] = *binding.Spec.MaxActiveSessionsTotal
 		}
+		perCluster := debugQuotaScope("debug-binding-cluster", string(binding.UID), s.Spec.Cluster)
+		entry.Scopes = append(entry.Scopes, perCluster)
+		if binding.Spec.MaxActiveSessionsPerCluster != nil {
+			limits[perCluster] = *binding.Spec.MaxActiveSessionsPerCluster
+		}
 		// Preserve username/email alias matching used by the API preflight.
 		for _, user := range []string{s.Spec.RequestedBy, s.Spec.RequestedByEmail} {
 			if user == "" {

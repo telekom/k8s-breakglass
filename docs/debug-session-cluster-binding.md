@@ -307,11 +307,13 @@ Control the number of concurrent sessions:
 |-------|------|-------------|
 | `maxActiveSessionsPerUser` | int32 | Maximum active, non-expired sessions per requester via this binding. The requester username is always used, and email is matched when present. |
 | `maxActiveSessionsTotal` | int32 | Maximum total active, non-expired sessions via this binding |
+| `maxActiveSessionsPerCluster` | int32 | Maximum active, non-expired sessions via this binding on each target cluster. Sessions on different clusters do not count against each other. |
 
 ```yaml
 spec:
   maxActiveSessionsPerUser: 2  # Each user can have at most 2 active sessions
   maxActiveSessionsTotal: 10   # Total of 10 sessions across all users
+  maxActiveSessionsPerCluster: 1  # At most 1 session per target cluster
 ```
 
 ### UI Display Options

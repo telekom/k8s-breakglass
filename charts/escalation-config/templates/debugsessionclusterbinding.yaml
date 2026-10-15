@@ -334,5 +334,8 @@ spec:
   {{- if $binding.maxActiveSessionsTotal }}
   maxActiveSessionsTotal: {{ $binding.maxActiveSessionsTotal }}
   {{- end }}
+  {{- if $binding.maxActiveSessionsPerCluster }}
+  maxActiveSessionsPerCluster: {{ $binding.maxActiveSessionsPerCluster }}
+  {{- end }}
 ---
 {{- end }}

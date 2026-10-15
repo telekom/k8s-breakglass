@@ -360,3 +360,26 @@ func TestLazyPruneDoesNotFreeUnreadableReservation(t *testing.T) {
 	require.Contains(t, state.Entries, old.UID)
 	require.NotContains(t, state.Entries, "candidate")
 }
+
+// TestReservationAcceptsScopesAddedByUpgrade covers a session reserved by an
+// older controller: a newer one may derive more scopes for the same UID, but
+// never fewer.
+func TestReservationAcceptsScopesAddedByUpgrade(t *testing.T) {
+	store := testStore(t)
+	old := Entry{Kind: "Session", Namespace: "sessions", Name: "one", UID: "one", Scopes: []string{"total"}}
+	require.NoError(t, store.Reserve(t.Context(), old, map[string]int32{"total": 1}, noLegacy, alwaysLive))
+	upgraded := old
+	upgraded.Scopes = []string{"total", "per-cluster"}
+	require.NoError(t, store.Reserve(t.Context(), upgraded, map[string]int32{"total": 1, "per-cluster": 1}, noLegacy, alwaysLive))
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, store.Reader.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: ledgerName}, cm))
+	var state ledger
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	require.Equal(t, []string{"total", "per-cluster"}, state.Entries["one"].Scopes)
+	// The recorded scope now counts against other sessions.
+	other := Entry{Kind: "Session", Namespace: "sessions", Name: "two", UID: "two", Scopes: []string{"per-cluster"}}
+	require.ErrorIs(t, store.Reserve(t.Context(), other, map[string]int32{"per-cluster": 1}, noLegacy, alwaysLive), ErrFull)
+	dropped := old
+	dropped.Scopes = []string{"per-cluster"}
+	require.ErrorContains(t, store.Reserve(t.Context(), dropped, nil, noLegacy, alwaysLive), "quota scopes changed")
+}
