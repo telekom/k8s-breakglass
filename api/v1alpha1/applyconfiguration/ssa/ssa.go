@@ -1372,6 +1372,9 @@ func EphemeralContainersConfigFrom(e *breakglassv1alpha1.EphemeralContainersConf
 	if len(e.MaxCapabilities) > 0 {
 		result.WithMaxCapabilities(e.MaxCapabilities...)
 	}
+	if e.SecurityContext != nil {
+		result.WithSecurityContext(*e.SecurityContext.DeepCopy())
+	}
 	return result
 }
 
@@ -1469,6 +1472,9 @@ func PodCopyConfigFrom(p *breakglassv1alpha1.PodCopyConfig) *ac.PodCopyConfigApp
 		for k, v := range p.Labels {
 			result.WithLabels(map[string]string{k: v})
 		}
+	}
+	if p.SecurityContext != nil {
+		result.WithSecurityContext(*p.SecurityContext.DeepCopy())
 	}
 	return result
 }

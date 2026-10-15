@@ -1001,6 +1001,46 @@ func (h *KubectlDebugHandler) ValidateEphemeralContainerRequest(
 	return nil
 }
 
+// effectiveEphemeralSecurityContext overlays every field set in the session
+// template's ephemeral-container securityContext onto the requested one. The
+// template wins, so a client cannot drop a setting such as
+// readOnlyRootFilesystem that target admission requires. Callers validate the
+// result, never the raw request.
+func effectiveEphemeralSecurityContext(
+	ds *breakglassv1alpha1.DebugSession,
+	requested *corev1.SecurityContext,
+) (*corev1.SecurityContext, error) {
+	template := ds.Status.ResolvedTemplate
+	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil ||
+		template.KubectlDebug.EphemeralContainers.SecurityContext == nil {
+		return requested, nil
+	}
+	// Unmarshal into a non-nil map keeps existing keys, so later sources
+	// replace only the top-level fields they set.
+	fields := map[string]json.RawMessage{}
+	for _, securityContext := range []*corev1.SecurityContext{requested, template.KubectlDebug.EphemeralContainers.SecurityContext} {
+		if securityContext == nil {
+			continue
+		}
+		encoded, err := json.Marshal(securityContext)
+		if err != nil {
+			return nil, fmt.Errorf("encode ephemeral container security context: %w", err)
+		}
+		if err := json.Unmarshal(encoded, &fields); err != nil {
+			return nil, fmt.Errorf("decode ephemeral container security context: %w", err)
+		}
+	}
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		return nil, fmt.Errorf("encode ephemeral container security context: %w", err)
+	}
+	effective := &corev1.SecurityContext{}
+	if err := json.Unmarshal(encoded, effective); err != nil {
+		return nil, fmt.Errorf("decode ephemeral container security context: %w", err)
+	}
+	return effective, nil
+}
+
 func validateEphemeralContainerSecurityContext(
 	securityContext *corev1.SecurityContext,
 	ec *breakglassv1alpha1.EphemeralContainersConfig,
@@ -1102,6 +1142,10 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		return kubectlDebugPolicyErrorf("ephemeral container policy is no longer available")
 	}
 	ecPolicy := template.KubectlDebug.EphemeralContainers
+	securityContext, err = effectiveEphemeralSecurityContext(ds, securityContext)
+	if err != nil {
+		return err
+	}
 	namespaceAllowed, err := h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
 	if err != nil {
 		return err
@@ -1368,11 +1412,12 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	// Add debug container if image specified
 	if debugImage != "" {
 		debugContainer := corev1.Container{
-			Name:    "debugger",
-			Image:   debugImage,
-			Command: []string{"sleep", "infinity"},
-			TTY:     true,
-			Stdin:   true,
+			Name:            "debugger",
+			Image:           debugImage,
+			Command:         []string{"sleep", "infinity"},
+			TTY:             true,
+			Stdin:           true,
+			SecurityContext: pc.SecurityContext.DeepCopy(),
 		}
 		copyPod.Spec.Containers = append(copyPod.Spec.Containers, debugContainer)
 		motd, err := sessionMOTD(ds)

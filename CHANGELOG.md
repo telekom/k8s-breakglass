@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional `securityContext` on `kubectlDebug.ephemeralContainers` and
+  `kubectlDebug.podCopy` in `DebugSessionTemplate`. For ephemeral containers,
+  each field set on the template replaces the requested value and the result is
+  still validated against the template policy. For pod copies, it is set on the
+  added `debugger` container. Templates can now set `readOnlyRootFilesystem:
+  true` and pass read-only root filesystem admission policies without a policy
+  exception. Unset fields keep the previous behavior. See
+  `docs/debug-session.md#template-security-context`.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are
