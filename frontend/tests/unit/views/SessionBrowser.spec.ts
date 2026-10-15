@@ -154,11 +154,7 @@ describe("SessionBrowser", () => {
           LoadingState: true,
           SessionCard: true,
           "scale-text-field": true,
-          "scale-checkbox": {
-            name: "ScaleCheckboxStub",
-            props: { checked: Boolean, disabled: Boolean },
-            template: "<span><slot /></span>",
-          },
+          "scale-checkbox": true,
           "scale-button": true,
           "scale-dropdown-select": true,
           "scale-dropdown-select-item": true,
@@ -320,10 +316,7 @@ describe("SessionBrowser", () => {
     await flushPromises();
 
     expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["approved"]);
-    const checkbox = wrapper
-      .findAllComponents({ name: "ScaleCheckboxStub" })
-      .find((item) => item.attributes("data-testid") === "filter-approved-by-me");
-    expect(checkbox?.props("disabled")).toBe(false);
+    expect(wrapper.get('[data-testid="filter-approved-by-me"]').attributes("disabled") ?? "false").toBe("false");
   });
 
   it.each([false, true])("uses server metadata and legacy fallback with email available: %s", async (hasEmail) => {
@@ -358,10 +351,7 @@ describe("SessionBrowser", () => {
     expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(
       hasEmail ? ["explicit-true", "legacy-fallback"] : ["explicit-true"],
     );
-    const checkbox = wrapper
-      .findAllComponents({ name: "ScaleCheckboxStub" })
-      .find((item) => item.attributes("data-testid") === "filter-approved-by-me");
-    expect(checkbox?.props("disabled")).toBe(false);
+    expect(wrapper.get('[data-testid="filter-approved-by-me"]').attributes("disabled") ?? "false").toBe("false");
   });
 
   it("uses server ownership metadata for card actions with an opaque username", async () => {
