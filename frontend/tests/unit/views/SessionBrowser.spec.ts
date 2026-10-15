@@ -12,7 +12,6 @@ import { ref } from "vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
 import { AuthKey } from "@/keys";
 import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
-import { wasApprovedBy } from "@/utils/sessionFilters";
 import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 
 const { mockSearchSessions } = vi.hoisted(() => ({
@@ -51,9 +50,9 @@ vi.mock("@/services/auth", () => ({
   ),
 }));
 
-vi.mock("@/utils/sessionFilters", () => ({
+vi.mock("@/utils/sessionFilters", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/sessionFilters")>()),
   describeApprover: vi.fn().mockReturnValue("Approved by admin"),
-  wasApprovedBy: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock("@/utils/sessionActions", () => ({
@@ -91,7 +90,6 @@ describe("SessionBrowser", () => {
 
   beforeEach(() => {
     vi.mocked(decideRejectOrWithdraw).mockReturnValue("reject");
-    vi.mocked(wasApprovedBy).mockReturnValue(false);
     mockSearchSessions.mockResolvedValue([
       {
         metadata: { name: "session-1", namespace: "default" },
@@ -303,7 +301,6 @@ describe("SessionBrowser", () => {
         status: { state: "Approved" },
       },
     ]);
-    vi.mocked(wasApprovedBy).mockImplementation((session) => session.approvedByMe === true);
     const wrapper = await createWrapper();
     const filters = useSessionBrowserFilters();
     filters.filters.onlyApprovedByMe = true;
