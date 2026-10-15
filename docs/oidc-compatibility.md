@@ -219,5 +219,14 @@ for the backend regression suite. Frontend ownership tests are in
 `frontend/tests/unit/views/SessionBrowser.spec.ts`. The real-cluster OIDC E2E
 flow separately verifies denial before approval, authorization of the exact
 prefixed principal afterward, and denial of the unprefixed username and email.
+Its RBAC fixture uses a dedicated namespace so unrelated deny-policy fixtures
+cannot mask the identity-mapping result. The native-policy admission fixture
+includes the required OIDC client-secret reference.
+
+Notification E2E assertions decode MIME transfer encoding before matching the
+rendered content. Run `go test ./e2e/api -run '^TestDecodeMailHogBody'` for the
+offline MIME regression tests, including the real request template encoded by
+gomail and malformed or unsupported transfer encodings.
+
 Unit case coverage and statement coverage are separate measures; these tests
 do not imply exhaustive coverage of every possible JWT or CEL expression.

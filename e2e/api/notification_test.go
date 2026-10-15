@@ -18,9 +18,11 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/quotedprintable"
 	"net/http"
 	"strings"
 	"testing"
@@ -46,13 +48,34 @@ type MailHogMessage struct {
 	} `json:"To"`
 	Content struct {
 		Headers struct {
-			Subject []string `json:"Subject"`
-			From    []string `json:"From"`
-			To      []string `json:"To"`
+			Subject                 []string `json:"Subject"`
+			From                    []string `json:"From"`
+			To                      []string `json:"To"`
+			ContentTransferEncoding []string `json:"Content-Transfer-Encoding"`
 		} `json:"Headers"`
 		Body string `json:"Body"`
 	} `json:"Content"`
 	Created time.Time `json:"Created"`
+}
+
+// decodeMailHogBody decodes the SMTP wire representation before content matching.
+func decodeMailHogBody(message MailHogMessage) (string, error) {
+	var reader io.Reader = strings.NewReader(message.Content.Body)
+	encoding := strings.ToLower(strings.TrimSpace(strings.Join(message.Content.Headers.ContentTransferEncoding, "")))
+	switch encoding {
+	case "", "7bit", "8bit", "binary":
+	case "quoted-printable":
+		reader = quotedprintable.NewReader(reader)
+	case "base64":
+		reader = base64.NewDecoder(base64.StdEncoding, reader)
+	default:
+		return "", fmt.Errorf("unsupported mail content transfer encoding %q", encoding)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return "", fmt.Errorf("decode mail body: %w", err)
+	}
+	return string(body), nil
 }
 
 // MailHogResponse represents the response from MailHog messages API
@@ -130,7 +153,12 @@ func waitForMailHogMessageWithBody(t *testing.T, subjectContains, bodyContains s
 				}
 			}
 			// Check body content
-			bodyMatches := strings.Contains(strings.ToLower(messages[i].Content.Body), strings.ToLower(bodyContains))
+			body, err := decodeMailHogBody(messages[i])
+			if err != nil {
+				t.Logf("Failed to decode MailHog message %s: %v", messages[i].ID, err)
+				continue
+			}
+			bodyMatches := strings.Contains(strings.ToLower(body), strings.ToLower(bodyContains))
 			if subjectMatches && bodyMatches {
 				return &messages[i]
 			}

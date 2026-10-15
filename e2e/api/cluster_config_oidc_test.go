@@ -43,11 +43,19 @@ import (
 func TestClusterConfigKubernetesIdentityAdmission(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithShortTimeout())
 	validName := helpers.GenerateUniqueName("cc-oidc-native-valid")
+	secretName := helpers.GenerateUniqueName("cc-oidc-native-secret")
+	s.MustCreateResource(&corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: secretName, Namespace: s.Namespace, Labels: helpers.E2ETestLabels()},
+		StringData: map[string]string{"client-secret": "test-secret"},
+	})
 	valid := &breakglassv1alpha1.ClusterConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: validName, Namespace: s.Namespace, Labels: helpers.E2ETestLabels()},
 		Spec: breakglassv1alpha1.ClusterConfigSpec{
 			ClusterID: "native-oidc-valid", Tenant: "e2e-tenant", Environment: "test", AuthType: breakglassv1alpha1.ClusterAuthTypeOIDC,
-			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{IssuerURL: configuredE2EIssuer(), ClientID: "breakglass-controller", Server: "https://kubernetes.default.svc:443"},
+			OIDCAuth: &breakglassv1alpha1.OIDCAuthConfig{
+				IssuerURL: configuredE2EIssuer(), ClientID: "breakglass-controller", Server: "https://kubernetes.default.svc:443",
+				ClientSecretRef: &breakglassv1alpha1.SecretKeyReference{Name: secretName, Namespace: s.Namespace, Key: "client-secret"},
+			},
 			KubernetesIdentity: &breakglassv1alpha1.KubernetesIdentityConfig{
 				ClaimMappings: apiserverv1.ClaimMappings{
 					Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: ptr.To("tdi_security_oidc:")},

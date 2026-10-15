@@ -143,22 +143,28 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 		require.NotNil(t, targetClient, "spoke A admin client is required for the target RBAC fixture")
 	}
 	targetCleanup := helpers.NewCleanup(t, targetClient)
+	targetNamespace := helpers.GenerateUniqueName("oidc-prefix-target")
+	targetNS := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: targetNamespace, Labels: helpers.E2ETestLabels()}}
+	// Register before creation so a failed subsequent fixture setup still cleans
+	// up the namespace. Cleanup tolerates the cascading deletion of its contents.
+	targetCleanup.Add(targetNS)
+	require.NoError(t, targetClient.Create(ctx, targetNS))
 	grantName := helpers.GenerateUniqueName("oidc-prefix-pod-reader")
 	role := &rbacv1.Role{
-		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: "default", Labels: helpers.E2ETestLabels()},
+		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: targetNamespace, Labels: helpers.E2ETestLabels()},
 		Rules:      []rbacv1.PolicyRule{{APIGroups: []string{""}, Resources: []string{"pods"}, Verbs: []string{"get"}}},
 	}
 	targetCleanup.Add(role)
 	require.NoError(t, targetClient.Create(ctx, role))
 	binding := &rbacv1.RoleBinding{
-		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: "default", Labels: helpers.E2ETestLabels()},
+		ObjectMeta: metav1.ObjectMeta{Name: grantName, Namespace: targetNamespace, Labels: helpers.E2ETestLabels()},
 		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "Role", Name: grantName},
 		Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "Group", Name: grantName}},
 	}
 	targetCleanup.Add(binding)
 	require.NoError(t, targetClient.Create(ctx, binding))
 	targetUsername := "tdi_security_oidc:" + helpers.TestUsers.Requester.Username
-	sar := helpers.BuildResourceSAR(targetUsername, nil, "get", "pods", "default")
+	sar := helpers.BuildResourceSAR(targetUsername, nil, "get", "pods", targetNamespace)
 	before, status, err := helpers.SendSARToWebhook(t, ctx, sar, oidcClusterName)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
@@ -215,7 +221,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 			Spec: authorizationv1.SubjectAccessReviewSpec{
 				User: session.Spec.User,
 				ResourceAttributes: &authorizationv1.ResourceAttributes{
-					Namespace: "default",
+					Namespace: targetNamespace,
 					Verb:      "get",
 					Resource:  "pods",
 				},
@@ -232,7 +238,7 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 		require.NoError(t, err, "the exact prefixed target principal must be authorized after approval")
 
 		for _, wrongUsername := range []string{helpers.TestUsers.Requester.Username, sessionUser} {
-			wrongPrincipalSAR := helpers.BuildResourceSAR(wrongUsername, nil, "get", "pods", "default")
+			wrongPrincipalSAR := helpers.BuildResourceSAR(wrongUsername, nil, "get", "pods", targetNamespace)
 			wrongResp, wrongStatus, err := helpers.SendSARToWebhook(t, ctx, wrongPrincipalSAR, oidcClusterName)
 			require.NoError(t, err, "Failed to send wrong-principal SAR")
 			require.Equal(t, http.StatusOK, wrongStatus, "wrong-principal SAR should still return an authorization response")
