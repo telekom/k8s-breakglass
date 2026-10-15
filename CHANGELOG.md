@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Match kube-apiserver OIDC identities with provider and cluster username prefixes,
+  arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
+  Discovery, accepted audiences, and signing algorithms are configurable.
+- Preserve requester ownership separately from target Kubernetes usernames,
+  including identities without email and server-computed UI ownership metadata.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are
@@ -117,6 +122,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in these independently built utility binaries.
 
 ### Changed
+
+- Use Kubernetes' OIDC authenticator for IdentityProvider token verification,
+  replacing the custom multi-provider JWKS implementation.
 
 - Limit `BreakglassSession.spec.ticketSystemID` to 256 characters. The CRD
   schema, session request API (`422 Unprocessable Entity`), `bgctl session

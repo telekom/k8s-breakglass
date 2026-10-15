@@ -170,18 +170,24 @@ Authorization: Bearer <token>
 | `cluster` | string | Filter by cluster name |
 | `user` | string | Filter by user |
 | `group` | string | Filter by granted group |
-| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions). Matches the authenticated user's email, preferred username, or subject/user ID; requests with no usable identity return `401 Unauthorized`. |
+| `mine` | boolean | Own sessions only (default: `false`; set `true` to include requester-owned sessions). Matches the authenticated requester identity, including the persisted provider/issuer-aware subject or mapped username for OIDC sessions, with legacy email, preferred username, and subject/user ID matching where applicable. Requests with no usable identity return `401 Unauthorized`. |
 | `approver` | boolean | Sessions user can approve. Defaults to `true` only when neither `mine=true` nor `approvedByMe=true` is requested; set `approver=true` explicitly to combine filters. |
-| `approvedByMe` | boolean | Sessions the caller has already approved. This filter matches the caller's email claim against recorded approver identifiers; missing email returns `401 Unauthorized`. |
+| `approvedByMe` | boolean | Sessions the caller has already approved. This filter matches the caller's email when available, or the authenticated mapped username for no-email OIDC identities, against the recorded provider-aware approver identity. Requests with no usable identity return `401 Unauthorized`. |
 | `activeOnly` | boolean | Only return currently running sessions that are in `Approved` state and granting access; pending approval and scheduled-wait sessions are excluded |
 | `state` | string | Accepts a single value, comma-separated list, or repeated parameter. Supported tokens: `all`, `pending`, `approved`, `active`, `waiting`, `waitingforscheduledtime`, `scheduled`, `rejected`, `withdrawn`, `expired`, `idleexpired`, `timeout`, `approvaltimeout`. The `active` token matches only currently running `Approved` sessions. Unknown non-empty tokens return `400 Bad Request`. |
 | `token` | string | Validate approval-link metadata for a session name. This mode returns metadata for one session instead of the normal session list. |
 
-**Response:** Array of `BreakglassSession` resources filtered by query parameters:
+**Response:** An object containing `items`, an array of enriched `BreakglassSession`
+resources, and `total`. Each item includes `isRequester`, calculated by the
+server from the authenticated provider-aware requester identity. Full
+`approvalMeta` is returned by the single-session detail endpoint; list responses
+keep only the ownership flag and `approvedByMe` to avoid repeating approval and
+group lookups for every item.
 
 ```json
-[
-  {
+{
+  "items": [
+    {
     "apiVersion": "breakglass.t-caas.telekom.com/v1alpha1",
     "kind": "BreakglassSession",
     "metadata": {
@@ -200,9 +206,13 @@ Authorization: Bearer <token>
       "expiresAt": null,
       "approver": "",
       "approvers": []
+    },
+    "isRequester": true,
+    "approvedByMe": false
     }
-  }
-]
+  ],
+  "total": 1
+}
 ```
 
 When `token=<session-name>` is present, the API treats the token value as a
@@ -449,7 +459,7 @@ Authorization: Bearer <token>
 **Status Code:** `200 OK`
 
 **Authorization:** Approvers can reject any pending request. Session requesters can also reject their own pending requests.
-Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
+New sessions use the persisted authenticated requester subject and provider provenance for ownership. Legacy sessions match authenticated email, `preferred_username`, or subject claims. Kubernetes username mappings do not change requester ownership.
 Approver authorization is checked before request-body validation and
 state-specific responses; unrelated callers receive only authorization errors.
 
@@ -574,7 +584,7 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 **Status Code:** `200 OK`
 
-**Authorization:** Only the session requester can withdraw a pending request. Requester ownership is matched against the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
+**Authorization:** Only the session requester can withdraw a pending request. New sessions use the persisted authenticated requester subject and provider provenance for ownership. Legacy sessions match authenticated email, `preferred_username`, or subject claims. Kubernetes username mappings do not change requester ownership.
 
 **Response:** Complete updated `BreakglassSession` resource with withdrawn status:
 
@@ -636,7 +646,7 @@ when sending an empty request. Non-empty bodies return `400 Bad Request`.
 - **Session owner/requester**: Can drop pending requests, approved scheduled
   sessions waiting for their start, or active non-terminal sessions
 
-Requester/owner matching uses the authenticated email, `preferred_username`, or subject claim so sessions created with a non-email `userIdentifierClaim` remain manageable by their owner.
+Requester/owner matching uses persisted authenticated requester provenance for new sessions and the legacy claim matcher for older sessions. The mapped Kubernetes username remains the authorization identity.
 
 The UI matches owner actions against the authenticated user's OIDC identity in
 this order: `profile.email`, `profile.preferred_username`, top-level `email`,
@@ -1728,3 +1738,9 @@ into arbitrary caller-selected node access.
 The create-session UI submits the selected visible binding reference even when only one binding is offered. Hidden bindings remain excluded from discovery results but can still be selected explicitly through the API with `bindingRef: "namespace/name"`.
 
 A template's `allowed.clusters` patterns and `allowed.clusterSelector` are alternative direct grants: either may match a cluster. Discovery, admission, and controller activation use the same matching rule; selectors are evaluated against the uniquely resolved, ready ClusterConfig's labels. Existing requester restrictions still apply. A binding selected with `templateSelector` retains compatible template matches when another matching template has incompatible variable constraints. An explicit incompatible `templateRef`, or a selector with only incompatible matches, remains an error.
+
+Session list items include the server-computed `isRequester` ownership flag and
+`approvedByMe`. The single-session detail endpoint also includes full
+`approvalMeta` with approval permissions. Clients should use these fields for
+ownership actions and filters; OIDC usernames may be derived from custom claims
+or CEL expressions and need not be email addresses.

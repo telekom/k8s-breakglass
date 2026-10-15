@@ -200,6 +200,31 @@ func TestHandleGetEscalationsFiltersRequesterIdentityProvider(t *testing.T) {
 	}
 }
 
+func TestHandleGetEscalationsUsesMappedUsernameWhenEmailIsUnavailable(t *testing.T) {
+	policy := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-user-policy", Namespace: "test"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"requesters"}, Clusters: []string{"prod"}},
+			EscalatedGroup: "emergency",
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(policy).Build()
+	ec := &BreakglassEscalationController{
+		manager: &EscalationManager{Client: cli}, log: zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{err: errors.New("email claim absent")}, configPath: "/nonexistent/config.yaml",
+	}
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Set("authenticated_username", "mapped-user")
+		c.Set("groups", []string{"requesters"})
+		c.Next()
+	})
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/breakglassEscalations?activeOnly=false", nil))
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+}
+
 func (s *stubIdentityProvider) GetEmail(_ *gin.Context) (string, error) {
 	return s.email, s.err
 }

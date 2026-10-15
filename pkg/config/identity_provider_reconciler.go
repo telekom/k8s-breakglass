@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
@@ -746,7 +747,7 @@ func (r *IdentityProviderReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			}
 
 			// Reload if spec changed (ignore status and metadata-only changes)
-			specChanged := oldIDP.Spec != newIDP.Spec
+			specChanged := !reflect.DeepEqual(oldIDP.Spec, newIDP.Spec)
 
 			if specChanged {
 				r.logger.Debugw("IdentityProvider spec changed",

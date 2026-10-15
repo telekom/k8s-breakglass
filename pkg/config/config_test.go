@@ -611,13 +611,13 @@ func TestGetUserIdentifierClaim(t *testing.T) {
 			expected: "sub",
 		},
 		{
-			name: "invalid claim defaults to email",
+			name: "arbitrary claim is preserved",
 			config: config.Config{
 				Kubernetes: config.Kubernetes{
 					UserIdentifierClaim: "invalid_claim",
 				},
 			},
-			expected: "email",
+			expected: "invalid_claim",
 		},
 	}
 

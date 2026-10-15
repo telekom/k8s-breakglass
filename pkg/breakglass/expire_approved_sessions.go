@@ -93,6 +93,10 @@ func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglas
 	if wc.mailService == nil || !wc.mailService.IsEnabled() {
 		return errors.New("expiry email service is unavailable")
 	}
+	requesterEmail := sessionRequesterEmail(session)
+	if requesterEmail == "" {
+		return errors.New("requester email is unavailable")
+	}
 
 	reasonText := "Session expired"
 	switch expirationReason {
@@ -103,7 +107,7 @@ func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglas
 	}
 
 	params := mail.SessionExpiredMailParams{
-		SubjectEmail:     session.Spec.User,
+		SubjectEmail:     requesterEmail,
 		RequestedRole:    session.Spec.GrantedGroup,
 		Cluster:          session.Spec.Cluster,
 		Username:         session.Spec.User,
@@ -124,7 +128,7 @@ func (wc *BreakglassSessionController) sendSessionExpiredEmail(session breakglas
 	}
 
 	subject := fmt.Sprintf("[%s] Session Expired: %s", wc.config.Frontend.BrandingName, session.Name)
-	if err := wc.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+	if err := wc.mailService.Enqueue(session.Name, []string{requesterEmail}, subject, body); err != nil {
 		wc.log.Errorw("failed to enqueue session expired email",
 			"session", session.Name,
 			"namespace", session.Namespace,

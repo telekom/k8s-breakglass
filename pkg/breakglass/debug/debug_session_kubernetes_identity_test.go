@@ -6,6 +6,7 @@ package debug
 import (
 	"context"
 	"encoding/json"
+	"k8s.io/utils/ptr"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -27,7 +28,12 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 		name            string
 		global, cluster breakglassv1alpha1.UserIdentifierClaimType
 		want, missing   string
+		providerPrefix  string
+		clusterPrefix   *string
 	}{
+		{name: "provider prefix", providerPrefix: "idp:", want: "idp:alice@example.test"},
+		{name: "cluster prefix", providerPrefix: "idp:", clusterPrefix: ptr.To("spoke:"), want: "spoke:alice@example.test"},
+		{name: "empty prefix", providerPrefix: "idp:", clusterPrefix: ptr.To(""), want: "alice@example.test"},
 		{name: "default email", want: "alice@example.test"},
 		{name: "global subject", global: breakglassv1alpha1.UserIdentifierClaimSub, want: "alice-sub"},
 		{name: "cluster username overrides email", cluster: breakglassv1alpha1.UserIdentifierClaimPreferredUsername, want: "alice"},
@@ -37,7 +43,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template"}, Spec: breakglassv1alpha1.DebugSessionTemplateSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{"production"}}}}
-			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{UserIdentifierClaim: tc.cluster}}
+			cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "default"}, Spec: breakglassv1alpha1.ClusterConfigSpec{UserIdentifierClaim: tc.cluster, UserIdentifierPrefix: tc.clusterPrefix}}
 			hub := fake.NewClientBuilder().WithScheme(testScheme()).WithObjects(template, cc).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
 			controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), hub, nil, nil).WithUserIdentifierClaim(tc.global)
 			user := "alice"
@@ -45,6 +51,7 @@ func TestDebugSessionCapturesTargetKubernetesIdentity(t *testing.T) {
 			router.Use(func(ctx *gin.Context) {
 				ctx.Set("legacy_identity_allowed", true)
 				ctx.Set("username", user)
+				ctx.Set("user_identifier_prefix", tc.providerPrefix)
 				if tc.missing != "email" {
 					ctx.Set("email", user+"@example.test")
 				}

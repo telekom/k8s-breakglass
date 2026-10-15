@@ -11,6 +11,8 @@ import { createPinia } from "pinia";
 import { ref } from "vue";
 import SessionBrowser from "@/views/SessionBrowser.vue";
 import { AuthKey } from "@/keys";
+import { useSessionBrowserFilters } from "@/stores/sessionBrowserFilters";
+import { decideRejectOrWithdraw } from "@/utils/sessionActions";
 
 const { mockSearchSessions } = vi.hoisted(() => ({
   mockSearchSessions: vi.fn(),
@@ -87,6 +89,7 @@ describe("SessionBrowser", () => {
   };
 
   beforeEach(() => {
+    vi.mocked(decideRejectOrWithdraw).mockReturnValue("reject");
     mockSearchSessions.mockResolvedValue([
       {
         metadata: { name: "session-1", namespace: "default" },
@@ -278,6 +281,51 @@ describe("SessionBrowser", () => {
 
       expect(renderedNames(wrapper)).toEqual(["session-1"]);
     });
+  });
+
+  it("uses server approvedByMe metadata for the list filter", async () => {
+    mockSearchSessions.mockResolvedValueOnce([
+      {
+        metadata: { name: "approved" },
+        spec: { user: "oidc:opaque" },
+        approvedByMe: true,
+        status: { state: "Approved" },
+      },
+      {
+        metadata: { name: "other" },
+        spec: { user: "oidc:other" },
+        approvedByMe: false,
+        status: { state: "Approved" },
+      },
+    ]);
+    const wrapper = await createWrapper();
+    const filters = useSessionBrowserFilters();
+    filters.filters.onlyApprovedByMe = true;
+    await flushPromises();
+
+    expect(wrapper.findAll(".session-name").map((item) => item.text())).toEqual(["approved"]);
+    expect(wrapper.find('[data-testid="filter-approved-by-me"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("uses server ownership metadata for card actions with an opaque username", async () => {
+    mockSearchSessions.mockResolvedValueOnce([
+      {
+        metadata: { name: "owned" },
+        spec: { user: "oidc:opaque" },
+        approvalMeta: {
+          canApprove: false,
+          canReject: false,
+          isRequester: true,
+          isApprover: false,
+          sessionState: "Approved",
+        },
+        status: { state: "Approved", expiresAt: new Date(Date.now() + 7200000).toISOString() },
+      },
+    ]);
+    vi.mocked(decideRejectOrWithdraw).mockReturnValue("withdraw");
+    const wrapper = await createWrapper();
+
+    expect(wrapper.find('[data-testid="session-actions"]').text()).toContain("Drop");
   });
 
   describe("Component Lifecycle", () => {

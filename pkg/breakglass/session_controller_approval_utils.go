@@ -98,19 +98,25 @@ func (wc *BreakglassSessionController) recordUnverifiedApproverGroupsDecision(
 func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context, session breakglassv1alpha1.BreakglassSession) ApprovalCheckResult {
 	reqLog := system.GetReqLogger(c, wc.log)
 
-	email, err := wc.identityProvider.GetEmail(c)
-	if err != nil {
-		reqLog.Error("Error getting user identity", zap.Error(err))
-		return ApprovalCheckResult{
-			Allowed: false,
-			Reason:  ApprovalDenialUnauthenticated,
-			Message: "Unable to verify user identity",
-		}
+	email, emailErr := wc.identityProvider.GetEmail(c)
+	// Email is optional for OIDC: kube-apiserver can authenticate a token whose
+	// mapped username is the only usable principal. Keep email empty so domain
+	// restrictions and mail delivery cannot accidentally treat that username as
+	// an email address.
+	approverName := email
+	if approverName == "" {
+		approverName = firstNonEmpty(c.GetString("authenticated_username"), c.GetString("username"), c.GetString("user_id"))
 	}
-	reqLog.Debugw("Approver identity verified", "email", email, "cluster", session.Spec.Cluster)
+	if approverName == "" {
+		reqLog.Error("Unable to identify approver", zap.Error(emailErr))
+		return ApprovalCheckResult{Allowed: false, Reason: ApprovalDenialUnauthenticated, Message: "Unable to verify user identity"}
+	}
+	if emailErr != nil {
+		reqLog.Debugw("Approver email unavailable; using authenticated username", "username", approverName, "error", emailErr)
+	}
+	reqLog.Debugw("Approver identity verified", "email", email, "username", approverName, "cluster", session.Spec.Cluster)
 	ctx := c.Request.Context()
-	approverID := ClusterUserGroup{Username: email, Clustername: session.Spec.Cluster}
-	authIdentifiers := collectAuthIdentifiers(email, wc.identityProvider.GetUsername(c), wc.identityProvider.GetIdentity(c))
+	approverID := ClusterUserGroup{Username: approverName, Clustername: session.Spec.Cluster}
 	requestContextGroups := approverGroupsFromRequestContext(c)
 	approverIdentityProvider := c.GetString("identity_provider_name")
 
@@ -141,7 +147,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 	}
 
 	// Gather approver groups with caching
-	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, email)
+	cacheKey := fmt.Sprintf("approverGroups_%q_%q", session.Spec.Cluster, approverName)
 	var approverGroups []string
 	lookupApproverGroups := true
 	if cached, ok := c.Get(cacheKey); ok {
@@ -250,7 +256,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		}
 
 		// Check self-approval restriction
-		if effectiveBlockSelf && matchesAuthIdentifier(session.Spec.User, authIdentifiers) && sessionIdentityProviderMatches(c, session.Spec.IdentityProviderName, session.Spec.IdentityProviderIssuer, session.Spec.AllowIDPMismatch) {
+		if effectiveBlockSelf && sessionRequesterMatches(c, session.Spec) {
 			reqLog.Debugw("Self-approval blocked by escalation/cluster setting", "escalation", esc.Name, "approver", email)
 			// Track this as the most specific denial (highest priority)
 			mostSpecificDenial = ApprovalCheckResult{
@@ -304,8 +310,8 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 		foundMatchingEscalationWithAllowedApproverIDP = true
 
 		// Direct user approver check
-		if slices.Contains(esc.Spec.Approvers.Users, email) {
-			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", email)
+		if slices.Contains(esc.Spec.Approvers.Users, approverName) {
+			reqLog.Debugw("User is session approver (direct user)", "session", session.Name, "escalation", esc.Name, "user", approverName)
 			return ApprovalCheckResult{Allowed: true}
 		}
 
@@ -329,7 +335,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			legacyHierarchy := len(esc.Status.IDPGroupMemberships) == 0 || (len(esc.Status.IDPGroupMemberships) == 1 && esc.Status.IDPGroupMemberships[""] != nil)
 			if c.GetBool("legacy_identity_allowed") && (approverIdentityProvider == "" || legacyHierarchy) {
 				for _, member := range dedupMembers {
-					if strings.EqualFold(member, email) {
+					if identityMatchesContext(c, member, approverName) {
 						reqLog.Debugw("User is session approver (resolved group member)",
 							"session", session.Name, "escalation", esc.Name, "member", email)
 						return ApprovalCheckResult{Allowed: true}
@@ -339,7 +345,7 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			if approverIdentityProvider != "" && len(esc.Status.IDPGroupMemberships) > 0 {
 				for _, g := range approverGroupsToCheck {
 					for _, member := range esc.Status.IDPGroupMemberships[approverIdentityProvider][g] {
-						if strings.EqualFold(member, email) {
+						if identityMatchesContext(c, member, approverName) {
 							return ApprovalCheckResult{Allowed: true}
 						}
 					}
@@ -528,6 +534,41 @@ func firstNonEmpty(values ...string) string {
 	return ""
 }
 
+func sessionRequesterMatches(c *gin.Context, spec breakglassv1alpha1.BreakglassSessionSpec) bool {
+	if spec.RequesterSubject != "" {
+		// A subject is only unique within an issuer/provider. New snapshots without
+		// provenance must not silently fall back to a cross-provider subject match.
+		if spec.IdentityProviderName == "" && spec.IdentityProviderIssuer == "" {
+			return false
+		}
+		return c.GetString("user_id") == spec.RequesterSubject &&
+			sessionIdentityProviderMatches(c, spec.IdentityProviderName, spec.IdentityProviderIssuer, false)
+	}
+	if spec.RequesterUsername != "" {
+		current := c.GetString("authenticated_username")
+		if current == "" {
+			current = firstNonEmpty(c.GetString("username"), c.GetString("email"), c.GetString("user_id"))
+		}
+		if current != spec.RequesterUsername {
+			return false
+		}
+		if spec.IdentityProviderName == "" && spec.IdentityProviderIssuer == "" {
+			return c.GetBool("legacy_identity_allowed")
+		}
+		return sessionIdentityProviderMatches(c, spec.IdentityProviderName, spec.IdentityProviderIssuer, false)
+	}
+	identifiers := collectAuthIdentifiers(c.GetString("email"), c.GetString("username"), c.GetString("user_id"))
+	return matchesAuthIdentifier(spec.User, identifiers) &&
+		sessionIdentityProviderMatches(c, spec.IdentityProviderName, spec.IdentityProviderIssuer, spec.AllowIDPMismatch)
+}
+
+func sessionRequesterEmail(session breakglassv1alpha1.BreakglassSession) string {
+	if session.Spec.RequesterSubject != "" || session.Spec.RequesterUsername != "" {
+		return session.Spec.RequesterEmail
+	}
+	return session.Spec.User
+}
+
 func matchesAuthIdentifier(value string, identifiers []string) bool {
 	if value == "" {
 		return false
@@ -541,6 +582,25 @@ func matchesAuthIdentifier(value string, identifiers []string) bool {
 		}
 	}
 	return false
+}
+
+func matchesAuthIdentifierForContext(c *gin.Context, value string, identifiers []string) bool {
+	if c.GetString("email") == "" && c.GetString("authenticated_username") != "" {
+		for _, id := range identifiers {
+			if id != "" && id == value {
+				return true
+			}
+		}
+		return false
+	}
+	return matchesAuthIdentifier(value, identifiers)
+}
+
+func identityMatchesContext(c *gin.Context, stored, current string) bool {
+	if c.GetString("email") == "" && c.GetString("authenticated_username") != "" {
+		return stored == current
+	}
+	return strings.EqualFold(stored, current)
 }
 
 // IsSessionRejected returns true if session is in Rejected state. Terminal
@@ -830,6 +890,10 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 		log.Warnw("mail not available, cannot send approval email", "session", session.Name)
 		return false
 	}
+	if sessionRequesterEmail(session) == "" {
+		log.Warnw("requester email unavailable, cannot send approval email", "session", session.Name)
+		return false
+	}
 
 	brandingName := "Breakglass"
 	if wc.config.Frontend.BrandingName != "" {
@@ -847,8 +911,8 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 
 	// Prepare email parameters with comprehensive approval info
 	params := mail.ApprovedMailParams{
-		SubjectFullName: session.Spec.User,
-		SubjectEmail:    session.Spec.User,
+		SubjectFullName: sessionRequesterEmail(session),
+		SubjectEmail:    sessionRequesterEmail(session),
 		RequestedRole:   session.Spec.GrantedGroup,
 		ApproverFullName: func() string {
 			// Try to extract approver name from email or use as-is
@@ -885,25 +949,25 @@ func (wc *BreakglassSessionController) sendSessionApprovalEmail(log *zap.Sugared
 	// Enqueue the email for sending via mail service (preferred) or legacy queue
 	subject := fmt.Sprintf("Breakglass Access Approved - %s on %s", session.Spec.GrantedGroup, session.Spec.Cluster)
 	sessionID := "session-approval-" + session.Name
-	recipients := []string{session.Spec.User}
+	recipients := []string{sessionRequesterEmail(session)}
 
 	// Prefer mail service if available
 	if wc.mailService != nil && wc.mailService.IsEnabled() {
 		if err := wc.mailService.Enqueue(sessionID, recipients, subject, body); err != nil {
-			log.Errorw("failed to enqueue approval email via mail service", "error", err, "session", session.Name, "to", session.Spec.User)
+			log.Errorw("failed to enqueue approval email via mail service", "error", err, "session", session.Name, "to", recipients[0])
 			return false
 		}
-		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		log.Infow("approval email enqueued for sending", "session", session.Name, "to", recipients[0])
 		return true
 	}
 
 	// Fallback to legacy queue
 	if wc.mailQueue != nil {
 		if err := wc.mailQueue.Enqueue(sessionID, recipients, subject, body); err != nil {
-			log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", session.Spec.User)
+			log.Errorw("failed to enqueue approval email", "error", err, "session", session.Name, "to", recipients[0])
 			return false
 		}
-		log.Infow("approval email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		log.Infow("approval email enqueued for sending", "session", session.Name, "to", recipients[0])
 		return true
 	}
 	return false
@@ -917,6 +981,10 @@ func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.Sugare
 		log.Warnw("mail not available, cannot send rejection email", "session", session.Name)
 		return
 	}
+	if sessionRequesterEmail(session) == "" {
+		log.Warnw("requester email unavailable, cannot send rejection email", "session", session.Name)
+		return
+	}
 
 	brandingName := "Breakglass"
 	if wc.config.Frontend.BrandingName != "" {
@@ -925,8 +993,8 @@ func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.Sugare
 
 	// Prepare email parameters with rejection info
 	params := mail.RejectedMailParams{
-		SubjectFullName: session.Spec.User,
-		SubjectEmail:    session.Spec.User,
+		SubjectFullName: sessionRequesterEmail(session),
+		SubjectEmail:    sessionRequesterEmail(session),
 		RequestedRole:   session.Spec.GrantedGroup,
 		RejectorFullName: func() string {
 			if session.Status.Approver != "" {
@@ -953,25 +1021,25 @@ func (wc *BreakglassSessionController) sendSessionRejectionEmail(log *zap.Sugare
 	// Enqueue the email for sending via mail service (preferred) or legacy queue
 	subject := fmt.Sprintf("Breakglass Access Rejected - %s on %s", session.Spec.GrantedGroup, session.Spec.Cluster)
 	sessionID := "session-rejection-" + session.Name
-	recipients := []string{session.Spec.User}
+	recipients := []string{sessionRequesterEmail(session)}
 
 	// Prefer mail service if available
 	if wc.mailService != nil && wc.mailService.IsEnabled() {
 		if err := wc.mailService.Enqueue(sessionID, recipients, subject, body); err != nil {
-			log.Errorw("failed to enqueue rejection email via mail service", "error", err, "session", session.Name, "to", session.Spec.User)
+			log.Errorw("failed to enqueue rejection email via mail service", "error", err, "session", session.Name, "to", recipients[0])
 			return
 		}
-		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", recipients[0])
 		return
 	}
 
 	// Fallback to legacy queue
 	if wc.mailQueue != nil {
 		if err := wc.mailQueue.Enqueue(sessionID, recipients, subject, body); err != nil {
-			log.Errorw("failed to enqueue rejection email", "error", err, "session", session.Name, "to", session.Spec.User)
+			log.Errorw("failed to enqueue rejection email", "error", err, "session", session.Name, "to", recipients[0])
 			return
 		}
-		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", session.Spec.User)
+		log.Infow("rejection email enqueued for sending", "session", session.Name, "to", recipients[0])
 	}
 }
 
@@ -1227,16 +1295,40 @@ func buildStateFilterPredicates(tokens []string) []sessionStatePredicate {
 }
 
 func userHasApprovedSessionForProvider(session breakglassv1alpha1.BreakglassSession, email, provider string, legacyAllowed bool) bool {
+	return userHasApprovedSessionForIdentity(session, email, provider, legacyAllowed, false)
+}
+
+// userHasApprovedSessionForContext preserves case-insensitive matching for
+// historical email identities, while treating mapped Kubernetes usernames as
+// opaque, case-sensitive principals.
+func userHasApprovedSessionForContext(c *gin.Context, session breakglassv1alpha1.BreakglassSession) bool {
+	if email := c.GetString("email"); email != "" {
+		return userHasApprovedSessionForProvider(session, email, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed"))
+	}
+	username := c.GetString("authenticated_username")
+	if username == "" {
+		return false
+	}
+	return userHasApprovedSessionForIdentity(session, username, c.GetString("identity_provider_name"), c.GetBool("legacy_identity_allowed"), true)
+}
+
+func userHasApprovedSessionForIdentity(session breakglassv1alpha1.BreakglassSession, identity, provider string, legacyAllowed, caseSensitive bool) bool {
+	equal := func(stored string) bool {
+		if caseSensitive {
+			return stored == identity
+		}
+		return strings.EqualFold(stored, identity)
+	}
 	for i, approver := range session.Status.Approvers {
 		storedProvider := ""
 		if i < len(session.Status.ApproverIdentityProviders) {
 			storedProvider = session.Status.ApproverIdentityProviders[i]
 		}
-		if strings.EqualFold(approver, email) && ((storedProvider != "" && storedProvider == provider) || (storedProvider == "" && legacyAllowed)) {
+		if equal(approver) && ((storedProvider != "" && storedProvider == provider) || (storedProvider == "" && legacyAllowed)) {
 			return true
 		}
 	}
-	return strings.EqualFold(session.Status.Approver, email) && ((session.Status.ApproverIdentityProvider != "" && session.Status.ApproverIdentityProvider == provider) || (session.Status.ApproverIdentityProvider == "" && legacyAllowed))
+	return equal(session.Status.Approver) && ((session.Status.ApproverIdentityProvider != "" && session.Status.ApproverIdentityProvider == provider) || (session.Status.ApproverIdentityProvider == "" && legacyAllowed))
 }
 
 func sessionIdentityProviderMatches(c *gin.Context, provider, issuer string, _ bool) bool {
@@ -1245,6 +1337,12 @@ func sessionIdentityProviderMatches(c *gin.Context, provider, issuer string, _ b
 	if provider == "" && issuer == "" {
 		return c.GetBool("legacy_identity_allowed")
 	}
+	// Provider-aware ownership is scoped to the complete identity-provider
+	// tuple. A name-only or issuer-only snapshot is ambiguous and must not
+	// authorize a requester across providers.
+	if provider == "" || issuer == "" {
+		return false
+	}
 	if provider != "" && c.GetString("identity_provider_name") != provider {
 		return false
 	}
@@ -1252,6 +1350,14 @@ func sessionIdentityProviderMatches(c *gin.Context, provider, issuer string, _ b
 }
 
 func recordApprover(status *breakglassv1alpha1.BreakglassSessionStatus, identity, provider string) {
+	recordApproverWithComparison(status, identity, provider, false)
+}
+
+func recordApproverForContext(c *gin.Context, status *breakglassv1alpha1.BreakglassSessionStatus, identity, provider string) {
+	recordApproverWithComparison(status, identity, provider, c.GetString("email") == "" && c.GetString("authenticated_username") != "")
+}
+
+func recordApproverWithComparison(status *breakglassv1alpha1.BreakglassSessionStatus, identity, provider string, caseSensitive bool) {
 	// Preserve unknown historical slots; never attribute them to a later signer.
 	if len(status.ApproverIdentityProviders) > len(status.Approvers) {
 		status.ApproverIdentityProviders = status.ApproverIdentityProviders[:len(status.Approvers)]
@@ -1260,7 +1366,11 @@ func recordApprover(status *breakglassv1alpha1.BreakglassSessionStatus, identity
 		status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, "")
 	}
 	for i, existing := range status.Approvers {
-		if strings.EqualFold(existing, identity) && status.ApproverIdentityProviders[i] == provider {
+		equal := existing == identity
+		if !caseSensitive {
+			equal = strings.EqualFold(existing, identity)
+		}
+		if equal && status.ApproverIdentityProviders[i] == provider {
 			return
 		}
 	}

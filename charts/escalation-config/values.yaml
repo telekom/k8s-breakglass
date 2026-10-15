@@ -174,8 +174,22 @@ cluster:
   # User identifier claim: Specifies which OIDC claim the spoke cluster uses
   # for extracting the username. Must match the spoke cluster's OIDC config
   # (e.g., --oidc-username-claim or claimMappings.username.claim).
-  # Valid values: "email" (default), "preferred_username", "sub"
+  # Any string-valued JWT claim, for example email, preferred_username, sub, or upn.
   # userIdentifierClaim: email
+  # Omit to inherit IdentityProvider prefix; "" explicitly disables it.
+  # userIdentifierPrefix: "tdi_security_oidc:"
+  # Or use Kubernetes AuthenticationConfiguration mapping syntax (instead of the
+  # shorthand userIdentifierClaim/userIdentifierPrefix fields):
+  # kubernetesIdentity:
+  #   claimMappings:
+  #     username:
+  #       expression: "'tdi_security_oidc:' + claims.preferred_username"
+  #     groups:
+  #       claim: roles
+  #       prefix: ""
+  #   userValidationRules:
+  #     - expression: "!user.username.startsWith('system:')"
+  #       message: "reserved Kubernetes usernames are not allowed"
   
   # Client rate limiting
   # qps: 100

@@ -6,6 +6,7 @@ function normalizeEmail(value?: string | null): string | null {
 }
 
 export function wasApprovedBy(session: SessionCR, email?: string | null): boolean {
+  if (typeof session.approvedByMe === "boolean") return session.approvedByMe;
   const normalized = normalizeEmail(email);
   if (!session || !normalized) return false;
 

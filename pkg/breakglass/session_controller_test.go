@@ -27,6 +27,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -1739,12 +1740,17 @@ func TestHandleRequestBreakglassSession_UsesUserIdentifierForExistingSessionLook
 func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 	tests := []struct {
 		name                string
+		providerPrefix      string
+		clusterPrefix       *string
 		userIdentifierClaim breakglassv1alpha1.UserIdentifierClaimType
 		contextEmail        string
 		contextUsername     string
 		contextUserID       string
 		expectedSpecUser    string
 	}{
+		{name: "provider prefix", providerPrefix: "tdi_security_oidc:", userIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimPreferredUsername, contextEmail: "christos.ntogkas@telekom.com", contextUsername: "k834798", expectedSpecUser: "tdi_security_oidc:k834798"},
+		{name: "cluster override", providerPrefix: "idp:", clusterPrefix: ptr.To("spoke:"), contextEmail: "alice@example.com", expectedSpecUser: "spoke:alice@example.com"},
+		{name: "disable prefix", providerPrefix: "idp:", clusterPrefix: ptr.To(""), contextEmail: "alice@example.com", expectedSpecUser: "alice@example.com"},
 		{
 			name:                "Email claim (default)",
 			userIdentifierClaim: breakglassv1alpha1.UserIdentifierClaimEmail,
@@ -1801,7 +1807,8 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 						Name:      "test-secret",
 						Namespace: "default",
 					},
-					UserIdentifierClaim: tt.userIdentifierClaim,
+					UserIdentifierClaim:  tt.userIdentifierClaim,
+					UserIdentifierPrefix: tt.clusterPrefix,
 				},
 			}
 
@@ -1834,6 +1841,7 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 				func(c *gin.Context) {
 					// Set all identity claims in context
 					c.Set("email", tt.contextEmail)
+					c.Set("user_identifier_prefix", tt.providerPrefix)
 					c.Set("legacy_identity_allowed", true)
 					c.Set("username", tt.contextUsername)
 					c.Set("legacy_identity_allowed", true)
@@ -1875,8 +1883,86 @@ func TestSessionCreatedUsesUserIdentifierClaim(t *testing.T) {
 			if list.Items[0].Spec.User != tt.expectedSpecUser {
 				t.Errorf("expected spec.User=%q, got %q", tt.expectedSpecUser, list.Items[0].Spec.User)
 			}
+			require.Empty(t, list.Items[0].Spec.RequesterSubject)
+			require.Equal(t, firstNonEmpty(tt.contextUsername, tt.contextEmail, tt.contextUserID), list.Items[0].Spec.RequesterUsername)
+			require.Equal(t, tt.contextEmail, list.Items[0].Spec.RequesterEmail)
+			withdraw := httptest.NewRecorder()
+			engine.ServeHTTP(withdraw, httptest.NewRequest(http.MethodPost, "/breakglassSessions/"+list.Items[0].Name+"/withdraw", nil))
+			require.Equal(t, http.StatusOK, withdraw.Code, withdraw.Body.String())
 		})
 	}
+}
+
+func TestSessionCreationPersistsMappedRequesterWithoutEmail(t *testing.T) {
+	clusterName := "mapped-requester-cluster"
+	clusterConfig := &breakglassv1alpha1.ClusterConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: clusterName},
+		Spec: breakglassv1alpha1.ClusterConfigSpec{
+			UserIdentifierClaim:  breakglassv1alpha1.UserIdentifierClaimPreferredUsername,
+			UserIdentifierPrefix: ptr.To("target:"),
+		},
+	}
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-requester-escalation", Namespace: "default"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{clusterName}, Groups: []string{"system:authenticated"}},
+			EscalatedGroup: "target-group",
+		},
+	}
+	identityProvider := &breakglassv1alpha1.IdentityProvider{
+		ObjectMeta: metav1.ObjectMeta{Name: "idp-a"},
+		Spec: breakglassv1alpha1.IdentityProviderSpec{
+			OIDC: breakglassv1alpha1.OIDCConfig{
+				Authority:        "https://issuer.example",
+				ClientID:         "breakglass",
+				ExpectedAudience: "breakglass",
+			},
+		},
+	}
+	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	for index, fn := range sessionIndexFunctions {
+		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+	}
+	cli := builder.WithObjects(clusterConfig, escalation, identityProvider).WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+	sesmanager := SessionManager{Client: cli}
+	escmanager := testEscalationLookup{Client: cli}
+	ctrl := NewBreakglassSessionController(zap.NewNop().Sugar(), config.Config{}, &sesmanager, &escmanager,
+		func(c *gin.Context) {
+			c.Set("authenticated_username", "api-user")
+			c.Set("username", "preferred-user")
+			c.Set("user_id", "subject-123")
+			c.Set("identity_provider_name", "idp-a")
+			c.Set("issuer", "https://issuer.example")
+			c.Next()
+		}, "/config/config.yaml", nil, cli)
+	ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+		return []string{"system:authenticated"}, nil
+	}
+
+	engine := gin.New()
+	_ = ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...))
+	payload, err := json.Marshal(BreakglassSessionRequest{Clustername: clusterName, Username: "api-user", GroupName: "target-group"})
+	require.NoError(t, err)
+	request := httptest.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(payload))
+	response := httptest.NewRecorder()
+	engine.ServeHTTP(response, request)
+	require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
+
+	sessions := &breakglassv1alpha1.BreakglassSessionList{}
+	require.NoError(t, cli.List(context.Background(), sessions))
+	require.Len(t, sessions.Items, 1)
+	session := sessions.Items[0]
+	require.Equal(t, "target:preferred-user", session.Spec.User)
+	require.Equal(t, "api-user", session.Spec.RequesterUsername)
+	require.Equal(t, "subject-123", session.Spec.RequesterSubject)
+	require.Empty(t, session.Spec.RequesterEmail)
+
+	ownerContext, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ownerContext.Set("authenticated_username", "api-user")
+	ownerContext.Set("user_id", "subject-123")
+	ownerContext.Set("identity_provider_name", "idp-a")
+	ownerContext.Set("issuer", "https://issuer.example/")
+	require.True(t, sessionRequesterMatches(ownerContext, session.Spec))
 }
 
 // helper to get *bool
@@ -2213,7 +2299,7 @@ func (p *trackingIdentityProvider) GetUserIdentifier(_ *gin.Context, claimType b
 	}
 }
 
-func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {
+func TestFilterBreakglassSessionsApprovedByMeUsesAuthenticatedIdentity(t *testing.T) {
 	approved := &breakglassv1alpha1.BreakglassSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "approved-by-me-session"},
 		Spec: breakglassv1alpha1.BreakglassSessionSpec{
@@ -2241,6 +2327,7 @@ func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {
 			return
 		}
 		c.Set("username", "bob")
+		c.Set("authenticated_username", "bob")
 		c.Set("legacy_identity_allowed", true)
 		c.Set("user_id", "subject-123")
 		c.Next()
@@ -2256,12 +2343,12 @@ func TestFilterBreakglassSessionsApprovedByMeRequiresEmailClaim(t *testing.T) {
 	w := httptest.NewRecorder()
 	engine.ServeHTTP(w, req)
 	res := w.Result()
-	require.Equal(t, http.StatusUnauthorized, res.StatusCode)
-
-	body, err := io.ReadAll(res.Body)
-	require.NoError(t, err)
-	assert.Contains(t, string(body), "UNAUTHORIZED")
-	assert.Contains(t, string(body), "email claim is required")
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	var result struct {
+		Items []breakglassv1alpha1.BreakglassSession `json:"items"`
+	}
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&result))
+	require.Empty(t, result.Items, "the mapped username bob must not match approver bob@example.com")
 }
 
 // TestApproveByNonApprover_ReturnsUnauthorized
@@ -8421,12 +8508,12 @@ func TestIsSessionExpiredFunction(t *testing.T) {
 	}{
 		// State-first: Expired state takes precedence
 		{"expired state", breakglassv1alpha1.SessionStateExpired, nil, true},
-		{"expired state with past time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
-		{"expired state with future time", breakglassv1alpha1.SessionStateExpired, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
+		{"expired state with past time", breakglassv1alpha1.SessionStateExpired, ptr.To(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
+		{"expired state with future time", breakglassv1alpha1.SessionStateExpired, ptr.To(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
 
 		// Approved state checks timestamp
-		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
-		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), false},
+		{"approved state with past time", breakglassv1alpha1.SessionStateApproved, ptr.To(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), true},
+		{"approved state with future time", breakglassv1alpha1.SessionStateApproved, ptr.To(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), false},
 		{"approved state with zero time fails closed", breakglassv1alpha1.SessionStateApproved, nil, true},
 
 		// Other states are not expired
@@ -8450,11 +8537,6 @@ func TestIsSessionExpiredFunction(t *testing.T) {
 	}
 }
 
-// ptr is a helper to get pointer to metav1.Time
-func ptr(t metav1.Time) *metav1.Time {
-	return &t
-}
-
 // TestIsSessionValid covers additional cases for IsSessionValid
 func TestIsSessionValidFunction(t *testing.T) {
 	tests := []struct {
@@ -8471,8 +8553,8 @@ func TestIsSessionValidFunction(t *testing.T) {
 		{"waiting for scheduled time", breakglassv1alpha1.SessionStateWaitingForScheduledTime, nil, false},
 
 		// Approved state with valid expiry
-		{"approved with future expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
-		{"approved with past expiry", breakglassv1alpha1.SessionStateApproved, ptr(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), false},
+		{"approved with future expiry", breakglassv1alpha1.SessionStateApproved, ptr.To(metav1.NewTime(time.Now().UTC().Add(1 * time.Hour))), true},
+		{"approved with past expiry", breakglassv1alpha1.SessionStateApproved, ptr.To(metav1.NewTime(time.Now().UTC().Add(-1 * time.Hour))), false},
 
 		// Pending is valid
 		{"pending state", breakglassv1alpha1.SessionStatePending, nil, true},
@@ -11251,7 +11333,7 @@ func TestHandleRequestBreakglassSession_RateLimitBeforeSessionCreation(t *testin
 		"rate-limited request must not create a BreakglassSession in the store")
 }
 
-func TestHandleRequestBreakglassSession_EmptyEmailRejectedBeforeRateLimit(t *testing.T) {
+func TestHandleRequestBreakglassSession_MissingIdentityRejectedBeforeRateLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	builder := fake.NewClientBuilder().WithScheme(Scheme)
@@ -11274,15 +11356,11 @@ func TestHandleRequestBreakglassSession_EmptyEmailRejectedBeforeRateLimit(t *tes
 	sesmanager := SessionManager{Client: cli}
 	escmanager := testEscalationLookup{Client: cli}
 
-	const username = "svc-account"
 	logger, _ := zap.NewDevelopment()
 	ctrl := NewBreakglassSessionController(logger.Sugar(), config.Config{}, &sesmanager, &escmanager,
 		func(c *gin.Context) {
 			c.Set("email", "")
 			c.Set("legacy_identity_allowed", true)
-			c.Set("username", username)
-			c.Set("legacy_identity_allowed", true)
-			c.Set("user_id", username)
 			c.Next()
 		}, "/config/config.yaml", nil, cli)
 
@@ -11303,7 +11381,7 @@ func TestHandleRequestBreakglassSession_EmptyEmailRejectedBeforeRateLimit(t *tes
 	require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
 
 	makeRequest := func() *httptest.ResponseRecorder {
-		reqData := BreakglassSessionRequest{Clustername: "test", Username: username, GroupName: "g1"}
+		reqData := BreakglassSessionRequest{Clustername: "test", Username: "untrusted-body-username", GroupName: "g1"}
 		b, _ := json.Marshal(reqData)
 		req, _ := http.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(b))
 		w := httptest.NewRecorder()
@@ -11312,10 +11390,10 @@ func TestHandleRequestBreakglassSession_EmptyEmailRejectedBeforeRateLimit(t *tes
 	}
 
 	first := makeRequest()
-	assert.Equal(t, http.StatusUnauthorized, first.Code, "request with empty email must be rejected with 401")
+	assert.Equal(t, http.StatusUnauthorized, first.Code, "request with no authenticated identity must be rejected with 401")
 
 	second := makeRequest()
-	assert.Equal(t, http.StatusUnauthorized, second.Code, "subsequent request with empty email must also be rejected with 401 (not 429)")
+	assert.Equal(t, http.StatusUnauthorized, second.Code, "subsequent request with no authenticated identity must also be rejected with 401 (not 429)")
 }
 
 func TestHandleRequestBreakglassSession_ConcurrentSameUserRateLimited(t *testing.T) {

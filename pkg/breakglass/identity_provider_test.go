@@ -1,6 +1,7 @@
 package breakglass
 
 import (
+	"net/http/httptest"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -240,13 +241,13 @@ func TestKeycloakIdentityProvider_GetUserIdentifier(t *testing.T) {
 			expectError:      false,
 		},
 		{
-			name:             "Unknown claim type - falls back to email",
+			name:             "Custom claim requires verified OIDC resolver",
 			claimType:        "unknown_claim",
 			email:            "fallback@example.com",
 			username:         "fallbackuser",
 			userID:           "sub-fallback",
-			expectIdentifier: "fallback@example.com",
-			expectError:      false,
+			expectIdentifier: "",
+			expectError:      true,
 		},
 	}
 
@@ -293,4 +294,56 @@ func TestKeycloakIdentityProvider_LoggerInjection(t *testing.T) {
 		// getLogger() should still return a non-nil logger (global fallback)
 		require.NotNil(t, kip.getLogger())
 	})
+}
+
+func TestSessionRequesterIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name, user, subject, sessionSubject, issuer, sessionIssuer string
+		legacy, want                                               bool
+	}{
+		{"subject owner", "oidc:k834798", "sub-1", "sub-1", "https://issuer", "https://issuer", false, true},
+		{"same subject wrong issuer", "oidc:k834798", "sub-1", "sub-1", "https://other", "https://issuer", false, false},
+		{"different subject", "oidc:k834798", "sub-2", "sub-1", "https://issuer", "https://issuer", false, false},
+		{"noninvertible username", "oidc:opaque", "sub-1", "sub-1", "https://issuer", "https://issuer", false, true},
+		{"mapped principal without subject", "oidc:opaque", "", "", "https://issuer", "https://issuer", false, true},
+		{"subject without provenance", "oidc:k834798", "sub-1", "sub-1", "", "", true, false},
+		{"legacy", "k834798", "", "", "", "", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set("user_id", tc.subject)
+			c.Set("issuer", tc.issuer)
+			c.Set("identity_provider_name", "provider")
+			c.Set("legacy_identity_allowed", tc.legacy)
+			if tc.name == "mapped principal without subject" {
+				c.Set("authenticated_username", tc.user)
+			} else {
+				c.Set("username", tc.user)
+			}
+			identityProviderName := "provider"
+			if tc.name == "legacy" || tc.name == "subject without provenance" {
+				identityProviderName = ""
+			}
+			spec := breakglassv1alpha1.BreakglassSessionSpec{User: tc.user, RequesterSubject: tc.sessionSubject, IdentityProviderIssuer: tc.sessionIssuer, IdentityProviderName: identityProviderName}
+			if tc.name == "mapped principal without subject" {
+				spec.RequesterUsername = tc.user
+			}
+			got := sessionRequesterMatches(c, spec)
+			if got != tc.want {
+				t.Fatalf("requester match = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSessionRequesterEmailDoesNotFallbackMappedPrincipal(t *testing.T) {
+	assert.Empty(t, sessionRequesterEmail(breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{
+			User:              "oidc:opaque-user",
+			RequesterUsername: "oidc:opaque-user",
+		},
+	}))
+	assert.Equal(t, "legacy@example.test", sessionRequesterEmail(breakglassv1alpha1.BreakglassSession{
+		Spec: breakglassv1alpha1.BreakglassSessionSpec{User: "legacy@example.test"},
+	}))
 }

@@ -821,6 +821,15 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: requestReasonConfig
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ReasonConfig
+    - name: requesterEmail
+      type:
+        scalar: string
+    - name: requesterSubject
+      type:
+        scalar: string
+    - name: requesterUsername
+      type:
+        scalar: string
     - name: retainFor
       type:
         scalar: string
@@ -961,6 +970,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: kubeconfigSecretRef
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SecretKeyReference
+    - name: kubernetesIdentity
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesIdentityConfig
     - name: location
       type:
         scalar: string
@@ -985,6 +997,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: userIdentifierClaim
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.UserIdentifierClaimType
+    - name: userIdentifierPrefix
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfigStatus
   map:
     fields:
@@ -2767,6 +2782,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: keycloak
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KeycloakGroupSync
+    - name: kubernetesIdentity
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesIdentityConfig
     - name: oidc
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCConfig
@@ -2776,6 +2794,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: sessionLimits
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.SessionLimits
+    - name: userIdentifierClaim
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.UserIdentifierClaimType
+    - name: userIdentifierPrefix
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProviderStatus
   map:
     fields:
@@ -3097,6 +3121,24 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: podCopy
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NamespaceFilter
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesIdentityConfig
+  map:
+    fields:
+    - name: claimMappings
+      type:
+        namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimMappings
+    - name: claimValidationRules
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimValidationRule
+          elementRelationship: atomic
+    - name: userValidationRules
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.UserValidationRule
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.KubernetesSinkSpec
   map:
     fields:
@@ -3462,6 +3504,12 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCConfig
   map:
     fields:
+    - name: audiences
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: authority
       type:
         scalar: string
@@ -3469,6 +3517,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: clientID
+      type:
+        scalar: string
+    - name: discoveryURL
       type:
         scalar: string
     - name: expectedAudience
@@ -3480,6 +3531,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: jwksEndpoint
       type:
         scalar: string
+    - name: supportedSigningAlgs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.OIDCFromIdentityProviderConfig
   map:
     fields:
@@ -6216,6 +6273,78 @@ var schemaYAML = typed.YAMLObject(`types:
     elementType:
       namedType: __untyped_deduced_
     elementRelationship: separable
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimMappings
+  map:
+    fields:
+    - name: extra
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.ExtraMapping
+          elementRelationship: atomic
+    - name: groups
+      type:
+        namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.PrefixedClaimOrExpression
+    - name: uid
+      type:
+        namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimOrExpression
+    - name: username
+      type:
+        namedType: io.k8s.apiserver.pkg.apis.apiserver.v1.PrefixedClaimOrExpression
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimOrExpression
+  map:
+    fields:
+    - name: claim
+      type:
+        scalar: string
+    - name: expression
+      type:
+        scalar: string
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.ClaimValidationRule
+  map:
+    fields:
+    - name: claim
+      type:
+        scalar: string
+    - name: expression
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: requiredValue
+      type:
+        scalar: string
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.ExtraMapping
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: valueExpression
+      type:
+        scalar: string
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.PrefixedClaimOrExpression
+  map:
+    fields:
+    - name: claim
+      type:
+        scalar: string
+    - name: expression
+      type:
+        scalar: string
+    - name: prefix
+      type:
+        scalar: string
+- name: io.k8s.apiserver.pkg.apis.apiserver.v1.UserValidationRule
+  map:
+    fields:
+    - name: expression
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
 - name: __untyped_atomic_
   scalar: untyped
   list:

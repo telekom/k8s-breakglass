@@ -191,3 +191,6 @@ Breakglass supports multiple deployment patterns via component enable flags. See
 - **API-only**: frontend + API + SAR webhook (no validating webhooks)
 - **Frontend-only**: web UI only
 - **Cleanup-only**: background cleanup routine only
+
+- [Kubernetes OIDC identity mapping](oidc-compatibility.md): claim/prefix configuration,
+  structured mappings, validation rules, and requester identity compatibility.

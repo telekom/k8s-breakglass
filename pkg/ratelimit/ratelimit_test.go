@@ -1192,3 +1192,26 @@ func TestIPRateLimiterStopIdempotent(t *testing.T) {
 		t.Fatal("timed out waiting for concurrent Stop calls to complete")
 	}
 }
+
+func TestAuthenticatedRateLimiterOIDCIdentityWithoutEmail(t *testing.T) {
+	limiter := NewAuthenticated(AuthenticatedConfig{
+		Authenticated:   Config{Rate: 0.000001, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour},
+		Unauthenticated: Config{Rate: 0.000001, Burst: 1, CleanupInterval: time.Hour, MaxAge: time.Hour},
+	})
+	defer limiter.Stop()
+	check := func(issuer, provider, principal string, expected bool) {
+		t.Helper()
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Set("issuer", issuer)
+		c.Set("identity_provider_name", provider)
+		c.Set("authenticated_username", principal)
+		allowed, authenticated := limiter.Allow(c)
+		require.True(t, authenticated)
+		require.Equal(t, expected, allowed)
+	}
+	check("https://issuer.example", "provider", "employee-1", true)
+	check("https://issuer.example", "provider", "employee-1", false)
+	check("https://other.example", "provider", "employee-1", true)
+	check("https://issuer.example", "other-provider", "employee-1", true)
+	check("https://issuer.example", "provider", "employee-2", true)
+}

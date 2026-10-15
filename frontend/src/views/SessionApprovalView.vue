@@ -6,21 +6,10 @@ import { useUser } from "@/services/auth";
 import BreakglassSessionService from "@/services/breakglassSession";
 import ApprovalModalContent from "@/components/ApprovalModalContent.vue";
 import LoadingState from "@/components/common/LoadingState.vue";
-import type { SessionCR } from "@/model/breakglass";
+import type { SessionApprovalMeta, SessionCR } from "@/model/breakglass";
 import { pushError, pushSuccess } from "@/services/toast";
 import { handleAxiosError, debug } from "@/services/logger";
 import type { AxiosLikeError } from "@/model/errors";
-
-// Type for the approval metadata returned by the API
-interface SessionApprovalMeta {
-  canApprove: boolean;
-  canReject: boolean;
-  isRequester: boolean;
-  isApprover: boolean;
-  denialReason?: string;
-  sessionState: string;
-  stateMessage?: string;
-}
 
 interface ApprovalReasonConfig {
   mandatory?: boolean;
@@ -190,7 +179,7 @@ const loadSession = async () => {
         errorDetails.value = meta.denialReason;
       } else {
         // User can approve - set the session
-        session.value = foundSession as SessionCR;
+        session.value = { ...(foundSession as SessionCR), approvalMeta: meta };
       }
     } else {
       // Fallback for old API response format (backward compatibility)

@@ -375,7 +375,10 @@ const activeFiltersDescription = computed(() => {
   return desc.length ? desc.join(" • ") : "No client-side filters";
 });
 
-const approvedFilterDisabled = computed(() => !currentUserEmail.value && filters.onlyApprovedByMe);
+const serverApprovalMetadataAvailable = computed(() =>
+  sessions.value.some((session) => typeof session.approvedByMe === "boolean"),
+);
+const approvedFilterDisabled = computed(() => !currentUserEmail.value && !serverApprovalMetadataAvailable.value);
 
 onMounted(() => {
   fetchSessions();
@@ -409,12 +412,16 @@ onMounted(() => {
             >Approver</scale-checkbox
           >
           <DisabledReason
-            :reason="currentUserEmail ? '' : 'Your profile has no email address to match approvals against.'"
+            :reason="
+              approvedFilterDisabled
+                ? 'Your profile has no email address and the server supplied no approval metadata.'
+                : ''
+            "
           >
             <scale-checkbox
               data-testid="filter-approved-by-me"
               :checked="filters.onlyApprovedByMe"
-              :disabled="!currentUserEmail"
+              :disabled="approvedFilterDisabled"
               @scale-change="filters.onlyApprovedByMe = $event.target.checked"
             >
               Approved by me

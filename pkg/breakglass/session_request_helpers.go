@@ -123,7 +123,7 @@ func (wc *BreakglassSessionController) resolveAuthenticatedIdentity(
 	c *gin.Context, request *BreakglassSessionRequest, reqLog *zap.SugaredLogger,
 ) (*authenticatedIdentity, bool) {
 	authEmail, emailErr := wc.identityProvider.GetEmail(c)
-	authUsername := wc.identityProvider.GetUsername(c)
+	authUsername := firstNonEmpty(c.GetString("authenticated_username"), wc.identityProvider.GetUsername(c))
 	authUserID := wc.identityProvider.GetIdentity(c)
 	authIdentifiers := collectAuthIdentifiers(authEmail, authUsername, authUserID)
 	if len(authIdentifiers) == 0 {
@@ -134,7 +134,7 @@ func (wc *BreakglassSessionController) resolveAuthenticatedIdentity(
 	if request.Username == "" {
 		// default to authenticated identity to avoid spoofing
 		request.Username = firstNonEmpty(authEmail, authUsername, authUserID)
-	} else if !matchesAuthIdentifier(request.Username, authIdentifiers) {
+	} else if !matchesAuthIdentifierForContext(c, request.Username, authIdentifiers) {
 		reqLog.Warnw("Request username does not match authenticated identity",
 			"requestUsername", request.Username,
 			"authIdentifiers", authIdentifiers)
@@ -569,12 +569,12 @@ func (wc *BreakglassSessionController) resolveUserIdentifierClaim(
 	}
 
 	// Get the user identifier based on the configured claim type
-	userIdentifier, err := wc.identityProvider.GetUserIdentifier(c, userIdentifierClaim)
+	userIdentifier, err := ResolveKubernetesUser(c, clusterConfig, userIdentifierClaim, wc.identityProvider)
 	if err != nil {
 		reqLog.Errorw("Error getting user identifier from token",
 			"error", err,
 			"userIdentifierClaim", userIdentifierClaim)
-		apiresponses.RespondInternalError(c, fmt.Sprintf("extract user identifier (%s) from token", userIdentifierClaim), err, reqLog)
+		apiresponses.RespondForbidden(c, "token does not satisfy the target cluster identity policy")
 		return "", nil, false
 	}
 	reqLog.Debugw("Resolved user identifier for session",
@@ -599,6 +599,7 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 	spec := breakglassv1alpha1.BreakglassSessionSpec{
 		Cluster:        request.Clustername,
 		User:           userIdentifier, // Use the identifier based on ClusterConfig's userIdentifierClaim
+		RequesterEmail: c.GetString("email"),
 		GrantedGroup:   request.GroupName,
 		DenyPolicyRefs: selectedDenyPolicies,
 		RequestReason:  request.Reason,
@@ -615,6 +616,16 @@ func (wc *BreakglassSessionController) buildSessionSpec(
 		if iss, ok := issuer.(string); ok && iss != "" {
 			spec.IdentityProviderIssuer = iss
 		}
+	}
+	// Snapshot the authenticated API principal, which is independent of the
+	// target cluster's username mapping. The auth middleware supplies this for
+	// custom claims and falls back to the standard verified identity claims.
+	spec.RequesterUsername = c.GetString("authenticated_username")
+	if spec.RequesterUsername == "" {
+		spec.RequesterUsername = firstNonEmpty(c.GetString("username"), c.GetString("email"), c.GetString("user_id"))
+	}
+	if spec.IdentityProviderName != "" || spec.IdentityProviderIssuer != "" {
+		spec.RequesterSubject = c.GetString("user_id")
 	}
 
 	if matchedEsc == nil {

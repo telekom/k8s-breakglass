@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -284,6 +285,15 @@ func (arl *AuthenticatedRateLimiter) Allow(c *gin.Context) (bool, bool) {
 		if userStr, ok := userID.(string); ok && userStr != "" {
 			// User is authenticated - use per-user rate limit
 			return arl.userLimiter.Allow(userStr), true
+		}
+	}
+
+	// OIDC identities need not carry email. Keep their fallback buckets scoped
+	// to the verified provider instead of sharing one bucket across issuers.
+	if arl.userKey == "email" {
+		if principal := c.GetString("authenticated_username"); principal != "" {
+			key := fmt.Sprintf("oidc:%q/%q/%q", c.GetString("issuer"), c.GetString("identity_provider_name"), principal)
+			return arl.userLimiter.Allow(key), true
 		}
 	}
 

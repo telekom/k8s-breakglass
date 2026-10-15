@@ -1,15 +1,14 @@
 package api
 
 import (
-	"container/list"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -17,30 +16,26 @@ import (
 	"sync"
 	"time"
 
-	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
+	"github.com/telekom/k8s-breakglass/pkg/oidc"
 	"go.uber.org/zap"
-	"golang.org/x/sync/singleflight"
+	"k8s.io/apiserver/pkg/apis/apiserver"
+	"k8s.io/apiserver/pkg/authentication/authenticator"
 )
 
 const (
 	AuthHeaderKey = "Authorization"
-	// maxJWKSCacheSize limits the number of cached JWKS to prevent memory exhaustion
-	// from malicious tokens claiming many different issuers
+	// maxJWKSCacheSize bounds the handler-owned upstream authenticator cache.
 	maxJWKSCacheSize = 100
 
 	// defaultOIDCTimeout is the HTTP client timeout for OIDC discovery
 	// and JWKS requests.
 	defaultOIDCTimeout = 10 * time.Second
-
-	// jwksFetchMinInterval is the minimum interval between JWKS fetch attempts
-	// for the same issuer. Prevents DoS against the OIDC provider when an attacker
-	// floods requests with unknown kid values that trigger JWKS re-fetches. (SEC-004)
-	jwksFetchMinInterval = 10 * time.Second
 
 	// maxIssuerLength is the maximum allowed length for a JWT issuer claim.
 	// Prevents log pollution and memory abuse from maliciously long issuer strings. (SEC-003)
@@ -59,519 +54,142 @@ var allowedJWTAlgs = []string{
 	jwt.SigningMethodES512.Alg(),
 }
 
-var (
-	errUnknownIdentityProvider = errors.New("invalid or unknown identity provider")
-	errJWKSFetchRateLimited    = errors.New("jwks fetch rate limited")
-)
-
-// jwksFetchRateLimitedError is a typed error that carries the exact duration
-// a caller should wait before retrying. It wraps errJWKSFetchRateLimited so
-// that errors.Is checks continue to work unchanged.
-type jwksFetchRateLimitedError struct {
-	RetryAfter time.Duration
-}
-
-func (e *jwksFetchRateLimitedError) Error() string {
-	return fmt.Sprintf("%s: retry after %s", errJWKSFetchRateLimited, e.RetryAfter.Truncate(time.Millisecond))
-}
-
-func (e *jwksFetchRateLimitedError) Unwrap() error { return errJWKSFetchRateLimited }
-
-// jwksCacheEntry holds the JWKS and its position in the LRU list
-type jwksCacheEntry struct {
-	issuer              string
-	idpName             string // resolved IDP name, cached to avoid redundant K8s API calls
-	expectedAudience    string // from IDP config; JWT aud claim is validated
-	audienceRefreshedAt time.Time
-	audienceAttemptedAt time.Time
-	jwks                keyfunc.Keyfunc
-	cancel              context.CancelFunc // stops the background refresh goroutine
-	configIdentity      jwksConfigIdentity
-}
-
-type jwksConfigIdentity struct {
-	authority            string
-	certificateAuthority string
-	insecureSkipVerify   bool
-	keycloakBaseURL      string
-	keycloakRealm        string
-	keycloakCA           string
-	keycloakInsecure     bool
-}
-
-func jwksIdentity(cfg *config.IdentityProviderConfig) jwksConfigIdentity {
-	identity := jwksConfigIdentity{
-		authority:            cfg.Authority,
-		certificateAuthority: cfg.CertificateAuthority,
-		insecureSkipVerify:   cfg.InsecureSkipVerify,
-	}
-	if cfg.Keycloak != nil {
-		identity.keycloakBaseURL = cfg.Keycloak.BaseURL
-		identity.keycloakRealm = cfg.Keycloak.Realm
-		identity.keycloakCA = cfg.Keycloak.CertificateAuthority
-		identity.keycloakInsecure = cfg.Keycloak.InsecureSkipVerify
-	}
-	return identity
-}
-
-// audienceRefreshInterval controls how often expectedAudience is re-read from
-// the live IDP config on cache hits. This avoids a K8s API call on every request
-// while still picking up config changes within a reasonable window.
-const audienceRefreshInterval = 30 * time.Second
-
-// audienceRefreshFailureBackoff prevents repeated refresh attempts on every
-// request when the refresh operation is currently failing.
-const audienceRefreshFailureBackoff = 5 * time.Second
+var errUnknownIdentityProvider = errors.New("invalid or unknown identity provider")
 
 type AuthHandler struct {
-	// Multi-IDP support: LRU cache for JWKS by issuer URL
-	jwksCache   map[string]*list.Element // issuer -> list element
-	jwksLRUList *list.List               // list of *jwksCacheEntry (front = most recent)
-	jwksMutex   sync.RWMutex
-
-	// Per-issuer JWKS fetch rate limiting (SEC-004)
-	// Maps issuer URL -> last fetch time to prevent flooding the OIDC provider
-	jwksFetchLimiter sync.Map // map[string]time.Time
-
-	// Singleflight deduplicates concurrent JWKS fetches for the same issuer (SEC-004)
-	jwksFlight singleflight.Group
-
-	// Single-IDP fallback (for backward compatibility)
-	jwks keyfunc.Keyfunc
-
-	log *zap.SugaredLogger
-
-	// IDPLoader for multi-IDP mode
-	idpLoader identityProviderByIssuerLoader
-
-	// defaultHTTPClient is a shared HTTP client for OIDC discovery when no
-	// custom CA is configured. Reusing it avoids per-request allocations and
-	// enables connection pooling.
+	providerEngineMu  sync.Mutex
+	closed            bool
+	providerEngines   map[string]*oidc.Engine
+	log               *zap.SugaredLogger
+	idpLoader         identityProviderByIssuerLoader
 	defaultHTTPClient *http.Client
 }
 
 type identityProviderByIssuerLoader interface {
-	LoadIdentityProviderByIssuer(ctx context.Context, issuer string) (*config.IdentityProviderConfig, error)
+	LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error)
 }
 
-func (a *AuthHandler) validateJWKSIdentityProviderConfig(idpCfg *config.IdentityProviderConfig) error {
-	if idpCfg == nil {
-		return errUnknownIdentityProvider
-	}
-	if idpCfg.InsecureSkipVerify || (idpCfg.Keycloak != nil && idpCfg.Keycloak.InsecureSkipVerify) {
-		if a.log != nil {
-			a.log.Warnw("refusing insecure TLS verification for IDP", "idp", idpCfg.Name)
-		}
-		return errUnknownIdentityProvider
-	}
-	if idpCfg.ExpectedAudience == "" {
-		if a.log != nil {
-			a.log.Warnw("refusing IDP without expected audience", "idp", idpCfg.Name)
-		}
+func (a *AuthHandler) validateJWKSIdentityProviderConfig(cfg *config.IdentityProviderConfig) error {
+	if cfg == nil || cfg.InsecureSkipVerify || (cfg.Keycloak != nil && cfg.Keycloak.InsecureSkipVerify) || cfg.ExpectedAudience == "" {
 		return errUnknownIdentityProvider
 	}
 	return nil
 }
 
-// defaultOIDCTransport clones http.DefaultTransport to inherit its sensible
-// defaults (proxy support, dial/idle timeouts, keep-alives) and layers TLS 1.2
-// minimum on top. If http.DefaultTransport is not a *http.Transport, it falls
-// back to a known-good Transport configuration.
 func defaultOIDCTransport() *http.Transport {
 	base, ok := http.DefaultTransport.(*http.Transport)
-
-	var t *http.Transport
-	if ok && base != nil {
-		t = base.Clone()
-	} else {
-		t = &http.Transport{
-			Proxy:                 http.ProxyFromEnvironment,
-			DialContext:           (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
-			ForceAttemptHTTP2:     true,
-			MaxIdleConns:          100,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ExpectContinueTimeout: 1 * time.Second,
-		}
+	if !ok || base == nil {
+		base = &http.Transport{Proxy: http.ProxyFromEnvironment, DialContext: (&net.Dialer{Timeout: 30 * time.Second, KeepAlive: 30 * time.Second}).DialContext, ForceAttemptHTTP2: true}
 	}
-
+	t := base.Clone()
 	if t.TLSClientConfig == nil {
 		t.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
 	} else if t.TLSClientConfig.MinVersion < tls.VersionTLS12 {
-		cfg := t.TLSClientConfig.Clone()
-		cfg.MinVersion = tls.VersionTLS12
-		t.TLSClientConfig = cfg
+		t.TLSClientConfig = t.TLSClientConfig.Clone()
+		t.TLSClientConfig.MinVersion = tls.VersionTLS12
 	}
 	return t
 }
 
-func NewAuth(log *zap.SugaredLogger, cfg config.Config) *AuthHandler {
-	// JWKS loading happens dynamically via WithIdentityProviderLoader()
-	// using IdentityProvider CRDs configured in the cluster
-	return &AuthHandler{
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		log:         log,
-		defaultHTTPClient: &http.Client{
-			Transport: defaultOIDCTransport(),
-			Timeout:   defaultOIDCTimeout,
-		},
-	}
+func NewAuth(log *zap.SugaredLogger, _ config.Config) *AuthHandler {
+	client := &http.Client{Transport: defaultOIDCTransport(), Timeout: defaultOIDCTimeout}
+	return &AuthHandler{log: log, defaultHTTPClient: client, providerEngines: make(map[string]*oidc.Engine)}
 }
 
-// WithIdentityProviderLoader sets the IDP loader for multi-IDP support
-func (a *AuthHandler) WithIdentityProviderLoader(loader *config.IdentityProviderLoader) *AuthHandler {
-	if loader == nil {
-		a.idpLoader = nil
-		return a
+func (a *AuthHandler) authenticateWithProviderPolicy(ctx context.Context, rawToken string, policy apiserver.JWTAuthenticator, cfg *config.IdentityProviderConfig) (*authenticator.Response, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("OIDC provider configuration is required")
 	}
-	a.idpLoader = loader
-	return a
-}
-
-// jwksFetchResult holds the result of a JWKS fetch operation for singleflight deduplication.
-type jwksFetchResult struct {
-	jwks     keyfunc.Keyfunc
-	audience string
-	idpName  string // resolved IDP name, avoids a second K8s lookup in the request path
-}
-
-// getJWKSForIssuer returns the JWKS and expected audience for a given issuer URL,
-// loading and caching them if necessary.
-// For single-IDP mode (no idpLoader), returns the default JWKS with empty audience.
-// Uses LRU eviction to prevent memory exhaustion when cache is full.
-// Concurrent fetches for the same issuer are deduplicated via singleflight (SEC-004).
-func (a *AuthHandler) getJWKSForIssuer(ctx context.Context, issuer string) (jwks keyfunc.Keyfunc, audience string, idpName string, cacheHit bool, err error) {
-	// Single-IDP mode: use default JWKS
-	if a.idpLoader == nil {
-		return a.jwks, "", "", true, nil
+	algorithms := append([]string(nil), cfg.SupportedSigningAlgs...)
+	if len(algorithms) == 0 {
+		algorithms = append([]string(nil), allowedJWTAlgs...)
 	}
-
-	// Multi-IDP mode: check LRU cache for specific issuer (fast path)
-	a.jwksMutex.Lock()
-	if elem, exists := a.jwksCache[issuer]; exists {
-		// Move to front of LRU list (mark as recently used)
-		a.jwksLRUList.MoveToFront(elem)
-		entry := elem.Value.(*jwksCacheEntry)
-		cachedElem := elem
-		// Snapshot mutable fields under the lock to avoid a data race:
-		// another goroutine could write these fields concurrently.
-		cachedJWKS := entry.jwks
-		cachedAudience := entry.expectedAudience
-		cachedIDPName := entry.idpName
-		lastRefresh := entry.audienceRefreshedAt
-		lastAttempt := entry.audienceAttemptedAt
-		a.jwksMutex.Unlock()
-
-		// Refresh expectedAudience from the live IDP config periodically so
-		// changes take effect without waiting for JWKS cache eviction or a restart.
-		// Use singleflight to avoid thundering herd when many requests arrive
-		// just after the refresh interval elapses for the same issuer.
-		if time.Since(lastRefresh) > audienceRefreshInterval &&
-			(lastAttempt.IsZero() || time.Since(lastAttempt) > audienceRefreshFailureBackoff) {
-			_, refreshErr, _ := a.jwksFlight.Do("audience:"+issuer, func() (interface{}, error) {
-				idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
-				now := time.Now()
-
-				a.jwksMutex.Lock()
-				defer a.jwksMutex.Unlock()
-
-				// Re-check the cache entry under the lock so we don't update a
-				// stale/evicted pointer captured before unlocking.
-				currentElem, stillCached := a.jwksCache[issuer]
-				if !stillCached || currentElem != cachedElem {
-					return nil, nil
-				}
-				currentEntry := currentElem.Value.(*jwksCacheEntry)
-				currentEntry.audienceAttemptedAt = now
-
-				if err != nil {
-					if currentEntry.cancel != nil {
-						currentEntry.cancel()
-					}
-					a.jwksFetchLimiter.Delete(issuer)
-					delete(a.jwksCache, issuer)
-					a.jwksLRUList.Remove(currentElem)
-					return nil, errUnknownIdentityProvider
-				}
-				if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
-					if currentEntry.cancel != nil {
-						currentEntry.cancel()
-					}
-					a.jwksFetchLimiter.Delete(issuer)
-					delete(a.jwksCache, issuer)
-					a.jwksLRUList.Remove(currentElem)
-					return nil, err
-				}
-				if currentEntry.configIdentity != jwksIdentity(idpCfg) {
-					if currentEntry.cancel != nil {
-						currentEntry.cancel()
-					}
-					a.jwksFetchLimiter.Delete(issuer)
-					delete(a.jwksCache, issuer)
-					a.jwksLRUList.Remove(currentElem)
-					return nil, errUnknownIdentityProvider
-				}
-
-				currentEntry.expectedAudience = idpCfg.ExpectedAudience
-				currentEntry.idpName = idpCfg.Name
-				currentEntry.audienceRefreshedAt = now
-				return nil, nil
-			})
-			if refreshErr == nil {
-				a.jwksMutex.Lock()
-				currentElem, stillCached := a.jwksCache[issuer]
-				if !stillCached || currentElem != cachedElem {
-					a.jwksMutex.Unlock()
-					return nil, "", "", true, errUnknownIdentityProvider
-				}
-				currentEntry := currentElem.Value.(*jwksCacheEntry)
-				refreshedAudience := currentEntry.expectedAudience
-				refreshedIDPName := currentEntry.idpName
-				a.jwksMutex.Unlock()
-				return cachedJWKS, refreshedAudience, refreshedIDPName, true, nil
-			}
-			a.log.Warnw("failed to refresh cached IDP config; evicted JWKS cache entry", "issuer", issuer, "error", refreshErr)
-			return nil, "", "", true, refreshErr
-		}
-
-		return cachedJWKS, cachedAudience, cachedIDPName, true, nil
-	}
-	a.jwksMutex.Unlock()
-
-	// SEC-004: Use singleflight to deduplicate concurrent JWKS fetches for the same issuer.
-	// This prevents fetch storms when many requests arrive simultaneously with a new issuer.
-	v, err, _ := a.jwksFlight.Do(issuer, func() (interface{}, error) {
-		return a.loadJWKSForIssuer(ctx, issuer)
-	})
+	engine, err := a.providerEngine(policy, cfg, algorithms)
 	if err != nil {
-		return nil, "", "", false, err
-	}
-	res := v.(*jwksFetchResult)
-	return res.jwks, res.audience, res.idpName, false, nil
-}
-
-// loadJWKSForIssuer performs the actual JWKS fetch, IDP resolution, and cache population.
-// It is called via singleflight to ensure only one concurrent fetch per issuer.
-func (a *AuthHandler) loadJWKSForIssuer(ctx context.Context, issuer string) (*jwksFetchResult, error) {
-	// Double-check cache inside singleflight (another goroutine may have populated it)
-	a.jwksMutex.Lock()
-	if elem, exists := a.jwksCache[issuer]; exists {
-		a.jwksLRUList.MoveToFront(elem)
-		entry := elem.Value.(*jwksCacheEntry)
-		result := &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}
-		a.jwksMutex.Unlock()
-		return result, nil
-	}
-	a.jwksMutex.Unlock()
-
-	// SEC-004: per-issuer rate limiting on initial JWKS client creation.
-	// Prevents an attacker from flooding requests with crafted issuer claims
-	// to trigger excessive JWKS fetches against upstream OIDC providers.
-	// Note: once a JWKS client is created and cached, subsequent refreshes
-	// (including those triggered by unknown kid values) are managed internally
-	// by keyfunc/v3's RefreshInterval and per-URL deduplication — not by this
-	// limiter. Network-level and IdP-side rate limits should be configured as
-	// additional defense-in-depth for the JWKS endpoint.
-	if lastFetch, ok := a.jwksFetchLimiter.Load(issuer); ok {
-		if t, ok := lastFetch.(time.Time); ok {
-			elapsed := time.Since(t)
-			if elapsed < jwksFetchMinInterval {
-				retryAfter := jwksFetchMinInterval - elapsed
-				return nil, &jwksFetchRateLimitedError{RetryAfter: retryAfter}
-			}
-		}
-	}
-
-	// Load IDP config by issuer
-	idpCfg, err := a.idpLoader.LoadIdentityProviderByIssuer(ctx, issuer)
-	if err != nil {
-		a.log.Warnw("failed to load IDP config for issuer", "issuer", issuer, "error", err)
-		// Don't expose the issuer in error message to prevent reconnaissance attacks
-		return nil, errUnknownIdentityProvider
-	}
-
-	if err := a.validateJWKSIdentityProviderConfig(idpCfg); err != nil {
 		return nil, err
 	}
+	return engine.Authenticate(ctx, rawToken, policy)
+}
 
-	// Create JWKS override options for keyfunc/v3
-	override := keyfunc.Override{
-		RefreshInterval: time.Hour,
-		HTTPTimeout:     defaultOIDCTimeout,
-		RefreshErrorHandlerFunc: func(u string) func(ctx context.Context, err error) {
-			return func(_ context.Context, err error) {
-				a.log.Warnw("failed to refresh JWKS", "issuer", issuer, "url", u, "error", err)
-			}
-		},
+func (a *AuthHandler) providerEngine(policy apiserver.JWTAuthenticator, cfg *config.IdentityProviderConfig, algorithms []string) (*oidc.Engine, error) {
+	ca := cfg.CertificateAuthority
+	if ca == "" && cfg.Keycloak != nil {
+		ca = cfg.Keycloak.CertificateAuthority
 	}
-
-	// Configure TLS if needed (from IDP config)
-	if idpCfg.CertificateAuthority != "" {
-		pool, err := buildCertPoolFromPEM(idpCfg.CertificateAuthority)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
-		}
-		transport := defaultOIDCTransport()
-		transport.TLSClientConfig.RootCAs = pool
-		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
-	} else if idpCfg.Keycloak != nil && idpCfg.Keycloak.CertificateAuthority != "" {
-		pool, err := buildCertPoolFromPEM(idpCfg.Keycloak.CertificateAuthority)
-		if err != nil {
-			return nil, fmt.Errorf("could not parse CA certificate for IDP %s: %w", idpCfg.Name, err)
-		}
-		transport := defaultOIDCTransport()
-		transport.TLSClientConfig.RootCAs = pool
-		override.Client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
+	keyBytes, _ := json.Marshal(struct {
+		Issuer, Discovery, CA, JWKS string
+		Algs                        []string
+	}{policy.Issuer.URL, policy.Issuer.DiscoveryURL, ca, cfg.JWKSURL, algorithms})
+	sum := sha256.Sum256(keyBytes)
+	key := hex.EncodeToString(sum[:])
+	a.providerEngineMu.Lock()
+	defer a.providerEngineMu.Unlock()
+	if a.closed {
+		return nil, fmt.Errorf("OIDC authentication handler is closed")
 	}
-
-	// Build JWKS endpoint URL from IDP's configuration
-	if idpCfg.Authority == "" {
-		return nil, fmt.Errorf("IDP %s has no authority configured", idpCfg.Name)
+	if a.providerEngines == nil {
+		a.providerEngines = make(map[string]*oidc.Engine)
 	}
-	if !isValidIssuerURL(idpCfg.Authority) {
-		return nil, fmt.Errorf("IDP %s has invalid authority URL", idpCfg.Name)
+	if engine := a.providerEngines[key]; engine != nil {
+		return engine, nil
 	}
-
-	// For Keycloak IDPs, use the Keycloak-specific JWKS endpoint
-	// This avoids relying on .well-known discovery which may not be available at the realm URL
-	var jwksURL string
-	if idpCfg.Keycloak != nil && idpCfg.Keycloak.BaseURL != "" && idpCfg.Keycloak.Realm != "" {
-		// Keycloak: {baseURL}/realms/{realm}/protocol/openid-connect/certs
-		baseURL := strings.TrimRight(idpCfg.Keycloak.BaseURL, "/")
-		jwksURL = fmt.Sprintf("%s/realms/%s/protocol/openid-connect/certs", baseURL, idpCfg.Keycloak.Realm)
-	} else {
-		// Standard OIDC: use .well-known/openid-configuration discovery
-		discoveryURL := fmt.Sprintf("%s/.well-known/openid-configuration", strings.TrimRight(idpCfg.Authority, "/"))
-
-		// Use the configured client (or default) to fetch discovery
-		client := override.Client
-		if client == nil {
-			client = a.defaultHTTPClient
-		}
-		if client == nil {
-			// Fallback for struct-literal construction: ensure TLS 1.2 minimum
-			client = &http.Client{
-				Transport: defaultOIDCTransport(),
-				Timeout:   defaultOIDCTimeout,
-			}
-		}
-
-		// Try discovery
-		var discoverySuccess bool
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL, nil)
-		if err == nil {
-			resp, err := client.Do(req)
-			if err == nil {
-				defer func() { _ = resp.Body.Close() }()
-				if resp.StatusCode == http.StatusOK {
-					var discovery struct {
-						JWKSURI string `json:"jwks_uri"`
-					}
-					if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&discovery); err == nil && discovery.JWKSURI != "" {
-						// Validate the discovered JWKS URI to prevent SSRF if an IDP
-						// is compromised and returns a malicious jwks_uri.
-						if !isValidJWKSURL(discovery.JWKSURI) {
-							a.log.Warnw("OIDC discovery returned invalid jwks_uri, ignoring", "jwks_uri", discovery.JWKSURI)
-						} else if !jwksHostMatchesAuthority(discovery.JWKSURI, idpCfg.Authority) {
-							a.log.Warnw("OIDC discovery returned jwks_uri with mismatched host, ignoring",
-								"jwks_uri", discovery.JWKSURI, "authority", idpCfg.Authority)
-						} else {
-							jwksURL = discovery.JWKSURI
-							discoverySuccess = true
-						}
-					}
-				}
-			}
-		}
-
-		if !discoverySuccess {
-			// Fallback: Try appending /.well-known/jwks.json directly to authority
-			jwksURL = fmt.Sprintf("%s/.well-known/jwks.json", strings.TrimRight(idpCfg.Authority, "/"))
-			a.log.Debugw("OIDC discovery failed or returned no jwks_uri, falling back to default path", "url", jwksURL)
-		}
-	}
-
-	// Create a per-entry context to control the background refresh goroutine.
-	// Cancelling this context stops the refresh goroutine (replaces EndBackground in keyfunc v1).
-	entryCtx, entryCancel := context.WithCancel(context.Background())
-	k, err := keyfunc.NewDefaultOverrideCtx(entryCtx, []string{jwksURL}, override)
-	if err != nil {
-		entryCancel()
-		return nil, fmt.Errorf("failed to load JWKS for IDP %s (%s): %w", idpCfg.Name, issuer, err)
-	}
-
-	// SEC-004: store rate-limit timestamp only after successful JWKS fetch.
-	// This prevents rate-limiting subsequent requests when the upstream JWKS
-	// endpoint is temporarily unavailable (transient failure amplification).
-	a.jwksFetchLimiter.Store(issuer, time.Now())
-
-	// Cache with LRU eviction to prevent memory exhaustion
-	a.jwksMutex.Lock()
-	defer a.jwksMutex.Unlock()
-
-	// Check again in case another goroutine loaded it while we were fetching
-	if elem, exists := a.jwksCache[issuer]; exists {
-		// Another goroutine beat us to it - use theirs, discard ours
-		entryCancel()
-		a.jwksLRUList.MoveToFront(elem)
-		entry := elem.Value.(*jwksCacheEntry)
-		return &jwksFetchResult{jwks: entry.jwks, audience: entry.expectedAudience, idpName: entry.idpName}, nil
-	}
-
-	// LRU eviction: remove least recently used entries if cache is full
-	for len(a.jwksCache) >= maxJWKSCacheSize {
-		// Evict the back element (least recently used)
-		oldest := a.jwksLRUList.Back()
-		if oldest == nil {
+	if len(a.providerEngines) >= maxJWKSCacheSize {
+		for oldKey, oldEngine := range a.providerEngines {
+			oldEngine.Close()
+			delete(a.providerEngines, oldKey)
 			break
 		}
-		entry := oldest.Value.(*jwksCacheEntry)
-		a.log.Debugw("JWKS cache LRU eviction",
-			"evictedIssuer", entry.issuer,
-			"currentSize", len(a.jwksCache),
-			"maxSize", maxJWKSCacheSize)
-		// Stop the background refresh goroutine via context cancellation
-		if entry.cancel != nil {
-			entry.cancel()
-		}
-		// Clean up rate limiter entry to prevent unbounded sync.Map growth
-		a.jwksFetchLimiter.Delete(entry.issuer)
-		delete(a.jwksCache, entry.issuer)
-		a.jwksLRUList.Remove(oldest)
 	}
-
-	// Add new entry at front (most recently used)
-	now := time.Now()
-	entry := &jwksCacheEntry{issuer: issuer, idpName: idpCfg.Name, expectedAudience: idpCfg.ExpectedAudience, audienceRefreshedAt: now, audienceAttemptedAt: now, jwks: k, cancel: entryCancel, configIdentity: jwksIdentity(idpCfg)}
-	elem := a.jwksLRUList.PushFront(entry)
-	a.jwksCache[issuer] = elem
-
-	a.log.Debugw("loaded JWKS for issuer", "issuer", issuer, "idp_name", idpCfg.Name)
-	return &jwksFetchResult{jwks: k, audience: idpCfg.ExpectedAudience, idpName: idpCfg.Name}, nil
+	client := a.defaultHTTPClient
+	if ca != "" {
+		pool, err := buildCertPoolFromPEM(ca)
+		if err != nil {
+			return nil, fmt.Errorf("parse OIDC certificate authority: %w", err)
+		}
+		transport := defaultOIDCTransport()
+		transport.TLSClientConfig.RootCAs = pool
+		client = &http.Client{Transport: transport, Timeout: defaultOIDCTimeout}
+	}
+	engine := oidc.New(context.Background(), oidc.Options{Client: client, JWKSURL: cfg.JWKSURL, MaxAuthenticators: maxJWKSCacheSize, SupportedSigningAlgs: algorithms})
+	a.providerEngines[key] = engine
+	return engine, nil
 }
 
-func authErrorMessageForJWKSLoad(err error) string {
-	switch {
-	case errors.Is(err, errUnknownIdentityProvider):
-		return "token issuer is not configured for this service"
-	case errors.Is(err, errJWKSFetchRateLimited):
-		return "temporarily unable to verify token; please retry shortly"
-	default:
-		return "unable to verify token"
+// Close releases cached OIDC authenticators and prevents their recreation.
+func (a *AuthHandler) Close() {
+	if a == nil {
+		return
+	}
+	a.providerEngineMu.Lock()
+	defer a.providerEngineMu.Unlock()
+	a.closed = true
+	for key, engine := range a.providerEngines {
+		engine.Close()
+		delete(a.providerEngines, key)
 	}
 }
 
-func retryAfterFromRateLimitedError(err error) string {
-	var rle *jwksFetchRateLimitedError
-	if errors.As(err, &rle) && rle.RetryAfter > 0 {
-		secs := int(math.Ceil(rle.RetryAfter.Seconds()))
-		if secs < 1 {
-			secs = 1
-		}
-		return fmt.Sprintf("%d", secs)
+func (a *AuthHandler) installTargetIdentityResolver(c *gin.Context, bearer string, cfg *config.IdentityProviderConfig) {
+	if cfg == nil {
+		return
 	}
-	return fmt.Sprintf("%d", int(jwksFetchMinInterval.Seconds()))
+	c.Set("user_identifier_claim", cfg.UserIdentifierClaim)
+	c.Set(oidc.TargetIdentityResolverKey, oidc.TargetIdentityResolver(func(ctx context.Context, cluster *breakglassv1alpha1.ClusterConfig, fallback breakglassv1alpha1.UserIdentifierClaimType) (oidc.TargetIdentity, error) {
+		policy, err := targetJWTPolicy(cfg, cluster, fallback)
+		if err != nil {
+			return oidc.TargetIdentity{}, err
+		}
+		response, err := a.authenticateWithProviderPolicy(ctx, bearer, policy, cfg)
+		if err != nil {
+			return oidc.TargetIdentity{}, err
+		}
+		return oidc.TargetIdentity{User: response.User}, nil
+	}))
+}
+
+func (a *AuthHandler) WithIdentityProviderLoader(loader identityProviderByIssuerLoader) *AuthHandler {
+	a.idpLoader = loader
+	return a
 }
 
 func (a *AuthHandler) authenticate(c *gin.Context) bool {
@@ -630,85 +248,27 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 
 	startTime := time.Now()
 
-	// Get appropriate JWKS (based on issuer or default)
-	var jwks keyfunc.Keyfunc
 	var selectedIDP string
-
-	var expectedAudience string
-
-	if a.idpLoader != nil && issuer != "" {
-		// Multi-IDP mode: load JWKS for specific issuer
-		loadedJwks, loadedAudience, loadedIDPName, wasCacheHit, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
-		if err != nil {
-			a.log.Debugw("failed to get JWKS for issuer", "issuer", issuer, "error", err)
-			metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
-			if errors.Is(err, errJWKSFetchRateLimited) {
-				metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_rate_limited").Inc()
-				RespondTooManyRequestsWithRetryAfter(c, retryAfterFromRateLimitedError(err), authErrorMessageForJWKSLoad(err))
-			} else {
-				metrics.JWTValidationFailure.WithLabelValues("unknown", "jwks_load_failed").Inc()
-				RespondUnauthorizedWithMessage(c, authErrorMessageForJWKSLoad(err))
-			}
-			c.Abort()
-			return false
+	var selectedIDPConfig *config.IdentityProviderConfig
+	var mappedIdentity *authenticator.Response
+	claims := unverifiedClaims
+	var token *jwt.Token
+	if a.idpLoader != nil {
+		selectedIDPConfig, mappedIdentity, err = a.verifyProviderToken(c.Request.Context(), bearer, claims)
+		if selectedIDPConfig != nil {
+			selectedIDP = selectedIDPConfig.Name
 		}
-		jwks = loadedJwks
-		expectedAudience = loadedAudience
-		selectedIDP = loadedIDPName
-
-		// Record JWKS cache hit/miss with bounded IDP name label
-		cacheLabel := selectedIDP
-		if cacheLabel == "" {
-			cacheLabel = "unknown"
+		if err == nil {
+			token = &jwt.Token{Claims: claims, Valid: true}
 		}
-		if wasCacheHit {
-			metrics.JWKSCacheHits.WithLabelValues(cacheLabel).Inc()
-		} else {
-			metrics.JWKSCacheMisses.WithLabelValues(cacheLabel).Inc()
-		}
-	} else if a.idpLoader != nil && issuer == "" {
-		// Multi-IDP mode but no issuer in token: require issuer claim
-		metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
-		metrics.JWTValidationFailure.WithLabelValues("unknown", "missing_issuer").Inc()
-		RespondUnauthorizedWithMessage(c, "No issuer (iss) claim found in token. Please ensure you are logged in with a valid identity provider.")
-		c.Abort()
-		return false
 	} else {
-		// Single-IDP mode: use default JWKS (issuer claim optional for backward compatibility)
-		jwks = a.jwks
+		err = errors.New("JWT verifier is not configured")
 	}
-
-	// Record validation attempt after IDP resolution so the label carries
-	// the resolved provider name instead of an empty string.
 	idpLabel := selectedIDP
 	if idpLabel == "" {
-		if mode == "single-idp" {
-			idpLabel = "single-idp"
-		} else {
-			idpLabel = "unknown"
-		}
+		idpLabel = mode
 	}
 	metrics.JWTValidationRequests.WithLabelValues(idpLabel, mode).Inc()
-
-	// Verify and parse JWT with selected JWKS
-	// Note: keyfunc/v3 automatically refreshes on unknown kid, so no manual refresh needed
-	claims := jwt.MapClaims{}
-	parserOpts := []jwt.ParserOption{
-		jwt.WithValidMethods(allowedJWTAlgs),
-		jwt.WithIssuedAt(),
-		jwt.WithExpirationRequired(), // SEC-005: reject tokens without exp claim
-	}
-
-	// SEC-005: Audience validation for CRD-backed identity providers.
-	// Prevents cross-service token confusion from other OIDC clients at the
-	// same IDP. IdentityProvider CRDs require expectedAudience and a matching
-	// audience protocol mapper in the IDP.
-	if expectedAudience != "" {
-		parserOpts = append(parserOpts, jwt.WithAudience(expectedAudience))
-	}
-
-	verifiedParser := jwt.NewParser(parserOpts...)
-	token, err := verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
 	if err != nil {
 		// Record failure with reason using typed errors from jwt/v5.
 		failureReason := "verification_failed"
@@ -746,8 +306,10 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if issuer != "" {
 		c.Set("issuer", issuer)
 	}
-	if selectedIDP != "" {
+	if selectedIDPConfig != nil {
 		c.Set("identity_provider_name", selectedIDP)
+		c.Set("user_identifier_prefix", selectedIDPConfig.UserIdentifierPrefix)
+		c.Set("user_identifier_claim", selectedIDPConfig.UserIdentifierClaim)
 	}
 
 	// This trusted middleware signal is independent of whether a JWT happens
@@ -761,6 +323,13 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// Attach raw claims for downstream debugging if needed
 	// Note: this is only used for debug logs and should not be exposed to end users.
 	c.Set("raw_claims", claims)
+	if mappedIdentity != nil {
+		c.Set("authenticated_username", mappedIdentity.User.GetName())
+		if value, ok := username.(string); !ok || value == "" {
+			username = mappedIdentity.User.GetName()
+		}
+		a.installTargetIdentityResolver(c, bearer, selectedIDPConfig)
+	}
 
 	// Attempt to extract groups from common Keycloak / OIDC claims.
 	// groupsClaimPresent tracks whether the token itself carried group
@@ -841,6 +410,11 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 	}
 
+	if selectedIDPConfig != nil && selectedIDPConfig.KubernetesIdentity != nil {
+		groups = mappedIdentity.User.GetGroups()
+		groupsClaimPresent = true
+	}
+
 	c.Set("token", token)
 	c.Set("user_id", userID)
 	c.Set("email", email)
@@ -863,7 +437,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		}
 		c.Set("groups", groups)
 		var identifiers []string
-		for _, claim := range []interface{}{userID, email, username} {
+		for _, claim := range []interface{}{userID, email, username, c.GetString("authenticated_username")} {
 			if identifier, ok := claim.(string); ok && identifier != "" {
 				identifiers = append(identifiers, identifier)
 			}
@@ -979,41 +553,18 @@ func (a *AuthHandler) tryExtractUserIdentity(c *gin.Context) string {
 		return ""
 	}
 
-	// Canonicalize issuer consistently with authenticate() to avoid
-	// duplicate cache entries from trailing slash variations.
-	issuer = strings.TrimRight(issuer, "/")
-
-	// Get JWKS for verification
-	jwks, expectedAudience, _, _, err := a.getJWKSForIssuer(c.Request.Context(), issuer)
-	if err != nil || jwks == nil {
+	if a.idpLoader != nil {
+		cfg, response, verifyErr := a.verifyProviderToken(c.Request.Context(), bearer, unverifiedClaims)
+		if verifyErr != nil {
+			return ""
+		}
+		c.Set("authenticated_username", response.User.GetName())
+		c.Set("issuer", issuer)
+		c.Set("identity_provider_name", cfg.Name)
+		if email, ok := unverifiedClaims["email"].(string); ok && email != "" {
+			return email
+		}
 		return ""
-	}
-
-	// Verify the token
-	claims := jwt.MapClaims{}
-	parserOpts := []jwt.ParserOption{
-		jwt.WithValidMethods(allowedJWTAlgs),
-		jwt.WithIssuedAt(),
-		jwt.WithExpirationRequired(), // SEC-005: consistent with authenticate()
-	}
-	// SEC-005: apply audience validation in optional auth path too
-	if expectedAudience != "" {
-		parserOpts = append(parserOpts, jwt.WithAudience(expectedAudience))
-	}
-	verifiedParser := jwt.NewParser(parserOpts...)
-	_, err = verifiedParser.ParseWithClaims(bearer, &claims, jwks.Keyfunc)
-	if err != nil {
-		return ""
-	}
-
-	// Extract email as user identity
-	if email, ok := claims["email"].(string); ok && email != "" {
-		return email
-	}
-
-	// Fallback to subject if email not available
-	if sub, ok := claims["sub"].(string); ok && sub != "" {
-		return sub
 	}
 
 	return ""
@@ -1043,58 +594,6 @@ func isValidIssuerURL(issuer string) bool {
 		return false
 	}
 	return true
-}
-
-// isValidJWKSURL validates that a JWKS URI is a well-formed HTTPS URL.
-// Unlike isValidIssuerURL, this allows query parameters since legitimate
-// JWKS endpoints may include them (e.g., versioned endpoints).
-func isValidJWKSURL(jwksURI string) bool {
-	if len(jwksURI) == 0 || len(jwksURI) > maxIssuerLength {
-		return false
-	}
-	u, err := url.Parse(jwksURI)
-	if err != nil {
-		return false
-	}
-	if u.Scheme != "https" || u.Host == "" {
-		return false
-	}
-	// Reject fragment and userinfo but allow query parameters
-	if u.Fragment != "" || u.User != nil {
-		return false
-	}
-	return true
-}
-
-// jwksHostMatchesAuthority returns true when the discovered jwks_uri origin
-// matches the configured authority origin (hostname + effective port).
-// This prevents SSRF if a compromised IDP discovery endpoint returns a
-// jwks_uri pointing to an internal, unrelated, or different-port host.
-func jwksHostMatchesAuthority(jwksURI, authority string) bool {
-	jwksURL, err := url.Parse(jwksURI)
-	if err != nil {
-		return false
-	}
-	authURL, err := url.Parse(authority)
-	if err != nil || !authURL.IsAbs() {
-		return false
-	}
-	if !strings.EqualFold(jwksURL.Hostname(), authURL.Hostname()) {
-		return false
-	}
-	// Compare effective ports (default 443 for HTTPS when unspecified)
-	return effectivePort(jwksURL) == effectivePort(authURL)
-}
-
-// effectivePort returns the port from the URL, defaulting to "443" for https.
-func effectivePort(u *url.URL) string {
-	if p := u.Port(); p != "" {
-		return p
-	}
-	if u.Scheme == "https" {
-		return "443"
-	}
-	return ""
 }
 
 func buildCertPoolFromPEM(pemData string) (*x509.CertPool, error) {

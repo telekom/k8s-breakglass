@@ -28,11 +28,17 @@ func (wc *BreakglassSessionController) authenticatedUserIdentifiers(c *gin.Conte
 	email := c.GetString("email")
 	username := c.GetString("username")
 	userID := c.GetString("user_id")
-	authIdentifiers := collectAuthIdentifiers(email, username, userID)
+	authenticatedUsername := c.GetString("authenticated_username")
+	authIdentifiers := collectAuthIdentifiers(email, authenticatedUsername, username)
+	for _, identifier := range collectAuthIdentifiers("", userID, "") {
+		if !slices.Contains(authIdentifiers, identifier) {
+			authIdentifiers = append(authIdentifiers, identifier)
+		}
+	}
 	if len(authIdentifiers) == 0 {
 		return "", nil, errAuthenticatedIdentityNotFound
 	}
-	return firstNonEmpty(email, username, userID), authIdentifiers, nil
+	return firstNonEmpty(email, authenticatedUsername, username, userID), authIdentifiers, nil
 }
 
 // handleWithdrawMyRequest allows the session requester to withdraw their own pending request
@@ -53,7 +59,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 	}
 
 	// Only allow the original requester to withdraw
-	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
+	requester, _, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
 		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
 		if errors.Is(err, errAuthenticatedIdentityNotFound) {
@@ -63,7 +69,7 @@ func (wc *BreakglassSessionController) handleWithdrawMyRequest(c *gin.Context) {
 		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
+	if !sessionRequesterMatches(c, bs.Spec) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can withdraw")
 		return
@@ -143,7 +149,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 	}
 
 	// Only allow the original requester to drop
-	requester, authIdentifiers, err := wc.authenticatedUserIdentifiers(c)
+	requester, _, err := wc.authenticatedUserIdentifiers(c)
 	if err != nil {
 		reqLog.Error("error getting authenticated user identifiers", zap.Error(err))
 		if errors.Is(err, errAuthenticatedIdentityNotFound) {
@@ -153,7 +159,7 @@ func (wc *BreakglassSessionController) handleDropMySession(c *gin.Context) {
 		apiresponses.RespondInternalError(c, "extract authenticated user identifiers from token", err, reqLog)
 		return
 	}
-	if !matchesAuthIdentifier(bs.Spec.User, authIdentifiers) || !sessionIdentityProviderMatches(c, bs.Spec.IdentityProviderName, bs.Spec.IdentityProviderIssuer, bs.Spec.AllowIDPMismatch) {
+	if !sessionRequesterMatches(c, bs.Spec) {
 		// User is authenticated but not the session owner - return 403 Forbidden
 		apiresponses.RespondForbidden(c, "only the session requester can drop")
 		return

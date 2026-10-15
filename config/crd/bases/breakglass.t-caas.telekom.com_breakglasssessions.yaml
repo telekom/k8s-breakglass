@@ -166,6 +166,23 @@ spec:
                       (true) or optional (false).
                     type: boolean
                 type: object
+              requesterEmail:
+                description: requesterEmail snapshots the verified email for notifications
+                  and display.
+                maxLength: 320
+                type: string
+              requesterSubject:
+                description: |-
+                  requesterSubject snapshots the verified OIDC subject used for requester ownership.
+                  It is matched only together with the originating identity provider.
+                maxLength: 256
+                type: string
+              requesterUsername:
+                description: |-
+                  requesterUsername snapshots the mapped Kubernetes API principal for tokens
+                  without a usable OIDC subject (for example custom username claims).
+                maxLength: 256
+                type: string
               retainFor:
                 default: 720h
                 description: retainFor is the amount of time to wait before removing

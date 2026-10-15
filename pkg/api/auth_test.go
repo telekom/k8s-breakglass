@@ -1,20 +1,14 @@
 package api
 
 import (
-	"container/list"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
-	"encoding/base64"
-	"encoding/json"
 	"encoding/pem"
-	"errors"
-	"fmt"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -23,22 +17,72 @@ import (
 	"testing"
 	"time"
 
-	"github.com/MicahParks/keyfunc/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/config"
+	upstreamoidc "github.com/telekom/k8s-breakglass/pkg/oidc"
 	"go.uber.org/zap/zaptest"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	apiserver "k8s.io/apiserver/pkg/apis/apiserver"
 )
 
 type staticIdentityProviderByIssuerLoader struct {
 	cfg *config.IdentityProviderConfig
 	err error
+}
+
+func TestInstallTargetIdentityResolverArbitraryClaimAndPrefix(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	server := newSignedOIDCServer(t)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+	auth := NewAuth(zaptest.NewLogger(t).Sugar(), config.Config{})
+	t.Cleanup(auth.Close)
+	token := server.token(t, server.key, jwt.MapClaims{
+		"iss": server.server.URL, "aud": "breakglass", "employee_id": "k834798",
+		"exp": time.Now().Add(time.Minute).Unix(),
+	})
+	auth.installTargetIdentityResolver(c, token, &config.IdentityProviderConfig{
+		Issuer:               server.server.URL,
+		Authority:            server.server.URL,
+		ExpectedAudience:     "breakglass",
+		CertificateAuthority: server.caPEM,
+		UserIdentifierClaim:  "employee_id",
+		UserIdentifierPrefix: "tdi_security_oidc:",
+	})
+	raw, exists := c.Get(upstreamoidc.TargetIdentityResolverKey)
+	require.True(t, exists)
+	resolver, ok := raw.(upstreamoidc.TargetIdentityResolver)
+	require.True(t, ok)
+	identity, err := resolver(context.Background(), nil, "")
+	require.NoError(t, err)
+	require.Equal(t, "tdi_security_oidc:k834798", identity.User.GetName())
+}
+
+func TestProviderEngineCacheReusesAndInvalidatesByConnectionPolicy(t *testing.T) {
+	auth := NewAuth(zaptest.NewLogger(t).Sugar(), config.Config{})
+	cfg := &config.IdentityProviderConfig{
+		Issuer:               "https://issuer.example",
+		JWKSURL:              "https://issuer.example/keys",
+		SupportedSigningAlgs: []string{"RS256"},
+	}
+	policy := apiserver.JWTAuthenticator{Issuer: apiserver.Issuer{URL: cfg.Issuer, Audiences: []string{"aud"}}}
+	algorithms := []string{"RS256"}
+	first, err := auth.providerEngine(policy, cfg, algorithms)
+	require.NoError(t, err)
+	second, err := auth.providerEngine(policy, cfg, algorithms)
+	require.NoError(t, err)
+	require.Same(t, first, second)
+	cfg.JWKSURL = "https://issuer.example/rotated-keys"
+	third, err := auth.providerEngine(policy, cfg, algorithms)
+	require.NoError(t, err)
+	require.NotSame(t, first, third)
+	auth.Close()
+	_, err = auth.providerEngine(policy, cfg, algorithms)
+	require.ErrorContains(t, err, "closed")
+	auth.Close()
 }
 
 func (s staticIdentityProviderByIssuerLoader) LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error) {
@@ -164,30 +208,6 @@ func TestAuthHandler_Middleware(t *testing.T) {
 	}
 }
 
-func TestAuthHandler_Middleware_ValidToken(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// Note: Comprehensive JWT validation tests with actual JWKS verification
-	// are in auth_jwt_test.go (TestAuthMiddleware_ExposesTokenAndRawClaims,
-	// TestAuthMiddleware_GroupNormalizationCases, etc.) and auth_jwt_negative_test.go.
-	// This test only validates the middleware function signature and basic structure.
-	t.Run("Middleware structure validation", func(t *testing.T) {
-		authHandler := &AuthHandler{}
-		middleware := authHandler.Middleware()
-		assert.NotNil(t, middleware, "Middleware should not be nil")
-		// Verify it's a valid Gin handler function
-		var handler gin.HandlerFunc = middleware
-		assert.NotNil(t, handler, "Middleware should be a gin.HandlerFunc")
-	})
-}
-
-func TestAuthHandler_Structure(t *testing.T) {
-	t.Run("AuthHandler creation", func(t *testing.T) {
-		authHandler := &AuthHandler{}
-		assert.NotNil(t, authHandler, "AuthHandler should be creatable")
-	})
-}
-
 func TestNewAuth_DefaultHTTPClient(t *testing.T) {
 	log := zaptest.NewLogger(t).Sugar()
 	handler := NewAuth(log, config.Config{})
@@ -294,56 +314,6 @@ func TestAuthHandler_MiddlewareHeaderRemoval(t *testing.T) {
 	assert.Empty(t, req.Header.Get("Authorization"))
 }
 
-func TestAuthHandler_ClaimsExtraction(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	srv, priv, kid := setupTestJWKSServer(t)
-	defer srv.Close()
-
-	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
-	assert.NoError(t, err)
-
-	authHandler := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
-
-	router := gin.New()
-	router.Use(authHandler.Middleware())
-	router.GET("/test", func(c *gin.Context) {
-		assert.True(t, c.GetBool("legacy_identity_allowed"), "single-JWKS mode remains explicit even when JWT carries an issuer")
-		assert.Equal(t, "https://single.example", c.GetString("issuer"))
-		c.JSON(http.StatusOK, gin.H{
-			"email":    c.GetString("email"),
-			"username": c.GetString("username"),
-			"user_id":  c.GetString("user_id"),
-		})
-	})
-
-	claims := jwt.MapClaims{
-		"iss":                "https://single.example",
-		"sub":                "user-123",
-		"email":              "user@example.com",
-		"preferred_username": "tester",
-		"exp":                time.Now().Add(time.Minute).Unix(),
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-	tok.Header["kid"] = kid
-	tokStr, err := tok.SignedString(priv)
-	assert.NoError(t, err)
-
-	req, err := http.NewRequest(http.MethodGet, "/test", nil)
-	assert.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+tokStr)
-
-	w := httptest.NewRecorder()
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var body map[string]string
-	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-	assert.Equal(t, "user@example.com", body["email"])
-	assert.Equal(t, "tester", body["username"])
-	assert.Equal(t, "user-123", body["user_id"])
-}
-
 func TestBuildCertPoolFromPEM(t *testing.T) {
 	// Generate a valid test certificate dynamically
 	validCertPEM := generateTestCertPEM(t)
@@ -443,98 +413,6 @@ func (m *mockRateLimiter) Allow(c *gin.Context) (bool, bool) {
 	return m.allowed, m.isAuthenticated
 }
 
-func TestMiddlewareWithRateLimiting(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	srv, priv, kid := setupTestJWKSServer(t)
-	defer srv.Close()
-
-	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
-	assert.NoError(t, err)
-
-	tests := []struct {
-		name           string
-		allowed        bool
-		authenticated  bool
-		authHeader     string
-		expectedStatus int
-		method         string
-		expectedAuth   bool
-	}{
-		{
-			name:           "rate limited unauthenticated",
-			allowed:        false,
-			authenticated:  false,
-			authHeader:     "",
-			expectedStatus: http.StatusTooManyRequests,
-			method:         http.MethodOptions,
-			expectedAuth:   false,
-		},
-		{
-			name:           "rate limited authenticated",
-			allowed:        false,
-			authenticated:  true,
-			authHeader:     "",
-			expectedStatus: http.StatusTooManyRequests,
-			method:         http.MethodGet,
-			expectedAuth:   true,
-		},
-		{
-			name:           "allowed authenticated",
-			allowed:        true,
-			authenticated:  true,
-			authHeader:     "",
-			expectedStatus: http.StatusOK,
-			method:         http.MethodGet,
-			expectedAuth:   true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			authHandler := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
-			mockRL := &mockRateLimiter{
-				allowed:         tt.allowed,
-				isAuthenticated: tt.authenticated,
-			}
-
-			router := gin.New()
-			router.Use(authHandler.MiddlewareWithRateLimiting(mockRL))
-			router.GET("/test", func(c *gin.Context) {
-				c.JSON(http.StatusOK, gin.H{"status": "ok"})
-			})
-
-			var tokenHeader string
-			if tt.method == http.MethodGet {
-				claims := jwt.MapClaims{
-					"sub": "rl-user",
-					"exp": time.Now().Add(time.Minute).Unix(),
-				}
-				tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-				tok.Header["kid"] = kid
-				tokStr, signErr := tok.SignedString(priv)
-				assert.NoError(t, signErr)
-				tokenHeader = "Bearer " + tokStr
-			}
-
-			req, _ := http.NewRequest(tt.method, "/test", nil)
-			if tokenHeader != "" {
-				req.Header.Set("Authorization", tokenHeader)
-			}
-			w := httptest.NewRecorder()
-			router.ServeHTTP(w, req)
-
-			assert.Equal(t, tt.expectedStatus, w.Code)
-			if tt.expectedStatus == http.StatusTooManyRequests {
-				var body map[string]interface{}
-				assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
-				assert.Equal(t, "TOO_MANY_REQUESTS", body["code"])
-				assert.Equal(t, tt.expectedAuth, body["authenticated"])
-			}
-		})
-	}
-}
-
 // --- SEC-003: isValidIssuerURL tests ---
 
 func TestIsValidIssuerURL(t *testing.T) {
@@ -568,69 +446,12 @@ func TestIsValidIssuerURL(t *testing.T) {
 	}
 }
 
-func TestIsValidJWKSURL(t *testing.T) {
-	tests := []struct {
-		name  string
-		url   string
-		valid bool
-	}{
-		{name: "valid JWKS URL", url: "https://auth.example.com/.well-known/jwks.json", valid: true},
-		{name: "valid JWKS URL with query", url: "https://auth.example.com/jwks?version=2", valid: true},
-		{name: "HTTP rejected", url: "http://auth.example.com/jwks", valid: false},
-		{name: "empty string", url: "", valid: false},
-		{name: "fragment rejected", url: "https://auth.example.com/jwks#frag", valid: false},
-		{name: "userinfo rejected", url: "https://user:pass@auth.example.com/jwks", valid: false},
-		{name: "extremely long URL", url: "https://auth.example.com/" + strings.Repeat("a", maxIssuerLength), valid: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := isValidJWKSURL(tt.url)
-			assert.Equal(t, tt.valid, got, "isValidJWKSURL(%q)", tt.url)
-		})
-	}
-}
-
-func TestJWKSHostMatchesAuthority(t *testing.T) {
-	tests := []struct {
-		name      string
-		jwksURI   string
-		authority string
-		match     bool
-	}{
-		{name: "same host", jwksURI: "https://auth.example.com/jwks", authority: "https://auth.example.com/realms/test", match: true},
-		{name: "case insensitive", jwksURI: "https://Auth.Example.COM/jwks", authority: "https://auth.example.com/", match: true},
-		{name: "different host rejected", jwksURI: "https://evil.com/jwks", authority: "https://auth.example.com/", match: false},
-		{name: "different host rejected (internal IP)", jwksURI: "https://169.254.169.254/jwks", authority: "https://auth.example.com/", match: false},
-		{name: "different port rejected", jwksURI: "https://auth.example.com:8443/jwks", authority: "https://auth.example.com/", match: false},
-		{name: "same explicit port", jwksURI: "https://auth.example.com:443/jwks", authority: "https://auth.example.com/", match: true},
-		{name: "both explicit same port", jwksURI: "https://auth.example.com:8443/jwks", authority: "https://auth.example.com:8443/realms/test", match: true},
-		{name: "invalid jwks URI", jwksURI: "://bad", authority: "https://auth.example.com/", match: false},
-		{name: "invalid authority", jwksURI: "https://auth.example.com/jwks", authority: "://bad", match: false},
-		{name: "relative authority", jwksURI: "https://auth.example.com/jwks", authority: "/relative/path", match: false},
-		{name: "empty authority", jwksURI: "https://auth.example.com/jwks", authority: "", match: false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := jwksHostMatchesAuthority(tt.jwksURI, tt.authority)
-			assert.Equal(t, tt.match, got, "jwksHostMatchesAuthority(%q, %q)", tt.jwksURI, tt.authority)
-		})
-	}
-}
-
 // --- SEC-003: Middleware rejects invalid issuer format ---
 
 func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	srv, priv, kid := setupTestJWKSServer(t)
-	defer srv.Close()
-
-	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
-	require.NoError(t, err)
-
-	auth := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
+	auth := &AuthHandler{log: zaptest.NewLogger(t).Sugar()}
 	router := gin.New()
 	router.Use(auth.Middleware())
 	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
@@ -642,7 +463,7 @@ func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
 	}{
 		{name: "HTTP issuer rejected", issuer: "http://evil.com", expectedStatus: http.StatusUnauthorized},
 		{name: "file issuer rejected", issuer: "file:///etc/passwd", expectedStatus: http.StatusUnauthorized},
-		{name: "empty issuer allowed (single-IDP fallback)", issuer: "", expectedStatus: http.StatusOK},
+		{name: "empty issuer fails closed without a verifier", issuer: "", expectedStatus: http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -654,9 +475,8 @@ func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
 			if tt.issuer != "" {
 				claims["iss"] = tt.issuer
 			}
-			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-			tok.Header["kid"] = kid
-			tokStr, signErr := tok.SignedString(priv)
+			tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+			tokStr, signErr := tok.SignedString([]byte("test-key"))
 			require.NoError(t, signErr)
 
 			req := httptest.NewRequest(http.MethodGet, "/test", nil)
@@ -665,664 +485,6 @@ func TestAuthMiddleware_RejectsInvalidIssuerFormat(t *testing.T) {
 			router.ServeHTTP(w, req)
 
 			assert.Equal(t, tt.expectedStatus, w.Code)
-		})
-	}
-}
-
-// --- SEC-004: Per-issuer JWKS fetch rate limiting ---
-
-func TestJWKSFetchRateLimiting(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	// Use a real IdentityProviderLoader with a fake k8s client so
-	// that getJWKSForIssuer enters the multi-IDP code path.
-	scheme := runtime.NewScheme()
-	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	loader := config.NewIdentityProviderLoader(fakeClient)
-
-	auth := &AuthHandler{
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		log:         zaptest.NewLogger(t).Sugar(),
-		idpLoader:   loader,
-	}
-
-	issuer := "https://auth.example.com"
-
-	// Pre-populate the limiter with a very recent fetch
-	auth.jwksFetchLimiter.Store(issuer, time.Now())
-
-	// Call getJWKSForIssuer — should return rate-limit error because
-	// the cooldown has not elapsed
-	_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rate limited")
-
-	// Verify that an unknown issuer (not in the rate limiter) passes the
-	// rate-limit check and proceeds to IDP resolution (which fails with a
-	// different error because we have no real k8s client).
-	unknownIssuer := "https://unknown.example.com"
-	_, _, _, _, err = auth.getJWKSForIssuer(t.Context(), unknownIssuer)
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "rate limited",
-		"unknown issuer should not be rate-limited on first attempt")
-
-	// Verify that after the cooldown, the same issuer is no longer rate-limited
-	// (it proceeds to IDP resolution which fails differently).
-	auth.jwksFetchLimiter.Store(issuer, time.Now().Add(-jwksFetchMinInterval-time.Second))
-	_, _, _, _, err = auth.getJWKSForIssuer(t.Context(), issuer)
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "rate limited",
-		"issuer should not be rate-limited after cooldown expires")
-}
-
-func TestGetJWKSForIssuerRejectsInsecureSkipVerifyBeforeCA(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	tests := []struct {
-		name string
-		idp  *breakglassv1alpha1.IdentityProvider
-	}{
-		{
-			name: "OIDC insecure flag with certificate authority",
-			idp: &breakglassv1alpha1.IdentityProvider{
-				ObjectMeta: metav1.ObjectMeta{Name: "oidc-insecure"},
-				Spec: breakglassv1alpha1.IdentityProviderSpec{
-					Issuer: "https://oidc.example.com",
-					OIDC: breakglassv1alpha1.OIDCConfig{
-						Authority:            "https://oidc.example.com",
-						ClientID:             "breakglass-ui",
-						ExpectedAudience:     "breakglass-ui",
-						CertificateAuthority: testCertificatePEM(t),
-						InsecureSkipVerify:   true,
-					},
-				},
-			},
-		},
-		{
-			name: "Keycloak insecure flag with certificate authority",
-			idp: &breakglassv1alpha1.IdentityProvider{
-				ObjectMeta: metav1.ObjectMeta{Name: "keycloak-insecure"},
-				Spec: breakglassv1alpha1.IdentityProviderSpec{
-					Issuer:            "https://keycloak.example.com/realms/test",
-					GroupSyncProvider: breakglassv1alpha1.GroupSyncProviderKeycloak,
-					OIDC: breakglassv1alpha1.OIDCConfig{
-						Authority:            "https://keycloak.example.com/realms/test",
-						ClientID:             "breakglass-ui",
-						ExpectedAudience:     "breakglass-ui",
-						CertificateAuthority: testCertificatePEM(t),
-					},
-					Keycloak: &breakglassv1alpha1.KeycloakGroupSync{
-						BaseURL:              "https://keycloak.example.com",
-						Realm:                "test",
-						ClientID:             "group-sync",
-						CertificateAuthority: testCertificatePEM(t),
-						InsecureSkipVerify:   true,
-						ClientSecretRef: breakglassv1alpha1.SecretKeyReference{
-							Name:      "keycloak-secret",
-							Namespace: "breakglass-system",
-							Key:       "client-secret",
-						},
-					},
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scheme := runtime.NewScheme()
-			require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-			loader := config.NewIdentityProviderLoader(fake.NewClientBuilder().
-				WithScheme(scheme).
-				WithObjects(tt.idp).
-				Build())
-
-			auth := &AuthHandler{
-				jwksCache:   make(map[string]*list.Element),
-				jwksLRUList: list.New(),
-				log:         zaptest.NewLogger(t).Sugar(),
-				idpLoader:   loader,
-			}
-
-			_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), tt.idp.Spec.Issuer)
-			require.Error(t, err)
-			assert.ErrorIs(t, err, errUnknownIdentityProvider)
-
-			_, err = loader.LoadIdentityProviderByIssuer(t.Context(), tt.idp.Spec.Issuer)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "insecureSkipVerify is not supported")
-		})
-	}
-}
-
-func TestGetJWKSForIssuerRejectsInsecureRuntimeConfigWithOpaqueError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	tests := []struct {
-		name string
-		cfg  *config.IdentityProviderConfig
-	}{
-		{
-			name: "OIDC insecure flag",
-			cfg: &config.IdentityProviderConfig{
-				Name:               "oidc-insecure",
-				Issuer:             "https://oidc.example.com",
-				Authority:          "https://oidc.example.com",
-				ClientID:           "breakglass-ui",
-				InsecureSkipVerify: true,
-			},
-		},
-		{
-			name: "Keycloak insecure flag",
-			cfg: &config.IdentityProviderConfig{
-				Name:      "keycloak-insecure",
-				Issuer:    "https://keycloak.example.com/realms/test",
-				Authority: "https://keycloak.example.com/realms/test",
-				ClientID:  "breakglass-ui",
-				Keycloak: &config.KeycloakRuntimeConfig{
-					BaseURL:            "https://keycloak.example.com",
-					Realm:              "test",
-					ClientID:           "group-sync",
-					InsecureSkipVerify: true,
-				},
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			auth := &AuthHandler{
-				jwksCache:   make(map[string]*list.Element),
-				jwksLRUList: list.New(),
-				log:         zaptest.NewLogger(t).Sugar(),
-				idpLoader:   staticIdentityProviderByIssuerLoader{cfg: tt.cfg},
-			}
-
-			_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), tt.cfg.Issuer)
-			require.Error(t, err)
-			assert.ErrorIs(t, err, errUnknownIdentityProvider)
-			assert.NotContains(t, err.Error(), tt.cfg.Name)
-			assert.NotContains(t, err.Error(), "insecureSkipVerify")
-		})
-	}
-}
-
-func TestGetJWKSForIssuer_AudienceRefreshFailureEvictsCachedEntry(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-	loader := config.NewIdentityProviderLoader(fake.NewClientBuilder().WithScheme(scheme).Build())
-
-	issuer := "https://auth.example.com"
-	auth := &AuthHandler{
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		log:         zaptest.NewLogger(t).Sugar(),
-		idpLoader:   loader,
-	}
-
-	entry := &jwksCacheEntry{
-		issuer:              issuer,
-		idpName:             "cached-idp",
-		expectedAudience:    "cached-aud",
-		audienceRefreshedAt: time.Now().Add(-audienceRefreshInterval - time.Second),
-		audienceAttemptedAt: time.Now().Add(-audienceRefreshFailureBackoff - time.Second),
-	}
-	elem := auth.jwksLRUList.PushFront(entry)
-	auth.jwksCache[issuer] = elem
-
-	_, _, _, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
-	require.Error(t, err)
-	assert.True(t, cacheHit)
-	assert.ErrorIs(t, err, errUnknownIdentityProvider)
-
-	auth.jwksMutex.RLock()
-	_, stillCached := auth.jwksCache[issuer]
-	cacheLen := auth.jwksLRUList.Len()
-	auth.jwksMutex.RUnlock()
-	assert.False(t, stillCached, "failed live IDP refresh should evict cached JWKS")
-	assert.Equal(t, 0, cacheLen, "failed live IDP refresh should remove the LRU entry")
-}
-
-func setupOIDCTLSJWKSServer(t *testing.T) (*httptest.Server, string) {
-	t.Helper()
-
-	priv, err := rsa.GenerateKey(rand.Reader, 2048)
-	require.NoError(t, err)
-	kid := "refresh-cache-kid"
-	nB64 := base64.RawURLEncoding.EncodeToString(priv.PublicKey.N.Bytes())
-	eBytes := big.NewInt(int64(priv.PublicKey.E)).Bytes()
-	eB64 := base64.RawURLEncoding.EncodeToString(eBytes)
-	jwksObj := map[string]interface{}{
-		"keys": []interface{}{
-			map[string]interface{}{
-				"kty": "RSA", "kid": kid, "use": "sig", "alg": "RS256",
-				"n": nB64, "e": eB64,
-			},
-		},
-	}
-	jwksBytes, err := json.Marshal(jwksObj)
-	require.NoError(t, err)
-
-	var srv *httptest.Server
-	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/.well-known/openid-configuration":
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(map[string]string{
-				"jwks_uri": srv.URL + "/.well-known/jwks.json",
-			}); err != nil {
-				t.Errorf("encode discovery response: %v", err)
-			}
-		case "/.well-known/jwks.json":
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write(jwksBytes)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-
-	t.Cleanup(srv.Close)
-	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
-	require.NotEmpty(t, caPEM)
-	return srv, string(caPEM)
-}
-
-func TestGetJWKSForIssuer_EvictsCachedJWKSWhenLiveIDPTrustChanges(t *testing.T) {
-	for _, change := range []string{"authority", "ca", "insecure", "keycloak"} {
-		t.Run(change, func(t *testing.T) {
-			gin.SetMode(gin.TestMode)
-
-			srv, caPEM := setupOIDCTLSJWKSServer(t)
-			issuer := srv.URL
-			loader := &mutableIdentityProviderByIssuerLoader{
-				cfg: &config.IdentityProviderConfig{
-					Name:                 "secure-idp",
-					Issuer:               issuer,
-					Authority:            issuer,
-					ClientID:             "breakglass-ui",
-					ExpectedAudience:     "breakglass-ui",
-					CertificateAuthority: caPEM,
-				},
-			}
-			auth := &AuthHandler{
-				jwksCache:   make(map[string]*list.Element),
-				jwksLRUList: list.New(),
-				log:         zaptest.NewLogger(t).Sugar(),
-				idpLoader:   loader,
-				defaultHTTPClient: &http.Client{
-					Transport: defaultOIDCTransport(),
-					Timeout:   defaultOIDCTimeout,
-				},
-			}
-
-			_, audience, idpName, cacheHit, err := auth.getJWKSForIssuer(t.Context(), issuer)
-			require.NoError(t, err)
-			assert.False(t, cacheHit)
-			assert.Equal(t, "breakglass-ui", audience)
-			assert.Equal(t, "secure-idp", idpName)
-
-			auth.jwksMutex.Lock()
-			elem, ok := auth.jwksCache[issuer]
-			require.True(t, ok, "initial JWKS lookup should cache the issuer")
-			entry := elem.Value.(*jwksCacheEntry)
-			entry.audienceRefreshedAt = time.Now().Add(-audienceRefreshInterval - time.Second)
-			entry.audienceAttemptedAt = time.Now().Add(-audienceRefreshFailureBackoff - time.Second)
-			auth.jwksMutex.Unlock()
-
-			changed := *loader.cfg
-			switch change {
-			case "authority":
-				changed.Authority += "/changed"
-			case "ca":
-				changed.CertificateAuthority += "\n"
-			case "insecure":
-				changed.InsecureSkipVerify = true
-			case "keycloak":
-				changed.Keycloak = &config.KeycloakRuntimeConfig{BaseURL: issuer, Realm: "changed"}
-			}
-			loader.setConfig(&changed)
-
-			_, _, _, cacheHit, err = auth.getJWKSForIssuer(t.Context(), issuer)
-			require.Error(t, err)
-			assert.True(t, cacheHit)
-			assert.ErrorIs(t, err, errUnknownIdentityProvider)
-
-			auth.jwksMutex.RLock()
-			_, stillCached := auth.jwksCache[issuer]
-			cacheLen := auth.jwksLRUList.Len()
-			auth.jwksMutex.RUnlock()
-			assert.False(t, stillCached, "changed live IDP endpoint should evict stale JWKS")
-			assert.Equal(t, 0, cacheLen)
-		})
-	}
-}
-
-func TestGetJWKSForIssuer_InvalidAuthorityRejected(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-
-	idp := &breakglassv1alpha1.IdentityProvider{
-		Spec: breakglassv1alpha1.IdentityProviderSpec{
-			Issuer: "https://auth.example.com",
-			OIDC: breakglassv1alpha1.OIDCConfig{
-				Authority:        "http://insecure.example.com",
-				ClientID:         "test-client",
-				ExpectedAudience: "test-client",
-			},
-		},
-	}
-	idp.Name = "invalid-authority-idp"
-
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(idp).Build()
-	auth := &AuthHandler{
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		log:         zaptest.NewLogger(t).Sugar(),
-		idpLoader:   config.NewIdentityProviderLoader(fakeClient),
-	}
-
-	_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), "https://auth.example.com")
-	require.Error(t, err)
-	assert.ErrorIs(t, err, errUnknownIdentityProvider)
-
-	_, err = auth.idpLoader.LoadIdentityProviderByIssuer(t.Context(), "https://auth.example.com")
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "only https scheme is allowed")
-}
-
-func TestAuthErrorMessageForJWKSLoad(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{
-			name: "unknown identity provider",
-			err:  errUnknownIdentityProvider,
-			want: "token issuer is not configured for this service",
-		},
-		{
-			name: "unknown identity provider wrapped",
-			err:  fmt.Errorf("wrapped: %w", errUnknownIdentityProvider),
-			want: "token issuer is not configured for this service",
-		},
-		{
-			name: "jwks rate limited",
-			err:  errJWKSFetchRateLimited,
-			want: "temporarily unable to verify token; please retry shortly",
-		},
-		{
-			name: "jwks rate limited wrapped",
-			err:  fmt.Errorf("wrapped: %w", errJWKSFetchRateLimited),
-			want: "temporarily unable to verify token; please retry shortly",
-		},
-		{
-			name: "generic error",
-			err:  errors.New("boom"),
-			want: "unable to verify token",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, authErrorMessageForJWKSLoad(tt.err))
-		})
-	}
-}
-
-func TestRetryAfterFromRateLimitedError(t *testing.T) {
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{
-			name: "standard rate limited error with seconds duration",
-			err:  &jwksFetchRateLimitedError{RetryAfter: 9 * time.Second},
-			want: "9",
-		},
-		{
-			name: "rate limited with sub-second remainder rounds up to 1",
-			err:  &jwksFetchRateLimitedError{RetryAfter: 500 * time.Millisecond},
-			want: "1",
-		},
-		{
-			name: "rate limited with fractional seconds rounds up via Ceil",
-			err:  &jwksFetchRateLimitedError{RetryAfter: 4999 * time.Millisecond},
-			want: "5",
-		},
-		{
-			name: "error without typed rate limit info returns default from jwksFetchMinInterval",
-			err:  errJWKSFetchRateLimited,
-			want: "10",
-		},
-		{
-			name: "wrapped typed error preserves retry after",
-			err:  fmt.Errorf("outer: %w", &jwksFetchRateLimitedError{RetryAfter: 7 * time.Second}),
-			want: "7",
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, retryAfterFromRateLimitedError(tt.err))
-		})
-	}
-}
-
-func TestAuthenticate_RateLimitedJWKS_Returns429(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	scheme := runtime.NewScheme()
-	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-
-	auth := &AuthHandler{
-		log:         zaptest.NewLogger(t).Sugar(),
-		jwksCache:   make(map[string]*list.Element),
-		jwksLRUList: list.New(),
-		idpLoader:   config.NewIdentityProviderLoader(fakeClient),
-	}
-	auth.jwksFetchLimiter.Store("https://idp.example.com", time.Now())
-
-	router := gin.New()
-	router.Use(auth.Middleware())
-	router.GET("/test", func(c *gin.Context) {
-		c.Status(http.StatusOK)
-	})
-
-	claims := jwt.MapClaims{
-		"iss": "https://idp.example.com",
-		"sub": "user@example.com",
-		"exp": time.Now().Add(time.Hour).Unix(),
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	tokenStr, err := tok.SignedString([]byte("secret"))
-	require.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	req, _ := http.NewRequest(http.MethodGet, "/test", nil)
-	req.Header.Set("Authorization", "Bearer "+tokenStr)
-	router.ServeHTTP(w, req)
-
-	assert.Equal(t, http.StatusTooManyRequests, w.Code)
-	retryAfter := w.Header().Get("Retry-After")
-	assert.NotEmpty(t, retryAfter, "Retry-After header must be set")
-	assert.Contains(t, w.Body.String(), `"TOO_MANY_REQUESTS"`)
-}
-
-// --- SEC-005: Audience claim validation ---
-
-func TestAuthMiddleware_AudienceValidation(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	srv, priv, kid := setupTestJWKSServer(t)
-	defer srv.Close()
-
-	jwks, err := keyfunc.NewDefaultCtx(t.Context(), []string{srv.URL})
-	require.NoError(t, err)
-
-	// Single-IDP mode: audience validation is not applied (no idpLoader)
-	auth := &AuthHandler{jwks: jwks, log: zaptest.NewLogger(t).Sugar()}
-	router := gin.New()
-	router.Use(auth.Middleware())
-	router.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
-
-	t.Run("single-IDP mode: no audience check", func(t *testing.T) {
-		claims := jwt.MapClaims{
-			"sub": "user-123",
-			"exp": time.Now().Add(time.Minute).Unix(),
-			"aud": "some-other-service",
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = kid
-		tokStr, signErr := tok.SignedString(priv)
-		require.NoError(t, signErr)
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("Authorization", "Bearer "+tokStr)
-		w := httptest.NewRecorder()
-		router.ServeHTTP(w, req)
-
-		// Should pass because single-IDP mode doesn't enforce audience
-		assert.Equal(t, http.StatusOK, w.Code)
-	})
-
-	t.Run("multi-IDP mode: audience mismatch rejected", func(t *testing.T) {
-		// Set up multi-IDP mode with a cached JWKS entry that has expectedAudience
-		multiScheme := runtime.NewScheme()
-		require.NoError(t, breakglassv1alpha1.AddToScheme(multiScheme))
-		multiClient := fake.NewClientBuilder().WithScheme(multiScheme).Build()
-		multiAuth := &AuthHandler{
-			jwksCache:   make(map[string]*list.Element),
-			jwksLRUList: list.New(),
-			log:         zaptest.NewLogger(t).Sugar(),
-			idpLoader:   config.NewIdentityProviderLoader(multiClient),
-		}
-
-		// Use an HTTPS issuer that passes isValidIssuerURL validation
-		testIssuer := "https://test-idp.example.com"
-		entry := &jwksCacheEntry{
-			issuer:              testIssuer,
-			expectedAudience:    "my-breakglass-client",
-			jwks:                jwks,
-			audienceRefreshedAt: time.Now(),
-		}
-		elem := multiAuth.jwksLRUList.PushFront(entry)
-		multiAuth.jwksCache[testIssuer] = elem
-
-		multiRouter := gin.New()
-		multiRouter.Use(multiAuth.Middleware())
-		multiRouter.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
-
-		// Token with wrong audience
-		claims := jwt.MapClaims{
-			"sub": "user-123",
-			"exp": time.Now().Add(time.Minute).Unix(),
-			"iss": testIssuer,
-			"aud": "wrong-audience",
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = kid
-		tokStr, signErr := tok.SignedString(priv)
-		require.NoError(t, signErr)
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("Authorization", "Bearer "+tokStr)
-		w := httptest.NewRecorder()
-		multiRouter.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusUnauthorized, w.Code, "wrong audience should be rejected in multi-IDP mode")
-	})
-
-	t.Run("multi-IDP mode: matching audience accepted", func(t *testing.T) {
-		multiScheme2 := runtime.NewScheme()
-		require.NoError(t, breakglassv1alpha1.AddToScheme(multiScheme2))
-		multiClient2 := fake.NewClientBuilder().WithScheme(multiScheme2).Build()
-		multiAuth := &AuthHandler{
-			jwksCache:   make(map[string]*list.Element),
-			jwksLRUList: list.New(),
-			log:         zaptest.NewLogger(t).Sugar(),
-			idpLoader:   config.NewIdentityProviderLoader(multiClient2),
-		}
-
-		testIssuer := "https://test-idp.example.com"
-		entry := &jwksCacheEntry{
-			issuer:              testIssuer,
-			expectedAudience:    "my-breakglass-client",
-			jwks:                jwks,
-			audienceRefreshedAt: time.Now(),
-		}
-		elem := multiAuth.jwksLRUList.PushFront(entry)
-		multiAuth.jwksCache[testIssuer] = elem
-
-		multiRouter := gin.New()
-		multiRouter.Use(multiAuth.Middleware())
-		multiRouter.GET("/test", func(c *gin.Context) { c.JSON(http.StatusOK, gin.H{"ok": true}) })
-
-		// Token with correct audience
-		claims := jwt.MapClaims{
-			"sub": "user-123",
-			"exp": time.Now().Add(time.Minute).Unix(),
-			"iss": testIssuer,
-			"aud": "my-breakglass-client",
-		}
-		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-		tok.Header["kid"] = kid
-		tokStr, signErr := tok.SignedString(priv)
-		require.NoError(t, signErr)
-
-		req := httptest.NewRequest(http.MethodGet, "/test", nil)
-		req.Header.Set("Authorization", "Bearer "+tokStr)
-		w := httptest.NewRecorder()
-		multiRouter.ServeHTTP(w, req)
-
-		assert.Equal(t, http.StatusOK, w.Code, "matching audience should be accepted")
-	})
-}
-
-type blockingIdentityProviderLoader struct {
-	started chan struct{}
-	release chan struct{}
-	cfg     *config.IdentityProviderConfig
-}
-
-func (l blockingIdentityProviderLoader) LoadIdentityProviderByIssuer(context.Context, string) (*config.IdentityProviderConfig, error) {
-	close(l.started)
-	<-l.release
-	return l.cfg, nil
-}
-
-func TestGetJWKSForIssuerDoesNotReturnConcurrentlyInvalidatedSnapshot(t *testing.T) {
-	for _, replace := range []bool{false, true} {
-		t.Run(fmt.Sprint(replace), func(t *testing.T) {
-			issuer := "https://idp.example.com"
-			loader := blockingIdentityProviderLoader{started: make(chan struct{}), release: make(chan struct{}), cfg: &config.IdentityProviderConfig{
-				Issuer: issuer, Authority: issuer, ExpectedAudience: "test",
-			}}
-			auth := &AuthHandler{jwksCache: make(map[string]*list.Element), jwksLRUList: list.New(), idpLoader: loader, log: zaptest.NewLogger(t).Sugar()}
-			old := auth.jwksLRUList.PushFront(&jwksCacheEntry{issuer: issuer})
-			auth.jwksCache[issuer] = old
-			done := make(chan error, 1)
-			go func() {
-				_, _, _, _, err := auth.getJWKSForIssuer(t.Context(), issuer)
-				done <- err
-			}()
-			<-loader.started
-			auth.jwksMutex.Lock()
-			delete(auth.jwksCache, issuer)
-			auth.jwksLRUList.Remove(old)
-			if replace {
-				auth.jwksCache[issuer] = auth.jwksLRUList.PushFront(&jwksCacheEntry{issuer: issuer})
-			}
-			auth.jwksMutex.Unlock()
-			close(loader.release)
-			assert.ErrorIs(t, <-done, errUnknownIdentityProvider)
 		})
 	}
 }

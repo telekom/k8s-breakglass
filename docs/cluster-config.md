@@ -773,7 +773,7 @@ Webhook local-part compatibility accepts only a nonempty local part and domain
 separated by one `@`. Requesters already expressed as email addresses use exact
 identity matching and do not trigger the local-part alias lookup.
 
-Use `userIdentifierClaim` to specify which OIDC claim the spoke cluster uses:
+Use `userIdentifierClaim` to specify any string-valued OIDC claim the spoke cluster uses. Common examples are:
 
 ```yaml
 spec:
@@ -798,7 +798,7 @@ apiServer:
     # authentication.oidc.claimMappings.username.claim: email
 ```
 
-If not specified in ClusterConfig, `userIdentifierClaim` falls back to the global config setting (`kubernetes.userIdentifierClaim` in `config.yaml`). If not configured globally either, it defaults to `email`, which is the recommended setting for most production deployments.
+If not specified in ClusterConfig, identity mapping inherits the authenticated IdentityProvider configuration. Without a provider mapping, `userIdentifierClaim` falls back to the global setting (`kubernetes.userIdentifierClaim` in `config.yaml`), then to `email`. Configure the same claim and prefix as the spoke API server; see [Kubernetes OIDC identity mapping](oidc-compatibility.md) for structured policies and override rules.
 
 ### Loopback kubeconfig rewrite
 
@@ -1509,3 +1509,31 @@ Keycloak service-account credentials are tracked as cache dependencies for
 refresh-token configurations only when fallback policy is `Auto` or `Warn`.
 Empty and `None` policies keep the refresh-only cache independent of the
 unused service-account Secret; re-resolution clears prior fallback state.
+
+### Kubernetes username prefixes
+
+Set `spec.userIdentifierPrefix` to the exact prefix used by the target Kubernetes
+API server, including its separator:
+
+```yaml
+spec:
+  userIdentifierClaim: preferred_username
+  userIdentifierPrefix: "tdi_security_oidc:"
+```
+
+For `preferred_username: k834798`, this stores the session user as
+`tdi_security_oidc:k834798`. The same mapping applies to DebugSession Kubernetes
+identities. The raw authentication claims remain unchanged.
+
+Omitting the cluster prefix inherits `IdentityProvider.spec.userIdentifierPrefix`
+from the authenticated provider. An explicit `userIdentifierPrefix: ""` on the
+cluster disables that default. Prefixes are literal: no separator is inserted,
+no existing prefix is detected, and `"-"` is not a special value.
+
+BreakglassSessions persist requester provenance separately for ownership and
+self-approval checks, so changing mappings does not change existing sessions. Recreate
+sessions created with an incorrect Kubernetes identity. Update the CRDs and
+controller together before using these fields.
+
+For arbitrary claims, CEL expressions, group/UID/extra mappings and validation
+rules, see [Kubernetes OIDC identity mapping](oidc-compatibility.md).

@@ -117,11 +117,7 @@ func (c *DebugSessionAPIController) WithUserIdentifierClaim(claim breakglassv1al
 }
 
 func (c *DebugSessionAPIController) kubernetesUser(ctx *gin.Context, clusterConfig *breakglassv1alpha1.ClusterConfig) (string, error) {
-	claim := c.userIdentifierClaim
-	if clusterConfig.Spec.UserIdentifierClaim != "" {
-		claim = clusterConfig.GetUserIdentifierClaim()
-	}
-	return breakglass.NewKeycloakIdentityProvider(c.log).GetUserIdentifier(ctx, claim)
+	return breakglass.ResolveKubernetesUser(ctx, clusterConfig, c.userIdentifierClaim, breakglass.NewKeycloakIdentityProvider(c.log))
 }
 
 // WithMailService sets the mail service for sending email notifications

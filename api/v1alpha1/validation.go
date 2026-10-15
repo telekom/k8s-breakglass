@@ -32,6 +32,7 @@ import (
 	"github.com/Masterminds/sprig/v3"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"sigs.k8s.io/yaml"
 )
 
@@ -357,8 +358,35 @@ func ValidateIdentityProvider(idp *IdentityProvider) *ValidationResult {
 
 	if idp.Spec.OIDC.ExpectedAudience == "" {
 		result.Errors = append(result.Errors, field.Required(oidcPath.Child("expectedAudience"), "OIDC expectedAudience is required"))
+	}
+	result.Errors = append(result.Errors, validateOIDCOptions(&idp.Spec.OIDC, oidcPath)...)
+
+	issuer := idp.Spec.Issuer
+	if issuer == "" {
+		issuer = idp.Spec.OIDC.Authority
+	}
+	if idp.Spec.KubernetesIdentity != nil {
+		if idp.Spec.UserIdentifierClaim != "" {
+			result.Errors = append(result.Errors, field.Forbidden(specPath.Child("userIdentifierClaim"), "cannot be combined with kubernetesIdentity"))
+		}
+		if idp.Spec.UserIdentifierPrefix != "" {
+			result.Errors = append(result.Errors, field.Forbidden(specPath.Child("userIdentifierPrefix"), "cannot be combined with kubernetesIdentity"))
+		}
+		result.Errors = append(result.Errors, prefixFieldErrors(idp.Spec.KubernetesIdentity.ValidateWithDiscoveryURL(issuer, effectiveOIDCAudiences(idp.Spec.OIDC), idp.Spec.OIDC.DiscoveryURL), specPath.Child("kubernetesIdentity"))...)
 	} else {
-		result.Errors = append(result.Errors, validateIdentifierFormat(idp.Spec.OIDC.ExpectedAudience, oidcPath.Child("expectedAudience"))...)
+		// Discovery and issuer restrictions are part of kube-apiserver's OIDC
+		// contract even when the legacy shorthand mapping is used. Validate those
+		// fields through the upstream validator rather than maintaining a second
+		// URL policy here.
+		legacyClaim := string(idp.Spec.UserIdentifierClaim)
+		if legacyClaim == "" {
+			legacyClaim = "sub"
+		}
+		legacyPrefix := idp.Spec.UserIdentifierPrefix
+		legacyPolicy := &KubernetesIdentityConfig{ClaimMappings: apiserverv1.ClaimMappings{
+			Username: apiserverv1.PrefixedClaimOrExpression{Claim: legacyClaim, Prefix: &legacyPrefix},
+		}}
+		result.Errors = append(result.Errors, prefixFieldErrors(legacyPolicy.ValidateWithDiscoveryURL(issuer, effectiveOIDCAudiences(idp.Spec.OIDC), idp.Spec.OIDC.DiscoveryURL), oidcPath)...)
 	}
 
 	if idp.Spec.OIDC.InsecureSkipVerify {
@@ -464,6 +492,17 @@ func ValidateClusterConfig(cc *ClusterConfig) *ValidationResult {
 
 	// Validate IdentityProviderRefs format
 	result.Errors = append(result.Errors, validateIdentityProviderRefsFormat(cc.Spec.IdentityProviderRefs, specPath.Child("identityProviderRefs"))...)
+	if cc.Spec.KubernetesIdentity != nil {
+		if cc.Spec.UserIdentifierClaim != "" {
+			result.Errors = append(result.Errors, field.Forbidden(specPath.Child("userIdentifierClaim"), "cannot be combined with kubernetesIdentity"))
+		}
+		if cc.Spec.UserIdentifierPrefix != nil {
+			result.Errors = append(result.Errors, field.Forbidden(specPath.Child("userIdentifierPrefix"), "cannot be combined with kubernetesIdentity"))
+		}
+		// ClusterConfig does not own the target API server's issuer/audience;
+		// validate policy shape against syntactically valid placeholders.
+		result.Errors = append(result.Errors, prefixFieldErrors(cc.Spec.KubernetesIdentity.Validate("https://issuer.invalid", []string{"audience.invalid"}), specPath.Child("kubernetesIdentity"))...)
+	}
 
 	// Validate approver domains format and duplicates
 	result.Errors = append(result.Errors, validateEmailDomainList(cc.Spec.AllowedApproverDomains, specPath.Child("allowedApproverDomains"))...)
@@ -472,6 +511,69 @@ func ValidateClusterConfig(cc *ClusterConfig) *ValidationResult {
 	result.Errors = append(result.Errors, validateIdentifierFormat(cc.Spec.MailProvider, specPath.Child("mailProvider"))...)
 
 	return result
+}
+
+func effectiveOIDCAudiences(config OIDCConfig) []string {
+	audiences := make([]string, 0, len(config.Audiences)+1)
+	if config.ExpectedAudience != "" {
+		audiences = append(audiences, config.ExpectedAudience)
+	}
+	for _, audience := range config.Audiences {
+		if audience == "" {
+			continue
+		}
+		seen := false
+		for _, existing := range audiences {
+			if existing == audience {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			audiences = append(audiences, audience)
+		}
+	}
+	return audiences
+}
+
+func validateOIDCOptions(config *OIDCConfig, path *field.Path) field.ErrorList {
+	var errs field.ErrorList
+	seenAudiences := map[string]struct{}{}
+	if config.ExpectedAudience != "" {
+		seenAudiences[config.ExpectedAudience] = struct{}{}
+	}
+	for i, audience := range config.Audiences {
+		itemPath := path.Child("audiences").Index(i)
+		if strings.TrimSpace(audience) == "" {
+			errs = append(errs, field.Required(itemPath, "audience must not be empty"))
+		}
+		if _, exists := seenAudiences[audience]; exists {
+			errs = append(errs, field.Duplicate(itemPath, audience))
+		}
+		seenAudiences[audience] = struct{}{}
+	}
+	for i, alg := range config.SupportedSigningAlgs {
+		itemPath := path.Child("supportedSigningAlgs").Index(i)
+		if strings.TrimSpace(alg) == "" {
+			errs = append(errs, field.Required(itemPath, "signing algorithm must not be empty"))
+		}
+	}
+	if config.DiscoveryURL != "" {
+		errs = append(errs, validateURLFormat(config.DiscoveryURL, path.Child("discoveryURL"))...)
+		errs = append(errs, validateHTTPSURL(config.DiscoveryURL, path.Child("discoveryURL"))...)
+	}
+	return errs
+}
+
+func prefixFieldErrors(errs field.ErrorList, prefix *field.Path) field.ErrorList {
+	for _, err := range errs {
+		if err.Field == "" {
+			err.Field = prefix.String()
+		} else {
+			err.Field = prefix.Child(err.Field).String()
+		}
+	}
+	return errs
 }
 
 // ==================== DenyPolicy Validation ====================

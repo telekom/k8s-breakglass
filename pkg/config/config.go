@@ -10,6 +10,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"gopkg.in/yaml.v2"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apiserver/pkg/apis/apiserver"
 )
 
 // CachedLoader provides thread-safe cached access to config with automatic reload on file change.
@@ -92,6 +93,13 @@ func (cl *CachedLoader) Get() (Config, error) {
 // IdentityProviderConfig represents the runtime identity provider configuration
 // loaded from IdentityProvider CRD resources
 type IdentityProviderConfig struct {
+	UserIdentifierPrefix string
+	// UserIdentifierClaim is the provider default claim used for Kubernetes
+	// username construction when a target cluster has no override.
+	UserIdentifierClaim string
+	// KubernetesIdentity is the kube-apiserver-compatible structured JWT policy.
+	KubernetesIdentity *apiserver.JWTAuthenticator
+
 	// Name is the name of the IdentityProvider CRD resource (metadata.name)
 	// Used to reference this IDP in ClusterConfig and BreakglassEscalation specs
 	Name string
@@ -113,6 +121,14 @@ type IdentityProviderConfig struct {
 	// The auth middleware validates the aud claim against this value for
 	// CRD-backed identity providers.
 	ExpectedAudience string
+	// Audiences contains all accepted JWT audiences, including ExpectedAudience.
+	Audiences []string
+	// SupportedSigningAlgs restricts JWT signature algorithms when configured.
+	SupportedSigningAlgs []string
+	// DiscoveryURL overrides the issuer's OIDC discovery endpoint.
+	DiscoveryURL string
+	// JWKSURL overrides discovery with a directly configured JWKS endpoint.
+	JWKSURL string
 
 	// ClientSecret for Keycloak (loaded from secret reference)
 	ClientSecret string
@@ -488,17 +504,12 @@ func Load(configPath ...string) (Config, error) {
 	return config, nil
 }
 
-// GetUserIdentifierClaim returns the configured user identifier claim type.
-// Returns UserIdentifierClaimEmail as default if not configured or if an invalid value is set.
+// GetUserIdentifierClaim returns the configured user identifier claim. Any
+// non-empty claim name is valid because kube-apiserver accepts arbitrary JWT
+// claim names; email remains the compatibility default.
 func (c Config) GetUserIdentifierClaim() breakglassv1alpha1.UserIdentifierClaimType {
-	switch c.Kubernetes.UserIdentifierClaim {
-	case string(breakglassv1alpha1.UserIdentifierClaimEmail):
-		return breakglassv1alpha1.UserIdentifierClaimEmail
-	case string(breakglassv1alpha1.UserIdentifierClaimPreferredUsername):
-		return breakglassv1alpha1.UserIdentifierClaimPreferredUsername
-	case string(breakglassv1alpha1.UserIdentifierClaimSub):
-		return breakglassv1alpha1.UserIdentifierClaimSub
-	default:
+	if strings.TrimSpace(c.Kubernetes.UserIdentifierClaim) == "" {
 		return breakglassv1alpha1.UserIdentifierClaimEmail
 	}
+	return breakglassv1alpha1.UserIdentifierClaimType(c.Kubernetes.UserIdentifierClaim)
 }

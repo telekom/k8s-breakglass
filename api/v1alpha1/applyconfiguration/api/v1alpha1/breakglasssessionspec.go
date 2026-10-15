@@ -21,6 +21,14 @@ type BreakglassSessionSpecApplyConfiguration struct {
 	Cluster *string `json:"cluster,omitempty"`
 	// user is the name of the user the session is valid for.
 	User *string `json:"user,omitempty"`
+	// requesterSubject snapshots the verified OIDC subject used for requester ownership.
+	// It is matched only together with the originating identity provider.
+	RequesterSubject *string `json:"requesterSubject,omitempty"`
+	// requesterUsername snapshots the mapped Kubernetes API principal for tokens
+	// without a usable OIDC subject (for example custom username claims).
+	RequesterUsername *string `json:"requesterUsername,omitempty"`
+	// requesterEmail snapshots the verified email for notifications and display.
+	RequesterEmail *string `json:"requesterEmail,omitempty"`
 	// grantedGroup is the group granted by the session.
 	GrantedGroup *string `json:"grantedGroup,omitempty"`
 	// maxValidFor is the maximum amount of time the session will be active for after it is approved.
@@ -96,6 +104,30 @@ func (b *BreakglassSessionSpecApplyConfiguration) WithCluster(value string) *Bre
 // If called multiple times, the User field is set to the value of the last call.
 func (b *BreakglassSessionSpecApplyConfiguration) WithUser(value string) *BreakglassSessionSpecApplyConfiguration {
 	b.User = &value
+	return b
+}
+
+// WithRequesterSubject sets the RequesterSubject field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequesterSubject field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithRequesterSubject(value string) *BreakglassSessionSpecApplyConfiguration {
+	b.RequesterSubject = &value
+	return b
+}
+
+// WithRequesterUsername sets the RequesterUsername field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequesterUsername field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithRequesterUsername(value string) *BreakglassSessionSpecApplyConfiguration {
+	b.RequesterUsername = &value
+	return b
+}
+
+// WithRequesterEmail sets the RequesterEmail field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequesterEmail field is set to the value of the last call.
+func (b *BreakglassSessionSpecApplyConfiguration) WithRequesterEmail(value string) *BreakglassSessionSpecApplyConfiguration {
+	b.RequesterEmail = &value
 	return b
 }
 

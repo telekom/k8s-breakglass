@@ -70,8 +70,15 @@ type ClusterConfigSpecApplyConfiguration struct {
 	// This MUST match the `claimMappings.username.claim` configured on the target cluster's
 	// Kubernetes API server OIDC configuration.
 	// Common values: "email" (recommended), "preferred_username", "sub"
-	// If not set, falls back to global config kubernetes.userIdentifierClaim.
+	// If not set, inherits the IdentityProvider mapping, then global config kubernetes.userIdentifierClaim.
 	UserIdentifierClaim *apiv1alpha1.UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+	// userIdentifierPrefix overrides the authenticated IdentityProvider prefix for this cluster.
+	// Omit to inherit; an explicit empty string disables the provider prefix.
+	// The value is prepended literally, including any separator, to the selected claim.
+	UserIdentifierPrefix *string `json:"userIdentifierPrefix,omitempty"`
+	// kubernetesIdentity configures kube-apiserver structured JWT claim mapping.
+	// It cannot be combined with the shorthand userIdentifierClaim or prefix.
+	KubernetesIdentity *KubernetesIdentityConfigApplyConfiguration `json:"kubernetesIdentity,omitempty"`
 }
 
 // ClusterConfigSpecApplyConfiguration constructs a declarative configuration of the ClusterConfigSpec type for use with
@@ -217,5 +224,21 @@ func (b *ClusterConfigSpecApplyConfiguration) WithConstrainedImpersonation(value
 // If called multiple times, the UserIdentifierClaim field is set to the value of the last call.
 func (b *ClusterConfigSpecApplyConfiguration) WithUserIdentifierClaim(value apiv1alpha1.UserIdentifierClaimType) *ClusterConfigSpecApplyConfiguration {
 	b.UserIdentifierClaim = &value
+	return b
+}
+
+// WithUserIdentifierPrefix sets the UserIdentifierPrefix field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UserIdentifierPrefix field is set to the value of the last call.
+func (b *ClusterConfigSpecApplyConfiguration) WithUserIdentifierPrefix(value string) *ClusterConfigSpecApplyConfiguration {
+	b.UserIdentifierPrefix = &value
+	return b
+}
+
+// WithKubernetesIdentity sets the KubernetesIdentity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesIdentity field is set to the value of the last call.
+func (b *ClusterConfigSpecApplyConfiguration) WithKubernetesIdentity(value *KubernetesIdentityConfigApplyConfiguration) *ClusterConfigSpecApplyConfiguration {
+	b.KubernetesIdentity = value
 	return b
 }

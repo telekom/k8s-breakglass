@@ -34,18 +34,26 @@ func TestIdentityProviderLoader_LoadIdentityProvider(t *testing.T) {
 						Name: "primary-oidc",
 					},
 					Spec: breakglassv1alpha1.IdentityProviderSpec{
-						Primary: true,
+						Primary:              true,
+						Issuer:               "https://auth.example.com",
+						UserIdentifierClaim:  "employee_id",
+						UserIdentifierPrefix: "tdi_security_oidc:",
 						OIDC: breakglassv1alpha1.OIDCConfig{
-							Authority:        "https://auth.example.com",
-							ClientID:         "test-client",
-							ExpectedAudience: "test-client",
+							Authority:            "https://auth.example.com",
+							ClientID:             "test-client",
+							ExpectedAudience:     "test-client",
+							Audiences:            []string{"spoke-api"},
+							SupportedSigningAlgs: []string{"RS256"},
+							DiscoveryURL:         "https://auth.example.com/.well-known/openid-configuration",
 						},
 					},
 				},
 			},
 			wantError: false,
 			check: func(cfg *IdentityProviderConfig) bool {
-				return cfg.Type == "OIDC" &&
+				return cfg.UserIdentifierPrefix == "tdi_security_oidc:" && cfg.UserIdentifierClaim == "employee_id" &&
+					cfg.Audiences[0] == "test-client" && cfg.Audiences[1] == "spoke-api" &&
+					cfg.SupportedSigningAlgs[0] == "RS256" && cfg.DiscoveryURL != "" && cfg.Type == "OIDC" &&
 					cfg.Authority == "https://auth.example.com" &&
 					cfg.ClientID == "test-client" &&
 					cfg.Keycloak == nil

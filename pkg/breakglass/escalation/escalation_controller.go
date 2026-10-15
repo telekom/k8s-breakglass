@@ -25,6 +25,15 @@ type BreakglassEscalationController struct {
 	configPath       string // Path to breakglass config file for OIDC prefix stripping
 }
 
+func firstNonEmptyIdentity(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 // dropK8sInternalFieldsEscalation removes K8s internal fields from BreakglassEscalation for API response
 func dropK8sInternalFieldsEscalation(e *breakglassv1alpha1.BreakglassEscalation) {
 	if e == nil {
@@ -67,14 +76,18 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 	clusterFilter := c.Query("cluster")
 	activeOnly := breakglass.ParseBoolQuery(c.Query("activeOnly"), true) // Default to true (Rule 11)
 
-	email, err := ec.identityProvider.GetEmail(c)
-	if err != nil {
-		reqLog.Errorw("Failed to extract user email from authentication token", "error", err)
-		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
-		apiresponses.RespondInternalErrorSimple(c, "failed to extract user identity")
+	email, emailErr := ec.identityProvider.GetEmail(c)
+	identity := firstNonEmptyIdentity(email, c.GetString("authenticated_username"), c.GetString("username"), c.GetString("user_id"))
+	if identity == "" {
+		reqLog.Errorw("Failed to extract an authenticated user identity", "error", emailErr)
+		metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "401").Inc()
+		apiresponses.RespondUnauthorizedWithMessage(c, "failed to extract user identity")
 		return
 	}
-	reqLog.Debugw("Successfully extracted user email from token", "email", email)
+	if emailErr != nil {
+		reqLog.Debugw("Email claim unavailable; using authenticated username for escalation lookup", "username", identity, "error", emailErr)
+	}
+	reqLog.Debugw("Successfully extracted user identity from token", "email", email, "username", identity)
 
 	// Attempt to resolve groups from token first (preferred) then fallback to cluster-based resolution.
 	// tokenGroupsPresent distinguishes "the JWT carried a groups/realm_access
@@ -91,11 +104,11 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		}
 	}
 	if !tokenGroupsPresent { // fallback only when the token carried no group information
-		userContext := breakglass.ClusterUserGroup{Username: email}
+		userContext := breakglass.ClusterUserGroup{Username: identity}
 		var gerr error
 		userGroups, gerr = ec.getUserGroupsFn(c.Request.Context(), userContext)
 		if gerr != nil {
-			reqLog.Errorw("Failed to retrieve user groups for escalation determination", "error", gerr.Error(), "user", email)
+			reqLog.Errorw("Failed to retrieve user groups for escalation determination", "error", gerr.Error(), "user", identity)
 			metrics.APIEndpointErrors.WithLabelValues("handleGetEscalations", "500").Inc()
 			apiresponses.RespondInternalErrorSimple(c, "failed to extract user groups")
 			return

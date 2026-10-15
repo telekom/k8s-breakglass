@@ -29,6 +29,8 @@ func TestSessionIdentityProviderMatches(t *testing.T) {
 	require.True(t, sessionIdentityProviderMatches(c, "idp-a", "https://a.example/", false))
 	require.False(t, sessionIdentityProviderMatches(c, "idp-b", "https://b.example", false))
 	require.False(t, sessionIdentityProviderMatches(c, "idp-b", "https://b.example", true), "spoke compatibility must not relax ownership")
+	require.False(t, sessionIdentityProviderMatches(c, "idp-a", "", false), "provider-only provenance is ambiguous")
+	require.False(t, sessionIdentityProviderMatches(c, "", "https://a.example", false), "issuer-only provenance is ambiguous")
 	require.False(t, sessionIdentityProviderMatches(c, "", "", false))
 	c.Set("legacy_identity_allowed", true)
 	require.True(t, sessionIdentityProviderMatches(c, "", "", false), "authenticated single-provider legacy owner")
@@ -48,6 +50,24 @@ func TestRecordApproverKeepsLegacyProviderAlignment(t *testing.T) {
 	require.True(t, userHasApprovedSessionForProvider(session, "alice@example.com", "idp-a", false))
 	require.True(t, userHasApprovedSessionForProvider(session, "alice@example.com", "idp-b", false))
 	require.False(t, userHasApprovedSessionForProvider(session, "alice@example.com", "idp-c", false))
+}
+
+func TestMappedUsernameApprovalHistoryIsCaseSensitive(t *testing.T) {
+	session := breakglassv1alpha1.BreakglassSession{Status: breakglassv1alpha1.BreakglassSessionStatus{
+		Approvers: []string{"Alice"}, ApproverIdentityProviders: []string{"idp-a"},
+	}}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("authenticated_username", "alice")
+	c.Set("identity_provider_name", "idp-a")
+	require.False(t, userHasApprovedSessionForContext(c, session))
+	c.Set("authenticated_username", "Alice")
+	require.True(t, userHasApprovedSessionForContext(c, session))
+
+	status := breakglassv1alpha1.BreakglassSessionStatus{}
+	recordApproverForContext(c, &status, "Alice", "idp-a")
+	c.Set("authenticated_username", "alice")
+	recordApproverForContext(c, &status, "alice", "idp-a")
+	require.Equal(t, []string{"Alice", "alice"}, status.Approvers)
 }
 
 func TestClusterIdentityProviderPolicyRejectsBeforeGroupLookup(t *testing.T) {
@@ -114,6 +134,64 @@ func TestApprovalUsesOnlyAuthenticatedProvidersMembership(t *testing.T) {
 		result := wc.checkApprovalAuthorization(c, session)
 		require.Equal(t, provider == "idp-b", result.Allowed, "provider %q: %s", provider, result.Message)
 	}
+}
+
+func TestApprovalUsesMappedUsernameWhenEmailIsUnavailable(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-approver"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"spoke"}},
+			EscalatedGroup: "admin",
+			Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"mapped-user"}},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(esc).Build()
+	wc := &BreakglassSessionController{
+		log: zap.NewNop().Sugar(), identityProvider: ErrIdentityProvider{},
+		escalationManager: &testEscalationLookup{Client: cli},
+		getUserGroupsFn:   func(context.Context, ClusterUserGroup) ([]string, error) { return nil, nil },
+	}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+	c.Set("authenticated_username", "mapped-user")
+	result := wc.checkApprovalAuthorization(c, breakglassv1alpha1.BreakglassSession{Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "spoke", GrantedGroup: "admin"}})
+	require.True(t, result.Allowed, result.Message)
+}
+
+func TestApprovalMappedUsernameGroupMembershipIsCaseSensitive(t *testing.T) {
+	esc := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "mapped-group-policy"},
+		Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+			Allowed: breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"spoke"}}, EscalatedGroup: "admin",
+			Approvers: breakglassv1alpha1.BreakglassEscalationApprovers{Groups: []string{"approvers"}},
+		},
+		Status: breakglassv1alpha1.BreakglassEscalationStatus{
+			ApproverGroupMembers: map[string][]string{"approvers": nil},
+			IDPGroupMemberships:  map[string]map[string][]string{"idp-a": {"approvers": {"Alice"}}},
+		},
+	}
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(esc).Build()
+	wc := &BreakglassSessionController{log: zap.NewNop().Sugar(), identityProvider: ErrIdentityProvider{}, escalationManager: &testEscalationLookup{Client: cli}, getUserGroupsFn: func(context.Context, ClusterUserGroup) ([]string, error) { return nil, nil }}
+	for _, username := range []string{"alice", "Alice"} {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodPost, "/", nil)
+		c.Set("authenticated_username", username)
+		c.Set("identity_provider_name", "idp-a")
+		result := wc.checkApprovalAuthorization(c, breakglassv1alpha1.BreakglassSession{Spec: breakglassv1alpha1.BreakglassSessionSpec{Cluster: "spoke", GrantedGroup: "admin"}})
+		require.Equal(t, username == "Alice", result.Allowed, username)
+	}
+}
+
+func TestSessionRequestAcceptsMappedUsernameWithoutEmail(t *testing.T) {
+	wc := &BreakglassSessionController{identityProvider: ErrIdentityProvider{}, log: zap.NewNop().Sugar()}
+	request := BreakglassSessionRequest{}
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Set("authenticated_username", "mapped-user")
+	identity, ok := wc.resolveAuthenticatedIdentity(c, &request, zap.NewNop().Sugar())
+	require.True(t, ok)
+	require.Equal(t, "mapped-user", identity.username)
+	require.Empty(t, identity.email)
+	require.Equal(t, "mapped-user", request.Username)
 }
 
 func TestClusterIdentityLookupFailureIsLogged(t *testing.T) {

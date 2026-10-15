@@ -202,8 +202,15 @@ spec:
   {{- end }}
   
   {{- /* Optional: User Identifier Claim (must match spoke cluster's OIDC username claim) */}}
+  {{- with .Values.cluster.kubernetesIdentity }}
+  kubernetesIdentity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- if hasKey .Values.cluster "userIdentifierPrefix" }}
+  userIdentifierPrefix: {{ .Values.cluster.userIdentifierPrefix | quote }}
+  {{- end }}
   {{- if .Values.cluster.userIdentifierClaim }}
-  userIdentifierClaim: {{ .Values.cluster.userIdentifierClaim }}
+  userIdentifierClaim: {{ .Values.cluster.userIdentifierClaim | quote }}
   {{- end }}
   
   {{- /* Optional: QPS and Burst */}}

@@ -160,15 +160,33 @@ func (l *IdentityProviderLoader) convertToRuntimeConfig(ctx context.Context, idp
 		return nil, fmt.Errorf("invalid IdentityProvider %s: %s", idp.Name, validationResult.ErrorMessage())
 	}
 
+	effectiveIssuer := idp.Spec.Issuer
+	if effectiveIssuer == "" {
+		effectiveIssuer = idp.Spec.OIDC.Authority
+	}
 	runtimeConfig := &IdentityProviderConfig{
+		UserIdentifierPrefix: idp.Spec.UserIdentifierPrefix,
+		UserIdentifierClaim:  string(idp.Spec.UserIdentifierClaim),
 		Name:                 idp.Name,
-		Issuer:               idp.Spec.Issuer,
+		Issuer:               effectiveIssuer,
 		Type:                 "OIDC",
 		Authority:            idp.Spec.OIDC.Authority,
 		ClientID:             idp.Spec.OIDC.ClientID,
 		ExpectedAudience:     idp.Spec.OIDC.ExpectedAudience,
+		Audiences:            append([]string{idp.Spec.OIDC.ExpectedAudience}, idp.Spec.OIDC.Audiences...),
+		SupportedSigningAlgs: append([]string(nil), idp.Spec.OIDC.SupportedSigningAlgs...),
+		DiscoveryURL:         idp.Spec.OIDC.DiscoveryURL,
+		JWKSURL:              idp.Spec.OIDC.JWKSEndpoint,
 		CertificateAuthority: idp.Spec.OIDC.CertificateAuthority,
 		InsecureSkipVerify:   idp.Spec.OIDC.InsecureSkipVerify,
+	}
+	if idp.Spec.KubernetesIdentity != nil {
+		policy, err := idp.Spec.KubernetesIdentity.ToJWTAuthenticator(runtimeConfig.Issuer, runtimeConfig.Audiences)
+		if err != nil {
+			return nil, fmt.Errorf("convert Kubernetes identity policy: %w", err)
+		}
+		policy.Issuer.DiscoveryURL = runtimeConfig.DiscoveryURL
+		runtimeConfig.KubernetesIdentity = &policy
 	}
 
 	l.logger.Debugw("OIDC config loaded",

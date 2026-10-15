@@ -63,7 +63,6 @@ const (
 
 // UserIdentifierClaimType specifies which OIDC claim to use for identifying users.
 // This must match the cluster's apiserver OIDC configuration (claimMappings.username.claim).
-// +kubebuilder:validation:Enum=email;preferred_username;sub
 type UserIdentifierClaimType string
 
 const (
@@ -457,10 +456,20 @@ type ClusterConfigSpec struct {
 	// This MUST match the `claimMappings.username.claim` configured on the target cluster's
 	// Kubernetes API server OIDC configuration.
 	// Common values: "email" (recommended), "preferred_username", "sub"
-	// If not set, falls back to global config kubernetes.userIdentifierClaim.
+	// If not set, inherits the IdentityProvider mapping, then global config kubernetes.userIdentifierClaim.
 	// +optional
-	// +kubebuilder:validation:Enum=email;preferred_username;sub
 	UserIdentifierClaim UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+
+	// userIdentifierPrefix overrides the authenticated IdentityProvider prefix for this cluster.
+	// Omit to inherit; an explicit empty string disables the provider prefix.
+	// The value is prepended literally, including any separator, to the selected claim.
+	// +optional
+	UserIdentifierPrefix *string `json:"userIdentifierPrefix,omitempty"`
+
+	// kubernetesIdentity configures kube-apiserver structured JWT claim mapping.
+	// It cannot be combined with the shorthand userIdentifierClaim or prefix.
+	// +optional
+	KubernetesIdentity *KubernetesIdentityConfig `json:"kubernetesIdentity,omitempty"`
 }
 
 // ConstrainedImpersonationSupport declares a spoke's constrained-impersonation

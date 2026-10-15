@@ -17,6 +17,15 @@ import (
 //
 // IdentityProviderSpec defines the desired state of an IdentityProvider
 type IdentityProviderSpecApplyConfiguration struct {
+	// userIdentifierClaim is the provider default used when no cluster override
+	// is configured. It is an arbitrary JWT claim name, matching kube-apiserver.
+	UserIdentifierClaim *apiv1alpha1.UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+	// userIdentifierPrefix is prepended literally to the selected user identifier claim.
+	// Include any separator (for example "tdi_security_oidc:"); empty means no prefix.
+	UserIdentifierPrefix *string `json:"userIdentifierPrefix,omitempty"`
+	// kubernetesIdentity configures kube-apiserver structured JWT claim mapping.
+	// It cannot be combined with the shorthand userIdentifierClaim or prefix.
+	KubernetesIdentity *KubernetesIdentityConfigApplyConfiguration `json:"kubernetesIdentity,omitempty"`
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
 	OIDC *OIDCConfigApplyConfiguration `json:"oidc,omitempty"`
@@ -48,6 +57,30 @@ type IdentityProviderSpecApplyConfiguration struct {
 // apply.
 func IdentityProviderSpec() *IdentityProviderSpecApplyConfiguration {
 	return &IdentityProviderSpecApplyConfiguration{}
+}
+
+// WithUserIdentifierClaim sets the UserIdentifierClaim field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UserIdentifierClaim field is set to the value of the last call.
+func (b *IdentityProviderSpecApplyConfiguration) WithUserIdentifierClaim(value apiv1alpha1.UserIdentifierClaimType) *IdentityProviderSpecApplyConfiguration {
+	b.UserIdentifierClaim = &value
+	return b
+}
+
+// WithUserIdentifierPrefix sets the UserIdentifierPrefix field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UserIdentifierPrefix field is set to the value of the last call.
+func (b *IdentityProviderSpecApplyConfiguration) WithUserIdentifierPrefix(value string) *IdentityProviderSpecApplyConfiguration {
+	b.UserIdentifierPrefix = &value
+	return b
+}
+
+// WithKubernetesIdentity sets the KubernetesIdentity field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the KubernetesIdentity field is set to the value of the last call.
+func (b *IdentityProviderSpecApplyConfiguration) WithKubernetesIdentity(value *KubernetesIdentityConfigApplyConfiguration) *IdentityProviderSpecApplyConfiguration {
+	b.KubernetesIdentity = value
+	return b
 }
 
 // WithOIDC sets the OIDC field in the declarative configuration to the given value

@@ -86,6 +86,23 @@ type BreakglassSessionSpec struct {
 	// +required
 	User string `json:"user"`
 
+	// requesterSubject snapshots the verified OIDC subject used for requester ownership.
+	// It is matched only together with the originating identity provider.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	RequesterSubject string `json:"requesterSubject,omitempty"`
+
+	// requesterUsername snapshots the mapped Kubernetes API principal for tokens
+	// without a usable OIDC subject (for example custom username claims).
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	RequesterUsername string `json:"requesterUsername,omitempty"`
+
+	// requesterEmail snapshots the verified email for notifications and display.
+	// +optional
+	// +kubebuilder:validation:MaxLength=320
+	RequesterEmail string `json:"requesterEmail,omitempty"`
+
 	// grantedGroup is the group granted by the session.
 	// +required
 	GrantedGroup string `json:"grantedGroup"`

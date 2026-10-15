@@ -84,9 +84,25 @@ type OIDCConfig struct {
 	// that adds this value to the aud claim in issued tokens.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:Pattern=`^\S+$`
 	ExpectedAudience string `json:"expectedAudience"`
+
+	// Audiences contains additional accepted JWT audiences. ExpectedAudience is
+	// always retained for compatibility and is included in the effective set.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	Audiences []string `json:"audiences,omitempty"`
+
+	// SupportedSigningAlgs limits accepted JWT signing algorithms. An empty list
+	// uses the API server's default allowlist.
+	// +optional
+	// +kubebuilder:validation:MaxItems=32
+	SupportedSigningAlgs []string `json:"supportedSigningAlgs,omitempty"`
+
+	// DiscoveryURL overrides the issuer's .well-known discovery endpoint.
+	// +optional
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://.+`
+	DiscoveryURL string `json:"discoveryURL,omitempty"`
 
 	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
 	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
@@ -182,6 +198,21 @@ type SessionLimitGroupOverride struct {
 
 // IdentityProviderSpec defines the desired state of an IdentityProvider
 type IdentityProviderSpec struct {
+	// userIdentifierClaim is the provider default used when no cluster override
+	// is configured. It is an arbitrary JWT claim name, matching kube-apiserver.
+	// +optional
+	UserIdentifierClaim UserIdentifierClaimType `json:"userIdentifierClaim,omitempty"`
+
+	// userIdentifierPrefix is prepended literally to the selected user identifier claim.
+	// Include any separator (for example "tdi_security_oidc:"); empty means no prefix.
+	// +optional
+	UserIdentifierPrefix string `json:"userIdentifierPrefix,omitempty"`
+
+	// kubernetesIdentity configures kube-apiserver structured JWT claim mapping.
+	// It cannot be combined with the shorthand userIdentifierClaim or prefix.
+	// +optional
+	KubernetesIdentity *KubernetesIdentityConfig `json:"kubernetesIdentity,omitempty"`
+
 	// OIDC holds mandatory OIDC configuration for user authentication
 	// This is the base authentication mechanism for all identity providers
 	OIDC OIDCConfig `json:"oidc"`

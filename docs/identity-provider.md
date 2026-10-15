@@ -884,3 +884,14 @@ See `/config/samples/` for complete examples:
 - [Installation Guide](installation.md) - How to deploy Breakglass
 - [API Reference](api-reference.md) - Full API documentation
 - [Advanced Features](advanced-features.md) - Group synchronization and RBAC
+
+### Kubernetes username prefix
+
+`spec.userIdentifierPrefix` optionally sets the literal default prefix for
+Kubernetes usernames authenticated by this provider, for example
+`"tdi_security_oidc:"`. The provider can also set `spec.userIdentifierClaim` to
+any string-valued JWT claim. Cluster overrides take precedence over these provider
+defaults, followed by the global `userIdentifierClaim` setting when no provider
+mapping exists. It does not modify email addresses, JWT claims,
+or group prefixes. A ClusterConfig can override it, including with an explicit
+empty string to disable it; see [username prefixes](cluster-config.md#kubernetes-username-prefixes).

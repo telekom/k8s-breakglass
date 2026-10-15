@@ -607,6 +607,12 @@ Valid formats: `30s`, `5m`, `1h`
 
 **Note**: Can also be set via CLI flag `--cluster-config-check-interval` (takes precedence).
 
+#### `userIdentifierPrefix` (Optional)
+
+`IdentityProvider.spec.userIdentifierPrefix` supplies a literal username prefix.
+`ClusterConfig.spec.userIdentifierPrefix` overrides it; an explicit empty string
+disables it. See [cluster username prefixes](cluster-config.md#kubernetes-username-prefixes).
+
 #### `userIdentifierClaim` (Optional)
 
 Specifies which OIDC claim to use as the user identifier for session matching. This is a global default that can be overridden per-cluster in ClusterConfig.

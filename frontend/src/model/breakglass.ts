@@ -62,10 +62,21 @@ export interface SessionSpec {
   approverGroups?: string | string[];
   scheduledStartTime?: string;
   identityProviderName?: string;
+  requesterEmail?: string;
   // Snapshots of escalation config at session creation time
   requestReasonConfig?: { mandatory?: boolean; description?: string };
   approvalReasonConfig?: { mandatory?: boolean; description?: string };
   [key: string]: unknown;
+}
+
+export interface SessionApprovalMeta {
+  canApprove: boolean;
+  canReject: boolean;
+  isRequester: boolean;
+  isApprover: boolean;
+  denialReason?: string;
+  sessionState: string;
+  stateMessage?: string;
 }
 
 export interface SessionStatus {
@@ -107,5 +118,8 @@ export interface SessionCR {
   createdAt?: string;
   state?: string;
   terminationReason?: string;
+  approvalMeta?: SessionApprovalMeta;
+  isRequester?: boolean;
+  approvedByMe?: boolean;
   [key: string]: unknown;
 }

@@ -235,6 +235,13 @@ func (wc *BreakglassSessionController) sendSessionIdleExpiredEmail(session break
 	if wc.disableEmail || wc.mailService == nil || !wc.mailService.IsEnabled() {
 		return
 	}
+	requesterEmail := sessionRequesterEmail(session)
+	if requesterEmail == "" {
+		if wc.log != nil {
+			wc.log.Warnw("requester email unavailable, cannot send idle-expired email", "session", session.Name)
+		}
+		return
+	}
 
 	// Determine a human-readable session start time for the notification.
 	// Fallback order: actualStartTime → approvedAt → current time.
@@ -251,7 +258,7 @@ func (wc *BreakglassSessionController) sendSessionIdleExpiredEmail(session break
 	}
 
 	params := mail.SessionExpiredMailParams{
-		SubjectEmail:     session.Spec.User,
+		SubjectEmail:     requesterEmail,
 		RequestedRole:    session.Spec.GrantedGroup,
 		Cluster:          session.Spec.Cluster,
 		Username:         session.Spec.User,
@@ -271,7 +278,7 @@ func (wc *BreakglassSessionController) sendSessionIdleExpiredEmail(session break
 	}
 
 	subject := fmt.Sprintf("[%s] Session Idle Expired: %s", wc.config.Frontend.BrandingName, session.Name)
-	if err := wc.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+	if err := wc.mailService.Enqueue(session.Name, []string{requesterEmail}, subject, body); err != nil {
 		wc.log.Errorw("failed to enqueue idle-expired session email",
 			"session", session.Name,
 			"error", err)

@@ -204,6 +204,7 @@ func run() error {
 
 	// Setup authentication
 	auth := api.NewAuth(log, cfg)
+	defer auth.Close()
 
 	// Initialise OpenTelemetry tracing.
 	// CLI flags override config-file values; disabled by default.

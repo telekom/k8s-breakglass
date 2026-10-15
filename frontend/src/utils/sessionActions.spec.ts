@@ -45,4 +45,56 @@ describe("sessionActions", () => {
     expect(decideRejectOrWithdraw("user@example.com", bg)).toBe("withdraw");
     expect(decideRejectOrWithdraw("username@example.com", bg)).toBe("reject");
   });
+
+  it("uses backend ownership metadata when it says the mapped username is not mine", () => {
+    const bg = {
+      spec: { user: "me@example.com", requesterEmail: "me@example.com" },
+      approvalMeta: {
+        canApprove: false,
+        canReject: false,
+        isRequester: false,
+        isApprover: false,
+        sessionState: "Pending",
+      },
+    };
+    expect(decideRejectOrWithdraw("me@example.com", bg)).toBe("reject");
+  });
+
+  it("uses backend ownership metadata when the mapped username is mine", () => {
+    const bg = {
+      spec: { user: "oidc:opaque-expression-result", requesterEmail: "different@example.com" },
+      approvalMeta: { canApprove: true, canReject: true, isRequester: true, isApprover: true, sessionState: "Pending" },
+    };
+    expect(decideRejectOrWithdraw("me@example.com", bg)).toBe("withdraw");
+  });
+
+  it("uses persisted requester email before legacy mapped username fallback", () => {
+    const bg = { spec: { user: "oidc:opaque-expression-result", requesterEmail: "me@example.com" } };
+    expect(decideRejectOrWithdraw("me@example.com", bg)).toBe("withdraw");
+  });
+
+  it("uses list ownership metadata for custom claim identities", () => {
+    const bg = { spec: { user: "tdi_security_oidc:k834798" }, isRequester: true };
+    expect(decideRejectOrWithdraw(undefined, bg)).toBe("withdraw");
+  });
+
+  it("honors an explicit negative list ownership result", () => {
+    const bg = { spec: { user: "tdi_security_oidc:k834798" }, isRequester: false };
+    expect(decideRejectOrWithdraw("tdi_security_oidc:k834798", bg)).toBe("reject");
+  });
+
+  it("prefers list ownership metadata over stale detail metadata", () => {
+    const bg = {
+      spec: { user: "tdi_security_oidc:k834798" },
+      isRequester: false,
+      approvalMeta: {
+        canApprove: false,
+        canReject: true,
+        isRequester: true,
+        isApprover: false,
+        sessionState: "Pending",
+      },
+    };
+    expect(decideRejectOrWithdraw("tdi_security_oidc:k834798", bg)).toBe("reject");
+  });
 });

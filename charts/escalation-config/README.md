@@ -687,3 +687,16 @@ target namespace, external Job manager, audit and support prerequisites.
 - [Identity Provider Configuration](../docs/identity-provider.md)
 - [DenyPolicy Configuration](../docs/deny-policy.md)
 - [Multi-IDP Guide](../docs/advanced-features.md#multi-idp-configuration-guide)
+
+### OIDC identity mapping
+
+`cluster.userIdentifierClaim` selects a string claim, and
+`cluster.userIdentifierPrefix` prepends a literal prefix. Omit the prefix to
+inherit the IdentityProvider default; explicitly set `""` to disable it.
+
+For Kubernetes structured-authentication mappings, set
+`cluster.kubernetesIdentity` with `claimMappings`, `claimValidationRules`, and
+`userValidationRules`. This object is rendered into the ClusterConfig unchanged
+and is validated by the controller's upstream Kubernetes validation. Do not
+combine it with the shorthand claim/prefix fields. See
+[OIDC compatibility](../../docs/oidc-compatibility.md) for examples and precedence.

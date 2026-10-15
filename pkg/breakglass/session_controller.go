@@ -274,9 +274,10 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	reqLog.Info("Validated session request parameters")
 
 	if authIdentity.email == "" {
-		reqLog.Errorw("Error getting user identity email", "error", authIdentity.emailErr)
-		apiresponses.RespondUnauthorizedWithMessage(c, "email claim is required for session creation")
-		return
+		// OIDC authentication does not require an email claim. The verified
+		// mapped username remains the requester identity; email is only used for
+		// optional notifications and email-domain policy checks.
+		reqLog.Debugw("Email claim unavailable; continuing with authenticated username", "username", authIdentity.username, "error", authIdentity.emailErr)
 	}
 	if !sessionRequestIdentityIsProviderScoped(c) {
 		apiresponses.RespondForbidden(c, "provider and issuer are required for session creation")
@@ -286,6 +287,12 @@ func (wc *BreakglassSessionController) handleRequestBreakglassSession(c *gin.Con
 	// Apply per-user rate limit before the expensive group/escalation lookups.
 	if wc.sessionCreationLimiter != nil {
 		rateLimitKey := strings.ToLower(strings.TrimSpace(authIdentity.email))
+		if rateLimitKey == "" {
+			// Keep no-email OIDC principals isolated by their verified provider
+			// provenance. Do not lowercase the mapped username: Kubernetes treats
+			// usernames as opaque strings.
+			rateLimitKey = fmt.Sprintf("oidc:%q/%q/%q", c.GetString("identity_provider_name"), c.GetString("issuer"), authIdentity.username)
+		}
 		allowed, retryAfter := wc.sessionCreationLimiter.AllowWithRetryAfter(rateLimitKey)
 		if !allowed {
 			retrySecs := int(math.Ceil(retryAfter.Seconds()))

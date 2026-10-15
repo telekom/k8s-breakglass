@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/apimachinery/pkg/util/validation/field"
+	apiserverv1 "k8s.io/apiserver/pkg/apis/apiserver/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 )
@@ -285,5 +286,61 @@ func TestCRDInstallation(t *testing.T) {
 			},
 		}
 		require.NoError(t, apiClient.Create(ctx, session))
+	})
+	t.Run("structured Kubernetes identity mappings survive API roundtrip", func(t *testing.T) {
+		scheme := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(scheme))
+		require.NoError(t, AddToScheme(scheme))
+		apiClient, err := client.New(cfg, client.Options{Scheme: scheme})
+		require.NoError(t, err)
+		ctx := context.Background()
+		namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "identity-roundtrip-"}}
+		require.NoError(t, apiClient.Create(ctx, namespace))
+
+		prefix := "tdi_security_oidc:"
+		policy := &KubernetesIdentityConfig{
+			ClaimMappings: apiserverv1.ClaimMappings{
+				Username: apiserverv1.PrefixedClaimOrExpression{Claim: "preferred_username", Prefix: &prefix},
+				Groups:   apiserverv1.PrefixedClaimOrExpression{Claim: "groups", Prefix: &prefix},
+				UID:      apiserverv1.ClaimOrExpression{Expression: "claims.sub"},
+				Extra:    []apiserverv1.ExtraMapping{{Key: "example.com/team", ValueExpression: "claims.team"}},
+			},
+			ClaimValidationRules: []apiserverv1.ClaimValidationRule{{Claim: "tenant", RequiredValue: "security"}},
+			UserValidationRules:  []apiserverv1.UserValidationRule{{Expression: "user.username.startsWith('tdi_security_oidc:')"}},
+		}
+		identityProvider := &IdentityProvider{
+			ObjectMeta: metav1.ObjectMeta{Name: "roundtrip-idp"},
+			Spec: IdentityProviderSpec{OIDC: OIDCConfig{
+				Authority: "https://issuer.example", ClientID: "client", ExpectedAudience: "audience",
+			}, KubernetesIdentity: policy, DisplayName: "Roundtrip provider"},
+		}
+		require.NoError(t, apiClient.Create(ctx, identityProvider))
+		var storedIdentityProvider IdentityProvider
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKey{Name: identityProvider.Name}, &storedIdentityProvider))
+		require.Equal(t, policy, storedIdentityProvider.Spec.KubernetesIdentity)
+
+		emptyPrefix := ""
+		clusterPolicy := *policy
+		clusterPolicy.ClaimMappings = policy.ClaimMappings
+		clusterPolicy.ClaimMappings.Username.Prefix = &emptyPrefix
+		clusterPolicy.ClaimMappings.Groups = apiserverv1.PrefixedClaimOrExpression{Expression: "claims.groups"}
+		clusterConfig := &ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "roundtrip-cluster", Namespace: namespace.Name},
+			Spec: ClusterConfigSpec{
+				ClusterID:           "roundtrip-cluster",
+				Tenant:              "roundtrip-tenant",
+				Environment:         "test",
+				KubeconfigSecretRef: &SecretKeyReference{Name: "cluster-kubeconfig", Namespace: namespace.Name},
+				KubernetesIdentity:  &clusterPolicy,
+			},
+		}
+		require.NoError(t, apiClient.Create(ctx, clusterConfig))
+		var storedClusterConfig ClusterConfig
+		require.NoError(t, apiClient.Get(ctx, client.ObjectKeyFromObject(clusterConfig), &storedClusterConfig))
+		require.NotNil(t, storedClusterConfig.Spec.KubernetesIdentity.ClaimMappings.Username.Prefix)
+		require.Empty(t, *storedClusterConfig.Spec.KubernetesIdentity.ClaimMappings.Username.Prefix)
+		require.Nil(t, storedClusterConfig.Spec.KubernetesIdentity.ClaimMappings.Groups.Prefix)
+		require.Equal(t, "claims.groups", storedClusterConfig.Spec.KubernetesIdentity.ClaimMappings.Groups.Expression)
+		require.Equal(t, clusterPolicy.ClaimValidationRules, storedClusterConfig.Spec.KubernetesIdentity.ClaimValidationRules)
 	})
 }

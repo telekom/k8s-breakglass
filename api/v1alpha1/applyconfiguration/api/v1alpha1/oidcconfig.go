@@ -29,6 +29,14 @@ type OIDCConfigApplyConfiguration struct {
 	// Requires a matching audience protocol mapper in the identity provider
 	// that adds this value to the aud claim in issued tokens.
 	ExpectedAudience *string `json:"expectedAudience,omitempty"`
+	// Audiences contains additional accepted JWT audiences. ExpectedAudience is
+	// always retained for compatibility and is included in the effective set.
+	Audiences []string `json:"audiences,omitempty"`
+	// SupportedSigningAlgs limits accepted JWT signing algorithms. An empty list
+	// uses the API server's default allowlist.
+	SupportedSigningAlgs []string `json:"supportedSigningAlgs,omitempty"`
+	// DiscoveryURL overrides the issuer's .well-known discovery endpoint.
+	DiscoveryURL *string `json:"discoveryURL,omitempty"`
 	// InsecureSkipVerify is deprecated for IdentityProvider OIDC/JWKS authentication.
 	// Admission and runtime auth/OIDC proxy paths reject this setting; configure
 	// certificateAuthority for private or self-signed issuer certificates.
@@ -72,6 +80,34 @@ func (b *OIDCConfigApplyConfiguration) WithClientID(value string) *OIDCConfigApp
 // If called multiple times, the ExpectedAudience field is set to the value of the last call.
 func (b *OIDCConfigApplyConfiguration) WithExpectedAudience(value string) *OIDCConfigApplyConfiguration {
 	b.ExpectedAudience = &value
+	return b
+}
+
+// WithAudiences adds the given value to the Audiences field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the Audiences field.
+func (b *OIDCConfigApplyConfiguration) WithAudiences(values ...string) *OIDCConfigApplyConfiguration {
+	for i := range values {
+		b.Audiences = append(b.Audiences, values[i])
+	}
+	return b
+}
+
+// WithSupportedSigningAlgs adds the given value to the SupportedSigningAlgs field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the SupportedSigningAlgs field.
+func (b *OIDCConfigApplyConfiguration) WithSupportedSigningAlgs(values ...string) *OIDCConfigApplyConfiguration {
+	for i := range values {
+		b.SupportedSigningAlgs = append(b.SupportedSigningAlgs, values[i])
+	}
+	return b
+}
+
+// WithDiscoveryURL sets the DiscoveryURL field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DiscoveryURL field is set to the value of the last call.
+func (b *OIDCConfigApplyConfiguration) WithDiscoveryURL(value string) *OIDCConfigApplyConfiguration {
+	b.DiscoveryURL = &value
 	return b
 }
 

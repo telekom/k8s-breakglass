@@ -743,6 +743,9 @@ func (s *Server) Handler() http.Handler {
 // Close cleans up server resources including stopping rate limiter cleanup goroutines.
 // This should be called when the server is no longer needed (e.g., in tests or graceful shutdown).
 func (s *Server) Close() {
+	if s.auth != nil {
+		s.auth.Close()
+	}
 	if s.publicAuthRateLimiter != nil {
 		s.publicAuthRateLimiter.Stop()
 	}

@@ -314,14 +314,38 @@
           "minLength": 1,
           "type": "string"
         },
+        "userIdentifierPrefix": {
+          "type": "string"
+        },
         "userIdentifierClaim": {
           "description": "OIDC claim for username extraction.",
-          "enum": [
-            "email",
-            "preferred_username",
-            "sub"
+          "type": "string",
+          "minLength": 1
+        },
+        "kubernetesIdentity": {
+          "type": "object",
+          "description": "Kubernetes API-server claim mappings and validation rules. Mutually exclusive with userIdentifierClaim/userIdentifierPrefix.",
+          "properties": {
+            "claimMappings": {
+              "type": "object"
+            },
+            "claimValidationRules": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            },
+            "userValidationRules": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "required": [
+            "claimMappings"
           ],
-          "type": "string"
+          "additionalProperties": false
         }
       },
       "required": [
@@ -329,7 +353,28 @@
         "tenant",
         "environment"
       ],
-      "type": "object"
+      "type": "object",
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "kubernetesIdentity"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "userIdentifierClaim"
+                ]
+              },
+              {
+                "required": [
+                  "userIdentifierPrefix"
+                ]
+              }
+            ]
+          }
+        }
+      ]
     },
     "debugSessionBindings": {
       "default": [],
@@ -1071,7 +1116,7 @@
             "type": "string"
           },
           "name": {
-            "description": "Escalation resource name. Defaults to escalation-\u003cindex\u003e if omitted. Short names retain legacy trailing-hyphen trimming. Names over 63 characters use a trimmed 54-character prefix and an 8-character SHA-256 suffix.",
+            "description": "Escalation resource name. Defaults to escalation-<index> if omitted. Short names retain legacy trailing-hyphen trimming. Names over 63 characters use a trimmed 54-character prefix and an 8-character SHA-256 suffix.",
             "type": "string"
           },
           "notificationExclusions": {
@@ -1264,16 +1309,12 @@
           "type": "integer"
         },
         "ingressNamespaceSelector": {
-          "additionalProperties": {
-            "type": "string"
-          },
+          "additionalProperties": {"type": "string"},
           "description": "Namespace label selector restricting ingress on the API port. Empty allows all namespaces.",
           "type": "object"
         },
         "metricsNamespaceSelector": {
-          "additionalProperties": {
-            "type": "string"
-          },
+          "additionalProperties": {"type": "string"},
           "description": "Namespace label selector restricting ingress on the metrics port. Empty allows all namespaces.",
           "type": "object"
         },

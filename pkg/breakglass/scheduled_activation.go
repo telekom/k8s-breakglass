@@ -380,9 +380,16 @@ func (ssa *ScheduledSessionActivator) sendSessionActivatedEmail(session breakgla
 	if ssa.disableEmail || ssa.mailService == nil || !ssa.mailService.IsEnabled() {
 		return
 	}
+	requesterEmail := sessionRequesterEmail(session)
+	if requesterEmail == "" {
+		if ssa.log != nil {
+			ssa.log.Warnw("requester email unavailable, cannot send activation email", "session", session.Name)
+		}
+		return
+	}
 
 	params := mail.SessionActivatedMailParams{
-		SubjectEmail:   session.Spec.User,
+		SubjectEmail:   requesterEmail,
 		RequestedRole:  session.Spec.GrantedGroup,
 		Cluster:        session.Spec.Cluster,
 		Username:       session.Spec.User,
@@ -405,7 +412,7 @@ func (ssa *ScheduledSessionActivator) sendSessionActivatedEmail(session breakgla
 	}
 
 	subject := fmt.Sprintf("[%s] Session Activated: %s", ssa.brandingName, session.Name)
-	if err := ssa.mailService.Enqueue(session.Name, []string{session.Spec.User}, subject, body); err != nil {
+	if err := ssa.mailService.Enqueue(session.Name, []string{requesterEmail}, subject, body); err != nil {
 		ssa.log.Errorw("failed to enqueue session activated email",
 			"session", session.Name,
 			"namespace", session.Namespace,
