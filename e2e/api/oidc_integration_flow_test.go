@@ -35,6 +35,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // TestOIDCFullIntegrationFlow tests the complete OIDC flow from ClusterConfig creation
@@ -163,6 +164,26 @@ func TestOIDCFullIntegrationFlow(t *testing.T) {
 	}
 	targetCleanup.Add(binding)
 	require.NoError(t, targetClient.Create(ctx, binding))
+	// The ClusterConfig connects as the Keycloak fixture's OIDC service user,
+	// not the controller's Kubernetes service account. Give that connection only
+	// the permissions needed to evaluate this fixture's grant and namespace.
+	connectionRole := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{Name: grantName + "-connection", Labels: helpers.E2ETestLabels()},
+		Rules: []rbacv1.PolicyRule{
+			{APIGroups: []string{""}, Resources: []string{"users"}, ResourceNames: []string{breakglass.AuthCheckerUsername}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{""}, Resources: []string{"groups"}, ResourceNames: []string{grantName}, Verbs: []string{"impersonate"}},
+			{APIGroups: []string{""}, Resources: []string{"namespaces"}, ResourceNames: []string{targetNamespace}, Verbs: []string{"get"}},
+		},
+	}
+	targetCleanup.Add(connectionRole)
+	require.NoError(t, targetClient.Create(ctx, connectionRole))
+	connectionBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: connectionRole.Name, Labels: helpers.E2ETestLabels()},
+		RoleRef:    rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: connectionRole.Name},
+		Subjects:   []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: "User", Name: "breakglass-group-sync@service.local"}},
+	}
+	targetCleanup.Add(connectionBinding)
+	require.NoError(t, targetClient.Create(ctx, connectionBinding))
 	targetUsername := "tdi_security_oidc:" + helpers.TestUsers.Requester.Username
 	sar := helpers.BuildResourceSAR(targetUsername, nil, "get", "pods", targetNamespace)
 	before, status, err := helpers.SendSARToWebhook(t, ctx, sar, oidcClusterName)

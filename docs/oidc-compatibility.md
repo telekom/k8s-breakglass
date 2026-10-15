@@ -222,6 +222,11 @@ prefixed principal afterward, and denial of the unprefixed username and email.
 Its RBAC fixture uses a dedicated namespace so unrelated deny-policy fixtures
 cannot mask the identity-mapping result. The native-policy admission fixture
 includes the required OIDC client-secret reference.
+The target-connection fixture also grants its OIDC service user impersonation
+of the synthetic authorization checker and the test's grant group, plus read
+access to the test namespace. These are connection permissions, separate from
+the requested user's temporary grant; the test still requires denial before
+approval and denial of other principals after approval.
 
 Notification E2E assertions decode MIME transfer encoding before matching the
 rendered content. Run `go test ./e2e/api -run '^TestDecodeMailHogBody'` for the
