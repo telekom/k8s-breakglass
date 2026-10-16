@@ -242,3 +242,154 @@ func TestNodeMaintenanceKexecDurationCoversDrainAndReturn(t *testing.T) {
 	spec.NodeMaintenance.DryRun = true
 	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec), "a validate-only profile never drains or reboots")
 }
+
+func TestNodeMaintenanceServiceRestartIsUnitOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "cra.service"}
+	service := &NodeMaintenanceService{DrainTimeoutSeconds: 60,
+		RestartPods: []NodeMaintenancePodSelector{{Namespace: "kube-system", MatchLabels: map[string]string{"app.kubernetes.io/name": "network-operator-agent-cra-vsr"}}}}
+	profile := func() *DebugSessionNodeMaintenance {
+		return &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionServiceRestart, Image: image,
+			AllowedTargets: []NodeMaintenanceTarget{target}, Service: service.DeepCopy()}
+	}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile(), &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"unit outside allowlist", func(v *NodeMaintenanceTarget) { v.Unit = "sshd.service" }},
+		{"no unit", func(v *NodeMaintenanceTarget) { v.Unit = "" }},
+		{"interface", func(v *NodeMaintenanceTarget) { v.Interface = "eth0" }},
+		{"mac", func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" }},
+		{"replaced node", func(v *NodeMaintenanceTarget) { v.TargetNodeUID = "replacement" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile(), &request))
+		})
+	}
+	for _, change := range []struct {
+		name   string
+		mutate func(*DebugSessionNodeMaintenance)
+	}{
+		{"missing service", func(p *DebugSessionNodeMaintenance) { p.Service = nil }},
+		{"preview", func(p *DebugSessionNodeMaintenance) { p.DryRun = true }},
+		{"short drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 10 }},
+		{"long drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 3601 }},
+		{"bad namespace", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].Namespace = "Kube System" }},
+		{"empty selector", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].MatchLabels = map[string]string{} }},
+		{"empty label value", func(p *DebugSessionNodeMaintenance) {
+			p.Service.RestartPods[0].MatchLabels = map[string]string{"app": ""}
+		}},
+		{"too many selectors", func(p *DebugSessionNodeMaintenance) {
+			p.Service.RestartPods = append(p.Service.RestartPods, p.Service.RestartPods[0], p.Service.RestartPods[0], p.Service.RestartPods[0], p.Service.RestartPods[0])
+		}},
+		{"kexec bundle", func(p *DebugSessionNodeMaintenance) { p.Kexec = &NodeMaintenanceKexec{} }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			p := profile()
+			change.mutate(p)
+			require.Error(t, ValidateNodeMaintenanceRequest(p, &target))
+		})
+	}
+	// Service settings and units belong to service-restart only.
+	neighbor := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: "192.0.2.2"}
+	other := &DebugSessionNodeMaintenance{Action: "neighbor-replace", Image: image, AllowedTargets: []NodeMaintenanceTarget{neighbor}, Service: service.DeepCopy()}
+	require.Error(t, ValidateNodeMaintenanceRequest(other, &neighbor))
+	other.Service = nil
+	withUnit := neighbor
+	withUnit.Unit = "containerd.service"
+	require.Error(t, ValidateNodeMaintenanceTarget("neighbor-replace", &withUnit))
+	require.Error(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionKexecRecovery, &NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service"}))
+}
+
+func TestNodeMaintenanceServiceRestartMaxDurationCoversDrainAndChecks(t *testing.T) {
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service"}
+	spec := &DebugSessionTemplateSpec{
+		TargetNamespace: NodeMaintenanceNamespace,
+		Approvers:       &DebugSessionApprovers{Users: []string{"approver"}},
+		Constraints:     &DebugSessionConstraints{MaxDuration: "10m"},
+		NodeMaintenance: &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionServiceRestart,
+			Image:          "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64),
+			AllowedTargets: []NodeMaintenanceTarget{target}, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60}},
+	}
+	require.ErrorContains(t, ValidateNodeMaintenanceTemplate(spec), "maxDuration must cover drainTimeoutSeconds plus 600s")
+	spec.Constraints.MaxDuration = "11m"
+	require.NoError(t, ValidateNodeMaintenanceTemplate(spec))
+}
+
+func TestNodeMaintenanceModuleLoadIsModuleOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Module: "ip6_gre"}
+	profile := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionModuleLoad, Image: image, AllowedTargets: []NodeMaintenanceTarget{target}}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other module", func(v *NodeMaintenanceTarget) { v.Module = "gre" }},
+		{"path", func(v *NodeMaintenanceTarget) { v.Module = "../ip6_gre" }},
+		{"parameters", func(v *NodeMaintenanceTarget) { v.Module = "ip6_gre debug=1" }},
+		{"dash form", func(v *NodeMaintenanceTarget) { v.Module = "ip6-gre" }},
+		{"no module", func(v *NodeMaintenanceTarget) { v.Module = "" }},
+		{"unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"interface", func(v *NodeMaintenanceTarget) { v.Interface = "eth0" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+	preview := profile.DeepCopy()
+	preview.DryRun = true
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(preview, &target), "no preview")
+	withModule := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service", Module: "gre"}
+	require.Error(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionServiceRestart, &withModule))
+}
+
+func TestNodeMaintenanceSRIOVReprovisionIsPFAndCountOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "ens1f0", VirtualFunctions: kptr.To(int32(8))}
+	profile := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionSRIOVReprovision, Image: image,
+		AllowedTargets: []NodeMaintenanceTarget{target}, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60}}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile, &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other PF", func(v *NodeMaintenanceTarget) { v.Interface = "ens1f1" }},
+		{"other count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(4)) }},
+		{"no count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = nil }},
+		{"zero count", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(0)) }},
+		{"count over 256", func(v *NodeMaintenanceTarget) { v.VirtualFunctions = kptr.To(int32(257)) }},
+		{"no PF", func(v *NodeMaintenanceTarget) { v.Interface = "" }},
+		{"dot PF", func(v *NodeMaintenanceTarget) { v.Interface = ".." }},
+		{"option-like PF", func(v *NodeMaintenanceTarget) { v.Interface = "-h" }},
+		{"PF with space", func(v *NodeMaintenanceTarget) { v.Interface = "ens1f0 x" }},
+		{"unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"module", func(v *NodeMaintenanceTarget) { v.Module = "igb" }},
+		{"MAC", func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile, &request))
+		})
+	}
+	preview := profile.DeepCopy()
+	preview.DryRun = true
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(preview, &target), "no preview")
+	noBounds := profile.DeepCopy()
+	noBounds.Service = nil
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(noBounds, &target), "drainTimeoutSeconds")
+	// The count belongs only to sriov-reprovision.
+	withCount := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service", VirtualFunctions: kptr.To(int32(8))}
+	require.ErrorContains(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionServiceRestart, &withCount), "virtualFunctions")
+	// The service bounds belong only to the systemd actions.
+	module := &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionModuleLoad, Image: image, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60},
+		AllowedTargets: []NodeMaintenanceTarget{{TargetNode: "node-a", TargetNodeUID: "node-uid", Module: "igb"}}}
+	require.ErrorContains(t, ValidateNodeMaintenanceRequest(module, &module.AllowedTargets[0]), "service-restart and sriov-reprovision")
+}

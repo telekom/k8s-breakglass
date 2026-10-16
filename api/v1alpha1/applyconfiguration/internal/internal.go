@@ -1938,6 +1938,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: kexec
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceKexec
+    - name: service
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceService
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
   map:
     fields:
@@ -3368,6 +3371,29 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: profile
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenancePodSelector
+  map:
+    fields:
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceService
+  map:
+    fields:
+    - name: drainTimeoutSeconds
+      type:
+        scalar: numeric
+    - name: restartPods
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenancePodSelector
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceStatus
   map:
     fields:
@@ -3398,12 +3424,21 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: operationID
       type:
         scalar: string
+    - name: podRestartIssued
+      type:
+        scalar: boolean
     - name: podUID
       type:
         scalar: string
     - name: released
       type:
         scalar: boolean
+    - name: restartedPodUIDs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: result
       type:
         scalar: string
@@ -3422,6 +3457,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: interface
       type:
         scalar: string
+    - name: module
+      type:
+        scalar: string
     - name: neighborAddress
       type:
         scalar: string
@@ -3431,6 +3469,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: targetNodeUID
       type:
         scalar: string
+    - name: unit
+      type:
+        scalar: string
+    - name: virtualFunctions
+      type:
+        scalar: numeric
     - name: vlan
       type:
         scalar: numeric

@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed node-maintenance `action: sriov-reprovision` re-creates the SR-IOV
+  virtual functions of one allowlisted physical function (exact PF and VF
+  count) on a cordoned and drained worker Node. The executor is the
+  capability-free `service-restart` Pod; the `service-action` helper runs the
+  fixed host commands `netplan apply --sriov-only` and `netplan rebind <PF>`
+  as transient systemd units and the helper requires exactly the approved
+  number of driver-bound VFs. The controller then recreates the template's
+  `restartPods` (for example the SR-IOV device plugin) and uncordons only on
+  success. See `docs/node-maintenance-controller.md#sr-iov-re-provision-profiles`.
+
+- Typed node-maintenance `action: module-load` loads one allowlisted kernel
+  module (exact name, no parameters) of the running kernel until the next
+  reboot. The executor adds only `SYS_MODULE` and reads the host module tree
+  from a read-only `/lib/modules` hostPath; modprobe runs with an empty
+  configuration directory and `--ignore-install`, and the name must resolve
+  to the module itself. The node-maintenance image adds `kmod`. See
+  `docs/node-maintenance-controller.md#module-load-profiles`.
+
+- Typed node-maintenance `action: service-restart` restarts one allowlisted
+  host systemd unit (`containerd.service`, `kubelet.service`, `cra.service`)
+  on a cordoned and drained worker Node. The executor has no capabilities and
+  reaches systemd only through its private socket (read-only `Socket`
+  hostPath) with a fixed `RestartUnit` call. The helper verifies the unit and,
+  on CRA nodes, the router container links; the controller then recreates the
+  template's `restartPods` on the Node once and requires a Ready Node and Ready
+  replacements before it reports success and uncordons. Anything else keeps
+  the Node cordoned with the advisory to replace it. See
+  `docs/node-maintenance-controller.md#service-restart-profiles`.
+
 - Match kube-apiserver OIDC identities with provider and cluster username prefixes,
   arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
   Discovery, accepted audiences, and signing algorithms are configurable.

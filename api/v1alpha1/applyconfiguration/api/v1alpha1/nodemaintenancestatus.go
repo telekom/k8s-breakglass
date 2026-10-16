@@ -40,9 +40,15 @@ type NodeMaintenanceStatusApplyConfiguration struct {
 	// bootID is the Node boot ID observed before a kexec-recovery executor
 	// was created. A different boot ID on a Ready Node proves the reboot.
 	BootID *string `json:"bootID,omitempty"`
-	// cordonedAt is when this operation cordoned the Node for kexec-recovery.
+	// cordonedAt is when this operation cordoned the Node for kexec-recovery or service-restart.
 	// It bounds the drain and marks the cordon as owned by this operation.
 	CordonedAt *v1.Time `json:"cordonedAt,omitempty"`
+	// restartedPodUIDs are the Pods a service-restart deleted after its
+	// verified restart; their replacements must be Ready before success.
+	RestartedPodUIDs []string `json:"restartedPodUIDs,omitempty"`
+	// podRestartIssued is set once the restartPods deletions were sent, so they
+	// are never repeated.
+	PodRestartIssued *bool `json:"podRestartIssued,omitempty"`
 	// released is set only after Pod absence and UID-fenced Lease deletion.
 	Released *bool `json:"released,omitempty"`
 }
@@ -146,6 +152,24 @@ func (b *NodeMaintenanceStatusApplyConfiguration) WithBootID(value string) *Node
 // If called multiple times, the CordonedAt field is set to the value of the last call.
 func (b *NodeMaintenanceStatusApplyConfiguration) WithCordonedAt(value v1.Time) *NodeMaintenanceStatusApplyConfiguration {
 	b.CordonedAt = &value
+	return b
+}
+
+// WithRestartedPodUIDs adds the given value to the RestartedPodUIDs field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the RestartedPodUIDs field.
+func (b *NodeMaintenanceStatusApplyConfiguration) WithRestartedPodUIDs(values ...string) *NodeMaintenanceStatusApplyConfiguration {
+	for i := range values {
+		b.RestartedPodUIDs = append(b.RestartedPodUIDs, values[i])
+	}
+	return b
+}
+
+// WithPodRestartIssued sets the PodRestartIssued field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PodRestartIssued field is set to the value of the last call.
+func (b *NodeMaintenanceStatusApplyConfiguration) WithPodRestartIssued(value bool) *NodeMaintenanceStatusApplyConfiguration {
+	b.PodRestartIssued = &value
 	return b
 }
 
