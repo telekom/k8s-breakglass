@@ -305,7 +305,7 @@ func TestBindingLimitsCountPendingWithoutIdleBaseline(t *testing.T) {
 					} else {
 						binding.Spec.MaxActiveSessionsTotal = &limit
 					}
-					err := controller.checkBindingSessionLimits(context.Background(), binding, debugSessionReadIdentity{username: "alice", legacyAllowed: true})
+					err := controller.checkBindingSessionLimits(context.Background(), binding, "cluster1", debugSessionReadIdentity{username: "alice", legacyAllowed: true})
 					if state == breakglassv1alpha1.DebugSessionStateActive {
 						require.NoError(t, err)
 					} else {

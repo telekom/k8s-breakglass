@@ -8670,6 +8670,58 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			userEmail:   "user2@example.com",
 			expectError: false,
 		},
+		{
+			name: "per-cluster limit on another cluster - should pass (clusters run in parallel)",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster2",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    false,
+			expectedErrMsg: "",
+		},
+		{
+			name: "per-cluster limit on the same cluster - should fail",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    true,
+			expectedErrMsg: "per cluster",
+		},
 	}
 
 	for _, tt := range tests {
@@ -8694,7 +8746,7 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			if username == "" {
 				username = tt.userEmail
 			}
-			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, debugSessionReadIdentity{
+			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, "cluster1", debugSessionReadIdentity{
 				legacyAllowed: true, // Authenticated single-provider fixture.
 				username:      username,
 				email:         tt.userEmail,

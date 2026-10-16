@@ -1766,6 +1766,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: maxActiveSessionsPerCluster
+      type:
+        scalar: numeric
     - name: maxActiveSessionsPerUser
       type:
         scalar: numeric

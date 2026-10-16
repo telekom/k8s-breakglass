@@ -216,6 +216,14 @@ type DebugSessionClusterBindingSpec struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=1
 	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
+
+	// maxActiveSessionsPerCluster limits concurrent sessions via this binding
+	// on each target cluster. Sessions on different clusters do not count
+	// against each other, so a fleet-wide binding can allow one session per
+	// cluster without limiting how many clusters run one at the same time.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	MaxActiveSessionsPerCluster *int32 `json:"maxActiveSessionsPerCluster,omitempty"`
 }
 
 // KubectlDebugTargetNamespaceConstraints narrows the source namespaces

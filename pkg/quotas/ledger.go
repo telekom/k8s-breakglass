@@ -122,9 +122,14 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 			return fmt.Errorf("quota candidate is terminal or deleted")
 		}
 		if existing, reserved := state.Entries[candidate.UID]; reserved {
-			if existing.Kind != candidate.Kind || existing.Namespace != candidate.Namespace || existing.Name != candidate.Name || !slices.Equal(existing.Scopes, candidate.Scopes) {
+			if existing.Kind != candidate.Kind || existing.Namespace != candidate.Namespace || existing.Name != candidate.Name || !scopesSubset(existing.Scopes, candidate.Scopes) {
 				return fmt.Errorf("reserved session identity or quota scopes changed")
 			}
+			// A controller upgrade can derive additional scopes for a session
+			// reserved by an older replica. Keep the reservation (grandfathered
+			// like a tightened limit) and record the new scopes; a dropped scope
+			// would escape a limit and stays refused.
+			state.Entries[candidate.UID] = candidate
 		} else {
 			for scope, limit := range limits {
 				var count int32
@@ -213,4 +218,14 @@ func (s Store) Reserve(ctx context.Context, candidate Entry, limits map[string]i
 		}
 	}
 	return fmt.Errorf("quota reservation CAS retries exhausted")
+}
+
+// scopesSubset reports whether every scope of old is also in updated.
+func scopesSubset(old, updated []string) bool {
+	for _, scope := range old {
+		if !slices.Contains(updated, scope) {
+			return false
+		}
+	}
+	return true
 }

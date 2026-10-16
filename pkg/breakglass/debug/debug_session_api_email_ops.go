@@ -879,7 +879,7 @@ func extractPrivileged(sc *corev1.SecurityContext) bool {
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
 // Returns nil if the session can be created, or an error describing the limit violation.
-func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, identity debugSessionReadIdentity) error {
+func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, cluster string, identity debugSessionReadIdentity) error {
 	if binding == nil {
 		return nil
 	}
@@ -893,6 +893,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	// Count active sessions for this binding
 	var totalActive int32
 	var userActive int32
+	var clusterActive int32
 	now := time.Now()
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
@@ -912,6 +913,9 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		}
 
 		totalActive++
+		if session.Spec.Cluster == cluster {
+			clusterActive++
+		}
 		if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 			userActive++
 		}
@@ -928,6 +932,13 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	if binding.Spec.MaxActiveSessionsTotal != nil {
 		if totalActive >= *binding.Spec.MaxActiveSessionsTotal {
 			return fmt.Errorf("session limit reached: maximum %d total active sessions allowed via this binding", *binding.Spec.MaxActiveSessionsTotal)
+		}
+	}
+
+	// Check per-cluster limit
+	if binding.Spec.MaxActiveSessionsPerCluster != nil {
+		if clusterActive >= *binding.Spec.MaxActiveSessionsPerCluster {
+			return fmt.Errorf("session limit reached: maximum %d active sessions per cluster allowed via this binding on cluster %q", *binding.Spec.MaxActiveSessionsPerCluster, cluster)
 		}
 	}
 

@@ -791,6 +791,15 @@ spec:
                   labels are additional labels applied to resources created via this binding.
                   Merged with template labels.
                 type: object
+              maxActiveSessionsPerCluster:
+                description: |-
+                  maxActiveSessionsPerCluster limits concurrent sessions via this binding
+                  on each target cluster. Sessions on different clusters do not count
+                  against each other, so a fleet-wide binding can allow one session per
+                  cluster without limiting how many clusters run one at the same time.
+                format: int32
+                minimum: 1
+                type: integer
               maxActiveSessionsPerUser:
                 description: maxActiveSessionsPerUser limits concurrent sessions per
                   user via this binding.
