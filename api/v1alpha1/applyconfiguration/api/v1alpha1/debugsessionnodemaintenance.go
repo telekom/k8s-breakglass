@@ -27,6 +27,9 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// kexec pins the provider recovery bundle for a kexec-recovery profile.
 	// It is required for kexec-recovery and forbidden for every other action.
 	Kexec *NodeMaintenanceKexecApplyConfiguration `json:"kexec,omitempty"`
+	// service bounds a service-restart profile. It is required for
+	// service-restart and forbidden for every other action.
+	Service *NodeMaintenanceServiceApplyConfiguration `json:"service,omitempty"`
 }
 
 // DebugSessionNodeMaintenanceApplyConfiguration constructs a declarative configuration of the DebugSessionNodeMaintenance type for use with
@@ -77,5 +80,13 @@ func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithDryRun(value bool) *
 // If called multiple times, the Kexec field is set to the value of the last call.
 func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithKexec(value *NodeMaintenanceKexecApplyConfiguration) *DebugSessionNodeMaintenanceApplyConfiguration {
 	b.Kexec = value
+	return b
+}
+
+// WithService sets the Service field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Service field is set to the value of the last call.
+func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithService(value *NodeMaintenanceServiceApplyConfiguration) *DebugSessionNodeMaintenanceApplyConfiguration {
+	b.Service = value
 	return b
 }

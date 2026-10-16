@@ -6,8 +6,8 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Kubernetes node-maintenance image
 
-This digest-pinnable, multi-architecture image provides three controller-
-targeted incident interfaces:
+This digest-pinnable, multi-architecture image provides controller-targeted
+incident interfaces:
 
 * `node-recovery` collects read-only link, address, route, neighbor, NIC,
   resolver, and kernel evidence for one exact interface;
@@ -23,6 +23,11 @@ targeted incident interfaces:
   loading and before rebooting. On any failure it unloads the kernel and exits
   non-zero, and every exit reports `kexec_loaded=0|1|unknown` as the
   termination message; a successful kexec never returns.
+* `service-restart` restarts exactly one allowlisted systemd unit
+  (`containerd.service`, `kubelet.service`, `cra.service`) through systemd's
+  private socket with the fixed `service-action` helper (no capabilities, no
+  generic D-Bus surface), then waits for the unit and, on a CRA node, for the
+  router container links; see `runbooks/service-restart.md`.
 
 The `node-recovery` preflight invokes `ethtool` against the exact controller-
 selected interface and records its result as `ethtool.txt`; the integration

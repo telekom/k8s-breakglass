@@ -22,7 +22,7 @@ import (
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenance struct {
 	// action is the one executor operation enabled by this profile.
-	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery
+	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery;service-restart
 	Action string `json:"action"`
 	// image must be an immutable node-maintenance helper image.
 	// +kubebuilder:validation:Pattern=`^.+@sha256:[a-f0-9]{64}$`
@@ -41,6 +41,42 @@ type DebugSessionNodeMaintenance struct {
 	// It is required for kexec-recovery and forbidden for every other action.
 	// +optional
 	Kexec *NodeMaintenanceKexec `json:"kexec,omitempty"`
+	// service bounds a service-restart profile. It is required for
+	// service-restart and forbidden for every other action.
+	// +optional
+	Service *NodeMaintenanceService `json:"service,omitempty"`
+}
+
+// NodeMaintenanceService restarts one allowlisted host systemd unit on a
+// cordoned and drained Node through systemd's private socket. After the helper
+// verified the unit, the controller recreates the listed Pods on that Node
+// (for example a network agent that must re-apply its configuration to a
+// restarted router container) and requires the Node and each replacement to
+// be Ready before it reports success and uncordons the Node.
+type NodeMaintenanceService struct {
+	// drainTimeoutSeconds bounds cordon and eviction before execution. On
+	// timeout the controller uncordons the Node and fails without executing.
+	// +kubebuilder:validation:Minimum=30
+	// +kubebuilder:validation:Maximum=3600
+	DrainTimeoutSeconds int32 `json:"drainTimeoutSeconds"`
+	// restartPods selects Pods on the target Node that the controller deletes
+	// once after a verified restart; each selector must then have a new Ready
+	// Pod on the Node. Typically DaemonSet Pods.
+	// +optional
+	// +kubebuilder:validation:MaxItems=4
+	// +listType=atomic
+	RestartPods []NodeMaintenancePodSelector `json:"restartPods,omitempty"`
+}
+
+// NodeMaintenancePodSelector selects Pods by exact labels in one namespace.
+type NodeMaintenancePodSelector struct {
+	// namespace is the exact namespace of the Pods.
+	// +kubebuilder:validation:MaxLength=63
+	Namespace string `json:"namespace"`
+	// matchLabels must all match; at least one and at most eight labels.
+	// +kubebuilder:validation:MinProperties=1
+	// +kubebuilder:validation:MaxProperties=8
+	MatchLabels map[string]string `json:"matchLabels"`
 }
 
 // NodeMaintenanceKexec pins one provider-owned recovery kernel bundle. A dryRun
@@ -107,6 +143,12 @@ type NodeMaintenanceTarget struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=15
 	VRF string `json:"vrf,omitempty"`
+	// unit is the host systemd unit for service-restart and forbidden for
+	// every other action. On a CRA node a containerd.service restart also
+	// restarts cra.service (systemd Requires=).
+	// +optional
+	// +kubebuilder:validation:Enum=containerd.service;kubelet.service;cra.service
+	Unit string `json:"unit,omitempty"`
 }
 
 var maintenanceInterfacePattern = regexp.MustCompile(`^[a-zA-Z0-9_.:-]{1,15}$`)
@@ -118,6 +160,16 @@ var maintenanceSHA256Pattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
 // NodeMaintenanceActionKexecRecovery reboots one drained Node into a pinned recovery kernel.
 const NodeMaintenanceActionKexecRecovery = "kexec-recovery"
+
+// NodeMaintenanceActionServiceRestart restarts one allowlisted host systemd unit on a drained Node.
+const NodeMaintenanceActionServiceRestart = "service-restart"
+
+// serviceRestartMarginSeconds is the minimum session time left after a full
+// drain for the helper (at most 240s), a Ready Node and recreated Pods.
+const serviceRestartMarginSeconds = 600
+
+// nodeMaintenanceServiceUnits is the complete service-restart unit allowlist.
+var nodeMaintenanceServiceUnits = []string{"containerd.service", "kubelet.service", "cra.service"}
 
 // kexecReturnMarginSeconds is the minimum session time left after a full
 // drain for the kexec, the reboot and the Node returning Ready.
@@ -173,6 +225,12 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 		maxDuration, err := ParseDuration(spec.Constraints.MaxDuration)
 		if err != nil || maxDuration < time.Duration(int64(kexec.DrainTimeoutSeconds)+kexecReturnMarginSeconds)*time.Second {
 			return fmt.Errorf("kexec-recovery maxDuration must cover drainTimeoutSeconds plus %ds for the Node to return", kexecReturnMarginSeconds)
+		}
+	}
+	if service := spec.NodeMaintenance.Service; service != nil {
+		maxDuration, err := ParseDuration(spec.Constraints.MaxDuration)
+		if err != nil || maxDuration < time.Duration(int64(service.DrainTimeoutSeconds)+serviceRestartMarginSeconds)*time.Second {
+			return fmt.Errorf("service-restart maxDuration must cover drainTimeoutSeconds plus %ds for the restart and post-checks", serviceRestartMarginSeconds)
 		}
 	}
 	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
@@ -233,6 +291,19 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 		!maintenanceUIDPattern.MatchString(target.TargetNodeUID) {
 		return fmt.Errorf("an exact Node name and UID are required")
 	}
+	if action == NodeMaintenanceActionServiceRestart {
+		if !slices.Contains(nodeMaintenanceServiceUnits, target.Unit) {
+			return fmt.Errorf("service-restart requires a unit from %v", nodeMaintenanceServiceUnits)
+		}
+		if target.Interface != "" || target.EntryMAC != "" || target.NeighborAddress != "" ||
+			target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
+			return fmt.Errorf("service-restart targets only an exact Node name, UID and unit")
+		}
+		return nil
+	}
+	if target.Unit != "" {
+		return fmt.Errorf("unit is valid only for service-restart")
+	}
 	if action == NodeMaintenanceActionKexecRecovery {
 		if target.Interface != "" || target.EntryMAC != "" || target.NeighborAddress != "" ||
 			target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
@@ -286,6 +357,9 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 	if err := validateNodeMaintenanceKexec(profile); err != nil {
 		return err
 	}
+	if err := validateNodeMaintenanceService(profile); err != nil {
+		return err
+	}
 	if err := ValidateNodeMaintenanceTarget(profile.Action, target); err != nil {
 		return err
 	}
@@ -301,11 +375,38 @@ func ValidateNodeMaintenanceRequest(profile *DebugSessionNodeMaintenance, target
 		if target.TargetNode == allowed.TargetNode && target.TargetNodeUID == allowed.TargetNodeUID &&
 			target.Interface == allowed.Interface && target.EntryMAC == allowed.EntryMAC &&
 			target.NeighborAddress == allowed.NeighborAddress && target.Bridge == allowed.Bridge &&
-			target.VRF == allowed.VRF && vlanMatches {
+			target.VRF == allowed.VRF && target.Unit == allowed.Unit && vlanMatches {
 			return nil
 		}
 	}
 	return fmt.Errorf("nodeMaintenance tuple is not in the template allowlist")
+}
+
+func validateNodeMaintenanceService(profile *DebugSessionNodeMaintenance) error {
+	service := profile.Service
+	if profile.Action != NodeMaintenanceActionServiceRestart {
+		if service != nil {
+			return fmt.Errorf("nodeMaintenance service is valid only for service-restart")
+		}
+		return nil
+	}
+	if profile.DryRun {
+		return fmt.Errorf("service-restart has no preview; dryRun is not supported")
+	}
+	if service == nil || service.DrainTimeoutSeconds < 30 || service.DrainTimeoutSeconds > 3600 || len(service.RestartPods) > 4 {
+		return fmt.Errorf("service-restart requires a drainTimeoutSeconds from 30 through 3600 and at most four restartPods")
+	}
+	for _, selector := range service.RestartPods {
+		if len(validation.IsDNS1123Label(selector.Namespace)) != 0 || len(selector.MatchLabels) == 0 || len(selector.MatchLabels) > 8 {
+			return fmt.Errorf("service-restart restartPods need an exact namespace and one to eight matchLabels")
+		}
+		for key, value := range selector.MatchLabels {
+			if len(validation.IsQualifiedName(key)) != 0 || len(validation.IsValidLabelValue(value)) != 0 || value == "" {
+				return fmt.Errorf("service-restart restartPods matchLabels must be exact non-empty label pairs")
+			}
+		}
+	}
+	return nil
 }
 
 func validateNodeMaintenanceKexec(profile *DebugSessionNodeMaintenance) error {
@@ -363,10 +464,20 @@ type NodeMaintenanceStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=128
 	BootID string `json:"bootID,omitempty"`
-	// cordonedAt is when this operation cordoned the Node for kexec-recovery.
+	// cordonedAt is when this operation cordoned the Node for kexec-recovery or service-restart.
 	// It bounds the drain and marks the cordon as owned by this operation.
 	// +optional
 	CordonedAt *metav1.Time `json:"cordonedAt,omitempty"`
+	// restartedPodUIDs are the Pods a service-restart deleted after its
+	// verified restart; their replacements must be Ready before success.
+	// +optional
+	// +kubebuilder:validation:MaxItems=64
+	// +listType=atomic
+	RestartedPodUIDs []string `json:"restartedPodUIDs,omitempty"`
+	// podRestartIssued is set once the restartPods deletions were sent, so they
+	// are never repeated.
+	// +optional
+	PodRestartIssued bool `json:"podRestartIssued,omitempty"`
 	// released is set only after Pod absence and UID-fenced Lease deletion.
 	// +optional
 	Released bool `json:"released,omitempty"`

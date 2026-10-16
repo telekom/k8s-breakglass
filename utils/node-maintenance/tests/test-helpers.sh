@@ -34,6 +34,7 @@ assert_rejected_with_message() {
 network_repair="$root_dir/lib/network-repair.sh"
 preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
+service_restart="$root_dir/lib/service-restart.sh"
 
 assert_neighbor_literal_accepted() {
 	address=$1
@@ -277,5 +278,27 @@ assert_network_tuple 'mutation approval cannot be replayed as a preview' rejecte
 	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR "" true
 assert_network_tuple 'preview tuple is accepted for a preview' accepted "$neighbor_tuple&vrf=vrf-red&dry_run=true&confirmation=NETWORK-REPAIR" \
 	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-red true
+
+# service-restart: fixed unit allowlist, its own confirmation, action and tuple binding.
+service_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_SERVICE_REQUEST="$2" "$service_restart" \
+		--target-node node-a --unit "$3" --evidence-dir /evidence --confirm "$4"
+}
+service_tuple='target_node=node-a&unit=containerd.service&confirmation=SERVICE-RESTART'
+assert_rejected 'service-restart rejects a unit outside the allowlist' "unit 'sshd.service' is not allowlisted" \
+	service_env service-restart "$service_tuple" sshd.service SERVICE-RESTART
+assert_rejected 'service-restart rejects a unit path' "unit '../containerd.service' is not allowlisted" \
+	service_env service-restart "$service_tuple" ../containerd.service SERVICE-RESTART
+assert_rejected 'service-restart requires its own confirmation' "confirmation must be exactly 'SERVICE-RESTART'" \
+	service_env service-restart "$service_tuple" containerd.service NETWORK-REPAIR
+assert_rejected 'service-restart requires a service-restart approval' "controller-approved action 'link-cycle' does not match requested action 'service-restart'" \
+	service_env link-cycle "$service_tuple" containerd.service SERVICE-RESTART
+assert_rejected 'service-restart approval is bound to the exact unit' 'controller-approved service request does not exactly match the requested tuple' \
+	service_env service-restart "$service_tuple" kubelet.service SERVICE-RESTART
+assert_rejected 'service-restart rejects duplicate options' '--unit may be supplied only once' \
+	"$service_restart" --target-node node-a --unit kubelet.service --unit containerd.service \
+	--evidence-dir /evidence --confirm SERVICE-RESTART
 
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

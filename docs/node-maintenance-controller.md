@@ -7,9 +7,10 @@ SPDX-License-Identifier: CC-BY-4.0
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace`,
-`bridge-fdb-replace` and `kexec-recovery` are supported, each optionally as a
-preview; this does **not** enable broad flushes, link cycling, a
-caller-selected kernel, arbitrary host commands, traffic mirroring or CRA.
+`bridge-fdb-replace`, `kexec-recovery` (each optionally as a preview) and
+`service-restart` of an allowlisted systemd unit are supported; this does
+**not** enable broad flushes, link cycling, a caller-selected kernel or unit,
+arbitrary host commands or traffic mirroring.
 
 ## Operator prerequisites
 
@@ -236,6 +237,68 @@ the console shows that the executor no longer runs (the Node runs the recovery
 kernel or is powered off), remove the Pod with
 `kubectl -n breakglass-node-maintenance delete pod OPERATION_ID --force --grace-period=0`.
 
+### Service restart profiles
+
+`action: service-restart` restarts one allowlisted host systemd unit
+(`containerd.service`, `kubelet.service` or `cra.service`) on one drained
+worker Node. The allowlist entries carry `targetNode`, `targetNodeUID` and
+`unit`; interface and tuple fields are rejected, and there is no preview.
+
+```yaml
+  constraints:
+    maxDuration: 20m   # at least drainTimeoutSeconds + 600s
+  nodeMaintenance:
+    action: service-restart
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    service:
+      drainTimeoutSeconds: 600
+      restartPods:            # optional, at most four selectors
+        - namespace: kube-system
+          matchLabels:
+            app.kubernetes.io/name: network-operator-agent-cra-vsr
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        unit: cra.service
+```
+
+Before the drain the controller requires every `restartPods` selector to match
+at least one Pod on the Node (select DaemonSet Pods: the drain evicts other
+Pods); otherwise it fails without executing. It rejects control-plane Nodes and
+drains like a kexec execution (steps 2 to 4 above, without the boot ID). The
+executor Pod has no capabilities, RuntimeDefault seccomp, a read-only root
+filesystem and no host PID, and uses the host network only to read host links.
+It mounts systemd's private socket `/run/systemd/private` from a `Socket`
+hostPath. `readOnly` does not restrict a socket: the fence is the fixed
+entrypoint and the `service-action` helper, which can only probe a unit
+(`LoadUnit` and property reads, after a `Peer.Ping`) and call
+`RestartUnit(<unit>, "replace")` for an allowlisted unit; the image has no
+`systemctl` or general D-Bus client. A Node without that socket leaves the
+executor Pending until the deadline (`interrupted`, the Node stays cordoned). The helper waits until the unit
+is active again with a new activation time; on a CRA node (where `cra.service`
+is loaded) a `containerd.service` or `cra.service` restart also waits for
+`cra.service`, the host `hbn` and `netconf` links and, when present, a global
+address on `oam0`. `cra.service` declares `Requires=containerd.service`, so a
+containerd restart on a CRA node always restarts the router container and
+briefly removes the node network.
+
+After the helper succeeded the controller requires the Node to be Ready,
+deletes each Pod that matches `restartPods` on that Node exactly once (UID
+precondition), and waits until every selector has a new Ready Pod on the Node.
+Use this for agents that must re-apply configuration to the restarted service,
+for example a network agent that only pushes its configuration when its own
+revision changes. Only then is the result `succeeded` and cleanup uncordons the
+Node. A failed helper, or a Node or replacement Pod that is not Ready before
+the deadline, is `failed` with the advisory "recommend replacing it"; the Node
+stays cordoned. A succeeded helper whose post-checks never ran (cancellation)
+is `unknown` and also stays cordoned. Nothing on the Node is persisted.
+
+The controller's ClusterConfig identity additionally needs `delete` on Pods in
+the `restartPods` namespaces (the drain already needs Pod `list`, eviction and
+Node `patch`). Admission
+policies that forbid hostPath volumes need a per-session exception for the
+executor Pod in the template's auxiliary resources.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
@@ -250,7 +313,7 @@ session UID. API-server atomic Create and UID/resourceVersion-fenced Delete
 arbitrate ownership; **Lease age alone never permits takeover**. A contender
 remains PendingApproval with an exclusive-Lease wait message and no executor.
 
-The single network-repair Pod has (see above for the kexec Pod):
+The single network-repair Pod has (see above for the kexec and service-restart Pods):
 
 - exact `nodeName`, `hostNetwork: true`, no host PID/IPC;
 - root UID/GID, NET_ADMIN only, all other capabilities dropped;

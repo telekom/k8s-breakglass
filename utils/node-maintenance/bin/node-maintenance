@@ -14,6 +14,8 @@ Commands (the only supported entrypoints):
   network-repair            Run one explicitly selected network repair.
   kexec-recovery-validate   Validate fixed provider recovery inputs; never execute.
   kexec-recovery            Validate the same inputs, then kexec into them.
+  service-restart           Restart one allowlisted systemd unit (containerd,
+                            kubelet, cra) and run its post-checks.
 
 The image does not provide an unrestricted shell entrypoint. Use a runbook and
 pass an explicit target, evidence directory, and confirmation token.
@@ -40,6 +42,9 @@ case "$command_name" in
 		;;
 	kexec-recovery)
 		exec /usr/local/libexec/node-maintenance/kexec-recovery "$@"
+		;;
+	service-restart)
+		exec /usr/local/libexec/node-maintenance/service-restart "$@"
 		;;
 	-h|--help)
 		usage

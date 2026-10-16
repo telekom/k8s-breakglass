@@ -10,6 +10,10 @@ WORKDIR /src
 COPY cmd/network-action/ ./
 RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
       go build -trimpath -ldflags='-s -w' -o /out/network-action .
+WORKDIR /src-service-action
+COPY cmd/service-action/ ./
+RUN CGO_ENABLED=0 GO111MODULE=off GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+      go build -trimpath -ldflags='-s -w' -o /out/service-action .
 
 FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kexec-action-builder
 
@@ -40,20 +44,25 @@ RUN apk add --no-cache \
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance
 COPY --from=network-action-builder /out/network-action /usr/local/sbin/network-action
+COPY --from=network-action-builder /out/service-action /usr/local/sbin/service-action
 COPY --from=kexec-action-builder /out/kexec-action /usr/local/sbin/kexec-action
 COPY lib/common.sh /usr/local/libexec/node-maintenance/common.sh
 COPY lib/network-repair.sh /usr/local/libexec/node-maintenance/network-repair
 COPY lib/node-recovery-preflight.sh /usr/local/libexec/node-maintenance/node-recovery
 COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery-validate
+COPY lib/service-restart.sh /usr/local/libexec/node-maintenance/service-restart
 COPY lib/kexec-recovery-validate.sh /usr/local/libexec/node-maintenance/kexec-recovery
 COPY MOTD /etc/motd
 COPY README.md /usr/share/breakglass/runbooks/upstream/node-maintenance/README.md
 COPY runbooks/network-repair.md /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md
 COPY runbooks/node-recovery-preflight.md /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md
 COPY runbooks/kexec-recovery-validation.md /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md
+COPY runbooks/service-restart.md /usr/share/breakglass/runbooks/upstream/node-maintenance/service-restart.md
 
 RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/local/sbin/network-action \
+        /usr/local/sbin/service-action \
+        /usr/local/libexec/node-maintenance/service-restart \
         /usr/local/sbin/kexec-action \
         /usr/local/libexec/node-maintenance/network-repair \
         /usr/local/libexec/node-maintenance/node-recovery \
@@ -64,6 +73,7 @@ RUN chmod 0555 /usr/local/bin/node-maintenance \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/network-repair.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/node-recovery-preflight.md \
         /usr/share/breakglass/runbooks/upstream/node-maintenance/kexec-recovery-validation.md \
+        /usr/share/breakglass/runbooks/upstream/node-maintenance/service-restart.md \
     && mkdir -p /evidence /usr/share/breakglass/runbooks/internal \
     && chmod 0700 /evidence \
     && chmod 0755 /usr/share/breakglass/runbooks/internal
@@ -78,7 +88,7 @@ LABEL org.opencontainers.image.title="Kubernetes node maintenance" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
       org.opencontainers.image.base.name="alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
-      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery" \
+      io.telekom.breakglass.node-maintenance.commands="node-recovery,network-repair,kexec-recovery-validate,kexec-recovery,service-restart" \
       io.telekom.breakglass.node-maintenance.shell="not-supported" \
       io.telekom.breakglass.node-maintenance.capabilities="NET_ADMIN,SYS_BOOT"
 

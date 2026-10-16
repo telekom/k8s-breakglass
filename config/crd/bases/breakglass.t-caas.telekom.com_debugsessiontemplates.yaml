@@ -2378,6 +2378,7 @@ spec:
                     - neighbor-replace
                     - bridge-fdb-replace
                     - kexec-recovery
+                    - service-restart
                     type: string
                   allowedTargets:
                     description: allowedTargets is an exact allowlist, not a selector
@@ -2416,6 +2417,16 @@ spec:
                           description: targetNodeUID prevents execution against a
                             replaced Node.
                           maxLength: 128
+                          type: string
+                        unit:
+                          description: |-
+                            unit is the host systemd unit for service-restart and forbidden for
+                            every other action. On a CRA node a containerd.service restart also
+                            restarts cra.service (systemd Requires=).
+                          enum:
+                          - containerd.service
+                          - kubelet.service
+                          - cra.service
                           type: string
                         vlan:
                           description: vlan is required only for an FDB operation.
@@ -2495,6 +2506,51 @@ spec:
                     - initrdSHA256
                     - kernelSHA256
                     - profile
+                    type: object
+                  service:
+                    description: |-
+                      service bounds a service-restart profile. It is required for
+                      service-restart and forbidden for every other action.
+                    properties:
+                      drainTimeoutSeconds:
+                        description: |-
+                          drainTimeoutSeconds bounds cordon and eviction before execution. On
+                          timeout the controller uncordons the Node and fails without executing.
+                        format: int32
+                        maximum: 3600
+                        minimum: 30
+                        type: integer
+                      restartPods:
+                        description: |-
+                          restartPods selects Pods on the target Node that the controller deletes
+                          once after a verified restart; each selector must then have a new Ready
+                          Pod on the Node. Typically DaemonSet Pods.
+                        items:
+                          description: NodeMaintenancePodSelector selects Pods by
+                            exact labels in one namespace.
+                          properties:
+                            matchLabels:
+                              additionalProperties:
+                                type: string
+                              description: matchLabels must all match; at least one
+                                and at most eight labels.
+                              maxProperties: 8
+                              minProperties: 1
+                              type: object
+                            namespace:
+                              description: namespace is the exact namespace of the
+                                Pods.
+                              maxLength: 63
+                              type: string
+                          required:
+                          - matchLabels
+                          - namespace
+                          type: object
+                        maxItems: 4
+                        type: array
+                        x-kubernetes-list-type: atomic
+                    required:
+                    - drainTimeoutSeconds
                     type: object
                 required:
                 - action

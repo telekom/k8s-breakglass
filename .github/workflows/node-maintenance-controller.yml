@@ -27,7 +27,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        action: [neighbor, fdb, kexec]
+        action: [neighbor, fdb, kexec, service]
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:

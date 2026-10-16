@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Typed node-maintenance `action: service-restart` restarts one allowlisted
+  host systemd unit (`containerd.service`, `kubelet.service`, `cra.service`)
+  on a cordoned and drained worker Node. The executor has no capabilities and
+  reaches systemd only through its private socket (read-only `Socket`
+  hostPath) with a fixed `RestartUnit` call. The helper verifies the unit and,
+  on CRA nodes, the router container links; the controller then recreates the
+  template's `restartPods` on the Node once and requires a Ready Node and Ready
+  replacements before it reports success and uncordons. Anything else keeps
+  the Node cordoned with the advisory to replace it. See
+  `docs/node-maintenance-controller.md#service-restart-profiles`.
+
 - Match kube-apiserver OIDC identities with provider and cluster username prefixes,
   arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
   Discovery, accepted audiences, and signing algorithms are configurable.

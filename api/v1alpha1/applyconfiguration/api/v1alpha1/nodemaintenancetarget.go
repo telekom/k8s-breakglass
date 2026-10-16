@@ -32,6 +32,10 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	// vrf optionally binds a neighbour operation to the exact VRF device that
 	// must be the interface master. It is never valid for an FDB operation.
 	VRF *string `json:"vrf,omitempty"`
+	// unit is the host systemd unit for service-restart and forbidden for
+	// every other action. On a CRA node a containerd.service restart also
+	// restarts cra.service (systemd Requires=).
+	Unit *string `json:"unit,omitempty"`
 }
 
 // NodeMaintenanceTargetApplyConfiguration constructs a declarative configuration of the NodeMaintenanceTarget type for use with
@@ -101,5 +105,13 @@ func (b *NodeMaintenanceTargetApplyConfiguration) WithVLAN(value int32) *NodeMai
 // If called multiple times, the VRF field is set to the value of the last call.
 func (b *NodeMaintenanceTargetApplyConfiguration) WithVRF(value string) *NodeMaintenanceTargetApplyConfiguration {
 	b.VRF = &value
+	return b
+}
+
+// WithUnit sets the Unit field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Unit field is set to the value of the last call.
+func (b *NodeMaintenanceTargetApplyConfiguration) WithUnit(value string) *NodeMaintenanceTargetApplyConfiguration {
+	b.Unit = &value
 	return b
 }

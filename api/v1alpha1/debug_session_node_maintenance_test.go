@@ -242,3 +242,80 @@ func TestNodeMaintenanceKexecDurationCoversDrainAndReturn(t *testing.T) {
 	spec.NodeMaintenance.DryRun = true
 	require.NoError(t, ValidateNodeMaintenanceTemplate(&spec), "a validate-only profile never drains or reboots")
 }
+
+func TestNodeMaintenanceServiceRestartIsUnitOnly(t *testing.T) {
+	image := "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64)
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "cra.service"}
+	service := &NodeMaintenanceService{DrainTimeoutSeconds: 60,
+		RestartPods: []NodeMaintenancePodSelector{{Namespace: "kube-system", MatchLabels: map[string]string{"app.kubernetes.io/name": "network-operator-agent-cra-vsr"}}}}
+	profile := func() *DebugSessionNodeMaintenance {
+		return &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionServiceRestart, Image: image,
+			AllowedTargets: []NodeMaintenanceTarget{target}, Service: service.DeepCopy()}
+	}
+	require.NoError(t, ValidateNodeMaintenanceRequest(profile(), &target))
+	for _, change := range []struct {
+		name   string
+		mutate func(*NodeMaintenanceTarget)
+	}{
+		{"other unit", func(v *NodeMaintenanceTarget) { v.Unit = "kubelet.service" }},
+		{"unit outside allowlist", func(v *NodeMaintenanceTarget) { v.Unit = "sshd.service" }},
+		{"no unit", func(v *NodeMaintenanceTarget) { v.Unit = "" }},
+		{"interface", func(v *NodeMaintenanceTarget) { v.Interface = "eth0" }},
+		{"mac", func(v *NodeMaintenanceTarget) { v.EntryMAC = "02:00:00:00:00:02" }},
+		{"replaced node", func(v *NodeMaintenanceTarget) { v.TargetNodeUID = "replacement" }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			request := *target.DeepCopy()
+			change.mutate(&request)
+			require.Error(t, ValidateNodeMaintenanceRequest(profile(), &request))
+		})
+	}
+	for _, change := range []struct {
+		name   string
+		mutate func(*DebugSessionNodeMaintenance)
+	}{
+		{"missing service", func(p *DebugSessionNodeMaintenance) { p.Service = nil }},
+		{"preview", func(p *DebugSessionNodeMaintenance) { p.DryRun = true }},
+		{"short drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 10 }},
+		{"long drain", func(p *DebugSessionNodeMaintenance) { p.Service.DrainTimeoutSeconds = 3601 }},
+		{"bad namespace", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].Namespace = "Kube System" }},
+		{"empty selector", func(p *DebugSessionNodeMaintenance) { p.Service.RestartPods[0].MatchLabels = map[string]string{} }},
+		{"empty label value", func(p *DebugSessionNodeMaintenance) {
+			p.Service.RestartPods[0].MatchLabels = map[string]string{"app": ""}
+		}},
+		{"too many selectors", func(p *DebugSessionNodeMaintenance) {
+			p.Service.RestartPods = append(p.Service.RestartPods, p.Service.RestartPods[0], p.Service.RestartPods[0], p.Service.RestartPods[0], p.Service.RestartPods[0])
+		}},
+		{"kexec bundle", func(p *DebugSessionNodeMaintenance) { p.Kexec = &NodeMaintenanceKexec{} }},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			p := profile()
+			change.mutate(p)
+			require.Error(t, ValidateNodeMaintenanceRequest(p, &target))
+		})
+	}
+	// Service settings and units belong to service-restart only.
+	neighbor := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0", EntryMAC: "02:00:00:00:00:02", NeighborAddress: "192.0.2.2"}
+	other := &DebugSessionNodeMaintenance{Action: "neighbor-replace", Image: image, AllowedTargets: []NodeMaintenanceTarget{neighbor}, Service: service.DeepCopy()}
+	require.Error(t, ValidateNodeMaintenanceRequest(other, &neighbor))
+	other.Service = nil
+	withUnit := neighbor
+	withUnit.Unit = "containerd.service"
+	require.Error(t, ValidateNodeMaintenanceTarget("neighbor-replace", &withUnit))
+	require.Error(t, ValidateNodeMaintenanceTarget(NodeMaintenanceActionKexecRecovery, &NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service"}))
+}
+
+func TestNodeMaintenanceServiceRestartMaxDurationCoversDrainAndChecks(t *testing.T) {
+	target := NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Unit: "kubelet.service"}
+	spec := &DebugSessionTemplateSpec{
+		TargetNamespace: NodeMaintenanceNamespace,
+		Approvers:       &DebugSessionApprovers{Users: []string{"approver"}},
+		Constraints:     &DebugSessionConstraints{MaxDuration: "10m"},
+		NodeMaintenance: &DebugSessionNodeMaintenance{Action: NodeMaintenanceActionServiceRestart,
+			Image:          "registry.example/node-maintenance@sha256:" + strings.Repeat("a", 64),
+			AllowedTargets: []NodeMaintenanceTarget{target}, Service: &NodeMaintenanceService{DrainTimeoutSeconds: 60}},
+	}
+	require.ErrorContains(t, ValidateNodeMaintenanceTemplate(spec), "maxDuration must cover drainTimeoutSeconds plus 600s")
+	spec.Constraints.MaxDuration = "11m"
+	require.NoError(t, ValidateNodeMaintenanceTemplate(spec))
+}

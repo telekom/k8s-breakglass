@@ -18,9 +18,10 @@ image:
     network-repair-preview: []
     kexec-recovery-validate: []
     kexec-recovery: [SYS_BOOT]
+    service-restart: []
   controllerDeadline:
     environment: BREAKGLASS_ACTION_DEADLINE_UNIX
-    operation: [network-repair, kexec-recovery]
+    operation: [network-repair, kexec-recovery, service-restart]
     checks: [before-preflight, before-mutation]
   runbooks: /usr/share/breakglass/runbooks/upstream/node-maintenance
   internalRunbookMount: /usr/share/breakglass/runbooks/internal
