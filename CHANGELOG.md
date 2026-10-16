@@ -9,11 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Match kube-apiserver OIDC identities with provider and cluster username prefixes,
-  arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
-  Discovery, accepted audiences, and signing algorithms are configurable.
-- Preserve requester ownership separately from target Kubernetes usernames,
-  including identities without email and server-computed UI ownership metadata.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are
@@ -122,9 +117,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in these independently built utility binaries.
 
 ### Changed
-
-- Use Kubernetes' OIDC authenticator for IdentityProvider token verification,
-  replacing the custom multi-provider JWKS implementation.
 
 - Limit `BreakglassSession.spec.ticketSystemID` to 256 characters. The CRD
   schema, session request API (`422 Unprocessable Entity`), `bgctl session
@@ -1156,6 +1148,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Catalogue utility integration now runs storage image mounted-volume checks
   through the `storage-diagnostics` dispatcher and removes a stale network job
   build reference to a non-existent kubestr fixture path.
+
+## [0.3.0-rc.13] - 2026-10-16
+
+### Added
+
+- Match kube-apiserver OIDC identities with provider and cluster username prefixes,
+  arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
+  Discovery, accepted audiences, and signing algorithms are configurable.
+- Preserve requester ownership separately from target Kubernetes usernames,
+  including identities without email and server-computed UI ownership metadata.
+
+### Changed
+
+- Use Kubernetes' OIDC authenticator for IdentityProvider token verification,
+  replacing the custom multi-provider JWKS implementation.
+- Update the Go dependency group, Vue/TypeScript and test tooling, and the pinned
+  Scorecard action. Package escalation-config 0.4.6 and debug-session-catalogue
+  0.2.9 with the new controller release.
+
+### Upgrade guidance
+
+- Apply updated CRDs first; match Kubernetes username prefixes explicitly and
+  retain the standard email claim in the API bearer token for notifications.
+  Existing sessions are not rewritten. See the
+  [release notes](docs/releases/v0.3.0-rc.13.md) for migration and security details.
 
 ## [0.1.0-rc.8] - 2026-08-22
 

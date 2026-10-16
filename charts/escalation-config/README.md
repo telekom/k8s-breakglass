@@ -606,6 +606,10 @@ escalations:
 
 ## Upgrading
 
+Chart 0.4.6 accompanies controller v0.3.0-rc.13. Apply the updated CRDs before
+using the OIDC claim, prefix, or structured mapping fields. See the
+[OIDC migration and email guidance](../../docs/oidc-compatibility.md).
+
 ```bash
 helm upgrade my-escalation ./charts/escalation-config -f values.yaml
 ```
