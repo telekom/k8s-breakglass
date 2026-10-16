@@ -244,6 +244,10 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.NodeDebugConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceKexec"):
 		return &apiv1alpha1.NodeMaintenanceKexecApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenancePodSelector"):
+		return &apiv1alpha1.NodeMaintenancePodSelectorApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceService"):
+		return &apiv1alpha1.NodeMaintenanceServiceApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceStatus"):
 		return &apiv1alpha1.NodeMaintenanceStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("NodeMaintenanceTarget"):
