@@ -22,7 +22,7 @@ import (
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenance struct {
 	// action is the one executor operation enabled by this profile.
-	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;kexec-recovery
+	// +kubebuilder:validation:Enum=neighbor-replace;bridge-fdb-replace;link-cycle;restart-autonegotiation;kexec-recovery
 	Action string `json:"action"`
 	// image must be an immutable node-maintenance helper image.
 	// +kubebuilder:validation:Pattern=`^.+@sha256:[a-f0-9]{64}$`
@@ -242,6 +242,12 @@ func ValidateNodeMaintenanceTarget(action string, target *NodeMaintenanceTarget)
 	}
 	if !maintenanceInterfacePattern.MatchString(target.Interface) || target.Interface == "." || target.Interface == ".." {
 		return fmt.Errorf("an exact interface is required")
+	}
+	if action == "link-cycle" || action == "restart-autonegotiation" {
+		if target.EntryMAC != "" || target.NeighborAddress != "" || target.Bridge != "" || target.VLAN != nil || target.VRF != "" {
+			return fmt.Errorf("%s acts on the exact interface only; entryMAC, neighbour, bridge, VLAN and VRF must be empty", action)
+		}
+		return nil
 	}
 	mac, err := net.ParseMAC(target.EntryMAC)
 	if err != nil || len(mac) != 6 || mac.String() != target.EntryMAC ||

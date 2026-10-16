@@ -2377,6 +2377,8 @@ spec:
                     enum:
                     - neighbor-replace
                     - bridge-fdb-replace
+                    - link-cycle
+                    - restart-autonegotiation
                     - kexec-recovery
                     type: string
                   allowedTargets:

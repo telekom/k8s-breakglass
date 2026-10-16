@@ -15,6 +15,7 @@ package v1alpha1
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// action is the one executor operation enabled by this profile.
+	// link-cycle and restart-autonegotiation act on the exact interface only.
 	Action *string `json:"action,omitempty"`
 	// image must be an immutable node-maintenance helper image.
 	Image *string `json:"image,omitempty"`

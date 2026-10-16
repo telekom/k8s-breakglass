@@ -150,7 +150,7 @@ kubectl --kubeconfig "$proof_dir/kubeconfig" label namespace breakglass-node-mai
 
 # This is disposable Kind-node kernel state, never an arbitrary caller command.
 docker exec "$node_id" sh -eu -c '
-	for link in bg1551n bg1551v bg1551vrf bg1551a bg1551ap bg1551b bg1551bp bg1551br; do
+	for link in bg1551n bg1551v bg1551vrf bg1551a bg1551ap bg1551b bg1551bp bg1551br bg1551l bg1551ld; do
 		if ip link show "$link" >/dev/null 2>&1; then
 			echo "Fixture link collision: $link" >&2
 			exit 1
@@ -185,6 +185,9 @@ docker exec "$node_id" sh -eu -c '
 	bridge vlan add dev bg1551b vid 101
 	bridge fdb replace 02:00:00:00:00:02 dev bg1551b master static vlan 100
 	bridge fdb replace 02:00:00:00:00:09 dev bg1551b master static vlan 101
+	# link-cycle lane: an administratively down port (the SCHIFF-3216 symptom) and a down decoy.
+	ip link add bg1551l type dummy
+	ip link add bg1551ld type dummy
 '
 # A disposable recovery bundle that is only hashed and never loaded: Kind
 # nodes are control planes, so the kexec lane proves validation and refusal.

@@ -17,11 +17,10 @@ type NodeMaintenanceTargetApplyConfiguration struct {
 	TargetNode *string `json:"targetNode,omitempty"`
 	// targetNodeUID prevents execution against a replaced Node.
 	TargetNodeUID *string `json:"targetNodeUID,omitempty"`
-	// interface is the neighbour interface or bridge FDB port. It is required
-	// for network repair and forbidden for kexec-recovery.
+	// interface is the neighbour interface or bridge FDB port.
 	Interface *string `json:"interface,omitempty"`
-	// entryMAC is the canonical lowercase colon-delimited six-byte MAC. It is
-	// required for network repair and forbidden for kexec-recovery.
+	// entryMAC is the canonical lowercase colon-delimited six-byte MAC.
+	// Required for neighbor-replace and bridge-fdb-replace; empty for link actions.
 	EntryMAC *string `json:"entryMAC,omitempty"`
 	// neighborAddress is a canonical individual IP, never a prefix.
 	NeighborAddress *string `json:"neighborAddress,omitempty"`

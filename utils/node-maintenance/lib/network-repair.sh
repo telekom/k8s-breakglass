@@ -137,6 +137,17 @@ fi
 interface_ifindex=$(pin_interface_ifindex "$interface")
 capture "$bundle/before-addresses.txt" ip -brief address show dev "$interface" || true
 capture "$bundle/before-routes.txt" ip route show dev "$interface" || true
+case "$action" in
+	link-cycle|restart-autonegotiation)
+		# Dropping the carrier of the interface that holds a default route cuts the node off.
+		for family in -4 -6; do
+			if [ -n "$(ip "$family" route show default dev "$interface" 2>/dev/null)" ]; then
+				record_event operation-completed preflight-failed
+				die "interface '$interface' carries a default route; a link action would cut the node off, no repair was attempted (evidence: $bundle)"
+			fi
+		done
+		;;
+esac
 capture "$bundle/before-neighbors.txt" ip neigh show dev "$interface" || true
 
 case "$action" in

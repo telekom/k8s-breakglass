@@ -54,6 +54,30 @@ func TestNodeMaintenanceTupleWithoutOptionalFieldsIsUnchanged(t *testing.T) {
 		maintenanceTuple(&breakglassv1alpha1.DebugSessionNodeMaintenance{Action: "bridge-fdb-replace"}, target))
 }
 
+func TestNodeMaintenanceLinkActionsPassInterfaceOnly(t *testing.T) {
+	for _, action := range []string{"link-cycle", "restart-autonegotiation"} {
+		t.Run(action, func(t *testing.T) {
+			c, ds, spoke, sink := maintenanceFixture(t)
+			setMaintenanceProfile(t, c, ds, func(spec *breakglassv1alpha1.DebugSessionTemplateSpec, target *breakglassv1alpha1.NodeMaintenanceTarget) {
+				*target = breakglassv1alpha1.NodeMaintenanceTarget{TargetNode: "node-a", TargetNodeUID: "node-uid", Interface: "eth0"}
+				spec.NodeMaintenance.Action = action
+				spec.NodeMaintenance.AllowedTargets = []breakglassv1alpha1.NodeMaintenanceTarget{*target}
+			})
+			require.NoError(t, c.deployMaintenance(t.Context(), ds))
+			pod := &corev1.Pod{}
+			require.NoError(t, spoke.Get(t.Context(), client.ObjectKey{Name: ds.Status.NodeMaintenance.OperationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace}, pod))
+			container := pod.Spec.Containers[0]
+			require.Equal(t, []string{"network-repair", "--target-node", "node-a", "--interface", "eth0", "--action", action,
+				"--confirm", "NETWORK-REPAIR", "--evidence-dir", "/evidence"}, container.Args)
+			require.Equal(t, []corev1.Capability{"NET_ADMIN"}, container.SecurityContext.Capabilities.Add)
+			want := "target_node=node-a&interface=eth0&action=" + action + "&neighbor_address=&bridge=&entry_mac=&vlan=&confirmation=NETWORK-REPAIR"
+			require.Contains(t, container.Env, corev1.EnvVar{Name: "BREAKGLASS_APPROVED_NETWORK_REQUEST", Value: want})
+			require.Equal(t, want, sink.Events()[0].Details["tuple"])
+			require.True(t, matchesMaintenancePod(ds, pod))
+		})
+	}
+}
+
 func TestNodeMaintenanceDryRunHasNoMutationCapability(t *testing.T) {
 	c, ds, spoke, sink := maintenanceFixture(t)
 	setMaintenanceProfile(t, c, ds, func(spec *breakglassv1alpha1.DebugSessionTemplateSpec, _ *breakglassv1alpha1.NodeMaintenanceTarget) {

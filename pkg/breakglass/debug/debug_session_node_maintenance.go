@@ -345,16 +345,18 @@ func maintenancePod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 		return kexecPod(ds)
 	}
 	seconds := status.ActiveDeadlineSeconds
-	args := []string{"network-repair", "--target-node", target.TargetNode, "--interface", target.Interface, "--action", profile.Action,
-		"--entry-mac", target.EntryMAC, "--confirm", "NETWORK-REPAIR", "--evidence-dir", "/evidence"}
-	if profile.Action == "neighbor-replace" {
-		args = append(args, "--neighbor-address", target.NeighborAddress)
+	args := []string{"network-repair", "--target-node", target.TargetNode, "--interface", target.Interface, "--action", profile.Action}
+	switch profile.Action {
+	case "neighbor-replace":
+		args = append(args, "--entry-mac", target.EntryMAC, "--neighbor-address", target.NeighborAddress)
 		if target.VRF != "" {
 			args = append(args, "--vrf", target.VRF)
 		}
-	} else {
-		args = append(args, "--bridge", target.Bridge, "--vlan", strconv.Itoa(int(*target.VLAN)))
+	case "bridge-fdb-replace":
+		args = append(args, "--entry-mac", target.EntryMAC, "--bridge", target.Bridge, "--vlan", strconv.Itoa(int(*target.VLAN)))
 	}
+	// link-cycle and restart-autonegotiation take the exact interface only.
+	args = append(args, "--confirm", "NETWORK-REPAIR", "--evidence-dir", "/evidence")
 	capabilities := &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_ADMIN"}}
 	if profile.DryRun {
 		// A preview only reads kernel tables, so it never holds NET_ADMIN.
