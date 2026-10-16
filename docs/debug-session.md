@@ -461,6 +461,54 @@ Ephemeral containers cannot mount volumes, so `kubectl debug` sessions and
 templates without a workload, such as node-maintenance templates, show the
 MOTD in the UI only.
 
+### Toolbox image volume
+
+Templates may set `spec.toolbox` to put an administrator-chosen, read-only OCI
+image with runbooks, helper scripts and CLIs into the session's interactive
+containers:
+
+```yaml
+spec:
+  toolbox:
+    image: registry.example/breakglass-toolbox@sha256:<64 hex>
+    mountPath: /opt/breakglass/toolbox   # default
+```
+
+`image` must be digest-pinned. `mountPath` is an absolute path without `.` or
+`..` segments. The controller mounts the image as a Kubernetes
+[image volume](https://kubernetes.io/docs/concepts/storage/volumes/#image)
+(`pullPolicy: IfNotPresent`, read-only) and exports the path as
+`BREAKGLASS_TOOLBOX` into:
+
+- every regular container of workload sessions (Pod, DaemonSet, Deployment or
+  Job), from the template;
+- the node debug container and the pod-copy `debugger` container, from the
+  session's approved template snapshot. Copied application containers stay
+  unchanged.
+
+Init containers, ephemeral containers (`kubectl debug`; they cannot add
+volumes) and templates without a workload get no toolbox. A container that
+already mounts something at the toolbox path keeps its own mount, and a
+template volume named `breakglass-toolbox` is kept (the controller then uses
+`breakglass-toolbox-1`). Requesters cannot change the image or path.
+
+Image volumes need the `ImageVolume` API on the target cluster: beta and on by
+default from Kubernetes 1.35, GA from 1.36; on 1.31-1.34 the feature gate must
+be enabled on the API server and every kubelet. The container runtime must
+support image volumes (containerd 2.1 or later, CRI-O 1.31 or later). On a
+cluster without the API, the API server drops the volume and its mounts when
+the pod is created, so the session starts without the toolbox;
+`BREAKGLASS_TOOLBOX` is still set, so scripts should test
+`[ -d "$BREAKGLASS_TOOLBOX" ]`. Restricted catalogue profiles reject
+`spec.toolbox`. Admission
+policies that restrict volume types must allow `image` volumes; policies that
+restrict image registries should also check `volumes[].image.reference`.
+Kubernetes mounts image volumes read-only but does not promise `noexec`: on
+containerd, binaries run from the mount; other runtimes may block execution.
+Only put content in the image that session users may run. The node keeps the image in its cache after
+the session ends; never put secrets in it. This is separate from the
+documentation-only [OCI runbook bundle](runbook-bundle-contract.md) contract.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.

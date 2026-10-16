@@ -6656,6 +6656,31 @@ spec:
                         - screen
                         type: string
                     type: object
+                  toolbox:
+                    description: |-
+                      toolbox mounts a read-only OCI image with runbooks, helper scripts and
+                      CLIs into the interactive containers of the session.
+                    properties:
+                      image:
+                        description: image is the digest-pinned OCI reference of the
+                          toolbox image.
+                        maxLength: 512
+                        pattern: ^[^\s@]+@sha256:[a-f0-9]{64}$
+                        type: string
+                      mountPath:
+                        default: /opt/breakglass/toolbox
+                        description: |-
+                          mountPath is the absolute, read-only mount path in each container.
+                          The controller exports it as BREAKGLASS_TOOLBOX.
+                        maxLength: 256
+                        pattern: ^/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$
+                        type: string
+                        x-kubernetes-validations:
+                        - message: mountPath must not contain . or .. segments
+                          rule: '!self.split(''/'').exists(s, s == ''.'' || s == ''..'')'
+                    required:
+                    - image
+                    type: object
                   workloadType:
                     description: |-
                       workloadType specifies the type of workload to create (DaemonSet, Deployment, or Job).

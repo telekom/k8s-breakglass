@@ -2390,6 +2390,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: terminalSharing
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingConfig
+    - name: toolbox
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionToolbox
     - name: workloadType
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
@@ -2431,6 +2434,16 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: totalSessionCount
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionToolbox
+  map:
+    fields:
+    - name: image
+      type:
+        scalar: string
+    - name: mountPath
+      type:
+        scalar: string
+      default: /opt/breakglass/toolbox
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicy

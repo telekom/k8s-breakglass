@@ -164,6 +164,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionTemplateSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionTemplateStatus"):
 		return &apiv1alpha1.DebugSessionTemplateStatusApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionToolbox"):
+		return &apiv1alpha1.DebugSessionToolboxApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicy"):
 		return &apiv1alpha1.DenyPolicyApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DenyPolicyScope"):

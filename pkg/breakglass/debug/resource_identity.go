@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -446,7 +447,80 @@ func recoveredCreateContentMatches(desired, existing client.Object) (bool, error
 	if err != nil {
 		return false, fmt.Errorf("serialize recovered object: %w", err)
 	}
+	dropImageVolumesAbsentFrom(desiredMap, existingMap)
 	return jsonSubset(desiredMap, existingMap), nil
+}
+
+// dropImageVolumesAbsentFrom mirrors the API server, which silently drops
+// image volumes and the mounts that reference them when the ImageVolume
+// feature is off. A recovered object without any image volume then still
+// matches a desired object that carries the session toolbox.
+func dropImageVolumesAbsentFrom(desired, existing map[string]interface{}) {
+	desiredSpec, existingSpec := createPodSpecMap(desired), createPodSpecMap(existing)
+	if desiredSpec == nil || existingSpec == nil {
+		return
+	}
+	hasImage := func(v interface{}) bool {
+		volume, ok := v.(map[string]interface{})
+		return ok && volume["image"] != nil
+	}
+	existingVolumes, _ := existingSpec["volumes"].([]interface{})
+	if slices.ContainsFunc(existingVolumes, hasImage) {
+		return
+	}
+	desiredVolumes, _ := desiredSpec["volumes"].([]interface{})
+	dropped := map[interface{}]bool{}
+	kept := make([]interface{}, 0, len(desiredVolumes))
+	for _, v := range desiredVolumes {
+		if hasImage(v) {
+			dropped[v.(map[string]interface{})["name"]] = true
+			continue
+		}
+		kept = append(kept, v)
+	}
+	if len(dropped) == 0 {
+		return
+	}
+	if len(kept) == 0 {
+		delete(desiredSpec, "volumes")
+	} else {
+		desiredSpec["volumes"] = kept
+	}
+	for _, field := range []string{"initContainers", "containers", "ephemeralContainers"} {
+		containers, _ := desiredSpec[field].([]interface{})
+		for _, c := range containers {
+			container, ok := c.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			mounts, _ := container["volumeMounts"].([]interface{})
+			mounts = slices.DeleteFunc(slices.Clone(mounts), func(m interface{}) bool {
+				mount, ok := m.(map[string]interface{})
+				return ok && dropped[mount["name"]]
+			})
+			if len(mounts) == 0 {
+				delete(container, "volumeMounts")
+			} else {
+				container["volumeMounts"] = mounts
+			}
+		}
+	}
+}
+
+// createPodSpecMap returns the pod spec of a Pod (spec.containers) or of a
+// pod-template workload (spec.template.spec). DebugSessions create no
+// CronJobs; any other shape returns nil and the comparison stays strict.
+func createPodSpecMap(obj map[string]interface{}) map[string]interface{} {
+	spec, _ := obj["spec"].(map[string]interface{})
+	if spec == nil {
+		return nil
+	}
+	if _, isPod := spec["containers"]; isPod {
+		return spec
+	}
+	template, _ := spec["template"].(map[string]interface{})
+	podSpec, _ := template["spec"].(map[string]interface{})
+	return podSpec
 }
 
 func normalizedCreateObjectMap(obj client.Object) (map[string]interface{}, error) {
