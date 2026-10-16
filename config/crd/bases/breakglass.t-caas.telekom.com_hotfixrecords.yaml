@@ -1,0 +1,549 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: hotfixrecords.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: HotfixRecord
+    listKind: HotfixRecordList
+    plural: hotfixrecords
+    shortNames:
+    - hfr
+    singular: hotfixrecord
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.cluster
+      name: Cluster
+      type: string
+    - jsonPath: .spec.payload.type
+      name: Type
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Active")].status
+      name: Active
+      type: string
+    - jsonPath: .status.conditions[?(@.type=="Closed")].status
+      name: Closed
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: HotfixRecord tracks one platform hotfix as drift until it is
+          closed.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HotfixRecordSpec is the durable drift record of one applied hotfix. Only the
+              controller writes it.
+            properties:
+              cluster:
+                description: cluster is the target cluster.
+                type: string
+              expiresAt:
+                description: |-
+                  expiresAt is when the hotfix must be reconfirmed, rolled back or closed.
+                  Expiry raises a critical alert; it never rolls back on its own.
+                format: date-time
+                type: string
+              fixedIn:
+                description: fixedIn names the regular release that will contain the
+                  fix.
+                type: string
+              nodeSelection:
+                description: nodeSelection is the original selection, used to detect
+                  uncovered nodes.
+                properties:
+                  names:
+                    description: names are exact Node names.
+                    items:
+                      type: string
+                    maxItems: 1000
+                    type: array
+                    x-kubernetes-list-type: set
+                  selector:
+                    description: selector selects Nodes by labels.
+                    properties:
+                      matchExpressions:
+                        description: matchExpressions is a list of label selector
+                          requirements. The requirements are ANDed.
+                        items:
+                          description: |-
+                            A label selector requirement is a selector that contains values, a key, and an operator that
+                            relates the key and values.
+                          properties:
+                            key:
+                              description: key is the label key that the selector
+                                applies to.
+                              type: string
+                            operator:
+                              description: |-
+                                operator represents a key's relationship to a set of values.
+                                Valid operators are In, NotIn, Exists and DoesNotExist.
+                              type: string
+                            values:
+                              description: |-
+                                values is an array of string values. If the operator is In or NotIn,
+                                the values array must be non-empty. If the operator is Exists or DoesNotExist,
+                                the values array must be empty. This array is replaced during a strategic
+                                merge patch.
+                              items:
+                                type: string
+                              type: array
+                              x-kubernetes-list-type: atomic
+                          required:
+                          - key
+                          - operator
+                          type: object
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      matchLabels:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          matchLabels is a map of {key,value} pairs. A single {key,value} in the matchLabels
+                          map is equivalent to an element of matchExpressions, whose key field is "key", the
+                          operator is "In", and the values array contains only "value". The requirements are ANDed.
+                        type: object
+                    type: object
+                    x-kubernetes-map-type: atomic
+                type: object
+              payload:
+                description: payload is the applied change, including sources and
+                  digests.
+                properties:
+                  debs:
+                    description: debs are installed in one dpkg transaction (node-deb).
+                    items:
+                      description: HotfixDeb is one pinned Debian package file.
+                      properties:
+                        package:
+                          description: package is the Debian package name in the control
+                            file.
+                          pattern: ^[a-z0-9][a-z0-9+.-]{1,62}$
+                          type: string
+                        sha256:
+                          description: sha256 is the lowercase hash of the .deb file.
+                          pattern: ^[a-f0-9]{64}$
+                          type: string
+                        url:
+                          description: url is the HTTPS source of the .deb file.
+                          maxLength: 2048
+                          type: string
+                        version:
+                          description: version is the exact Debian version in the
+                            control file.
+                          pattern: ^[0-9A-Za-z.+~:-]{1,128}$
+                          type: string
+                      required:
+                      - package
+                      - sha256
+                      - url
+                      - version
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  file:
+                    description: file is the node-file payload.
+                    properties:
+                      afterSHA256:
+                        description: afterSHA256 is the hash of the new content. Required
+                          for replace.
+                        pattern: ^[a-f0-9]{64}$
+                        type: string
+                      beforeSHA256:
+                        description: |-
+                          beforeSHA256 lists accepted current file hashes. Required for replace;
+                          optional for sed and diff, where the plan records each node's hash.
+                        items:
+                          type: string
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: set
+                      content:
+                        description: |-
+                          content is inline new content for replace. It is recorded in the audit
+                          trail and must not contain secrets. Exclusive with url.
+                        maxLength: 65536
+                        type: string
+                      diff:
+                        description: diff is a unified diff of exactly this one file,
+                          applied without fuzz.
+                        maxLength: 65536
+                        type: string
+                      mode:
+                        description: mode selects full replacement, sed substitution
+                          or a unified diff.
+                        enum:
+                        - replace
+                        - sed
+                        - diff
+                        type: string
+                      path:
+                        description: path is the absolute, clean path of an existing
+                          regular file.
+                        maxLength: 4096
+                        type: string
+                      sedExpressions:
+                        description: |-
+                          sedExpressions are GNU sed -E substitution commands (s/re/repl/flags)
+                          applied in sandbox mode.
+                        items:
+                          type: string
+                        maxItems: 16
+                        type: array
+                        x-kubernetes-list-type: atomic
+                      url:
+                        description: url is an HTTPS source of the new content for
+                          replace, checked against afterSHA256.
+                        maxLength: 2048
+                        type: string
+                    required:
+                    - mode
+                    - path
+                    type: object
+                  image:
+                    description: image is the static-pod-image or host-container-image
+                      payload.
+                    properties:
+                      hostContainer:
+                        description: hostContainer is the name of a profile host container.
+                        maxLength: 63
+                        type: string
+                      image:
+                        description: image is the new image by manifest digest, without
+                          a tag.
+                        maxLength: 512
+                        type: string
+                      staticPod:
+                        description: staticPod is the control-plane static Pod whose
+                          container image is replaced.
+                        enum:
+                        - kube-apiserver
+                        - kube-controller-manager
+                        - kube-scheduler
+                        - etcd
+                        type: string
+                    required:
+                    - image
+                    type: object
+                  restart:
+                    description: |-
+                      restart lists units to restart after a node-file or node-deb change.
+                      Each must be in the profile's restartableServices.
+                    items:
+                      description: |-
+                        HotfixService is a systemd unit that a hotfix may restart.
+                        systemd-networkd is supported but must be listed explicitly.
+                      enum:
+                      - containerd.service
+                      - kubelet.service
+                      - ssh.service
+                      - chrony.service
+                      - systemd-networkd.service
+                      type: string
+                    maxItems: 5
+                    type: array
+                    x-kubernetes-list-type: set
+                  rollbackDebs:
+                    description: |-
+                      rollbackDebs reinstall the previous versions on rollback (node-deb).
+                      Packages that the hotfix newly installed are purged on rollback.
+                    items:
+                      description: HotfixDeb is one pinned Debian package file.
+                      properties:
+                        package:
+                          description: package is the Debian package name in the control
+                            file.
+                          pattern: ^[a-z0-9][a-z0-9+.-]{1,62}$
+                          type: string
+                        sha256:
+                          description: sha256 is the lowercase hash of the .deb file.
+                          pattern: ^[a-f0-9]{64}$
+                          type: string
+                        url:
+                          description: url is the HTTPS source of the .deb file.
+                          maxLength: 2048
+                          type: string
+                        version:
+                          description: version is the exact Debian version in the
+                            control file.
+                          pattern: ^[0-9A-Za-z.+~:-]{1,128}$
+                          type: string
+                      required:
+                      - package
+                      - sha256
+                      - url
+                      - version
+                      type: object
+                    maxItems: 16
+                    type: array
+                    x-kubernetes-list-type: atomic
+                  type:
+                    description: type selects the payload kind.
+                    enum:
+                    - node-file
+                    - node-deb
+                    - static-pod-image
+                    - host-container-image
+                    type: string
+                required:
+                - type
+                type: object
+              planHash:
+                description: planHash is the reviewed plan hash of the apply session.
+                type: string
+              rollout:
+                description: rollout is the effective rollout of the apply stage;
+                  rollback reuses it.
+                properties:
+                  allAtOnceReason:
+                    description: allAtOnceReason is mandatory for the all-at-once
+                      strategy.
+                    maxLength: 700
+                    type: string
+                  canaryNodes:
+                    description: canaryNodes is the size of the first batch (default
+                      1).
+                    format: int32
+                    maximum: 10
+                    minimum: 1
+                    type: integer
+                  maxUnavailable:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      maxUnavailable is the batch size after the canary, as a count or a
+                      percentage of selected nodes (default 10%).
+                    x-kubernetes-int-or-string: true
+                  soakSeconds:
+                    description: soakSeconds is the wait after each batch (at least
+                      the profile minimum).
+                    format: int32
+                    maximum: 3600
+                    minimum: 0
+                    type: integer
+                  strategy:
+                    description: strategy defaults to canary.
+                    enum:
+                    - canary
+                    - all-at-once
+                    type: string
+                type: object
+              sessions:
+                description: sessions are the four-eyes sessions of this hotfix, in
+                  order.
+                items:
+                  description: HotfixRecordSession links a four-eyes session to the
+                    record.
+                  properties:
+                    approvedBy:
+                      description: approvedBy is the independent approver.
+                      type: string
+                    at:
+                      description: at is when the stage started.
+                      format: date-time
+                      type: string
+                    name:
+                      description: name is the DebugSession name.
+                      type: string
+                    requestedBy:
+                      description: requestedBy is the requester.
+                      type: string
+                    stage:
+                      description: stage is the session stage.
+                      enum:
+                      - plan
+                      - apply
+                      - rollback
+                      - reconfirm
+                      - close
+                      type: string
+                    uid:
+                      description: uid is the DebugSession UID.
+                      type: string
+                  required:
+                  - approvedBy
+                  - at
+                  - name
+                  - requestedBy
+                  - stage
+                  - uid
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              templateRef:
+                description: templateRef is the DebugSessionTemplate of the hotfix.
+                type: string
+            required:
+            - cluster
+            - expiresAt
+            - fixedIn
+            - nodeSelection
+            - payload
+            - planHash
+            - rollout
+            - sessions
+            - templateRef
+            type: object
+          status:
+            description: HotfixRecordStatus is the observed drift state.
+            properties:
+              conditions:
+                description: conditions are Active, Reverted, Uncovered, Expiring,
+                  Expired and Closed.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              nodes:
+                description: nodes is the per-node state.
+                items:
+                  description: HotfixRecordNode is the tracked state of one node.
+                  properties:
+                    afterSHA256:
+                      description: afterSHA256 is the verified result hash on this
+                        node.
+                      type: string
+                    at:
+                      description: at is the last state change.
+                      format: date-time
+                      type: string
+                    beforeSHA256:
+                      description: beforeSHA256 is the pre-image hash on this node;
+                        rollback restores it.
+                      type: string
+                    controlPlane:
+                      description: controlPlane marks control-plane nodes, which change
+                        one at a time.
+                      type: boolean
+                    message:
+                      description: message explains failed, reverted and uncovered
+                        states.
+                      maxLength: 1024
+                      type: string
+                    name:
+                      description: name is the Node name.
+                      type: string
+                    newPackages:
+                      description: newPackages are Debian packages the hotfix added;
+                        rollback purges them.
+                      items:
+                        type: string
+                      type: array
+                      x-kubernetes-list-type: atomic
+                    state:
+                      description: state is the tracked state.
+                      enum:
+                      - applied
+                      - skipped
+                      - failed
+                      - rolledBack
+                      - uncovered
+                      - reverted
+                      type: string
+                    uid:
+                      description: uid is the Node UID.
+                      type: string
+                  required:
+                  - at
+                  - name
+                  - state
+                  - uid
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
+              observedAt:
+                description: observedAt is the last drift check.
+                format: date-time
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

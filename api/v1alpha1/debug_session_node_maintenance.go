@@ -131,10 +131,24 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	if spec.NodeMaintenance == nil {
 		return nil
 	}
+	if err := validateFixedExecutorTemplate(spec, "nodeMaintenance"); err != nil {
+		return err
+	}
+	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
+		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
+	}
+	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
+}
+
+// validateFixedExecutorTemplate is the template contract shared by the fixed
+// executors (nodeMaintenance and hotfix): no generic rendering, scheduling,
+// interactive or auxiliary overrides, explicit independent approvers, blocked
+// self-approval and a bounded hard expiry.
+func validateFixedExecutorTemplate(spec *DebugSessionTemplateSpec, kind string) error {
 	if (spec.Mode != "" && spec.Mode != DebugSessionModeWorkload) || spec.WorkloadType != "" ||
 		spec.TargetNamespace != NodeMaintenanceNamespace || (spec.FailMode != "" && spec.FailMode != "closed") ||
 		(spec.ExpirationBehavior != "" && spec.ExpirationBehavior != "terminate") {
-		return fmt.Errorf("nodeMaintenance requires workload mode, no generic workloadType, fixed maintenance namespace and closed termination")
+		return fmt.Errorf("%s requires workload mode, no generic workloadType, fixed maintenance namespace and closed termination", kind)
 	}
 	if spec.PodTemplateRef != nil || spec.PodTemplateString != "" || spec.PodOverridesTemplate != "" ||
 		spec.PodOverrides != nil || len(spec.ExtraDeployVariables) != 0 || spec.AffinityOverrides != nil ||
@@ -143,28 +157,33 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 		spec.TerminalSharing != nil || spec.ArtifactCollection != nil ||
 		len(spec.AuxiliaryResourceDefaults) != 0 || spec.PodDisruptionBudget != nil || spec.ResourceQuota != nil ||
 		(spec.Audit != nil && spec.Audit.EnableTerminalRecording) {
-		return fmt.Errorf("nodeMaintenance cannot use generic workload, scheduling, interactive or auxiliary overrides")
+		return fmt.Errorf("%s cannot use generic workload, scheduling, interactive or auxiliary overrides", kind)
 	}
-	if err := validateNodeMaintenanceAuxiliaryResources(spec); err != nil {
+	if err := validateFixedExecutorAuxiliaryResources(spec, kind); err != nil {
 		return err
 	}
 	if spec.Approvers == nil || len(spec.Approvers.Users)+len(spec.Approvers.Groups) == 0 || spec.Approvers.AutoApproveFor != nil {
-		return fmt.Errorf("nodeMaintenance requires explicit independent approvers without auto-approval")
+		return fmt.Errorf("%s requires explicit independent approvers without auto-approval", kind)
 	}
 	if spec.BlockSelfApproval != nil && !*spec.BlockSelfApproval {
-		return fmt.Errorf("nodeMaintenance requires blocked self-approval")
+		return fmt.Errorf("%s requires blocked self-approval", kind)
 	}
 	if spec.Constraints == nil || spec.Constraints.MaxDuration == "" {
-		return fmt.Errorf("nodeMaintenance requires an explicit bounded maxDuration")
+		return fmt.Errorf("%s requires an explicit bounded maxDuration", kind)
 	}
 	if errs := validatePositiveDurationFormat(spec.Constraints.MaxDuration, field.NewPath("constraints", "maxDuration")); len(errs) > 0 {
-		return fmt.Errorf("nodeMaintenance requires a valid positive maxDuration: %w", errs[0])
+		return fmt.Errorf("%s requires a valid positive maxDuration: %w", kind, errs[0])
 	}
 	// The executor receives only the hard expiry. No debug operation advances
 	// activity, so an idle deadline would expire the session while the helper
 	// could still mutate until the later hard deadline.
 	if spec.Constraints.IdleTimeout != "" {
-		return fmt.Errorf("nodeMaintenance does not support idleTimeout; bound the session with maxDuration")
+		return fmt.Errorf("%s does not support idleTimeout; bound the session with maxDuration", kind)
+	}
+	// Hotfix templates do not carry a nodeMaintenance profile; only
+	// node-maintenance templates need the checks below.
+	if spec.NodeMaintenance == nil {
+		return nil
 	}
 	if len(spec.NodeMaintenance.AllowedTargets) == 0 {
 		return fmt.Errorf("nodeMaintenance requires a nonempty exact allowlist")
@@ -178,11 +197,11 @@ func ValidateNodeMaintenanceTemplate(spec *DebugSessionTemplateSpec) error {
 	return ValidateNodeMaintenanceRequest(spec.NodeMaintenance, &spec.NodeMaintenance.AllowedTargets[0])
 }
 
-// validateNodeMaintenanceAuxiliaryResources admits only resources that are
+// validateFixedExecutorAuxiliaryResources admits only resources that are
 // always deployed before the executor and deleted with it, such as a
 // per-session admission PolicyException. Requesters and bindings cannot
 // select, add or retain them.
-func validateNodeMaintenanceAuxiliaryResources(spec *DebugSessionTemplateSpec) error {
+func validateFixedExecutorAuxiliaryResources(spec *DebugSessionTemplateSpec, kind string) error {
 	required := map[string]bool{}
 	for _, category := range spec.RequiredAuxiliaryResourceCategories {
 		required[category] = true
@@ -192,13 +211,13 @@ func validateNodeMaintenanceAuxiliaryResources(spec *DebugSessionTemplateSpec) e
 		if resource.CreateBefore == nil || !*resource.CreateBefore || (resource.DeleteAfter != nil && !*resource.DeleteAfter) ||
 			resource.Optional || (resource.FailurePolicy != "" && resource.FailurePolicy != AuxiliaryResourceFailurePolicyFail) ||
 			resource.Category == "" || !required[resource.Category] {
-			return fmt.Errorf("nodeMaintenance auxiliary resources must be required, createBefore, deleteAfter and fail closed")
+			return fmt.Errorf("%s auxiliary resources must be required, createBefore, deleteAfter and fail closed", kind)
 		}
 		used[resource.Category] = true
 	}
 	for category := range required {
 		if !used[category] {
-			return fmt.Errorf("nodeMaintenance required auxiliary category %q has no resources", category)
+			return fmt.Errorf("%s required auxiliary category %q has no resources", kind, category)
 		}
 	}
 	return nil

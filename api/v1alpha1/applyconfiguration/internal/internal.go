@@ -1917,6 +1917,95 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: retainFor
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionHotfix
+  map:
+    fields:
+    - name: allowAllAtOnce
+      type:
+        scalar: boolean
+    - name: allowedPaths
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
+    - name: executorImage
+      type:
+        scalar: string
+    - name: hostContainers
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixHostContainer
+          elementRelationship: associative
+          keys:
+          - name
+    - name: maxBatchPercent
+      type:
+        scalar: numeric
+    - name: maxLifetime
+      type:
+        scalar: string
+    - name: maxNodes
+      type:
+        scalar: numeric
+    - name: minSoakSeconds
+      type:
+        scalar: numeric
+    - name: nodeDeadlineSeconds
+      type:
+        scalar: numeric
+    - name: payloadTypes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayloadType
+          elementRelationship: associative
+    - name: restartableServices
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixService
+          elementRelationship: associative
+    - name: staticPods
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStaticPod
+          elementRelationship: associative
+    - name: suspended
+      type:
+        scalar: boolean
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionHotfixRequest
+  map:
+    fields:
+    - name: fixedIn
+      type:
+        scalar: string
+    - name: lifetime
+      type:
+        scalar: string
+    - name: nodes
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeSelection
+    - name: payload
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayload
+    - name: planHash
+      type:
+        scalar: string
+    - name: planRef
+      type:
+        scalar: string
+    - name: recordName
+      type:
+        scalar: string
+    - name: rollout
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
+    - name: stage
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStage
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNodeMaintenance
   map:
     fields:
@@ -2017,6 +2106,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             namedType: io.k8s.apiextensions-apiserver.pkg.apis.apiextensions.v1.JSON
+    - name: hotfix
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionHotfixRequest
     - name: identityProviderIssuer
       type:
         scalar: string
@@ -2137,6 +2229,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: expiresAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: hotfix
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStatus
     - name: kubectlDebugStatus
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.KubectlDebugStatus
@@ -2315,6 +2410,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
       default: false
+    - name: hotfix
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionHotfix
     - name: impersonation
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.ImpersonationConfig
@@ -2728,6 +2826,368 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
       default: true
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixDeb
+  map:
+    fields:
+    - name: package
+      type:
+        scalar: string
+    - name: sha256
+      type:
+        scalar: string
+    - name: url
+      type:
+        scalar: string
+    - name: version
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixFileMode
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixFilePayload
+  map:
+    fields:
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: beforeSHA256
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
+    - name: content
+      type:
+        scalar: string
+    - name: diff
+      type:
+        scalar: string
+    - name: mode
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixFileMode
+    - name: path
+      type:
+        scalar: string
+    - name: sedExpressions
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: url
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixHostContainer
+  map:
+    fields:
+    - name: containerdNamespace
+      type:
+        scalar: string
+    - name: imageRefFile
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: unit
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixImagePayload
+  map:
+    fields:
+    - name: hostContainer
+      type:
+        scalar: string
+    - name: image
+      type:
+        scalar: string
+    - name: staticPod
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStaticPod
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeSelection
+  map:
+    fields:
+    - name: names
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: associative
+    - name: selector
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.LabelSelector
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeState
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayload
+  map:
+    fields:
+    - name: debs
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixDeb
+          elementRelationship: atomic
+    - name: file
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixFilePayload
+    - name: image
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixImagePayload
+    - name: restart
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixService
+          elementRelationship: associative
+    - name: rollbackDebs
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixDeb
+          elementRelationship: atomic
+    - name: type
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayloadType
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayloadType
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
+  map:
+    fields:
+    - name: diffs
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedDiff
+          elementRelationship: atomic
+    - name: fixedIn
+      type:
+        scalar: string
+    - name: lifetime
+      type:
+        scalar: string
+    - name: nodes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedNode
+          elementRelationship: atomic
+    - name: payload
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayload
+    - name: rollout
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedAction
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedDiff
+  map:
+    fields:
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: diff
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedNode
+  map:
+    fields:
+    - name: action
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlannedAction
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: batch
+      type:
+        scalar: numeric
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: controlPlane
+      type:
+        scalar: boolean
+    - name: name
+      type:
+        scalar: string
+    - name: newPackages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: uid
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecord
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: metadata
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.ObjectMeta
+    - name: spec
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordNode
+  map:
+    fields:
+    - name: afterSHA256
+      type:
+        scalar: string
+    - name: at
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: beforeSHA256
+      type:
+        scalar: string
+    - name: controlPlane
+      type:
+        scalar: boolean
+    - name: message
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: newPackages
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
+    - name: state
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeState
+    - name: uid
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordSession
+  map:
+    fields:
+    - name: approvedBy
+      type:
+        scalar: string
+    - name: at
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: name
+      type:
+        scalar: string
+    - name: requestedBy
+      type:
+        scalar: string
+    - name: stage
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStage
+    - name: uid
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordSpec
+  map:
+    fields:
+    - name: cluster
+      type:
+        scalar: string
+    - name: expiresAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: fixedIn
+      type:
+        scalar: string
+    - name: nodeSelection
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixNodeSelection
+    - name: payload
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPayload
+    - name: planHash
+      type:
+        scalar: string
+    - name: rollout
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
+    - name: sessions
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordSession
+          elementRelationship: atomic
+    - name: templateRef
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordStatus
+  map:
+    fields:
+    - name: conditions
+      type:
+        list:
+          elementType:
+            namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Condition
+          elementRelationship: associative
+          keys:
+          - type
+    - name: nodes
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRecordNode
+          elementRelationship: associative
+          keys:
+          - name
+    - name: observedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRollout
+  map:
+    fields:
+    - name: allAtOnceReason
+      type:
+        scalar: string
+    - name: canaryNodes
+      type:
+        scalar: numeric
+    - name: maxUnavailable
+      type:
+        namedType: io.k8s.apimachinery.pkg.util.intstr.IntOrString
+    - name: soakSeconds
+      type:
+        scalar: numeric
+    - name: strategy
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRolloutStrategy
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixRolloutStrategy
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixService
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStage
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStaticPod
+  scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixStatus
+  map:
+    fields:
+    - name: appliedBy
+      type:
+        scalar: string
+    - name: plan
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.HotfixPlan
+    - name: planHash
+      type:
+        scalar: string
+    - name: plannedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.IdentityProvider
   map:
     fields:

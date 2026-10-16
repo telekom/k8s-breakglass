@@ -1628,6 +1628,158 @@ spec:
                   hidden hides this template from the UI but allows API usage.
                   Useful for templates used by automation or internal tools.
                 type: boolean
+              hotfix:
+                description: hotfix enables the typed platform hotfix executor instead
+                  of a rendered Pod template.
+                properties:
+                  allowAllAtOnce:
+                    description: |-
+                      allowAllAtOnce permits the all-at-once strategy. It still needs a reason,
+                      a plan and health gates.
+                    type: boolean
+                  allowedPaths:
+                    description: |-
+                      allowedPaths are absolute file paths, or directory prefixes ending in
+                      "/", that node-file payloads may change. The hard denylist applies even
+                      when an entry covers a denied path.
+                    items:
+                      type: string
+                    maxItems: 64
+                    type: array
+                    x-kubernetes-list-type: set
+                  executorImage:
+                    description: executorImage is the node-maintenance image by manifest
+                      digest.
+                    pattern: ^.+@sha256:[a-f0-9]{64}$
+                    type: string
+                  hostContainers:
+                    description: hostContainers are the host containers a host-container-image
+                      payload may swap.
+                    items:
+                      description: |-
+                        HotfixHostContainer describes a container that systemd runs on the host
+                        with nerdctl, outside Kubernetes. The unit reads the image reference from
+                        imageRefFile on start (for cra-vsr: cra.service, containerd namespace hbr,
+                        /etc/cra/image).
+                      properties:
+                        containerdNamespace:
+                          description: containerdNamespace holds the container's images.
+                          maxLength: 63
+                          type: string
+                        imageRefFile:
+                          description: imageRefFile is the absolute path of the file
+                            that holds the image reference.
+                          maxLength: 4096
+                          type: string
+                        name:
+                          description: name is the fixed container name.
+                          maxLength: 63
+                          type: string
+                        unit:
+                          description: unit is the systemd unit that starts the container.
+                          pattern: ^[a-zA-Z0-9@_.-]{1,240}\.service$
+                          type: string
+                      required:
+                      - containerdNamespace
+                      - imageRefFile
+                      - name
+                      - unit
+                      type: object
+                    maxItems: 8
+                    type: array
+                    x-kubernetes-list-map-keys:
+                    - name
+                    x-kubernetes-list-type: map
+                  maxBatchPercent:
+                    description: maxBatchPercent caps the share of selected nodes
+                      changed per batch.
+                    format: int32
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  maxLifetime:
+                    description: maxLifetime caps the lifetime of a hotfix until reconfirm,
+                      rollback or close.
+                    pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
+                    type: string
+                  maxNodes:
+                    description: maxNodes caps the number of nodes one hotfix may
+                      select.
+                    format: int32
+                    maximum: 1000
+                    minimum: 1
+                    type: integer
+                  minSoakSeconds:
+                    description: minSoakSeconds is the minimum wait after each batch
+                      before the next one.
+                    format: int32
+                    maximum: 3600
+                    minimum: 0
+                    type: integer
+                  nodeDeadlineSeconds:
+                    description: nodeDeadlineSeconds bounds each per-node executor
+                      Pod.
+                    format: int32
+                    maximum: 1800
+                    minimum: 60
+                    type: integer
+                  payloadTypes:
+                    description: payloadTypes are the payload kinds this profile enables.
+                    items:
+                      description: HotfixPayloadType is one typed kind of persistent
+                        node change.
+                      enum:
+                      - node-file
+                      - node-deb
+                      - static-pod-image
+                      - host-container-image
+                      type: string
+                    maxItems: 4
+                    minItems: 1
+                    type: array
+                    x-kubernetes-list-type: set
+                  restartableServices:
+                    description: restartableServices are the systemd units a payload
+                      may restart.
+                    items:
+                      description: |-
+                        HotfixService is a systemd unit that a hotfix may restart.
+                        systemd-networkd is supported but must be listed explicitly.
+                      enum:
+                      - containerd.service
+                      - kubelet.service
+                      - ssh.service
+                      - chrony.service
+                      - systemd-networkd.service
+                      type: string
+                    maxItems: 5
+                    type: array
+                    x-kubernetes-list-type: set
+                  staticPods:
+                    description: staticPods are the control-plane static Pods a static-pod-image
+                      payload may patch.
+                    items:
+                      description: HotfixStaticPod is a kubeadm control-plane static
+                        Pod.
+                      enum:
+                      - kube-apiserver
+                      - kube-controller-manager
+                      - kube-scheduler
+                      - etcd
+                      type: string
+                    maxItems: 4
+                    type: array
+                    x-kubernetes-list-type: set
+                  suspended:
+                    description: |-
+                      suspended rejects new plan and apply sessions and stops further batches
+                      of running ones. Rollback, reconfirm and close stay possible so an
+                      active hotfix can always be revoked.
+                    type: boolean
+                required:
+                - executorImage
+                - payloadTypes
+                type: object
               impersonation:
                 description: |-
                   impersonation controls which identity is used to deploy debug resources.
