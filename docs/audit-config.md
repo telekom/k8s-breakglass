@@ -325,7 +325,8 @@ acknowledge required delivery only with
 remain useful operational outputs, but they do not provide a durable delivery
 receipt and cannot satisfy required delivery by themselves. If any configured
 sink cannot be constructed, required auditing remains unavailable and duplicate
-cleanup fails closed until configuration is repaired.
+cleanup fails closed until configuration is repaired, unless the previous
+pipeline stays active (see [Reload failures](#reload-failures)).
 The same rule applies to the node-maintenance
 `debug_session.node_maintenance.execution_intent` event. Advisory chat sinks
 (`webhook.payloadFormat: slack`) are the exception: required delivery skips
