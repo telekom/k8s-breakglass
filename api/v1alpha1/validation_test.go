@@ -4758,6 +4758,12 @@ func TestValidateAuditConfig_SlackWebhookSink(t *testing.T) {
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "eventTypes")
 
+	narrowed := slack(func(s *AuditSinkConfig) { s.EventTypes = nil })
+	narrowed.Spec.Filtering = &AuditFilterConfig{IncludeEventTypes: []string{"session.requested"}}
+	result = ValidateAuditConfig(narrowed)
+	assert.True(t, result.IsValid())
+	assert.Empty(t, result.Warnings, "a global include filter already narrows the chat sink")
+
 	// JSON sinks keep their batch options.
 	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) {
 		s.Webhook.PayloadFormat = WebhookPayloadFormatJSON

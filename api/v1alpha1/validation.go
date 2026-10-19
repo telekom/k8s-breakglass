@@ -724,7 +724,8 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 			result.Errors = append(result.Errors, validateKafkaSink(sink.Kafka, sinkPath)...)
 		case AuditSinkTypeWebhook:
 			result.Errors = append(result.Errors, validateWebhookSink(sink.Webhook, sinkPath)...)
-			if sink.Webhook != nil && sink.Webhook.PayloadFormat == WebhookPayloadFormatSlack && len(sink.EventTypes) == 0 {
+			if sink.Webhook != nil && sink.Webhook.PayloadFormat == WebhookPayloadFormatSlack && len(sink.EventTypes) == 0 &&
+				(ac.Spec.Filtering == nil || len(ac.Spec.Filtering.IncludeEventTypes) == 0) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("sink %q posts every audit event to a chat channel; set eventTypes to the notifications you want", sink.Name))
 			}
 		case AuditSinkTypeLog:
