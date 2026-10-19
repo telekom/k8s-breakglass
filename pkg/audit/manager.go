@@ -218,18 +218,20 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 // Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
 // waits for capacity up to WriteTimeout or the caller's context deadline.
 // Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
-// queue is full, which may block up to WriteTimeout.
-func (m *Manager) Emit(ctx context.Context, event *Event) {
+// queue is full, which may block up to WriteTimeout or until the caller's
+// context ends; a caller that has already gone loses the event (logged).
+// Emit reports false only when the Manager is closed and nothing was accepted.
+func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if m.closed.Load() {
-		return
+		return false
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return
+		return true
 	}
 	// Apply sampling for high-volume event types
 	if m.shouldSample(event.Type) {
 		m.droppedEvents.Add(1)
-		return
+		return true
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
@@ -257,7 +259,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	// Re-check closed under the lock: Close sets closed=true then acquires
 	// closeMu.Lock, so if we see closed=true here the channel is already closed.
 	if m.closed.Load() {
-		return
+		return false
 	}
 	if !m.config.DropOnFull {
 		writeCtx, cancel := context.WithTimeout(ctx, m.config.WriteTimeout)
@@ -272,7 +274,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
 			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
 		}
-		return
+		return true
 	}
 
 	select {
@@ -283,8 +285,12 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
 		// queue_full / circuit_open) are not intercepted by this path.
 		if IsSensitiveEvent(event.Type) {
+			// Bounded by the write timeout and by the caller: an authorization
+			// request must not outlive its own deadline waiting for a sink.
 			writeCtx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
 			defer cancel()
+			stop := context.AfterFunc(ctx, cancel)
+			defer stop()
 
 			writeErr := m.syncWriteDirect(writeCtx, event)
 			if writeErr != nil {
@@ -294,7 +300,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 					zap.Error(writeErr))
 			}
 
-			return
+			return true
 		}
 
 		m.droppedEvents.Add(1)
@@ -305,6 +311,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 				zap.String("event_id", event.ID))
 		}
 	}
+	return true
 }
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
@@ -467,6 +474,9 @@ func writeSynchronousSink(ctx context.Context, sink Sink, event *Event) error {
 	}
 }
 
+// errManagerClosed is returned by EmitSync after Close.
+var errManagerClosed = errors.New("audit manager is closed")
+
 // EmitSync sends an audit event synchronously to every configured direct sink.
 // It never traverses queued or isolated sink wrappers.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
@@ -476,7 +486,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	m.closeMu.RLock()
 	defer m.closeMu.RUnlock()
 	if m.closed.Load() {
-		return errors.New("audit manager is closed")
+		return errManagerClosed
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)

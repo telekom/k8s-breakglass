@@ -74,12 +74,22 @@ func TestService_ReloadStateTransitions(t *testing.T) {
 	assert.True(t, svc.IsConfigured())
 	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
 
-	err := svc.ReloadMultipleWithAvailability(context.Background(), nil, true)
-	require.Error(t, err)
+	// A rejected unchanged AuditConfig keeps the running pipeline (last known
+	// good); a running config that is not in the reload is never kept.
+	require.ErrorIs(t, svc.ReloadMultipleWithAvailability(context.Background(), []*breakglassv1alpha1.AuditConfig{valid}, true), ErrKeptPreviousPipeline)
+	assert.True(t, svc.IsEnabled())
+	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())
+	require.Error(t, svc.ReloadMultipleWithAvailability(context.Background(), nil, true))
 	assert.False(t, svc.IsEnabled())
-	assert.True(t, svc.IsConfigured())
 	assert.Equal(t, ConfigurationUnavailable, svc.ConfigurationState())
-	assert.ErrorContains(t, svc.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}), "disabled")
+
+	// Without a running pipeline it is configured but unavailable and fails closed.
+	fresh := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	require.Error(t, fresh.ReloadMultipleWithAvailability(context.Background(), nil, true))
+	assert.False(t, fresh.IsEnabled())
+	assert.True(t, fresh.IsConfigured())
+	assert.Equal(t, ConfigurationUnavailable, fresh.ConfigurationState())
+	assert.ErrorContains(t, fresh.EmitSync(context.Background(), &Event{Type: EventSessionTerminationIntent}), "disabled")
 
 	require.NoError(t, svc.Reload(context.Background(), valid))
 	assert.Equal(t, ConfigurationReady, svc.ConfigurationState())

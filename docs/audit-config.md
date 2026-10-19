@@ -324,7 +324,7 @@ only events carrying labels; they are not a general namespace label lookup.
 **Upgrade compatibility:** enabled AuditConfigs containing
 `excludeNamespaces.selectorTerms` are rejected during reload. The last working
 configuration remains active, and the new configuration is reported with
-`Ready=False` / `ReloadFailed`. Convert selector exclusions to namespace patterns
+`Ready=False` / `ReloadFailed` (see [Reload failures](#reload-failures)). Convert selector exclusions to namespace patterns
 before upgrading or applying the configuration. On initial startup there is no
 previous configuration to retain. Adding labels to individual events does not
 make selector exclusions supported by AuditConfig.
@@ -431,10 +431,30 @@ sinks:
       - session.*
 ```
 
+## Reload failures
+
+A reload builds the new sinks (Secret reads, TLS and SASL setup) without
+blocking audit emitters or the authorization webhook, and within 30 seconds.
+If the reload fails (an invalid or unavailable AuditConfig, a missing or slow
+Secret, a TLS setup error), the last working audit pipeline stays active only
+while every AuditConfig it was built from is still enabled with an unchanged
+spec: for example a new AuditConfig whose Secret cannot be read, or a resync
+while a broker is down. A removed, disabled or changed AuditConfig (for
+example a removed or changed sink) is never kept: the pipeline is closed, and
+auditing is configured but unavailable, so operations that require a durable
+audit event fail closed until a reload succeeds. Each AuditConfig of the
+failed reload reports `Ready=False` / `ReloadFailed` with a Warning event, the
+reconciler retries, and
+`breakglass_audit_config_reloads_total{status="kept_previous"}` counts each
+kept pipeline. Without a previous pipeline (for example on startup), auditing
+is also configured but unavailable. Disabling or deleting all AuditConfigs
+stops auditing.
+
 ## Metrics
 
 The audit system exposes Prometheus metrics:
 
+- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `disabled`, `error`, `kept_previous`, `reconciler_error`)
 - `breakglass_audit_events_processed_total` - Events successfully written
 - `breakglass_audit_events_dropped_total{sink="...",reason="..."}` - Events lost to overflow, enqueue timeout, circuit rejection or retry exhaustion
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink
