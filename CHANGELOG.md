@@ -1,11 +1,47 @@
 # Changelog
 
-All notable changes to the Breakglass Controller project will be documented in this file.
+All notable changes to the Breakglass Controller project are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
+the project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The
+newest release is at the top.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+Release sections are generated from the squash-merged pull request titles and
+the notes in [changes/](changes/README.md);
+[CONTRIBUTING.md](CONTRIBUTING.md#changelog) describes how. Do not edit this
+file in a pull request: only the release pull request (`make changelog-release`)
+writes it.
 
 ## [Unreleased]
+
+## [0.3.0-rc.13] - 2026-10-16
+
+### Added
+
+- Match kube-apiserver OIDC identities with provider and cluster username prefixes,
+  arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
+  Discovery, accepted audiences, and signing algorithms are configurable.
+- Preserve requester ownership separately from target Kubernetes usernames,
+  including identities without email and server-computed UI ownership metadata.
+
+### Changed
+
+- Use Kubernetes' OIDC authenticator for IdentityProvider token verification,
+  replacing the custom multi-provider JWKS implementation.
+- Update the Go dependency group, Vue/TypeScript and test tooling, and the pinned
+  Scorecard action. Package escalation-config 0.4.6 and debug-session-catalogue
+  0.2.9 with the new controller release.
+
+### Upgrade guidance
+
+- Apply updated CRDs first; match Kubernetes username prefixes explicitly and
+  retain the standard email claim in the API bearer token for notifications.
+  Existing sessions are not rewritten. See the
+  [release notes](docs/releases/v0.3.0-rc.13.md) for migration and security details.
+
+## [0.3.0-rc.12] - 2026-10-14
+
+This section holds the changes of v0.3.0-rc.1 (2026-09-02) to v0.3.0-rc.12.
+They were collected under Unreleased and not split per pre-release.
 
 ### Added
 
@@ -1148,31 +1184,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Catalogue utility integration now runs storage image mounted-volume checks
   through the `storage-diagnostics` dispatcher and removes a stale network job
   build reference to a non-existent kubestr fixture path.
-
-## [0.3.0-rc.13] - 2026-10-16
-
-### Added
-
-- Match kube-apiserver OIDC identities with provider and cluster username prefixes,
-  arbitrary claims, and upstream Kubernetes CEL mapping and validation rules.
-  Discovery, accepted audiences, and signing algorithms are configurable.
-- Preserve requester ownership separately from target Kubernetes usernames,
-  including identities without email and server-computed UI ownership metadata.
-
-### Changed
-
-- Use Kubernetes' OIDC authenticator for IdentityProvider token verification,
-  replacing the custom multi-provider JWKS implementation.
-- Update the Go dependency group, Vue/TypeScript and test tooling, and the pinned
-  Scorecard action. Package escalation-config 0.4.6 and debug-session-catalogue
-  0.2.9 with the new controller release.
-
-### Upgrade guidance
-
-- Apply updated CRDs first; match Kubernetes username prefixes explicitly and
-  retain the standard email claim in the API bearer token for notifications.
-  Existing sessions are not rewritten. See the
-  [release notes](docs/releases/v0.3.0-rc.13.md) for migration and security details.
 
 ## [0.1.0-rc.8] - 2026-08-22
 
@@ -2377,7 +2388,11 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.6...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...HEAD
+[0.3.0-rc.13]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.12...v0.3.0-rc.13
+[0.3.0-rc.12]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.8...v0.3.0-rc.12
+[0.1.0-rc.8]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.7...v0.1.0-rc.8
+[0.1.0-rc.7]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.6...v0.1.0-rc.7
 [0.1.0-rc.6]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.5...v0.1.0-rc.6
 [0.1.0-rc.5]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.4...v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.3...v0.1.0-rc.4

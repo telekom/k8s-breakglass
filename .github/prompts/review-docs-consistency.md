@@ -102,7 +102,8 @@ consistent, and synchronized with the actual code.
 
 ### 7. Changelog & User-Facing Text
 
-- If behavior changed, verify `CHANGELOG.md` has a corresponding entry.
+- If behavior changed, verify the PR title describes it and a `changes/`
+  fragment carries upgrade notes; `CHANGELOG.md` is not edited in a PR.
 - Check that error messages, log messages, and condition reasons in Go
   code use the same terminology as the docs.
 

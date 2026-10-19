@@ -96,19 +96,17 @@ upstream aliases such as `PatchApplyResult.String`.
    - New features → Add to `docs/advanced-features.md` or create new doc, update `docs/README.md` index
    - Configuration changes → Update `docs/configuration-reference.md` and `docs/cli-flags-reference.md`
    - Helm chart changes → Update `charts/escalation-config/README.md` and inline `values.yaml` comments
-   - **CHANGELOG updates** → Update `CHANGELOG.md` for every user-facing change (see below)
+   - **Changelog** → Never edit `CHANGELOG.md`; use the PR title and a `changes/` fragment (see below)
 
-9. **CHANGELOG Updates (MANDATORY)**: Every PR with user-facing changes MUST update `CHANGELOG.md`:
-   - Add entries under `## [Unreleased]` section in the appropriate category
-   - Categories: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
-   - Format: `- Brief description of change (PR #123)` - include PR number when available
-   - New features → `Added`
-   - Breaking changes → `Changed` with migration notes
-   - Bug fixes → `Fixed`
-   - Security patches → `Security`
-   - Dependency updates → Generally skip unless security-related or breaking
-   - When releasing: Move `Unreleased` content to new version section with date
-   - Follow [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format
+9. **Changelog (generated)**: Never edit `CHANGELOG.md` in a PR; CI rejects it.
+   - The squash-merged PR title is the changelog line, so it must be a Conventional
+     Commit (`feat`, `fix`, `perf`, `docs`, `build`, `ci`, `test`, `refactor`, `revert`,
+     `deps` for Dependabot;
+     `chore`/`style` are left out). `!` marks a breaking change.
+   - Upgrade notes (new CRD fields, chart values, upgrade order), breaking and behaviour
+     changes go into one `changes/<pr>.md` fragment with `section:` front matter
+     (`changes/README.md`).
+   - The release PR (`chore(release): vX.Y.Z`) runs `make changelog-release`.
 
 10. **Unit Tests (MANDATORY)**: Every code change MUST include unit tests:
    - Go code → Add/update `*_test.go` files colocated with source (min 70% coverage for new code)

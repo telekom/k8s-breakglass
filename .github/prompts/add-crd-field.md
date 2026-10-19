@@ -11,5 +11,5 @@ You are adding a new CRD field to the breakglass controller. Follow these steps:
 7. Add unit tests for the new field behavior
 8. Update docs: `docs/` relevant files
 9. Update Helm chart: `charts/escalation-config/`
-10. Update CHANGELOG.md
+10. Add a `changes/<pr>.md` fragment with upgrade notes (do not edit CHANGELOG.md)
 11. Run `make lint test` and `cd frontend && npm test`

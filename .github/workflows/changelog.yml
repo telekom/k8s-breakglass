@@ -1,0 +1,54 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Changelog
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    # edited: the guard reads the PR title.
+    types: [opened, edited, reopened, synchronize]
+  workflow_dispatch:
+
+concurrency:
+  group: changelog-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Keep in sync with release.yml.
+  GIT_CLIFF_VERSION: "2.14.2"
+
+jobs:
+  preview:
+    name: Changelog Preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install git-cliff
+        run: pipx install "git-cliff==${GIT_CLIFF_VERSION}"
+
+      - name: Test the changelog generator
+        run: python3 -B hack/changelog_test.py
+
+      # CHANGELOG.md is written only by the release PR, see CONTRIBUTING.md#changelog.
+      - name: Check that the PR does not edit CHANGELOG.md
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          BASE_REF: ${{ github.base_ref }}
+        run: python3 -B hack/changelog.py check-pr "origin/${BASE_REF}"
+
+      # Fails on a changes/*.md fragment without front matter.
+      - name: Generate the next release section
+        shell: bash
+        run: make changelog | tee -a "$GITHUB_STEP_SUMMARY"
