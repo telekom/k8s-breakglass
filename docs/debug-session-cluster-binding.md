@@ -702,7 +702,15 @@ flowchart TD
 
 ### Auto-Discovery Process
 
-When a debug session is created without an explicit `BindingRef`, the controller automatically searches for a matching binding:
+`POST /api/debugSessions` without `bindingRef` picks the binding before it
+creates the session: of the bindings that grant the template and cluster, it
+takes the first one whose requester rules (`spec.allowed`, or the template's
+when the binding sets none) allow the requester, visible bindings before
+hidden ones, each in namespace and then name order, and records it as
+`spec.bindingRef`. If none allows the requester, the request fails with 403,
+also when the template itself allows the cluster.
+
+When a `DebugSession` object is created directly without an explicit `BindingRef`, the controller automatically searches for a matching binding:
 
 1. **List all bindings** in the cluster
 2. **Filter disabled bindings** (skip any with `spec.disabled: true`)

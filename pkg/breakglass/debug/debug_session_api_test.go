@@ -5176,6 +5176,68 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "breakglass", response.Spec.BindingRef.Namespace)
 	})
 
+	t.Run("create session without bindingRef uses the binding that allows the requester", func(t *testing.T) {
+		readiness := template.DeepCopy()
+		readiness.Name = "readiness-debug"
+		readiness.Spec.Allowed = nil
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		newBinding := func(name, group string) *breakglassv1alpha1.DebugSessionClusterBinding {
+			return &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "breakglass"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "readiness-debug"},
+					Clusters:    []string{"production"},
+					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}},
+				},
+			}
+		}
+		for _, tc := range []struct {
+			groups      []string
+			wantStatus  int
+			wantBinding string
+		}{
+			{[]string{"onboarding"}, http.StatusCreated, "b-onboarding"},
+			{[]string{"first-line"}, http.StatusCreated, "a-first-line"},
+			{[]string{"tenant"}, http.StatusForbidden, ""},
+		} {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(readiness, &clusterConfig, newBinding("a-first-line", "first-line"), newBinding("b-onboarding", "onboarding")).
+				Build()
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+				c.Set("username", "alice@example.com")
+				c.Set("email", "alice@example.com")
+				c.Set("groups", tc.groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			require.NoError(t, ctrl.Register(rg))
+			body := `{"templateRef":"readiness-debug","cluster":"production","reason":"node readiness"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code, "%v: %s", tc.groups, w.Body.String())
+			if tc.wantStatus != http.StatusCreated {
+				assert.Contains(t, w.Body.String(), "user is not allowed to request this debug session")
+				assert.NotContains(t, w.Body.String(), "first-line")
+				var sessions breakglassv1alpha1.DebugSessionList
+				require.NoError(t, fakeClient.List(context.Background(), &sessions))
+				assert.Empty(t, sessions.Items)
+				continue
+			}
+			var response DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.NotNil(t, response.Spec.BindingRef)
+			assert.Equal(t, tc.wantBinding, response.Spec.BindingRef.Name, "%v", tc.groups)
+		}
+	})
+
 	t.Run("create session rejects explicit binding denied by binding allowlist", func(t *testing.T) {
 		templateViaBinding := template.DeepCopy()
 		templateViaBinding.Name = "explicit-denied-binding-debug"

@@ -1075,7 +1075,22 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 		return
 	}
 
-	selectedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult)
+	selectedBinding, err := selectEffectiveDebugSessionBinding(req.BindingRef, allowedResult, func(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+		return isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(template, binding), currentUserStr, userEmail, userGroups)
+	})
+	if errors.Is(err, errNoDebugSessionBindingAllowsRequester) {
+		reqLog.Warnw("No binding allows the requester for this template and cluster",
+			"templateRef", req.TemplateRef,
+			"cluster", req.Cluster,
+			"bindingsChecked", len(allowedResult.AllBindings),
+			"user", currentUserStr,
+			"groupCount", len(userGroups),
+		)
+		// Same answer as for any other denied requester: do not disclose
+		// which bindings name this cluster.
+		apiresponses.RespondForbidden(ctx, "user is not allowed to request this debug session")
+		return
+	}
 	if err != nil {
 		// BindingRef is either empty or was normalized and used to build allowedResult above.
 		reqLog.Errorw("Validated debug session binding could not be selected",

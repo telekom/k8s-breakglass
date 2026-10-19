@@ -1307,13 +1307,18 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 - **Constraint overrides**: Customize durations, namespaces, and approval requirements per cluster
 - **Impersonation**: Deploy debug pods using a constrained ServiceAccount
 
-When a request omits `bindingRef`, the API can still default to an applicable
-binding for the target cluster. If the selected binding has non-empty
-`spec.allowed.users` or `spec.allowed.groups`, those requester rules replace
-the template requester allowlist for that matched cluster. A caller who is
-allowed by the template but not by the selected binding is rejected instead of
-receiving that binding's constraints, labels, approvers, or impersonation
-settings. Bindings that omit `spec.allowed`, or set it without users or groups,
+When a request omits `bindingRef`, the API defaults to the first binding that
+grants the target cluster and allows the requester (visible bindings before
+hidden ones, each in namespace and then name order), and stores it as the
+session's `spec.bindingRef`. A binding with non-empty `spec.allowed.users` or
+`spec.allowed.groups` allows only those requesters; those rules replace the
+template requester allowlist for that cluster. So with one first-line binding
+and one onboarding binding for the same template and cluster, each requester
+gets the binding that allows them. If no binding for the cluster allows the
+requester, the request is rejected with 403, also when the template itself
+allows the cluster and the requester: bindings that grant a cluster own its
+requester rules. A caller is never given another binding's constraints,
+labels, approvers, or impersonation settings. Bindings that omit `spec.allowed`, or set it without users or groups,
 still inherit the template requester allowlist.
 
 ### Basic Binding
