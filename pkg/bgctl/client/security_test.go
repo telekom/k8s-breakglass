@@ -55,3 +55,15 @@ func TestErrorBodyReadIsBoundedAndTerminalSafe(t *testing.T) {
 		t.Fatalf("unsafe error %q", err)
 	}
 }
+
+func TestErrorIncludesDetails(t *testing.T) {
+	body := `{"error":"extraDeployValues validation failed","code":"BAD_REQUEST","cid":"c1","details":"a: bad; b: bad"}`
+	err := decodeError(&http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(strings.NewReader(body))}, "trace")
+	var got *HTTPError
+	if !errors.As(err, &got) {
+		t.Fatalf("expected HTTP error: %v", err)
+	}
+	if got.Message != "extraDeployValues validation failed: a: bad; b: bad" || got.Code != "BAD_REQUEST" {
+		t.Fatalf("details not kept: %+v", got)
+	}
+}

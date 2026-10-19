@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -297,7 +298,11 @@ func TestMiddleware(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, http.StatusTooManyRequests, w.Code)
-		assert.Contains(t, w.Body.String(), "Rate limit exceeded")
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, "Rate limit exceeded, please try again later", body["error"])
+		assert.Equal(t, "TOO_MANY_REQUESTS", body["code"])
+		assert.NotEmpty(t, body["cid"])
 	})
 
 	t.Run("uses X-Forwarded-For header when configured", func(t *testing.T) {
@@ -1031,6 +1036,8 @@ func TestAuthenticatedMiddleware(t *testing.T) {
 		router.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusTooManyRequests, w.Code)
 		assert.Contains(t, w.Body.String(), `"authenticated":true`)
+		assert.Contains(t, w.Body.String(), `"code":"TOO_MANY_REQUESTS"`)
+		assert.Regexp(t, `"cid":"[^"]+"`, w.Body.String())
 	})
 
 	t.Run("middleware message differs for unauthenticated", func(t *testing.T) {

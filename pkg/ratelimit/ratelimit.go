@@ -2,12 +2,12 @@ package ratelimit
 
 import (
 	"fmt"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"golang.org/x/time/rate"
 )
 
@@ -205,9 +205,7 @@ func (rl *IPRateLimiter) MiddlewareWithExclusions(excludedPrefixes []string) gin
 
 		ip := c.ClientIP()
 		if !rl.Allow(ip) {
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Rate limit exceeded, please try again later",
-			})
+			apiresponses.RespondTooManyRequests(c, "Rate limit exceeded, please try again later")
 			c.Abort()
 			return
 		}
@@ -312,10 +310,7 @@ func (arl *AuthenticatedRateLimiter) Middleware() gin.HandlerFunc {
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":         msg,
-				"authenticated": isAuthenticated,
-			})
+			apiresponses.RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}

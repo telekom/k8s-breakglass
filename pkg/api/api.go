@@ -23,6 +23,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
@@ -46,7 +47,7 @@ type APIController interface {
 }
 
 const (
-	requestIDHeader     = "X-Request-ID"
+	requestIDHeader     = apiresponses.RequestIDHeader
 	correlationIDHeader = "X-Correlation-ID"
 )
 
@@ -183,6 +184,21 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		c.Next()
 	})
 
+	// Correlation ID middleware. Registered before the rate limiter so that
+	// every response, including a 429, carries the request correlation ID.
+	engine.Use(func(c *gin.Context) {
+		cid := c.Request.Header.Get(requestIDHeader)
+		if !isValidRequestID(cid) {
+			cid = c.Request.Header.Get(correlationIDHeader)
+		}
+		if !isValidRequestID(cid) {
+			cid = uuid.NewString()
+		}
+		c.Set(apiresponses.CIDKey, cid)
+		c.Writer.Header().Set(requestIDHeader, cid)
+		c.Next()
+	})
+
 	// Basic per-IP rate limiter for public/unauthenticated endpoints
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
 	// Uses a moderate limit: 20 req/s per IP, burst of 50
@@ -208,20 +224,6 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		log.Warn("Failed to set trusted proxies", zap.String("error", err.Error()))
 	}
 
-	// Correlation ID middleware
-	engine.Use(func(c *gin.Context) {
-		cid := c.Request.Header.Get(requestIDHeader)
-		if !isValidRequestID(cid) {
-			cid = c.Request.Header.Get(correlationIDHeader)
-		}
-		if !isValidRequestID(cid) {
-			cid = uuid.NewString()
-		}
-		c.Set("cid", cid)
-		c.Writer.Header().Set(requestIDHeader, cid)
-		c.Next()
-	})
-
 	// OpenTelemetry tracing middleware — creates a span per HTTP request.
 	// When tracing is disabled, OTel installs a no-op provider so this
 	// middleware becomes a near-zero-cost pass-through.
@@ -232,7 +234,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		ginzap.RecoveryWithZap(log, false),
 		// Request-scoped logger middleware: attach a sugared logger with request fields
 		func(c *gin.Context) {
-			cid, _ := c.Get("cid")
+			cid, _ := c.Get(apiresponses.CIDKey)
 			reqLogger := log.Sugar().With("cid", cid, "method", c.Request.Method, "path", c.FullPath(), "remote", c.ClientIP())
 			// store under canonical key so system.GetReqLogger can find it
 			c.Set("reqLogger", reqLogger)
@@ -243,14 +245,14 @@ func NewServer(log *zap.Logger, cfg config.Config,
 		func(c *gin.Context) { // request start/end structured log
 			start := time.Now()
 			c.Next()
-			cid, _ := c.Get("cid")
+			cid, _ := c.Get(apiresponses.CIDKey)
 			// ensure a concise http_request log always includes cid
 			log.Info("http_request", zap.String("cid", fmt.Sprintf("%v", cid)), zap.String("method", c.Request.Method), zap.String("path", c.FullPath()), zap.Int("status", c.Writer.Status()), zap.Duration("latency", time.Since(start)))
 		},
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
 			c.Next()
 			if len(c.Errors) > 0 {
-				cid, _ := c.Get("cid")
+				cid, _ := c.Get(apiresponses.CIDKey)
 				first := c.Errors[0]
 				metaStr, _ := first.Meta.(string)
 				// Prefer using the request-scoped logger if present so cid is already included
@@ -270,7 +272,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 					if status < http.StatusBadRequest {
 						status = http.StatusInternalServerError
 					}
-					RespondError(c, status, first.Error(), metaStr)
+					apiresponses.RespondError(c, status, first.Error(), metaStr)
 				}
 			}
 		},
@@ -320,12 +322,10 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			return
 		}
 
-		cid, _ := c.Get("cid")
+		cid, _ := c.Get(apiresponses.CIDKey)
 		log.Warn("blocked_request_origin", zap.String("origin", originHeader), zap.String("normalized_origin", normalized), zap.String("cid", fmt.Sprintf("%v", cid)))
-		c.AbortWithStatusJSON(http.StatusForbidden, APIError{
-			Error: "origin not allowed",
-			Code:  "FORBIDDEN",
-		})
+		apiresponses.RespondForbidden(c, "origin not allowed")
+		c.Abort()
 	})
 
 	// Always expose CORS for browser-based OIDC flows (token exchange happens against keycloak but frontend hits API)
@@ -357,7 +357,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Custom NoRoute: JSON 404 for /api/*, SPA fallback for others
 	engine.NoRoute(func(c *gin.Context) {
 		if len(c.Request.URL.Path) >= 5 && c.Request.URL.Path[:5] == "/api/" {
-			RespondError(c, http.StatusNotFound, "API endpoint not found", c.Request.URL.Path)
+			apiresponses.RespondError(c, http.StatusNotFound, "API endpoint not found", c.Request.URL.Path)
 		} else {
 			ServeSPA("/", "/frontend/dist/")(c)
 		}
@@ -882,7 +882,7 @@ func (s *Server) getIdentityProvider(c *gin.Context) {
 		s.log.Sugar().Warnw("identity_provider_not_loaded")
 		metrics.APIEndpointErrors.WithLabelValues("getIdentityProvider", "not_configured").Inc()
 		metrics.APIEndpointDuration.WithLabelValues("getIdentityProvider").Observe(time.Since(start).Seconds())
-		RespondNotFoundSimple(c, "Identity provider not configured")
+		apiresponses.RespondNotFoundSimple(c, "Identity provider not configured")
 		return
 	}
 
@@ -1017,7 +1017,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if s.oidcAuthority == nil {
 		s.log.Sugar().Warnw("oidc_proxy_missing_authority")
 		recordOIDCProxyFailure("missing_authority", start)
-		RespondNotFoundSimple(c, "OIDC authority not configured")
+		apiresponses.RespondNotFoundSimple(c, "OIDC authority not configured")
 		return
 	}
 
@@ -1051,7 +1051,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_client_error", "error", err)
 		recordOIDCProxyFailure("tls_configuration_error", start)
-		RespondInternalErrorSimple(c, "oidc proxy TLS configuration error")
+		apiresponses.RespondInternalErrorSimple(c, "oidc proxy TLS configuration error")
 		return
 	}
 	req, err := buildOIDCProxyHTTPRequest(c, target)
@@ -1059,10 +1059,10 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 		s.log.Sugar().Errorw("oidc_proxy_build_error", "error", err, "target", target)
 		if errors.Is(err, errOIDCProxyReadBody) {
 			recordOIDCProxyFailure("read_body_error", start)
-			RespondInternalErrorSimple(c, "failed to read request body")
+			apiresponses.RespondInternalErrorSimple(c, "failed to read request body")
 		} else {
 			recordOIDCProxyFailure("request_build_error", start)
-			RespondInternalErrorSimple(c, "failed to build proxy request")
+			apiresponses.RespondInternalErrorSimple(c, "failed to build proxy request")
 		}
 		return
 	}
@@ -1071,7 +1071,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_upstream_error", "error", err, "target", target, "elapsed", time.Since(start))
 		recordOIDCProxyFailure("upstream_error", start)
-		RespondBadGateway(c, "failed to fetch from authority")
+		apiresponses.RespondBadGateway(c, "failed to fetch from authority")
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -1086,6 +1086,8 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 			c.Writer.Header().Add(canonical, v)
 		}
 	}
+	// Pass-through: the identity provider's status and body are relayed as-is,
+	// so this is deliberately not a pkg/apiresponses error body.
 	c.Status(resp.StatusCode)
 	// gin buffers the status until the first write, so an upstream response with
 	// an empty body (notably the 30x we now refuse to follow) would otherwise
@@ -1098,7 +1100,7 @@ func (s *Server) handleOIDCProxy(c *gin.Context) {
 	if err != nil {
 		s.log.Sugar().Errorw("oidc_proxy_copy_error", "error", err, "target", target)
 		recordOIDCProxyFailure("response_copy_error", start)
-		RespondBadGateway(c, "failed to stream response from authority")
+		apiresponses.RespondBadGateway(c, "failed to stream response from authority")
 		return
 	}
 	if copied == maxOIDCProxyResponseBytes && oidcProxyBodyHasMore(resp.Body) {
@@ -1121,31 +1123,31 @@ func (s *Server) handleOIDCProxyPathError(c *gin.Context, proxyPath, normalizedP
 	case errors.Is(err, errProxyPathNotAllowed):
 		s.log.Sugar().Warnw("oidc_proxy_path_not_whitelisted", "path", proxyPath, "normalized", normalizedPath)
 		recordOIDCProxyFailure("path_not_allowed", start)
-		RespondForbidden(c, errProxyPathNotAllowed.Error())
+		apiresponses.RespondForbidden(c, errProxyPathNotAllowed.Error())
 	case errors.Is(err, errProxyPathSuspicious):
 		s.log.Sugar().Warnw("oidc_proxy_suspicious_pattern", "path", proxyPath)
 		recordOIDCProxyFailure("suspicious_pattern", start)
-		RespondForbidden(c, errProxyPathSuspicious.Error())
+		apiresponses.RespondForbidden(c, errProxyPathSuspicious.Error())
 	case errors.Is(err, errProxyPathMalformed):
 		s.log.Sugar().Warnw("oidc_proxy_malformed_path", "path", proxyPath, "normalized", normalizedPath, "error", err)
 		recordOIDCProxyFailure("malformed_path", start)
-		RespondBadRequest(c, errProxyPathMalformed.Error())
+		apiresponses.RespondBadRequest(c, errProxyPathMalformed.Error())
 	case errors.Is(err, errProxyAuthorityMissing):
 		s.log.Sugar().Errorw("oidc_proxy_missing_authority_base", "path", proxyPath)
 		recordOIDCProxyFailure("missing_authority", start)
-		RespondInternalErrorSimple(c, errProxyAuthorityMissing.Error())
+		apiresponses.RespondInternalErrorSimple(c, errProxyAuthorityMissing.Error())
 	case errors.Is(err, errProxyPathAbsolute):
 		s.log.Sugar().Warnw("oidc_proxy_absolute_url_detected", "path", proxyPath)
 		recordOIDCProxyFailure("absolute_url_detected", start)
-		RespondForbidden(c, errProxyPathAbsolute.Error())
+		apiresponses.RespondForbidden(c, errProxyPathAbsolute.Error())
 	case errors.Is(err, errURLResolutionAttack):
 		s.log.Sugar().Warnw("oidc_proxy_url_resolution_attack", "originalPath", proxyPath)
 		recordOIDCProxyFailure("url_resolution_attack", start)
-		RespondForbidden(c, errURLResolutionAttack.Error())
+		apiresponses.RespondForbidden(c, errURLResolutionAttack.Error())
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_unknown_path_error", "path", proxyPath, "error", err)
 		recordOIDCProxyFailure("path_error", start)
-		RespondBadRequest(c, "invalid proxy path")
+		apiresponses.RespondBadRequest(c, "invalid proxy path")
 	}
 }
 
@@ -1154,15 +1156,15 @@ func (s *Server) handleOIDCProxyAuthorityError(c *gin.Context, headerValue strin
 	case errors.Is(err, errInvalidAuthorityHeader):
 		s.log.Sugar().Warnw("oidc_proxy_invalid_authority_header", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("invalid_authority_header", start)
-		RespondBadRequest(c, errInvalidAuthorityHeader.Error())
+		apiresponses.RespondBadRequest(c, errInvalidAuthorityHeader.Error())
 	case errors.Is(err, errUnknownOIDCAuthority):
 		s.log.Sugar().Warnw("oidc_proxy_unknown_authority", "customAuthority", headerValue)
 		recordOIDCProxyFailure("unknown_authority", start)
-		RespondForbidden(c, errUnknownOIDCAuthority.Error())
+		apiresponses.RespondForbidden(c, errUnknownOIDCAuthority.Error())
 	default:
 		s.log.Sugar().Errorw("oidc_proxy_authority_error", "customAuthority", headerValue, "error", err)
 		recordOIDCProxyFailure("authority_error", start)
-		RespondBadRequest(c, "invalid authority header")
+		apiresponses.RespondBadRequest(c, "invalid authority header")
 	}
 }
 

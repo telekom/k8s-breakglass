@@ -6,6 +6,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	artifactapi "github.com/telekom/k8s-breakglass/pkg/artifacts/api"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 )
@@ -45,12 +47,12 @@ func TestArtifactRoutesDistinguishInvalidInputFromProviderFailure(t *testing.T) 
 			router.ServeHTTP(response, request)
 			if scenario == "invalid archive" {
 				require.Equal(t, http.StatusBadRequest, response.Code)
-				require.Empty(t, response.Body.String())
+				requireGenericArtifactError(t, response)
 				return
 			}
 			if scenario == "ambiguous upload" {
 				require.Equal(t, http.StatusServiceUnavailable, response.Code)
-				require.Empty(t, response.Body.String())
+				requireGenericArtifactError(t, response)
 				return
 			}
 			require.Equal(t, http.StatusCreated, response.Code, response.Body.String())
@@ -63,7 +65,18 @@ func TestArtifactRoutesDistinguishInvalidInputFromProviderFailure(t *testing.T) 
 			response = httptest.NewRecorder()
 			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/api/debugSessionArtifacts/hub/session/"+record.ArtifactID, nil))
 			require.Equal(t, http.StatusServiceUnavailable, response.Code)
-			require.Empty(t, response.Body.String())
+			requireGenericArtifactError(t, response)
 		})
 	}
+}
+
+// requireGenericArtifactError asserts the standard error body without any
+// provider or storage detail.
+func requireGenericArtifactError(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	var body apiresponses.APIError
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+	require.Equal(t, apiresponses.CodeForStatus(response.Code), body.Code)
+	require.NotEmpty(t, body.CID)
+	require.NotContains(t, response.Body.String(), "private")
 }

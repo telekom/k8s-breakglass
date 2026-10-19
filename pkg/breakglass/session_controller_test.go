@@ -11527,10 +11527,16 @@ func TestTokenValidation_NotFoundReturns404WithValidFalse(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, w.Code, "missing token session must return 404")
 	var body struct {
-		Valid bool `json:"valid"`
+		Valid bool   `json:"valid"`
+		Error string `json:"error"`
+		Code  string `json:"code"`
+		CID   string `json:"cid"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 	require.False(t, body.Valid, "valid must be false when session is not found")
+	require.Equal(t, "session not found", body.Error)
+	require.Equal(t, "NOT_FOUND", body.Code)
+	require.NotEmpty(t, body.CID)
 }
 
 func TestTokenValidation_ApprovalTimedOutPendingSessionIsNotApprovable(t *testing.T) {

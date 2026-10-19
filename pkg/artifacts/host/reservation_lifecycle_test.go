@@ -588,8 +588,9 @@ func TestDownloadHTTPMapsInitialStreamRevocationBeforeSuccessHeaders(t *testing.
 				return
 			}
 			require.Equal(t, http.StatusNotFound, response.Code)
-			require.Empty(t, response.Body.Bytes())
-			for _, header := range []string{"Content-Type", "Content-Disposition", "Content-Length"} {
+			requireGenericArtifactError(t, response)
+			require.Equal(t, "application/json; charset=utf-8", response.Header().Get("Content-Type"), "the archive content type must not survive")
+			for _, header := range []string{"Content-Disposition", "Content-Length"} {
 				require.Empty(t, response.Header().Get(header), header)
 			}
 		})

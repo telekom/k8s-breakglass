@@ -39,14 +39,33 @@ The API uses standard HTTP status codes with the following conventions:
 
 **Error Response Format:**
 
+Every REST error response, including middleware rejections (rate limits, a
+blocked browser `Origin` on non-preflight requests, unknown `/api/` routes) and artifact
+endpoints, uses one JSON body. A rejected CORS preflight (`OPTIONS`) gets an
+empty `403` from the CORS middleware, and the OIDC proxy relays the identity
+provider's status and body unchanged.
+
 ```json
 {
   "error": "Human-readable error message",
-  "code": "ERROR_CODE"
+  "code": "ERROR_CODE",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21"
 }
 ```
 
-Common error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`, `NOT_FOUND`
+- `error`: human-readable message. Its text is unchanged from earlier releases.
+- `code`: machine-readable code, for example `UNAUTHORIZED`, `FORBIDDEN`,
+  `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `GONE`, `PAYLOAD_TOO_LARGE`,
+  `UNPROCESSABLE_ENTITY`, `TOO_MANY_REQUESTS`, `BAD_GATEWAY`,
+  `SERVICE_UNAVAILABLE` or `INTERNAL_ERROR`. Some endpoints use a more specific
+  code, for example `AMBIGUOUS_ESCALATION`.
+- `cid`: the request correlation ID, the same value as the `X-Request-ID`
+  response header.
+- `details` (optional): extra context, for example the `; `-separated list of
+  validation messages.
+
+Some errors add fields next to these, for example `session`, `candidates`,
+`valid` or `authenticated`. Clients must ignore fields they do not know.
 
 ## Identity Provider Configuration
 
@@ -1124,6 +1143,9 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 If the session changes concurrently while recording the joined participant, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
+**Response:** `200 OK` with the updated `DebugSession`, the same shape as
+approve and terminate. `status.participants` contains the new `viewer` entry.
+
 ### Leave Debug Session
 
 ```http
@@ -1139,6 +1161,9 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 If the session changes concurrently while recording `leftAt`, the endpoint
 returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+**Response:** `200 OK` with the updated `DebugSession`; the caller's
+participant entry has `leftAt` set.
 
 ### Renew Debug Session
 
@@ -1167,6 +1192,10 @@ live session and privileged cluster configuration. Only the requester or an acti
 Renewal retries concurrent status conflicts against the latest session. The
 request still returns `409 Conflict` if the session changes, is deleted, or
 becomes ineligible while retrying; refresh the `DebugSession` before retrying.
+
+**Response:** `200 OK` with the updated `DebugSession`. Read the new expiry
+from `status.expiresAt` and the count from `status.renewalCount`. Releases
+before this change returned `{"message", "newExpiresAt", "renewalCount"}`.
 
 ### Terminate Debug Session
 

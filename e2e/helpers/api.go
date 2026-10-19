@@ -1006,8 +1006,12 @@ func (c *APIClient) RenewDebugSession(ctx context.Context, t *testing.T, session
 
 	body, _ := io.ReadAll(resp.Body)
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to renew debug session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+	}
+	var renewed breakglassv1alpha1.DebugSession
+	if err := json.Unmarshal(body, &renewed); err != nil || renewed.Name != sessionName {
+		return fmt.Errorf("renew debug session (cid=%s): response is not the updated session: %s", cid, string(body))
 	}
 
 	if t != nil {

@@ -14,6 +14,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 )
@@ -53,7 +54,7 @@ func (controller *ReadController) Register(group *gin.RouterGroup) error {
 func (controller *ReadController) handleList(context *gin.Context) {
 	binding, err := controller.resolve(context, context.Param("namespace"), context.Param("session"), "")
 	if err != nil {
-		context.Status(http.StatusNotFound)
+		apiresponses.RespondNotFoundSimple(context, "artifact not found")
 		return
 	}
 	records, err := controller.service.ListAuthorized(context.Request.Context(), context.Param("namespace"), context.Param("session"), binding.UID, func() error {
@@ -74,7 +75,7 @@ func (controller *ReadController) handleDownload(context *gin.Context) {
 	namespace, session, artifactID := context.Param("namespace"), context.Param("session"), context.Param("artifactID")
 	binding, err := controller.resolve(context, namespace, session, artifactID)
 	if err != nil {
-		context.Status(http.StatusNotFound)
+		apiresponses.RespondNotFoundSimple(context, "artifact not found")
 		return
 	}
 	reader, public, err := controller.service.Download(context.Request.Context(), namespace, session, artifactID, binding)
@@ -110,15 +111,15 @@ func (controller *ReadController) handleDownload(context *gin.Context) {
 func writeReadError(context *gin.Context, err error) {
 	switch {
 	case errors.Is(err, backend.ErrForbidden), errors.Is(err, storage.ErrNotFound):
-		context.Status(http.StatusNotFound)
+		apiresponses.RespondNotFoundSimple(context, "artifact not found")
 	case errors.Is(err, backend.ErrExpired):
-		context.Status(http.StatusGone)
+		apiresponses.RespondError(context, http.StatusGone, "artifact expired", "")
 	case errors.Is(err, backend.ErrConflict), errors.Is(err, storage.ErrConflict):
-		context.Status(http.StatusConflict)
+		apiresponses.RespondConflict(context, "artifact state conflict")
 	case errors.Is(err, backend.ErrInvalid):
-		context.Status(http.StatusBadRequest)
+		apiresponses.RespondBadRequest(context, "invalid artifact request")
 	default:
-		context.Status(http.StatusServiceUnavailable)
+		apiresponses.RespondServiceUnavailable(context, "artifact storage")
 	}
 }
 

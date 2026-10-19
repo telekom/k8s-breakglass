@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 )
 
 func TestPlatformRateLimitIdentityResponses(t *testing.T) {
@@ -21,6 +22,7 @@ func TestPlatformRateLimitIdentityResponses(t *testing.T) {
 	engine := gin.New()
 	require.NoError(t, engine.SetTrustedProxies(nil))
 	engine.Use(func(c *gin.Context) {
+		c.Set(apiresponses.CIDKey, "cid-1")
 		if identity := c.GetHeader("X-Test-Identity"); identity != "" {
 			c.Set("identity", identity)
 		}
@@ -41,13 +43,13 @@ func TestPlatformRateLimitIdentityResponses(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, request("192.0.2.1", "").Code)
 	unauthenticated := request("192.0.2.1", "")
 	require.Equal(t, http.StatusTooManyRequests, unauthenticated.Code)
-	require.JSONEq(t, `{"error":"Rate limit exceeded. Please authenticate for higher limits.","authenticated":false}`, unauthenticated.Body.String())
+	require.JSONEq(t, `{"error":"Rate limit exceeded. Please authenticate for higher limits.","code":"TOO_MANY_REQUESTS","cid":"cid-1","authenticated":false}`, unauthenticated.Body.String())
 	require.Empty(t, unauthenticated.Header().Get("Retry-After"), "general middleware has no retry header")
 	require.Equal(t, http.StatusNoContent, request("192.0.2.2", "").Code, "untrusted forwarding header cannot share IP buckets")
 	require.Equal(t, http.StatusNoContent, request("192.0.2.1", "alice").Code, "identity and anonymous buckets are separate")
 	authenticated := request("192.0.2.2", "alice")
 	require.Equal(t, http.StatusTooManyRequests, authenticated.Code, "identity bucket follows the user across IPs")
-	require.JSONEq(t, `{"error":"Rate limit exceeded, please try again later","authenticated":true}`, authenticated.Body.String())
+	require.JSONEq(t, `{"error":"Rate limit exceeded, please try again later","code":"TOO_MANY_REQUESTS","cid":"cid-1","authenticated":true}`, authenticated.Body.String())
 	require.Equal(t, http.StatusNoContent, request("192.0.2.1", "bob").Code, "users on the same IP are isolated")
 	require.Equal(t, 4, handlerCalls, "denied requests abort downstream handlers")
 	require.Equal(t, 2, limiter.IPLen())

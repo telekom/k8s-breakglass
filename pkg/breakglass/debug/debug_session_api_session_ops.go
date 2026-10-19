@@ -140,7 +140,7 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 	reqLog.Infow("User joined debug session", "session", name, "user", username, "role", role)
 	metrics.DebugSessionParticipants.WithLabelValues(session.Spec.Cluster, name).Set(float64(len(session.Status.Participants)))
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "successfully joined session", "role": role})
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 // handleRenewDebugSession extends the session duration
@@ -342,11 +342,7 @@ func (c *DebugSessionAPIController) handleRenewDebugSession(ctx *gin.Context) {
 		"renewalCount", session.Status.RenewalCount)
 	c.emitDebugSessionAuditEvent(apiCtx, audit.EventDebugSessionRenewed, session, identity.username, "Debug session renewed")
 
-	ctx.JSON(http.StatusOK, gin.H{
-		"message":      "session renewed successfully",
-		"newExpiresAt": newExpiry.Time,
-		"renewalCount": session.Status.RenewalCount,
-	})
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 // extendTrackedJobDeadlines keeps Kubernetes Job termination aligned with a
@@ -902,7 +898,7 @@ func (c *DebugSessionAPIController) handleLeaveDebugSession(ctx *gin.Context) {
 	}
 	metrics.DebugSessionParticipants.WithLabelValues(session.Spec.Cluster, name).Set(float64(activeCount))
 
-	ctx.JSON(http.StatusOK, gin.H{"message": "successfully left session"})
+	ctx.JSON(http.StatusOK, publicDebugSession(session))
 }
 
 // DebugSessionTemplateResponse represents a template in API responses

@@ -13,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest"
@@ -79,11 +80,13 @@ func TestServerUnifiedErrorMiddlewareRespondsAfterHandlerError(t *testing.T) {
 	server.gin.ServeHTTP(w, req)
 
 	require.Equal(t, http.StatusInternalServerError, w.Code)
-	var response APIError
+	var response apiresponses.APIError
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	assert.Equal(t, "boom", response.Error)
 	assert.Equal(t, "INTERNAL_ERROR", response.Code)
 	assert.Equal(t, "route failed", response.Details)
+	assert.NotEmpty(t, response.CID)
+	assert.Equal(t, w.Header().Get("X-Request-ID"), response.CID)
 }
 
 func TestServer_getConfig(t *testing.T) {
@@ -410,6 +413,8 @@ func TestOriginValidationMiddleware(t *testing.T) {
 		require.NoError(t, json.Unmarshal(resp.Body.Bytes(), &body))
 		require.Equal(t, "origin not allowed", body["error"])
 		require.Equal(t, "FORBIDDEN", body["code"])
+		require.NotEmpty(t, body["cid"])
+		require.Equal(t, resp.Header().Get("X-Request-ID"), body["cid"])
 	})
 
 	t.Run("skips when origin header missing", func(t *testing.T) {
@@ -557,6 +562,8 @@ func TestServer_NoRoute_API_Json404(t *testing.T) {
 	assert.Equal(t, "API endpoint not found", body["error"])
 	assert.Equal(t, "NOT_FOUND", body["code"])
 	assert.Equal(t, "/api/unknown/thing", body["details"])
+	assert.NotEmpty(t, body["cid"])
+	assert.Equal(t, w.Header().Get("X-Request-ID"), body["cid"])
 }
 
 func TestServer_NoRoute_SPA_Fallback(t *testing.T) {
@@ -1105,31 +1112,31 @@ func TestRespondHelpers_JSONErrorShape(t *testing.T) {
 	}{
 		{
 			name:         "RespondNotFoundSimple",
-			handler:      func(c *gin.Context) { RespondNotFoundSimple(c, "resource not found") },
+			handler:      func(c *gin.Context) { apiresponses.RespondNotFoundSimple(c, "resource not found") },
 			expectedCode: http.StatusNotFound,
 			expectedJSON: map[string]string{"error": "resource not found", "code": "NOT_FOUND"},
 		},
 		{
 			name:         "RespondBadRequest",
-			handler:      func(c *gin.Context) { RespondBadRequest(c, "invalid input") },
+			handler:      func(c *gin.Context) { apiresponses.RespondBadRequest(c, "invalid input") },
 			expectedCode: http.StatusBadRequest,
 			expectedJSON: map[string]string{"error": "invalid input", "code": "BAD_REQUEST"},
 		},
 		{
 			name:         "RespondForbidden",
-			handler:      func(c *gin.Context) { RespondForbidden(c, "access denied") },
+			handler:      func(c *gin.Context) { apiresponses.RespondForbidden(c, "access denied") },
 			expectedCode: http.StatusForbidden,
 			expectedJSON: map[string]string{"error": "access denied", "code": "FORBIDDEN"},
 		},
 		{
 			name:         "RespondInternalErrorSimple",
-			handler:      func(c *gin.Context) { RespondInternalErrorSimple(c, "something went wrong") },
+			handler:      func(c *gin.Context) { apiresponses.RespondInternalErrorSimple(c, "something went wrong") },
 			expectedCode: http.StatusInternalServerError,
 			expectedJSON: map[string]string{"error": "something went wrong", "code": "INTERNAL_ERROR"},
 		},
 		{
 			name:         "RespondUnauthorized",
-			handler:      func(c *gin.Context) { RespondUnauthorized(c) },
+			handler:      func(c *gin.Context) { apiresponses.RespondUnauthorized(c) },
 			expectedCode: http.StatusUnauthorized,
 			expectedJSON: map[string]string{"error": "user not authenticated", "code": "UNAUTHORIZED"},
 		},

@@ -266,7 +266,7 @@ async function onWithdraw(bg: Breakglass) {
     const axiosLike = e as { response?: { data?: Record<string, unknown> }; message?: string };
     if (axiosLike?.response?.data && typeof axiosLike.response.data === "object" && axiosLike.response.data.session) {
       pushError(
-        `Withdraw failed: ${axiosLike.response.data.message || axiosLike.message}. Session: ${JSON.stringify(axiosLike.response.data.session)}`,
+        `Withdraw failed: ${axiosLike.response.data.error || axiosLike.message}. Session: ${JSON.stringify(axiosLike.response.data.session)}`,
       );
     } else {
       pushError(axiosLike?.message || "Failed to withdraw request");

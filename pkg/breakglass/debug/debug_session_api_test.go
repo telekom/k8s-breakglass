@@ -6312,6 +6312,9 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		joined := requireUpdatedDebugSessionBody(t, w, "test-session")
+		require.Len(t, joined.Status.Participants, 2, "join returns the session with the new participant")
+		assert.Equal(t, "bob@example.com", joined.Status.Participants[1].User)
 
 		// Verify participant was added
 		var updatedSession breakglassv1alpha1.DebugSession
@@ -6812,6 +6815,14 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		left := requireUpdatedDebugSessionBody(t, w, "test-session")
+		leftBob := false
+		for _, participant := range left.Status.Participants {
+			if participant.User == "bob@example.com" {
+				leftBob = participant.LeftAt != nil
+			}
+		}
+		assert.True(t, leftBob, "leave returns the session with leftAt set for the caller")
 	})
 
 	t.Run("leave rejects unexpected body", func(t *testing.T) {
@@ -7323,6 +7334,10 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		renewed := requireUpdatedDebugSessionBody(t, w, "test-session")
+		assert.Equal(t, int32(1), renewed.Status.RenewalCount, "renew returns the session with the new renewal count")
+		require.NotNil(t, renewed.Status.ExpiresAt)
+		assert.True(t, renewed.Status.ExpiresAt.After(expiresAt.Time), "renew returns the extended expiry")
 
 		// Verify renewal count was incremented
 		var updatedSession breakglassv1alpha1.DebugSession
@@ -9869,4 +9884,19 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 		assert.Equal(t, 1, response.Total)
 	})
+}
+
+// requireUpdatedDebugSessionBody asserts that a mutation returned the updated
+// DebugSession, the same shape as approve and terminate, and not a message.
+func requireUpdatedDebugSessionBody(t *testing.T, w *httptest.ResponseRecorder, name string) breakglassv1alpha1.DebugSession {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	require.NotContains(t, raw, "message")
+	require.Contains(t, raw, "status")
+	require.NotContains(t, string(raw["status"]), "authenticatedUserGroups", "public session view must stay redacted")
+	var session breakglassv1alpha1.DebugSession
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &session))
+	require.Equal(t, name, session.Name)
+	return session
 }

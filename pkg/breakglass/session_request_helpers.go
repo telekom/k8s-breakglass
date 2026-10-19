@@ -85,24 +85,22 @@ func selectRequestedEscalation(c *gin.Context, eligible []breakglassv1alpha1.Bre
 			names = append(names, escalation.Name)
 		}
 		slices.Sort(names)
-		c.JSON(http.StatusConflict, gin.H{
-			"error":      "multiple eligible escalations match; specify escalationName",
-			"code":       "AMBIGUOUS_ESCALATION",
-			"candidates": names,
-		})
+		c.JSON(http.StatusConflict, struct {
+			apiresponses.APIError
+			Candidates []string `json:"candidates"`
+		}{APIError: apiresponses.NewError(c, "AMBIGUOUS_ESCALATION", "multiple eligible escalations match; specify escalationName"), Candidates: names})
 		return nil, false
 	}
 	return matches[0], true
 }
 
 type duplicateSessionConflictResponse struct {
-	Error   string                               `json:"error"`
-	Code    string                               `json:"code"`
+	apiresponses.APIError
 	Session breakglassv1alpha1.BreakglassSession `json:"session"`
 }
 
 func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
-	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{Error: message, Code: "CONFLICT", Session: ses})
+	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{APIError: apiresponses.NewError(c, "CONFLICT", message), Session: ses})
 }
 
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
