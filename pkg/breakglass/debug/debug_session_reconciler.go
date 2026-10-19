@@ -252,6 +252,22 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if !ds.DeletionTimestamp.IsZero() && hasAdmissionRecipeFinalizer(ds) {
+		// A deleted session that is still active, for example one that expired
+		// while the controller was down, becomes terminal first: an expired
+		// active session accepts only terminal status updates, and the revert
+		// records its progress in the status.
+		if !debugSessionTerminal(ds) {
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if isDebugSessionExpired(ds, time.Now().UTC()) {
+				state = breakglassv1alpha1.DebugSessionStateExpired
+			}
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = state
+				status.Message = "Session deleted; reverting admission recipe"
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		// Never drop a session that may still own a widened admission field.
 		if err := c.revertAdmissionRecipe(ctx, ds); err != nil {
 			return ctrl.Result{}, err

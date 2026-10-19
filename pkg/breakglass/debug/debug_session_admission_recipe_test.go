@@ -223,6 +223,53 @@ func TestAdmissionRecipeDriftIsReportedAndNotOverwritten(t *testing.T) {
 	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetRevertSkipped, f.ds.Status.AdmissionRecipe.Targets[0].State)
 }
 
+func TestAdmissionRecipeDriftReceiptPrecedesTheStateChange(t *testing.T) {
+	target := policyTarget("require-labels")
+	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "platform-best-practices", "Deny"))
+	require.NoError(t, f.c.applyAdmissionRecipe(t.Context(), f.ds))
+	live := getPolicy(t, f.spoke, "require-labels")
+	require.NoError(t, unstructured.SetNestedStringSlice(live.Object, []string{"Deny", "Audit"}, "spec", "validationActions"))
+	require.NoError(t, f.spoke.Update(t.Context(), live))
+
+	manager := f.c.currentAuditManager()
+	f.c.WithAuditManager(nil)
+	require.ErrorContains(t, f.c.detectAdmissionRecipeDrift(t.Context(), f.ds), "durable audit")
+	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetApplied, f.ds.Status.AdmissionRecipe.Targets[0].State, "no state change without a receipt")
+	f.c.WithAuditManager(manager)
+	require.NoError(t, f.c.detectAdmissionRecipeDrift(t.Context(), f.ds))
+	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetDrifted, f.ds.Status.AdmissionRecipe.Targets[0].State)
+	events := f.sink.Events()
+	require.Equal(t, audit.EventDebugSessionAdmissionRecipeDrift, events[len(events)-1].Type)
+}
+
+func TestAdmissionRecipeRevertsWhenOnlyTheSessionAnnotationWasStripped(t *testing.T) {
+	target := policyTarget("require-labels")
+	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "psa", "Deny"))
+	require.NoError(t, f.c.applyAdmissionRecipe(t.Context(), f.ds))
+	live := getPolicy(t, f.spoke, "require-labels")
+	annotations := live.GetAnnotations()
+	delete(annotations, breakglassv1alpha1.AdmissionRecipeSessionAnnotation)
+	live.SetAnnotations(annotations)
+	require.NoError(t, f.spoke.Update(t.Context(), live))
+	require.NoError(t, f.c.revertAdmissionRecipe(t.Context(), f.ds))
+	require.Equal(t, []string{"Deny"}, policyActions(t, getPolicy(t, f.spoke, "require-labels")), "the value this session wrote is restored")
+	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetReverted, f.ds.Status.AdmissionRecipe.Targets[0].State)
+}
+
+func TestAdmissionRecipeDeletingAnExpiredActiveSessionReverts(t *testing.T) {
+	target := policyTarget("require-labels")
+	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "psa", "Deny"))
+	require.NoError(t, f.c.applyAdmissionRecipe(t.Context(), f.ds))
+	past := metav1.NewTime(time.Now().Add(-time.Minute))
+	f.ds.Status.ExpiresAt = &past
+	require.NoError(t, f.c.client.Status().Update(t.Context(), f.ds))
+	require.NoError(t, f.c.client.Delete(t.Context(), f.ds))
+	_, err := f.c.Reconcile(t.Context(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(f.ds)})
+	require.NoError(t, err)
+	require.True(t, apierrors.IsNotFound(f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), &breakglassv1alpha1.DebugSession{})))
+	require.Equal(t, []string{"Deny"}, policyActions(t, getPolicy(t, f.spoke, "require-labels")))
+}
+
 func TestAdmissionRecipeRecoversInterruptedWrites(t *testing.T) {
 	target := policyTarget("require-labels")
 	t.Run("write happened, status lost", func(t *testing.T) {

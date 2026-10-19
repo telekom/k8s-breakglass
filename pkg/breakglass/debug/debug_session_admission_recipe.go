@@ -494,7 +494,11 @@ func (c *DebugSessionController) detectAdmissionRecipeDrift(ctx context.Context,
 	if err := configurationFence(); err != nil {
 		return err
 	}
-	drifted := false
+	type drift struct {
+		index   int
+		message string
+	}
+	var drifts []drift
 	for i, entry := range status.Targets {
 		if entry.State != breakglassv1alpha1.AdmissionRecipeTargetApplied {
 			continue
@@ -519,14 +523,30 @@ func (c *DebugSessionController) detectAdmissionRecipeDrift(ctx context.Context,
 		if message == "" {
 			continue
 		}
-		drifted = true
+		drifts = append(drifts, drift{index: i, message: message})
+	}
+	if len(drifts) == 0 {
+		return nil
+	}
+	// The drift receipt precedes the state change, like every other recipe
+	// receipt: a failed audit leaves the targets applied, so the next check
+	// reports the drift again under the same event ID.
+	receipt := ds.DeepCopy()
+	keys := make([]string, 0, len(drifts))
+	for _, d := range drifts {
+		entry := &receipt.Status.AdmissionRecipe.Targets[d.index]
+		entry.State, entry.Message = breakglassv1alpha1.AdmissionRecipeTargetDrifted, d.message
+		keys = append(keys, breakglassv1alpha1.AdmissionRecipeTargetKey(entry.Target))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(keys, "\n")))
+	if err := c.auditAdmissionRecipe(ctx, receipt, audit.EventDebugSessionAdmissionRecipeDrift, "drift-"+hex.EncodeToString(digest[:8])); err != nil {
+		return err
+	}
+	for _, d := range drifts {
 		metrics.AdmissionRecipeOperations.WithLabelValues(ds.Spec.Cluster, recipe.Action, "drift", "detected").Inc()
-		if err := c.setAdmissionRecipeTargetState(ctx, ds, i, breakglassv1alpha1.AdmissionRecipeTargetDrifted, message); err != nil {
+		if err := c.setAdmissionRecipeTargetState(ctx, ds, d.index, breakglassv1alpha1.AdmissionRecipeTargetDrifted, d.message); err != nil {
 			return err
 		}
-	}
-	if drifted {
-		return c.auditAdmissionRecipe(ctx, ds, audit.EventDebugSessionAdmissionRecipeDrift, "drift-"+time.Now().UTC().Format("20060102T150405Z"))
 	}
 	return nil
 }
@@ -568,7 +588,12 @@ func (c *DebugSessionController) revertAdmissionRecipe(ctx context.Context, ds *
 			errs = append(errs, err)
 			continue
 		}
-		if obj.GetAnnotations()[breakglassv1alpha1.AdmissionRecipeSessionAnnotation] != sessionUID {
+		owner := obj.GetAnnotations()[breakglassv1alpha1.AdmissionRecipeSessionAnnotation]
+		// A confirmed write whose session annotation alone was stripped is
+		// still restored when the field still holds the value this session
+		// wrote: restoring the original never widens admission.
+		confirmed := entry.State == breakglassv1alpha1.AdmissionRecipeTargetApplied || entry.State == breakglassv1alpha1.AdmissionRecipeTargetDrifted
+		if owner != sessionUID && (owner != "" || !confirmed) {
 			state, message := breakglassv1alpha1.AdmissionRecipeTargetRevertSkipped, "session annotation was removed or replaced; field left as is"
 			if entry.State == breakglassv1alpha1.AdmissionRecipeTargetApplying {
 				// Most likely the write never happened; if it did and the
@@ -659,6 +684,9 @@ func (c *DebugSessionController) handleAdmissionRecipeActive(ctx context.Context
 		return ctrl.Result{RequeueAfter: time.Millisecond}, nil
 	}
 	requeue := admissionRecipeActiveRequeue
+	if ds.Status.ExpiresAt == nil {
+		return ctrl.Result{RequeueAfter: requeue}, nil
+	}
 	if until := ds.Status.ExpiresAt.Sub(now); until < requeue {
 		requeue = max(until, time.Millisecond)
 	}

@@ -101,23 +101,36 @@ already changed by another session, or not at its starting value
    stage, and auto-approval is not possible.
 2. **Apply** when the session becomes Active. The controller adds the
    `breakglass.t-caas.telekom.com/admission-recipe-revert` finalizer, emits a
-   synchronous audit event (`debug_session.admission_recipe.applied`), and for
+   synchronous audit event (`debug_session.admission_recipe.applied`; it is the
+   intent receipt and precedes every write, so its targets are still
+   `not-applied`; the values written are in the session status and in the
+   `.reverted` event), and for
    each target: re-reads it, re-checks the denied labels, owner and starting
    value, records the original value in `status.admissionRecipe` **before**
    writing, re-validates the live session approval, and updates the object
    with its read `resourceVersion`. It also sets the annotations
    `breakglass.t-caas.telekom.com/admission-recipe-session` (session UID) and
-   `breakglass.t-caas.telekom.com/admission-recipe-expires-at`.
+   `breakglass.t-caas.telekom.com/admission-recipe-expires-at`. The owner
+   annotation is on the policy or webhook configuration, so a second session
+   for another webhook of the same configuration is refused while the first
+   one holds it.
 3. **Watch.** Every 30 seconds the controller re-reads each target. If the
-   field or the session annotation changed, the target becomes `drifted`, a
-   synchronous `debug_session.admission_recipe.drift` audit event is emitted
-   and `breakglass_admission_recipe_operations_total{operation="drift"}`
-   increases. The controller never overwrites drift.
+   field or the session annotation changed, a synchronous
+   `debug_session.admission_recipe.drift` audit event is emitted, then the
+   target becomes `drifted` and
+   `breakglass_admission_recipe_operations_total{operation="drift"}`
+   increases. If the audit sink is down, the target stays `applied` and the
+   next check reports the drift again. The controller never overwrites drift.
 4. **Revert** on terminate, reject, failure, expiry (hard `maxDuration`) and
    on deletion of the DebugSession (the finalizer keeps it until the revert
-   is done). Only a target that still carries this session's annotation and
-   the applied value is restored; a drifted target keeps its current value
-   and only loses the annotations. A synchronous
+   is done). A target is restored when it still holds the value this session
+   wrote and carries this session's annotation, or no owner annotation at all
+   (someone stripped only the annotation): restoring the original never widens
+   admission. A target whose value someone else changed keeps its current
+   value and only loses the annotations (`revert-skipped`), and a target owned
+   by another session is left alone; alert on
+   `breakglass_admission_recipe_operations_total{operation="revert",result="skipped"}`.
+   A synchronous
    `debug_session.admission_recipe.reverted` event follows the last target.
    A target whose webhook entry disappeared is `revert-skipped` with the
    reason, and its annotations are still removed. Revert failures are
@@ -125,7 +138,9 @@ already changed by another session, or not at its starting value
    If the ClusterConfig is deleted before the revert, the finalizer keeps
    the session: restore the target by hand, remove its
    `admission-recipe-*` annotations, then remove the finalizer
-   `breakglass.t-caas.telekom.com/admission-recipe-revert` on the hub.
+   `breakglass.t-caas.telekom.com/admission-recipe-revert` on the hub. A
+   deleted session that is still active, for example one that expired while
+   the controller was down, is first marked terminal and then reverted.
 5. **Restart safety.** The original value and intent are persisted before
    each write, so a controller restart either finds the write done (the
    session annotation is present) or not done, and reverts accordingly.
@@ -149,7 +164,24 @@ healthy again, which is also reported as drift.
 The controller's ClusterConfig identity needs `get` and `update` on the
 allowlisted kinds (`validatingpolicies.policies.kyverno.io`,
 `validatingwebhookconfigurations` / `mutatingwebhookconfigurations`), which
-can be scoped with `resourceNames`.
+can be scoped with `resourceNames`. Breakglass ships no spoke role for this;
+grant it to the ClusterConfig identity, for example:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: breakglass-admission-recipes
+rules:
+  - apiGroups: ["policies.kyverno.io"]
+    resources: ["validatingpolicies"]
+    resourceNames: ["require-labels"]        # the allowlisted policies
+    verbs: ["get", "update"]
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources: ["validatingwebhookconfigurations"]
+    resourceNames: ["example-webhook"]       # the allowlisted configurations
+    verbs: ["get", "update"]
+```
 
 ## Metrics and audit
 
