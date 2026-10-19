@@ -17,8 +17,10 @@ import (
 
 // TestDebugSessionWithoutBindingRefUsesTheBindingThatAllowsTheRequester
 // covers a template with a first-line and an onboarding binding for the same
-// cluster: a request without bindingRef from an onboarding requester uses the
-// onboarding binding although the first-line binding sorts first.
+// cluster. Each binding has its own display name, because the webhook rejects
+// two bindings with the same effective name. A request without bindingRef
+// from an onboarding requester uses the onboarding binding, although the
+// first-line binding sorts first.
 func TestDebugSessionWithoutBindingRefUsesTheBindingThatAllowsTheRequester(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	user := helpers.TestUsers.SecurityRequester
@@ -53,6 +55,7 @@ spec:
 		b := &breakglassv1alpha1.DebugSessionClusterBinding{
 			ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName(prefix), Namespace: s.Namespace},
 			Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+				DisplayName: prefix,
 				TemplateRef: &breakglassv1alpha1.TemplateReference{Name: template.Name},
 				Clusters:    []string{s.Cluster},
 				Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}},
