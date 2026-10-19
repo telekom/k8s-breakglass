@@ -139,9 +139,15 @@ func chatMessageText(event *Event, baseURL string) string {
 
 	name := event.Target.Name
 	debug := strings.HasPrefix(string(event.Type), "debug_session.")
-	noun, requester, scopeLabel, scope, path := "Breakglass session", detail(event, "user"), "group", detail(event, "grantedGroup"), "/session/"+url.PathEscape(name)
+	// Session events carry the requester as "user", debug session events and
+	// the Manager helpers as "requestedBy".
+	requester := detail(event, "user")
+	if requester == "" {
+		requester = detail(event, "requestedBy")
+	}
+	noun, scopeLabel, scope, path := "Breakglass session", "group", detail(event, "grantedGroup"), "/session/"+url.PathEscape(name)
 	if debug {
-		noun, requester, scopeLabel, path = "Debug session", detail(event, "requestedBy"), "template", "/debug-sessions/"+url.PathEscape(name)
+		noun, scopeLabel, path = "Debug session", "template", "/debug-sessions/"+url.PathEscape(name)
 		if scope = detail(event, "templateRef"); scope == "" {
 			scope = detail(event, "templateName")
 		}

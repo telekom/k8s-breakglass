@@ -199,6 +199,7 @@ type KafkaSASLSpec struct {
 }
 
 // WebhookSinkSpec configures an HTTP webhook audit sink.
+// +kubebuilder:validation:XValidation:rule="!has(self.payloadFormat) || self.payloadFormat != 'slack' || (!has(self.batchUrl) && (!has(self.batchSize) || self.batchSize <= 1))",message="payloadFormat slack posts one message per event and does not support batchUrl or batchSize > 1"
 type WebhookSinkSpec struct {
 	// URL is the webhook endpoint.
 	// +kubebuilder:validation:MinLength=1

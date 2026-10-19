@@ -215,7 +215,7 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 		stop:   make(chan struct{}),
 	}
 
-	batchSink, isBatchSink := sink.(BatchSink)
+	batchSink, isBatchSink := asBatchSink(sink)
 
 	// Start workers
 	for i := 0; i < cfg.WorkerCount; i++ {

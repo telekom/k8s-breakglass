@@ -287,3 +287,62 @@ func TestSlackWebhookAloneGivesNoDurableReceipt(t *testing.T) {
 	require.ErrorContains(t, err, "durable delivery receipt")
 	assert.Empty(t, chat.snapshot())
 }
+
+func TestChatSinkChainIsNotBatched(t *testing.T) {
+	chat := NewChatWebhookSink(WebhookSinkConfig{Name: "chat", URL: "http://127.0.0.1:1"}, "", zap.NewNop())
+	chain := NewFilteredSink(NewCircuitBreakerSink(chat, DefaultCircuitBreakerConfig(), zap.NewNop()), EventFilterConfig{})
+	_, batched := chain.(BatchSink)
+	assert.False(t, batched, "a batch retry would repost delivered chat messages")
+	assert.True(t, isAdvisorySink(chain))
+
+	json := NewFilteredSink(NewCircuitBreakerSink(NewWebhookSink(WebhookSinkConfig{URL: "http://127.0.0.1:1"}, zap.NewNop()), DefaultCircuitBreakerConfig(), zap.NewNop()), EventFilterConfig{})
+	_, batched = json.(BatchSink)
+	assert.True(t, batched, "JSON webhook sinks keep batching")
+	assert.False(t, isAdvisorySink(json))
+}
+
+func TestServiceSlackWebhookRetriesOnlyFailedEvents(t *testing.T) {
+	var mu sync.Mutex
+	posts := map[string]int{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var payload struct{ Text string }
+		_ = json.NewDecoder(req.Body).Decode(&payload)
+		name := strings.Fields(payload.Text)[2]
+		mu.Lock()
+		posts[name]++
+		mu.Unlock()
+		if name == "fail" {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
+	defer func() { _ = svc.Close() }()
+	require.NoError(t, svc.Reload(context.Background(), &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "chat"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name:    "chat",
+				Type:    breakglassv1alpha1.AuditSinkTypeWebhook,
+				Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: server.URL, PayloadFormat: breakglassv1alpha1.WebhookPayloadFormatSlack},
+			}},
+		},
+	}))
+
+	for _, name := range []string{"first", "fail", "last"} {
+		svc.Emit(context.Background(), &Event{Type: EventSessionRequested, Target: Target{Name: name}})
+	}
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return posts["fail"] >= 3 && posts["last"] >= 1
+	}, 10*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, 1, posts["first"], "a delivered message must not be posted again")
+	assert.Equal(t, 1, posts["last"])
+}

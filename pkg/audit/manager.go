@@ -66,6 +66,20 @@ type BatchSink interface {
 	WriteBatch(ctx context.Context, events []*Event) error
 }
 
+// asBatchSink returns sink as a BatchSink only when it batches natively. A
+// circuit breaker around a non-batch sink (the chat sink) would split a batch
+// into single writes and stop at the first failure; the caller would then
+// retry the whole batch and post the delivered events again.
+func asBatchSink(sink Sink) (BatchSink, bool) {
+	if cb, ok := sink.(*CircuitBreakerSink); ok {
+		if _, inner := cb.sink.(BatchSink); !inner {
+			return nil, false
+		}
+	}
+	batchSink, ok := sink.(BatchSink)
+	return batchSink, ok
+}
+
 // ManagerConfig configures the audit Manager.
 type ManagerConfig struct {
 	// Enrich captures resource identity before an event enters asynchronous queues.
@@ -186,7 +200,7 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	m.workerCtx, m.stopWorkers = context.WithCancel(context.Background())
 
 	// Check if sink supports batch writes
-	if batchSink, ok := sink.(BatchSink); ok {
+	if batchSink, ok := asBatchSink(sink); ok {
 		m.batchSink = batchSink
 	}
 
@@ -959,7 +973,7 @@ func (m *Manager) DebugSessionFailed(ctx context.Context, sessionName, namespace
 }
 
 // DebugSessionExpired emits an audit event when a debug session expires.
-func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespace, cluster string) {
+func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespace, cluster, requestedBy, templateRef string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionExpired,
 		Severity: SeverityWarning,
@@ -970,7 +984,9 @@ func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespac
 			Namespace: namespace,
 		},
 		Details: map[string]interface{}{
-			"cluster": cluster,
+			"cluster":     cluster,
+			"requestedBy": requestedBy,
+			"templateRef": templateRef,
 		},
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
@@ -979,7 +995,7 @@ func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespac
 }
 
 // DebugSessionApprovalTimeout emits an audit event when a debug session approval times out.
-func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, namespace, cluster string) {
+func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, namespace, cluster, requestedBy, templateRef string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionApprovalTimeout,
 		Severity: SeverityWarning,
@@ -990,7 +1006,9 @@ func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, 
 			Namespace: namespace,
 		},
 		Details: map[string]interface{}{
-			"cluster": cluster,
+			"cluster":     cluster,
+			"requestedBy": requestedBy,
+			"templateRef": templateRef,
 		},
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,

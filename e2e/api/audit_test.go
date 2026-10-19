@@ -864,6 +864,14 @@ func TestSlackWebhookAuditSinkFunctional(t *testing.T) {
 	webhookExternalURL := helpers.GetAuditWebhookReceiverExternalURL()
 	httpClient := helpers.ShortTimeoutHTTPClient()
 
+	healthReq, err := http.NewRequestWithContext(ctx, http.MethodGet, webhookExternalURL+"/health", nil)
+	require.NoError(t, err)
+	healthResp, err := httpClient.Do(healthReq)
+	if err != nil {
+		t.Skipf("Skipping chat audit test - receiver not accessible at %s: %v", webhookExternalURL, err)
+	}
+	_ = healthResp.Body.Close()
+
 	t.Run("RejectsUnknownFormatAndBatching", func(t *testing.T) {
 		for name, webhook := range map[string]breakglassv1alpha1.WebhookSinkSpec{
 			"unknown-format": {URL: webhookInternalURL + "/audit/events", PayloadFormat: "teams"},
@@ -906,6 +914,7 @@ func TestSlackWebhookAuditSinkFunctional(t *testing.T) {
 	}
 	cleanup.Add(auditConfig)
 	require.NoError(t, cli.Create(ctx, auditConfig))
+	helpers.WaitForAuditConfigReady(t, ctx, cli, auditConfig.Name, helpers.WaitForStateTimeout)
 	time.Sleep(helpers.CachePropagationDelay)
 
 	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-chat-audit-esc"), namespace).

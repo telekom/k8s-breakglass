@@ -64,7 +64,7 @@ func NewFilteredSink(sink Sink, filter EventFilterConfig) Sink {
 		sink:   sink,
 		filter: filter.compile(),
 	}
-	if batchSink, ok := sink.(BatchSink); ok {
+	if batchSink, ok := asBatchSink(sink); ok {
 		return &filteredBatchSink{
 			filteredSink: filtered,
 			batchSink:    batchSink,

@@ -1949,10 +1949,10 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	manager.DebugSessionFailed(ctx, "ds-failed-2", "ns1", "cluster1", "unknown error", nil)
 
 	// Test DebugSessionExpired
-	manager.DebugSessionExpired(ctx, "ds-expired", "ns1", "cluster1")
+	manager.DebugSessionExpired(ctx, "ds-expired", "ns1", "cluster1", "alice", "node-debug")
 
 	// Test DebugSessionApprovalTimeout
-	manager.DebugSessionApprovalTimeout(ctx, "ds-timeout", "ns1", "cluster1")
+	manager.DebugSessionApprovalTimeout(ctx, "ds-timeout", "ns1", "cluster1", "alice", "node-debug")
 
 	// Test DebugSessionPodFailed
 	manager.DebugSessionPodFailed(ctx, "ds1", "ns1", "pod1", "pod-ns1", "CrashLoopBackOff", "container exited with error")

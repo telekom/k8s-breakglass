@@ -646,6 +646,12 @@ spec:
                       required:
                       - url
                       type: object
+                      x-kubernetes-validations:
+                      - message: payloadFormat slack posts one message per event and
+                          does not support batchUrl or batchSize > 1
+                        rule: '!has(self.payloadFormat) || self.payloadFormat != ''slack''
+                          || (!has(self.batchUrl) && (!has(self.batchSize) || self.batchSize
+                          <= 1))'
                   required:
                   - name
                   - type

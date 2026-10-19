@@ -552,7 +552,7 @@ func (c *DebugSessionController) handlePendingApproval(ctx context.Context, ds *
 
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				auditManager.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Spec.RequestedBy, ds.Spec.TemplateRef)
 			}
 		}
 		c.sendDebugSessionFailedEmail(ds, reason)
@@ -624,7 +624,7 @@ func (c *DebugSessionController) handleActive(ctx context.Context, ds *breakglas
 		c.sendDebugSessionExpiredEmail(*notificationSession)
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Spec.RequestedBy, ds.Spec.TemplateRef)
 			}
 		}
 		log.Info("Debug session expired")
