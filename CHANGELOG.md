@@ -118,22 +118,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Behaviour change:** `POST /api/debugSessions/{name}/join`, `/leave` and
-  `/renew` now return the updated `DebugSession`, like `/approve` and
-  `/terminate`. They returned `{"message", "role"}`, `{"message"}` and
-  `{"message", "newExpiresAt", "renewalCount"}` before. Read the renewed expiry
-  from `status.expiresAt` and the count from `status.renewalCount`. The UI and
-  `bgctl debug session join|leave|renew` already expected the session; `bgctl`
-  now prints it instead of an empty object.
-- Every REST error response now has the same body: `error` (text unchanged),
-  `code` and `cid` (the `X-Request-ID` correlation ID), plus optional
-  `details`. This adds `cid` everywhere, adds `code` to rate-limit 429s, and
-  gives the debug-session artifact endpoints, the terminal recording
-  `410`/`429` replies and the approval-token `404` a JSON error body where they
-  sent none or no error fields. Fields such as `session`, `candidates`, `valid`
-  and `authenticated` stay. `bgctl` now prints the `details` of an error. A
-  unit test now fails the build when a handler writes an error body outside
-  `pkg/apiresponses`.
 - Limit `BreakglassSession.spec.ticketSystemID` to 256 characters. The CRD
   schema, session request API (`422 Unprocessable Entity`), `bgctl session
   request --ticket-system-id` and the request dialog reject longer values. The
