@@ -145,6 +145,62 @@ Webhook delivery always uses `POST`, does not follow redirects, and succeeds
 only for a `2xx` response. Redirect and other response codes keep required
 audit delivery pending.
 
+### Chat Notifications (Slack and Mattermost)
+
+Set `webhook.payloadFormat: slack` to post approval notifications to a Slack or
+Mattermost incoming webhook. The default, `json`, keeps the audit event body
+described above.
+
+```yaml
+sinks:
+  - name: chat
+    type: webhook
+    eventTypes:
+      - session.requested
+      - debug_session.created
+    webhook:
+      url: https://hooks.slack.com/services/T000/B000/XXXX
+      payloadFormat: slack
+```
+
+A `slack` sink posts one `{"text": "..."}` request per event, with no
+`X-Batch-Size` header. It rejects `batchUrl` and `batchSize` greater than 1.
+Mattermost accepts the same body.
+
+Messages exist for `session.requested`, `session.approved`, `session.denied`,
+`session.expired`, `session.withdrawn`, `debug_session.created`,
+`debug_session.approved`, `debug_session.rejected`,
+`debug_session.approval_timeout` and `debug_session.expired`. They name the
+session, the requester, the group (sessions) or template (debug sessions), the
+cluster, and a link built from `frontend.baseURL`:
+
+- `session.requested`: `<baseURL>/session/<name>/approve`
+- other session events: `<baseURL>/session/<name>`
+- debug session events: `<baseURL>/debug-sessions/<name>`
+
+Without `frontend.baseURL`, messages have no link. Every other event type gets
+one generic line with the event type, target and cluster. Set `eventTypes` to
+the notifications you want; the AuditConfig webhook warns about a `slack` sink
+without `eventTypes`.
+
+A channel message reaches everyone in the channel and bypasses the
+per-recipient email controls (`disableNotifications`, `notificationExclusions`,
+`hiddenFromUI`). For this reason, messages never contain the request reason,
+approver names or approver groups. In every string taken from an event, `&`,
+`<` and `>` are escaped as `&amp;`, `&lt;` and `&gt;`, so a value such as
+`<!channel>` cannot mention a Slack channel. `@` is replaced with the fullwidth
+`＠` (U+FF20), so a value such as `@channel` or `@here` cannot mention a
+Mattermost channel. Control characters such as newlines become spaces.
+
+Messages come from audit events. Debug sessions whose template sets
+`spec.audit.enabled: false` emit no audit events and therefore no chat
+messages. The webhook URL is a credential: restrict read access to
+AuditConfig objects.
+
+A `slack` sink is **advisory**. The required synchronous audit path (see
+[Filtering](#filtering)) skips it: it is not written, its `eventTypes` filter
+is not checked, and it cannot provide a durable delivery receipt.
+
 ### Log Sink
 
 Write events to structured logs (always available, useful for debugging):
@@ -270,6 +326,11 @@ remain useful operational outputs, but they do not provide a durable delivery
 receipt and cannot satisfy required delivery by themselves. If any configured
 sink cannot be constructed, required auditing remains unavailable and duplicate
 cleanup fails closed until configuration is repaired.
+The same rule applies to the node-maintenance
+`debug_session.node_maintenance.execution_intent` event. Advisory chat sinks
+(`webhook.payloadFormat: slack`) are the exception: required delivery skips
+them, so a narrow chat sink next to an unfiltered durable sink does not block
+these events. A chat sink alone cannot satisfy required delivery.
 
 ```yaml
 spec:

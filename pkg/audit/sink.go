@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/telekom/t-caas-go-library/pkg/redact"
@@ -145,15 +146,16 @@ func (s *LogSink) Name() string {
 // WebhookSink sends audit events to an external HTTP endpoint.
 // It supports both single-event and batch writes for efficiency.
 type WebhookSink struct {
-	name           string
-	url            string
-	batchURL       string // Optional: separate URL for batch requests
-	httpClient     *http.Client
-	headers        map[string]string
-	logger         *zap.Logger
-	eventsWritten  int64
-	eventsFailed   int64
-	batchesWritten int64
+	name       string
+	url        string
+	batchURL   string // Optional: separate URL for batch requests
+	httpClient *http.Client
+	headers    map[string]string
+	logger     *zap.Logger
+	// Counters are atomic: queued delivery calls one sink from several workers.
+	eventsWritten  atomic.Int64
+	eventsFailed   atomic.Int64
+	batchesWritten atomic.Int64
 }
 
 // WebhookSinkConfig configures a WebhookSink.
@@ -216,14 +218,18 @@ func NewWebhookSink(cfg WebhookSinkConfig, logger *zap.Logger) *WebhookSink {
 func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	body, err := json.Marshal(event)
 	if err != nil {
-		s.eventsFailed++
+		s.eventsFailed.Add(1)
 		return fmt.Errorf("failed to marshal audit event: %w: %w", ErrSerialization, err)
 	}
+	return s.post(ctx, body, event)
+}
 
+// post sends one JSON body for event to the webhook URL.
+func (s *WebhookSink) post(ctx context.Context, body []byte, event *Event) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.url, bytes.NewReader(body))
 	if err != nil {
 		err = redactHTTPError(err)
-		s.eventsFailed++
+		s.eventsFailed.Add(1)
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
@@ -235,7 +241,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		err = redactHTTPError(err)
-		s.eventsFailed++
+		s.eventsFailed.Add(1)
 		s.logger.Debug("webhook request failed",
 			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
@@ -246,7 +252,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		s.eventsFailed++
+		s.eventsFailed.Add(1)
 		s.logger.Debug("webhook returned error",
 			zap.String("url", redactURL(s.url)),
 			zap.String("event_id", event.ID),
@@ -255,7 +261,7 @@ func (s *WebhookSink) Write(ctx context.Context, event *Event) error {
 		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.url), resp.StatusCode)
 	}
 
-	s.eventsWritten++
+	s.eventsWritten.Add(1)
 	s.logger.Debug("webhook event sent successfully",
 		zap.String("event_id", event.ID),
 		zap.String("event_type", string(event.Type)))
@@ -281,14 +287,14 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 
 	body, err := json.Marshal(batchPayload)
 	if err != nil {
-		s.eventsFailed += int64(len(events))
+		s.eventsFailed.Add(int64(len(events)))
 		return fmt.Errorf("failed to marshal batch payload: %w: %w", ErrSerialization, err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.batchURL, bytes.NewReader(body))
 	if err != nil {
 		err = redactHTTPError(err)
-		s.eventsFailed += int64(len(events))
+		s.eventsFailed.Add(int64(len(events)))
 		return fmt.Errorf("failed to create batch request: %w", err)
 	}
 
@@ -301,7 +307,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
 		err = redactHTTPError(err)
-		s.eventsFailed += int64(len(events))
+		s.eventsFailed.Add(int64(len(events)))
 		s.logger.Debug("webhook batch request failed",
 			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
@@ -311,7 +317,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		s.eventsFailed += int64(len(events))
+		s.eventsFailed.Add(int64(len(events)))
 		s.logger.Debug("webhook batch returned error",
 			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
@@ -319,27 +325,27 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.batchURL), resp.StatusCode)
 	}
 
-	s.eventsWritten += int64(len(events))
-	s.batchesWritten++
+	s.eventsWritten.Add(int64(len(events)))
+	s.batchesWritten.Add(1)
 	s.logger.Debug("webhook batch sent successfully",
 		zap.Int("batch_size", len(events)),
-		zap.Int64("total_events", s.eventsWritten))
+		zap.Int64("total_events", s.eventsWritten.Load()))
 
 	return nil
 }
 
 // Stats returns the webhook sink statistics.
 func (s *WebhookSink) Stats() (written, failed, batches int64) {
-	return s.eventsWritten, s.eventsFailed, s.batchesWritten
+	return s.eventsWritten.Load(), s.eventsFailed.Load(), s.batchesWritten.Load()
 }
 
 // Close is a no-op for WebhookSink.
 func (s *WebhookSink) Close() error {
 	s.logger.Info("closing webhook audit sink",
 		zap.String("name", s.name),
-		zap.Int64("events_written", s.eventsWritten),
-		zap.Int64("events_failed", s.eventsFailed),
-		zap.Int64("batches_written", s.batchesWritten))
+		zap.Int64("events_written", s.eventsWritten.Load()),
+		zap.Int64("events_failed", s.eventsFailed.Load()),
+		zap.Int64("batches_written", s.batchesWritten.Load()))
 	return nil
 }
 

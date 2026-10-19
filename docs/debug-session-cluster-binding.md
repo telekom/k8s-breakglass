@@ -425,12 +425,15 @@ Override template notification settings:
 spec:
   notification:
     enabled: true
-    channels:
-      - email
-      - slack
-    recipients:
+    notifyOnRequest: true
+    notifyOnApproval: true
+    additionalRecipients:
       - security@example.com
 ```
+
+Notifications are sent by email. For Slack or Mattermost channel messages,
+configure an AuditConfig webhook sink with `payloadFormat: slack`; see
+[Chat Notifications](audit-config.md#chat-notifications-slack-and-mattermost).
 
 ## Status
 

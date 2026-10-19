@@ -376,6 +376,9 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 }
 
 func validateSynchronousSink(sink Sink, event *Event) (bool, error) {
+	if isAdvisorySink(sink) {
+		return false, nil
+	}
 	sinkName := sink.Name()
 	switch sink := sink.(type) {
 	case *filteredBatchSink:
@@ -442,6 +445,9 @@ func validateSynchronousSink(sink Sink, event *Event) (bool, error) {
 }
 
 func writeSynchronousSink(ctx context.Context, sink Sink, event *Event) error {
+	if isAdvisorySink(sink) {
+		return nil
+	}
 	switch sink := sink.(type) {
 	case *filteredBatchSink:
 		if !sink.filter.allows(event) {

@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	apiv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+)
+
 // WebhookSinkSpecApplyConfiguration represents a declarative configuration of the WebhookSinkSpec type for use
 // with apply.
 //
@@ -31,6 +35,14 @@ type WebhookSinkSpecApplyConfiguration struct {
 	// If not specified, the main URL is used for both single and batch writes.
 	// This allows using different endpoints for single vs batch operations.
 	BatchURL *string `json:"batchUrl,omitempty"`
+	// PayloadFormat selects the request body.
+	// "json" (default) posts the audit event JSON, or a {"events":[...],"count":N}
+	// batch with an X-Batch-Size header.
+	// "slack" posts one {"text":"..."} message per event, accepted by Slack and
+	// Mattermost incoming webhooks. A slack sink is advisory: the required
+	// synchronous audit path skips it, so it never provides or blocks a durable
+	// delivery receipt. It cannot be combined with batchUrl or batchSize > 1.
+	PayloadFormat *apiv1alpha1.WebhookPayloadFormat `json:"payloadFormat,omitempty"`
 }
 
 // WebhookSinkSpecApplyConfiguration constructs a declarative configuration of the WebhookSinkSpec type for use with
@@ -98,5 +110,13 @@ func (b *WebhookSinkSpecApplyConfiguration) WithBatchSize(value int) *WebhookSin
 // If called multiple times, the BatchURL field is set to the value of the last call.
 func (b *WebhookSinkSpecApplyConfiguration) WithBatchURL(value string) *WebhookSinkSpecApplyConfiguration {
 	b.BatchURL = &value
+	return b
+}
+
+// WithPayloadFormat sets the PayloadFormat field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the PayloadFormat field is set to the value of the last call.
+func (b *WebhookSinkSpecApplyConfiguration) WithPayloadFormat(value apiv1alpha1.WebhookPayloadFormat) *WebhookSinkSpecApplyConfiguration {
+	b.PayloadFormat = &value
 	return b
 }

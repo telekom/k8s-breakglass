@@ -4171,6 +4171,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: patternError
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookPayloadFormat
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookSinkSpec
   map:
     fields:
@@ -4189,6 +4191,10 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: payloadFormat
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookPayloadFormat
+      default: json
     - name: timeoutSeconds
       type:
         scalar: numeric

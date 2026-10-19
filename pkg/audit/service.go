@@ -89,6 +89,7 @@ type Service struct {
 	enabled            bool
 	configurationState ConfigurationState
 	configNS           string // namespace where secrets are located (controller namespace)
+	frontendBaseURL    string // links in chat (payloadFormat slack) messages
 }
 
 // ConfigurationState distinguishes intentional audit disablement from a
@@ -111,6 +112,13 @@ func NewService(kubeClient client.Client, recorder events.EventRecorder, logger 
 		configurationState: ConfigurationUnavailable,
 		configNS:           controllerNamespace,
 	}
+}
+
+// WithFrontendBaseURL sets the frontend base URL used for links in chat
+// webhook messages. Call it before the first reload.
+func (s *Service) WithFrontendBaseURL(baseURL string) *Service {
+	s.frontendBaseURL = baseURL
+	return s
 }
 
 // ControllerNamespace is the namespace allowed for audit sink credentials.
@@ -303,7 +311,8 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 					fields = append(fields,
 						zap.String("url", redactURL(sinkCfg.Webhook.URL)),
 						zap.Int("timeout_seconds", sinkCfg.Webhook.TimeoutSeconds),
-						zap.Int("batch_size", sinkCfg.Webhook.BatchSize))
+						zap.Int("batch_size", sinkCfg.Webhook.BatchSize),
+						zap.String("payload_format", string(sinkCfg.Webhook.PayloadFormat)))
 				}
 			}
 			s.logger.Debug("sink configuration loaded", fields...)
@@ -850,6 +859,9 @@ func (s *Service) buildWebhookSink(ctx context.Context, sinkCfg breakglassv1alph
 		webhookCfg.TLS = tlsCfg
 	}
 
+	if sinkCfg.Webhook.PayloadFormat == breakglassv1alpha1.WebhookPayloadFormatSlack {
+		return NewChatWebhookSink(webhookCfg, s.frontendBaseURL, s.logger), nil
+	}
 	return NewWebhookSink(webhookCfg, s.logger), nil
 }
 

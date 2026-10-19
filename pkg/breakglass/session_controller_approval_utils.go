@@ -1088,6 +1088,7 @@ func (b *BreakglassSessionController) emitSessionAuditEvent(ctx context.Context,
 			"grantedGroup":   session.Spec.GrantedGroup,
 			"state":          string(session.Status.State),
 			"ticketSystemID": session.Spec.TicketSystemID,
+			"user":           session.Spec.User,
 		},
 	}
 

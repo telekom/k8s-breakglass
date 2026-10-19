@@ -724,6 +724,9 @@ func ValidateAuditConfig(ac *AuditConfig) *ValidationResult {
 			result.Errors = append(result.Errors, validateKafkaSink(sink.Kafka, sinkPath)...)
 		case AuditSinkTypeWebhook:
 			result.Errors = append(result.Errors, validateWebhookSink(sink.Webhook, sinkPath)...)
+			if sink.Webhook != nil && sink.Webhook.PayloadFormat == WebhookPayloadFormatSlack && len(sink.EventTypes) == 0 {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("sink %q posts every audit event to a chat channel; set eventTypes to the notifications you want", sink.Name))
+			}
 		case AuditSinkTypeLog:
 			result.Errors = append(result.Errors, validateLogSink(sink.Log, sinkPath)...)
 		case AuditSinkTypeKubernetes:
@@ -826,6 +829,15 @@ func validateWebhookSink(webhook *WebhookSinkSpec, sinkPath *field.Path) field.E
 		}
 		if webhook.AuthSecretRef.Namespace == "" {
 			errs = append(errs, field.Required(authPath.Child("namespace"), "secret namespace is required when authSecretRef is specified"))
+		}
+	}
+
+	if webhook.PayloadFormat == WebhookPayloadFormatSlack {
+		if webhook.BatchURL != "" {
+			errs = append(errs, field.Forbidden(webhookPath.Child("batchUrl"), "batchUrl is not supported with payloadFormat slack; slack posts one message per event"))
+		}
+		if webhook.BatchSize > 1 {
+			errs = append(errs, field.Forbidden(webhookPath.Child("batchSize"), "batchSize > 1 is not supported with payloadFormat slack; slack posts one message per event"))
 		}
 	}
 
