@@ -9,15 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- AuditConfig webhook sinks accept `payloadFormat: slack` for approver
-  notifications in Slack or Mattermost channels. Such a sink posts one
-  `{"text": "..."}` message per event, with a link built from
-  `frontend.baseURL`, for session and debug session requests and their
-  outcomes. Messages never contain the request reason, approver names or
-  approver groups, and `&`, `<`, `>` and `@` from event values are escaped so
-  a request cannot mention a channel. The sink is advisory: required
-  synchronous audit delivery skips it. The default `json` format is
-  unchanged. See `docs/audit-config.md#chat-notifications-slack-and-mattermost`.
 - `net-debug trace` in the network-debug image accepts `--backend kprobe-multi`,
   `--all-kmods` and `--meta`, for whole-node packet traces. Tuples then carry
   the NETNS inode of the host or Pod namespace, module skb functions are
@@ -145,10 +136,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- The end-to-end example AuditConfig used fields that do not exist
-  (`webhook.eventFilter`, Kafka `sasl.enabled`/`username`/`passwordRef`), and
-  the DebugSessionClusterBinding docs showed a non-existent
-  `notification.channels`. Both examples now use real fields.
 - A DebugSession now keeps an explicit `false` from its template for booleans
   whose CRD default is `true`. Examples are
   `kubectlDebug.ephemeralContainers.requireNonRoot`,
