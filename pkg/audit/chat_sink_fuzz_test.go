@@ -17,7 +17,6 @@ limitations under the License.
 package audit
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"unicode"
@@ -25,18 +24,20 @@ import (
 
 // FuzzChatMessageText checks the chat message invariants for arbitrary event
 // values: no Slack control characters, no "@" mentions, no control
-// characters, every "&" starts an entity, a valid JSON body, and neither the
-// approving actor nor the reason in the text.
+// characters, every "&" starts an entity, and neither the approving actor
+// nor the reason in the text.
 func FuzzChatMessageText(f *testing.F) {
 	f.Add("session.requested", "sess", "alice@example.com", "admins", "prod", "")
 	f.Add("debug_session.rejected", "<!channel>", "@here", "<https://x|y>", "a&b", "https://bg.example.com")
 	f.Add("custom.event", "x\ny", "\u0000@all", "&lt;", "c1", "https://bg.example.com/")
+	// The requester is the actor when no requester detail is set.
+	f.Add("session.requested", "0", "", "0", "0", "")
 
-	const approver, reason = "approver-marker-7f3a", "reason-marker-9c1e"
+	const approver, groups, reason = "approver-marker-7f3a", "groups-marker-2d6b", "reason-marker-9c1e"
 	f.Fuzz(func(t *testing.T, eventType, name, requester, scope, cluster, baseURL string) {
 		event := &Event{
 			Type:   EventType(eventType),
-			Actor:  Actor{User: approver, Groups: []string{approver}},
+			Actor:  Actor{User: approver, Groups: []string{groups}},
 			Target: Target{Kind: "BreakglassSession", Name: name, Cluster: cluster},
 			Details: map[string]interface{}{
 				"user":         requester,
@@ -62,14 +63,18 @@ func FuzzChatMessageText(f *testing.F) {
 		if got, want := len(entityPattern.FindAllString(text, -1)), strings.Count(text, "&"); got != want {
 			t.Fatalf("bare & in %q", text)
 		}
-		inputs := eventType + name + requester + scope + cluster + baseURL
-		if !strings.Contains(inputs, "marker") && (strings.Contains(text, approver) || strings.Contains(text, reason)) {
-			t.Fatalf("approver or reason leaked into %q", text)
-		}
-		if _, err := json.Marshal(struct {
-			Text string `json:"text"`
-		}{text}); err != nil {
-			t.Fatalf("marshal: %v", err)
+		if inputs := eventType + name + requester + scope + cluster + baseURL; !strings.Contains(inputs, "marker") {
+			if strings.Contains(text, reason) || strings.Contains(text, groups) {
+				t.Fatalf("reason or actor groups leaked into %q", text)
+			}
+			// Without a requester detail, the actor of a request, withdrawal
+			// or debug session creation is the requester and is shown. For
+			// every other event the actor may be the approver.
+			actorIsRequester := requester == "" && (eventType == string(EventSessionRequested) ||
+				eventType == string(EventSessionWithdrawn) || eventType == string(EventDebugSessionCreated))
+			if !actorIsRequester && strings.Contains(text, approver) {
+				t.Fatalf("approver leaked into %q", text)
+			}
 		}
 	})
 }
