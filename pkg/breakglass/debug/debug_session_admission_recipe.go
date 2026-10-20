@@ -675,7 +675,7 @@ func (c *DebugSessionController) handleAdmissionRecipeActive(ctx context.Context
 		c.sendDebugSessionExpiredEmail(*ds.DeepCopy())
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+				auditManager.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Spec.RequestedBy, ds.Spec.TemplateRef)
 			}
 		}
 		if err := c.reconcileActiveAccounting(ctx, ds, false); err != nil {
