@@ -256,6 +256,26 @@ func TestAdmissionRecipeRevertsWhenOnlyTheSessionAnnotationWasStripped(t *testin
 	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetReverted, f.ds.Status.AdmissionRecipe.Targets[0].State)
 }
 
+func TestAdmissionRecipeRevertRetryAfterAnUnrecordedRevert(t *testing.T) {
+	target := policyTarget("require-labels")
+	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "psa", "Deny"))
+	require.NoError(t, f.c.applyAdmissionRecipe(t.Context(), f.ds))
+	// The first revert restored the target, then its status write failed.
+	live := getPolicy(t, f.spoke, "require-labels")
+	annotations := live.GetAnnotations()
+	delete(annotations, breakglassv1alpha1.AdmissionRecipeSessionAnnotation)
+	delete(annotations, breakglassv1alpha1.AdmissionRecipeExpiresAnnotation)
+	live.SetAnnotations(annotations)
+	require.NoError(t, unstructured.SetNestedStringSlice(live.Object, []string{"Deny"}, "spec", "validationActions"))
+	require.NoError(t, f.spoke.Update(t.Context(), live))
+	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetApplied, f.ds.Status.AdmissionRecipe.Targets[0].State)
+	require.NoError(t, f.c.revertAdmissionRecipe(t.Context(), f.ds))
+	require.Equal(t, breakglassv1alpha1.AdmissionRecipeTargetReverted, f.ds.Status.AdmissionRecipe.Targets[0].State,
+		"a restored field is not a change by another writer")
+	require.Empty(t, f.ds.Status.AdmissionRecipe.Targets[0].Message)
+	require.Equal(t, []string{"Deny"}, policyActions(t, getPolicy(t, f.spoke, "require-labels")))
+}
+
 func TestAdmissionRecipeDeletingAnExpiredActiveSessionReverts(t *testing.T) {
 	target := policyTarget("require-labels")
 	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "psa", "Deny"))

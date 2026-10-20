@@ -328,7 +328,9 @@ sink cannot be constructed, required auditing remains unavailable and duplicate
 cleanup fails closed until configuration is repaired, unless the previous
 pipeline stays active (see [Reload failures](#reload-failures)).
 The same rule applies to the node-maintenance
-`debug_session.node_maintenance.execution_intent` event. Advisory chat sinks
+`debug_session.node_maintenance.execution_intent` event and to the admission
+recipe events `debug_session.admission_recipe.applied`, `.drift` and
+`.reverted`: the target write waits for their delivery. Advisory chat sinks
 (`webhook.payloadFormat: slack`) are the exception: required delivery skips
 them, so a narrow chat sink next to an unfiltered durable sink does not block
 these events. A chat sink alone cannot satisfy required delivery.

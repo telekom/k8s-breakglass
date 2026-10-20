@@ -616,6 +616,9 @@ func (c *DebugSessionController) revertAdmissionRecipe(ctx context.Context, ds *
 			if err := setAdmissionRecipeField(recipe.Action, entry.Target, obj, entry.Original); err != nil {
 				state, message = breakglassv1alpha1.AdmissionRecipeTargetRevertSkipped, err.Error()
 			}
+		case current == entry.Original:
+			// An earlier revert wrote the target but could not record it
+			// (for example a status conflict): the field is already restored.
 		default:
 			state, message = breakglassv1alpha1.AdmissionRecipeTargetRevertSkipped, fmt.Sprintf("field was changed to %s by another writer; left as is", current)
 		}
