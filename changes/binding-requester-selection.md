@@ -8,4 +8,4 @@ section: Behaviour changes
   first binding by name and rejected requesters that only a later binding
   allows, for example an onboarding requester when a first-line binding of the
   same template and cluster sorted first. A requester that no binding for the
-  cluster allows is still rejected with 403.
+  cluster allows is still rejected with 403 (#1535).
