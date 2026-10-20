@@ -34,7 +34,7 @@ GOTMPDIR="$PWD/$proof_dir/go-work" go test -c ./pkg/breakglass/debug -o "$proof_
 created=true
 kind create cluster --name "$cluster" --kubeconfig "$proof_dir/kubeconfig" --wait 120s \
 	--image "${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
-kubectl --kubeconfig "$proof_dir/kubeconfig" apply \
+kubectl --kubeconfig "$proof_dir/kubeconfig" apply --server-side \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessiontemplates.yaml \
