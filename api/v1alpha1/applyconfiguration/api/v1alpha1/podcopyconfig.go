@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/api/core/v1"
+)
+
 // PodCopyConfigApplyConfiguration represents a declarative configuration of the PodCopyConfig type for use
 // with apply.
 //
@@ -29,6 +33,14 @@ type PodCopyConfigApplyConfiguration struct {
 	Labels map[string]string `json:"labels,omitempty"`
 	// ttl specifies how long copied pods live before auto-deletion.
 	TTL *string `json:"ttl,omitempty"`
+	// securityContext is set on the debug container that is added to the
+	// copied pod. The copied application containers keep their own security
+	// context. Without it the debug container has no security context and
+	// admission policies such as a read-only root filesystem requirement
+	// reject the copy. It is applied as written: privileged and Windows host
+	// process containers are rejected, every other field is the template
+	// author's responsibility.
+	SecurityContext *v1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // PodCopyConfigApplyConfiguration constructs a declarative configuration of the PodCopyConfig type for use with
@@ -88,5 +100,13 @@ func (b *PodCopyConfigApplyConfiguration) WithLabels(entries map[string]string) 
 // If called multiple times, the TTL field is set to the value of the last call.
 func (b *PodCopyConfigApplyConfiguration) WithTTL(value string) *PodCopyConfigApplyConfiguration {
 	b.TTL = &value
+	return b
+}
+
+// WithSecurityContext sets the SecurityContext field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SecurityContext field is set to the value of the last call.
+func (b *PodCopyConfigApplyConfiguration) WithSecurityContext(value v1.SecurityContext) *PodCopyConfigApplyConfiguration {
+	b.SecurityContext = &value
 	return b
 }

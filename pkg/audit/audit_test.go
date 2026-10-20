@@ -1612,124 +1612,6 @@ func TestManager_SensitiveEventsNeverSampled(t *testing.T) {
 	}
 }
 
-func TestManager_SensitiveEventsNotDroppedOnQueueFull(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-
-	var mu sync.Mutex
-	var sensitiveReceived int
-	blockWorker := make(chan struct{})
-	workerBlocking := make(chan struct{}, 1)
-
-	sink := &testSink{
-		name: "blocking",
-		writeFunc: func(event *Event) {
-			if IsSensitiveEvent(event.Type) {
-				mu.Lock()
-				sensitiveReceived++
-				mu.Unlock()
-				return
-			}
-			// Signal that the worker is now blocking so the test can proceed.
-			select {
-			case workerBlocking <- struct{}{}:
-			default:
-			}
-			<-blockWorker
-		},
-	}
-
-	manager := NewManager(sink, ManagerConfig{
-		QueueSize:    1,
-		WorkerCount:  1,
-		DropOnFull:   true,
-		WriteTimeout: 5 * time.Second,
-	}, logger)
-
-	// Given: one event occupies the worker (blocked), one fills the queue slot.
-	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
-	// Wait until the worker is actually blocking before filling the queue.
-	select {
-	case <-workerBlocking:
-	case <-time.After(2 * time.Second):
-		t.Fatal("worker did not start blocking within 2s")
-	}
-	manager.Emit(context.Background(), &Event{Type: EventResourceList})
-
-	// When: sensitive events are emitted against a full queue.
-	const sensitiveCount = 5
-	for i := 0; i < sensitiveCount; i++ {
-		manager.Emit(context.Background(), &Event{
-			Type: EventSessionRevoked,
-			ID:   fmt.Sprintf("sensitive-%d", i),
-		})
-	}
-
-	// Then: all sensitive events are written synchronously (not dropped).
-	assert.Equal(t, int64(sensitiveCount), manager.sensitiveEventsSyncWritten.Load(),
-		"sensitiveEventsSyncWritten counter must match")
-
-	mu.Lock()
-	assert.Equal(t, sensitiveCount, sensitiveReceived,
-		"all sensitive events must be written even when queue is full")
-	mu.Unlock()
-
-	close(blockWorker)
-	_ = manager.Close()
-}
-
-func TestManager_SensitiveEventSyncFallbackWriteError(t *testing.T) {
-	logger := zaptest.NewLogger(t)
-	blockWorker := make(chan struct{})
-	workerBlocking := make(chan struct{}, 1)
-
-	writeErr := fmt.Errorf("simulated sink failure")
-	sink := &errableSink{
-		name: "failing",
-		writeFn: func(event *Event) error {
-			if IsSensitiveEvent(event.Type) {
-				return writeErr
-			}
-			// Signal that the worker is now blocking so the test can proceed.
-			select {
-			case workerBlocking <- struct{}{}:
-			default:
-			}
-			<-blockWorker
-			return nil
-		},
-	}
-
-	manager := NewManager(sink, ManagerConfig{
-		QueueSize:    1,
-		WorkerCount:  1,
-		DropOnFull:   true,
-		WriteTimeout: 5 * time.Second,
-	}, logger)
-
-	// Given: queue is full (one event blocks worker, one fills queue slot).
-	manager.Emit(context.Background(), &Event{Type: EventResourceGet})
-	// Wait until the worker is actually blocking before filling the queue.
-	select {
-	case <-workerBlocking:
-	case <-time.After(2 * time.Second):
-		t.Fatal("worker did not start blocking within 2s")
-	}
-	manager.Emit(context.Background(), &Event{Type: EventResourceList})
-
-	// When: a sensitive event is emitted and the sync fallback write fails.
-	manager.Emit(context.Background(), &Event{
-		Type: EventSessionRevoked,
-		ID:   "fail-test",
-	})
-
-	// Then: sensitiveEventsSyncWritten is NOT incremented on failure.
-	assert.Equal(t, int64(0), manager.sensitiveEventsSyncWritten.Load(),
-		"sensitiveEventsSyncWritten must not increment on write failure")
-
-	close(blockWorker)
-	_ = manager.Close()
-}
-
 type errableSink struct {
 	name    string
 	writeFn func(event *Event) error
@@ -1949,10 +1831,10 @@ func TestManager_DebugSessionEvents(t *testing.T) {
 	manager.DebugSessionFailed(ctx, "ds-failed-2", "ns1", "cluster1", "unknown error", nil)
 
 	// Test DebugSessionExpired
-	manager.DebugSessionExpired(ctx, "ds-expired", "ns1", "cluster1")
+	manager.DebugSessionExpired(ctx, "ds-expired", "ns1", "cluster1", "alice", "node-debug")
 
 	// Test DebugSessionApprovalTimeout
-	manager.DebugSessionApprovalTimeout(ctx, "ds-timeout", "ns1", "cluster1")
+	manager.DebugSessionApprovalTimeout(ctx, "ds-timeout", "ns1", "cluster1", "alice", "node-debug")
 
 	// Test DebugSessionPodFailed
 	manager.DebugSessionPodFailed(ctx, "ds1", "ns1", "pod1", "pod-ns1", "CrashLoopBackOff", "container exited with error")

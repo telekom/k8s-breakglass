@@ -113,7 +113,10 @@ Ephemeral-container requests with `allowPrivileged: false` reject explicit
 privilege escalation, Windows host processes, non-default proc mounts,
 unconfined AppArmor or seccomp profiles, and unsafe SELinux user, role, or type
 settings before intent is persisted. `requireNonRoot` also rejects an explicit
-root `runAsUser`. Safe fields are forwarded unchanged; `allowPrivileged: true`
+root `runAsUser`. A template `ephemeralContainers.securityContext` replaces the
+requested top-level fields first, and the checks run on the result (see
+[template security context](debug-session.md#template-security-context)).
+Other safe fields are forwarded unchanged; `allowPrivileged: true`
 preserves the existing template policy for these explicit settings. These
 checks cover the listed request fields and do not claim complete Pod Security
 Standards Restricted profile conformance.

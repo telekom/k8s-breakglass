@@ -206,11 +206,73 @@ func TestSelectEffectiveDebugSessionBinding_DefaultsToFirstApplicableBinding(t *
 		AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{first, second},
 	}
 
-	binding, err := selectEffectiveDebugSessionBinding("", result)
+	binding, err := selectEffectiveDebugSessionBinding("", result, func(*breakglassv1alpha1.DebugSessionClusterBinding) bool { return true })
 
 	require.NoError(t, err)
 	require.NotNil(t, binding)
 	assert.Equal(t, "a-first", binding.Name)
+}
+
+// Without a bindingRef the first binding (namespace, then name) that allows
+// the requester is used, not simply the first binding.
+func TestSelectEffectiveDebugSessionBinding_PicksTheBindingThatAllowsTheRequester(t *testing.T) {
+	firstLine := breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "a-first-line", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionClusterBindingSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"first-line"}}},
+	}
+	onboarding := breakglassv1alpha1.DebugSessionClusterBinding{
+		ObjectMeta: metav1.ObjectMeta{Name: "b-onboarding", Namespace: "breakglass"},
+		Spec:       breakglassv1alpha1.DebugSessionClusterBindingSpec{Allowed: &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"onboarding"}}},
+	}
+	alsoOnboarding := onboarding
+	alsoOnboarding.Name = "c-onboarding"
+	allows := func(groups ...string) func(*breakglassv1alpha1.DebugSessionClusterBinding) bool {
+		return func(binding *breakglassv1alpha1.DebugSessionClusterBinding) bool {
+			return isDebugSessionRequesterAllowed(effectiveDebugSessionAllowed(nil, binding), "user", "user@example.com", groups)
+		}
+	}
+	byBinding := ClusterAllowedResult{Allowed: true, AllowedBySource: "binding:breakglass/a-first-line", MatchingBinding: &firstLine,
+		AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{alsoOnboarding, firstLine, onboarding}}
+
+	selected, err := selectEffectiveDebugSessionBinding("", byBinding, allows("onboarding"))
+	require.NoError(t, err)
+	assert.Equal(t, "b-onboarding", selected.Name, "first allowing binding in namespace/name order")
+
+	selected, err = selectEffectiveDebugSessionBinding("", byBinding, allows("first-line"))
+	require.NoError(t, err)
+	assert.Equal(t, "a-first-line", selected.Name)
+
+	_, err = selectEffectiveDebugSessionBinding("", byBinding, allows("tenant"))
+	require.ErrorIs(t, err, errNoDebugSessionBindingAllowsRequester)
+
+	// Bindings that grant the cluster own its requester rules, also when the
+	// template itself allows the cluster.
+	byTemplate := byBinding
+	byTemplate.AllowedBySource, byTemplate.MatchingBinding = "template", nil
+	_, err = selectEffectiveDebugSessionBinding("", byTemplate, allows("tenant"))
+	require.ErrorIs(t, err, errNoDebugSessionBindingAllowsRequester)
+
+	// Only a cluster that no binding grants uses no binding.
+	selected, err = selectEffectiveDebugSessionBinding("", ClusterAllowedResult{Allowed: true, AllowedBySource: "template"}, allows("tenant"))
+	require.NoError(t, err)
+	assert.Nil(t, selected)
+
+	// A visible binding is preferred over a hidden one that sorts first.
+	hidden := firstLine
+	hidden.Name, hidden.Spec.Allowed, hidden.Spec.Hidden = "0-hidden", &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{"onboarding"}}, true
+	withHidden := byBinding
+	withHidden.AllBindings = append([]breakglassv1alpha1.DebugSessionClusterBinding{hidden}, byBinding.AllBindings...)
+	selected, err = selectEffectiveDebugSessionBinding("", withHidden, allows("onboarding"))
+	require.NoError(t, err)
+	assert.Equal(t, "b-onboarding", selected.Name)
+	selected, err = selectEffectiveDebugSessionBinding("", ClusterAllowedResult{Allowed: true, AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{hidden}}, allows("onboarding"))
+	require.NoError(t, err)
+	assert.Equal(t, "0-hidden", selected.Name, "a hidden binding is used when it is the only one that allows the requester")
+
+	// An explicit bindingRef is taken as given; the caller checks the requester.
+	selected, err = selectEffectiveDebugSessionBinding("breakglass/a-first-line", byBinding, allows("onboarding"))
+	require.NoError(t, err)
+	assert.Equal(t, "a-first-line", selected.Name)
 }
 
 func TestSelectEffectiveDebugSessionBinding_TrimsExplicitBindingRef(t *testing.T) {
@@ -222,7 +284,7 @@ func TestSelectEffectiveDebugSessionBinding_TrimsExplicitBindingRef(t *testing.T
 		AllBindings: []breakglassv1alpha1.DebugSessionClusterBinding{binding},
 	}
 
-	selected, err := selectEffectiveDebugSessionBinding(" breakglass/ops-binding ", result)
+	selected, err := selectEffectiveDebugSessionBinding(" breakglass/ops-binding ", result, func(*breakglassv1alpha1.DebugSessionClusterBinding) bool { return true })
 
 	require.NoError(t, err)
 	require.NotNil(t, selected)

@@ -693,6 +693,72 @@ func TestHandleInjectEphemeralContainer_RejectsUnsafeSecurityContextBeforeIntent
 	assert.Equal(t, "safe-debugger", storedPod.Spec.EphemeralContainers[0].Name)
 }
 
+func TestHandleInjectEphemeralContainer_AppliesTemplateSecurityContextBeforeValidation(t *testing.T) {
+	session := newActiveKubectlDebugSession("active-session", "test-user", time.Now().Add(time.Hour))
+	session.UID = "session-uid"
+	nonRoot := true
+	session.Status.ResolvedTemplate.KubectlDebug = &breakglassv1alpha1.KubectlDebugConfig{
+		EphemeralContainers: &breakglassv1alpha1.EphemeralContainersConfig{
+			Enabled:        true,
+			RequireNonRoot: true,
+			SecurityContext: &corev1.SecurityContext{
+				RunAsNonRoot:           &nonRoot,
+				ReadOnlyRootFilesystem: &nonRoot,
+			},
+		},
+	}
+	now := time.Now().UTC()
+	duration := int32(3600)
+	holder := string(session.UID)
+	session.Status.ConnectionLease = &breakglassv1alpha1.DebugSessionConnectionLease{
+		Namespace: session.Namespace, Name: "session-lease", UID: "session-lease-uid", HolderUID: session.UID,
+		TargetUID: "target-uid", ProfileDigest: "sha256:" + strings.Repeat("a", 64), Epoch: 1,
+		ExpiresAt: metav1.NewTime(now.Add(time.Hour)),
+	}
+	lease := &coordinationv1.Lease{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: session.Status.ConnectionLease.Name, Namespace: session.Status.ConnectionLease.Namespace,
+			UID: session.Status.ConnectionLease.UID,
+			Annotations: map[string]string{
+				connectionLeaseEpochAnnotation:      "1",
+				connectionLeaseTargetUIDAnnotation:  "target-uid",
+				connectionLeaseProfileAnnotation:    session.Status.ConnectionLease.ProfileDigest,
+				connectionLeaseSessionAnnotation:    holder,
+				connectionLeaseGenerationAnnotation: "0",
+			},
+		},
+		Spec: coordinationv1.LeaseSpec{HolderIdentity: &holder, LeaseDurationSeconds: &duration, RenewTime: &metav1.MicroTime{Time: now}},
+	}
+	_, controller := setupTestRouter(t, session, lease)
+	targetClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(&corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "default", UID: "target-uid"},
+		Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "app", Image: "app:v1"}}},
+	}).WithInterceptorFuncs(interceptor.Funcs{SubResourceUpdate: func(ctx context.Context, cl client.Client, _ string, obj client.Object, _ ...client.SubResourceUpdateOption) error {
+		return cl.Update(ctx, obj)
+	}}).Build()
+	controller.WithClusterClients(&mockClientProvider{clients: map[string]client.Client{"test-cluster": targetClient}})
+	router := setupAuthenticatedDebugSessionRouter(t, controller, "test-user", "", nil)
+	writable := false
+	// The client omits runAsNonRoot and asks for a writable root filesystem.
+	body, err := json.Marshal(InjectEphemeralContainerRequest{
+		Namespace: "default", PodName: "target", ContainerName: "debugger", Image: "busybox",
+		SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: &writable},
+	})
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, "/api/debugSessions/active-session/injectEphemeralContainer", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	storedPod := &corev1.Pod{}
+	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "target"}, storedPod))
+	require.Len(t, storedPod.Spec.EphemeralContainers, 1)
+	assert.Equal(t, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers.SecurityContext,
+		storedPod.Spec.EphemeralContainers[0].SecurityContext)
+}
+
 func TestHandleInjectEphemeralContainer_UserNotParticipant(t *testing.T) {
 	// Create an active session where the requesting user is not a participant
 	session := &breakglassv1alpha1.DebugSession{

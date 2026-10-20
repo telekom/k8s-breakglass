@@ -8,6 +8,10 @@ SPDX-License-Identifier: Apache-2.0
 
 package v1alpha1
 
+import (
+	v1 "k8s.io/api/core/v1"
+)
+
 // EphemeralContainersConfigApplyConfiguration represents a declarative configuration of the EphemeralContainersConfig type for use
 // with apply.
 //
@@ -34,6 +38,13 @@ type EphemeralContainersConfigApplyConfiguration struct {
 	AllowPrivileged *bool `json:"allowPrivileged,omitempty"`
 	// requireNonRoot requires ephemeral containers to run as non-root.
 	RequireNonRoot *bool `json:"requireNonRoot,omitempty"`
+	// securityContext is applied to every injected ephemeral container. Each
+	// field set here replaces the requested value; unset fields keep the
+	// request value. The result is still validated against this policy, so it
+	// cannot grant more than allowPrivileged, maxCapabilities and
+	// requireNonRoot permit. Use it to enforce settings that clients do not
+	// send, such as readOnlyRootFilesystem for admission policies.
+	SecurityContext *v1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 // EphemeralContainersConfigApplyConfiguration constructs a declarative configuration of the EphemeralContainersConfig type for use with
@@ -107,5 +118,13 @@ func (b *EphemeralContainersConfigApplyConfiguration) WithAllowPrivileged(value 
 // If called multiple times, the RequireNonRoot field is set to the value of the last call.
 func (b *EphemeralContainersConfigApplyConfiguration) WithRequireNonRoot(value bool) *EphemeralContainersConfigApplyConfiguration {
 	b.RequireNonRoot = &value
+	return b
+}
+
+// WithSecurityContext sets the SecurityContext field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SecurityContext field is set to the value of the last call.
+func (b *EphemeralContainersConfigApplyConfiguration) WithSecurityContext(value v1.SecurityContext) *EphemeralContainersConfigApplyConfiguration {
+	b.SecurityContext = &value
 	return b
 }

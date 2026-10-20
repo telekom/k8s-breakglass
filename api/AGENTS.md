@@ -13,5 +13,5 @@ This document provides conventions specifically for AI coding agents working in 
 2. **Generation Required**: After making any changes to `*_types.go` files, you MUST run `make generate && make manifests` from the project root.
 3. **Validation**: Use kubebuilder validation markers (e.g. `//+kubebuilder:validation:Required`, `//+kubebuilder:validation:Enum=...`) on all new fields to enforce API constraints.
 4. **Fuzz Testing**: Add cases to `fuzz_test.go` when adding new complex types or validations.
-5. **Backwards Compatibility**: Do not make backwards-incompatible changes to `v1alpha1` unless absolutely necessary and documented in the CHANGELOG.
+5. **Backwards Compatibility**: Do not make backwards-incompatible changes to `v1alpha1` unless absolutely necessary and documented in a `changes/` fragment (section `Breaking changes`).
 6. **Binding constraint narrowing**: Resolve `DebugSessionClusterBinding.spec.extraDeployVariables` through the shared effective-variable helper; binding options, validation, required/disabled state, and defaults must never widen the referenced template. Disabled variables must not retain defaults or accept values, unknown values must be rejected when a binding narrows variables, and discovery/rendering must fail closed if the intersection is invalid.

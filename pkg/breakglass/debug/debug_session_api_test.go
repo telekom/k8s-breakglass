@@ -5176,6 +5176,68 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		assert.Equal(t, "breakglass", response.Spec.BindingRef.Namespace)
 	})
 
+	t.Run("create session without bindingRef uses the binding that allows the requester", func(t *testing.T) {
+		readiness := template.DeepCopy()
+		readiness.Name = "readiness-debug"
+		readiness.Spec.Allowed = nil
+		clusterConfig := breakglassv1alpha1.ClusterConfig{
+			ObjectMeta: metav1.ObjectMeta{Name: "production", Namespace: "breakglass"},
+		}
+		newBinding := func(name, group string) *breakglassv1alpha1.DebugSessionClusterBinding {
+			return &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "breakglass"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					TemplateRef: &breakglassv1alpha1.TemplateReference{Name: "readiness-debug"},
+					Clusters:    []string{"production"},
+					Allowed:     &breakglassv1alpha1.DebugSessionAllowed{Groups: []string{group}},
+				},
+			}
+		}
+		for _, tc := range []struct {
+			groups      []string
+			wantStatus  int
+			wantBinding string
+		}{
+			{[]string{"onboarding"}, http.StatusCreated, "b-onboarding"},
+			{[]string{"first-line"}, http.StatusCreated, "a-first-line"},
+			{[]string{"tenant"}, http.StatusForbidden, ""},
+		} {
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithObjects(readiness, &clusterConfig, newBinding("a-first-line", "first-line"), newBinding("b-onboarding", "onboarding")).
+				Build()
+			ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+			router := gin.New()
+			router.Use(func(c *gin.Context) {
+				c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+				c.Set("username", "alice@example.com")
+				c.Set("email", "alice@example.com")
+				c.Set("groups", tc.groups)
+				c.Next()
+			})
+			rg := router.Group("/api/v1/" + ctrl.BasePath())
+			require.NoError(t, ctrl.Register(rg))
+			body := `{"templateRef":"readiness-debug","cluster":"production","reason":"node readiness"}`
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			router.ServeHTTP(w, req)
+			require.Equal(t, tc.wantStatus, w.Code, "%v: %s", tc.groups, w.Body.String())
+			if tc.wantStatus != http.StatusCreated {
+				assert.Contains(t, w.Body.String(), "user is not allowed to request this debug session")
+				assert.NotContains(t, w.Body.String(), "first-line")
+				var sessions breakglassv1alpha1.DebugSessionList
+				require.NoError(t, fakeClient.List(context.Background(), &sessions))
+				assert.Empty(t, sessions.Items)
+				continue
+			}
+			var response DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+			require.NotNil(t, response.Spec.BindingRef)
+			assert.Equal(t, tc.wantBinding, response.Spec.BindingRef.Name, "%v", tc.groups)
+		}
+	})
+
 	t.Run("create session rejects explicit binding denied by binding allowlist", func(t *testing.T) {
 		templateViaBinding := template.DeepCopy()
 		templateViaBinding.Name = "explicit-denied-binding-debug"
@@ -6312,6 +6374,9 @@ func TestDebugSessionAPIController_HandleJoinDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		joined := requireUpdatedDebugSessionBody(t, w, "test-session")
+		require.Len(t, joined.Status.Participants, 2, "join returns the session with the new participant")
+		assert.Equal(t, "bob@example.com", joined.Status.Participants[1].User)
 
 		// Verify participant was added
 		var updatedSession breakglassv1alpha1.DebugSession
@@ -6812,6 +6877,14 @@ func TestDebugSessionAPIController_HandleLeaveDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		left := requireUpdatedDebugSessionBody(t, w, "test-session")
+		leftBob := false
+		for _, participant := range left.Status.Participants {
+			if participant.User == "bob@example.com" {
+				leftBob = participant.LeftAt != nil
+			}
+		}
+		assert.True(t, leftBob, "leave returns the session with leftAt set for the caller")
 	})
 
 	t.Run("leave rejects unexpected body", func(t *testing.T) {
@@ -7323,6 +7396,10 @@ func TestDebugSessionAPIController_HandleRenewDebugSession(t *testing.T) {
 		router.ServeHTTP(w, req)
 
 		assert.Equal(t, 200, w.Code)
+		renewed := requireUpdatedDebugSessionBody(t, w, "test-session")
+		assert.Equal(t, int32(1), renewed.Status.RenewalCount, "renew returns the session with the new renewal count")
+		require.NotNil(t, renewed.Status.ExpiresAt)
+		assert.True(t, renewed.Status.ExpiresAt.After(expiresAt.Time), "renew returns the extended expiry")
 
 		// Verify renewal count was incremented
 		var updatedSession breakglassv1alpha1.DebugSession
@@ -8670,6 +8747,120 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			userEmail:   "user2@example.com",
 			expectError: false,
 		},
+		{
+			name: "per-cluster limit on another cluster - should pass (clusters run in parallel)",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster2",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    false,
+			expectedErrMsg: "",
+		},
+		{
+			name: "per-cluster limit on the same cluster - should fail",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(1),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    true,
+			expectedErrMsg: "per cluster",
+		},
+		{
+			name: "per-cluster limit 2 with one session on the same cluster - should pass",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(2),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+			},
+			userEmail:   "user2@example.com",
+			expectError: false,
+		},
+		{
+			name: "per-cluster limit 2 with two sessions on the same cluster - should fail",
+			binding: &breakglassv1alpha1.DebugSessionClusterBinding{
+				ObjectMeta: metav1.ObjectMeta{Name: "binding1", Namespace: "default"},
+				Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{
+					ClusterSelector:             &metav1.LabelSelector{},
+					MaxActiveSessionsPerCluster: ptrInt32(2),
+				},
+			},
+			existingSessions: []breakglassv1alpha1.DebugSession{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session1", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user1@example.com",
+						RequestedByEmail: "user1@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "session2", Namespace: "default"},
+					Spec: breakglassv1alpha1.DebugSessionSpec{
+						Cluster:          "cluster1",
+						TemplateRef:      "template1",
+						RequestedBy:      "user3@example.com",
+						RequestedByEmail: "user3@example.com",
+						BindingRef:       &breakglassv1alpha1.BindingReference{Name: "binding1", Namespace: "default"},
+					},
+					Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStatePendingApproval},
+				},
+			},
+			userEmail:      "user2@example.com",
+			expectError:    true,
+			expectedErrMsg: "per cluster",
+		},
 	}
 
 	for _, tt := range tests {
@@ -8694,7 +8885,7 @@ func TestCheckBindingSessionLimits(t *testing.T) {
 			if username == "" {
 				username = tt.userEmail
 			}
-			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, debugSessionReadIdentity{
+			err := ctrl.checkBindingSessionLimits(ctx, tt.binding, "cluster1", debugSessionReadIdentity{
 				legacyAllowed: true, // Authenticated single-provider fixture.
 				username:      username,
 				email:         tt.userEmail,
@@ -9869,4 +10060,19 @@ func TestHandleListDebugSessions_StateValidation(t *testing.T) {
 		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 		assert.Equal(t, 1, response.Total)
 	})
+}
+
+// requireUpdatedDebugSessionBody asserts that a mutation returned the updated
+// DebugSession, the same shape as approve and terminate, and not a message.
+func requireUpdatedDebugSessionBody(t *testing.T, w *httptest.ResponseRecorder, name string) breakglassv1alpha1.DebugSession {
+	t.Helper()
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	require.NotContains(t, raw, "message")
+	require.Contains(t, raw, "status")
+	require.NotContains(t, string(raw["status"]), "authenticatedUserGroups", "public session view must stay redacted")
+	var session breakglassv1alpha1.DebugSession
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &session))
+	require.Equal(t, name, session.Name)
+	return session
 }

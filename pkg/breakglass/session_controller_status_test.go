@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"go.uber.org/zap/zaptest"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -118,6 +119,7 @@ func TestRespondBreakglassSessionErrorIncludesSession(t *testing.T) {
 	assert.Equal(t, "session already in requested state", message)
 	assert.Equal(t, "CONFLICT", code)
 	assert.Equal(t, "session-1", responseSession.Name)
+	assert.Regexp(t, `^"[^"]+"$`, string(response["cid"]))
 }
 
 func TestRespondBreakglassSessionNotFoundPreservesSessionField(t *testing.T) {
@@ -133,6 +135,7 @@ func TestRespondBreakglassSessionNotFoundPreservesSessionField(t *testing.T) {
 	assert.Equal(t, "session not found", response["error"])
 	assert.Equal(t, "NOT_FOUND", response["code"])
 	assert.Equal(t, "missing-session", response["session"])
+	assert.NotEmpty(t, response["cid"])
 }
 
 func TestSetSessionStatusHelperRejectsTerminalNonApprovalTransition(t *testing.T) {
@@ -201,6 +204,9 @@ func TestSetSessionStatusHelperRejectsTerminalNonApprovalTransition(t *testing.T
 	assert.Equal(t, "session is in terminal state Expired and cannot be modified", message)
 	assert.Equal(t, "BAD_REQUEST", code)
 	assert.Equal(t, "expired-session", responseSession.Name)
+	var cid string
+	require.NoError(t, json.Unmarshal(response["cid"], &cid))
+	assert.NotEmpty(t, cid)
 }
 
 func TestBreakglassSessionErrorCode(t *testing.T) {
@@ -268,7 +274,7 @@ func TestBreakglassSessionErrorCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.expected, breakglassSessionErrorCode(tt.status))
+			assert.Equal(t, tt.expected, apiresponses.CodeForStatus(tt.status))
 		})
 	}
 }

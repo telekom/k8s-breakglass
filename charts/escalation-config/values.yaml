@@ -552,6 +552,7 @@ debugSessionBindings: []
   #   # Session limits
   #   maxActiveSessionsPerUser: 1
   #   maxActiveSessionsTotal: 5
+  #   maxActiveSessionsPerCluster: 1  # per target cluster
   #   
   #   # Priority for UI ordering (lower = higher priority)
   #   priority: 10

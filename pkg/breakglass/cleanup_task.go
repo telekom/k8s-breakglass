@@ -427,7 +427,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				// Emit audit event for expired debug session
 				if routine.AuditService != nil && ShouldEmitDebugSessionAudit(ctx, routine.Manager.Reader(), routine.Log, &ds) {
 					if m := routine.AuditService.Manager(); m != nil {
-						m.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+						m.DebugSessionExpired(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Spec.RequestedBy, ds.Spec.TemplateRef)
 					}
 				}
 
@@ -468,7 +468,7 @@ func (routine CleanupRoutine) cleanupExpiredDebugSessions(ctx context.Context) {
 				// Emit audit event for approval timeout
 				if routine.AuditService != nil && ShouldEmitDebugSessionAudit(ctx, routine.Manager.Reader(), routine.Log, &ds) {
 					if m := routine.AuditService.Manager(); m != nil {
-						m.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+						m.DebugSessionApprovalTimeout(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ds.Spec.RequestedBy, ds.Spec.TemplateRef)
 					}
 				}
 

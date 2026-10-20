@@ -88,7 +88,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	}
 	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
 		c.recordingStreams.Add(-1)
-		ctx.Status(http.StatusTooManyRequests)
+		apiresponses.RespondTooManyRequests(ctx, "too many concurrent terminal recordings")
 		return
 	}
 	defer c.recordingStreams.Add(-1)
@@ -491,7 +491,7 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 	reader, record, err := c.recordingArtifacts.DownloadRecording(replayCtx, reservation, authorize)
 	if err != nil {
 		if errors.Is(err, backend.ErrExpired) {
-			ctx.Status(http.StatusGone)
+			apiresponses.RespondError(ctx, http.StatusGone, "terminal recording expired", "")
 		} else {
 			apiresponses.RespondForbidden(ctx, "terminal recording unavailable")
 		}
@@ -508,7 +508,7 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 			ctx.Writer.Header().Del(header)
 		}
 		if errors.Is(err, backend.ErrExpired) {
-			ctx.Status(http.StatusGone)
+			apiresponses.RespondError(ctx, http.StatusGone, "terminal recording expired", "")
 		} else if errors.Is(err, backend.ErrForbidden) {
 			apiresponses.RespondForbidden(ctx, "terminal recording access denied")
 		} else {

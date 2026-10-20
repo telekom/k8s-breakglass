@@ -81,11 +81,15 @@ func TestSelectRequestedEscalation(t *testing.T) {
 			require.Equal(t, tc.wantStatus, recorder.Code)
 			if tc.wantStatus == http.StatusConflict {
 				var response struct {
+					Error      string   `json:"error"`
 					Code       string   `json:"code"`
+					CID        string   `json:"cid"`
 					Candidates []string `json:"candidates"`
 				}
 				require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+				assert.Equal(t, "multiple eligible escalations match; specify escalationName", response.Error)
 				assert.Equal(t, "AMBIGUOUS_ESCALATION", response.Code)
+				assert.NotEmpty(t, response.CID)
 				assert.Equal(t, []string{a.Name, b.Name}, response.Candidates)
 			}
 		})
@@ -330,7 +334,7 @@ func TestAuthenticatedIdentity_WithError(t *testing.T) {
 // ----- buildSessionSpec integration tests -----
 
 func TestHandleRequestBreakglassSession_ShortDurationIdleTimeout(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme).
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test-cluster")).
 		WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).
 		WithObjects(&breakglassv1alpha1.BreakglassEscalation{
 			ObjectMeta: metav1.ObjectMeta{Name: "emergency", Namespace: "default", UID: "escalation"},

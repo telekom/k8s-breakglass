@@ -202,6 +202,68 @@ describe("BreakglassService", () => {
     expect(durationByCluster.get("epsilon")).toBe(3600);
   });
 
+  it("offers a cluster picker instead of a pattern as the session target", async () => {
+    mockClient.get.mockResolvedValueOnce({
+      data: {
+        items: [
+          {
+            metadata: { name: "global" },
+            spec: { allowed: { groups: ["ops"], clusters: ["*", "edge"] }, escalatedGroup: "ops" },
+            clusterOptions: ["prod-a", "prod-b"],
+          },
+          {
+            metadata: { name: "refs" },
+            spec: { allowed: { groups: ["ops"] }, clusterConfigRefs: ["prod-*"], escalatedGroup: "sre" },
+          },
+        ],
+      },
+    });
+
+    const escalations = await (
+      service as unknown as { fetchAvailableEscalations: () => Promise<Breakglass[]> }
+    ).fetchAvailableEscalations();
+
+    expect(escalations.map((e) => [e.escalationName, e.cluster, e.clusterOptions])).toEqual([
+      ["global", "edge", undefined],
+      ["global", "", ["prod-a", "prod-b"]],
+      ["refs", "", []],
+    ]);
+    expect(escalations.some((e) => e.cluster === "*" || e.cluster === "prod-*")).toBe(false);
+  });
+
+  it("requests a pattern escalation for the picked cluster and shows its open session", async () => {
+    mockClient.get
+      .mockResolvedValueOnce({
+        data: [
+          {
+            metadata: { name: "global" },
+            spec: { allowed: { groups: ["ops"], clusters: ["*"] }, escalatedGroup: "ops" },
+            clusterOptions: ["prod-a", "prod-b"],
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({
+        data: [
+          {
+            metadata: { name: "pending-a" },
+            spec: { grantedGroup: "ops", cluster: "prod-a" },
+            status: { state: "Pending" },
+          },
+        ],
+      })
+      .mockResolvedValueOnce({ data: [] })
+      .mockResolvedValueOnce({ data: [] });
+
+    const breakglasses = await service.getBreakglasses();
+    expect(breakglasses.map((bg) => [bg.cluster, bg.state])).toEqual([
+      ["", "Available"],
+      ["prod-a", "Pending"],
+    ]);
+    expect(breakglasses[0]!.clusterOptions).toEqual(["prod-a", "prod-b"]);
+    expect(breakglasses[1]!.clusterOptions).toBeUndefined();
+  });
+
   it("normalizes active sessions so getBreakglasses() can match them", async () => {
     // fetchAvailableEscalations -> returns one available escalation
     mockClient.get

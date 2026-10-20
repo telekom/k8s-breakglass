@@ -1758,7 +1758,38 @@ func TestEphemeralContainersConfigFrom(t *testing.T) {
 		assert.Equal(t, []string{"busybox:*", "alpine:*"}, result.AllowedImages)
 		assert.Equal(t, []string{"NET_ADMIN"}, result.MaxCapabilities)
 		require.NotNil(t, result.AllowedNamespaces)
+		assert.Nil(t, result.SecurityContext)
 	})
+
+	t.Run("keeps security context", func(t *testing.T) {
+		readOnly := true
+		config := &breakglassv1alpha1.EphemeralContainersConfig{
+			Enabled:         true,
+			SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: &readOnly},
+		}
+
+		result := EphemeralContainersConfigFrom(config)
+
+		require.NotNil(t, result.SecurityContext)
+		assert.Equal(t, config.SecurityContext, result.SecurityContext)
+		assert.NotSame(t, config.SecurityContext, result.SecurityContext)
+	})
+}
+
+// TestPodCopyConfigFromKeepsSecurityContext guards the status snapshot: a
+// dropped field would silently disable the template security context.
+func TestPodCopyConfigFromKeepsSecurityContext(t *testing.T) {
+	readOnly := true
+	config := &breakglassv1alpha1.PodCopyConfig{
+		Enabled:         true,
+		SecurityContext: &corev1.SecurityContext{ReadOnlyRootFilesystem: &readOnly},
+	}
+
+	result := PodCopyConfigFrom(config)
+
+	require.NotNil(t, result.SecurityContext)
+	assert.Equal(t, config.SecurityContext, result.SecurityContext)
+	assert.Nil(t, PodCopyConfigFrom(&breakglassv1alpha1.PodCopyConfig{Enabled: true}).SecurityContext)
 }
 
 // TestNodeDebugConfigFrom tests conversion of NodeDebugConfig.

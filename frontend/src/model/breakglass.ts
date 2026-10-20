@@ -9,6 +9,9 @@ export interface AvailableBreakglass {
   escalationIdentities?: string[]; // resource names and display labels represented by a cluster/group card
   from: string; // source role/group user has (base role for escalation)
   cluster: string; // cluster name escalation applies to
+  // set when the escalation allows a cluster pattern such as "*": the registered
+  // clusters the pattern matches. The requester picks one; cluster is then "".
+  clusterOptions?: string[];
   to: string; // escalated (granted) group
   duration: number; // seconds
   selfApproval: boolean; // true if no approvers defined

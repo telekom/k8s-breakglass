@@ -199,6 +199,7 @@ type KafkaSASLSpec struct {
 }
 
 // WebhookSinkSpec configures an HTTP webhook audit sink.
+// +kubebuilder:validation:XValidation:rule="!has(self.payloadFormat) || self.payloadFormat != 'slack' || (!has(self.batchUrl) && (!has(self.batchSize) || self.batchSize <= 1))",message="payloadFormat slack posts one message per event and does not support batchUrl or batchSize > 1"
 type WebhookSinkSpec struct {
 	// URL is the webhook endpoint.
 	// +kubebuilder:validation:MinLength=1
@@ -239,7 +240,31 @@ type WebhookSinkSpec struct {
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://.+`
 	BatchURL string `json:"batchUrl,omitempty"`
+
+	// PayloadFormat selects the request body.
+	// "json" (default) posts the audit event JSON, or a {"events":[...],"count":N}
+	// batch with an X-Batch-Size header.
+	// "slack" posts one {"text":"..."} message per event, accepted by Slack and
+	// Mattermost incoming webhooks. A slack sink is advisory: the required
+	// synchronous audit path skips it, so it never provides or blocks a durable
+	// delivery receipt. It cannot be combined with batchUrl or batchSize > 1.
+	// +kubebuilder:validation:Enum=json;slack
+	// +kubebuilder:default=json
+	// +optional
+	PayloadFormat WebhookPayloadFormat `json:"payloadFormat,omitempty"`
 }
+
+// WebhookPayloadFormat is the request body format of a webhook audit sink.
+type WebhookPayloadFormat string
+
+const (
+	// WebhookPayloadFormatJSON posts audit events as JSON.
+	WebhookPayloadFormatJSON WebhookPayloadFormat = "json"
+
+	// WebhookPayloadFormatSlack posts a text message per event for Slack and
+	// Mattermost incoming webhooks.
+	WebhookPayloadFormatSlack WebhookPayloadFormat = "slack"
+)
 
 // WebhookTLSSpec configures TLS for webhook connections.
 type WebhookTLSSpec struct {

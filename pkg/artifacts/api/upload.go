@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 )
 
@@ -41,7 +42,7 @@ func (controller *UploadController) Register(group *gin.RouterGroup) error {
 func (controller *UploadController) handleUpload(context *gin.Context) {
 	token := bearerToken(context.GetHeader("Authorization"))
 	if token == "" {
-		context.Status(http.StatusNotFound)
+		apiresponses.RespondNotFoundSimple(context, "artifact upload not found")
 		return
 	}
 	route := "/api/" + controller.BasePath() + "/" + context.Param("namespace") + "/" + context.Param("session") + "/" + context.Param("artifactID")
@@ -65,18 +66,18 @@ func writeUploadError(context *gin.Context, err error) {
 	var tooLarge *http.MaxBytesError
 	switch {
 	case errors.As(err, &tooLarge):
-		context.Status(http.StatusRequestEntityTooLarge)
+		apiresponses.RespondError(context, http.StatusRequestEntityTooLarge, "artifact too large", "")
 	case errors.Is(err, backend.ErrForbidden):
 		// Do not disclose whether the session or artifact exists.
-		context.Status(http.StatusNotFound)
+		apiresponses.RespondNotFoundSimple(context, "artifact upload not found")
 	case errors.Is(err, backend.ErrExpired):
-		context.Status(http.StatusGone)
+		apiresponses.RespondError(context, http.StatusGone, "artifact upload expired", "")
 	case errors.Is(err, backend.ErrReplay), errors.Is(err, backend.ErrConflict):
-		context.Status(http.StatusConflict)
+		apiresponses.RespondConflict(context, "artifact already uploaded")
 	case errors.Is(err, backend.ErrInvalid):
-		context.Status(http.StatusBadRequest)
+		apiresponses.RespondBadRequest(context, "invalid artifact upload")
 	default:
-		context.Status(http.StatusServiceUnavailable)
+		apiresponses.RespondServiceUnavailable(context, "artifact storage")
 	}
 }
 

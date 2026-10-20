@@ -12,7 +12,6 @@ on:
       - "hack/kind-ownership.sh"
       - "hack/kubernetes-delete-uid.sh"
       - "docs/network-debug-image.md"
-      - "CHANGELOG.md"
       - ".github/workflows/network-debug-pod-capture-integration.yml"
   push:
     # Run on every main commit so release tags always have an exact, fresh

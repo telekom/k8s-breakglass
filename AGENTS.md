@@ -71,7 +71,7 @@ image with its declared non-root/read-only settings, execute real packaged
 tools (not mocks), exercise every report/inspection mode, and fail rather than
 silently skip when Docker is unavailable. Run the image tests, ShellCheck,
 Dockerfile linting, YAML validation, REUSE, and a multi-architecture BuildKit
-build before release. Keep image docs, MOTD, runbooks, `CHANGELOG.md`, and
+build before release. Keep image docs, MOTD, runbooks, `changes/` fragments, and
 machine-readable metadata synchronized with the actual command surface.
 Release CI must attach an SBOM and provenance attestation and sign the immutable
 manifest with keyless Cosign.
@@ -85,7 +85,7 @@ manifest with keyless Cosign.
 5. **HTTP constants**: Use `http.MethodGet` not `"GET"`.
 6. **Unit tests mandatory**: Every code change needs `*_test.go` (>70% coverage).
 7. **Documentation mandatory**: Update `docs/` with every code change.
-8. **CHANGELOG mandatory**: Update `CHANGELOG.md` for user-facing changes.
+8. **No CHANGELOG edits**: Never edit `CHANGELOG.md` in a PR. The squash-merged PR title (Conventional Commit) is the changelog line; add a `changes/<pr>.md` fragment for upgrade notes, breaking or behaviour changes (`changes/README.md`).
 9. **E2E sessions**: Use API helpers (`e2e/helpers/api.go`), not direct K8s client creation.
 10. **Fuzz tests**: Exist at `api/v1alpha1/fuzz_test.go`, `pkg/breakglass/fuzz_test.go`, and `pkg/breakglass/debug/fuzz_test.go`.
 11. **Strict Readiness Enforcement**: Unready clusters (`Ready=False`) MUST be hidden from Escalation API by default (`activeOnly=true`) and MUST be blocked from session requests at the controller level.
@@ -170,7 +170,7 @@ provider-specific behavior to the public image.
 The report contract (`cluster-validator.telekom.com/v1alpha1`) must remain
 deterministic: sort check results by name, omit timestamps by default, and
 preserve exit codes 0 (ready), 1 (not-ready), and 2 (usage/configuration).
-Changes to the contract require a versioned API decision and changelog entry.
+Changes to the contract require a versioned API decision and a `changes/` fragment.
 Run `make test-validator` before committing. Image changes must preserve the
 digest-pinned base images, `linux/amd64` + `linux/arm64` build, OCI revision /
 SBOM / signing labels, and the pinned-action workflow's provenance, SPDX SBOM,

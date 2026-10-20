@@ -200,6 +200,11 @@ func (wc *BreakglassSessionController) validateSessionRequest(request Breakglass
 	if request.Clustername == "" {
 		return errors.New("cluster is required")
 	}
+	// An escalation may allow a glob pattern such as "*" or "prod-*", but a
+	// session targets one concrete cluster.
+	if strings.ContainsAny(request.Clustername, "*?[") {
+		return errors.New("cluster must be the name of a registered cluster, not a pattern")
+	}
 	if request.Username == "" {
 		return errors.New("user is required")
 	}

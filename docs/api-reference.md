@@ -39,14 +39,33 @@ The API uses standard HTTP status codes with the following conventions:
 
 **Error Response Format:**
 
+Every REST error response, including middleware rejections (rate limits, a
+blocked browser `Origin` on non-preflight requests, unknown `/api/` routes) and artifact
+endpoints, uses one JSON body. A rejected CORS preflight (`OPTIONS`) gets an
+empty `403` from the CORS middleware, and the OIDC proxy relays the identity
+provider's status and body unchanged.
+
 ```json
 {
   "error": "Human-readable error message",
-  "code": "ERROR_CODE"
+  "code": "ERROR_CODE",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21"
 }
 ```
 
-Common error codes: `UNAUTHORIZED`, `FORBIDDEN`, `BAD_REQUEST`, `NOT_FOUND`
+- `error`: human-readable message. Its text is unchanged from earlier releases.
+- `code`: machine-readable code, for example `UNAUTHORIZED`, `FORBIDDEN`,
+  `BAD_REQUEST`, `NOT_FOUND`, `CONFLICT`, `GONE`, `PAYLOAD_TOO_LARGE`,
+  `UNPROCESSABLE_ENTITY`, `TOO_MANY_REQUESTS`, `BAD_GATEWAY`,
+  `SERVICE_UNAVAILABLE` or `INTERNAL_ERROR`. Some endpoints use a more specific
+  code, for example `AMBIGUOUS_ESCALATION`.
+- `cid`: the request correlation ID, the same value as the `X-Request-ID`
+  response header.
+- `details` (optional): extra context, for example the `; `-separated list of
+  validation messages.
+
+Some errors add fields next to these, for example `session`, `candidates`,
+`valid` or `authenticated`. Clients must ignore fields they do not know.
 
 ## Identity Provider Configuration
 
@@ -290,6 +309,11 @@ Authorization: Bearer <token>
 
 - JSON bodies must contain only known field names; requests with unknown or typo'd fields are rejected with `422 Unprocessable Entity`
 - JSON bodies must contain exactly one JSON object; trailing data is rejected
+- `cluster` must name one registered `ClusterConfig`. A glob pattern such as
+  `*` or `prod-*` is rejected with `422 Unprocessable Entity`. A name without a
+  registered `ClusterConfig` is rejected with `422` after the escalation match,
+  so only requesters with a matching escalation learn that it is unregistered. An escalation may allow a pattern, but each
+  session targets one concrete cluster.
 - `reason` is optional unless the escalation's `requestReason.mandatory` is `true`.
 - `reason` must be at most 500 characters after trimming.
 - `ticketSystemID` must be at most 256 characters.
@@ -731,6 +755,13 @@ targets (ready targets only when `activeOnly=true`) so older UI/CLI clients
 cannot offer the wrong stage variant. Stored policies are unchanged. Missing,
 ambiguous or unmatched targets never appear; read errors fail closed.
 
+For other policies whose `spec.allowed.clusters` or `spec.clusterConfigRefs`
+contain a glob pattern, each item carries `clusterOptions`: the sorted
+registered clusters that the patterns match (ready clusters only when
+`activeOnly=true`, narrowed by the `cluster` filter). Clusters already listed
+by exact name are not repeated. Clients offer these names as the session
+target; the stored patterns stay unchanged in `spec`.
+
 ```json
 [
   {
@@ -1079,6 +1110,7 @@ POST /api/debugSessions
 | `bindingRef` | string | No | Binding reference as "namespace/name" (when multiple bindings match cluster). The referenced binding must be active, match the selected template, grant the selected cluster, and allow the authenticated requester. |
 | `requestedDuration` | string | No | Desired session duration (e.g., "2h") |
 | `nodeMaintenance` | object | Conditional | Exact operator-allowlisted Node name/UID and neighbour or FDB tuple, required only for a typed maintenance template. No action/image/command overrides. See [the complete contract](node-maintenance-controller.md#template-and-typed-request). |
+| `admissionRecipe` | object | Conditional | `targets`: 1 to 16 entries, each equal to an allowlist entry of a typed admission recipe template (`kind`, `apiVersion`, `name`, `webhook`). Required only for such a template; no field, value or patch input. See [Typed admission recipes](admission-recipes.md#request). |
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request. Required when the effective template or binding `requestReason.mandatory` is `true`; enforced after sanitization with configured `minLength` and `maxLength`. |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
@@ -1124,6 +1156,9 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 If the session changes concurrently while recording the joined participant, the
 endpoint returns `409 Conflict`; refresh the `DebugSession` before retrying.
 
+**Response:** `200 OK` with the updated `DebugSession`, the same shape as
+approve and terminate. `status.participants` contains the new `viewer` entry.
+
 ### Leave Debug Session
 
 ```http
@@ -1139,6 +1174,9 @@ This action does not accept a request body. Non-empty bodies return `400 Bad Req
 
 If the session changes concurrently while recording `leftAt`, the endpoint
 returns `409 Conflict`; refresh the `DebugSession` before retrying.
+
+**Response:** `200 OK` with the updated `DebugSession`; the caller's
+participant entry has `leftAt` set.
 
 ### Renew Debug Session
 
@@ -1167,6 +1205,10 @@ live session and privileged cluster configuration. Only the requester or an acti
 Renewal retries concurrent status conflicts against the latest session. The
 request still returns `409 Conflict` if the session changes, is deleted, or
 becomes ineligible while retrying; refresh the `DebugSession` before retrying.
+
+**Response:** `200 OK` with the updated `DebugSession`. Read the new expiry
+from `status.expiresAt` and the count from `status.renewalCount`. Releases
+before this change returned `{"message", "newExpiresAt", "renewalCount"}`.
 
 ### Terminate Debug Session
 

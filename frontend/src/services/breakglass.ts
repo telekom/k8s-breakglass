@@ -78,6 +78,9 @@ export default class BreakglassService {
         const allowed = (spec.allowed || {}) as Record<string, unknown>;
         const approvers = (spec.approvers || {}) as Record<string, unknown>;
         const clusters: string[] = Array.isArray(allowed.clusters) ? (allowed.clusters as string[]) : [];
+        const clusterRefs: string[] = Array.isArray(spec.clusterConfigRefs) ? (spec.clusterConfigRefs as string[]) : [];
+        const scope = Array.from(new Set([...clusters, ...clusterRefs]));
+        const concrete = scope.filter((cl) => !isClusterPattern(cl));
         const allowedGroups: string[] = Array.isArray(allowed.groups) ? (allowed.groups as string[]) : [];
         const escalatedGroup: string = (spec.escalatedGroup ||
           spec.escalatedgroup ||
@@ -108,10 +111,13 @@ export default class BreakglassService {
             : undefined,
           motd: toMotd(spec.motd),
         };
-        if (clusters.length === 0) {
+        concrete.forEach((cl) => output.push({ ...basePartial, cluster: cl }));
+        if (concrete.length < scope.length) {
+          // A pattern needs a concrete target: one card with a cluster picker.
+          const options = Array.isArray(item.clusterOptions) ? (item.clusterOptions as string[]) : [];
+          output.push({ ...basePartial, cluster: "", clusterOptions: options });
+        } else if (scope.length === 0) {
           output.push({ ...basePartial, cluster: "" });
-        } else {
-          clusters.forEach((cl) => output.push({ ...basePartial, cluster: cl }));
         }
       });
       debug("BreakglassService.fetchAvailableEscalations", "Built available escalations", { count: output.length });
@@ -454,17 +460,31 @@ export default class BreakglassService {
       pending: pending.length,
       historical: historical.length,
     });
-    const result = available.map((av) => {
-      const belongsToPolicy = (session: Pick<SessionCR, "metadata">) => {
-        const owner = session.metadata?.ownerReferences?.find(
-          (reference) => reference.controller && reference.kind === "BreakglassEscalation",
-        );
-        return (
-          !owner ||
-          !av.escalationName ||
-          (owner.name === av.escalationName && (!av.escalationUID || owner.uid === av.escalationUID))
-        );
-      };
+    const ownedBy = (av: AvailableBreakglass, session: Pick<SessionCR, "metadata">) => {
+      const owner = session.metadata?.ownerReferences?.find(
+        (reference) => reference.controller && reference.kind === "BreakglassEscalation",
+      );
+      return (
+        !owner ||
+        !av.escalationName ||
+        (owner.name === av.escalationName && (!av.escalationUID || owner.uid === av.escalationUID))
+      );
+    };
+    // A pattern card keeps its picker; each picked cluster with a session also
+    // gets its own card, so the session can be seen, withdrawn or dropped.
+    const expanded = available.flatMap((av) => [
+      av,
+      ...(av.clusterOptions || [])
+        .filter(
+          (cl) =>
+            active.some((a) => a.group === av.to && a.cluster === cl && ownedBy(av, a)) ||
+            pending.some((p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === cl && ownedBy(av, p)) ||
+            historical.some((h) => h.group === av.to && h.cluster === cl && ownedBy(av, h)),
+        )
+        .map((cl) => ({ ...av, cluster: cl, clusterOptions: undefined })),
+    ]);
+    const result = expanded.map((av) => {
+      const belongsToPolicy = (session: Pick<SessionCR, "metadata">) => ownedBy(av, session);
       const match = active.find((a) => a.group === av.to && a.cluster === av.cluster && belongsToPolicy(a));
       const pendingMatch = pending.find(
         (p) => p.spec?.grantedGroup === av.to && p.spec?.cluster === av.cluster && belongsToPolicy(p),
@@ -574,6 +594,11 @@ function parseDuration(input: string | undefined): number | undefined {
     default:
       return undefined;
   }
+}
+
+// Glob metacharacters of the backend's filepath.Match cluster patterns.
+function isClusterPattern(cluster: string): boolean {
+  return /[*?[]/.test(cluster);
 }
 
 function hasApprovers(appr: Record<string, unknown>): boolean {

@@ -147,6 +147,7 @@ debugSessionBindings:
       maxDuration: "4h"
     maxActiveSessionsPerUser: 2
     maxActiveSessionsTotal: 10
+    maxActiveSessionsPerCluster: 1
 
   # Binding with scheduling options
   - name: multi-option-binding

@@ -36,7 +36,7 @@ type ticketSystemIDHarness struct {
 
 func newTicketSystemIDHarness(t *testing.T) ticketSystemIDHarness {
 	t.Helper()
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("wc1"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}

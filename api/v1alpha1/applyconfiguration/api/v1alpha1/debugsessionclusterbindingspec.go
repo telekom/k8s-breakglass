@@ -118,6 +118,11 @@ type DebugSessionClusterBindingSpecApplyConfiguration struct {
 	MaxActiveSessionsPerUser *int32 `json:"maxActiveSessionsPerUser,omitempty"`
 	// maxActiveSessionsTotal limits total concurrent sessions via this binding.
 	MaxActiveSessionsTotal *int32 `json:"maxActiveSessionsTotal,omitempty"`
+	// maxActiveSessionsPerCluster limits concurrent sessions via this binding
+	// on each target cluster. Sessions on different clusters do not count
+	// against each other, so a fleet-wide binding can allow one session per
+	// cluster without limiting how many clusters run one at the same time.
+	MaxActiveSessionsPerCluster *int32 `json:"maxActiveSessionsPerCluster,omitempty"`
 }
 
 // DebugSessionClusterBindingSpecApplyConfiguration constructs a declarative configuration of the DebugSessionClusterBindingSpec type for use with
@@ -414,5 +419,13 @@ func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMaxActiveSessions
 // If called multiple times, the MaxActiveSessionsTotal field is set to the value of the last call.
 func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMaxActiveSessionsTotal(value int32) *DebugSessionClusterBindingSpecApplyConfiguration {
 	b.MaxActiveSessionsTotal = &value
+	return b
+}
+
+// WithMaxActiveSessionsPerCluster sets the MaxActiveSessionsPerCluster field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the MaxActiveSessionsPerCluster field is set to the value of the last call.
+func (b *DebugSessionClusterBindingSpecApplyConfiguration) WithMaxActiveSessionsPerCluster(value int32) *DebugSessionClusterBindingSpecApplyConfiguration {
+	b.MaxActiveSessionsPerCluster = &value
 	return b
 }

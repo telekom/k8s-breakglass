@@ -18,6 +18,11 @@ The four actions are:
 * `neighbor-replace` for one IP/MAC/interface tuple;
 * `bridge-fdb-replace` for one bridge/port/MAC/VLAN tuple.
 
+`link-cycle` and `restart-autonegotiation` refuse an interface when a default
+route of any routing table (also a multipath nexthop) uses it or a device
+stacked on it (bond, VLAN, bridge, VRF): dropping that carrier cuts the node
+off. Repair such an uplink out of band.
+
 Broad neighbor flush, FDB flush, delete-all, inferred interfaces, and inferred
 bridges are intentionally absent. Run exactly one action:
 

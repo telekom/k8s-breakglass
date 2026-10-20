@@ -441,7 +441,9 @@ func TestBreakglassSessionAPICreateAndGet(t *testing.T) {
 
 		_, status, err := requesterClient.CreateSession(ctx, t, req)
 		require.Error(t, err, "Creating with invalid cluster should fail")
-		assert.True(t, status == http.StatusBadRequest || status == http.StatusNotFound || status == http.StatusForbidden,
+		// 403 when no escalation matches the name; 422 ("not registered") when a
+		// global escalation matches it but no ClusterConfig exists.
+		assert.True(t, status == http.StatusForbidden || status == http.StatusUnprocessableEntity,
 			"Should return error status, got: %d", status)
 	})
 

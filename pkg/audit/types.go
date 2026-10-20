@@ -126,17 +126,22 @@ const (
 	EventDebugSessionCleanupRecovered  EventType = "debug_session.cleanup_recovered"
 	EventDebugSessionMaintenanceIntent EventType = "debug_session.node_maintenance.execution_intent"
 	EventDebugSessionMaintenanceResult EventType = "debug_session.node_maintenance.result"
-	EventDebugSessionAttached          EventType = "debug_session.attached"
-	EventDebugSessionDetached          EventType = "debug_session.detached"
-	EventDebugSessionCommand           EventType = "debug_session.command"
-	EventDebugSessionOutput            EventType = "debug_session.output"
-	EventDebugSessionFileAccess        EventType = "debug_session.file_access"
-	EventDebugSessionNetAccess         EventType = "debug_session.net_access"
-	EventDebugSessionProcAccess        EventType = "debug_session.proc_access"
-	EventDebugSessionPodFailed         EventType = "debug_session.pod_failed"
-	EventDebugSessionPodRestarted      EventType = "debug_session.pod_restarted"
-	EventDebugSessionResourceDeploy    EventType = "debug_session.resource_deployed"
-	EventDebugSessionResourceCleanup   EventType = "debug_session.resource_cleanup"
+	// Admission recipe receipts (applied before the first target write,
+	// drift when another writer changed a target, reverted after the last revert).
+	EventDebugSessionAdmissionRecipeApplied  EventType = "debug_session.admission_recipe.applied"
+	EventDebugSessionAdmissionRecipeDrift    EventType = "debug_session.admission_recipe.drift"
+	EventDebugSessionAdmissionRecipeReverted EventType = "debug_session.admission_recipe.reverted"
+	EventDebugSessionAttached                EventType = "debug_session.attached"
+	EventDebugSessionDetached                EventType = "debug_session.detached"
+	EventDebugSessionCommand                 EventType = "debug_session.command"
+	EventDebugSessionOutput                  EventType = "debug_session.output"
+	EventDebugSessionFileAccess              EventType = "debug_session.file_access"
+	EventDebugSessionNetAccess               EventType = "debug_session.net_access"
+	EventDebugSessionProcAccess              EventType = "debug_session.proc_access"
+	EventDebugSessionPodFailed               EventType = "debug_session.pod_failed"
+	EventDebugSessionPodRestarted            EventType = "debug_session.pod_restarted"
+	EventDebugSessionResourceDeploy          EventType = "debug_session.resource_deployed"
+	EventDebugSessionResourceCleanup         EventType = "debug_session.resource_cleanup"
 	// EventDebugSessionBindingUnresolved is emitted when a DebugSession names an
 	// explicit BindingRef that cannot be resolved. The binding carries the approver
 	// configuration, so an unresolvable ref means the approval requirement is
@@ -495,8 +500,9 @@ func IsHighVolumeEvent(eventType EventType) bool {
 	}
 }
 
-// IsSensitiveEvent returns true if this event type should always be captured
-// (never sampled, never dropped)
+// IsSensitiveEvent returns true if this event type should always be captured:
+// it is never sampled. Emit can still drop it, for example on a full ingress
+// queue (counted with reason queue_full or enqueue_timeout) or at shutdown.
 func IsSensitiveEvent(eventType EventType) bool {
 	switch eventType {
 	case EventSessionRequested, EventSessionApproved, EventSessionDenied,
@@ -514,6 +520,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionExpired, EventDebugSessionApprovalTimeout,
 		EventDebugSessionCleanupFailed, EventDebugSessionCleanupRecovered,
 		EventDebugSessionMaintenanceIntent, EventDebugSessionMaintenanceResult,
+		EventDebugSessionAdmissionRecipeApplied, EventDebugSessionAdmissionRecipeDrift,
+		EventDebugSessionAdmissionRecipeReverted,
 		EventDebugSessionBindingUnresolved,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,

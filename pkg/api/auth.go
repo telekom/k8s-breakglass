@@ -19,6 +19,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -207,7 +208,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	// delete the header to avoid logging it by accident
 	c.Request.Header.Del(AuthHeaderKey)
 	if !strings.HasPrefix(authHeader, "Bearer ") {
-		RespondUnauthorizedWithMessage(c, "No Bearer token provided in Authorization header")
+		apiresponses.RespondUnauthorizedWithMessage(c, "No Bearer token provided in Authorization header")
 		c.Abort()
 		return false
 	}
@@ -218,7 +219,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	parser := jwt.NewParser()
 	_, _, err := parser.ParseUnverified(bearer, unverifiedClaims)
 	if err != nil {
-		RespondUnauthorizedWithMessage(c, "Invalid JWT format")
+		apiresponses.RespondUnauthorizedWithMessage(c, "Invalid JWT format")
 		c.Abort()
 		return false
 	}
@@ -235,7 +236,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 	if issuer != "" && !isValidIssuerURL(issuer) {
 		metrics.JWTValidationRequests.WithLabelValues("unknown", mode).Inc()
 		metrics.JWTValidationFailure.WithLabelValues("unknown", "invalid_issuer_format").Inc()
-		RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
+		apiresponses.RespondUnauthorizedWithMessage(c, "Invalid token issuer format")
 		c.Abort()
 		return false
 	}
@@ -288,7 +289,7 @@ func (a *AuthHandler) authenticate(c *gin.Context) bool {
 		metrics.JWTValidationFailure.WithLabelValues(idpLabel, failureReason).Inc()
 
 		errorMsg := "Token verification failed. Please re-authenticate."
-		RespondUnauthorizedWithMessage(c, errorMsg)
+		apiresponses.RespondUnauthorizedWithMessage(c, errorMsg)
 		c.Abort()
 		return false
 	}
@@ -476,7 +477,7 @@ func (a *AuthHandler) MiddlewareWithRateLimiting(rl RateLimiter) gin.HandlerFunc
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
+			apiresponses.RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}
@@ -506,7 +507,7 @@ func (a *AuthHandler) OptionalAuthRateLimitMiddleware(rl RateLimiter) gin.Handle
 			if !isAuthenticated {
 				msg = "Rate limit exceeded. Please authenticate for higher limits."
 			}
-			RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
+			apiresponses.RespondTooManyRequestsWithAuthState(c, msg, isAuthenticated)
 			c.Abort()
 			return
 		}

@@ -18,7 +18,13 @@ import type { Breakglass } from "@/model/breakglass";
 
 const props = defineProps<{ breakglass: Breakglass; time: number }>();
 const emit = defineEmits<{
-  request: [reason: string, duration: number, scheduledStartTime: string | null, ticketSystemID: string];
+  request: [
+    reason: string,
+    duration: number,
+    scheduledStartTime: string | null,
+    ticketSystemID: string,
+    cluster: string,
+  ];
   drop: [];
   withdraw: [];
 }>();
@@ -28,6 +34,9 @@ const cardUid = useId();
 
 const requestReason = ref("");
 const ticketSystemID = ref("");
+// Target cluster for a pattern escalation (breakglass.clusterOptions is set).
+const selectedCluster = ref("");
+const needsClusterChoice = computed(() => Array.isArray(props.breakglass.clusterOptions));
 const selectedDuration = ref<number | null>(null);
 const durationInput = ref<string>("");
 const showRequestModal = ref(false);
@@ -49,6 +58,7 @@ function closeRequestModal() {
   showRequestModal.value = false;
   requestReason.value = "";
   ticketSystemID.value = "";
+  selectedCluster.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
@@ -66,6 +76,7 @@ watch(
   () => {
     requestReason.value = "";
     ticketSystemID.value = "";
+    selectedCluster.value = "";
     selectedDuration.value = null;
     durationInput.value = "";
     scheduledStartTime.value = null;
@@ -401,6 +412,10 @@ function handleReasonChange(ev: Event) {
 }
 
 function request() {
+  if (needsClusterChoice.value && !props.breakglass.clusterOptions?.includes(selectedCluster.value)) {
+    pushError("Select the target cluster");
+    return;
+  }
   const parsedDuration = parseDurationInput(durationInput.value);
   if (!parsedDuration) {
     pushError("Please enter a valid duration (e.g., '1h', '30m', '3600')");
@@ -426,9 +441,11 @@ function request() {
 
   const sanitizedReason = sanitizeReason(requestReason.value);
 
-  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value, ticketSystemID.value);
+  const cluster = needsClusterChoice.value ? selectedCluster.value : props.breakglass.cluster;
+  emit("request", sanitizedReason, parsedDuration, scheduledStartTime.value, ticketSystemID.value, cluster);
   requestReason.value = "";
   ticketSystemID.value = "";
+  selectedCluster.value = "";
   selectedDuration.value = null;
   durationInput.value = "";
   scheduledStartTime.value = null;
@@ -565,6 +582,23 @@ function drop() {
     :opened="showRequestModal"
     @scale-close="closeRequestModal"
   >
+    <div v-if="needsClusterChoice" class="cluster-selector">
+      <scale-dropdown-select
+        :id="`cluster-select-${cardUid}`"
+        data-testid="cluster-select"
+        label="Target cluster"
+        :value="selectedCluster"
+        @scale-change="selectedCluster = extractScaleValue($event)"
+      >
+        <scale-dropdown-select-item v-for="name in breakglass.clusterOptions" :key="name" :value="name">{{
+          name
+        }}</scale-dropdown-select-item>
+      </scale-dropdown-select>
+      <p v-if="!breakglass.clusterOptions?.length" class="helper error" data-testid="cluster-select-empty">
+        No registered cluster matches this escalation.
+      </p>
+    </div>
+
     <div class="duration-selector">
       <scale-text-field
         id="duration-input"

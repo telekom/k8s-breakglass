@@ -6,7 +6,7 @@ The breakglass controller includes an extremely granular, non-blocking audit sys
 
 The audit system is designed for:
 - **Extreme Granularity**: Captures 120+ event types covering every Kubernetes operation including non-resource URLs
-- **Async by default**: Events are queued; optional backpressure and sensitive-event synchronous delivery have bounded waits
+- **Async by default**: Events are queued; optional backpressure has bounded waits; paths that need a delivery receipt write synchronously and fail closed
 - **High Throughput**: Handles thousands of events per second with batching and backpressure
 - **Multiple Sinks**: Send events to Kafka, webhooks, structured logs, or Kubernetes Events
 - **Flexible Filtering**: Include/exclude by event type, user, namespace, or resource
@@ -145,6 +145,62 @@ Webhook delivery always uses `POST`, does not follow redirects, and succeeds
 only for a `2xx` response. Redirect and other response codes keep required
 audit delivery pending.
 
+### Chat Notifications (Slack and Mattermost)
+
+Set `webhook.payloadFormat: slack` to post approval notifications to a Slack or
+Mattermost incoming webhook. The default, `json`, keeps the audit event body
+described above.
+
+```yaml
+sinks:
+  - name: chat
+    type: webhook
+    eventTypes:
+      - session.requested
+      - debug_session.created
+    webhook:
+      url: https://hooks.slack.com/services/T000/B000/XXXX
+      payloadFormat: slack
+```
+
+A `slack` sink posts one `{"text": "..."}` request per event, with no
+`X-Batch-Size` header. It rejects `batchUrl` and `batchSize` greater than 1.
+Mattermost accepts the same body.
+
+Messages exist for `session.requested`, `session.approved`, `session.denied`,
+`session.expired`, `session.withdrawn`, `debug_session.created`,
+`debug_session.approved`, `debug_session.rejected`,
+`debug_session.approval_timeout` and `debug_session.expired`. They name the
+session, the requester, the group (sessions) or template (debug sessions), the
+cluster, and a link built from `frontend.baseURL`:
+
+- `session.requested`: `<baseURL>/session/<name>/approve`
+- other session events: `<baseURL>/session/<name>`
+- debug session events: `<baseURL>/debug-sessions/<name>`
+
+Without `frontend.baseURL`, messages have no link. Every other event type gets
+one generic line with the event type, target and cluster. Set `eventTypes` to
+the notifications you want; the AuditConfig webhook warns about a `slack` sink
+without `eventTypes`.
+
+A channel message reaches everyone in the channel and bypasses the
+per-recipient email controls (`disableNotifications`, `notificationExclusions`,
+`hiddenFromUI`). For this reason, messages never contain the request reason,
+approver names or approver groups. In every string taken from an event, `&`,
+`<` and `>` are escaped as `&amp;`, `&lt;` and `&gt;`, so a value such as
+`<!channel>` cannot mention a Slack channel. `@` is replaced with the fullwidth
+`＠` (U+FF20), so a value such as `@channel` or `@here` cannot mention a
+Mattermost channel. Control characters such as newlines become spaces.
+
+Messages come from audit events. Debug sessions whose template sets
+`spec.audit.enabled: false` emit no audit events and therefore no chat
+messages. The webhook URL is a credential: restrict read access to
+AuditConfig objects.
+
+A `slack` sink is **advisory**. The required synchronous audit path (see
+[Filtering](#filtering)) skips it: it is not written, its `eventTypes` filter
+is not checked, and it cannot provide a durable delivery receipt.
+
 ### Log Sink
 
 Write events to structured logs (always available, useful for debugging):
@@ -269,7 +325,15 @@ acknowledge required delivery only with
 remain useful operational outputs, but they do not provide a durable delivery
 receipt and cannot satisfy required delivery by themselves. If any configured
 sink cannot be constructed, required auditing remains unavailable and duplicate
-cleanup fails closed until configuration is repaired.
+cleanup fails closed until configuration is repaired, unless the previous
+pipeline stays active (see [Reload failures](#reload-failures)).
+The same rule applies to the node-maintenance
+`debug_session.node_maintenance.execution_intent` event and to the admission
+recipe events `debug_session.admission_recipe.applied`, `.drift` and
+`.reverted`: the target write waits for their delivery. Advisory chat sinks
+(`webhook.payloadFormat: slack`) are the exception: required delivery skips
+them, so a narrow chat sink next to an unfiltered durable sink does not block
+these events. A chat sink alone cannot satisfy required delivery.
 
 ```yaml
 spec:
@@ -324,7 +388,7 @@ only events carrying labels; they are not a general namespace label lookup.
 **Upgrade compatibility:** enabled AuditConfigs containing
 `excludeNamespaces.selectorTerms` are rejected during reload. The last working
 configuration remains active, and the new configuration is reported with
-`Ready=False` / `ReloadFailed`. Convert selector exclusions to namespace patterns
+`Ready=False` / `ReloadFailed` (see [Reload failures](#reload-failures)). Convert selector exclusions to namespace patterns
 before upgrading or applying the configuration. On initial startup there is no
 previous configuration to retain. Adding labels to individual events does not
 make selector exclusions supported by AuditConfig.
@@ -364,13 +428,17 @@ spec:
 > terminate/fail/expire/approval-timeout/binding-unresolved, cluster role binding
 > create/delete, resource impersonation, policy bypass/violation, and pod
 > security deny/warning/override. When the manager's main async queue is full,
-> sensitive events fall back to a **direct synchronous write** path, blocking up
-> to `WriteTimeout`. This fallback is intended to avoid drops caused by manager-
-> queue overflow, but it does **not** override sink-local drop behavior such as a
-> per-sink queue reporting `queue_full` or `circuit_open`. The metric
-> `breakglass_audit_sensitive_events_sync_written_total` tracks how often this
-> manager-queue fallback occurs — a sustained non-zero value indicates the queue
-> should be enlarged.
+> asynchronous emission drops the event, sensitive or not, and counts it in
+> `breakglass_audit_events_dropped_total{reason="queue_full"}`. It never writes
+> to a sink synchronously, because asynchronous emitters include the
+> authorization webhook: a synchronous write to a stalled sink (for example a
+> Kafka broker that is down) would hold the SubjectAccessReview answer. A
+> sustained non-zero `queue_full` count indicates that the sinks cannot keep
+> up. Code paths that need a delivery receipt (cleanup termination intents,
+> node maintenance intents) emit synchronously and fail closed;
+> `breakglass_audit_sensitive_events_sync_written_total` counts those writes.
+> With `queue.dropOnFull: false`, asynchronous emission still waits for queue
+> capacity up to five seconds or the caller's deadline, for every caller.
 
 ## Queue Configuration
 
@@ -391,7 +459,8 @@ spec:
 Failed writes retain the same batch and event IDs while retrying. Exhaustion
 counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
 to the caller deadline or five seconds. Each config's settings apply to its own
-sinks; the manager's shared ingress settings still come from the first config.
+sinks; the manager's shared ingress settings still come from the first
+enabled config by name.
 These are bounded in-memory retries, not a durable outbox. See
 [audit delivery and immutable identity](audit-delivery.md) for limits, duplicate
 delivery semantics and the additive session/resource UID fields.
@@ -431,10 +500,44 @@ sinks:
       - session.*
 ```
 
+## Reload failures
+
+A reload builds the new sinks (Secret reads, TLS and SASL setup) without
+blocking audit emitters or the authorization webhook, and within 30 seconds.
+If the reload fails (an invalid or unavailable AuditConfig, a missing or slow
+Secret, a TLS setup error), the last working audit pipeline stays active only
+while every AuditConfig it was built from is still enabled with an unchanged
+spec: for example a new AuditConfig whose Secret cannot be read, or a resync
+while a broker is down. A removed, disabled or changed AuditConfig (for
+example a removed or changed sink) is never kept: the pipeline stops taking
+new events, and auditing is configured but unavailable, so operations that require a durable
+audit event fail closed until a reload succeeds. Each AuditConfig of the
+failed reload reports `Ready=False` / `ReloadFailed` with a Warning event, the
+reconciler retries, and
+`breakglass_audit_config_reloads_total{status="kept_previous"}` counts each
+kept pipeline. Without a previous pipeline (for example on startup), auditing
+is also configured but unavailable. Disabling or deleting all AuditConfigs
+stops auditing.
+
+The reconciler also reloads every 10 minutes. A reload whose enabled
+AuditConfigs (names and specs) and sink Secrets (resource versions)
+are unchanged does nothing and counts as
+`breakglass_audit_config_reloads_total{status="unchanged"}`, so it no longer
+resets sink clients, circuit breakers or queues. A rotated Secret is picked
+up by the next resync. When a reload replaces the pipeline with a new one, new
+events go to the new pipeline at once, and the old pipeline first finishes
+the events it still holds, including events in retry, for up to its longest
+`queue.retryTimeoutSeconds`, and then closes. A sink that was removed by that
+change can therefore still receive events that were emitted before it. When
+auditing stops (all AuditConfigs disabled or deleted, or a changed
+AuditConfig that cannot be built), the old pipeline closes at once with the
+regular five-second shutdown drain. Controller shutdown ends the wait.
+
 ## Metrics
 
 The audit system exposes Prometheus metrics:
 
+- `breakglass_audit_config_reloads_total{status="..."}` - Reloads by result (`success`, `unchanged`, `disabled`, `error`, `kept_previous`, `reconciler_error`); an unchanged resync counts as `unchanged`, not `success`
 - `breakglass_audit_events_processed_total` - Events successfully written
 - `breakglass_audit_events_dropped_total{sink="...",reason="..."}` - Events lost to overflow, enqueue timeout, circuit rejection or retry exhaustion
 - `breakglass_audit_sink_errors_total{sink="..."}` - Errors by sink

@@ -590,6 +590,20 @@ spec:
                             type: string
                           description: Headers to include in requests.
                           type: object
+                        payloadFormat:
+                          default: json
+                          description: |-
+                            PayloadFormat selects the request body.
+                            "json" (default) posts the audit event JSON, or a {"events":[...],"count":N}
+                            batch with an X-Batch-Size header.
+                            "slack" posts one {"text":"..."} message per event, accepted by Slack and
+                            Mattermost incoming webhooks. A slack sink is advisory: the required
+                            synchronous audit path skips it, so it never provides or blocks a durable
+                            delivery receipt. It cannot be combined with batchUrl or batchSize > 1.
+                          enum:
+                          - json
+                          - slack
+                          type: string
                         timeoutSeconds:
                           default: 5
                           description: TimeoutSeconds for HTTP requests.
@@ -632,6 +646,12 @@ spec:
                       required:
                       - url
                       type: object
+                      x-kubernetes-validations:
+                      - message: payloadFormat slack posts one message per event and
+                          does not support batchUrl or batchSize > 1
+                        rule: '!has(self.payloadFormat) || self.payloadFormat != ''slack''
+                          || (!has(self.batchUrl) && (!has(self.batchSize) || self.batchSize
+                          <= 1))'
                   required:
                   - name
                   - type

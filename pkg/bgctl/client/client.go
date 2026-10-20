@@ -229,6 +229,7 @@ func decodeError(resp *http.Response, correlationID string) error {
 	var apiErr struct {
 		Error      string   `json:"error"`
 		Code       string   `json:"code"`
+		Details    string   `json:"details"`
 		Candidates []string `json:"candidates"`
 	}
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody+1))
@@ -239,6 +240,9 @@ func decodeError(resp *http.Response, correlationID string) error {
 		_ = json.Unmarshal(body, &apiErr)
 	}
 	msg := strings.TrimSpace(apiErr.Error)
+	if details := strings.TrimSpace(apiErr.Details); msg != "" && details != "" {
+		msg += ": " + details
+	}
 	if msg == "" {
 		msg = strings.TrimSpace(string(body))
 	}

@@ -68,6 +68,51 @@ function makeBreakglass(overrides: Partial<Breakglass> = {}): Breakglass {
   };
 }
 
+describe("BreakglassCard cluster picker", () => {
+  async function openPicker(clusterOptions: string[]) {
+    const wrapper = mount(BreakglassCard, {
+      props: {
+        breakglass: makeBreakglass({ cluster: "", clusterOptions, requestReason: { mandatory: false } }),
+        time: Date.now(),
+      },
+      global: { stubs: SCALE_STUBS },
+    });
+    await wrapper.find('[data-testid="request-access-button"]').trigger("click");
+    return wrapper;
+  }
+
+  it("requires a picked cluster and emits it as the session target", async () => {
+    const wrapper = await openPicker(["prod-a", "prod-b"]);
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    expect(wrapper.emitted("request")).toBeUndefined();
+
+    wrapper
+      .get('[data-testid="cluster-select"]')
+      .element.dispatchEvent(new CustomEvent("scale-change", { bubbles: true, detail: { value: "prod-b" } }));
+    await nextTick();
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    expect(wrapper.emitted("request")?.[0]?.[4]).toBe("prod-b");
+  });
+
+  it("explains that no registered cluster matches", async () => {
+    const wrapper = await openPicker([]);
+    expect(wrapper.find('[data-testid="cluster-select-empty"]').exists()).toBe(true);
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    expect(wrapper.emitted("request")).toBeUndefined();
+  });
+
+  it("keeps the card cluster for a concrete escalation", async () => {
+    const wrapper = mount(BreakglassCard, {
+      props: { breakglass: makeBreakglass({ requestReason: { mandatory: false } }), time: Date.now() },
+      global: { stubs: SCALE_STUBS },
+    });
+    await wrapper.find('[data-testid="request-access-button"]').trigger("click");
+    expect(wrapper.find('[data-testid="cluster-select"]').exists()).toBe(false);
+    await wrapper.get('[data-testid="submit-request-button"]').trigger("click");
+    expect(wrapper.emitted("request")?.[0]?.[4]).toBe("dev");
+  });
+});
+
 describe("BreakglassCard request reason validation", () => {
   it("submits an optional ticket reference verbatim without treating it as a reason", async () => {
     const wrapper = mount(BreakglassCard, {

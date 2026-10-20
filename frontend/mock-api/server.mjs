@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import express from "express";
 import cors from "cors";
 import {
@@ -28,6 +29,16 @@ import {
 
 const app = express();
 const port = Number(process.env.MOCK_API_PORT || 8080);
+
+// Same error body as the real API: error, code and cid.
+const errorCodes = { 400: "BAD_REQUEST", 401: "UNAUTHORIZED", 403: "FORBIDDEN", 404: "NOT_FOUND", 409: "CONFLICT" };
+function apiError(res, status, message) {
+  const cid = randomUUID();
+  res.set("X-Request-ID", cid);
+  return res
+    .status(status)
+    .json({ error: message, code: errorCodes[status] || (status >= 500 ? "INTERNAL_ERROR" : "ERROR"), cid });
+}
 
 app.use(cors());
 app.use(express.json());
@@ -67,7 +78,7 @@ app.post("/api/breakglassSessions/:name/approve", (req, res) => {
   const name = req.params.name;
   const updated = updateSessionState(name, "Approved", { reason: req.body?.reason });
   if (!updated) {
-    return res.status(404).json({ message: `session ${name} not found` });
+    return apiError(res, 404, `session ${name} not found`);
   }
   res.json({ message: "session approved", session: updated });
 });
@@ -76,7 +87,7 @@ app.post("/api/breakglassSessions/:name/reject", (req, res) => {
   const name = req.params.name;
   const updated = updateSessionState(name, "Rejected", { reason: req.body?.reason });
   if (!updated) {
-    return res.status(404).json({ message: `session ${name} not found` });
+    return apiError(res, 404, `session ${name} not found`);
   }
   res.json({ message: "session rejected", session: updated });
 });
@@ -85,7 +96,7 @@ app.post("/api/breakglassSessions/:name/drop", (req, res) => {
   const name = req.params.name;
   const updated = updateSessionState(name, "Dropped", { reason: req.body?.reason });
   if (!updated) {
-    return res.status(404).json({ message: `session ${name} not found` });
+    return apiError(res, 404, `session ${name} not found`);
   }
   res.json({ message: "session dropped", session: updated });
 });
@@ -94,7 +105,7 @@ app.post("/api/breakglassSessions/:name/withdraw", (req, res) => {
   const name = req.params.name;
   const updated = updateSessionState(name, "Withdrawn", { reason: req.body?.reason });
   if (!updated) {
-    return res.status(404).json({ message: `session ${name} not found` });
+    return apiError(res, 404, `session ${name} not found`);
   }
   res.json({ message: "session withdrawn", session: updated });
 });
@@ -110,7 +121,7 @@ app.post("/api/breakglassSessions/:name/refresh", (_req, res) => {
 app.get("/api/breakglassSessions/:name", (req, res) => {
   const session = findSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "session not found" });
+    return apiError(res, 404, "session not found");
   }
   // Build approvalMeta based on session state and mock scenarios
   const isRequester = session.spec.user === CURRENT_USER_EMAIL;
@@ -181,7 +192,7 @@ app.get("/api/debugSessions/templates", (req, res) => {
 app.get("/api/debugSessions/templates/:name", (req, res) => {
   const template = findDebugSessionTemplate(req.params.name);
   if (!template) {
-    return res.status(404).json({ message: "template not found" });
+    return apiError(res, 404, "template not found");
   }
   res.json(template);
 });
@@ -190,7 +201,7 @@ app.get("/api/debugSessions/templates/:name", (req, res) => {
 app.get("/api/debugSessions/templates/:name/clusters", (req, res) => {
   const result = getTemplateClusters(req.params.name);
   if (!result) {
-    return res.status(404).json({ message: "template not found" });
+    return apiError(res, 404, "template not found");
   }
   res.json(result);
 });
@@ -205,7 +216,7 @@ app.get("/api/debugSessions/podTemplates", (req, res) => {
 app.get("/api/debugSessions/podTemplates/:name", (req, res) => {
   const template = findDebugPodTemplate(req.params.name);
   if (!template) {
-    return res.status(404).json({ message: "pod template not found" });
+    return apiError(res, 404, "pod template not found");
   }
   res.json(template);
 });
@@ -214,7 +225,7 @@ app.get("/api/debugSessions/podTemplates/:name", (req, res) => {
 app.get("/api/debugSessions/:name", (req, res) => {
   const session = findDebugSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -230,7 +241,7 @@ app.post("/api/debugSessions/:name/join", (req, res) => {
   const role = req.body?.role || "viewer";
   const session = joinDebugSession(req.params.name, role);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -239,7 +250,7 @@ app.post("/api/debugSessions/:name/join", (req, res) => {
 app.post("/api/debugSessions/:name/leave", (req, res) => {
   const session = leaveDebugSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -249,7 +260,7 @@ app.post("/api/debugSessions/:name/renew", (req, res) => {
   const extendBy = req.body?.extendBy || "1h";
   const session = renewDebugSession(req.params.name, extendBy);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -258,7 +269,7 @@ app.post("/api/debugSessions/:name/renew", (req, res) => {
 app.post("/api/debugSessions/:name/terminate", (req, res) => {
   const session = updateDebugSessionState(req.params.name, "Terminated", { reason: req.body?.reason });
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -267,7 +278,7 @@ app.post("/api/debugSessions/:name/terminate", (req, res) => {
 app.post("/api/debugSessions/:name/approve", (req, res) => {
   const session = updateDebugSessionState(req.params.name, "Active", { approvedBy: CURRENT_USER_EMAIL });
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -275,7 +286,7 @@ app.post("/api/debugSessions/:name/approve", (req, res) => {
 app.post("/api/debugSessions/:name/reject", (req, res) => {
   const session = rejectDebugSession(req.params.name, req.body?.reason);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json(session);
 });
@@ -304,7 +315,7 @@ app.post("/api/breakglassSessions/:name/cancel", (req, res) => {
     reason: req.body?.reason || "Cancelled",
   });
   if (!updated) {
-    return res.status(404).json({ message: `session ${name} not found` });
+    return apiError(res, 404, `session ${name} not found`);
   }
   res.json({ message: "session cancelled", session: updated });
 });
@@ -313,7 +324,7 @@ app.post("/api/breakglassSessions/:name/cancel", (req, res) => {
 app.post("/api/debugSessions/:name/injectEphemeralContainer", (req, res) => {
   const session = findDebugSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json({
     sessionName: req.params.name,
@@ -325,7 +336,7 @@ app.post("/api/debugSessions/:name/injectEphemeralContainer", (req, res) => {
 app.post("/api/debugSessions/:name/createPodCopy", (req, res) => {
   const session = findDebugSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json({
     sessionName: req.params.name,
@@ -337,7 +348,7 @@ app.post("/api/debugSessions/:name/createPodCopy", (req, res) => {
 app.post("/api/debugSessions/:name/createNodeDebugPod", (req, res) => {
   const session = findDebugSession(req.params.name);
   if (!session) {
-    return res.status(404).json({ message: "debug session not found" });
+    return apiError(res, 404, "debug session not found");
   }
   res.json({
     sessionName: req.params.name,
@@ -350,7 +361,7 @@ app.post("/api/debugSessions/:name/createNodeDebugPod", (req, res) => {
 app.use((req, res, next) => {
   if (req.path.startsWith("/api")) {
     console.warn("[mock-api] Unhandled API route", req.method, req.path);
-    return res.status(404).json({ message: "mock route not implemented" });
+    return apiError(res, 404, "mock route not implemented");
   }
   return next();
 });
@@ -360,7 +371,7 @@ app.use((err, _req, res, _next) => {
   if (res.headersSent && typeof _next === "function") {
     return _next(err);
   }
-  return res.status(err?.status || 500).json({ message: "Internal server error", error: err?.message || String(err) });
+  return apiError(res, err?.status || 500, "Internal server error");
 });
 
 app.listen(port, () => {

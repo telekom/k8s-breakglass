@@ -958,6 +958,13 @@ run_network_fixture() {
 	bridge_mount_arg=
 	vrf_test_mode=0
 	case "$label" in *-vrf*) vrf_test_mode=1 ;; esac
+	default_route_mode=none
+	case "$label" in
+		*-default-route-ecmp) default_route_mode=ecmp ;;
+		*-default-route-table) default_route_mode=table ;;
+		*-default-route-upper) default_route_mode=upper ;;
+		*-default-route) default_route_mode=main ;;
+	esac
 	if [ "$label" = guard-fdb-vlan-output-quota ]; then
 		bridge_test_mode=1
 		bridge_wrapper="$tmp_dir/fake-bridge"
@@ -992,6 +999,7 @@ run_network_fixture() {
 		--env BREAKGLASS_APPROVED_NETWORK_REQUEST="$approved_request" \
 		--env NODE_MAINTENANCE_TEST_BRIDGE_OUTPUT_QUOTA="$bridge_test_mode" \
 		--env NODE_MAINTENANCE_TEST_VRF="$vrf_test_mode" \
+		--env NODE_MAINTENANCE_TEST_DEFAULT_ROUTE="$default_route_mode" \
 		--network none --read-only --cap-drop ALL --cap-add NET_ADMIN \
 		--security-opt no-new-privileges --security-opt seccomp=builtin \
 		--mount "source=$volume_name,destination=/evidence" \
@@ -1026,6 +1034,27 @@ run_network_fixture() {
 				ip link set vrfpeer up
 				ip neigh replace 198.51.100.2 lladdr 02:00:00:00:00:ff nud permanent dev vrfport0
 			fi
+			case "$NODE_MAINTENANCE_TEST_DEFAULT_ROUTE" in
+				main) ip route add default via 192.0.2.254 dev repair0 ;;
+				table) ip route add default via 192.0.2.254 dev repair0 table 100 ;;
+				ecmp)
+					ip link add alt0 type veth peer name altpeer
+					ip address add 203.0.113.1/24 dev alt0
+					ip link set alt0 up
+					ip link set altpeer up
+					ip route add default nexthop via 203.0.113.254 dev alt0 nexthop via 192.0.2.254 dev repair0
+					;;
+				upper)
+					ip link add brup type bridge
+					ip link add up0 type veth peer name uppeer
+					ip link set up0 master brup
+					ip address add 203.0.113.1/24 dev brup
+					ip link set brup up
+					ip link set up0 up
+					ip link set uppeer up
+					ip route add default via 203.0.113.254 dev brup
+					;;
+			esac
 			exec /usr/local/bin/node-maintenance "$@"
 		' fixture "$@" >"$output_file" 2>&1
 	actual_exit=$?
@@ -1038,6 +1067,30 @@ run_network_fixture() {
 		[ "$actual_exit" -eq "$expected_exit" ] || fail "$label returned $actual_exit, expected $expected_exit"
 	fi
 }
+
+run_network_fixture guard-link-cycle-default-route nonzero link-cycle network-repair \
+	--target-node node-a --interface repair0 --action link-cycle \
+	--evidence-dir /evidence --confirm NETWORK-REPAIR
+grep -q "carries a default route" "$fixture_dir/output" || fail 'link-cycle on the default-route interface was not refused by preflight'
+link_guard_bundle=$(bundle_from_output "$fixture_dir/output")
+link_guard_host_bundle=$(copy_bundle "$fixture_dir/output" "$link_guard_bundle")
+[ ! -e "$link_guard_host_bundle/action-link-cycle.txt" ] || fail 'link-cycle ran despite the default-route guard'
+destroy_fixture
+pass 'link-cycle refuses an interface that carries a default route'
+
+for variant in ecmp table upper; do
+	link_interface=repair0
+	[ "$variant" != upper ] || link_interface=up0
+	run_network_fixture "guard-link-cycle-default-route-$variant" nonzero link-cycle network-repair \
+		--target-node node-a --interface "$link_interface" --action link-cycle \
+		--evidence-dir /evidence --confirm NETWORK-REPAIR
+	grep -q "carries a default route" "$fixture_dir/output" || fail "link-cycle with a $variant default route was not refused by preflight"
+	link_guard_bundle=$(bundle_from_output "$fixture_dir/output")
+	link_guard_host_bundle=$(copy_bundle "$fixture_dir/output" "$link_guard_bundle")
+	[ ! -e "$link_guard_host_bundle/action-link-cycle.txt" ] || fail "link-cycle ran despite the $variant default-route guard"
+	destroy_fixture
+	pass "link-cycle refuses an interface under a $variant default route"
+done
 
 run_network_fixture repair-neighbor-replace 0 neighbor-replace network-repair \
 	--target-node node-a --interface repair0 --action neighbor-replace \

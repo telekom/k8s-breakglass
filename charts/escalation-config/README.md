@@ -383,6 +383,7 @@ debugSessionBindings:
 | `motd.runbookURL` | HTTPS runbook link shown with the message | - |
 | `maxActiveSessionsPerUser` | Max concurrent sessions per user | - |
 | `maxActiveSessionsTotal` | Max total concurrent sessions | - |
+| `maxActiveSessionsPerCluster` | Max concurrent sessions on each target cluster | - |
 | `priority` | UI ordering priority | - |
 | `disabled` | Temporarily disable binding | `false` |
 | `hidden` | Hide from UI | `false` |
@@ -605,6 +606,12 @@ escalations:
 ```
 
 ## Upgrading
+
+Chart 0.4.7 adds `debugSessionBindings[].maxActiveSessionsPerCluster`. Apply the
+updated `DebugSessionClusterBinding` CRD before you set it; a controller older
+than the CRD ignores the field and counts only the hub-wide limits. Rolling the
+controller back to v0.3.0-rc.13 or older strands sessions that are still in
+quota admission at that moment; delete those sessions after the rollback.
 
 Chart 0.4.6 accompanies controller v0.3.0-rc.13. Apply the updated CRDs before
 using the OIDC claim, prefix, or structured mapping fields. See the

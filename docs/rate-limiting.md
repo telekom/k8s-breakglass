@@ -122,7 +122,9 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 **Global limiter response:**
 ```json
 {
-  "error": "Rate limit exceeded, please try again later"
+  "error": "Rate limit exceeded, please try again later",
+  "code": "TOO_MANY_REQUESTS",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21"
 }
 ```
 
@@ -131,6 +133,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 {
   "error": "Rate limit exceeded. Please authenticate for higher limits.",
   "code": "TOO_MANY_REQUESTS",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21",
   "authenticated": false
 }
 ```
@@ -140,6 +143,7 @@ When a request is rate limited, the server returns HTTP `429 Too Many Requests` 
 {
   "error": "Rate limit exceeded, please try again later",
   "code": "TOO_MANY_REQUESTS",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21",
   "authenticated": true
 }
 ```

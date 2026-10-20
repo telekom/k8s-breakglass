@@ -839,15 +839,52 @@ jobs:
   # ---------------------------------------------------------------------------
   # Create GitHub Release with manifests, bgctl binaries, and SBOM
   # ---------------------------------------------------------------------------
+  changelog:
+    name: Generate Changelog
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Keep the version in sync with GIT_CLIFF_VERSION in changelog.yml.
+      - name: Install git-cliff
+        run: pipx install "git-cliff==2.14.2"
+
+      # The section of the tag in CHANGELOG.md (written by the release PR, see
+      # CONTRIBUTING.md#release-process), or generated when the tag has none.
+      - name: Generate release notes
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+        run: python3 -B hack/changelog.py notes "$TAG" | tee release-notes.md
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: changelog
+          path: release-notes.md
+          if-no-files-found: error
+
   release:
     # NOTE: Does not depend on `artifactory` intentionally — Artifactory is a
     # best-effort mirror and should not block GitHub Release creation.
-    needs: [prepare, assemble, publish-chart, validate-tag]
+    needs: [prepare, assemble, publish-chart, validate-tag, changelog]
     permissions:
       contents: write
       packages: read
     runs-on: ubuntu-latest
     steps:
+      - name: Download changelog
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: changelog
+          path: changelog
       - name: Download manifests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -937,4 +974,4 @@ jobs:
             dist/bgctl_${{ github.ref_name }}_checksums.txt
             release-${{ github.ref_name }}-checksums.txt
             sbom-${{ github.ref_name }}.spdx.json
-          generate_release_notes: true
+          body_path: changelog/release-notes.md

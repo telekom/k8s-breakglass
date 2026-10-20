@@ -394,3 +394,73 @@ func TestHandleGetEscalationsFallbackPropagatesClusterLookupError(t *testing.T) 
 
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 }
+
+func TestHandleGetEscalationsOffersClustersForPatterns(t *testing.T) {
+	policy := func(name string, clusters, refs []string) *breakglassv1alpha1.BreakglassEscalation {
+		return &breakglassv1alpha1.BreakglassEscalation{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"},
+			Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+				Allowed:           breakglassv1alpha1.BreakglassEscalationAllowed{Groups: []string{"requesters"}, Clusters: clusters},
+				ClusterConfigRefs: refs, EscalatedGroup: "emergency",
+			},
+		}
+	}
+	cluster := func(name string, ready bool) *breakglassv1alpha1.ClusterConfig {
+		cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+		if !ready {
+			cc.Status.Conditions = []metav1.Condition{{
+				Type: string(breakglassv1alpha1.ClusterConfigConditionReady), Status: metav1.ConditionFalse,
+			}}
+		}
+		return cc
+	}
+	cli := fake.NewClientBuilder().WithScheme(breakglass.Scheme).WithObjects(
+		policy("global", []string{"*"}, nil),
+		policy("prod-mixed", []string{"prod-a", "prod-*"}, nil),
+		policy("refs", nil, []string{"dev-?"}),
+		policy("exact", []string{"prod-a"}, nil),
+		cluster("prod-a", true), cluster("prod-b", true), cluster("prod-down", false), cluster("dev-1", true),
+	).Build()
+	ec := &BreakglassEscalationController{
+		manager: &EscalationManager{Client: cli}, log: zaptest.NewLogger(t).Sugar(),
+		identityProvider: &stubIdentityProvider{email: "requester@example.com"}, configPath: "/nonexistent/config.yaml",
+	}
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) { c.Set("groups", []string{"requesters"}); c.Next() })
+	engine.GET("/breakglassEscalations", ec.handleGetEscalations)
+
+	for _, tc := range []struct {
+		query    string
+		expected map[string][]string
+	}{
+		{"", map[string][]string{
+			"global": {"dev-1", "prod-a", "prod-b"}, "prod-mixed": {"prod-b"}, "refs": {"dev-1"}, "exact": nil,
+		}},
+		{"?activeOnly=false", map[string][]string{
+			"global": {"dev-1", "prod-a", "prod-b", "prod-down"}, "prod-mixed": {"prod-b", "prod-down"},
+			"refs": {"dev-1"}, "exact": nil,
+		}},
+		{"?cluster=prod-b", map[string][]string{"global": {"prod-b"}, "prod-mixed": {"prod-b"}}},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/breakglassEscalations"+tc.query, nil))
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+			var policies struct {
+				Items []struct {
+					breakglassv1alpha1.BreakglassEscalation
+					ClusterOptions []string `json:"clusterOptions"`
+				} `json:"items"`
+			}
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &policies))
+			got := map[string][]string{}
+			for _, item := range policies.Items {
+				got[item.Name] = item.ClusterOptions
+				if item.Name == "global" {
+					require.Equal(t, []string{"*"}, item.Spec.Allowed.Clusters, "the stored pattern stays in spec")
+				}
+			}
+			require.Equal(t, tc.expected, got)
+		})
+	}
+}

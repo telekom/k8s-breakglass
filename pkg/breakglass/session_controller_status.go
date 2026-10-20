@@ -23,52 +23,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
+// Session-scoped error bodies keep the standard error schema and add the
+// session the request referred to.
 type breakglassSessionErrorResponse struct {
-	Error   string                               `json:"error"`
-	Code    string                               `json:"code"`
+	apiresponses.APIError
 	Session breakglassv1alpha1.BreakglassSession `json:"session"`
 }
 
 type breakglassSessionNameErrorResponse struct {
-	Error   string `json:"error"`
-	Code    string `json:"code"`
+	apiresponses.APIError
 	Session string `json:"session"`
 }
 
 func respondBreakglassSessionError(c *gin.Context, status int, message string, session breakglassv1alpha1.BreakglassSession) {
-	c.JSON(status, breakglassSessionErrorResponse{Error: message, Code: breakglassSessionErrorCode(status), Session: session})
+	c.JSON(status, breakglassSessionErrorResponse{APIError: apiresponses.NewError(c, apiresponses.CodeForStatus(status), message), Session: session})
 }
 
 func respondBreakglassSessionNotFound(c *gin.Context, sessionName string) {
-	c.JSON(http.StatusNotFound, breakglassSessionNameErrorResponse{Error: "session not found", Code: "NOT_FOUND", Session: sessionName})
-}
-
-func breakglassSessionErrorCode(status int) string {
-	switch status {
-	case http.StatusBadRequest:
-		return "BAD_REQUEST"
-	case http.StatusUnauthorized:
-		return "UNAUTHORIZED"
-	case http.StatusForbidden:
-		return "FORBIDDEN"
-	case http.StatusConflict:
-		return "CONFLICT"
-	case http.StatusNotFound:
-		return "NOT_FOUND"
-	case http.StatusUnprocessableEntity:
-		return "UNPROCESSABLE_ENTITY"
-	case http.StatusTooManyRequests:
-		return "TOO_MANY_REQUESTS"
-	case http.StatusBadGateway:
-		return "BAD_GATEWAY"
-	case http.StatusServiceUnavailable:
-		return "SERVICE_UNAVAILABLE"
-	default:
-		if status >= http.StatusInternalServerError {
-			return "INTERNAL_ERROR"
-		}
-		return "ERROR"
-	}
+	c.JSON(http.StatusNotFound, breakglassSessionNameErrorResponse{APIError: apiresponses.NewError(c, "NOT_FOUND", "session not found"), Session: sessionName})
 }
 
 func (wc *BreakglassSessionController) setSessionStatus(c *gin.Context, sesCondition breakglassv1alpha1.BreakglassSessionConditionType) {
@@ -772,8 +744,9 @@ func (wc *BreakglassSessionController) handleGetBreakglassSessionStatus(c *gin.C
 			if apierrors.IsNotFound(err) {
 				reqLog.Debugw("Token validation: session not found", "tokenLen", len(token))
 				c.JSON(http.StatusNotFound, struct {
+					apiresponses.APIError
 					Valid bool `json:"valid"`
-				}{Valid: false})
+				}{APIError: apiresponses.NewError(c, "NOT_FOUND", "session not found"), Valid: false})
 				return
 			}
 			reqLog.Errorw("Token validation: unable to load session", "tokenLen", len(token), "error", err)

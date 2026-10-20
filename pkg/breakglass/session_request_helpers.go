@@ -85,24 +85,22 @@ func selectRequestedEscalation(c *gin.Context, eligible []breakglassv1alpha1.Bre
 			names = append(names, escalation.Name)
 		}
 		slices.Sort(names)
-		c.JSON(http.StatusConflict, gin.H{
-			"error":      "multiple eligible escalations match; specify escalationName",
-			"code":       "AMBIGUOUS_ESCALATION",
-			"candidates": names,
-		})
+		c.JSON(http.StatusConflict, struct {
+			apiresponses.APIError
+			Candidates []string `json:"candidates"`
+		}{APIError: apiresponses.NewError(c, "AMBIGUOUS_ESCALATION", "multiple eligible escalations match; specify escalationName"), Candidates: names})
 		return nil, false
 	}
 	return matches[0], true
 }
 
 type duplicateSessionConflictResponse struct {
-	Error   string                               `json:"error"`
-	Code    string                               `json:"code"`
+	apiresponses.APIError
 	Session breakglassv1alpha1.BreakglassSession `json:"session"`
 }
 
 func respondDuplicateSessionConflict(c *gin.Context, message string, ses breakglassv1alpha1.BreakglassSession) {
-	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{Error: message, Code: "CONFLICT", Session: ses})
+	c.JSON(http.StatusConflict, duplicateSessionConflictResponse{APIError: apiresponses.NewError(c, "CONFLICT", message), Session: ses})
 }
 
 // sessionCreateParams bundles the inputs needed for session creation and persistence.
@@ -232,7 +230,16 @@ func (wc *BreakglassSessionController) fetchMatchingEscalations(
 	}
 	escalations = readyEscalations
 
-	if !wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog) {
+	ready, registered := wc.isRequestedClusterConfigReady(ctx, cug.Clustername, reqLog)
+	if !registered {
+		// Checked after the escalation match, so only users with a matching
+		// policy learn whether a name is registered. The authorization webhook
+		// denies every request for an unregistered cluster, so such a session
+		// could never grant access.
+		apiresponses.RespondUnprocessableEntity(c, fmt.Sprintf("cluster %q is not registered", cug.Clustername))
+		return nil, false
+	}
+	if !ready {
 		apiresponses.RespondForbidden(c, "requested ClusterConfig is not ready or is ambiguous")
 		return nil, false
 	}
@@ -259,30 +266,30 @@ func FilterEscalationsByIdentityProvider(
 	return filtered
 }
 
-func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) bool {
+// isRequestedClusterConfigReady reports whether the target ClusterConfig is
+// ready, and whether it is registered at all.
+func (wc *BreakglassSessionController) isRequestedClusterConfigReady(ctx context.Context, clusterName string, reqLog *zap.SugaredLogger) (ready, registered bool) {
 	if wc.clusterConfigManager == nil || !wc.clusterConfigManager.hasClient() {
-		return true
+		return true, true
 	}
 
 	clusterConfig, err := wc.clusterConfigManager.GetClusterConfigByName(ctx, clusterName)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			reqLog.Debugw("No ClusterConfig found while enforcing session readiness; preserving legacy escalation-based matching",
-				"cluster", clusterName,
-				"error", err)
-			return true
+			reqLog.Warnw("Requested cluster has no ClusterConfig", "cluster", clusterName)
+			return false, false
 		}
 		reqLog.Warnw("Failed to resolve ClusterConfig while enforcing session readiness; blocking request",
 			"cluster", clusterName,
 			"error", err)
-		return false
+		return false, true
 	}
 	if IsClusterConfigReady(clusterConfig) {
-		return true
+		return true, true
 	}
 
 	reqLog.Warnw("Requested ClusterConfig is not ready", "cluster", clusterName)
-	return false
+	return false, true
 }
 
 // collectApproversFromEscalations selects the requested escalation and gathers

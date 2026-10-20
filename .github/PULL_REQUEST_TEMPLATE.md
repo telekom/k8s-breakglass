@@ -28,7 +28,7 @@ SPDX-License-Identifier: Apache-2.0
 - [ ] New and existing unit tests pass locally (`make test`)
 - [ ] Linting passes (`make lint`)
 - [ ] I have made corresponding changes to the documentation
-- [ ] `CHANGELOG.md` updated under `[Unreleased]` for user-facing changes
+- [ ] PR title is a Conventional Commit; `CHANGELOG.md` is not edited, and a `changes/` fragment carries any upgrade notes
 - [ ] My changes generate no new warnings
 - [ ] REUSE SPDX license header compliance check passes (`reuse lint`)
 

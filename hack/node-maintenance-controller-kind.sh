@@ -100,6 +100,10 @@ containerdConfigPatches:
 nodes:
   - role: control-plane
 EOF
+if [[ "${NODE_MAINTENANCE_KIND_ACTION:-}" == module ]]; then
+	# The module lane loads a real module of the runner kernel from its module tree.
+	printf '    extraMounts:\n      - hostPath: /lib/modules\n        containerPath: /lib/modules\n        readOnly: true\n' >> "$proof_dir/kind.yaml"
+fi
 kind create cluster --name "$cluster" --config "$proof_dir/kind.yaml" \
 	--kubeconfig "$proof_dir/kubeconfig" --wait 120s \
 	--image "${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
@@ -150,7 +154,7 @@ kubectl --kubeconfig "$proof_dir/kubeconfig" label namespace breakglass-node-mai
 
 # This is disposable Kind-node kernel state, never an arbitrary caller command.
 docker exec "$node_id" sh -eu -c '
-	for link in bg1551n bg1551v bg1551vrf bg1551a bg1551ap bg1551b bg1551bp bg1551br; do
+	for link in bg1551n bg1551v bg1551vrf bg1551a bg1551ap bg1551b bg1551bp bg1551br bg1551l bg1551ld; do
 		if ip link show "$link" >/dev/null 2>&1; then
 			echo "Fixture link collision: $link" >&2
 			exit 1
@@ -185,6 +189,9 @@ docker exec "$node_id" sh -eu -c '
 	bridge vlan add dev bg1551b vid 101
 	bridge fdb replace 02:00:00:00:00:02 dev bg1551b master static vlan 100
 	bridge fdb replace 02:00:00:00:00:09 dev bg1551b master static vlan 101
+	# link-cycle lane: an administratively down port and a down decoy.
+	ip link add bg1551l type dummy
+	ip link add bg1551ld type dummy
 '
 # A disposable recovery bundle that is only hashed and never loaded: Kind
 # nodes are control planes, so the kexec lane proves validation and refusal.
@@ -198,6 +205,23 @@ kexec_sha256=$(docker exec "$node_id" sh -eu -c "
 	for file in kernel initrd cmdline; do sha256sum $recovery_dir/\$file | cut -d' ' -f1; done | paste -sd,
 ")
 [[ "$kexec_sha256" =~ ^[a-f0-9]{64},[a-f0-9]{64},[a-f0-9]{64}$ ]] || { echo "Invalid recovery bundle digests" >&2; exit 1; }
+kind_module=""
+if [[ "${NODE_MAINTENANCE_KIND_ACTION:-}" == module ]]; then
+	# Pick a module that exists for the running kernel and is not loaded yet.
+	kind_module=$(docker exec --interactive "$node_id" /bin/sh -s <<'PICK'
+release=$(uname -r)
+for m in ip6_gre gre vxlan ipip sit bonding dummy; do
+	[ -d "/sys/module/$m" ] && continue
+	grep -Eq "/$m\.ko(\.(xz|zst|gz))?:" "/lib/modules/$release/modules.dep" 2>/dev/null && { echo "$m"; exit 0; }
+done
+PICK
+)
+	[[ "$kind_module" =~ ^[a-z0-9_]+$ ]] || {
+		echo "No unloaded test module is available for this kernel: $(docker exec "$node_id" uname -r) $(docker exec "$node_id" ls /lib/modules 2>&1 | tr '\n' ' ')" >&2
+		exit 1
+	}
+fi
+NODE_MAINTENANCE_KIND_MODULE="$kind_module" \
 NODE_MAINTENANCE_KIND_KEXEC_SHA256="$kexec_sha256" \
 NODE_MAINTENANCE_KIND_KUBECONFIG="$PWD/$proof_dir/kubeconfig" \
 NODE_MAINTENANCE_KIND_NODE="$node" \

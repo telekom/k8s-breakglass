@@ -34,7 +34,7 @@ import (
 // Designed for EXTREMELY granular audit trails with non-blocking operation.
 type Manager struct {
 	sink        Sink
-	directSinks []Sink // underlying sinks for true synchronous fallback writes
+	directSinks []Sink // underlying sinks for synchronous EmitSync writes
 	asyncQueue  chan *Event
 	logger      *zap.Logger
 	wg          sync.WaitGroup
@@ -64,6 +64,20 @@ type Manager struct {
 type BatchSink interface {
 	Sink
 	WriteBatch(ctx context.Context, events []*Event) error
+}
+
+// asBatchSink returns sink as a BatchSink only when it batches natively. A
+// circuit breaker around a non-batch sink (the chat sink) would split a batch
+// into single writes and stop at the first failure; the caller would then
+// retry the whole batch and post the delivered events again.
+func asBatchSink(sink Sink) (BatchSink, bool) {
+	if cb, ok := sink.(*CircuitBreakerSink); ok {
+		if _, inner := cb.sink.(BatchSink); !inner {
+			return nil, false
+		}
+	}
+	batchSink, ok := sink.(BatchSink)
+	return batchSink, ok
 }
 
 // ManagerConfig configures the audit Manager.
@@ -127,10 +141,10 @@ type ManagerConfig struct {
 	// Default: 30s
 	StatsInterval time.Duration
 
-	// DirectSinks are the underlying raw sinks used for true synchronous
-	// writes during sensitive-event fallback, bypassing QueuedSink layers.
-	// If empty, the fallback writes through the primary sink chain, which may
-	// block up to the context timeout and is subject to downstream queue limits.
+	// DirectSinks are the underlying raw sinks used for synchronous EmitSync
+	// writes, bypassing QueuedSink layers. If empty, EmitSync writes through
+	// the primary sink chain, which may block up to the context timeout and is
+	// subject to downstream queue limits.
 	DirectSinks []Sink
 }
 
@@ -186,7 +200,7 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 	m.workerCtx, m.stopWorkers = context.WithCancel(context.Background())
 
 	// Check if sink supports batch writes
-	if batchSink, ok := sink.(BatchSink); ok {
+	if batchSink, ok := asBatchSink(sink); ok {
 		m.batchSink = batchSink
 	}
 
@@ -217,19 +231,21 @@ func NewManager(sink Sink, cfg ManagerConfig, logger *zap.Logger) *Manager {
 
 // Emit sends an audit event asynchronously. With DropOnFull=false, enqueue
 // waits for capacity up to WriteTimeout or the caller's context deadline.
-// Sensitive events (IsSensitiveEvent) fall back to a synchronous write when the
-// queue is full, which may block up to WriteTimeout.
-func (m *Manager) Emit(ctx context.Context, event *Event) {
+// With DropOnFull=true a full queue drops the event at once, sensitive or
+// not, and counts it as dropped with reason "queue_full". Emit never writes
+// to a sink itself; use EmitSync when the caller needs a delivery receipt.
+// Emit reports false only when the Manager is closed and nothing was accepted.
+func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if m.closed.Load() {
-		return
+		return false
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
-		return
+		return true
 	}
 	// Apply sampling for high-volume event types
 	if m.shouldSample(event.Type) {
 		m.droppedEvents.Add(1)
-		return
+		return true
 	}
 	if event.Timestamp.IsZero() {
 		event.Timestamp = time.Now().UTC()
@@ -257,7 +273,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 	// Re-check closed under the lock: Close sets closed=true then acquires
 	// closeMu.Lock, so if we see closed=true here the channel is already closed.
 	if m.closed.Load() {
-		return
+		return false
 	}
 	if !m.config.DropOnFull {
 		writeCtx, cancel := context.WithTimeout(ctx, m.config.WriteTimeout)
@@ -272,39 +288,21 @@ func (m *Manager) Emit(ctx context.Context, event *Event) {
 			metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "enqueue_timeout").Inc()
 			m.logger.Warn("audit manager enqueue timed out", zap.Error(writeCtx.Err()))
 		}
-		return
+		return true
 	}
 
 	select {
 	case m.asyncQueue <- event:
 		m.queuedEvents.Add(1)
 	default:
-		// Queue is full — sensitive events fall back to a synchronous direct write
-		// to bypass manager-queue overflow. Per-sink queue drops (QueuedSink
-		// queue_full / circuit_open) are not intercepted by this path.
-		if IsSensitiveEvent(event.Type) {
-			writeCtx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
-			defer cancel()
-
-			writeErr := m.syncWriteDirect(writeCtx, event)
-			if writeErr != nil {
-				m.logger.Error("failed sync-write of sensitive audit event",
-					zap.String("event_type", string(event.Type)),
-					zap.String("event_id", event.ID),
-					zap.Error(writeErr))
-			}
-
-			return
-		}
-
+		// Queue is full. Emit never writes synchronously: its callers include the
+		// authorization webhook, and a synchronous write to a stalled sink would
+		// hold the SubjectAccessReview answer. Callers that need a delivery
+		// receipt use EmitSync.
 		m.droppedEvents.Add(1)
 		metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "queue_full").Inc()
-		if !m.config.DropOnFull {
-			m.logger.Warn("audit queue full, dropping event",
-				zap.String("event_type", string(event.Type)),
-				zap.String("event_id", event.ID))
-		}
 	}
+	return true
 }
 
 // syncWriteDirect writes an event synchronously to the direct (unbuffered) sinks.
@@ -369,6 +367,9 @@ func (m *Manager) syncWriteDirect(ctx context.Context, event *Event) error {
 }
 
 func validateSynchronousSink(sink Sink, event *Event) (bool, error) {
+	if isAdvisorySink(sink) {
+		return false, nil
+	}
 	sinkName := sink.Name()
 	switch sink := sink.(type) {
 	case *filteredBatchSink:
@@ -435,6 +436,9 @@ func validateSynchronousSink(sink Sink, event *Event) (bool, error) {
 }
 
 func writeSynchronousSink(ctx context.Context, sink Sink, event *Event) error {
+	if isAdvisorySink(sink) {
+		return nil
+	}
 	switch sink := sink.(type) {
 	case *filteredBatchSink:
 		if !sink.filter.allows(event) {
@@ -467,6 +471,9 @@ func writeSynchronousSink(ctx context.Context, sink Sink, event *Event) error {
 	}
 }
 
+// errManagerClosed is returned by EmitSync after Close.
+var errManagerClosed = errors.New("audit manager is closed")
+
 // EmitSync sends an audit event synchronously to every configured direct sink.
 // It never traverses queued or isolated sink wrappers.
 func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
@@ -476,7 +483,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	m.closeMu.RLock()
 	defer m.closeMu.RUnlock()
 	if m.closed.Load() {
-		return errors.New("audit manager is closed")
+		return errManagerClosed
 	}
 	if !eventTypeAllowed(event.Type, m.config.IncludeEventTypes, m.config.ExcludeEventTypes) {
 		return fmt.Errorf("required audit event %q is filtered out by manager configuration", event.Type)
@@ -943,7 +950,7 @@ func (m *Manager) DebugSessionFailed(ctx context.Context, sessionName, namespace
 }
 
 // DebugSessionExpired emits an audit event when a debug session expires.
-func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespace, cluster string) {
+func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespace, cluster, requestedBy, templateRef string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionExpired,
 		Severity: SeverityWarning,
@@ -954,7 +961,9 @@ func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespac
 			Namespace: namespace,
 		},
 		Details: map[string]interface{}{
-			"cluster": cluster,
+			"cluster":     cluster,
+			"requestedBy": requestedBy,
+			"templateRef": templateRef,
 		},
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,
@@ -963,7 +972,7 @@ func (m *Manager) DebugSessionExpired(ctx context.Context, sessionName, namespac
 }
 
 // DebugSessionApprovalTimeout emits an audit event when a debug session approval times out.
-func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, namespace, cluster string) {
+func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, namespace, cluster, requestedBy, templateRef string) {
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionApprovalTimeout,
 		Severity: SeverityWarning,
@@ -974,7 +983,9 @@ func (m *Manager) DebugSessionApprovalTimeout(ctx context.Context, sessionName, 
 			Namespace: namespace,
 		},
 		Details: map[string]interface{}{
-			"cluster": cluster,
+			"cluster":     cluster,
+			"requestedBy": requestedBy,
+			"templateRef": templateRef,
 		},
 		RequestContext: &RequestContext{
 			DebugSessionName: sessionName,

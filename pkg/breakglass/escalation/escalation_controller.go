@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -23,6 +24,26 @@ type BreakglassEscalationController struct {
 	identityProvider breakglass.IdentityProvider
 	getUserGroupsFn  breakglass.GetUserGroupsFunction
 	configPath       string // Path to breakglass config file for OIDC prefix stripping
+}
+
+// escalationResponse is one item of the escalation list response.
+// ClusterOptions lists the registered clusters that the escalation's cluster
+// patterns (for example "*" or "prod-*") match. A session needs one concrete
+// cluster, so clients offer these names instead of the pattern itself.
+type escalationResponse struct {
+	breakglassv1alpha1.BreakglassEscalation
+	ClusterOptions []string `json:"clusterOptions,omitempty"`
+}
+
+// clusterPatterns returns the glob entries of the escalation's cluster scope.
+func clusterPatterns(esc breakglassv1alpha1.BreakglassEscalation) []string {
+	var patterns []string
+	for _, entry := range slices.Concat(esc.Spec.Allowed.Clusters, esc.Spec.ClusterConfigRefs) {
+		if strings.ContainsAny(entry, "*?[") {
+			patterns = append(patterns, entry)
+		}
+	}
+	return patterns
 }
 
 func firstNonEmptyIdentity(values ...string) string {
@@ -136,11 +157,11 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 
 	clusterReadiness := map[string]bool{}
 	clusterLabels := map[string]map[string]string{}
-	hasClusterSelector := false
+	needClusters := false
 	for _, esc := range escalations {
-		hasClusterSelector = hasClusterSelector || esc.Spec.Allowed.ClusterSelector != nil
+		needClusters = needClusters || esc.Spec.Allowed.ClusterSelector != nil || len(clusterPatterns(esc)) > 0
 	}
-	if activeOnly || hasClusterSelector {
+	if activeOnly || needClusters {
 		var readinessErr error
 		clusterReadiness, readinessErr = ec.clusterConfigReadiness(c.Request.Context(), clusterLabels)
 		if readinessErr != nil {
@@ -235,7 +256,24 @@ func (ec *BreakglassEscalationController) handleGetEscalations(c *gin.Context) {
 		return esc.Spec.Allowed.ClusterSelector != nil && len(esc.Spec.Allowed.Clusters) == 0
 	})
 	reqLog.Debugw("Returning escalations response (filtered, hidden groups removed)", "responseCount", len(response))
-	items := dropK8sInternalFieldsEscalationList(response)
+	items := make([]escalationResponse, 0, len(response))
+	for _, esc := range dropK8sInternalFieldsEscalationList(response) {
+		item := escalationResponse{BreakglassEscalation: esc}
+		if patterns := clusterPatterns(esc); len(patterns) > 0 {
+			explicit := slices.Concat(esc.Spec.Allowed.Clusters, esc.Spec.ClusterConfigRefs)
+			for clusterName, ready := range clusterReadiness {
+				if (clusterFilter != "" && !clusterMatchesPatterns(clusterName, []string{clusterFilter})) ||
+					(activeOnly && !ready) || slices.Contains(explicit, clusterName) {
+					continue
+				}
+				if clusterMatchesPatterns(clusterName, patterns) {
+					item.ClusterOptions = append(item.ClusterOptions, clusterName)
+				}
+			}
+			slices.Sort(item.ClusterOptions)
+		}
+		items = append(items, item)
+	}
 	c.JSON(http.StatusOK, gin.H{"items": items, "total": len(items)})
 }
 

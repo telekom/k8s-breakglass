@@ -17,6 +17,7 @@ limitations under the License.
 package debug
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -138,20 +139,45 @@ func maxDebugSessionDuration(constraints *breakglassv1alpha1.DebugSessionConstra
 	return maxDuration, constraints.MaxDuration, nil
 }
 
+// errNoDebugSessionBindingAllowsRequester is returned when a request without
+// bindingRef reaches the cluster only through bindings, and none of them
+// allows the requester.
+var errNoDebugSessionBindingAllowsRequester = errors.New("no binding for this template and cluster allows the requester")
+
+// selectEffectiveDebugSessionBinding returns the binding a request uses.
+// Without bindingRef it is the first binding that grants the cluster and whose
+// allowed requesters (or, if it sets none, the template's) include the
+// requester: visible bindings before hidden ones, each in namespace and then
+// name order. Bindings that grant a cluster own its requester rules, so if
+// none of them allows the requester the request fails with
+// errNoDebugSessionBindingAllowsRequester, also when the template itself
+// allows the cluster. Only a cluster that no binding grants uses no binding.
+// An explicit bindingRef is returned as given; the caller checks the
+// requester against it.
 func selectEffectiveDebugSessionBinding(
 	bindingRef string,
 	allowedResult ClusterAllowedResult,
+	allowsRequester func(*breakglassv1alpha1.DebugSessionClusterBinding) bool,
 ) (*breakglassv1alpha1.DebugSessionClusterBinding, error) {
 	if strings.TrimSpace(bindingRef) == "" {
-		if allowedResult.MatchingBinding != nil {
-			return allowedResult.MatchingBinding, nil
+		bindings := append([]breakglassv1alpha1.DebugSessionClusterBinding(nil), allowedResult.AllBindings...)
+		if len(bindings) == 0 && allowedResult.MatchingBinding != nil {
+			// Hand-built results in tests may set only MatchingBinding.
+			bindings = append(bindings, *allowedResult.MatchingBinding)
 		}
-		if len(allowedResult.AllBindings) > 0 {
-			bindings := append([]breakglassv1alpha1.DebugSessionClusterBinding(nil), allowedResult.AllBindings...)
-			sortDebugSessionClusterBindings(bindings)
-			return &bindings[0], nil
+		if len(bindings) == 0 {
+			return nil, nil
 		}
-		return nil, nil
+		sortDebugSessionClusterBindings(bindings)
+		// Hidden bindings are meant for an explicit bindingRef; prefer the
+		// visible ones that discovery offers.
+		sort.SliceStable(bindings, func(i, j int) bool { return !bindings[i].Spec.Hidden && bindings[j].Spec.Hidden })
+		for i := range bindings {
+			if allowsRequester(&bindings[i]) {
+				return &bindings[i], nil
+			}
+		}
+		return nil, errNoDebugSessionBindingAllowsRequester
 	}
 
 	namespace, name, ok := parseDebugSessionBindingRef(bindingRef)

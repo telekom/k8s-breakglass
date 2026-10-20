@@ -205,8 +205,15 @@ func TestDropK8sInternalFieldsSessionStripsMetadata(t *testing.T) {
 //   - POST to approve, GET to validate ApprovedAt is set.
 //   - POST to reject the now-approved session and assert a BadRequest is
 //     returned and the session remains approved.
+
+// registeredCluster returns the ClusterConfig a session request needs: the API
+// rejects sessions for clusters without one.
+func registeredCluster(name string) *breakglassv1alpha1.ClusterConfig {
+	return &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"}}
+}
+
 func TestRequestApproveRejectGetSession(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -510,7 +517,7 @@ func TestApproveRejectTimedOutPendingSessionBlocked(t *testing.T) {
 //   - Issue a reject as a different user and assert the reject fails and the
 //     approver metadata remains unchanged.
 func TestApproveSetsApproverMetadata(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -674,7 +681,7 @@ func TestApproveSetsApproverMetadata(t *testing.T) {
 
 // Test that creating a session when a matching escalation exists attaches an OwnerReference
 func TestCreateSessionAttachesOwnerReference(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -758,7 +765,7 @@ func TestCreateSessionAttachesOwnerReference(t *testing.T) {
 }
 
 func TestCreateSessionRejectsEscalationWithoutUID(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -975,7 +982,7 @@ func TestCreateSessionRejectsDuplicateClusterConfigName(t *testing.T) {
 
 // Test that creating a session without a matching escalation returns 403 and no session is created
 func TestCreateSessionWithoutEscalationReturns401(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -1447,7 +1454,7 @@ func newApprovalAuthorizationTestContext(email, identityProvider string) *gin.Co
 // Test that a BreakglassSession created via the controller is stored in the
 // same namespace as the matched BreakglassEscalation when a match exists.
 func TestSessionCreatedUsesEscalationNamespace(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -1579,10 +1586,71 @@ func TestHandleRequestBreakglassSession_RejectsUserMismatch(t *testing.T) {
 	}
 }
 
+func TestHandleRequestBreakglassSession_RequiresRegisteredConcreteCluster(t *testing.T) {
+	for _, tc := range []struct {
+		cluster string
+		group   string // requester group; the escalation allows system:authenticated
+		status  int
+		message string
+	}{
+		{"*", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"prod-*", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"prod-[ab]", "system:authenticated", http.StatusUnprocessableEntity, "not a pattern"},
+		{"unregistered", "system:authenticated", http.StatusUnprocessableEntity, `cluster \"unregistered\" is not registered`},
+		{"prod-a", "system:authenticated", http.StatusCreated, ""},
+		// Without a matching escalation, an unknown name gets the same 403 as a
+		// known one: registration is not disclosed to arbitrary users.
+		{"unregistered", "other", http.StatusForbidden, ""},
+	} {
+		t.Run(tc.cluster+"/"+tc.group, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("prod-a"))
+			for index, fn := range sessionIndexFunctions {
+				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
+			}
+			builder.WithObjects(&breakglassv1alpha1.BreakglassEscalation{
+				ObjectMeta: metav1.ObjectMeta{Name: "global", Namespace: "escns", UID: "global-uid"},
+				Spec: breakglassv1alpha1.BreakglassEscalationSpec{
+					Allowed:        breakglassv1alpha1.BreakglassEscalationAllowed{Clusters: []string{"*"}, Groups: []string{"system:authenticated"}},
+					EscalatedGroup: "g1",
+					Approvers:      breakglassv1alpha1.BreakglassEscalationApprovers{Users: []string{"approver@example.com"}},
+				},
+			})
+			cli := builder.WithStatusSubresource(&breakglassv1alpha1.BreakglassSession{}).Build()
+			ctrl := NewBreakglassSessionController(zap.NewNop().Sugar(), config.Config{},
+				&SessionManager{Client: cli}, &testEscalationLookup{Client: cli},
+				func(c *gin.Context) {
+					c.Set("email", "req@example.com")
+					c.Set("username", "Requester")
+					c.Set("legacy_identity_allowed", true)
+					c.Next()
+				}, "/config/config.yaml", nil, cli)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{tc.group}, nil
+			}
+			engine := gin.New()
+			require.NoError(t, ctrl.Register(engine.Group("/breakglassSessions", ctrl.Handlers()...)))
+			body, err := json.Marshal(BreakglassSessionRequest{Clustername: tc.cluster, Username: "req@example.com", GroupName: "g1"})
+			require.NoError(t, err)
+			response := httptest.NewRecorder()
+			engine.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/breakglassSessions", bytes.NewReader(body)))
+			require.Equal(t, tc.status, response.Code, response.Body.String())
+			require.Contains(t, response.Body.String(), tc.message)
+			var sessions breakglassv1alpha1.BreakglassSessionList
+			require.NoError(t, cli.List(context.Background(), &sessions))
+			if tc.status == http.StatusCreated {
+				require.Len(t, sessions.Items, 1)
+				require.Equal(t, tc.cluster, sessions.Items[0].Spec.Cluster)
+			} else {
+				require.Empty(t, sessions.Items)
+			}
+		})
+	}
+}
+
 func TestHandleRequestBreakglassSession_ValidatesEscalationName(t *testing.T) {
 	for _, name := range []string{"Uppercase", "namespace/name", "invalid name", "valid-policy.example"} {
 		t.Run(name, func(t *testing.T) {
-			builder := fake.NewClientBuilder().WithScheme(Scheme)
+			builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 			for index, fn := range sessionIndexFunctions {
 				builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 			}
@@ -3780,7 +3848,7 @@ func TestApprovalAuthorizationDoesNotUseRequestGroupsWhenTargetLookupSucceeds(t 
 //   - Approve it again (expect 409 Conflict).
 //   - Attempt to reject it as an authorized approver after approval (expect 400 Bad Request).
 func TestTerminalStateImmutability(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("c"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -3889,7 +3957,7 @@ func TestTerminalStateImmutability(t *testing.T) {
 //     ExpiresAt is populated.
 //   - Attempt to approve again and assert the operation is rejected.
 func TestDropApprovedSessionExpires(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("c"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -4276,7 +4344,7 @@ func TestOwnerActionsMatchAlternateAuthIdentifiers(t *testing.T) {
 //   - Re-create controller middleware to simulate a non-approver and assert
 //     cancel returns 401 Unauthorized.
 func TestApproverCancelRunningSession(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("c"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -4881,7 +4949,7 @@ func TestFilterBreakglassSessionsByClusterAndUserQueryParams(t *testing.T) {
 }
 
 func TestRequestAndApproveWithReasons(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("c1"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -5127,7 +5195,7 @@ func TestWhitespaceReasonRejectedWhenMandatory(t *testing.T) {
 }
 
 func TestOwnerCanRejectPendingSession(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("oc1"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -7442,7 +7510,7 @@ func TestHiddenFromUIAndNotificationExclusionsCombined(t *testing.T) {
 // TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups tests that hidden groups don't receive email notifications
 // when a session is requested
 func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -7541,7 +7609,7 @@ func TestHiddenFromUI_SessionRequest_NoEmailsToHiddenGroups(t *testing.T) {
 
 // TestHiddenFromUI_MixedVisibleAndHidden tests escalation with both visible and hidden users
 func TestHiddenFromUI_MixedVisibleAndHidden(t *testing.T) {
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -10993,7 +11061,7 @@ func TestApproverResolutionLimits(t *testing.T) {
 func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 	clusterName := "race-cluster"
 
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster(clusterName))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -11084,7 +11152,7 @@ func TestConcurrentSessionCreation_TOCTOURace(t *testing.T) {
 func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 	clusterName := "parallel-cluster"
 
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster(clusterName))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -11188,7 +11256,7 @@ func TestConcurrentSessionCreation_ParallelRequests(t *testing.T) {
 func TestHandleRequestBreakglassSession_PerUserRateLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -11399,7 +11467,7 @@ func TestHandleRequestBreakglassSession_MissingIdentityRejectedBeforeRateLimit(t
 func TestHandleRequestBreakglassSession_ConcurrentSameUserRateLimited(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	builder := fake.NewClientBuilder().WithScheme(Scheme)
+	builder := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(registeredCluster("test"))
 	for index, fn := range sessionIndexFunctions {
 		builder.WithIndex(&breakglassv1alpha1.BreakglassSession{}, index, fn)
 	}
@@ -11527,10 +11595,16 @@ func TestTokenValidation_NotFoundReturns404WithValidFalse(t *testing.T) {
 
 	require.Equal(t, http.StatusNotFound, w.Code, "missing token session must return 404")
 	var body struct {
-		Valid bool `json:"valid"`
+		Valid bool   `json:"valid"`
+		Error string `json:"error"`
+		Code  string `json:"code"`
+		CID   string `json:"cid"`
 	}
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
 	require.False(t, body.Valid, "valid must be false when session is not found")
+	require.Equal(t, "session not found", body.Error)
+	require.Equal(t, "NOT_FOUND", body.Code)
+	require.NotEmpty(t, body.CID)
 }
 
 func TestTokenValidation_ApprovalTimedOutPendingSessionIsNotApprovable(t *testing.T) {

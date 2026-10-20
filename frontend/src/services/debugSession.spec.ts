@@ -39,6 +39,24 @@ describe("DebugSessionService", () => {
     });
   });
 
+  it.each([
+    ["joinSession", "join", undefined],
+    ["leaveSession", "leave", undefined],
+    ["renewSession", "renew", { extendBy: "1h" }],
+  ] as const)("%s resolves to the updated session returned by the API", async (method, action, body) => {
+    const updated = { metadata: { name: "debug-prod" }, status: { state: "Active", renewalCount: 1 } };
+    mockClient.post.mockResolvedValueOnce({ data: updated });
+    const service = new DebugSessionService(fakeAuth);
+    const result =
+      method === "renewSession"
+        ? await service.renewSession("debug-prod", { extendBy: "1h" })
+        : await service[method]("debug-prod");
+    expect(result).toEqual(updated);
+    const expectedArgs =
+      body === undefined ? [`/debugSessions/debug-prod/${action}`] : [`/debugSessions/debug-prod/${action}`, body];
+    expect(mockClient.post).toHaveBeenCalledWith(...expectedArgs);
+  });
+
   it("normalizes legacy list responses that return an array", async () => {
     mockClient.get.mockResolvedValueOnce({
       data: [

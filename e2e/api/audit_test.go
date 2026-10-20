@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -841,4 +842,171 @@ func TestWebhookAuditSinkFunctional(t *testing.T) {
 			t.Logf("Event %d: type=%s, severity=%s", i+1, eventType, severity)
 		}
 	})
+}
+
+// TestSlackWebhookAuditSinkFunctional verifies the advisory chat sink
+// (webhook.payloadFormat: slack) end to end: one {"text"} message per event,
+// no batching, a link to the approval page, and no reason or approver identity.
+func TestSlackWebhookAuditSinkFunctional(t *testing.T) {
+	_ = helpers.SetupTest(t, helpers.WithShortTimeout())
+	if !helpers.IsAuditWebhookTestEnabled() {
+		t.Skip("Skipping audit webhook test. Set AUDIT_WEBHOOK_TEST=true to run.")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	cli := helpers.GetClient(t)
+	cleanup := helpers.NewCleanup(t, cli)
+	namespace := helpers.GetTestNamespace()
+	clusterName := helpers.GetTestClusterName()
+	webhookInternalURL := helpers.GetAuditWebhookReceiverURL()
+	webhookExternalURL := helpers.GetAuditWebhookReceiverExternalURL()
+	httpClient := helpers.ShortTimeoutHTTPClient()
+
+	healthReq, err := http.NewRequestWithContext(ctx, http.MethodGet, webhookExternalURL+"/health", nil)
+	require.NoError(t, err)
+	healthResp, err := httpClient.Do(healthReq)
+	if err != nil {
+		t.Skipf("Skipping chat audit test - receiver not accessible at %s: %v", webhookExternalURL, err)
+	}
+	_ = healthResp.Body.Close()
+
+	t.Run("RejectsUnknownFormatAndBatching", func(t *testing.T) {
+		for name, webhook := range map[string]breakglassv1alpha1.WebhookSinkSpec{
+			"unknown-format": {URL: webhookInternalURL + "/audit/events", PayloadFormat: "teams"},
+			"batch-url":      {URL: webhookInternalURL + "/audit/events", PayloadFormat: breakglassv1alpha1.WebhookPayloadFormatSlack, BatchURL: webhookInternalURL + "/events"},
+		} {
+			invalid := &breakglassv1alpha1.AuditConfig{
+				ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("e2e-audit-chat-" + name), Labels: helpers.E2ELabelsWithFeature("audit-chat")},
+				Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+					Name: "chat", Type: breakglassv1alpha1.AuditSinkTypeWebhook, EventTypes: []string{"session.requested"}, Webhook: &webhook,
+				}}},
+			}
+			err := cli.Create(ctx, invalid)
+			if err == nil {
+				cleanup.Add(invalid)
+			}
+			require.Error(t, err, "AuditConfig %s must be rejected", name)
+		}
+	})
+
+	auditConfig := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "e2e-audit-chat-functional",
+			Labels: helpers.E2ELabelsWithFeature("audit-chat"),
+		},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name:       "chat",
+				Type:       breakglassv1alpha1.AuditSinkTypeWebhook,
+				EventTypes: []string{"session.requested", "session.approved"},
+				Webhook: &breakglassv1alpha1.WebhookSinkSpec{
+					// The receiver records the path, which separates chat
+					// messages from the JSON sinks posting to /audit and /events.
+					URL:            webhookInternalURL + "/audit/events",
+					PayloadFormat:  breakglassv1alpha1.WebhookPayloadFormatSlack,
+					TimeoutSeconds: 10,
+				},
+			}},
+		},
+	}
+	cleanup.Add(auditConfig)
+	require.NoError(t, cli.Create(ctx, auditConfig))
+	helpers.WaitForAuditConfigReady(t, ctx, cli, auditConfig.Name, helpers.WaitForStateTimeout)
+	time.Sleep(helpers.CachePropagationDelay)
+
+	escalation := helpers.NewEscalationBuilder(helpers.GenerateUniqueName("e2e-chat-audit-esc"), namespace).
+		WithEscalatedGroup("chat-audit-test-admins").
+		WithAllowedClusters(clusterName).
+		WithMaxValidFor("1h").
+		WithApprovalTimeout("30m").
+		WithAllowedGroups(helpers.TestUsers.AuditTestRequester.Groups...).
+		WithApproverUsers(helpers.TestUsers.AuditTestApprover.Email).
+		WithLabels(map[string]string{"feature": "chat-audit"}).
+		Build()
+	cleanup.Add(escalation)
+	require.NoError(t, cli.Create(ctx, escalation))
+
+	tc := helpers.NewTestContext(t, ctx)
+	const reason = "chat-e2e-private-reason-token"
+	session, err := tc.ClientForUser(helpers.TestUsers.AuditTestRequester).CreateSessionAndWaitForPending(ctx, t, helpers.SessionRequest{
+		Cluster: clusterName,
+		User:    helpers.TestUsers.AuditTestRequester.Email,
+		Group:   escalation.Spec.EscalatedGroup,
+		Reason:  reason,
+	}, helpers.WaitForStateTimeout)
+	require.NoError(t, err)
+	cleanup.Add(session)
+
+	chatMessages := func() []map[string]interface{} {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, webhookExternalURL+"/events", nil)
+		require.NoError(t, err)
+		resp, err := httpClient.Do(req)
+		if err != nil {
+			return nil
+		}
+		defer func() { _ = resp.Body.Close() }()
+		var result struct {
+			Events []map[string]interface{} `json:"events"`
+		}
+		if json.NewDecoder(resp.Body).Decode(&result) != nil {
+			return nil
+		}
+		var messages []map[string]interface{}
+		for _, event := range result.Events {
+			text, _ := event["text"].(string)
+			if event["_path"] == "/audit/events" && strings.Contains(text, " "+session.Name+" ") {
+				messages = append(messages, event)
+			}
+		}
+		return messages
+	}
+	waitForMessages := func(n int) []map[string]interface{} {
+		var messages []map[string]interface{}
+		require.Eventually(t, func() bool {
+			messages = chatMessages()
+			return len(messages) >= n
+		}, helpers.WaitForStateTimeout, time.Second, "expected %d chat messages for session %s", n, session.Name)
+		return messages
+	}
+
+	requested := waitForMessages(1)[0]
+	text := requested["text"].(string)
+	t.Logf("chat message: %s", text)
+	assert.Contains(t, text, "Breakglass session "+session.Name+" requested")
+	assert.Contains(t, text, "/session/"+session.Name+"/approve")
+	assert.Contains(t, text, "group: "+escalation.Spec.EscalatedGroup)
+	assert.Contains(t, text, "cluster: "+clusterName)
+	assert.NotContains(t, text, reason)
+	assert.NotContains(t, text, "@", "requester e-mail @ must be escaped")
+	assertChatPayloadShape(t, requested)
+
+	require.NoError(t, tc.ClientForUser(helpers.TestUsers.AuditTestApprover).ApproveSessionViaAPI(ctx, t, session.Name, namespace))
+	messages := waitForMessages(2)
+	require.Len(t, messages, 2, "one message per event")
+	approved := messages[1]["text"].(string)
+	t.Logf("chat message: %s", approved)
+	assert.Contains(t, approved, "Breakglass session "+session.Name+" approved")
+	assert.NotContains(t, approved, reason)
+	approverLocal := strings.Split(helpers.TestUsers.AuditTestApprover.Email, "@")[0]
+	assert.NotContains(t, approved, approverLocal, "approver identity must not be posted")
+	assertChatPayloadShape(t, messages[1])
+}
+
+// assertChatPayloadShape checks the receiver stored a single {"text"} body
+// that was not sent as a batch.
+func assertChatPayloadShape(t *testing.T, stored map[string]interface{}) {
+	t.Helper()
+	for key := range stored {
+		if !strings.HasPrefix(key, "_") {
+			assert.Equal(t, "text", key, "slack payload must only carry text")
+		}
+	}
+	assert.NotContains(t, stored, "_batch_size")
+	headers, _ := stored["_headers"].(map[string]interface{})
+	for name := range headers {
+		assert.NotEqual(t, "x-batch-size", strings.ToLower(name))
+	}
 }

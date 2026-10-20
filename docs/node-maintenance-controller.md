@@ -7,9 +7,26 @@ SPDX-License-Identifier: CC-BY-4.0
 
 `DebugSessionTemplate.spec.nodeMaintenance` opts a profile into the controller's
 fixed executor. It is absent by default. Only `neighbor-replace`,
-`bridge-fdb-replace` and `kexec-recovery` are supported, each optionally as a
-preview; this does **not** enable broad flushes, link cycling, a
-caller-selected kernel, arbitrary host commands, traffic mirroring or CRA.
+`bridge-fdb-replace`, `link-cycle`, `restart-autonegotiation`,
+`kexec-recovery`, `service-restart` of an allowlisted systemd unit,
+`module-load` of an allowlisted kernel module and `sriov-reprovision` of an
+allowlisted SR-IOV physical function are supported. `neighbor-replace`,
+`bridge-fdb-replace` and `kexec-recovery` can run as a preview; the link actions,
+`service-restart`, `module-load` and `sriov-reprovision` cannot (`dryRun` is rejected). This does **not** enable broad flushes,
+a caller-selected kernel, unit or module, arbitrary host commands or traffic mirroring.
+
+`link-cycle` (down, then up) and `restart-autonegotiation` act on one exact
+Node and interface; `entryMAC`, neighbour, bridge, VLAN and VRF must be empty
+in the request and in every allowlist entry. The helper pins the interface by
+ifindex and refuses it when a default route of any routing table, including a
+multipath nexthop, uses the interface or a device stacked on it (bond, VLAN,
+bridge, VRF), because dropping that carrier cuts the node off. The routes are
+captured in the evidence bundle (`before-default-routes-ipv4.txt`,
+`before-default-routes-ipv6.txt`). Known limit: the default-route check and
+the autonegotiation reset address the interface by name after the ifindex is
+pinned, so a root actor that renames interfaces on the node at the same moment
+can make them see another device; the autonegotiation post-check reports the
+rename.
 
 ## Operator prerequisites
 
@@ -236,6 +253,182 @@ the console shows that the executor no longer runs (the Node runs the recovery
 kernel or is powered off), remove the Pod with
 `kubectl -n breakglass-node-maintenance delete pod OPERATION_ID --force --grace-period=0`.
 
+### Service restart profiles
+
+`action: service-restart` restarts one allowlisted host systemd unit
+(`containerd.service`, `kubelet.service` or `cra.service`) on one drained
+worker Node. The allowlist entries carry `targetNode`, `targetNodeUID` and
+`unit`; interface and tuple fields are rejected, and there is no preview.
+
+```yaml
+  constraints:
+    maxDuration: 20m   # at least drainTimeoutSeconds + 600s
+  nodeMaintenance:
+    action: service-restart
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    service:
+      drainTimeoutSeconds: 600
+      restartPods:            # optional, at most four selectors
+        - namespace: kube-system
+          matchLabels:
+            app.kubernetes.io/name: network-operator-agent-cra-vsr
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        unit: cra.service
+```
+
+Before the drain the controller requires every `restartPods` selector to match
+at least one Pod on the Node (select DaemonSet Pods: the drain evicts other
+Pods); otherwise it fails without executing. It rejects control-plane Nodes and
+drains like a kexec execution (steps 2 to 4 above, without the boot ID). The
+executor Pod has no capabilities, RuntimeDefault seccomp, a read-only root
+filesystem and no host PID, and uses the host network only to read host links.
+It mounts systemd's private socket `/run/systemd/private` from a `Socket`
+hostPath. `readOnly` does not restrict a socket: the fence is the fixed
+entrypoint and the `service-action` helper, which can only probe a unit
+(`LoadUnit` and property reads, after a `Peer.Ping`) and call
+`RestartUnit(<unit>, "replace")` for an allowlisted unit; the image has no
+`systemctl` or general D-Bus client. The executor is a Pod, so the kubelet and
+containerd must still start Pods on the Node: use the action for a degraded but
+responsive unit. A Node without that socket, or one that cannot start the Pod,
+leaves the executor Pending until the deadline (`interrupted`). The executor
+tolerates the `not-ready` and `unreachable` NoExecute taints, so a restart that
+briefly makes the Node NotReady does not evict it. The helper waits until the unit
+is active again with a new activation time; on a CRA node (where `cra.service`
+is loaded) a `containerd.service` or `cra.service` restart also waits for
+`cra.service`, the host `hbn` and `netconf` links and, when present, a global
+address on `oam0`. `cra.service` declares `Requires=containerd.service`, so a
+containerd restart on a CRA node always restarts the router container and
+briefly removes the node network.
+
+After the helper succeeded the controller requires the Node to be Ready,
+deletes each Pod that matches `restartPods` on that Node exactly once (UID
+precondition), and waits until every selector has a new Ready Pod on the Node.
+Use this for agents that must re-apply configuration to the restarted service,
+for example a network agent that only pushes its configuration when its own
+revision changes. Only then is the result `succeeded` and cleanup uncordons the
+Node. A failed helper, or a Node or replacement Pod that is not Ready before
+the deadline, is `failed` with the advisory "recommend replacing it"; the Node
+stays cordoned. A succeeded helper whose post-checks never ran (cancellation)
+is `unknown` and also stays cordoned. An executor that proves it changed
+nothing (it refused in preflight before the restart request, reported as the
+termination message `action_issued=0`, or the kubelet reported its container
+as never started) sets `status.nodeMaintenance.hostUnchanged`, and cleanup
+uncordons the Node. An executor Pod without any container status, or one that
+ran, keeps the cordon. The helper checks the session deadline again right
+before the restart request, so a container that starts after the deadline
+restarts nothing. Nothing
+on the Node is persisted.
+
+The controller's ClusterConfig identity additionally needs `delete` on Pods in
+the `restartPods` namespaces (the drain already needs Pod `list`, eviction and
+Node `patch`). Admission
+policies that forbid hostPath volumes need a per-session exception for the
+executor Pod in the template's auxiliary resources.
+
+### Module load profiles
+
+`action: module-load` loads one kernel module of the running kernel, with the
+dependencies and soft dependencies the host module tree lists, until the next
+reboot. Each allowlist entry
+carries `targetNode`, `targetNodeUID` and `module` (an exact name matching
+`^[a-z0-9_]{1,56}$`, no parameters); there is no preview and no drain.
+
+```yaml
+  nodeMaintenance:
+    action: module-load
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        module: ip6_gre
+```
+
+The executor Pod adds only `SYS_MODULE`, uses RuntimeDefault seccomp, a
+read-only root filesystem, neither the host network nor the host PID
+namespace, and mounts the host `/lib/modules` read-only from a `Directory`
+hostPath (admission policies that forbid hostPath volumes need the same
+per-session exception as the other host executors). The helper runs modprobe
+with an empty configuration directory (`-C`), so no image `modprobe.d` alias,
+option, softdep or install line applies; the name must resolve to itself
+(`--resolve-alias`), and `--ignore-install` is set. It succeeds only when
+`/sys/module/<module>` exists afterwards; an already loaded or built-in module
+is recorded unchanged. Persist a needed module through node configuration; a replacement
+node otherwise misses it again.
+
+The empty configuration also discards the host's own `modprobe.d`: the module
+loads with its compiled-in defaults, not with the node's `options` or `softdep`
+lines (kernel command-line `module.param=` values still apply). Do not
+allowlist a module whose defaults create devices or change tunables (for
+example `bonding` or `dummy` create a device, `nf_conntrack` sizes its table)
+without checking the node's `modprobe.d`. Every loaded module adds host attack
+surface that unprivileged processes can reach, so allowlist only modules the
+node configuration needs. The executor is sized for small modules (10 s
+modprobe timeout, 128Mi memory). The host must have `/lib/modules` (a symlink
+to a directory is fine); otherwise the executor Pod never starts and the
+session ends `interrupted`. The executor does not tolerate the `not-ready` or
+`unreachable` NoExecute taints, so it does not run on a Node that is already
+NotReady.
+
+### SR-IOV re-provision profiles
+
+`action: sriov-reprovision` re-creates the SR-IOV virtual functions (VFs) of one
+physical function (PF) from the node's own netplan configuration, for a node
+whose VFs were not created at boot. Each allowlist entry carries `targetNode`,
+`targetNodeUID`, `interface` (the PF) and `virtualFunctions` (the exact VF
+count, 1 through 256, that netplan creates for that PF). The profile needs the
+same `service` bounds as `service-restart`; there is no preview.
+
+```yaml
+  nodeMaintenance:
+    action: sriov-reprovision
+    image: YOUR_VERIFIED_NODE_MAINTENANCE_IMAGE_BY_DIGEST
+    allowedTargets:
+      - targetNode: exact-node-name
+        targetNodeUID: exact-live-node-uid
+        interface: ens1f0
+        virtualFunctions: 8
+    service:
+      drainTimeoutSeconds: 300
+      restartPods:
+        - namespace: kube-system
+          matchLabels:
+            app: sriov-device-plugin
+```
+
+The controller cordons and drains the worker Node as for `service-restart`
+(control-plane Nodes are refused). The executor Pod is the `service-restart`
+Pod: no capabilities, RuntimeDefault seccomp, a read-only root filesystem, the
+host network (to read the PF in sysfs) and only `/run/systemd/private` as a
+read-only `Socket` hostPath. The helper asks systemd to run two fixed commands
+as transient oneshot units on the host: `netplan apply --sriov-only`, which must
+exit 0, and, only for VFs that are still unbound 10 seconds later,
+`netplan rebind <PF>`. Each runs at most 120 seconds (the helper stops a unit
+that runs longer, and systemd stops it 5 seconds later by itself if the helper
+is gone; a leftover unit of an interrupted run is stopped and reported before
+the next run). `netplan rebind` only binds VFs that share the PF driver
+(mlx5) or use `delay-virtual-functions-rebind`; VFs with their own driver
+(igbvf, ixgbevf, iavf) bind by autoprobe. A failed rebind is recorded in the
+evidence; the decision is the exact VF state: the helper waits up to 120
+seconds until `sriov_numvfs` of the PF equals `virtualFunctions` and every VF
+exists and is bound to a driver. As for `service-restart`, `maxDuration` must cover
+`drainTimeoutSeconds` plus 600 seconds. The controller recreates the
+`restartPods` (typically the SR-IOV device plugin) once and requires a Ready
+Node and Ready replacements before it reports success and uncordons. Anything
+else keeps the Node cordoned with the advisory to replace it.
+
+`netplan apply --sriov-only` applies the SR-IOV settings of every PF in the
+node's netplan configuration and changes no other network setting; `netplan
+rebind` acts on the allowlisted PF only. A PF whose current VF count differs
+from netplan (for example one managed by an SR-IOV operator) is reset to the
+netplan count, which removes and re-creates its VFs; check the other PFs of the
+node before you approve. Enabling SR-IOV resets the PF on many NICs (ixgbe,
+i40e, ice), so a PF that also carries the node address loses its link for a
+few seconds. Nothing is persisted: the next boot creates the VFs from netplan
+again. An executor that refuses in preflight (no SR-IOV PF, too few VFs)
+changed nothing, and the controller uncordons the Node.
+
 ## Approval, execution and cleanup
 
 The server validates the request and live Node UID before PendingApproval.
@@ -250,7 +443,7 @@ session UID. API-server atomic Create and UID/resourceVersion-fenced Delete
 arbitrate ownership; **Lease age alone never permits takeover**. A contender
 remains PendingApproval with an exclusive-Lease wait message and no executor.
 
-The single network-repair Pod has (see above for the kexec Pod):
+The single network-repair Pod has (see above for the kexec, service-restart, module-load and sriov-reprovision Pods):
 
 - exact `nodeName`, `hostNetwork: true`, no host PID/IPC;
 - root UID/GID, NET_ADMIN only, all other capabilities dropped;

@@ -109,6 +109,11 @@ func debugQuotaPolicyForObjects(s *breakglassv1alpha1.DebugSession, template *br
 		if binding.Spec.MaxActiveSessionsTotal != nil {
 			limits[total] = *binding.Spec.MaxActiveSessionsTotal
 		}
+		perCluster := debugQuotaScope("debug-binding-cluster", string(binding.UID), s.Spec.Cluster)
+		entry.Scopes = append(entry.Scopes, perCluster)
+		if binding.Spec.MaxActiveSessionsPerCluster != nil {
+			limits[perCluster] = *binding.Spec.MaxActiveSessionsPerCluster
+		}
 		// Preserve username/email alias matching used by the API preflight.
 		for _, user := range []string{s.Spec.RequestedBy, s.Spec.RequestedByEmail} {
 			if user == "" {
@@ -211,14 +216,19 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 			var entries []quotas.Entry
 			for i := range sessions {
 				item := &sessions[i]
-				if _, exists := reserved[string(item.UID)]; exists {
-					continue
-				}
+				// A reservation recorded by an older controller can lack scopes
+				// that this controller derives (for example the per-cluster
+				// binding scope). Derive it again and return it when it adds
+				// scopes; the ledger keeps the old entry in every other case.
+				recorded, isReserved := reserved[string(item.UID)]
 				if debugSessionTerminal(item) {
 					continue
 				}
 				template := templatesByName[item.Spec.TemplateRef]
 				if template == nil {
+					if isReserved {
+						continue
+					}
 					return nil, fmt.Errorf("read quota template %q: not found in bootstrap policy", item.Spec.TemplateRef)
 				}
 				ref := item.Spec.BindingRef
@@ -229,6 +239,9 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 				if ref != nil {
 					binding = bindingsByKey[ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}]
 					if binding == nil {
+						if isReserved {
+							continue
+						}
 						return nil, fmt.Errorf("read quota binding %s/%s: not found in bootstrap policy", ref.Namespace, ref.Name)
 					}
 				} else {
@@ -239,6 +252,9 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 						var err error
 						binding, err = utils.SelectDebugSessionBinding(template, item.Spec.Cluster, bindingItems, clusterItems)
 						if err != nil {
+							if isReserved {
+								continue
+							}
 							return nil, fmt.Errorf("read quota binding: %w", err)
 						}
 						discoveredBindings[key] = binding
@@ -246,7 +262,13 @@ func (c *DebugSessionController) admitDebugSession(ctx context.Context, s *break
 				}
 				entry, _, _, err := debugQuotaPolicyForObjects(item, template, binding)
 				if err != nil {
+					if isReserved {
+						continue
+					}
 					return nil, err
+				}
+				if isReserved && !quotas.AddsScopes(recorded, entry) {
+					continue
 				}
 				entries = append(entries, entry)
 			}

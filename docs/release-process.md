@@ -170,7 +170,7 @@ mutable image tag during teardown.
 ## Release Checklist
 
 - Verify CI success on the release commit.
-- Ensure the changelog is up to date.
+- Open the release PR `chore(release): vX.Y.Z` with `make changelog-release RELEASE=X.Y.Z` (see [CONTRIBUTING.md](../CONTRIBUTING.md#release-process)); check `make changelog` output and the `changes/` fragments first.
 - Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
 - Bump the applicable chart's `version` before cutting a release whose chart `appVersion` has not already been published under that chart version. The catalogue's map-to-list migration is a breaking values-interface change recorded by its `0.2.0` chart version.
   Release packaging keeps `version` from `Chart.yaml` and overrides its source

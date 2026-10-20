@@ -366,12 +366,14 @@ API errors are returned in consistent JSON format:
 {
   "error": "User email not found in token",
   "code": "UNAUTHORIZED",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21",
   "details": "metadata about the error"
 }
 ```
 
-Use the `X-Request-ID` response header, not the JSON body, as the correlation ID
-for logs and support requests.
+`cid` is the correlation ID for logs and support requests. It is the same value
+as the `X-Request-ID` response header. `details` is optional. See
+[Error Response Format](api-reference.md#error-response-codes).
 
 ### HTTP Status Codes
 

@@ -34,6 +34,9 @@ assert_rejected_with_message() {
 network_repair="$root_dir/lib/network-repair.sh"
 preflight="$root_dir/lib/node-recovery-preflight.sh"
 kexec_validate="$root_dir/lib/kexec-recovery-validate.sh"
+service_restart="$root_dir/lib/service-restart.sh"
+module_load="$root_dir/lib/module-load.sh"
+sriov_reprovision="$root_dir/lib/sriov-reprovision.sh"
 
 assert_neighbor_literal_accepted() {
 	address=$1
@@ -277,5 +280,72 @@ assert_network_tuple 'mutation approval cannot be replayed as a preview' rejecte
 	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR "" true
 assert_network_tuple 'preview tuple is accepted for a preview' accepted "$neighbor_tuple&vrf=vrf-red&dry_run=true&confirmation=NETWORK-REPAIR" \
 	node-a eth0 neighbor-replace 192.0.2.2 "" 02:00:00:00:00:02 "" NETWORK-REPAIR vrf-red true
+
+# service-restart: fixed unit allowlist, its own confirmation, action and tuple binding.
+service_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_SERVICE_REQUEST="$2" "$service_restart" \
+		--target-node node-a --unit "$3" --evidence-dir /evidence --confirm "$4"
+}
+service_tuple='target_node=node-a&unit=containerd.service&confirmation=SERVICE-RESTART'
+assert_rejected 'service-restart rejects a unit outside the allowlist' "unit 'sshd.service' is not allowlisted" \
+	service_env service-restart "$service_tuple" sshd.service SERVICE-RESTART
+assert_rejected 'service-restart rejects a unit path' "unit '../containerd.service' is not allowlisted" \
+	service_env service-restart "$service_tuple" ../containerd.service SERVICE-RESTART
+assert_rejected 'service-restart requires its own confirmation' "confirmation must be exactly 'SERVICE-RESTART'" \
+	service_env service-restart "$service_tuple" containerd.service NETWORK-REPAIR
+assert_rejected 'service-restart requires a service-restart approval' "controller-approved action 'link-cycle' does not match requested action 'service-restart'" \
+	service_env link-cycle "$service_tuple" containerd.service SERVICE-RESTART
+assert_rejected 'service-restart approval is bound to the exact unit' 'controller-approved service request does not exactly match the requested tuple' \
+	service_env service-restart "$service_tuple" kubelet.service SERVICE-RESTART
+assert_rejected 'service-restart rejects duplicate options' '--unit may be supplied only once' \
+	"$service_restart" --target-node node-a --unit kubelet.service --unit containerd.service \
+	--evidence-dir /evidence --confirm SERVICE-RESTART
+
+# module-load: exact module name, its own confirmation, action and tuple binding.
+module_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_MODULE_REQUEST="$2" "$module_load" \
+		--target-node node-a --module "$3" --evidence-dir /evidence --confirm "$4"
+}
+module_tuple='target_node=node-a&module=ip6_gre&confirmation=MODULE-LOAD'
+assert_rejected 'module-load rejects a path' 'module must be an exact kernel module name' module_env module-load "$module_tuple" ../ip6_gre MODULE-LOAD
+assert_rejected 'module-load rejects module parameters' 'module must be an exact kernel module name' module_env module-load "$module_tuple" 'ip6_gre debug=1' MODULE-LOAD
+long_module=$(awk 'BEGIN { for (i = 0; i < 57; i++) printf "m" }')
+assert_rejected 'module-load rejects a name over 56 bytes' 'module name exceeds 56 bytes' module_env module-load "$module_tuple" "$long_module" MODULE-LOAD
+assert_rejected 'module-load requires its own confirmation' "confirmation must be exactly 'MODULE-LOAD'" module_env module-load "$module_tuple" ip6_gre SERVICE-RESTART
+assert_rejected 'module-load requires a module-load approval' "controller-approved action 'service-restart' does not match requested action 'module-load'" \
+	module_env service-restart "$module_tuple" ip6_gre MODULE-LOAD
+assert_rejected 'module-load approval is bound to the exact module' 'controller-approved module request does not exactly match the requested tuple' \
+	module_env module-load "$module_tuple" gre MODULE-LOAD
+
+# sriov-reprovision: exact PF and approved VF count, its own confirmation, action and tuple binding.
+sriov_env() {
+	env BREAKGLASS_NODE_NAME=node-a BREAKGLASS_OPERATION_ID=op-a BREAKGLASS_RECORDING_ID=record-a \
+		BREAKGLASS_APPROVAL_ID=approval-a BREAKGLASS_APPROVED_ACTION="$1" \
+		BREAKGLASS_APPROVED_SRIOV_REQUEST="$2" "$sriov_reprovision" \
+		--target-node node-a --interface "$3" --virtual-functions "$4" --evidence-dir /evidence --confirm "$5"
+}
+sriov_tuple='target_node=node-a&interface=ens1f0&virtual_functions=8&confirmation=SRIOV-REPROVISION'
+assert_rejected 'sriov-reprovision rejects an interface with unsupported characters' 'interface contains unsupported characters' \
+	sriov_env sriov-reprovision "$sriov_tuple" 'ens1f0 x' 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a dot PF' "interface '..' is not a PF name" sriov_env sriov-reprovision "$sriov_tuple" .. 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects an option-like PF' "interface '-h' is not a PF name" sriov_env sriov-reprovision "$sriov_tuple" -h 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a zero VF count' 'must be a positive integer' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 0 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects a leading zero' 'must be a positive integer' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 08 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects more than 256 VFs' 'must not exceed 256' sriov_env sriov-reprovision "$sriov_tuple" ens1f0 257 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision requires its own confirmation' "confirmation must be exactly 'SRIOV-REPROVISION'" \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f0 8 SERVICE-RESTART
+assert_rejected 'sriov-reprovision requires a sriov-reprovision approval' "controller-approved action 'service-restart' does not match requested action 'sriov-reprovision'" \
+	sriov_env service-restart "$sriov_tuple" ens1f0 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision approval is bound to the exact PF' 'controller-approved SR-IOV request does not exactly match the requested tuple' \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f1 8 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision approval is bound to the exact VF count' 'controller-approved SR-IOV request does not exactly match the requested tuple' \
+	sriov_env sriov-reprovision "$sriov_tuple" ens1f0 4 SRIOV-REPROVISION
+assert_rejected 'sriov-reprovision rejects duplicate options' '--interface may be supplied only once' \
+	"$sriov_reprovision" --target-node node-a --interface ens1f0 --interface ens1f1 --virtual-functions 8 \
+	--evidence-dir /evidence --confirm SRIOV-REPROVISION
 
 printf 'PASS: node-maintenance fast behavioral guards completed\n'

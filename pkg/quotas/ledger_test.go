@@ -360,3 +360,59 @@ func TestLazyPruneDoesNotFreeUnreadableReservation(t *testing.T) {
 	require.Contains(t, state.Entries, old.UID)
 	require.NotContains(t, state.Entries, "candidate")
 }
+
+// TestBootstrapAddsScopesToRecordedReservation covers a session that an older
+// controller reserved and that is no longer admitted again: the bootstrap
+// re-derives it, and the ledger records the added scope so that it counts
+// against other sessions. A re-derived entry that drops a scope is ignored.
+func TestBootstrapAddsScopesToRecordedReservation(t *testing.T) {
+	store := testStore(t)
+	old := Entry{Kind: "Session", Namespace: "sessions", Name: "one", UID: "one", Scopes: []string{"total"}}
+	require.NoError(t, store.Reserve(t.Context(), old, map[string]int32{"total": 5}, noLegacy, alwaysLive))
+	dropping := func(context.Context, map[string]Entry) ([]Entry, error) {
+		e := old
+		e.Scopes = []string{"per-cluster"}
+		return []Entry{e}, nil
+	}
+	free := Entry{Kind: "Session", Namespace: "sessions", Name: "free", UID: "free", Scopes: []string{"total"}}
+	require.NoError(t, store.Reserve(t.Context(), free, map[string]int32{"total": 5}, dropping, alwaysLive))
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, store.Reader.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: ledgerName}, cm))
+	var state ledger
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	require.Equal(t, []string{"total"}, state.Entries["one"].Scopes)
+
+	upgraded := func(context.Context, map[string]Entry) ([]Entry, error) {
+		e := old
+		e.Scopes = []string{"total", "per-cluster"}
+		return []Entry{e}, nil
+	}
+	other := Entry{Kind: "Session", Namespace: "sessions", Name: "two", UID: "two", Scopes: []string{"total", "per-cluster"}}
+	require.ErrorIs(t, store.Reserve(t.Context(), other, map[string]int32{"total": 5, "per-cluster": 1}, upgraded, alwaysLive), ErrFull)
+	require.NoError(t, store.Reader.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: ledgerName}, cm))
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	require.Equal(t, []string{"total"}, state.Entries["one"].Scopes, "a refused reservation does not write the ledger")
+}
+
+// TestReservationAcceptsScopesAddedByUpgrade covers a session reserved by an
+// older controller: a newer one may derive more scopes for the same UID, but
+// never fewer.
+func TestReservationAcceptsScopesAddedByUpgrade(t *testing.T) {
+	store := testStore(t)
+	old := Entry{Kind: "Session", Namespace: "sessions", Name: "one", UID: "one", Scopes: []string{"total"}}
+	require.NoError(t, store.Reserve(t.Context(), old, map[string]int32{"total": 1}, noLegacy, alwaysLive))
+	upgraded := old
+	upgraded.Scopes = []string{"total", "per-cluster"}
+	require.NoError(t, store.Reserve(t.Context(), upgraded, map[string]int32{"total": 1, "per-cluster": 1}, noLegacy, alwaysLive))
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, store.Reader.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: ledgerName}, cm))
+	var state ledger
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	require.Equal(t, []string{"total", "per-cluster"}, state.Entries["one"].Scopes)
+	// The recorded scope now counts against other sessions.
+	other := Entry{Kind: "Session", Namespace: "sessions", Name: "two", UID: "two", Scopes: []string{"per-cluster"}}
+	require.ErrorIs(t, store.Reserve(t.Context(), other, map[string]int32{"per-cluster": 1}, noLegacy, alwaysLive), ErrFull)
+	dropped := old
+	dropped.Scopes = []string{"per-cluster"}
+	require.ErrorContains(t, store.Reserve(t.Context(), dropped, nil, noLegacy, alwaysLive), "quota scopes changed")
+}

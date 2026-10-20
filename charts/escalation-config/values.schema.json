@@ -622,6 +622,10 @@
             },
             "type": "object"
           },
+          "maxActiveSessionsPerCluster": {
+            "minimum": 1,
+            "type": "integer"
+          },
           "maxActiveSessionsPerUser": {
             "minimum": 1,
             "type": "integer"

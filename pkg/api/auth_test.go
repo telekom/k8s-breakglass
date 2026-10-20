@@ -20,6 +20,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	upstreamoidc "github.com/telekom/k8s-breakglass/pkg/oidc"
 	"go.uber.org/zap/zaptest"
@@ -235,19 +236,19 @@ func TestAuthHandler_MiddlewareErrorResponses(t *testing.T) {
 		{
 			name:         "No Bearer token error",
 			authHeader:   "Basic test",
-			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED"}`,
+			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED","cid":"cid-1"}`,
 		},
 		{
 			name:         "Empty header error",
 			authHeader:   "",
-			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED"}`,
+			expectedBody: `{"error":"No Bearer token provided in Authorization header","code":"UNAUTHORIZED","cid":"cid-1"}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			router := gin.New()
-			router.Use(authHandler.Middleware())
+			router.Use(func(c *gin.Context) { c.Set(apiresponses.CIDKey, "cid-1") }, authHandler.Middleware())
 			router.GET("/test", func(c *gin.Context) {
 				c.JSON(http.StatusOK, gin.H{"status": "ok"})
 			})

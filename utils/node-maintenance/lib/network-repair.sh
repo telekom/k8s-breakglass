@@ -108,6 +108,34 @@ case "$action" in
 	*) die "action '$action' is not allowlisted" ;;
 esac
 
+# stacked_devices prints the interface and every device above it (the
+# transitive upper_* links in sysfs: bond, VLAN, bridge, VRF, macvlan).
+stacked_devices() {
+	stack_pending=$1
+	stack_seen=
+	while [ -n "$stack_pending" ]; do
+		# Kernel interface names contain no whitespace, but may contain glob
+		# characters: split the list without pathname expansion.
+		set -f
+		# shellcheck disable=SC2086
+		set -- $stack_pending
+		set +f
+		stack_device=$1
+		shift
+		stack_pending=$*
+		case " $stack_seen " in *" $stack_device "*) continue ;; esac
+		stack_seen="$stack_seen $stack_device"
+		for stack_upper in "/sys/class/net/$stack_device"/upper_*; do
+			[ -e "$stack_upper" ] || continue
+			stack_pending="$stack_pending ${stack_upper##*/upper_}"
+		done
+	done
+	set -f
+	# shellcheck disable=SC2086
+	printf '%s\n' $stack_seen
+	set +f
+}
+
 validate_recording_context
 validate_approved_action "$action"
 validate_approved_network_request "$target_node" "$interface" "$action" "$neighbor_address" "$bridge_name" "$entry_mac" "$vlan" "$confirmation" "$vrf" "$dry_run"
@@ -137,6 +165,31 @@ fi
 interface_ifindex=$(pin_interface_ifindex "$interface")
 capture "$bundle/before-addresses.txt" ip -brief address show dev "$interface" || true
 capture "$bundle/before-routes.txt" ip route show dev "$interface" || true
+case "$action" in
+	link-cycle|restart-autonegotiation)
+		# Dropping the carrier of a device that a default route uses cuts the
+		# node off. Check the interface and every device stacked on it (bond,
+		# VLAN, bridge, VRF), in every routing table, including the nexthops of
+		# multipath routes (`ip -o` prints them on the route's line).
+		guarded=$(stacked_devices "$interface")
+		set -f
+		for family in 4 6; do
+			[ "$family" = 4 ] || [ -e /proc/net/if_inet6 ] || continue
+			routes="$bundle/before-default-routes-ipv$family.txt"
+			if ! capture "$routes" ip -o "-$family" route show table all type unicast default; then
+				record_event operation-completed preflight-failed
+				die "could not capture the IPv$family default routes; no repair was attempted (evidence: $bundle)"
+			fi
+			for guarded_device in $guarded; do
+				if sed 's/$/ /' "$routes" | grep -F " dev $guarded_device " >/dev/null; then
+					record_event operation-completed preflight-failed
+					die "interface '$interface' carries a default route (through '$guarded_device'); a link action would cut the node off, no repair was attempted (evidence: $bundle)"
+				fi
+			done
+		done
+		set +f
+		;;
+esac
 capture "$bundle/before-neighbors.txt" ip neigh show dev "$interface" || true
 
 case "$action" in

@@ -452,10 +452,17 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
 	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
-	// Validate the request
-	capabilities := extractCapabilities(req.SecurityContext)
-	runAsNonRoot := extractRunAsNonRoot(req.SecurityContext)
-	privileged := extractPrivileged(req.SecurityContext)
+	// Validate the request with the template security context applied, so the
+	// early answer matches the authoritative check in InjectEphemeralContainer.
+	securityContext, err := effectiveEphemeralSecurityContext(session, req.SecurityContext)
+	if err != nil {
+		reqLog.Errorw("Failed to apply template security context", "error", err)
+		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate ephemeral container request")
+		return
+	}
+	capabilities := extractCapabilities(securityContext)
+	runAsNonRoot := extractRunAsNonRoot(securityContext)
+	privileged := extractPrivileged(securityContext)
 	if err := handler.ValidateEphemeralContainerRequest(apiCtx, session, req.Namespace, req.PodName, req.Image, capabilities, runAsNonRoot, privileged); err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to validate ephemeral container request", "error", err)
@@ -465,13 +472,13 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
-	if err := validateEphemeralContainerSecurityContext(req.SecurityContext, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers); err != nil {
+	if err := validateEphemeralContainerSecurityContext(securityContext, session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers); err != nil {
 		respondKubectlDebugOperationError(ctx, err, "failed to validate ephemeral container request")
 		return
 	}
 
 	// Inject the ephemeral container
-	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, req.SecurityContext, username); err != nil {
+	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, securityContext, username); err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
 		} else {
@@ -879,7 +886,7 @@ func extractPrivileged(sc *corev1.SecurityContext) bool {
 
 // checkBindingSessionLimits verifies that creating a new session won't exceed the binding's session limits.
 // Returns nil if the session can be created, or an error describing the limit violation.
-func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, identity debugSessionReadIdentity) error {
+func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Context, binding *breakglassv1alpha1.DebugSessionClusterBinding, cluster string, identity debugSessionReadIdentity) error {
 	if binding == nil {
 		return nil
 	}
@@ -893,6 +900,7 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	// Count active sessions for this binding
 	var totalActive int32
 	var userActive int32
+	var clusterActive int32
 	now := time.Now()
 	for i := range sessionList.Items {
 		session := &sessionList.Items[i]
@@ -912,6 +920,9 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 		}
 
 		totalActive++
+		if session.Spec.Cluster == cluster {
+			clusterActive++
+		}
 		if debugSessionIdentityMatches(identity, session.Spec.RequestedBy, session.Spec.RequestedByEmail) {
 			userActive++
 		}
@@ -928,6 +939,13 @@ func (c *DebugSessionAPIController) checkBindingSessionLimits(ctx context.Contex
 	if binding.Spec.MaxActiveSessionsTotal != nil {
 		if totalActive >= *binding.Spec.MaxActiveSessionsTotal {
 			return fmt.Errorf("session limit reached: maximum %d total active sessions allowed via this binding", *binding.Spec.MaxActiveSessionsTotal)
+		}
+	}
+
+	// Check per-cluster limit
+	if binding.Spec.MaxActiveSessionsPerCluster != nil {
+		if clusterActive >= *binding.Spec.MaxActiveSessionsPerCluster {
+			return fmt.Errorf("session limit reached: maximum %d active sessions per cluster allowed via this binding on cluster %q", *binding.Spec.MaxActiveSessionsPerCluster, cluster)
 		}
 	}
 

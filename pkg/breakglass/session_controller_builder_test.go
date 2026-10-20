@@ -729,4 +729,6 @@ func TestEmitSessionAuditEvent_WithAuditService(t *testing.T) {
 	assert.Equal(t, "test-ns", events[0].Target.Namespace)
 	assert.Equal(t, "production", events[0].Target.Cluster)
 	assert.Equal(t, "approver@example.com", events[0].Actor.User)
+	// Chat notifications name the requester from Details, never the approver actor.
+	assert.Equal(t, "requester@example.com", events[0].Details["user"])
 }

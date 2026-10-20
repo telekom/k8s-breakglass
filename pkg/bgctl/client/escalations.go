@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -48,7 +49,10 @@ func (e *EscalationService) ListClusters(ctx context.Context) ([]string, error) 
 	clusterSet := make(map[string]struct{})
 	for _, esc := range escs {
 		for _, cluster := range esc.Spec.Allowed.Clusters {
-			clusterSet[cluster] = struct{}{}
+			// A pattern such as "*" is not a session target.
+			if !strings.ContainsAny(cluster, "*?[") {
+				clusterSet[cluster] = struct{}{}
+			}
 		}
 	}
 	clusters := make([]string, 0, len(clusterSet))

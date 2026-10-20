@@ -216,6 +216,100 @@ func TestDebugQuotaScopesAcrossNamespacesAndBindings(t *testing.T) {
 	}
 }
 
+// TestDebugQuotaPerClusterScope proves maxActiveSessionsPerCluster: sessions via one
+// binding run in parallel on different clusters, a second one on the same cluster is refused.
+func TestDebugQuotaPerClusterScope(t *testing.T) {
+	one := int32(1)
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "bindings", UID: "binding-uid"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{MaxActiveSessionsPerCluster: &one}}
+	candidate := func(name, cluster string) *breakglassv1alpha1.DebugSession {
+		return &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "sessions", UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: cluster, TemplateRef: template.Name, RequestedBy: name, BindingRef: &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}}}
+	}
+	a, b, c := candidate("on-a", "cluster-a"), candidate("on-b", "cluster-b"), candidate("second-on-a", "cluster-a")
+	// The scope exists even without the limit, so setting the limit later does
+	// not change the scopes of reserved sessions.
+	unlimited := binding.DeepCopy()
+	unlimited.Spec.MaxActiveSessionsPerCluster = nil
+	entry, limits, _, err := debugQuotaPolicyForObjects(a, template, unlimited)
+	require.NoError(t, err)
+	assert.Contains(t, entry.Scopes, debugQuotaScope("debug-binding-cluster", "binding-uid", "cluster-a"))
+	assert.NotContains(t, limits, debugQuotaScope("debug-binding-cluster", "binding-uid", "cluster-a"))
+	// Sessions arrive one at a time, as the API creates them.
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding).Build()
+	ctrl := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+	for _, s := range []*breakglassv1alpha1.DebugSession{a, b} {
+		require.NoError(t, cli.Create(t.Context(), s))
+		require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(s), s))
+		require.NoError(t, ctrl.admitDebugSession(t.Context(), s), s.Name)
+	}
+	require.NoError(t, cli.Create(t.Context(), c))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(c), c))
+	require.ErrorIs(t, ctrl.admitDebugSession(t.Context(), c), quotas.ErrFull)
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(c), c))
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, c.Status.State)
+}
+
+// TestDebugQuotaAddsPerClusterScopeToOlderReservation covers the upgrade: a
+// session that an older controller reserved without the per-cluster scope
+// still counts against the per-cluster limit of its binding.
+func TestDebugQuotaAddsPerClusterScopeToOlderReservation(t *testing.T) {
+	one := int32(1)
+	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template-uid"}}
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "binding", Namespace: "bindings", UID: "binding-uid"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{MaxActiveSessionsPerCluster: &one}}
+	candidate := func(name string) *breakglassv1alpha1.DebugSession {
+		return &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "sessions", UID: types.UID(name), Annotations: map[string]string{quotas.AdmissionAnnotation: quotas.Pending}}, Spec: breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster-a", TemplateRef: template.Name, RequestedBy: name, BindingRef: &breakglassv1alpha1.BindingReference{Name: binding.Name, Namespace: binding.Namespace}}}
+	}
+	older, second := candidate("older"), candidate("second")
+	cli := fake.NewClientBuilder().WithScheme(Scheme).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).WithObjects(template, binding).Build()
+	ctrl := NewDebugSessionController(zap.NewNop().Sugar(), cli, nil).WithAPIReader(cli).WithQuotaNamespace("controller")
+	require.NoError(t, cli.Create(t.Context(), older))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(older), older))
+	require.NoError(t, ctrl.admitDebugSession(t.Context(), older))
+
+	// Rewrite the reservation as an older controller recorded it: without
+	// the per-cluster scope.
+	perCluster := debugQuotaScope("debug-binding-cluster", "binding-uid", "cluster-a")
+	cm := &corev1.ConfigMap{}
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: "breakglass-session-quota-v1"}, cm))
+	var state struct {
+		Version int                     `json:"version"`
+		Entries map[string]quotas.Entry `json:"entries"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	entry := state.Entries["older"]
+	require.Contains(t, entry.Scopes, perCluster)
+	var scopes []string
+	for _, scope := range entry.Scopes {
+		if scope != perCluster {
+			scopes = append(scopes, scope)
+		}
+	}
+	entry.Scopes = scopes
+	state.Entries["older"] = entry
+	raw, err := json.Marshal(state)
+	require.NoError(t, err)
+	cm.Data["ledger"] = string(raw)
+	require.NoError(t, cli.Update(t.Context(), cm))
+
+	require.NoError(t, cli.Create(t.Context(), second))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(second), second))
+	require.ErrorIs(t, ctrl.admitDebugSession(t.Context(), second), quotas.ErrFull)
+
+	// A reserved session whose binding is gone keeps its recorded entry and
+	// does not block admission through another binding.
+	require.NoError(t, cli.Delete(t.Context(), binding))
+	other := &breakglassv1alpha1.DebugSessionClusterBinding{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "bindings", UID: "other-uid"}, Spec: breakglassv1alpha1.DebugSessionClusterBindingSpec{MaxActiveSessionsPerCluster: &one}}
+	require.NoError(t, cli.Create(t.Context(), other))
+	third := candidate("third")
+	third.Spec.BindingRef = &breakglassv1alpha1.BindingReference{Name: other.Name, Namespace: other.Namespace}
+	require.NoError(t, cli.Create(t.Context(), third))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKeyFromObject(third), third))
+	require.NoError(t, ctrl.admitDebugSession(t.Context(), third))
+	require.NoError(t, cli.Get(t.Context(), client.ObjectKey{Namespace: "controller", Name: "breakglass-session-quota-v1"}, cm))
+	require.NoError(t, json.Unmarshal([]byte(cm.Data["ledger"]), &state))
+	assert.Equal(t, scopes, state.Entries["older"].Scopes)
+}
+
 func TestDebugQuotaBootstrapsLegacyResolvedBinding(t *testing.T) {
 	one := int32(1)
 	template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "template", UID: "template"}}

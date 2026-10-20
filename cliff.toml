@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# git-cliff configuration for k8s-breakglass
+# https://git-cliff.org/docs/configuration
+#
+# hack/changelog.py reads the commits that these parsers group (git-cliff
+# --context) and writes the release sections of CHANGELOG.md. The group names
+# are the section headings in CHANGELOG.md. The body template below is only
+# for a plain `git cliff` run.
+
+[changelog]
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group }}
+{% for commit in commits %}
+- {% if commit.scope %}{{ commit.scope }}: {% endif %}{{ commit.message }}
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+split_commits = false
+commit_parsers = [
+    { message = "^[a-z]+(\\([^)]*\\))?!:", group = "Breaking changes" },
+    # Dependabot titles: deps(go), deps(npm), ci(deps), chore(deps).
+    { message = "^deps", group = "Dependencies" },
+    { message = "^[a-z]+\\(deps[^)]*\\)", group = "Dependencies" },
+    { message = "^(chore|style)", skip = true },
+    { message = "^revert", group = "Reverts" },
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Fixes" },
+    { message = "^perf", group = "Performance" },
+    { message = "^docs", group = "Docs" },
+    { message = "^(build|ci|test)", group = "CI, build and tests" },
+    { message = "^refactor", group = "Maintenance" },
+]
+filter_commits = true
+tag_pattern = "v[0-9].*"
+sort_commits = "oldest"

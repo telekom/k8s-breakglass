@@ -209,6 +209,35 @@ describe("BreakglassView", () => {
       },
     );
 
+    it("requests a pattern escalation for the cluster picked on its card", async () => {
+      mockGetBreakglasses.mockResolvedValue([
+        {
+          escalationName: "global",
+          from: "ops",
+          to: "admin",
+          cluster: "",
+          clusterOptions: ["prod-a", "prod-b"],
+          duration: 3600,
+          selfApproval: true,
+          approvalGroups: [],
+          group: "admin",
+          expiry: 0,
+          state: "Available",
+        },
+      ]);
+      const wrapper = await createWrapper();
+      const card = wrapper.findComponent({ name: "BreakglassCard" });
+      await card.vm.$emit("request", "Incident repair", 3600, null, "", "prod-b");
+      await flushPromises();
+      expect(mockRequestBreakglass).toHaveBeenCalledWith(
+        expect.objectContaining({ escalationName: "global", cluster: "prod-b" }),
+        "Incident repair",
+        3600,
+        undefined,
+        "",
+      );
+    });
+
     it("offers distinct policies for the same cluster and grant, while merging requester groups within one policy", async () => {
       mockGetBreakglasses.mockResolvedValueOnce([
         { escalationName: "firstline", cluster: "prod", to: "emergency", from: "fixed-core" },

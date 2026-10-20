@@ -15,6 +15,7 @@ package v1alpha1
 // It deliberately has no command, environment, capability or shell overrides.
 type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// action is the one executor operation enabled by this profile.
+	// link-cycle and restart-autonegotiation act on the exact interface only.
 	Action *string `json:"action,omitempty"`
 	// image must be an immutable node-maintenance helper image.
 	Image *string `json:"image,omitempty"`
@@ -23,10 +24,15 @@ type DebugSessionNodeMaintenanceApplyConfiguration struct {
 	// dryRun makes every session of this profile a preview: the executor runs
 	// the same exact tuple preflight and records the entry it would replace,
 	// but has no NET_ADMIN capability and never mutates the kernel table.
+	// link-cycle and restart-autonegotiation have no preview and reject it.
 	DryRun *bool `json:"dryRun,omitempty"`
 	// kexec pins the provider recovery bundle for a kexec-recovery profile.
 	// It is required for kexec-recovery and forbidden for every other action.
 	Kexec *NodeMaintenanceKexecApplyConfiguration `json:"kexec,omitempty"`
+	// service bounds a drained host action that runs through systemd. It is
+	// required for service-restart and sriov-reprovision and forbidden for
+	// every other action.
+	Service *NodeMaintenanceServiceApplyConfiguration `json:"service,omitempty"`
 }
 
 // DebugSessionNodeMaintenanceApplyConfiguration constructs a declarative configuration of the DebugSessionNodeMaintenance type for use with
@@ -77,5 +83,13 @@ func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithDryRun(value bool) *
 // If called multiple times, the Kexec field is set to the value of the last call.
 func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithKexec(value *NodeMaintenanceKexecApplyConfiguration) *DebugSessionNodeMaintenanceApplyConfiguration {
 	b.Kexec = value
+	return b
+}
+
+// WithService sets the Service field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Service field is set to the value of the last call.
+func (b *DebugSessionNodeMaintenanceApplyConfiguration) WithService(value *NodeMaintenanceServiceApplyConfiguration) *DebugSessionNodeMaintenanceApplyConfiguration {
+	b.Service = value
 	return b
 }

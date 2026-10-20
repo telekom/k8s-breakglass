@@ -461,6 +461,67 @@ Ephemeral containers cannot mount volumes, so `kubectl debug` sessions and
 templates without a workload, such as node-maintenance templates, show the
 MOTD in the UI only.
 
+### Toolbox image volume
+
+Templates may set `spec.toolbox` to put an administrator-chosen, read-only OCI
+image with runbooks, helper scripts and CLIs into the session's interactive
+containers:
+
+```yaml
+spec:
+  toolbox:
+    image: registry.example/breakglass-toolbox@sha256:<64 hex>
+    mountPath: /opt/breakglass/toolbox   # default
+```
+
+`image` must be digest-pinned. `mountPath` is an absolute path without `.` or
+`..` segments. The controller mounts the image as a Kubernetes
+[image volume](https://kubernetes.io/docs/concepts/storage/volumes/#image)
+(`pullPolicy: IfNotPresent`, read-only) and exports the path as
+`BREAKGLASS_TOOLBOX` into:
+
+- every regular container of workload sessions (Pod, DaemonSet, Deployment or
+  Job), from the template;
+- the node debug container and the pod-copy `debugger` container, from the
+  session's approved template snapshot. Copied application containers stay
+  unchanged.
+
+Init containers, ephemeral containers (`kubectl debug`; they cannot add
+volumes) and templates without a workload get no toolbox. A container that
+already mounts something at the toolbox path keeps its own mount, and a
+template volume named `breakglass-toolbox` is kept (the controller then uses
+`breakglass-toolbox-1`). Requesters cannot change the image or path.
+
+Image volumes need the `ImageVolume` API on the target cluster: beta and on by
+default from Kubernetes 1.35, GA from 1.36; on 1.31-1.34 the feature gate must
+be enabled on the API server and every kubelet. The container runtime must
+support image volumes (containerd 2.1 or later, CRI-O 1.31 or later). On a
+1.31-1.34 API server with the feature gate off, the API server drops the volume
+and its mounts when the pod is created, so the session starts without the
+toolbox; `BREAKGLASS_TOOLBOX` is still set, so scripts should test
+`[ -d "$BREAKGLASS_TOOLBOX" ]`. API servers older than 1.31 do not know the
+`image` volume type and reject the pod, so the session fails to start: do not
+set `spec.toolbox` on templates for such clusters. Restricted catalogue
+profiles reject `spec.toolbox`.
+
+The node pulls the toolbox image like a container image, with the pod's
+`imagePullSecrets` or node-level credentials. Node debug pods get no pull
+secrets from Breakglass and pod copies keep those of the source pod, so use a
+registry that every node can pull from; a failed pull keeps the debug pod in
+`ContainerCreating`. The mount path must not be at or below `/proc`, `/sys`,
+`/dev`, `/host`, `/etc/breakglass-motd`, `/var/run/secrets` or `/run/secrets`.
+In a node debug session, use `$BREAKGLASS_TOOLBOX` before `chroot /host`: the
+toolbox is not visible inside the chroot.
+
+Admission
+policies that restrict volume types must allow `image` volumes; policies that
+restrict image registries should also check `volumes[].image.reference`.
+Kubernetes mounts image volumes read-only but does not promise `noexec`: on
+containerd, binaries run from the mount; other runtimes may block execution.
+Only put content in the image that session users may run. The node keeps the image in its cache after
+the session ends; never put secrets in it. This is separate from the
+documentation-only [OCI runbook bundle](runbook-bundle-contract.md) contract.
+
 ## Allowed Pod Operations
 
 The `allowedPodOperations` field controls which kubectl operations are permitted on debug session pods. This enables fine-grained access control for different use cases.
@@ -1246,13 +1307,18 @@ Both pod templates and auxiliary resources support multi-document YAML for creat
 - **Constraint overrides**: Customize durations, namespaces, and approval requirements per cluster
 - **Impersonation**: Deploy debug pods using a constrained ServiceAccount
 
-When a request omits `bindingRef`, the API can still default to an applicable
-binding for the target cluster. If the selected binding has non-empty
-`spec.allowed.users` or `spec.allowed.groups`, those requester rules replace
-the template requester allowlist for that matched cluster. A caller who is
-allowed by the template but not by the selected binding is rejected instead of
-receiving that binding's constraints, labels, approvers, or impersonation
-settings. Bindings that omit `spec.allowed`, or set it without users or groups,
+When a request omits `bindingRef`, the API defaults to the first binding that
+grants the target cluster and allows the requester (visible bindings before
+hidden ones, each in namespace and then name order), and stores it as the
+session's `spec.bindingRef`. A binding with non-empty `spec.allowed.users` or
+`spec.allowed.groups` allows only those requesters; those rules replace the
+template requester allowlist for that cluster. So with one first-line binding
+and one onboarding binding for the same template and cluster, each requester
+gets the binding that allows them. If no binding for the cluster allows the
+requester, the request is rejected with 403, also when the template itself
+allows the cluster and the requester: bindings that grant a cluster own its
+requester rules. A caller is never given another binding's constraints,
+labels, approvers, or impersonation settings. Bindings that omit `spec.allowed`, or set it without users or groups,
 still inherit the template requester allowlist.
 
 ### Basic Binding
@@ -1394,6 +1460,53 @@ Prefer one reviewed digest per template and set `requireImageDigest: true`.
 When `allowPrivileged` is `false`, requests with
 `securityContext.privileged: true` are rejected. The template's allowlist is
 not a reason to expose image or command selection to an untrusted caller.
+
+#### Template security context
+
+Clients such as `kubectl debug` profiles do not set every field that
+cluster admission policies require, for example `readOnlyRootFilesystem`.
+Set `securityContext` on the template to enforce such fields:
+
+```yaml
+kubectlDebug:
+  ephemeralContainers:
+    enabled: true
+    securityContext:
+      readOnlyRootFilesystem: true
+  podCopy:
+    enabled: true
+    securityContext:
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+```
+
+- `ephemeralContainers.securityContext`: every top-level field set here
+  replaces the requested value as a whole. Objects are not merged: a template
+  `capabilities` or `seccompProfile` replaces the requested one completely, so a
+  template `capabilities: {drop: [ALL]}` also removes a requested
+  `capabilities.add`. Fields not set here keep the request value, so a request
+  can still add, for example, `runAsUser: 0` and `NET_RAW` when the template
+  allows them. The controller validates the result against `allowPrivileged`,
+  `maxCapabilities` and `requireNonRoot`. The CRD rejects a template
+  `securityContext` that sets `privileged` or `allowPrivilegeEscalation` without
+  `allowPrivileged`, and `runAsUser: 0` or `runAsNonRoot: false` while
+  `requireNonRoot` is true.
+- `podCopy.securityContext`: set on the `debugger` container that the controller
+  adds to the copy. The copied application containers keep their own security
+  context. Without it, the debugger has no security context and policies that
+  require one reject the copy. The CRD rejects `privileged: true` and Windows
+  host process settings here; every other field is applied as written and is
+  the template author's responsibility.
+
+Both fields are optional. When they are unset, the behavior is unchanged. To
+roll back, remove the field from the template; new requests then use the
+previous behavior. Already injected ephemeral containers and existing copies
+keep the security context they were created with.
 
 #### Namespace Filtering with Labels
 

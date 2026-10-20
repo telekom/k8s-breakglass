@@ -370,3 +370,47 @@ func TestRespondUnprocessableEntity(t *testing.T) {
 	assert.Equal(t, "Invalid field value", resp.Error)
 	assert.Equal(t, "UNPROCESSABLE_ENTITY", resp.Code)
 }
+
+func TestRespondTooManyRequestsWithAuthState(t *testing.T) {
+	tests := []struct {
+		name          string
+		message       string
+		authenticated bool
+		expected      string
+	}{
+		{
+			name:          "authenticated custom message",
+			message:       "rate limit exceeded",
+			authenticated: true,
+			expected:      "rate limit exceeded",
+		},
+		{
+			name:          "anonymous default message",
+			message:       "",
+			authenticated: false,
+			expected:      "too many requests",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+
+			RespondTooManyRequestsWithAuthState(c, tt.message, tt.authenticated)
+
+			assert.Equal(t, http.StatusTooManyRequests, w.Code)
+
+			var resp struct {
+				APIError
+				Authenticated *bool `json:"authenticated"`
+			}
+			err := json.Unmarshal(w.Body.Bytes(), &resp)
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, resp.Error)
+			assert.Equal(t, "TOO_MANY_REQUESTS", resp.Code)
+			require.NotNil(t, resp.Authenticated)
+			assert.Equal(t, tt.authenticated, *resp.Authenticated)
+		})
+	}
+}

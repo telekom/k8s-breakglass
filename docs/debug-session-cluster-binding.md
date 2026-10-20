@@ -307,11 +307,13 @@ Control the number of concurrent sessions:
 |-------|------|-------------|
 | `maxActiveSessionsPerUser` | int32 | Maximum active, non-expired sessions per requester via this binding. The requester username is always used, and email is matched when present. |
 | `maxActiveSessionsTotal` | int32 | Maximum total active, non-expired sessions via this binding |
+| `maxActiveSessionsPerCluster` | int32 | Maximum active, non-expired sessions via this binding on each target cluster. Sessions on different clusters do not count against each other. |
 
 ```yaml
 spec:
   maxActiveSessionsPerUser: 2  # Each user can have at most 2 active sessions
   maxActiveSessionsTotal: 10   # Total of 10 sessions across all users
+  maxActiveSessionsPerCluster: 1  # At most 1 session per target cluster
 ```
 
 ### UI Display Options
@@ -425,12 +427,15 @@ Override template notification settings:
 spec:
   notification:
     enabled: true
-    channels:
-      - email
-      - slack
-    recipients:
+    notifyOnRequest: true
+    notifyOnApproval: true
+    additionalRecipients:
       - security@example.com
 ```
+
+Notifications are sent by email. For Slack or Mattermost channel messages,
+configure an AuditConfig webhook sink with `payloadFormat: slack`; see
+[Chat Notifications](audit-config.md#chat-notifications-slack-and-mattermost).
 
 ## Status
 
@@ -697,7 +702,15 @@ flowchart TD
 
 ### Auto-Discovery Process
 
-When a debug session is created without an explicit `BindingRef`, the controller automatically searches for a matching binding:
+`POST /api/debugSessions` without `bindingRef` picks the binding before it
+creates the session: of the bindings that grant the template and cluster, it
+takes the first one whose requester rules (`spec.allowed`, or the template's
+when the binding sets none) allow the requester, visible bindings before
+hidden ones, each in namespace and then name order, and records it as
+`spec.bindingRef`. If none allows the requester, the request fails with 403,
+also when the template itself allows the cluster.
+
+When a `DebugSession` object is created directly without an explicit `BindingRef`, the controller automatically searches for a matching binding:
 
 1. **List all bindings** in the cluster
 2. **Filter disabled bindings** (skip any with `spec.disabled: true`)

@@ -332,6 +332,9 @@ func (c *DebugSessionAPIClient) JoinDebugSession(ctx context.Context, t *testing
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, fmt.Errorf("failed to join debug session: status=%d, body=%s", resp.StatusCode, string(body))
 	}
+	if err := requireUpdatedDebugSession(body, name); err != nil {
+		return resp.StatusCode, fmt.Errorf("join debug session: %w", err)
+	}
 
 	return resp.StatusCode, nil
 }
@@ -353,6 +356,9 @@ func (c *DebugSessionAPIClient) LeaveDebugSession(ctx context.Context, t *testin
 
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, fmt.Errorf("failed to leave debug session: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+	if err := requireUpdatedDebugSession(body, name); err != nil {
+		return resp.StatusCode, fmt.Errorf("leave debug session: %w", err)
 	}
 
 	return resp.StatusCode, nil
@@ -376,6 +382,9 @@ func (c *DebugSessionAPIClient) RenewDebugSession(ctx context.Context, t *testin
 
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, fmt.Errorf("failed to renew debug session: status=%d, body=%s", resp.StatusCode, string(body))
+	}
+	if err := requireUpdatedDebugSession(body, name); err != nil {
+		return resp.StatusCode, fmt.Errorf("renew debug session: %w", err)
 	}
 
 	return resp.StatusCode, nil
@@ -4652,4 +4661,17 @@ func TestDebugSessionClusterBindingAuthorization(t *testing.T) {
 		})
 		t.Logf("Session created via templateSelector binding: %s", session.Name)
 	})
+}
+
+// requireUpdatedDebugSession checks that a session mutation returned the
+// updated DebugSession, like approve and terminate do.
+func requireUpdatedDebugSession(body []byte, name string) error {
+	var session breakglassv1alpha1.DebugSession
+	if err := json.Unmarshal(body, &session); err != nil {
+		return fmt.Errorf("decode updated session: %w", err)
+	}
+	if session.Name != name {
+		return fmt.Errorf("response is not the updated session %q: %s", name, string(body))
+	}
+	return nil
 }

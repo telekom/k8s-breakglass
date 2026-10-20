@@ -229,6 +229,7 @@ The API error response includes the required groups:
 {
   "error": "extraDeployValues validation failed",
   "code": "BAD_REQUEST",
+  "cid": "6f1c2a4e-1d1b-4c69-9a7a-0c4b8c3f9e21",
   "details": "test[hostNetwork]: Forbidden: variable \"hostNetwork\" is restricted; requires membership in one of: [platform_poweruser infrastructure-admin]"
 }
 ```

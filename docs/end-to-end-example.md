@@ -483,37 +483,30 @@ spec:
           - "kafka-2.examplecorp.com:9092"
         topic: "breakglass-audit-events"
         sasl:
-          enabled: true
           mechanism: "SCRAM-SHA-512"
-          username: "breakglass-producer"
-          passwordRef:
+          credentialsSecretRef:
             name: kafka-credentials
             namespace: breakglass-system
-            key: password
         tls:
           enabled: true
-          insecureSkipVerify: false
     
-    # Webhook for real-time alerting
+    # Slack channel notifications for approvers (advisory, see docs/audit-config.md)
     - type: webhook
       name: slack-alerts
+      eventTypes:
+        - "session.requested"
+        - "session.approved"
+        - "session.denied"
+        - "session.expired"
       webhook:
         url: "https://hooks.slack.com/services/xxx/yyy/zzz"
-        headers:
-          Content-Type: "application/json"
-        # Filter to only critical events
-        eventFilter:
-          eventTypes:
-            - "session.termination_intent"
-            - "session.created"
-            - "session.approved"
-            - "session.rejected"
-            - "session.expired"
+        payloadFormat: slack
 ```
 
 ```bash
 kubectl create secret generic kafka-credentials \
   --namespace breakglass-system \
+  --from-literal=username="breakglass-producer" \
   --from-literal=password="kafka-password"
 
 kubectl apply -f audit-config.yaml

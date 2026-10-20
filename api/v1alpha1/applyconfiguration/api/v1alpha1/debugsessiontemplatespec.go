@@ -20,6 +20,9 @@ import (
 type DebugSessionTemplateSpecApplyConfiguration struct {
 	// nodeMaintenance enables a fixed, exact-tuple executor instead of a rendered Pod template.
 	NodeMaintenance *DebugSessionNodeMaintenanceApplyConfiguration `json:"nodeMaintenance,omitempty"`
+	// admissionRecipe enables a controller-executed, automatically reverted
+	// admission change (policy audit switch or webhook fail-open) instead of a workload.
+	AdmissionRecipe *DebugSessionAdmissionRecipeApplyConfiguration `json:"admissionRecipe,omitempty"`
 	// artifactCollection explicitly enables fixed diagnostic recipes for active participants.
 	ArtifactCollection *DebugSessionArtifactCollectionApplyConfiguration `json:"artifactCollection,omitempty"`
 	// displayName is a human-readable name for this template.
@@ -141,6 +144,9 @@ type DebugSessionTemplateSpecApplyConfiguration struct {
 	// motd replaces it. The effective motd is exported to every debug workload
 	// container as BREAKGLASS_MOTD and BREAKGLASS_RUNBOOK_URL.
 	MOTD *MessageOfTheDayApplyConfiguration `json:"motd,omitempty"`
+	// toolbox mounts a read-only OCI image with runbooks, helper scripts and
+	// CLIs into the interactive containers of the session.
+	Toolbox *DebugSessionToolboxApplyConfiguration `json:"toolbox,omitempty"`
 	// expirationBehavior controls what happens when a session expires.
 	// "notify-only" is a deprecated alias that requests an expiry notification;
 	// it still expires the session, revokes access, and starts resource cleanup.
@@ -165,6 +171,14 @@ func DebugSessionTemplateSpec() *DebugSessionTemplateSpecApplyConfiguration {
 // If called multiple times, the NodeMaintenance field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithNodeMaintenance(value *DebugSessionNodeMaintenanceApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.NodeMaintenance = value
+	return b
+}
+
+// WithAdmissionRecipe sets the AdmissionRecipe field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the AdmissionRecipe field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithAdmissionRecipe(value *DebugSessionAdmissionRecipeApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.AdmissionRecipe = value
 	return b
 }
 
@@ -525,6 +539,14 @@ func (b *DebugSessionTemplateSpecApplyConfiguration) WithDeprecationMessage(valu
 // If called multiple times, the MOTD field is set to the value of the last call.
 func (b *DebugSessionTemplateSpecApplyConfiguration) WithMOTD(value *MessageOfTheDayApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
 	b.MOTD = value
+	return b
+}
+
+// WithToolbox sets the Toolbox field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Toolbox field is set to the value of the last call.
+func (b *DebugSessionTemplateSpecApplyConfiguration) WithToolbox(value *DebugSessionToolboxApplyConfiguration) *DebugSessionTemplateSpecApplyConfiguration {
+	b.Toolbox = value
 	return b
 }
 

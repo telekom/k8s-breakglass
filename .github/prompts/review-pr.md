@@ -19,7 +19,7 @@ You are reviewing a pull request for k8s-breakglass. Check for:
 - [ ] SPDX headers on all new files
 
 ## Documentation
-- [ ] CHANGELOG.md updated for user-facing changes
+- [ ] CHANGELOG.md not edited; `changes/` fragment for upgrade notes, breaking or behaviour changes
 - [ ] API reference updated if endpoints changed
 - [ ] Helm chart values documented if config added
 - [ ] Frontend docs updated if UI changed

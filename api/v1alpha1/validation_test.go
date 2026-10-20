@@ -4725,3 +4725,50 @@ spec:
 func jsonRawPtr(raw string) *apiextensionsv1.JSON {
 	return &apiextensionsv1.JSON{Raw: []byte(raw)}
 }
+
+func TestValidateAuditConfig_SlackWebhookSink(t *testing.T) {
+	slack := func(mutate func(*AuditSinkConfig)) *AuditConfig {
+		sink := AuditSinkConfig{
+			Name:       "chat",
+			Type:       AuditSinkTypeWebhook,
+			EventTypes: []string{"session.requested"},
+			Webhook:    &WebhookSinkSpec{URL: "https://hooks.example.com/x", PayloadFormat: WebhookPayloadFormatSlack},
+		}
+		mutate(&sink)
+		return &AuditConfig{ObjectMeta: metav1.ObjectMeta{Name: "test"}, Spec: AuditConfigSpec{Sinks: []AuditSinkConfig{sink}}}
+	}
+
+	result := ValidateAuditConfig(slack(func(*AuditSinkConfig) {}))
+	assert.True(t, result.IsValid())
+	assert.Empty(t, result.Warnings)
+
+	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) { s.Webhook.BatchURL = "https://hooks.example.com/batch" }))
+	assert.False(t, result.IsValid())
+	assert.Contains(t, result.ErrorMessage(), "batchUrl")
+
+	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) { s.Webhook.BatchSize = 10 }))
+	assert.False(t, result.IsValid())
+	assert.Contains(t, result.ErrorMessage(), "batchSize")
+
+	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) { s.Webhook.BatchSize = 1 }))
+	assert.True(t, result.IsValid())
+
+	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) { s.EventTypes = nil }))
+	assert.True(t, result.IsValid())
+	require.Len(t, result.Warnings, 1)
+	assert.Contains(t, result.Warnings[0], "eventTypes")
+
+	narrowed := slack(func(s *AuditSinkConfig) { s.EventTypes = nil })
+	narrowed.Spec.Filtering = &AuditFilterConfig{IncludeEventTypes: []string{"session.requested"}}
+	result = ValidateAuditConfig(narrowed)
+	assert.True(t, result.IsValid())
+	assert.Empty(t, result.Warnings, "a global include filter already narrows the chat sink")
+
+	// JSON sinks keep their batch options.
+	result = ValidateAuditConfig(slack(func(s *AuditSinkConfig) {
+		s.Webhook.PayloadFormat = WebhookPayloadFormatJSON
+		s.Webhook.BatchSize = 10
+		s.Webhook.BatchURL = "https://hooks.example.com/batch"
+	}))
+	assert.True(t, result.IsValid())
+}

@@ -44,7 +44,7 @@ func TestNodeMaintenanceKind(t *testing.T) {
 	nodeName, image := os.Getenv("NODE_MAINTENANCE_KIND_NODE"), os.Getenv("NODE_MAINTENANCE_KIND_IMAGE")
 	containerID := os.Getenv("NODE_MAINTENANCE_KIND_CONTAINER_ID")
 	actionFilter := os.Getenv("NODE_MAINTENANCE_KIND_ACTION")
-	require.Contains(t, []string{"", "neighbor", "fdb", "kexec"}, actionFilter)
+	require.Contains(t, []string{"", "neighbor", "fdb", "link", "kexec", "service", "module"}, actionFilter)
 	require.Regexp(t, "^[0-9a-f]{64}$", containerID)
 	require.True(t, strings.HasPrefix(nodeName, "node-maintenance-proof-") && strings.HasSuffix(nodeName, "-control-plane"))
 	require.Contains(t, image, "@sha256:")
@@ -107,6 +107,18 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		require.NoError(t, json.Unmarshal(output, &records))
 		return records
 	}
+	linkUp := func(device string) bool {
+		t.Helper()
+		records := dockerJSON("ip", "-j", "link", "show", "dev", device)
+		require.Len(t, records, 1)
+		flags, _ := records[0]["flags"].([]interface{})
+		for _, flag := range flags {
+			if flag == "UP" {
+				return true
+			}
+		}
+		return false
+	}
 	neighborMACs := func(device string) map[string]string {
 		t.Helper()
 		macs := map[string]string{}
@@ -134,6 +146,9 @@ func TestNodeMaintenanceKind(t *testing.T) {
 		{"neighbor", "neighbor", "neighbor-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551n", NeighborAddress: "192.0.2.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
 		{"vrf", "neighbor", "neighbor-replace", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551v", VRF: "bg1551vrf", NeighborAddress: "198.51.100.2", EntryMAC: "02:00:00:00:00:02"}, nil, false},
 		{"fdb", "fdb", "bridge-fdb-replace", false, false, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551a", Bridge: "bg1551br", EntryMAC: "02:00:00:00:00:02", VLAN: ptr.To(int32(100))}, nil, false},
+		// The fixture port is administratively down; link-cycle brings exactly
+		// that port up and leaves the down decoy alone.
+		{"link", "link", "link-cycle", false, true, breakglassv1alpha1.NodeMaintenanceTarget{Interface: "bg1551l"}, nil, false},
 		// The single Kind Node is the control plane: validation reads the
 		// pinned bundle without privilege, a wrong digest fails closed, and
 		// a reboot request for that Node is refused before any cordon.
@@ -248,6 +263,9 @@ func TestNodeMaintenanceKind(t *testing.T) {
 					if tc.helperFails {
 						expected = "failed"
 					}
+				} else if tc.lane == "link" {
+					require.True(t, linkUp("bg1551l"), "link-cycle brought the exact port up")
+					require.False(t, linkUp("bg1551ld"), "link-cycle left the decoy down")
 				} else if tc.dryRun {
 					require.Empty(t, pod.Spec.Containers[0].SecurityContext.Capabilities.Add, "a preview runs without NET_ADMIN")
 					require.Equal(t, "02:00:00:00:00:03", neighborMACs("bg1551n")["192.0.2.2"], "a preview never changes the entry")
@@ -387,6 +405,190 @@ func TestNodeMaintenanceKind(t *testing.T) {
 			}, &coordinationv1.Lease{})))
 		})
 	}
+	// module-load loads one real, unloaded module of the runner kernel through
+	// the real approval flow, and a module outside the allowlist is refused.
+	t.Run("module-load", func(t *testing.T) {
+		if actionFilter != "module" {
+			t.Skip("module-load runs in its own CI lane")
+		}
+		module := os.Getenv("NODE_MAINTENANCE_KIND_MODULE")
+		require.Regexp(t, "^[a-z0-9_]+$", module)
+		target := breakglassv1alpha1.NodeMaintenanceTarget{TargetNode: nodeName, TargetNodeUID: string(node.UID), Module: module}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "maintenance-module-load"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				TargetNamespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+				Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"requester@example.com"}, Clusters: []string{cc.Name}},
+				Approvers:       &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+				Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "5m", DefaultDuration: "5m"},
+				NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: breakglassv1alpha1.NodeMaintenanceActionModuleLoad, Image: image,
+					AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{target}},
+			}}
+		require.NoError(t, hub.Create(ctx, template))
+		request := func(target breakglassv1alpha1.NodeMaintenanceTarget, expectedStatus int) *breakglassv1alpha1.DebugSession {
+			t.Helper()
+			body, err := json.Marshal(CreateDebugSessionRequest{TemplateRef: template.Name, Cluster: cc.Name, RequestedDuration: "5m",
+				Reason: "Disposable module load proof", NodeMaintenance: &target})
+			require.NoError(t, err)
+			previousActor := approver
+			approver = "requester@example.com"
+			httpRequest := httptest.NewRequest(http.MethodPost, "/debugSessions", bytes.NewReader(body))
+			httpRequest.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httpRequest)
+			approver = previousActor
+			require.Equal(t, expectedStatus, response.Code, response.Body.String())
+			if expectedStatus != http.StatusCreated {
+				return nil
+			}
+			var created DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+			return &created.DebugSession
+		}
+		other := target
+		other.Module = "nbd"
+		request(other, http.StatusBadRequest)
+		loaded := func() bool {
+			return exec.CommandContext(ctx, "docker", "exec", containerID, "test", "-d", "/sys/module/"+module).Run() == nil
+		}
+		require.False(t, loaded(), "the lane picked an unloaded module")
+		session := request(target, http.StatusCreated)
+		reconcile(session)
+		approver = "requester@example.com"
+		approve(session, http.StatusForbidden)
+		approver = "approver@example.com"
+		approve(session, http.StatusOK)
+		require.Eventually(t, func() bool {
+			reconcile(session)
+			return session.Status.NodeMaintenance != nil && session.Status.NodeMaintenance.Result != ""
+		}, 3*time.Minute, 2*time.Second)
+		require.Equal(t, "succeeded", session.Status.NodeMaintenance.Result, session.Status.Message)
+		require.True(t, loaded(), "the allowlisted module is loaded")
+		pod := &corev1.Pod{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.NodeMaintenance.OperationID}, pod))
+		require.Equal(t, []corev1.Capability{"SYS_MODULE"}, pod.Spec.Containers[0].SecurityContext.Capabilities.Add)
+		require.False(t, pod.Spec.HostNetwork)
+		require.Eventually(t, func() bool {
+			err := controller.cleanupResources(ctx, session)
+			return err == nil && session.Status.NodeMaintenance.Released
+		}, 90*time.Second, time.Second)
+		// A second approved request finds the module loaded and changes nothing.
+		again := request(target, http.StatusCreated)
+		reconcile(again)
+		approve(again, http.StatusOK)
+		require.Eventually(t, func() bool {
+			reconcile(again)
+			return again.Status.NodeMaintenance != nil && again.Status.NodeMaintenance.Result != ""
+		}, 3*time.Minute, 2*time.Second)
+		require.Equal(t, "succeeded", again.Status.NodeMaintenance.Result, again.Status.Message)
+		require.Eventually(t, func() bool {
+			err := controller.cleanupResources(ctx, again)
+			return err == nil && again.Status.NodeMaintenance.Released
+		}, 90*time.Second, time.Second)
+	})
+
+	// service-restart restarts containerd on the Kind node through the real
+	// approval flow. The single Kind node is the control plane, so the lane
+	// first proves the refusal, then removes the role label of this
+	// disposable node to prove the drain, restart, agent recreation and
+	// uncordon end to end.
+	t.Run("service-restart", func(t *testing.T) {
+		if actionFilter != "service" {
+			t.Skip("service-restart runs in its own CI lane")
+		}
+		target := breakglassv1alpha1.NodeMaintenanceTarget{TargetNode: nodeName, TargetNodeUID: string(node.UID), Unit: "containerd.service"}
+		template := &breakglassv1alpha1.DebugSessionTemplate{ObjectMeta: metav1.ObjectMeta{Name: "maintenance-service-restart"},
+			Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+				TargetNamespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+				Allowed:         &breakglassv1alpha1.DebugSessionAllowed{Users: []string{"requester@example.com"}, Clusters: []string{cc.Name}},
+				Approvers:       &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"approver@example.com"}},
+				Constraints:     &breakglassv1alpha1.DebugSessionConstraints{MaxDuration: "15m", DefaultDuration: "15m"},
+				NodeMaintenance: &breakglassv1alpha1.DebugSessionNodeMaintenance{Action: breakglassv1alpha1.NodeMaintenanceActionServiceRestart, Image: image,
+					AllowedTargets: []breakglassv1alpha1.NodeMaintenanceTarget{target},
+					Service: &breakglassv1alpha1.NodeMaintenanceService{DrainTimeoutSeconds: 120,
+						RestartPods: []breakglassv1alpha1.NodeMaintenancePodSelector{{Namespace: "kube-system", MatchLabels: map[string]string{"k8s-app": "kube-proxy"}}}}},
+			}}
+		require.NoError(t, hub.Create(ctx, template))
+		request := func(expectedStatus int) (*breakglassv1alpha1.DebugSession, string) {
+			t.Helper()
+			body, err := json.Marshal(CreateDebugSessionRequest{TemplateRef: template.Name, Cluster: cc.Name, RequestedDuration: "15m",
+				Reason: "Disposable service restart proof", NodeMaintenance: &target})
+			require.NoError(t, err)
+			previousActor := approver
+			approver = "requester@example.com"
+			httpRequest := httptest.NewRequest(http.MethodPost, "/debugSessions", bytes.NewReader(body))
+			httpRequest.Header.Set("Content-Type", "application/json")
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httpRequest)
+			approver = previousActor
+			require.Equal(t, expectedStatus, response.Code, response.Body.String())
+			if expectedStatus != http.StatusCreated {
+				return nil, response.Body.String()
+			}
+			var created DebugSessionDetailResponse
+			require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+			return &created.DebugSession, ""
+		}
+		_, rejection := request(http.StatusBadRequest)
+		require.Contains(t, rejection, "control-plane")
+
+		roleLabel := "node-role.kubernetes.io/control-plane"
+		live := &corev1.Node{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, live))
+		roleValue, hadRole := live.Labels[roleLabel]
+		base := live.DeepCopy()
+		delete(live.Labels, roleLabel)
+		require.NoError(t, hub.Patch(ctx, live, client.MergeFrom(base)))
+		t.Cleanup(func() {
+			restore := &corev1.Node{}
+			if err := hub.Get(context.Background(), client.ObjectKey{Name: nodeName}, restore); err == nil && hadRole {
+				before := restore.DeepCopy()
+				restore.Labels[roleLabel] = roleValue
+				_ = hub.Patch(context.Background(), restore, client.MergeFrom(before))
+			}
+		})
+		systemd := func(property string) string {
+			t.Helper()
+			output, err := exec.CommandContext(ctx, "docker", "exec", containerID, "systemctl", "show", "-p", property, "--value", "containerd.service").CombinedOutput()
+			require.NoError(t, err, string(output))
+			return strings.TrimSpace(string(output))
+		}
+		enteredBefore := systemd("ActiveEnterTimestampMonotonic")
+		proxies := func() []corev1.Pod {
+			pods := &corev1.PodList{}
+			require.NoError(t, hub.List(ctx, pods, client.InNamespace("kube-system"), client.MatchingLabels{"k8s-app": "kube-proxy"}))
+			return pods.Items
+		}
+		require.Len(t, proxies(), 1)
+		proxyBefore := proxies()[0].UID
+
+		session, _ := request(http.StatusCreated)
+		reconcile(session)
+		approver = "requester@example.com"
+		approve(session, http.StatusForbidden)
+		approver = "approver@example.com"
+		approve(session, http.StatusOK)
+		require.Eventually(t, func() bool {
+			reconcile(session)
+			return session.Status.NodeMaintenance != nil && session.Status.NodeMaintenance.Result != ""
+		}, 5*time.Minute, 2*time.Second)
+		require.Equal(t, "succeeded", session.Status.NodeMaintenance.Result, session.Status.Message)
+		require.True(t, session.Status.NodeMaintenance.ResultAudited)
+		require.Equal(t, []string{string(proxyBefore)}, session.Status.NodeMaintenance.RestartedPodUIDs)
+		enteredAfter := systemd("ActiveEnterTimestampMonotonic")
+		require.NotEqual(t, enteredBefore, enteredAfter, "containerd was restarted")
+		require.Equal(t, "active", systemd("ActiveState"))
+		current := proxies()
+		require.Len(t, current, 1)
+		require.NotEqual(t, proxyBefore, current[0].UID, "the agent was recreated")
+		require.True(t, podReady(&current[0]))
+		require.Eventually(t, func() bool {
+			err := controller.cleanupResources(ctx, session)
+			return err == nil && session.Status.NodeMaintenance.Released
+		}, 90*time.Second, time.Second)
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Name: nodeName}, live))
+		require.False(t, live.Spec.Unschedulable, "a verified restart returns the Node to service")
+		require.NotContains(t, live.Annotations, maintenanceCordonAnnotation)
+	})
 }
 
 // kindKexec pins the disposable recovery bundle that the kexec lane stages on

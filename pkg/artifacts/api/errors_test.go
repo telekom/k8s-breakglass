@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 )
@@ -34,7 +36,12 @@ func TestArtifactHTTPErrorClassification(t *testing.T) {
 				write(ctx, fmt.Errorf("wrapped: %w", tc.err))
 				ctx.Writer.WriteHeaderNow()
 				require.Equal(t, tc.status, response.Code)
-				require.Empty(t, response.Body.String())
+				var body apiresponses.APIError
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+				require.Equal(t, apiresponses.CodeForStatus(tc.status), body.Code)
+				require.NotEmpty(t, body.CID)
+				require.NotContains(t, response.Body.String(), "private", "provider details must not leak")
+				require.NotContains(t, response.Body.String(), "wrapped")
 			}
 		})
 	}

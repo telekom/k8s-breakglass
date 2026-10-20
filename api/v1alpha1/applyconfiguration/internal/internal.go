@@ -62,6 +62,77 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: uid
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeDeniedLabel
+  map:
+    fields:
+    - name: key
+      type:
+        scalar: string
+    - name: valuePattern
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeRequest
+  map:
+    fields:
+    - name: targets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeStatus
+  map:
+    fields:
+    - name: operationID
+      type:
+        scalar: string
+    - name: reverted
+      type:
+        scalar: boolean
+    - name: targets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTargetStatus
+          elementRelationship: atomic
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+  map:
+    fields:
+    - name: apiVersion
+      type:
+        scalar: string
+    - name: kind
+      type:
+        scalar: string
+    - name: name
+      type:
+        scalar: string
+    - name: webhook
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTargetStatus
+  map:
+    fields:
+    - name: applied
+      type:
+        scalar: string
+    - name: message
+      type:
+        scalar: string
+    - name: original
+      type:
+        scalar: string
+    - name: originalAnnotations
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: state
+      type:
+        scalar: string
+    - name: target
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
   map:
     fields:
@@ -1415,6 +1486,27 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: status
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAdmissionRecipe
+  map:
+    fields:
+    - name: action
+      type:
+        scalar: string
+    - name: allowedTargets
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeTarget
+          elementRelationship: atomic
+    - name: deniedTargetLabels
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeDeniedLabel
+          elementRelationship: atomic
+    - name: flux
+      type:
+        scalar: boolean
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAllowed
   map:
     fields:
@@ -1766,6 +1858,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: maxActiveSessionsPerCluster
+      type:
+        scalar: numeric
     - name: maxActiveSessionsPerUser
       type:
         scalar: numeric
@@ -1938,6 +2033,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: kexec
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceKexec
+    - name: service
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceService
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionNotificationConfig
   map:
     fields:
@@ -2003,6 +2101,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionSpec
   map:
     fields:
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeRequest
     - name: approvalReasonConfig
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugApprovalReasonConfig
@@ -2090,6 +2191,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: activityCount
       type:
         scalar: numeric
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AdmissionRecipeStatus
     - name: allowedPodOperations
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.AllowedPodOperations
@@ -2237,6 +2341,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: io.k8s.api.core.v1.Toleration
           elementRelationship: atomic
+    - name: admissionRecipe
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionAdmissionRecipe
     - name: affinityOverrides
       type:
         namedType: io.k8s.api.core.v1.Affinity
@@ -2390,6 +2497,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: terminalSharing
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TerminalSharingConfig
+    - name: toolbox
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionToolbox
     - name: workloadType
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
@@ -2431,6 +2541,16 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: totalSessionCount
       type:
         scalar: numeric
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionToolbox
+  map:
+    fields:
+    - name: image
+      type:
+        scalar: string
+    - name: mountPath
+      type:
+        scalar: string
+      default: /opt/breakglass/toolbox
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugWorkloadType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DenyPolicy
@@ -2631,6 +2751,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: boolean
       default: true
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployInputType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ExtraDeployVariable
@@ -3368,6 +3491,29 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: profile
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenancePodSelector
+  map:
+    fields:
+    - name: matchLabels
+      type:
+        map:
+          elementType:
+            scalar: string
+    - name: namespace
+      type:
+        scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceService
+  map:
+    fields:
+    - name: drainTimeoutSeconds
+      type:
+        scalar: numeric
+    - name: restartPods
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenancePodSelector
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.NodeMaintenanceStatus
   map:
     fields:
@@ -3381,6 +3527,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: createAttempted
+      type:
+        scalar: boolean
+    - name: hostUnchanged
       type:
         scalar: boolean
     - name: jobCreateAttempted
@@ -3398,12 +3547,21 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: operationID
       type:
         scalar: string
+    - name: podRestartIssued
+      type:
+        scalar: boolean
     - name: podUID
       type:
         scalar: string
     - name: released
       type:
         scalar: boolean
+    - name: restartedPodUIDs
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: result
       type:
         scalar: string
@@ -3422,6 +3580,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: interface
       type:
         scalar: string
+    - name: module
+      type:
+        scalar: string
     - name: neighborAddress
       type:
         scalar: string
@@ -3431,6 +3592,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: targetNodeUID
       type:
         scalar: string
+    - name: unit
+      type:
+        scalar: string
+    - name: virtualFunctions
+      type:
+        scalar: numeric
     - name: vlan
       type:
         scalar: numeric
@@ -3618,6 +3785,9 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: securityContext
+      type:
+        namedType: io.k8s.api.core.v1.SecurityContext
     - name: targetNamespace
       type:
         scalar: string
@@ -4171,6 +4341,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: patternError
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookPayloadFormat
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookSinkSpec
   map:
     fields:
@@ -4189,6 +4361,10 @@ var schemaYAML = typed.YAMLObject(`types:
         map:
           elementType:
             scalar: string
+    - name: payloadFormat
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.WebhookPayloadFormat
+      default: json
     - name: timeoutSeconds
       type:
         scalar: numeric
