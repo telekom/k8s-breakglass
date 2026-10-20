@@ -443,16 +443,16 @@ func TestAdmissionRecipePendingSeparatesTargetOutage(t *testing.T) {
 	require.ErrorIs(t, err, errMaintenanceTargetUnavailable)
 }
 
-type failingAuditSink struct{ maintenanceAuditCaptureSink }
+type failingRecipeAuditSink struct{ maintenanceAuditCaptureSink }
 
-func (s *failingAuditSink) Write(context.Context, *audit.Event) error {
+func (s *failingRecipeAuditSink) Write(context.Context, *audit.Event) error {
 	return errors.New("sink unavailable")
 }
 
 func TestAdmissionRecipeFailingSinkBlocksEveryWrite(t *testing.T) {
 	target := policyTarget("require-labels")
 	f := newRecipeFixture(t, policyRecipe(false, target), []breakglassv1alpha1.AdmissionRecipeTarget{target}, recipePolicy("require-labels", "psa", "Deny"))
-	manager := audit.NewManager(&failingAuditSink{}, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	manager := audit.NewManager(&failingRecipeAuditSink{}, audit.ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
 	t.Cleanup(func() { _ = manager.Close() })
 	f.c.WithAuditManager(manager)
 	require.Error(t, f.c.applyAdmissionRecipe(t.Context(), f.ds))
