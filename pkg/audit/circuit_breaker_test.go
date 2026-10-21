@@ -416,6 +416,9 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 		},
 	}
 	cb := NewCircuitBreaker(sinkName, cfg, logger)
+	// The counter is process-global; assert the delta so -count>1 passes.
+	transitionsMetric := metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(sinkName, "closed", "open")
+	before := testutil.ToFloat64(transitionsMetric)
 
 	// Trip the circuit
 	_ = cb.Execute(context.Background(), func(ctx context.Context) error {
@@ -424,7 +427,7 @@ func TestCircuitBreaker_StateCallback(t *testing.T) {
 
 	require.Len(t, transitions, 1)
 	assert.Equal(t, "closed->open", transitions[0])
-	assert.Equal(t, 1.0, testutil.ToFloat64(metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(sinkName, "closed", "open")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(transitionsMetric)-before)
 }
 
 func TestCircuitBreaker_ConcurrentAccess(t *testing.T) {

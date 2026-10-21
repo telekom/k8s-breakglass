@@ -402,8 +402,10 @@ func (qs *QueuedSink) dropShutdownBacklog(pending int) bool {
 }
 
 func (qs *QueuedSink) recordDrop(count int, reason string) {
-	qs.droppedEvents.Add(int64(count))
+	// Update the metric first: a reader that sees the new Health().DroppedEvents
+	// then also sees the metric.
 	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), reason).Add(float64(count))
+	qs.droppedEvents.Add(int64(count))
 	qs.logger.Warn("audit events dropped", zap.Int("count", count), zap.String("reason", reason))
 }
 
