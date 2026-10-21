@@ -607,7 +607,8 @@ escalations:
 
 ## Upgrading
 
-Chart 0.4.7 adds `debugSessionBindings[].maxActiveSessionsPerCluster`. Apply the
+Chart 0.4.7 accompanies controller v0.3.0-rc.14 and adds
+`debugSessionBindings[].maxActiveSessionsPerCluster`. Apply the
 updated `DebugSessionClusterBinding` CRD before you set it; a controller older
 than the CRD ignores the field and counts only the hub-wide limits. Rolling the
 controller back to v0.3.0-rc.13 or older strands sessions that are still in

@@ -122,6 +122,7 @@ Every utility is published as an immutable,
 - **[Technical Debt](./TECHNICAL_DEBT.md)** - Known TODOs, future enhancements, and maintenance tracking
 - **[Package Structure](./package-structure.md)** - Sub-package layout of `pkg/breakglass/`
 - **[Release Process](./release-process.md)** - Release signing, provenance, and checklist
+- **[v0.3.0-rc.14 release notes](./releases/v0.3.0-rc.14.md)** - toolbox, per-cluster session caps, admission recipes, platform hotfixes, node-maintenance actions, audit and API fixes
 - **[v0.3.0-rc.13 release notes](./releases/v0.3.0-rc.13.md)** - OIDC identity migration, email claims, dependency updates, and security notes
 - **[T-CaaS deployment-model E2E coverage audit](./e2e-tcaas-coverage-audit.md)** - Deployment-shape coverage, evidence, and remaining gaps
 - **[Authorization resilience E2E](./authorization-resilience-e2e.md)** - Real apiserver cache revocation and NoOpinion outage controls

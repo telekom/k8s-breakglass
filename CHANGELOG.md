@@ -13,6 +13,251 @@ writes it.
 
 ## [Unreleased]
 
+## [0.3.0-rc.14] - 2026-10-21
+
+### Upgrade notes
+
+- `DebugSessionTemplate` has the new optional field `spec.toolbox` (`image`,
+  `mountPath`), and `DebugSession` snapshots it. Apply the CRDs before the
+  controller. The digest-pinned image is mounted read-only as a Kubernetes
+  image volume (KEP 4639, GA in Kubernetes 1.36) at `mountPath` (default
+  `/opt/breakglass/toolbox`) into workload containers, the node debug container
+  and the pod-copy debugger, and `BREAKGLASS_TOOLBOX` names the path. Target
+  API servers 1.31 to 1.34 with the ImageVolume gate off drop the volume, and
+  the session starts without the toolbox; API servers older than 1.31 reject
+  the pod, so do not set a toolbox for such clusters. Every node must be able
+  to pull the image. Restricted catalogue profiles reject `spec.toolbox` (#1505).
+- Typed admission recipes (default off): `DebugSessionTemplate` has the new
+  optional field `spec.admissionRecipe` with the actions `policy-audit`
+  (Kyverno `ValidatingPolicy` `validationActions` `Deny` to `[Audit]`) and
+  `webhook-fail-open` (one webhook `failurePolicy` `Fail` to `Ignore`). The
+  controller applies the change for an independently approved session on
+  allowlisted targets only, refuses targets whose live labels match
+  `deniedTargetLabels`, persists the original value before each write, reports
+  drift without overwriting it, and reverts on terminate, failure, expiry and
+  session deletion (finalizer). New audit events
+  `debug_session.admission_recipe.{applied,drift,reverted}` and the metric
+  `breakglass_admission_recipe_operations_total`. Apply the CRDs before the
+  controller, and grant the ClusterConfig identity `get` and `update` on the
+  allowlisted policies and webhook configurations (see the docs). See
+  `docs/admission-recipes.md` (#1506).
+- Typed platform hotfix API (default off): `DebugSessionTemplate.spec.hotfix`
+  (operator profile with payload types, path allowlist, restartable units,
+  static Pods, host containers, rollout and lifetime limits, and a `suspended`
+  switch), the `DebugSession.spec.hotfix` stage request (plan, apply, rollback,
+  reconfirm, close) and the new namespaced `HotfixRecord` CRD, whose recorded
+  change is immutable. Apply the CRDs before the controller. Validation pins
+  every source by digest or SHA-256, allows HTTPS sources without credentials
+  only, enforces a hard path denylist, restricts sed and unified-diff patches,
+  caps lifetimes and binds an apply to the plan hash of a reviewed plan. See
+  `docs/hotfix.md` (#1508).
+- Apply the CRDs server-side (`kubectl apply --server-side --force-conflicts`;
+  Flux and Helm already do). With the hotfix fields the `DebugSession` CRD is
+  larger than the 256 KiB `last-applied-configuration` annotation of a
+  client-side `kubectl apply`, which the API server refuses ("metadata.annotations:
+  Too long"). `make install` and `make deploy` now apply server-side (#1508).
+- Typed node-maintenance network repair accepts the actions `link-cycle` and
+  `restart-autonegotiation` (exact Node and interface only; neighbour, bridge,
+  VLAN, VRF and `entryMAC` must be empty, and `dryRun` is rejected). The action
+  enum in the CRDs changes, so apply the CRDs before the controller. The
+  node-maintenance image refuses both link actions on an interface that a
+  default route uses, directly or through a bond, VLAN, bridge or VRF on top of
+  it, in any routing table; use an image built from this release for these
+  profiles (#1510).
+- `DebugSessionTemplate` has the new optional fields
+  `kubectlDebug.ephemeralContainers.securityContext` and
+  `kubectlDebug.podCopy.securityContext`. Apply the CRDs before the controller.
+  For ephemeral containers each field set on the template replaces the
+  requested value, and the result is still validated against `allowPrivileged`,
+  `maxCapabilities` and `requireNonRoot`; for pod copies the security context
+  is set on the added `debugger` container. Templates can set
+  `readOnlyRootFilesystem: true` and then pass read-only root filesystem
+  admission policies without a policy exception. Unset fields keep the previous
+  behaviour. See `docs/debug-session.md#template-security-context` (#1511).
+- The controller runs the `plan`, `apply` and `rollback` stages of platform
+  hotfix sessions: one single-attempt executor Pod per node, canary and batch
+  layout with control-plane nodes one at a time, health gates (node
+  conditions, control-plane Pods, API server `/readyz`) and soak time, a
+  per-cluster and per-node Lease, synchronous critical audit events, the
+  `HotfixRecord` drift record and node annotations. A failed node, a failed
+  gate, a suspended template or an expiring session stops the rollout. Every
+  stage needs an independent approver. Use a node-maintenance image from this
+  release (it adds `hotfix-action`) (#1512).
+- Platform hotfix records have a lifecycle: `reconfirm` and `close` sessions,
+  and a `HotfixRecord` reconciler that keeps `Expiring`, `Expired`, `Reverted`
+  and `Uncovered` current (alerts only, never a rollback). New metrics
+  `breakglass_hotfix_active`, `breakglass_hotfix_expires_timestamp_seconds`,
+  `breakglass_hotfix_uncovered_nodes` and `breakglass_hotfix_reverted_nodes`;
+  `config/samples/prometheusrule-hotfix.yaml` is an example alert rule (#1513).
+- Typed node-maintenance `action: service-restart` restarts one allowlisted
+  host systemd unit (`containerd.service`, `kubelet.service`, `cra.service`) on
+  a cordoned and drained worker Node. The executor has no capabilities and
+  reaches systemd only through its private socket (read-only `Socket`
+  hostPath) with a fixed `RestartUnit` call. The controller then recreates the
+  template's `restartPods` on the Node once and requires a Ready Node and Ready
+  replacements before it uncordons; anything else keeps the Node cordoned with
+  the advisory to replace it. The new action and its template fields need the
+  updated CRDs and a node-maintenance image from this release. See
+  `docs/node-maintenance-controller.md#service-restart-profiles` (#1519).
+- Typed node-maintenance `action: module-load` loads one allowlisted kernel
+  module (exact name, no parameters other than kernel command-line
+  `module.param=` values) of the running kernel until the next
+  reboot. The executor adds only `SYS_MODULE` and reads the host module tree
+  from a read-only `/lib/modules` hostPath; modprobe runs with
+  `--ignore-install` and an empty configuration directory (the node's own
+  `modprobe.d` does not apply), and the name must resolve to the module
+  itself. The action needs the updated CRDs and a node-maintenance
+  image from this release (it adds `kmod`). See
+  `docs/node-maintenance-controller.md#module-load-profiles` (#1520).
+- Typed node-maintenance `action: sriov-reprovision` re-creates the SR-IOV
+  virtual functions of one allowlisted physical function (exact PF and VF
+  count) on a cordoned and drained worker Node. The executor is the
+  capability-free `service-restart` Pod; the `service-action` helper runs the
+  fixed host commands `netplan apply --sriov-only` and `netplan rebind <PF>`
+  as transient systemd units and requires exactly the approved number of
+  driver-bound VFs. The controller then recreates the template's `restartPods`
+  (for example the SR-IOV device plugin) and uncordons only on success. The
+  action needs the updated CRDs and a node-maintenance image from this release.
+  See `docs/node-maintenance-controller.md#sr-iov-re-provision-profiles` (#1521).
+- `DebugSessionClusterBinding` has the new optional field
+  `maxActiveSessionsPerCluster` (escalation-config chart 0.4.7:
+  `debugSessionBindings[].maxActiveSessionsPerCluster`). It limits the active
+  sessions of one binding per target cluster, while `maxActiveSessionsTotal`
+  and the template `maxConcurrentSessions` still count on the whole hub. Apply
+  the CRDs before the controller and before setting the field. Unset keeps the
+  previous behaviour. Sessions that an older controller admitted count against
+  the new limit too: the quota ledger adds the per-cluster scope to their
+  reservations. Like a tightened limit, this refuses new sessions on a cluster
+  that already has more sessions than the limit, but does not end any of them.
+  Rolling the controller back to v0.3.0-rc.13 or older strands
+  sessions that are still in quota admission at that moment; delete them after
+  the rollback (#1522).
+- Apply the CRDs before the controller: AuditConfig webhook sinks have the new
+  field `payloadFormat` (`json`, the default, or `slack`) (#1536). A `slack`
+  sink posts approver notifications to a Slack or Mattermost channel and is
+  advisory: required synchronous audit delivery skips it, so it neither blocks
+  nor satisfies `session.termination_intent` or node-maintenance execution
+  intents. See `docs/audit-config.md#chat-notifications-slack-and-mattermost`.
+
+### Behaviour changes
+
+- github.com/go-jose/go-jose/v4 4.1.6 (from #1530) fixes GHSA-mgcc-cww5-fp2q
+  and rejects RSA JWKS keys with a modulus larger than 4096 bits, so tokens
+  from an identity provider that signs with such a key no longer verify (#1530).
+- A failed AuditConfig reload keeps the running audit pipeline only while
+  every AuditConfig it was built from is still enabled with an unchanged spec
+  (for example a broker that is down during a resync, or a new AuditConfig
+  whose Secret cannot be read). A removed, disabled or changed AuditConfig is
+  never kept: the pipeline is closed and auditing fails closed until a reload
+  succeeds. Reloads no longer block authorization decisions; they are bounded
+  to 30 seconds. New metric value
+  `breakglass_audit_config_reloads_total{status="kept_previous"}`. See
+  `docs/audit-config.md#reload-failures` (#1533).
+- `POST /api/debugSessions/{name}/join`, `/leave` and `/renew` now return the
+  updated `DebugSession`, like `/approve` and `/terminate`. They returned
+  `{"message", "role"}`, `{"message"}` and
+  `{"message", "newExpiresAt", "renewalCount"}` before. Read the renewed expiry
+  from `status.expiresAt` and the count from `status.renewalCount`. The UI and
+  `bgctl debug session join|leave|renew` already expected the session; `bgctl`
+  now prints it instead of an empty object (#1537).
+- Every REST error response now has the same body: `error` (text unchanged),
+  `code` and `cid` (the `X-Request-ID` correlation ID), plus optional
+  `details`. This adds `cid` everywhere, adds `code` to rate-limit 429s, and
+  gives the debug-session artifact endpoints, the terminal recording
+  `410`/`429` replies and the approval-token `404` a JSON error body where they
+  sent none or no error fields. Fields such as `session`, `candidates`, `valid`
+  and `authenticated` stay. `bgctl` now prints the `details` of an error. A
+  unit test now fails `make test` when a handler writes an error body outside
+  `pkg/apiresponses` (#1537).
+- The periodic AuditConfig resync (every 10 minutes) no longer rebuilds the
+  audit pipeline when the AuditConfigs and the Secrets their sinks read are
+  unchanged. Before, every resync stopped the running pipeline, and events it
+  was still retrying during a sink outage were dropped with reason
+  `shutdown`. A real change still rebuilds the pipeline; the replaced pipeline
+  now finishes the events it holds, bounded by its `queue.retryTimeoutSeconds`,
+  before it closes, so a sink removed by that change can still receive events
+  emitted before it. When auditing stops, the old pipeline closes at once. A
+  resync no longer resets sink clients, circuit breakers or queues. New value
+  `breakglass_audit_config_reloads_total{status="unchanged"}`; an unchanged
+  resync no longer counts as `success`. With several enabled AuditConfigs,
+  the shared ingress settings (`queue.dropOnFull`, sampling) now always come
+  from the first one by name, instead of from a random one (#1541).
+- `AuditConfig` `status.eventsDropped` now includes drops in the per-sink
+  queues (for example `retry_exhausted`), not only in the shared ingress
+  queue. The counters describe the current pipeline and restart at zero when
+  it is rebuilt (#1541).
+- Asynchronous audit emission no longer writes a sensitive event (for example
+  `access.denied`) synchronously when the manager's ingress queue is full. The
+  event is dropped and counted in
+  `breakglass_audit_events_dropped_total{reason="queue_full"}`. Before, the
+  authorization webhook could wait up to the five-second write timeout for a
+  stalled sink, such as a Kafka broker that is down, so a SubjectAccessReview
+  with a shorter webhook timeout failed closed. `queue.dropOnFull: false`
+  keeps its bounded wait for queue capacity. Paths that need a delivery
+  receipt still emit synchronously and fail closed. This reverses the earlier
+  synchronous fallback for sensitive events on a full queue. See
+  `docs/audit-config.md` (#1540; issue 1538).
+- `POST /api/debugSessions` without `bindingRef` now uses the first binding
+  that grants the cluster and allows the requester (visible bindings before
+  hidden ones, each in namespace and then name order). Before, it used the
+  first binding by name and rejected requesters that only a later binding
+  allows, for example an onboarding requester when a first-line binding of the
+  same template and cluster sorted first. A requester that no binding for the
+  cluster allows is still rejected with 403 (#1535).
+
+### Features
+
+- audit: add Slack/Mattermost payload format for webhook sinks ([#1536](https://github.com/telekom/k8s-breakglass/pull/1536))
+- mount a toolbox image volume into debug sessions ([#1505](https://github.com/telekom/k8s-breakglass/pull/1505))
+- debug: limit sessions per target cluster on a DebugSessionClusterBinding ([#1522](https://github.com/telekom/k8s-breakglass/pull/1522))
+- debug: add securityContext to kubectl-debug ephemeral and pod-copy templates ([#1511](https://github.com/telekom/k8s-breakglass/pull/1511))
+- node-maintenance: allow link-cycle and restart-autonegotiation in typed profiles ([#1510](https://github.com/telekom/k8s-breakglass/pull/1510))
+- node-maintenance: add a typed service-restart executor ([#1519](https://github.com/telekom/k8s-breakglass/pull/1519))
+- node-maintenance: add a typed module-load executor ([#1520](https://github.com/telekom/k8s-breakglass/pull/1520))
+- node-maintenance: add a typed sriov-reprovision executor ([#1521](https://github.com/telekom/k8s-breakglass/pull/1521))
+- debug: typed admission recipes for policy audit and webhook fail-open ([#1506](https://github.com/telekom/k8s-breakglass/pull/1506))
+- api: add typed platform hotfix API and HotfixRecord CRD ([#1508](https://github.com/telekom/k8s-breakglass/pull/1508))
+- node-maintenance: add hotfix-action executor for platform hotfixes ([#1509](https://github.com/telekom/k8s-breakglass/pull/1509))
+- debug: run platform hotfix plan, apply and rollback sessions ([#1512](https://github.com/telekom/k8s-breakglass/pull/1512))
+- debug: platform hotfix lifecycle and Kind e2e proof ([#1513](https://github.com/telekom/k8s-breakglass/pull/1513), [#1514](https://github.com/telekom/k8s-breakglass/pull/1514))
+
+### Security
+
+- Build the controller, `bgctl` and the utility images with Go 1.27.3. Go
+  1.27.2 is affected by GO-2026-6809 in `crypto/x509`, which is reachable
+  through certificate verification (#1545).
+
+### Fixes
+
+- audit: keep AuditConfig reloads off the authorization path ([#1533](https://github.com/telekom/k8s-breakglass/pull/1533))
+- api: use one error schema and return sessions from join/leave/renew ([#1537](https://github.com/telekom/k8s-breakglass/pull/1537))
+- audit: never write synchronously from asynchronous Emit ([#1540](https://github.com/telekom/k8s-breakglass/pull/1540))
+- session: require a concrete registered cluster for sessions ([#1539](https://github.com/telekom/k8s-breakglass/pull/1539))
+- audit: keep the pipeline on an unchanged AuditConfig resync ([#1541](https://github.com/telekom/k8s-breakglass/pull/1541))
+- debug: pick the binding that allows the requester when bindingRef is omitted ([#1535](https://github.com/telekom/k8s-breakglass/pull/1535))
+- utils: refresh workload-debug ca-certificates pin ([#1543](https://github.com/telekom/k8s-breakglass/pull/1543))
+- A session request for a cluster pattern (for example `*`) or for a cluster
+  without a registered `ClusterConfig` is now rejected with `422`. Before, an
+  escalation that allows `*` accepted a session for the literal cluster `*`,
+  which could never grant access. The escalation list now returns
+  `clusterOptions` with the registered clusters that a pattern matches, and
+  the UI shows a cluster picker for such escalations.
+  Escalations scoped only by `spec.clusterConfigRefs` now also get one UI card
+  per referenced cluster instead of a card without a cluster (#1539).
+
+### CI, build and tests
+
+- use Go 1.27.3 to fix GO-2026-6809 in crypto/x509 ([#1545](https://github.com/telekom/k8s-breakglass/pull/1545))
+
+### Dependencies
+
+- npm: bump vue from 3.5.43 to 3.5.44 in /frontend in the vue-ecosystem group across 1 directory ([#1528](https://github.com/telekom/k8s-breakglass/pull/1528))
+- bump github/codeql-action/upload-sarif from 4.38.3 to 4.39.0 in the actions-minor-patch group across 1 directory ([#1531](https://github.com/telekom/k8s-breakglass/pull/1531))
+- go: bump the go-minor-patch group across 1 directory with 8 updates ([#1530](https://github.com/telekom/k8s-breakglass/pull/1530))
+- npm: bump the npm-minor-patch group in /frontend with 8 updates ([#1542](https://github.com/telekom/k8s-breakglass/pull/1542))
+- npm: bump follow-redirects from 1.16.0 to 1.16.1 in /frontend ([#1544](https://github.com/telekom/k8s-breakglass/pull/1544))
+- go: bump github.com/gabriel-vasile/mimetype ([#1546](https://github.com/telekom/k8s-breakglass/pull/1546))
+
 ## [0.3.0-rc.13] - 2026-10-16
 
 ### Added
@@ -2388,7 +2633,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...HEAD
+[0.3.0-rc.14]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...v0.3.0-rc.14
 [0.3.0-rc.13]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.12...v0.3.0-rc.13
 [0.3.0-rc.12]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.8...v0.3.0-rc.12
 [0.1.0-rc.8]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.7...v0.1.0-rc.8

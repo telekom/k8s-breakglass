@@ -9,9 +9,9 @@ the cluster administrator.
 
 ## Install
 
-Chart 0.2.9 accompanies controller v0.3.0-rc.13 and receives that release's
+Chart 0.2.10 accompanies controller v0.3.0-rc.14 and receives that release's
 verified utility image digests during packaging. Its values interface is
-unchanged from 0.2.8.
+unchanged from 0.2.9.
 
 Profiles may opt into fixed artifact recipes with `artifactCollection`.
 Uploader trust is unset by default; for a private-CA HTTPS controller endpoint,
@@ -38,7 +38,7 @@ targetNamespace: breakglass-debug
 ```bash
 helm install debug-catalogue \
   oci://ghcr.io/telekom/k8s-breakglass/charts/debug-session-catalogue \
-  --version 0.2.9 \
+  --version 0.2.10 \
   -f access-values.yaml
 ```
 
