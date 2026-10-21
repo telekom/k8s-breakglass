@@ -7,7 +7,7 @@
 #   docker buildx build --platform linux/amd64,linux/arm64 \
 #     -f utils/cluster-validator/Dockerfile .
 # Use the same patched Go toolchain as repository and controller CI builds.
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS builder
+FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG VERSION=dev

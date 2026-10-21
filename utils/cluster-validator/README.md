@@ -24,5 +24,5 @@ The image is built from the repository root with
 `linux/arm64`, and runs as UID/GID `65532`. Read
 `/usr/share/cluster-validator/RUNBOOK.md` before operating it.
 
-The image builder is pinned to Go 1.27.2, matching the minimum version declared
+The image builder is pinned to Go 1.27.3, matching the minimum version declared
 in `go.mod` and used by repository and controller CI compilation.

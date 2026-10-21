@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS uploader-builder
+FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS uploader-builder
 ARG TARGETOS=linux
 ARG TARGETARCH
 WORKDIR /src

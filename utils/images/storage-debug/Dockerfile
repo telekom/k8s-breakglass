@@ -3,7 +3,7 @@
 
 # Build natively and cross-compile: running the Go toolchain under QEMU for
 # foreign targets takes long enough to exhaust CI job timeouts.
-FROM --platform=$BUILDPLATFORM golang:1.27.2@sha256:5bc7f572bbaa98885a3a1fd9c0aa76b59e3e14e8628bfc316bbfd0c701e4818c AS kubestr-builder
+FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS kubestr-builder
 
 ARG TARGETARCH
 ARG KUBESTR_VERSION=v0.4.49
