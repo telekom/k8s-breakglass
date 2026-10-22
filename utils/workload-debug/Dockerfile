@@ -9,17 +9,32 @@ ARG BUILD_DATE=unknown
 ARG REVISION=${VCS_REF}
 ARG CREATED=${BUILD_DATE}
 
+# renovate: datasource=repology depName=alpine_3_24/bash versioning=loose
+ARG BASH_VERSION=5.3.9-r1
+# renovate: datasource=repology depName=alpine_3_24/bind-tools versioning=loose
+ARG BIND_TOOLS_VERSION=9.20.29-r0
+# renovate: datasource=repology depName=alpine_3_24/ca-certificates versioning=loose
+ARG CA_CERTIFICATES_VERSION=20261020-r0
+# renovate: datasource=repology depName=alpine_3_24/curl versioning=loose
+ARG CURL_VERSION=8.22.0-r0
+# renovate: datasource=repology depName=alpine_3_24/jq versioning=loose
+ARG JQ_VERSION=1.8.2-r0
+# renovate: datasource=repology depName=alpine_3_24/openssl versioning=loose
+ARG OPENSSL_VERSION=3.5.9-r0
+# renovate: datasource=repology depName=alpine_3_24/tini versioning=loose
+ARG TINI_VERSION=0.19.0-r3
+
 # The Alpine 3.24 release and its base manifest are pinned. Refresh deps.lock
 # and the SBOM together whenever this is updated.
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
-      bash=5.3.9-r1 \
-      bind-tools=9.20.29-r0 \
-      ca-certificates=20261020-r0 \
-      curl=8.22.0-r0 \
-      jq=1.8.2-r0 \
-      openssl=3.5.9-r0 \
-      tini=0.19.0-r3 \
+      "bash=${BASH_VERSION}" \
+      "bind-tools=${BIND_TOOLS_VERSION}" \
+      "ca-certificates=${CA_CERTIFICATES_VERSION}" \
+      "curl=${CURL_VERSION}" \
+      "jq=${JQ_VERSION}" \
+      "openssl=${OPENSSL_VERSION}" \
+      "tini=${TINI_VERSION}" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && mkdir -p /home/debug /usr/share/breakglass/runbooks/upstream/workload-debug \

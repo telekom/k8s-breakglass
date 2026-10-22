@@ -7,10 +7,17 @@
 base=alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/main
 repository=https://dl-cdn.alpinelinux.org/alpine/v3.24/community
+# renovate: datasource=repology depName=alpine_3_24/bash versioning=loose
 bash=5.3.9-r1
+# renovate: datasource=repology depName=alpine_3_24/bind-tools versioning=loose
 bind-tools=9.20.29-r0
+# renovate: datasource=repology depName=alpine_3_24/ca-certificates versioning=loose
 ca-certificates=20261020-r0
+# renovate: datasource=repology depName=alpine_3_24/curl versioning=loose
 curl=8.22.0-r0
+# renovate: datasource=repology depName=alpine_3_24/jq versioning=loose
 jq=1.8.2-r0
+# renovate: datasource=repology depName=alpine_3_24/openssl versioning=loose
 openssl=3.5.9-r0
+# renovate: datasource=repology depName=alpine_3_24/tini versioning=loose
 tini=0.19.0-r3

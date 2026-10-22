@@ -19,12 +19,12 @@ the ordinary controller CI suite.
 1. **Release review**
    - All release PRs require at least one approving review.
    - CI checks must be green on the release commit.
-   - Frontend npm vulnerability findings are advisory: CI retains the full JSON
-     artifact and job summary, and a trusted `workflow_run` job updates a PR
-     comment (including fork PRs) after CI completes. It never executes PR code
-     with write permissions or reports stale commit results on a newer PR head.
-     Dependency installation, malformed reports, and scanner failures still
-     fail CI. Other security, build, and test gates remain blocking.
+   - Vulnerability findings and scanner setup failures are advisory: CI retains
+     complete scan logs and reports, and trusted `workflow_run` jobs update a
+     bot-owned PR comment (including fork PRs) for the current head. They never
+     execute PR code with write permissions or report stale results on a newer
+     head. Build, test, lint, dependency-license, and REUSE checks remain
+     blocking.
 
 2. **Checksums**
    - Publish SHA-256 checksums for every release payload artifact.

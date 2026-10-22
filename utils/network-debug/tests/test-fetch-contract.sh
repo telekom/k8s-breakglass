@@ -35,8 +35,8 @@ grep -F "ARG PWRU_COMMIT=${commit}" "${dockerfile}" >/dev/null || {
 grep -F 'PWRU_BUILD_POLICY=go-module-at-pinned-sum-built-with-pinned-toolchain' "${versions}" >/dev/null
 base_alpine_version="$(awk -F= '$1 == "BASE_ALPINE_VERSION" { print $2 }' "${versions}")"
 grep -F "ARG NETSHOOT_ALPINE_VERSION=${base_alpine_version}" "${dockerfile}" >/dev/null
-[[ "${base_alpine_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
-	printf '%s\n' 'netshoot Alpine compatibility version is invalid' >&2
+[[ "${base_alpine_version}" =~ ^[0-9]+\.[0-9]+$ ]] || {
+	printf '%s\n' 'netshoot Alpine release series is invalid' >&2
 	exit 1
 }
 

@@ -32,8 +32,9 @@ trap 'exit 143' TERM
 mkdir "$proof_dir/go-work"
 GOTMPDIR="$PWD/$proof_dir/go-work" go test -c ./pkg/breakglass/debug -o "$proof_dir/recipe.test"
 created=true
-kind create cluster --name "$cluster" --kubeconfig "$proof_dir/kubeconfig" --wait 120s \
-	--image "${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
+# renovate: datasource=docker depName=kindest/node versioning=docker
+kind_node_image="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
+kind create cluster --name "$cluster" --kubeconfig "$proof_dir/kubeconfig" --wait 120s --image "$kind_node_image"
 kubectl --kubeconfig "$proof_dir/kubeconfig" apply --server-side \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_clusterconfigs.yaml \
 	-f config/crd/bases/breakglass.t-caas.telekom.com_debugsessions.yaml \

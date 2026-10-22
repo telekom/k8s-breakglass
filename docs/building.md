@@ -151,7 +151,7 @@ directories without introducing another published base image.
 | Frontend `package.json` / `package-lock.json`, production and development dependencies | Dependabot `npm` |
 | Pinned actions in `.github/workflows/` | Dependabot `github-actions` |
 | Root Dockerfile, seven utility build contexts, and `e2e/images/tmux-debug` | Dependabot `docker` |
-| Image references in `config/dev/resources`, its `crs` directory, `config/samples`, and `e2e/fixtures/templates` | Dependabot `docker`, where the Kubernetes image parser recognizes the reference |
+| Image references in `config/dev/resources`, its `crs` directory, `config/samples`, and `e2e/fixtures` | Dependabot `docker`, where the Kubernetes image parser recognizes the reference |
 | Chart dependencies and supported image references in both `charts/*` charts | Dependabot `helm` |
 
 `Dockerfile.validator` is a compatibility symlink; Dependabot updates its
@@ -161,6 +161,28 @@ references, including zero-digest catalogue placeholders, are excluded from
 external updates: the signed release pipeline supplies verified immutable
 digests. Dependabot security alerts and security updates are repository settings,
 separate from this version-update configuration.
+
+The hosted Renovate companion in `.github/renovate.json` only handles annotated
+tool pins and source references that native Dependabot does not parse, plus the
+`github.com/open-policy-agent/frameworks/constraint` Go submodule. Dependabot
+continues to own ordinary Go, npm, GitHub Actions, Dockerfile, Kubernetes
+manifest and Helm updates. Renovate's hosted App must be installed with access
+to this repository before this companion is merged; it is not active yet. No
+privileged self-hosted Renovate workflow or bot secret is added. The Go
+language-version rule allows patch updates below Go 1.28.0 and bumps the
+`go` directive.
+The OPA constraint rule is dormant while the module appears only in `go.sum`;
+it does not add a direct requirement or change its current transitive version.
+
+System package updates and the `pwru` / `kubestr` source versions require
+Dependency Dashboard approval. Review their repository/package origin and
+update related lock entries, upstream commit IDs and SHA-256/module checksums
+together; never weaken verification to make an update pass. The pinned kind
+compatibility fixture at Kubernetes 1.34 and the MinIO E2E source commit are
+deliberate test inputs, not moving dependencies. Product image versions,
+zero-digest source-built images and immutable release trust anchors remain
+release-owned; update their duplicated metadata only with the corresponding
+reviewed image change.
 
 The legacy `github.com/google/cel-go` module is restricted to versions below
 `v0.32.0`: newer releases declare `cel.dev/cel-go` and cannot be substituted
@@ -185,11 +207,14 @@ a green Dependabot run as proof that these are current:
 
 | Pins | Required maintenance |
 | --- | --- |
-| Root `versions.env` | Review controller-tools, kustomize, golangci-lint, setup-envtest, envtest Kubernetes, and govulncheck versions. The weekly `Check Tool Updates` workflow reports only the first three; it is not an exhaustive updater. |
-| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Refresh replaced APK revisions and Alpine runtime assertions together. Check both Alpine architectures; repositories can remove old package revisions without changing the pinned base digest. Review pinned Debian builder packages too. |
-| `pwru` and `kubestr` build inputs | Update tool version, module sum or commit, dependency overrides, and corresponding inventories together; verify upstream immutable inputs before rebuilding. |
-| kind, Kubernetes node images, Keycloak and other images embedded in shell scripts or workflow `run` blocks | Update all copies and associated checksums explicitly. The Actions updater manages `uses:` references, not arbitrary shell downloads. |
-| Image metadata, OCI base labels, third-party inventories, and generated SBOMs | Synchronize these with every Dockerfile base or package update. Dependabot does not maintain these mirrors automatically. |
+| Root `versions.env` | Renovate tracks annotated controller-tools, kustomize, setup-envtest, golangci-lint, envtest Kubernetes and govulncheck pins after hosted App activation. The weekly `Check Tool Updates` workflow remains a supplemental report for the first three. |
+| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Renovate tracks complete Alpine and Debian package revisions through Repology with Dashboard approval. Review the package origin, full epoch/revision, architecture availability and lock/Dockerfile sync before approving. |
+| `pwru` and `kubestr` build inputs | Renovate queues upstream versions behind Dashboard approval; coordinate the separate module checksum / commit and dependency overrides in the same reviewed update. |
+| Kind, Node.js, Go security tools, license checker and cert-manager used by CI/E2E scripts | Renovate custom-regex markers track versions outside manifests; review the supported compatibility floor before approving. |
+| Kind node image references embedded in shell and workflow files; the ORT and local registry test images | Renovate tracks these unsupported Docker references with digest pinning. Native Dependabot still owns configured Dockerfiles and Kubernetes manifests. |
+| `PWRU_MODULE_SUM`, `PWRU_COMMIT`, `KUBESTR_COMMIT`, and fetched kind checksums | Cryptographic integrity anchors are not independently versioned. Review them only alongside the corresponding upstream release and never replace or remove the verification. |
+| kind node defaults in utility integration tests, the Kubernetes 1.34 `hard-expiry` lane, BusyBox digests in API tests, and MinIO source commit in `e2e/fixtures/artifacts/setup.sh` | Deliberate reproducible E2E fixtures / compatibility floors; update only with a reviewed fixture or support-policy change. |
+| `versions.env` base/build image mirrors, OCI base labels, image metadata, source-built product versions and generated SBOMs | These are release/integrity records, not separate Renovate dependencies; synchronize with the corresponding Dependabot Dockerfile or release change to avoid competing bot PRs. |
 
 Keep immutable digests and exact package constraints. For image update PRs, run
 the image's helper tests, multi-architecture build, real-tool integration, and
@@ -200,6 +225,21 @@ the resulting images. For controller/tool updates, run `make lint` and
 GitHub's [options reference](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference)
 and [supported ecosystems](https://docs.github.com/en/code-security/reference/supply-chain-security/supported-ecosystems-and-repositories)
 define the native coverage boundaries.
+
+### Security scan reporting
+
+Vulnerability findings and scanner setup failures from govulncheck, gosec,
+Trivy, and dependency review are advisory. Their full job logs and scanner
+artifacts remain available, and the trusted `Security report` workflow updates
+one bot-owned PR comment for the current head. It never executes PR code or
+artifacts with the reporter's write token. Build, test, lint, dependency-license,
+and REUSE checks remain blocking.
+
+The Node tests exercise reporter behavior and real dependency extraction and
+replacement, not workflow text assertions. Live acceptance still requires a
+hosted PR run proving that scanner findings/setup errors warn without blocking,
+while a failed build and a denied dependency license (including npm manifests)
+remain blocking. These failure-injection checks have not been run locally.
 
 ## Testing
 

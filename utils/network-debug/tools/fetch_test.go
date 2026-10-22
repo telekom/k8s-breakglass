@@ -21,6 +21,7 @@ import (
 	"time"
 )
 
+// renovate: datasource=github-releases depName=cilium/pwru
 const testReleaseURL = "https://github.com/cilium/pwru/releases/download/v1.0.12/pwru-linux-amd64.tar.gz"
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

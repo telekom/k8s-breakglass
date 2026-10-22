@@ -37,19 +37,40 @@ ARG VERSION=dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
+# renovate: datasource=repology depName=alpine_3_24/ethtool versioning=loose
+ARG ETHTOOL_VERSION=7.0-r0
+# renovate: datasource=repology depName=alpine_3_24/flock versioning=loose
+ARG FLOCK_VERSION=2.42.3-r1
+# renovate: datasource=repology depName=alpine_3_24/iproute2 versioning=loose
+ARG IPROUTE2_VERSION=7.0.0-r0
+# renovate: datasource=repology depName=alpine_3_24/kmod versioning=loose
+ARG KMOD_VERSION=34.2-r1
+# renovate: datasource=repology depName=alpine_3_24/xz-libs versioning=loose
+ARG XZ_LIBS_VERSION=5.8.4-r0
+# renovate: datasource=repology depName=alpine_3_24/zlib versioning=loose
+ARG ZLIB_VERSION=1.3.2-r0
+# renovate: datasource=repology depName=alpine_3_24/zstd-libs versioning=loose
+ARG ZSTD_LIBS_VERSION=1.5.7-r2
+# renovate: datasource=repology depName=alpine_3_24/libcrypto3 versioning=loose
+ARG LIBCRYPTO3_VERSION=3.5.8-r0
+# renovate: datasource=repology depName=alpine_3_24/libssl3 versioning=loose
+ARG LIBSSL3_VERSION=3.5.8-r0
+# renovate: datasource=repology depName=alpine_3_24/sed versioning=loose
+ARG SED_VERSION=4.9-r2
+
 # Keep the runtime deliberately small. Do not add a general-purpose network
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
 RUN apk add --no-cache \
-        ethtool=7.0-r0 \
-        flock=2.42.3-r1 \
-        iproute2=7.0.0-r0 \
-        kmod=34.2-r1 \
-        xz-libs=5.8.4-r0 \
-        zlib=1.3.2-r0 \
-        zstd-libs=1.5.7-r2 \
-        libcrypto3=3.5.8-r0 \
-        libssl3=3.5.8-r0 \
-        sed=4.9-r2 \
+        "ethtool=${ETHTOOL_VERSION}" \
+        "flock=${FLOCK_VERSION}" \
+        "iproute2=${IPROUTE2_VERSION}" \
+        "kmod=${KMOD_VERSION}" \
+        "xz-libs=${XZ_LIBS_VERSION}" \
+        "zlib=${ZLIB_VERSION}" \
+        "zstd-libs=${ZSTD_LIBS_VERSION}" \
+        "libcrypto3=${LIBCRYPTO3_VERSION}" \
+        "libssl3=${LIBSSL3_VERSION}" \
+        "sed=${SED_VERSION}" \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance

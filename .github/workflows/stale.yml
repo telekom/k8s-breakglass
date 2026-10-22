@@ -25,11 +25,11 @@ jobs:
           # Issues configuration
           stale-issue-message: >
             This issue has been automatically marked as stale because it has not had
-            recent activity. It will be closed in 14 days if no further activity occurs.
+            recent activity. It will remain open until further activity occurs.
             If this issue is still relevant, please comment or update it.
           stale-issue-label: 'stale'
           days-before-issue-stale: 60
-          days-before-issue-close: 14
+          days-before-issue-close: -1
           exempt-issue-labels: 'pinned,security,enhancement,bug'
           # PR configuration
           # PR stale processing is disabled; pull requests must not be stale-closed.

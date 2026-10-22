@@ -105,6 +105,7 @@ updates:
       - /utils/node-maintenance
       - /utils/workload-debug
       - /e2e/images/tmux-debug
+      - /e2e/fixtures
       - /e2e/fixtures/templates
       - /config/dev/resources
       - /config/dev/resources/crs

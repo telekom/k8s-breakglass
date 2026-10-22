@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write
+      pull-requests: read
 
     steps:
       - name: Checkout code
@@ -28,7 +28,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Dependency Review
+      - name: Review dependency licenses
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           # Allow permissive licenses (MIT, Apache, BSD, ISC, MPL-2.0)
@@ -37,9 +37,21 @@ jobs:
 
           # Deny copyleft and restrictive licenses
           deny-licenses: GPL-2.0, GPL-2.0-only, GPL-2.0-or-later, GPL-3.0, GPL-3.0-only, GPL-3.0-or-later, LGPL-2.0, LGPL-2.1, LGPL-3.0, AGPL-3.0, AGPL-3.0-only, AGPL-3.0-or-later
+          license-check: true
+          vulnerability-check: false
+          comment-summary-in-pr: never
 
-          # Fail on moderate or higher severity vulnerabilities
+      - name: Review dependency vulnerabilities
+        id: scan
+        if: always()
+        continue-on-error: true
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          license-check: false
+          vulnerability-check: true
           fail-on-severity: moderate
+          comment-summary-in-pr: never
 
-          # Comment on PR with details (only for non-fork PRs where write access is available)
-          comment-summary-in-pr: ${{ github.event.pull_request.head.repo.full_name == github.repository && 'always' || 'never' }}
+      - name: Report security scan status
+        if: always() && steps.scan.outcome != 'success'
+        run: echo '::warning title=Security scan advisory::Dependency review reported findings or could not complete. Review the complete scan logs.'

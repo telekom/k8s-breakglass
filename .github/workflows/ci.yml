@@ -17,7 +17,9 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # renovate: datasource=github-releases depName=kubernetes-sigs/kind
   KIND_VERSION: 'v0.32.0'
+  # renovate: datasource=docker depName=kindest/node versioning=docker
   KIND_NODE_IMAGE: 'kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5'
 
 concurrency:
@@ -158,6 +160,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # renovate: datasource=github-releases depName=nodejs/node extractVersion=^v?(?<version>.+)$
           node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
@@ -368,6 +371,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # renovate: datasource=github-releases depName=nodejs/node extractVersion=^v?(?<version>.+)$
           node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
@@ -1735,6 +1739,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
+          # renovate: datasource=github-releases depName=nodejs/node extractVersion=^v?(?<version>.+)$
           node-version: '24.15.0'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json

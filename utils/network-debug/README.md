@@ -21,9 +21,10 @@ the proofs. We deliberately do not reinstall or independently pin those
 packages. The upstream netshoot package set is part of the digest-pinned base;
 the additions are listed in [`IMAGE-METADATA.yaml`](./IMAGE-METADATA.yaml).
 
-The build refreshes inherited APK packages from Alpine 3.24 and verifies the
-resulting Alpine 3.24.2 runtime. Keep `NETSHOOT_ALPINE_VERSION` and
-`BASE_ALPINE_VERSION` synchronized when the repository publishes a patch release.
+The build refreshes inherited APK packages from Alpine 3.24 and verifies that
+the result remains on the 3.24 release series. `apk upgrade` intentionally
+allows patch updates; keep `NETSHOOT_ALPINE_VERSION` and `BASE_ALPINE_VERSION`
+synchronized when changing the supported Alpine series.
 
 The following netshoot utilities are deliberately not part of this intent:
 `calicoctl` is platform/CNI-specific; `ctop` is a Docker-host UI; `fortio` and
