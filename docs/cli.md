@@ -78,6 +78,19 @@ bgctl escalation list -o yaml
 bgctl session list -o wide
 ```
 
+## Escalation discovery
+
+Inspect available policies and cluster names before requesting a session:
+
+```bash
+bgctl escalation list
+bgctl escalation get production-admin -o yaml
+bgctl escalation list-clusters -o json
+```
+
+Each escalation subcommand includes a description and examples in `--help`.
+Help is available without loading an authenticated context.
+
 ## Explicit escalation selection
 
 When several eligible policies grant the same group on a cluster, select the

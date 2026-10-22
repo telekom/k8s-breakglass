@@ -52,6 +52,8 @@ func TestEscalationListCommand_Help(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "list")
+	assert.Contains(t, buf.String(), "List the escalation policies available to the current user.")
+	assert.Contains(t, buf.String(), "bgctl escalation list -o json")
 }
 
 func TestEscalationGetCommand_Help(t *testing.T) {
@@ -67,6 +69,8 @@ func TestEscalationGetCommand_Help(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "get")
+	assert.Contains(t, buf.String(), "Inspect an escalation policy by its Kubernetes resource name.")
+	assert.Contains(t, buf.String(), "bgctl escalation get production-admin -o yaml")
 }
 
 func TestEscalationListClustersCommand_Help(t *testing.T) {
@@ -82,6 +86,8 @@ func TestEscalationListClustersCommand_Help(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, buf.String(), "list-clusters")
+	assert.Contains(t, buf.String(), "Show cluster names available through escalation policies.")
+	assert.Contains(t, buf.String(), "bgctl escalation list-clusters -o json")
 }
 
 // writeTestConfigForEscalation creates a temporary config file for testing

@@ -300,42 +300,64 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 func TestIsolatedMultiSink_Independence(t *testing.T) {
 	logger := zap.NewNop()
 
-	// Create one fast sink and one slow sink
 	fastSink := newQueuedMockSink("fast")
 	slowSink := newQueuedMockSink("slow")
-	slowSink.writeDelay = 50 * time.Millisecond
+	slowStarted := make(chan struct{})
+	releaseSlow := make(chan struct{})
+	slowSink.firstStarted = slowStarted
+	slowSink.blockFirst = releaseSlow
 
 	cfg := QueuedSinkConfig{
-		QueueSize:   100,
-		WorkerCount: 2,
+		QueueSize:    100,
+		WorkerCount:  1,
+		WriteTimeout: time.Minute,
 	}
 
 	ims := NewIsolatedMultiSink([]Sink{fastSink, slowSink}, cfg, logger)
-	defer func() { _ = ims.Close() }()
+	unblockSlow := sync.OnceFunc(func() { close(releaseSlow) })
+	t.Cleanup(func() {
+		unblockSlow()
+		require.NoError(t, ims.Close())
+	})
 
-	// Write events
-	ctx := context.Background()
-	start := time.Now()
-	for i := 0; i < 10; i++ {
-		event := &Event{
-			ID:   "multi-" + string(rune('0'+i)),
-			Type: EventSessionRequested,
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	writeResult := make(chan error, 1)
+	go func() {
+		for i := 0; i < 10; i++ {
+			event := &Event{
+				ID:   "multi-" + string(rune('0'+i)),
+				Type: EventSessionRequested,
+			}
+			if err := ims.Write(ctx, event); err != nil {
+				writeResult <- err
+				return
+			}
 		}
-		err := ims.Write(ctx, event)
-		require.NoError(t, err)
+		writeResult <- nil
+	}()
+
+	select {
+	case <-slowStarted:
+	case <-ctx.Done():
+		t.Fatal("slow sink did not begin processing")
 	}
-	writeTime := time.Since(start)
+	select {
+	case err := <-writeResult:
+		require.NoError(t, err)
+	case <-ctx.Done():
+		t.Fatal("enqueueing waited for the blocked slow sink")
+	}
 
-	// Writes should be fast (non-blocking)
-	assert.Less(t, writeTime, 10*time.Millisecond, "Writes should be non-blocking")
+	require.Eventually(t, func() bool {
+		return fastSink.EventCount() == 10
+	}, 5*time.Second, 10*time.Millisecond, "fast sink must drain while the slow sink is blocked")
+	assert.Zero(t, slowSink.EventCount(), "slow sink must still be blocked")
 
-	// Wait for fast sink to process
-	time.Sleep(50 * time.Millisecond)
-	assert.Equal(t, 10, fastSink.EventCount(), "Fast sink should have all events")
-
-	// Slow sink should still be processing or done
-	time.Sleep(600 * time.Millisecond) // Wait for slow sink
-	assert.Equal(t, 10, slowSink.EventCount(), "Slow sink should eventually have all events")
+	unblockSlow()
+	require.Eventually(t, func() bool {
+		return slowSink.EventCount() == 10
+	}, 5*time.Second, 10*time.Millisecond, "slow sink must drain after release")
 
 	// Check health
 	healths := ims.Health()
