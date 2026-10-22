@@ -162,6 +162,24 @@ func TestDebugSession_E2E_KubectlDebugReadOnlyRootFilesystemAdmission(t *testing
 	session = helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 		breakglassv1alpha1.DebugSessionStateActive, defaultTimeout)
 
+	// Copy before injection: kubelet updates to ephemeral-container status change
+	// the source resourceVersion, which the pod-copy authorization fence rejects.
+	copyResult, err := api.CreatePodCopy(ctx, t, session.Name, helpers.PodCopyRequest{
+		Namespace:  roRootfsNamespace,
+		PodName:    sourcePod.Name,
+		DebugImage: "busybox:latest",
+	})
+	require.NoError(t, err, "admission must accept the pod copy with the template security context")
+	copyPod := &corev1.Pod{}
+	require.NoError(t, cli.Get(ctx, client.ObjectKey{Namespace: copyResult.CopyNamespace, Name: copyResult.CopyName}, copyPod))
+	defer func() { _ = cli.Delete(ctx, copyPod) }()
+	require.Len(t, copyPod.Spec.Containers, 2)
+	for _, container := range copyPod.Spec.Containers {
+		require.NotNil(t, container.SecurityContext, container.Name)
+		require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem, container.Name)
+	}
+	require.NoError(t, helpers.WaitForPodReady(ctx, cli, copyPod.Namespace, copyPod.Name, defaultTimeout))
+
 	// The client asks for a writable root filesystem; the template wins.
 	// requireNonRoot defaults to true, so the request runs as nobody.
 	nobody, nonRoot := int64(65534), true
@@ -182,20 +200,5 @@ func TestDebugSession_E2E_KubectlDebugReadOnlyRootFilesystemAdmission(t *testing
 	require.NotNil(t, sourcePod.Spec.EphemeralContainers[0].SecurityContext)
 	require.True(t, *sourcePod.Spec.EphemeralContainers[0].SecurityContext.ReadOnlyRootFilesystem)
 
-	copyResult, err := api.CreatePodCopy(ctx, t, session.Name, helpers.PodCopyRequest{
-		Namespace:  roRootfsNamespace,
-		PodName:    sourcePod.Name,
-		DebugImage: "busybox:latest",
-	})
-	require.NoError(t, err, "admission must accept the pod copy with the template security context")
-	copyPod := &corev1.Pod{}
-	require.NoError(t, cli.Get(ctx, client.ObjectKey{Namespace: copyResult.CopyNamespace, Name: copyResult.CopyName}, copyPod))
-	defer func() { _ = cli.Delete(ctx, copyPod) }()
-	require.Len(t, copyPod.Spec.Containers, 2)
-	for _, container := range copyPod.Spec.Containers {
-		require.NotNil(t, container.SecurityContext, container.Name)
-		require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem, container.Name)
-	}
-	require.NoError(t, helpers.WaitForPodReady(ctx, cli, copyPod.Namespace, copyPod.Name, defaultTimeout))
 	require.NoError(t, api.TerminateDebugSession(ctx, t, session.Name))
 }
