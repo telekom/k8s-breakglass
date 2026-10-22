@@ -51,26 +51,42 @@ test('extracts tagged tool versions, image digests, and release prereleases with
 });
 
 test('preserves full Debian package revisions including epochs and suffixes', () => {
-  const input = '# renovate: datasource=repology depName=debian_13/llvm-toolchain-19 versioning=loose\n' +
+  const input = '# renovate: datasource=deb depName=clang versioning=deb\n' +
     'ARG CLANG_VERSION=1:19.0-63\n' +
-    '# renovate: datasource=repology depName=debian_13/bison versioning=loose\n' +
+    '# renovate: datasource=deb depName=bison versioning=deb\n' +
     'BISON_VERSION=2:3.8.2+dfsg-1+b2';
   const deps = extract(input, 'versions.env', packageManager);
   assert.deepEqual(deps.map(dep => [dep.depName, dep.currentValue]), [
-    ['debian_13/llvm-toolchain-19', '1:19.0-63'],
-    ['debian_13/bison', '2:3.8.2+dfsg-1+b2'],
+    ['clang', '1:19.0-63'],
+    ['bison', '2:3.8.2+dfsg-1+b2'],
   ]);
 });
 
 test('extracts exact APK and Debian revisions from fixed package fixtures', () => {
   const lock = '# renovate: datasource=repology depName=alpine_3_24/ethtool versioning=loose\nethtool=7.0-r0\n';
-  const dockerfile = '# renovate: datasource=repology depName=debian_13/flex versioning=loose\nARG FLEX_VERSION=2.6.4-8.2+b4\n' +
-    '# renovate: datasource=repology depName=debian_13/bison versioning=loose\nARG BISON_VERSION=2:3.8.2+dfsg-1+b2\n';
+  const dockerfile = '# renovate: datasource=deb depName=flex versioning=deb\nARG FLEX_VERSION=2.6.4-8.2+b4\n' +
+    '# renovate: datasource=deb depName=bison versioning=deb\nARG BISON_VERSION=2:3.8.2+dfsg-1+b2\n';
   const alpine = extract(lock, 'fixture.lock', packageManager);
   const debian = extract(dockerfile, 'Dockerfile', packageManager);
   assert.equal(alpine.find(dep => dep.depName.endsWith('/ethtool'))?.currentValue, '7.0-r0');
-  assert.equal(debian.find(dep => dep.depName.endsWith('/flex'))?.currentValue, '2.6.4-8.2+b4');
-  assert.equal(debian.find(dep => dep.depName.endsWith('/bison'))?.currentValue, '2:3.8.2+dfsg-1+b2');
+  assert.equal(debian.find(dep => dep.depName === 'flex')?.currentValue, '2.6.4-8.2+b4');
+  assert.equal(debian.find(dep => dep.depName === 'bison')?.currentValue, '2:3.8.2+dfsg-1+b2');
+});
+
+test('binary Debian pins resolve against the explicit distribution and preserve full revisions during updates', async () => {
+  const original = '# renovate: datasource=deb depName=clang versioning=deb\nCLANG_VERSION=1:19.0-63\n';
+  const dep = extract(original, 'debian.env', packageManager)[0];
+  const resolved = await applyPackageRules({
+    ...dep, packageRules: config.packageRules, manager: 'custom.regex', packageName: dep.depName,
+  }, 'Debian binary package lookup');
+  assert.equal(resolved.versioning, 'deb');
+  assert.deepEqual(resolved.registryUrls, ['https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64']);
+  assert.equal(resolved.dependencyDashboardApproval, true);
+  const updated = await doAutoReplace({
+    ...packageManager, ...dep, manager: 'regex', depIndex: 0, packageFile: 'debian.env',
+    newValue: '1:20.0-1+b2',
+  }, original, false);
+  assert.equal(updated, original.replace('1:19.0-63', '1:20.0-1+b2'));
 });
 
 test('the real updater replaces duplicate immutable image references as a coordinated change', async () => {
@@ -128,6 +144,7 @@ test('the real updater replaces a fixed validator version fixture', async () => 
 test('requires dashboard approval for package revisions and checksum-coupled source pins', async () => {
   for (const [datasource, packageName] of [
     ['repology', 'alpine_3_24/bash'],
+    ['deb', 'clang'],
     ['github-releases', 'cilium/pwru'],
     ['github-releases', 'kastenhq/kubestr'],
     ['github-releases', 'kubernetes-sigs/kind'],

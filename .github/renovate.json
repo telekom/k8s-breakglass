@@ -45,8 +45,13 @@
     },
     {
       "description": "Require coordinated review for system package pins",
-      "matchDatasources": ["repology"],
+      "matchDatasources": ["repology", "deb"],
       "dependencyDashboardApproval": true
+    },
+    {
+      "description": "Resolve full Debian binary package versions, not source or normalized Repology versions",
+      "matchDatasources": ["deb"],
+      "registryUrls": ["https://deb.debian.org/debian?suite=trixie&components=main&binaryArch=amd64"]
     },
     {
       "description": "Review version, commit, and module checksum together before updating these built tools",
@@ -81,7 +86,7 @@
         "/(^|/)(versions\\.env|deps\\.lock|Dockerfile)$/"
       ],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>repology) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\r?\\n[^\\r\\n]*?=[\"']?(?<currentValue>[0-9A-Za-z][0-9A-Za-z.+:~_-]*)"
+        "# renovate: datasource=(?<datasource>repology|deb) depName=(?<depName>\\S+) versioning=(?<versioning>\\S+)\\r?\\n[^\\r\\n]*?=[\"']?(?<currentValue>[0-9A-Za-z][0-9A-Za-z.+:~_-]*)"
       ],
       "versioningTemplate": "{{{versioning}}}"
     }
