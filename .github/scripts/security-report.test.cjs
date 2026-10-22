@@ -16,7 +16,7 @@ function fixture() {
     pulls: [pr], comments: [],
     runs: [{ id: 3, name: 'Security Scan' }, { id: 1, name: 'Security Scan' }],
     jobs: [{ name: 'govulncheck', conclusion: 'success', html_url: 'https://github.com/logs', check_run_url: 'https://api.github.com/checks/4' }],
-    annotations: [{ title: 'Security scan advisory', message: '<script>@someone|[finding](evil)</script>', annotation_level: 'warning' }],
+    annotations: [{ title: 'Security scan advisory', message: '<ScRiPt>@someone|[finding](evil)</SCRIPT>', annotation_level: 'warning' }],
   };
   const endpoint = key => Object.assign(() => {}, { key });
   const github = {
@@ -50,8 +50,8 @@ test('creates an escaped advisory report using the newest run', async () => {
   assert.equal(f.posted.length, 1);
   assert.equal(f.posted[0].method, 'create');
   assert.match(f.posted[0].body, /success; findings or scanner error \(advisory\)/);
-  assert.match(f.posted[0].body, /&lt;script&gt;&#64;someone&#124;&#91;finding&#93;&#40;evil&#41;&lt;\/script&gt;/);
-  assert.doesNotMatch(f.posted[0].body, /<script>|@someone|\[finding\]\(evil\)/);
+  assert.match(f.posted[0].body, /&lt;ScRiPt&gt;&#64;someone&#124;&#91;finding&#93;&#40;evil&#41;&lt;\/SCRIPT&gt;/);
+  assert.doesNotMatch(f.posted[0].body, /<\/?script>|@someone|\[finding\]\(evil\)/i);
   assert.match(f.posted[0].body, /licensing and REUSE checks remain blocking/);
 });
 
