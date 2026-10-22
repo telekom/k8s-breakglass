@@ -91,7 +91,6 @@ trap 'exit 143' TERM
 mkdir "$proof_dir/go-work"
 GOTMPDIR="$PWD/$proof_dir/go-work" go test -c ./pkg/breakglass/debug -o "$proof_dir/hotfix.test"
 
-# renovate: datasource=docker depName=registry versioning=docker
 registry_image='registry:3.0.0@sha256:6c5666b861f3505b116bb9aa9b25175e71210414bd010d92035ff64018f9457e'
 registry_id=$(docker run --detach --cidfile "$proof_dir/registry.cid" --name "$registry" --publish 127.0.0.1::5000 "$registry_image")
 port=$(docker port "$registry_id" 5000/tcp | sed 's/^127\.0\.0\.1://')
@@ -120,7 +119,6 @@ nodes:
   - role: control-plane
 EOF
 # The node reaches the proof registry directly; never through a host proxy.
-# renovate: datasource=docker depName=kindest/node versioning=docker
 kind_node_image="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
 env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
 	kind create cluster --name "$cluster" --config "$proof_dir/kind.yaml" \

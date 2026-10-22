@@ -53,7 +53,6 @@ HUB_WEBHOOK_URL=""
 HUB_API_URL=""
 
 # --- Kind node image ---
-# renovate: datasource=docker depName=kindest/node versioning=docker
 KIND_NODE_IMAGE=${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}
 
 # The authorization configuration below uses cacheAuthorizedRequests, which is
@@ -618,7 +617,6 @@ setup_hub_cluster() {
   
   # Install cert-manager to provide Certificate and Issuer CRDs
   log "Installing cert-manager..."
-  # renovate: datasource=github-releases depName=cert-manager/cert-manager
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.3/cert-manager.yaml
   log "Waiting for cert-manager to be ready..."
   KUBECONFIG="$HUB_KUBECONFIG" $KUBECTL wait --for=condition=available --timeout=120s -n cert-manager deployment/cert-manager

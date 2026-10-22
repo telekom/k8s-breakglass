@@ -9,19 +9,12 @@ ARG BUILD_DATE=unknown
 ARG REVISION=${VCS_REF}
 ARG CREATED=${BUILD_DATE}
 
-# renovate: datasource=repology depName=alpine_3_24/bash versioning=loose
 ARG BASH_VERSION=5.3.9-r1
-# renovate: datasource=repology depName=alpine_3_24/bind-tools versioning=loose
-ARG BIND_TOOLS_VERSION=9.20.29-r0
-# renovate: datasource=repology depName=alpine_3_24/ca-certificates versioning=loose
+ARG BIND_TOOLS_VERSION=9.20.30-r0
 ARG CA_CERTIFICATES_VERSION=20261020-r0
-# renovate: datasource=repology depName=alpine_3_24/curl versioning=loose
 ARG CURL_VERSION=8.22.0-r0
-# renovate: datasource=repology depName=alpine_3_24/jq versioning=loose
 ARG JQ_VERSION=1.8.2-r0
-# renovate: datasource=repology depName=alpine_3_24/openssl versioning=loose
 ARG OPENSSL_VERSION=3.5.9-r0
-# renovate: datasource=repology depName=alpine_3_24/tini versioning=loose
 ARG TINI_VERSION=0.19.0-r3
 
 # The Alpine 3.24 release and its base manifest are pinned. Refresh deps.lock

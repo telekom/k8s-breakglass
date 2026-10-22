@@ -42,7 +42,6 @@ jobs:
       - name: Install govulncheck
         id: install
         continue-on-error: true
-        # renovate: datasource=go depName=golang.org/x/vuln
         run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
 
       - name: Run govulncheck
@@ -80,9 +79,7 @@ jobs:
           mkdir -p .gosec-build
           cd .gosec-build
           go mod init breakglass.local/gosec-build
-          # renovate: datasource=go depName=github.com/securego/gosec/v2
           GOSEC_VERSION=v2.29.0
-          # renovate: datasource=go depName=golang.org/x/tools
           X_TOOLS_VERSION=v0.50.0
           # Bounded retries tolerate transient proxy failures and fail closed.
           install_status=1
@@ -221,7 +218,6 @@ jobs:
           go-version-file: go.mod
 
       - name: Install go-licenses
-        # renovate: datasource=go depName=github.com/google/go-licenses/v2
         run: go install github.com/google/go-licenses/v2@v2.0.1
 
       - name: Check dependency licenses

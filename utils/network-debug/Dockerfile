@@ -16,19 +16,13 @@ ARG BUILD_DATE=unknown
 # tooling is intentionally excluded; kubestr belongs to storage-debug.
 FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS tools
 ARG TARGETARCH
-# renovate: datasource=github-releases depName=cilium/pwru
 ARG PWRU_VERSION=v1.0.12
 ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
 ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
-# renovate: datasource=go depName=golang.org/x/net
 ARG X_NET_VERSION=v0.60.0
-# renovate: datasource=deb depName=clang versioning=deb
 ARG CLANG_VERSION=1:19.0-63
-# renovate: datasource=deb depName=llvm versioning=deb
 ARG LLVM_VERSION=1:19.0-63
-# renovate: datasource=deb depName=flex versioning=deb
 ARG FLEX_VERSION=2.6.4-8.2+b4
-# renovate: datasource=deb depName=bison versioning=deb
 ARG BISON_VERSION=2:3.8.2+dfsg-1+b2
 
 WORKDIR /src/pwru
@@ -60,7 +54,6 @@ FROM runtime
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-# renovate: datasource=github-releases depName=cilium/pwru
 ARG PWRU_VERSION=v1.0.12
 ARG NETSHOOT_ALPINE_VERSION=3.24
 

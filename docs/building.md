@@ -162,20 +162,13 @@ external updates: the signed release pipeline supplies verified immutable
 digests. Dependabot security alerts and security updates are repository settings,
 separate from this version-update configuration.
 
-The hosted Renovate companion in `.github/renovate.json` only handles annotated
-tool pins and source references that native Dependabot does not parse, plus the
-`github.com/open-policy-agent/frameworks/constraint` Go submodule. Dependabot
-continues to own ordinary Go, npm, GitHub Actions, Dockerfile, Kubernetes
-manifest and Helm updates. Renovate's hosted App must be installed with access
-to this repository before this companion is merged; it is not active yet. No
-privileged self-hosted Renovate workflow or bot secret is added. The Go
-language-version rule allows patch updates below Go 1.28.0 and bumps the
-`go` directive.
-The OPA constraint rule is dormant while the module appears only in `go.sum`;
-it does not add a direct requirement or change its current transitive version.
+GitHub Dependabot is the only dependency updater. Unsupported pins listed below
+require manual review, not an external updater installation. The OPA constraint
+submodule appears only in `go.sum`; do not add a direct requirement merely to
+drive updates. For an untagged submodule, verify any manual pseudo-version with
+the Go proxy rather than selecting an unrelated parent-module release.
 
-System package updates and the `pwru` / `kubestr` source versions require
-Dependency Dashboard approval. Review their repository/package origin and
+Review system package and `pwru` / `kubestr` updates against their upstream origin and
 update related lock entries, upstream commit IDs and SHA-256/module checksums
 together; never weaken verification to make an update pass. The pinned kind
 compatibility fixture at Kubernetes 1.34 and the MinIO E2E source commit are
@@ -207,14 +200,14 @@ a green Dependabot run as proof that these are current:
 
 | Pins | Required maintenance |
 | --- | --- |
-| Root `versions.env` | Renovate tracks annotated controller-tools, kustomize, setup-envtest, golangci-lint, envtest Kubernetes and govulncheck pins after hosted App activation. The weekly `Check Tool Updates` workflow remains a supplemental report for the first three. |
-| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Renovate tracks Alpine revisions through Repology and Debian binary packages through the native `deb` datasource against Trixie indexes, with Dashboard approval. Review the package origin, full epoch/revision, availability on both amd64 and arm64 and lock/Dockerfile sync before approving. Repology source versions are not substitutes for exact Debian binary versions. |
-| `pwru` and `kubestr` build inputs | Renovate queues upstream versions behind Dashboard approval; coordinate the separate module checksum / commit and dependency overrides in the same reviewed update. |
-| Kind, Node.js, Go security tools, license checker and cert-manager used by CI/E2E scripts | Renovate custom-regex markers track versions outside manifests; review the supported compatibility floor before approving. |
-| Kind node image references embedded in shell and workflow files; the ORT and local registry test images | Renovate tracks these unsupported Docker references with digest pinning. Native Dependabot still owns configured Dockerfiles and Kubernetes manifests. |
+| Root `versions.env` | Review tool releases manually. The weekly `Check Tool Updates` workflow reports selected tools but does not open version-update PRs. |
+| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Review full Alpine/Debian binary-package versions, including epochs and rebuild revisions, against the package indexes for both amd64 and arm64. Synchronize the Dockerfile, lock and metadata; Debian source versions are not substitutes for exact binary versions. |
+| `pwru` and `kubestr` build inputs | Coordinate upstream versions, module checksums, commits and dependency overrides in the same reviewed update. |
+| Kind, Node.js, Go security tools, license checker and cert-manager used by CI/E2E scripts | Review these unsupported version literals manually against the supported compatibility floor. |
+| Kind node image references embedded in shell and workflow files; the ORT and local registry test images | Resolve published image tags and immutable digests manually; keep repeated references synchronized. Dependabot owns supported Dockerfiles and Kubernetes manifests. |
 | `PWRU_MODULE_SUM`, `PWRU_COMMIT`, `KUBESTR_COMMIT`, and fetched kind checksums | Cryptographic integrity anchors are not independently versioned. Review them only alongside the corresponding upstream release and never replace or remove the verification. |
 | kind node defaults in utility integration tests, the Kubernetes 1.34 `hard-expiry` lane, BusyBox digests in API tests, and MinIO source commit in `e2e/fixtures/artifacts/setup.sh` | Deliberate reproducible E2E fixtures / compatibility floors; update only with a reviewed fixture or support-policy change. |
-| `versions.env` base/build image mirrors, OCI base labels, image metadata, source-built product versions and generated SBOMs | These are release/integrity records, not separate Renovate dependencies; synchronize with the corresponding Dependabot Dockerfile or release change to avoid competing bot PRs. |
+| `versions.env` base/build image mirrors, OCI base labels, image metadata, source-built product versions and generated SBOMs | These are release/integrity records; synchronize with the corresponding Dependabot Dockerfile or release change. |
 
 Keep immutable digests and exact package constraints. For image update PRs, run
 the image's helper tests, multi-architecture build, real-tool integration, and

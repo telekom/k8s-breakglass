@@ -6,18 +6,12 @@
 FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS kubestr-builder
 
 ARG TARGETARCH
-# renovate: datasource=github-releases depName=kastenhq/kubestr
 ARG KUBESTR_VERSION=v0.4.49
 ARG KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174
-# renovate: datasource=go depName=golang.org/x/net
 ARG X_NET_VERSION=v0.60.0
-# renovate: datasource=go depName=golang.org/x/crypto
 ARG X_CRYPTO_VERSION=v0.57.0
-# renovate: datasource=go depName=golang.org/x/text
 ARG X_TEXT_VERSION=v0.42.0
-# renovate: datasource=go depName=github.com/moby/spdystream
 ARG SPDYSTREAM_VERSION=v0.5.1
-# renovate: datasource=go depName=golang.org/x/oauth2
 ARG OAUTH2_VERSION=v0.27.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
@@ -49,15 +43,10 @@ FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cab
 ARG VERSION=dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-# renovate: datasource=repology depName=alpine_3_24/fio versioning=loose
 ARG FIO_VERSION=3.41-r0
-# renovate: datasource=repology depName=alpine_3_24/ioping versioning=loose
 ARG IOPING_VERSION=1.3-r0
-# renovate: datasource=github-releases depName=kastenhq/kubestr
 ARG KUBESTR_VERSION=v0.4.49
-# renovate: datasource=repology depName=alpine_3_24/libcrypto3 versioning=loose
 ARG LIBCRYPTO3_VERSION=3.5.8-r0
-# renovate: datasource=repology depName=alpine_3_24/libssl3 versioning=loose
 ARG LIBSSL3_VERSION=3.5.8-r0
 
 LABEL org.opencontainers.image.title="Storage diagnostics utilities" \

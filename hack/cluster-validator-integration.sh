@@ -17,7 +17,6 @@ CLUSTER_NAME="${CLUSTER_NAME_BASE:0:40}-${RUN_ID}"
 NAMESPACE="validator-integration"
 IMAGE_BASE="${VALIDATOR_INTEGRATION_IMAGE:-cluster-validator-integration:${GITHUB_SHA:-local}}"
 IMAGE="${IMAGE_BASE}-${RUN_ID}"
-# renovate: datasource=docker depName=kindest/node versioning=docker
 KIND_NODE_IMAGE="${KIND_NODE_IMAGE:-kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5}"
 WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/cluster-validator-integration.XXXXXX")"
 ARTIFACT_DIR="${VALIDATOR_INTEGRATION_ARTIFACT_DIR:-${RUNNER_TEMP:-/tmp}/cluster-validator-integration-artifacts}"

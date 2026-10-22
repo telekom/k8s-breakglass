@@ -2,9 +2,8 @@
 section: Security
 ---
 
-- Add review-gated Renovate tracking for unsupported tool, system-package and
-  embedded image pins while leaving ordinary manifest updates with Dependabot.
-  The hosted Renovate App must be installed before this configuration is
-  merged; it is not active as part of this change.
+- Use GitHub Dependabot for all supported dependency manifests, including the
+  previously missing E2E fixture directory. Tool literals, system-package
+  revisions and embedded source images still require explicit manual review.
 - Keep vulnerability scan findings advisory and disable automatic issue
   closure while preserving stale labels.

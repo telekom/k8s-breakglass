@@ -21,7 +21,6 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Install kind
-        # renovate: datasource=github-releases depName=kubernetes-sigs/kind
         run: go install sigs.k8s.io/kind@v0.32.0
       - name: Verify shell
         run: shellcheck hack/audit-delivery-kind.sh
