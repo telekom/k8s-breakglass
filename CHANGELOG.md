@@ -13,6 +13,52 @@ writes it.
 
 ## [Unreleased]
 
+## [0.3.0-rc.15] - 2026-10-23
+
+### Upgrade notes
+
+- Development tooling now uses Kustomize v5.8.3. Its Go 1.27 requirement is
+  already satisfied by the repository's Go 1.27.3 source floor. This updates
+  the Kustomize portion of the recurring tool report in issue #629 without
+  changing the rendered default deployment.
+- Refresh the workload-debug DNS tools to the available Alpine 3.24
+  `bind-tools=9.20.30-r0` package. The repository no longer supplies the
+  previously pinned revision, which prevented utility-image builds.
+
+### Behaviour changes
+
+- `bgctl escalation list`, `get` and `list-clusters` now provide descriptive
+  help and runnable examples without requiring an authenticated context.
+  This addresses the escalation-help portion of issue #544; API behavior,
+  permissions and output formats are unchanged.
+
+### Security
+
+- Use GitHub Dependabot for all supported dependency manifests, including the
+  previously missing E2E fixture directory. Tool literals, system-package
+  revisions and embedded source images still require explicit manual review.
+- Keep vulnerability scan findings advisory and disable automatic issue
+  closure while preserving stale labels.
+
+### Fixes
+
+- audit: update the drop metric before the health counter ([#1548](https://github.com/telekom/k8s-breakglass/pull/1548))
+- bgctl: add actionable escalation command help and examples
+- ci: restore utility builds and report advisory security scans
+- A queued audit sink now updates `breakglass_audit_events_dropped_total` before
+  the dropped count in its health status. A reader that sees the new count also
+  sees the metric. Delivery is unchanged (#1548).
+
+### CI, build and tests
+
+- audit: prove sink independence without scheduler timing
+
+### Dependencies
+
+- go: bump github.com/shopspring/decimal ([#1549](https://github.com/telekom/k8s-breakglass/pull/1549))
+- update Kustomize to v5.8.3
+- go: bump the go-minor-patch group across 1 directory with 2 updates
+
 ## [0.3.0-rc.14] - 2026-10-21
 
 ### Upgrade notes
@@ -2633,7 +2679,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.15...HEAD
+[0.3.0-rc.15]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...v0.3.0-rc.15
 [0.3.0-rc.14]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...v0.3.0-rc.14
 [0.3.0-rc.13]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.12...v0.3.0-rc.13
 [0.3.0-rc.12]: https://github.com/telekom/k8s-breakglass/compare/v0.1.0-rc.8...v0.3.0-rc.12
