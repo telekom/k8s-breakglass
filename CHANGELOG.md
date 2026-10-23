@@ -57,7 +57,8 @@ writes it.
 
 - go: bump github.com/shopspring/decimal ([#1549](https://github.com/telekom/k8s-breakglass/pull/1549))
 - update Kustomize to v5.8.3
-- go: bump the go-minor-patch group across 1 directory with 2 updates
+- npm: bump jose in /frontend in the npm-minor-patch group ([#1555](https://github.com/telekom/k8s-breakglass/pull/1555))
+- go: bump the go-minor-patch group across 1 directory with 2 updates ([#1554](https://github.com/telekom/k8s-breakglass/pull/1554))
 
 ## [0.3.0-rc.14] - 2026-10-21
 
