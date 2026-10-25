@@ -90,6 +90,10 @@ const (
 	AuditConfigurationUnavailable AuditConfigurationState = "unavailable"
 )
 
+// unhealthySinkStatusRefresh is the status refresh interval while a sink is
+// not ready. It matches the audit circuit breaker open timeout.
+const unhealthySinkStatusRefresh = 30 * time.Second
+
 // SinkHealthInfo contains health information for a sink.
 type SinkHealthInfo struct {
 	Name                string
@@ -163,7 +167,7 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 
 	// Process each config: validate and update status
 	var validConfigs []*breakglassv1alpha1.AuditConfig
-	configuredUnavailable := false
+	configuredUnavailable, sinkNotReady := false, false
 	for i := range allConfigs.Items {
 		config := &allConfigs.Items[i]
 
@@ -207,6 +211,9 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 			// A failed status write says nothing about the config itself;
 			// it is still reloaded below if it is valid.
 			r.logger.Errorw("Failed to update AuditConfig status", "name", config.Name, "error", err)
+		}
+		for _, sink := range config.Status.SinkStatuses {
+			sinkNotReady = sinkNotReady || (r.getSinkHealth != nil && !sink.Ready)
 		}
 
 		// If validation failed, skip this config but continue with others
@@ -297,6 +304,11 @@ func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Req
 		"configNames", configNames,
 		"totalSinks", totalSinks)
 
+	// Sink health is not watched. Poll it while a sink is not ready, so that
+	// a recovery shows in the status without waiting for the full resync.
+	if sinkNotReady {
+		return reconcile.Result{RequeueAfter: unhealthySinkStatusRefresh}, nil
+	}
 	return reconcile.Result{RequeueAfter: r.resyncPeriod}, nil
 }
 
@@ -469,7 +481,8 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 				Name:  h.Name,
 				Ready: h.Ready,
 			}
-			if h.LastError != "" {
+			// A sink keeps the error it recovered from; report it only while it is not ready.
+			if !h.Ready {
 				status.LastError = h.LastError
 			}
 			sinkStatuses = append(sinkStatuses, status)

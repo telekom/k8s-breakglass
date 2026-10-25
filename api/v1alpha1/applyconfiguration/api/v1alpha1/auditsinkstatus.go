@@ -21,7 +21,7 @@ type AuditSinkStatusApplyConfiguration struct {
 	Name *string `json:"name,omitempty"`
 	// Ready indicates if the sink is operational.
 	Ready *bool `json:"ready,omitempty"`
-	// LastError is the most recent error, if any.
+	// LastError is the most recent error while the sink is not ready.
 	LastError *string `json:"lastError,omitempty"`
 	// LastSuccessTime is when the sink last successfully processed an event.
 	LastSuccessTime *v1.Time `json:"lastSuccessTime,omitempty"`

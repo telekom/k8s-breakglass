@@ -471,7 +471,7 @@ type AuditSinkStatus struct {
 	// Ready indicates if the sink is operational.
 	Ready bool `json:"ready"`
 
-	// LastError is the most recent error, if any.
+	// LastError is the most recent error while the sink is not ready.
 	// +optional
 	LastError string `json:"lastError,omitempty"`
 

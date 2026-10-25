@@ -757,7 +757,8 @@ spec:
                       format: int64
                       type: integer
                     lastError:
-                      description: LastError is the most recent error, if any.
+                      description: LastError is the most recent error while the sink
+                        is not ready.
                       type: string
                     lastSuccessTime:
                       description: LastSuccessTime is when the sink last successfully

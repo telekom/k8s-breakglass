@@ -533,6 +533,18 @@ auditing stops (all AuditConfigs disabled or deleted, or a changed
 AuditConfig that cannot be built), the old pipeline closes at once with the
 regular five-second shutdown drain. Controller shutdown ends the wait.
 
+## Sink status
+
+Each AuditConfig reports its sinks in `status.sinkStatuses` and in the
+`SinksHealthy` condition. A sink is ready when its circuit breaker is not
+open, its queue is less than 80% full, and its latest delivery succeeded (or
+it has not failed yet). An idle sink keeps the result of its latest delivery.
+`lastError` is shown only while the sink is not ready. While a sink is not
+ready, the reconciler refreshes the status every 30 seconds instead of every
+10 minutes (each refresh also counts as an `unchanged` reload), so a sink
+shows `ready: true` within 30 seconds of its first successful delivery after
+an outage.
+
 ## Metrics
 
 The audit system exposes Prometheus metrics:

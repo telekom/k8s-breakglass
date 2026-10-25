@@ -1554,3 +1554,42 @@ func TestAuditConfigReconcile_EmptyTLSNamespaceExcludedFromReload(t *testing.T) 
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
 	assert.Equal(t, "ValidationFailed", condition.Reason)
 }
+
+func TestAuditConfigReconciler_Reconcile_RefreshesSinkStatusAfterRecovery(t *testing.T) {
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: "kafka-audit"},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog,
+				Log: &breakglassv1alpha1.LogSinkSpec{Level: "info", Format: "json"},
+			}},
+		},
+	}
+	r, _ := newTestAuditConfigReconciler(t, config)
+	health := []SinkHealthInfo{{Name: "kafka", Ready: false, CircuitState: "open", LastError: "circuit breaker is open"}}
+	r.SetSinkHealthProvider(func() []SinkHealthInfo { return health })
+	reconcileStatus := func() (reconcile.Result, *breakglassv1alpha1.AuditConfig) {
+		t.Helper()
+		result, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: config.Name}})
+		require.NoError(t, err)
+		got := &breakglassv1alpha1.AuditConfig{}
+		require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, got))
+		return result, got
+	}
+
+	result, got := reconcileStatus()
+	assert.Equal(t, unhealthySinkStatusRefresh, result.RequeueAfter, "an unhealthy sink is not watched, so its status is polled")
+	require.Len(t, got.Status.SinkStatuses, 1)
+	assert.False(t, got.Status.SinkStatuses[0].Ready)
+	assert.Equal(t, "circuit breaker is open", got.Status.SinkStatuses[0].LastError)
+
+	// The breaker closed; the sink still remembers the error it recovered from.
+	health = []SinkHealthInfo{{Name: "kafka", Ready: true, CircuitState: "closed", LastError: "circuit breaker is open"}}
+	result, got = reconcileStatus()
+	assert.Equal(t, time.Minute, result.RequeueAfter)
+	require.Len(t, got.Status.SinkStatuses, 1)
+	assert.True(t, got.Status.SinkStatuses[0].Ready)
+	assert.Empty(t, got.Status.SinkStatuses[0].LastError, "a recovered sink reports no error")
+	assert.True(t, apimeta.IsStatusConditionTrue(got.Status.Conditions, "SinksHealthy"))
+}

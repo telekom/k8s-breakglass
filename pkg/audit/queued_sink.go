@@ -449,13 +449,15 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 			if asynchronousKafkaSink(qs.sink) != nil {
 				return
 			}
-			qs.processedEvents.Add(int64(count))
-			qs.consecutiveFails.Store(0)
-			qs.circuitOpen.Store(false)
-			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
+			// Record the success first: a reader that sees the new
+			// Health().ProcessedEvents then also sees the healthy state.
 			qs.mu.Lock()
 			qs.lastSuccessTime = time.Now()
 			qs.mu.Unlock()
+			qs.consecutiveFails.Store(0)
+			qs.circuitOpen.Store(false)
+			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
+			qs.processedEvents.Add(int64(count))
 			return
 		}
 		qs.failedEvents.Add(int64(count))
@@ -552,9 +554,11 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 	}
 
 	// Consider healthy if:
-	// - Circuit is not open
+	// - Circuit is not open. A half-open breaker that delivered its probe
+	//   stays half-open until the next event, and the sink is working.
 	// - Queue is not > 80% full
-	// - Had a recent success after the latest error OR no errors yet
+	// - The latest delivery succeeded OR no errors yet. An idle sink keeps
+	//   the result of its last delivery: audit traffic can pause for hours.
 	processed := qs.processedEvents.Load()
 	dropped, failed := qs.droppedEvents.Load(), qs.failedEvents.Load()
 	if sink := asynchronousKafkaSink(qs.sink); sink != nil {
@@ -569,9 +573,9 @@ func (qs *QueuedSink) Health() QueuedSinkHealth {
 			lastSuccessTime = completed
 		}
 	}
-	healthy := circuitState == "closed" &&
+	healthy := !circuitOpen &&
 		float64(queueLen) < float64(queueCap)*0.8 &&
-		((lastSuccessTime.After(lastErrorTime) && lastSuccessTime.After(time.Now().Add(-1*time.Minute))) || lastErrorTime.IsZero())
+		(lastSuccessTime.After(lastErrorTime) || lastErrorTime.IsZero())
 	return QueuedSinkHealth{
 		Name:             qs.sink.Name(),
 		Healthy:          healthy,

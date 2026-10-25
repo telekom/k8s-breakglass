@@ -546,3 +546,35 @@ func TestExpiredShutdownDoesNotInvokeSinkForBacklog(t *testing.T) {
 	require.Zero(t, sink.writeCount.Load())
 	require.Equal(t, int64(101), qs.droppedEvents.Load())
 }
+
+func TestQueuedHealthStaysHealthyWhileIdleAfterRecovery(t *testing.T) {
+	qs := NewQueuedSink(&retryBatchSink{failures: 1}, retryTestConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "one"}, {ID: "two"}}))
+	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, time.Millisecond)
+	require.True(t, qs.Health().Healthy)
+
+	// No audit traffic after the recovery: the sink is still healthy.
+	qs.mu.Lock()
+	qs.lastErrorTime = qs.lastErrorTime.Add(-10 * time.Minute)
+	qs.lastSuccessTime = qs.lastSuccessTime.Add(-10 * time.Minute)
+	qs.mu.Unlock()
+	require.True(t, qs.Health().Healthy, "an idle sink that recovered is healthy")
+}
+
+func TestQueuedHealthIsReadyAfterSuccessfulHalfOpenProbe(t *testing.T) {
+	breakerConfig := DefaultCircuitBreakerConfig()
+	breakerConfig.FailureThreshold, breakerConfig.SuccessThreshold = 1, 2
+	breakerConfig.OpenTimeout = time.Millisecond
+	breaker := NewCircuitBreakerSink(&retryBatchSink{failures: 1}, breakerConfig, zap.NewNop())
+	qs := NewQueuedSink(NewFilteredSink(breaker, EventFilterConfig{}), retryTestConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "one"}, {ID: "two"}}))
+	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, time.Millisecond)
+
+	// One successful probe does not close the breaker, and no more events
+	// arrive: the breaker stays half-open, but the sink delivered.
+	health := qs.Health()
+	require.Equal(t, "half-open", health.CircuitState)
+	require.True(t, health.Healthy, "the last delivery succeeded")
+}
