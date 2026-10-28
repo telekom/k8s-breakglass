@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -219,16 +220,19 @@ func TestClientProviderRealAPI(t *testing.T) {
 		// This mirrors the ClusterConfig checker, which periodically updates
 		// status while a privileged operation may still be deploying.
 		var statusOnly breakglassv1alpha1.ClusterConfig
-		require.NoError(t, live.Get(ctx, client.ObjectKeyFromObject(cc), &statusOnly))
-		statusResourceVersionBefore := statusOnly.ResourceVersion
-		statusOnly.Status.Conditions = []metav1.Condition{{
-			Type:               "Ready",
-			Status:             metav1.ConditionTrue,
-			Reason:             "ValidationSucceeded",
-			LastTransitionTime: metav1.Now(),
-		}}
-		require.NoError(t, live.Status().Update(ctx, &statusOnly))
-		require.NotEqual(t, statusResourceVersionBefore, statusOnly.ResourceVersion, "status update must advance ClusterConfig resourceVersion")
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := live.Get(ctx, client.ObjectKeyFromObject(cc), &statusOnly); err != nil {
+				return err
+			}
+			statusOnly.Status.Conditions = []metav1.Condition{{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ValidationSucceeded",
+				LastTransitionTime: metav1.Now(),
+			}}
+			return live.Status().Update(ctx, &statusOnly)
+		}))
+		require.NotEqual(t, cc.ResourceVersion, statusOnly.ResourceVersion, "status update must advance ClusterConfig resourceVersion")
 		require.NotEqual(t, next.ResourceVersion, statusOnly.ResourceVersion, "status update must advance beyond captured privileged snapshot")
 		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
 		cc.Spec.KubeconfigSecretRef.Key = "value"
