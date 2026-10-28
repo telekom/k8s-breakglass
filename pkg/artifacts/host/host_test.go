@@ -39,6 +39,51 @@ func TestSameAllowedPodIgnoresStatusResourceVersionChanges(t *testing.T) {
 	require.False(t, sameAllowedPod(session, "target", "other", "pod-uid"))
 }
 
+func TestArtifactCollectionAuthorizationFenceIgnoresStatusResourceVersion(t *testing.T) {
+	now := time.Now().UTC().Add(10 * time.Minute)
+	leaseUID := types.UID("lease-uid")
+	targetUID := types.UID("target-uid")
+	initial := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{UID: types.UID("session-uid"), ResourceVersion: "10"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			ExpiresAt:        ptrTime(metav1.NewTime(now)),
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{},
+			AllowedPods:      []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "pod", UID: "pod-uid"}},
+			ConnectionLease:  &breakglassv1alpha1.DebugSessionConnectionLease{UID: leaseUID, TargetUID: targetUID, Epoch: 7},
+		},
+	}
+	profile, err := debug.ProfileDigestForSession(initial)
+	require.NoError(t, err)
+
+	valid := func() *breakglassv1alpha1.DebugSession { return initial.DeepCopy() }
+	tests := []struct {
+		name   string
+		mutate func(*breakglassv1alpha1.DebugSession)
+		valid  bool
+	}{
+		{name: "status resource version", mutate: func(s *breakglassv1alpha1.DebugSession) { s.ResourceVersion = "11" }, valid: true},
+		{name: "session identity", mutate: func(s *breakglassv1alpha1.DebugSession) { s.UID = "other-session" }},
+		{name: "expiry", mutate: func(s *breakglassv1alpha1.DebugSession) {
+			s.Status.ExpiresAt = ptrTime(metav1.NewTime(now.Add(time.Minute)))
+		}},
+		{name: "lease identity", mutate: func(s *breakglassv1alpha1.DebugSession) { s.Status.ConnectionLease.UID = "other-lease" }},
+		{name: "lease epoch", mutate: func(s *breakglassv1alpha1.DebugSession) { s.Status.ConnectionLease.Epoch++ }},
+		{name: "target identity", mutate: func(s *breakglassv1alpha1.DebugSession) { s.Status.ConnectionLease.TargetUID = "other-target" }},
+		{name: "pod identity", mutate: func(s *breakglassv1alpha1.DebugSession) { s.Status.AllowedPods[0].UID = "other-pod" }},
+		{name: "profile", mutate: func(s *breakglassv1alpha1.DebugSession) {
+			s.Status.ResolvedTemplate.Constraints = &breakglassv1alpha1.DebugSessionConstraints{}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			final := valid()
+			tt.mutate(final)
+			got := artifactCollectionAuthorizationMatches(initial, final, "target", "pod", "pod-uid", targetUID, now, profile)
+			require.Equal(t, tt.valid, got)
+		})
+	}
+}
+
 func TestBuildRejectsInvalidCollectorImagePullSecretsBeforeExternalDependencies(t *testing.T) {
 	for _, name := range []string{"", "UPPERCASE", "other/registry", strings.Repeat("a", 254)} {
 		t.Run(name, func(t *testing.T) {
