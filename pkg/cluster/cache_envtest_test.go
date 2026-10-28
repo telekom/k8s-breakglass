@@ -220,6 +220,7 @@ func TestClientProviderRealAPI(t *testing.T) {
 		// status while a privileged operation may still be deploying.
 		var statusOnly breakglassv1alpha1.ClusterConfig
 		require.NoError(t, live.Get(ctx, client.ObjectKeyFromObject(cc), &statusOnly))
+		statusResourceVersionBefore := statusOnly.ResourceVersion
 		statusOnly.Status.Conditions = []metav1.Condition{{
 			Type:               "Ready",
 			Status:             metav1.ConditionTrue,
@@ -227,6 +228,8 @@ func TestClientProviderRealAPI(t *testing.T) {
 			LastTransitionTime: metav1.Now(),
 		}}
 		require.NoError(t, live.Status().Update(ctx, &statusOnly))
+		require.NotEqual(t, statusResourceVersionBefore, statusOnly.ResourceVersion, "status update must advance ClusterConfig resourceVersion")
+		require.NotEqual(t, next.ResourceVersion, statusOnly.ResourceVersion, "status update must advance beyond captured privileged snapshot")
 		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
 		cc.Spec.KubeconfigSecretRef.Key = "value"
 		require.NoError(t, live.Update(ctx, cc))
