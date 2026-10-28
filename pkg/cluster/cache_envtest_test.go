@@ -235,8 +235,13 @@ func TestClientProviderRealAPI(t *testing.T) {
 		require.NotEqual(t, cc.ResourceVersion, statusOnly.ResourceVersion, "status update must advance ClusterConfig resourceVersion")
 		require.NotEqual(t, next.ResourceVersion, statusOnly.ResourceVersion, "status update must advance beyond captured privileged snapshot")
 		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
-		cc.Spec.KubeconfigSecretRef.Key = "value"
-		require.NoError(t, live.Update(ctx, cc))
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := live.Get(ctx, client.ObjectKeyFromObject(cc), cc); err != nil {
+				return err
+			}
+			cc.Spec.KubeconfigSecretRef.Key = "value"
+			return live.Update(ctx, cc)
+		}))
 		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "spec changed")
 		require.NoError(t, live.Delete(ctx, cc))
 		require.Error(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
