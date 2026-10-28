@@ -162,7 +162,7 @@ func TestGetRESTConfig_RewritesLoopbackHostAndCaches(t *testing.T) {
 	assert.Same(t, cfg, cfg2)
 }
 
-func TestGetRESTConfigForPrivilegedOperationRejectsStaleClusterConfigCache(t *testing.T) {
+func TestGetRESTConfigForPrivilegedOperationRejectsChangedClusterConfigSpec(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
@@ -188,9 +188,17 @@ func TestGetRESTConfigForPrivilegedOperationRejectsStaleClusterConfigCache(t *te
 	provider := NewClientProvider(cachedClient, zaptest.NewLogger(t).Sugar()).WithLiveReader(liveReader)
 
 	_, snapshot, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
-	require.Error(t, err)
-	assert.Nil(t, snapshot)
-	assert.Contains(t, err.Error(), "cached ClusterConfig default/privileged is stale")
+	require.NoError(t, err, "metadata-only differences must not invalidate privileged inputs")
+	require.NotNil(t, snapshot)
+	provider.ReleasePrivilegedOperationClusterConfig(snapshot)
+
+	changed := live.DeepCopy()
+	changedQPS := int32(50)
+	changed.Spec.QPS = &changedQPS
+	require.NoError(t, liveReader.Update(context.Background(), changed))
+	_, next, err := provider.GetRESTConfigForPrivilegedOperation(context.Background(), "default/privileged")
+	require.ErrorContains(t, err, "ClusterConfig default/privileged spec changed")
+	assert.Nil(t, next)
 }
 
 func TestValidatePrivilegedOperationClusterConfigRejectsCredentialSecretChange(t *testing.T) {
