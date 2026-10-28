@@ -195,7 +195,7 @@ func TestClientProviderRealAPI(t *testing.T) {
 		require.ErrorIs(t, err, ErrClusterConfigNotFound)
 	})
 
-	t.Run("privileged client snapshot rejects Secret and ClusterConfig version changes", func(t *testing.T) {
+	t.Run("privileged client snapshot rejects Secret and spec changes but permits status-only writes", func(t *testing.T) {
 		ns := newNamespace(t, "remote-fence")
 		secret := newSecret(t, ns, "credentials", config.Host)
 		cc := newCluster(t, ns, "fenced-target", secret.Name)
@@ -214,7 +214,7 @@ func TestClientProviderRealAPI(t *testing.T) {
 		defer fenced.ReleasePrivilegedOperationClusterConfig(next)
 		cc.Annotations = map[string]string{"version": "changed"}
 		require.NoError(t, live.Update(ctx, cc))
-		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "resource version changed")
+		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
 		cc.Spec.KubeconfigSecretRef.Key = "value"
 		require.NoError(t, live.Update(ctx, cc))
 		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "spec changed")
