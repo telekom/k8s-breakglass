@@ -285,8 +285,7 @@ func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Contex
 // versions are the security boundary; status-only writes do not change the
 // target client or its authorization inputs.
 func (p *ClientProvider) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
-	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured)
-	if err != nil {
+	if _, err := p.livePrivilegedOperationClusterConfig(ctx, configured); err != nil {
 		return err
 	}
 	p.mu.RLock()
