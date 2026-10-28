@@ -212,8 +212,21 @@ func TestClientProviderRealAPI(t *testing.T) {
 		_, next, err := fenced.GetRESTConfigForPrivilegedOperation(ctx, cacheKey(ns, cc.Name))
 		require.NoError(t, err)
 		defer fenced.ReleasePrivilegedOperationClusterConfig(next)
+		// A metadata write changes resourceVersion but not the privileged input.
 		cc.Annotations = map[string]string{"version": "changed"}
+		cc.Labels = map[string]string{"status-only": "true"}
 		require.NoError(t, live.Update(ctx, cc))
+		// This mirrors the ClusterConfig checker, which periodically updates
+		// status while a privileged operation may still be deploying.
+		var statusOnly breakglassv1alpha1.ClusterConfig
+		require.NoError(t, live.Get(ctx, client.ObjectKeyFromObject(cc), &statusOnly))
+		statusOnly.Status.Conditions = []metav1.Condition{{
+			Type:               "Ready",
+			Status:             metav1.ConditionTrue,
+			Reason:             "ValidationSucceeded",
+			LastTransitionTime: metav1.Now(),
+		}}
+		require.NoError(t, live.Status().Update(ctx, &statusOnly))
 		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
 		cc.Spec.KubeconfigSecretRef.Key = "value"
 		require.NoError(t, live.Update(ctx, cc))
