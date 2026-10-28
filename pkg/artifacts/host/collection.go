@@ -87,6 +87,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, "artifact collection not allowed")
 		return
 	}
+	initialPodUID := podUID
 	target, config, err := c.provider.GetClientForPrivilegedOperation(ctx.Request.Context(), session.Spec.Cluster)
 	if err != nil {
 		apiresponses.RespondServiceUnavailable(ctx, "artifact collection target")
@@ -170,7 +171,12 @@ func (c *collectionController) create(ctx *gin.Context) {
 		return
 	}
 	final, err := c.debug.AuthorizeArtifactCollection(ctx, session.Namespace, session.Name)
-	if err != nil || final.UID != session.UID || final.ResourceVersion != session.ResourceVersion || !time.Now().Before(record.ExpiresAt) {
+	if err != nil || final.UID != session.UID || final.Status.ExpiresAt == nil || !final.Status.ExpiresAt.Time.Equal(record.ExpiresAt) || final.Status.ConnectionLease == nil || final.Status.ConnectionLease.UID != session.Status.ConnectionLease.UID || final.Status.ConnectionLease.Epoch != session.Status.ConnectionLease.Epoch || final.Status.ConnectionLease.TargetUID != session.Status.ConnectionLease.TargetUID || final.Status.ConnectionLease.TargetUID != config.UID || !sameAllowedPod(final, request.PodNamespace, request.PodName, initialPodUID) || !time.Now().Before(record.ExpiresAt) {
+		apiresponses.RespondForbidden(ctx, "artifact collection not allowed")
+		return
+	}
+	finalProfile, profileErr := debug.ProfileDigestForSession(final)
+	if profileErr != nil || finalProfile != profile {
 		apiresponses.RespondForbidden(ctx, "artifact collection not allowed")
 		return
 	}
@@ -184,6 +190,15 @@ func (c *collectionController) create(ctx *gin.Context) {
 		return
 	}
 	ctx.JSON(http.StatusCreated, c.service.Public(reserved))
+}
+
+func sameAllowedPod(session *breakglassv1alpha1.DebugSession, namespace, name, uid string) bool {
+	for _, pod := range session.Status.AllowedPods {
+		if pod.Namespace == namespace && pod.Name == name {
+			return pod.UID == uid
+		}
+	}
+	return false
 }
 func opaqueDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))

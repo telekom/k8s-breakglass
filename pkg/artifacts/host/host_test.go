@@ -32,6 +32,13 @@ func TestBuildDisabledDoesNotReadOrRequireHostDependencies(t *testing.T) {
 	require.Nil(t, components)
 }
 
+func TestSameAllowedPodIgnoresStatusResourceVersionChanges(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{AllowedPods: []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "pod", UID: "pod-uid"}}}}
+	require.True(t, sameAllowedPod(session, "target", "pod", "pod-uid"))
+	require.False(t, sameAllowedPod(session, "target", "pod", "other-uid"))
+	require.False(t, sameAllowedPod(session, "target", "other", "pod-uid"))
+}
+
 func TestBuildRejectsInvalidCollectorImagePullSecretsBeforeExternalDependencies(t *testing.T) {
 	for _, name := range []string{"", "UPPERCASE", "other/registry", strings.Repeat("a", 254)} {
 		t.Run(name, func(t *testing.T) {
