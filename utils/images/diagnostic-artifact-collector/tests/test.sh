@@ -64,7 +64,10 @@ label() {
 [ "$(label org.opencontainers.image.version)" = contract-test ]
 [ "$(label org.opencontainers.image.revision)" = contract-ref ]
 [ "$(label org.opencontainers.image.created)" = 2026-01-01T00:00:00Z ]
-[ "$(label org.opencontainers.image.base.digest)" = sha256:dc2d74b28e4cf8984fa52af1f39bc7c3d9c73760b41a74d629f5d11b1ab28616 ]
+base_ref=$(awk '/^FROM / { ref=$2 } END { print ref }' "$root/Dockerfile")
+base_digest=${base_ref##*@}
+[[ "$base_ref" == *@sha256:* && "$base_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+[ "$(label org.opencontainers.image.base.digest)" = "$base_digest" ]
 
 create_owned_volume() {
 	owner_name=$1

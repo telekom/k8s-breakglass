@@ -5,8 +5,12 @@
 set -Eeuo pipefail
 
 script="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)/tests/kind-collision.sh"
-grep -F "alpine:3.24@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b" "${script}" >/dev/null
-if grep -E 'docker (pull|tag) alpine:3\.24([[:space:]]|$)' "${script}" >/dev/null; then
+alpine_image=$(sed -n "s/^alpine_image='\([^']*\)'$/\1/p" "${script}")
+if [[ ! "$alpine_image" =~ ^alpine:[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+	printf '%s\n' 'collision proof must use an immutable Alpine image reference' >&2
+	exit 1
+fi
+if grep -E 'docker (pull|tag) alpine:[^@[:space:]]+([[:space:]]|$)' "${script}" >/dev/null; then
 	printf '%s\n' 'collision proof uses an unpinned Alpine reference' >&2
 	exit 1
 fi
