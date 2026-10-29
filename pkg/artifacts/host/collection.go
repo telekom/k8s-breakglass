@@ -22,6 +22,7 @@ import (
 	artifactcontroller "github.com/telekom/k8s-breakglass/pkg/artifacts/controller"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -87,6 +88,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		apiresponses.RespondForbidden(ctx, "artifact collection not allowed")
 		return
 	}
+	initialPodUID := podUID
 	target, config, err := c.provider.GetClientForPrivilegedOperation(ctx.Request.Context(), session.Spec.Cluster)
 	if err != nil {
 		apiresponses.RespondServiceUnavailable(ctx, "artifact collection target")
@@ -170,7 +172,7 @@ func (c *collectionController) create(ctx *gin.Context) {
 		return
 	}
 	final, err := c.debug.AuthorizeArtifactCollection(ctx, session.Namespace, session.Name)
-	if err != nil || final.UID != session.UID || final.ResourceVersion != session.ResourceVersion || !time.Now().Before(record.ExpiresAt) {
+	if err != nil || !artifactCollectionAuthorizationMatches(session, final, request.PodNamespace, request.PodName, initialPodUID, config.UID, record.ExpiresAt, profile) {
 		apiresponses.RespondForbidden(ctx, "artifact collection not allowed")
 		return
 	}
@@ -184,6 +186,38 @@ func (c *collectionController) create(ctx *gin.Context) {
 		return
 	}
 	ctx.JSON(http.StatusCreated, c.service.Public(reserved))
+}
+
+// artifactCollectionAuthorizationMatches compares the authorization-critical
+// state observed before and after the target-cluster reads. Kubernetes status
+// updates legitimately change ResourceVersion, so that mutable metadata is not
+// an authorization fence. Identity, lease, expiry, profile, and pod binding
+// remain fail-closed fences.
+func artifactCollectionAuthorizationMatches(initial, final *breakglassv1alpha1.DebugSession, podNamespace, podName, podUID string, targetUID types.UID, expiresAt time.Time, profile string) bool {
+	if initial == nil || final == nil || initial.UID == "" || final.UID != initial.UID || final.Status.ExpiresAt == nil || !final.Status.ExpiresAt.Time.Equal(expiresAt) || !time.Now().Before(expiresAt) {
+		return false
+	}
+	if initial.Status.ConnectionLease == nil || final.Status.ConnectionLease == nil {
+		return false
+	}
+	initialLease, finalLease := initial.Status.ConnectionLease, final.Status.ConnectionLease
+	if finalLease.UID != initialLease.UID || finalLease.Epoch != initialLease.Epoch || finalLease.TargetUID != initialLease.TargetUID || finalLease.TargetUID != targetUID {
+		return false
+	}
+	if !sameAllowedPod(final, podNamespace, podName, podUID) {
+		return false
+	}
+	finalProfile, err := debug.ProfileDigestForSession(final)
+	return err == nil && finalProfile == profile
+}
+
+func sameAllowedPod(session *breakglassv1alpha1.DebugSession, namespace, name, uid string) bool {
+	for _, pod := range session.Status.AllowedPods {
+		if pod.Namespace == namespace && pod.Name == name {
+			return pod.UID == uid
+		}
+	}
+	return false
 }
 func opaqueDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
