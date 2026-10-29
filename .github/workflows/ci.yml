@@ -707,9 +707,9 @@ jobs:
           # Dependabot PRs receive a read-only GITHUB_TOKEN even though they
           # originate from the same repo (not a fork). Pushing images and
           # attestations would fail with 404/403 errors.
-          if [ "${{ github.actor }}" == "dependabot[bot]" ]; then
+          if [ "${{ github.actor }}" == "dependabot[bot]" ] || [ "${{ github.event.pull_request.user.login }}" == "dependabot[bot]" ]; then
             echo "can_push=false" >> $GITHUB_OUTPUT
-            echo "Dependabot PR — GITHUB_TOKEN is read-only, skipping registry push"
+            echo "Dependabot PR or rerun — GITHUB_TOKEN is read-only, skipping registry push"
           elif [ "${{ github.event_name }}" != "pull_request" ] || [ "${{ steps.fork_check.outputs.push_to_registry }}" == "true" ]; then
             echo "can_push=true" >> $GITHUB_OUTPUT
           else
