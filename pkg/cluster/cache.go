@@ -278,13 +278,15 @@ func (p *ClientProvider) livePrivilegedOperationClusterConfig(ctx context.Contex
 
 // ValidatePrivilegedOperationClusterConfig checks that the captured live
 // ClusterConfig still has the same UID and spec at a target write boundary.
+//
+// ResourceVersion is intentionally not compared here: ClusterConfig status
+// validation is periodic and may update status while a privileged operation is
+// deploying. UID/spec plus the separately captured credential/trust input
+// versions are the security boundary; status-only writes do not change the
+// target client or its authorization inputs.
 func (p *ClientProvider) ValidatePrivilegedOperationClusterConfig(ctx context.Context, configured *breakglassv1alpha1.ClusterConfig) error {
-	live, err := p.livePrivilegedOperationClusterConfig(ctx, configured)
-	if err != nil {
+	if _, err := p.livePrivilegedOperationClusterConfig(ctx, configured); err != nil {
 		return err
-	}
-	if configured.ResourceVersion != "" && live.ResourceVersion != configured.ResourceVersion {
-		return fmt.Errorf("ClusterConfig %s/%s resource version changed", configured.Namespace, configured.Name)
 	}
 	p.mu.RLock()
 	expected := p.privilegedInputVersions[configured]
@@ -539,9 +541,6 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	if err != nil {
 		return nil, nil, fmt.Errorf("validate privileged operation cluster config: %w", err)
 	}
-	if configured.ResourceVersion != "" && live.ResourceVersion != configured.ResourceVersion {
-		return nil, nil, fmt.Errorf("cached ClusterConfig %s/%s is stale", configured.Namespace, configured.Name)
-	}
 	cachedInputs, err := p.capturePrivilegedInputVersionsWithReader(ctx, live, p.k8s)
 	if err != nil {
 		return nil, nil, fmt.Errorf("capture cached privileged client inputs: %w", err)
@@ -568,7 +567,7 @@ func (p *ClientProvider) GetRESTConfigForPrivilegedOperation(ctx context.Context
 	if err != nil {
 		return nil, nil, fmt.Errorf("capture rebuilt privileged client inputs: %w", err)
 	}
-	if liveAfter.UID != live.UID || liveAfter.ResourceVersion != live.ResourceVersion || !reflect.DeepEqual(before, after) {
+	if liveAfter.UID != live.UID || !apiequality.Semantic.DeepEqual(liveAfter.Spec, live.Spec) || !reflect.DeepEqual(before, after) {
 		return nil, nil, fmt.Errorf("privileged client inputs changed while building target config")
 	}
 	live = liveAfter

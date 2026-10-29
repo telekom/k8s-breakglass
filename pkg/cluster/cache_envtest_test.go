@@ -24,6 +24,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -195,7 +196,7 @@ func TestClientProviderRealAPI(t *testing.T) {
 		require.ErrorIs(t, err, ErrClusterConfigNotFound)
 	})
 
-	t.Run("privileged client snapshot rejects Secret and ClusterConfig version changes", func(t *testing.T) {
+	t.Run("privileged client snapshot rejects Secret and spec changes but permits status-only writes", func(t *testing.T) {
 		ns := newNamespace(t, "remote-fence")
 		secret := newSecret(t, ns, "credentials", config.Host)
 		cc := newCluster(t, ns, "fenced-target", secret.Name)
@@ -212,11 +213,35 @@ func TestClientProviderRealAPI(t *testing.T) {
 		_, next, err := fenced.GetRESTConfigForPrivilegedOperation(ctx, cacheKey(ns, cc.Name))
 		require.NoError(t, err)
 		defer fenced.ReleasePrivilegedOperationClusterConfig(next)
+		// A metadata write changes resourceVersion but not the privileged input.
 		cc.Annotations = map[string]string{"version": "changed"}
+		cc.Labels = map[string]string{"status-only": "true"}
 		require.NoError(t, live.Update(ctx, cc))
-		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "resource version changed")
-		cc.Spec.KubeconfigSecretRef.Key = "value"
-		require.NoError(t, live.Update(ctx, cc))
+		// This mirrors the ClusterConfig checker, which periodically updates
+		// status while a privileged operation may still be deploying.
+		var statusOnly breakglassv1alpha1.ClusterConfig
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := live.Get(ctx, client.ObjectKeyFromObject(cc), &statusOnly); err != nil {
+				return err
+			}
+			statusOnly.Status.Conditions = []metav1.Condition{{
+				Type:               "Ready",
+				Status:             metav1.ConditionTrue,
+				Reason:             "ValidationSucceeded",
+				LastTransitionTime: metav1.Now(),
+			}}
+			return live.Status().Update(ctx, &statusOnly)
+		}))
+		require.NotEqual(t, cc.ResourceVersion, statusOnly.ResourceVersion, "status update must advance ClusterConfig resourceVersion")
+		require.NotEqual(t, next.ResourceVersion, statusOnly.ResourceVersion, "status update must advance beyond captured privileged snapshot")
+		require.NoError(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
+		require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			if err := live.Get(ctx, client.ObjectKeyFromObject(cc), cc); err != nil {
+				return err
+			}
+			cc.Spec.KubeconfigSecretRef.Key = "value"
+			return live.Update(ctx, cc)
+		}))
 		require.ErrorContains(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next), "spec changed")
 		require.NoError(t, live.Delete(ctx, cc))
 		require.Error(t, fenced.ValidatePrivilegedOperationClusterConfig(ctx, next))
