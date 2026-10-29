@@ -75,6 +75,12 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 ### Optional OCI mirror configuration
 
+Artifactory publishing is temporarily disabled in both CI and release
+workflows while the configured mirror credentials are repaired. GHCR image
+publication, signing, attestations, and chart publication remain enabled.
+Re-enable the mirror job only after validating the four secrets below against
+the target registry.
+
 CI and release workflows use repository or organization Actions secrets for the
 optional Artifactory mirror:
 
@@ -85,9 +91,10 @@ optional Artifactory mirror:
 | `AF_USER` | Registry username |
 | `AF_TOKEN` | Registry access token |
 
-The mirror push is skipped unless all four secrets are set. GHCR publication
-and release signing do not depend on the mirror. The derived repository key
-used by storage-API diagnostics is also explicitly masked in workflow logs.
+When enabled, the mirror push is skipped unless all four secrets are set. GHCR
+publication and release signing do not depend on the mirror. The derived
+repository key used by storage-API diagnostics is also explicitly masked in
+workflow logs.
 Deployments previously using the built-in mirror must configure `AF_REGISTRY`
 and `AF_REPOSITORY` to retain it.
 

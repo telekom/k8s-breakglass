@@ -634,15 +634,13 @@ jobs:
           mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
   # ============================================================================
-  # Publish Image — SBOM, registry push, attestation, Artifactory push
+  # Publish Image — SBOM, registry push, attestation
   # Runs after all quality gates pass.
   # ============================================================================
 
   publish-image:
     name: Publish Image
     runs-on: ubuntu-latest
-    env:
-      ARTIFACTORY_CONFIGURED: ${{ secrets.AF_REGISTRY != '' && secrets.AF_REPOSITORY != '' && secrets.AF_USER != '' && secrets.AF_TOKEN != '' }}
     needs:
       - build-image
       - lint
@@ -816,46 +814,6 @@ jobs:
         with:
           name: sbom
           path: sbom.json
-      - name: Push image to Artifactory (OCI)
-        # Skip for Dependabot PRs (no access to secrets) and fork PRs
-        if: ${{ github.actor != 'dependabot[bot]' && steps.push_check.outputs.can_push == 'true' && steps.registry_push.outputs.digest != '' && env.ARTIFACTORY_CONFIGURED == 'true' }}
-        env:
-          ARTIFACTORY_URL: ${{ secrets.AF_REGISTRY }}
-          ARTIFACTORY_REPO: ${{ secrets.AF_REPOSITORY }}
-          REGISTRY: ${{ env.REGISTRY }}
-          IMAGE: ${{ env.IMAGE_NAME }}
-        run: |
-          set -e
-          echo "Preparing to push image to Artifactory"
-          echo "${{ secrets.AF_TOKEN }}" | docker login --username ${{ secrets.AF_USER }} --password-stdin https://${ARTIFACTORY_URL}
-          REPO_KEY=$(echo "${ARTIFACTORY_REPO}" | cut -d'/' -f1)
-          echo "::add-mask::${REPO_KEY}"
-          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${REPO_KEY}" ) || true
-          echo "Artifactory storage API HTTP status: ${HTTP_STATUS}"
-          if [ "${HTTP_STATUS}" != "200" ]; then
-            echo "Warning: Artifactory repo ${REPO_KEY} not accessible (HTTP ${HTTP_STATUS}). The push may fail due to permissions."
-          fi
-
-          echo "Using local image breakglass:e2e for Artifactory push"
-          ART_TAG=${GITHUB_SHA}
-          ART_IMG=${ARTIFACTORY_URL}/${ARTIFACTORY_REPO}/${IMAGE}:${ART_TAG}
-          echo "Tagging breakglass:e2e -> ${ART_IMG}"
-          docker tag breakglass:e2e "${ART_IMG}"
-
-          set -x
-          docker push "${ART_IMG}"
-          set +x
-
-          sleep 3
-          CHECK_PATH=$(echo "${ARTIFACTORY_REPO}/${IMAGE}" | sed 's@//*@/@g')
-          HTTP_STATUS_AFTER=$(curl -s -o /dev/null -w "%{http_code}" -u "${{ secrets.AF_USER }}:${{ secrets.AF_TOKEN }}" "https://${ARTIFACTORY_URL}/artifactory/api/storage/${CHECK_PATH}?list" ) || true
-          echo "Artifactory storage API HTTP status for pushed path: ${HTTP_STATUS_AFTER}"
-          if [ "${HTTP_STATUS_AFTER}" = "200" ]; then
-            echo "Artifact path appears present in Artifactory."
-          else
-            echo "Artifact path not found or not accessible (HTTP ${HTTP_STATUS_AFTER}). It might be a permission issue or Artifactory indexing delay."
-          fi
-
   # ============================================================================
   # E2E Tests - Use the Docker image artifact from build-image job
   # ============================================================================
