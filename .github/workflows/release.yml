@@ -577,6 +577,7 @@ jobs:
   # Push multi-arch image to Artifactory OCI mirror
   # ---------------------------------------------------------------------------
   artifactory:
+    if: ${{ false }} # Temporarily disabled until the mirror credentials are repaired.
     needs: [assemble]
     continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
     env:
