@@ -54,7 +54,9 @@ the ordinary controller CI suite.
    - Published catalogue charts are keylessly Cosign-signed and carry SPDX
      SBOM plus SLSA provenance attestations on the OCI manifest digest.
    - Chart `.tgz` packages are attached to the GitHub Release assets and included in release checksums.
-   - Every release tag that changes a packaged chart `appVersion` must use a unique chart `version` in that chart's `Chart.yaml`. Release reruns may skip an already-published chart only when the remote chart `appVersion` matches the release tag and the pulled remote package is byte-identical to the local package.
+   - Release preparation enumerates the authenticated OCI tag set (including all paginated pages), selects a version strictly above the published Helm SemVer maximum, and keeps chart versions independent from application tags. A rerun may reuse an already-published chart only when its remote `appVersion` matches the release tag; publication then requires the pulled remote package to be byte-identical to the local package.
+   - Helm OCI encodes chart SemVer build metadata (`+build`) in the registry tag as `_build`; release preparation normalizes that representation for ordering while retaining the raw tag for inspection.
+   - The complete release workflow uses a static, non-canceling GitHub Actions concurrency group. This prevents two release runs from selecting and publishing chart versions concurrently. GitHub permits one running and one pending run per group; if additional tags arrive, a newer pending run may replace an older pending run even with cancellation disabled. The group therefore serializes work that is actually admitted, while the immutable publication guard remains authoritative for any stale or manually restarted run.
 
 ## Multi-Architecture Builds
 
@@ -179,13 +181,16 @@ mutable image tag during teardown.
 - Verify CI success on the release commit.
 - Open the release PR `chore(release): vX.Y.Z` with `make changelog-release RELEASE=X.Y.Z` (see [CONTRIBUTING.md](../CONTRIBUTING.md#release-process)); check `make changelog` output and the `changes/` fragments first.
 - Use `vX.Y.Z` tags for stable releases and `vX.Y.Z-rc.1` style tags for prereleases. Do not use SemVer build metadata in release tags.
-- Bump the applicable chart's `version` before cutting a release whose chart `appVersion` has not already been published under that chart version. The catalogue's map-to-list migration is a breaking values-interface change recorded by its `0.2.0` chart version.
-  Release packaging keeps `version` from `Chart.yaml` and overrides its source
-  `appVersion` with the controller tag (`helm package --app-version`). Check both
-  chart versions in GHCR before tagging, even if their templates are unchanged:
-  a version published for an earlier controller tag cannot be reused. A chart
-  version already bumped since the previous release needs no additional bump
-  if it is still unpublished.
+- Chart versions are selected automatically during release preparation. The
+  selector keeps the source chart version independent from the controller tag,
+  advances only the patch component beyond the authoritative OCI maximum when
+  an OCI version belongs to another release, and reuses a version only when
+  its remote `appVersion` matches the current release. Registry authentication,
+  pagination, malformed responses, and network failures fail closed. The
+  catalogue's map-to-list migration remains a breaking
+  values-interface change recorded by its `0.2.0` chart version. Release
+  packaging overrides `appVersion` with the controller tag (`helm package
+  --app-version`).
 - Generate artifacts via the release workflow.
 - Verify both chart publications in GHCR (`.../charts/escalation-config` and `.../charts/debug-session-catalogue`).
 - For a catalogue release, verify every rendered utility image is a
