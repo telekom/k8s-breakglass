@@ -12,6 +12,12 @@ on:
 permissions:
   contents: read
 
+# Version selection and OCI publication must observe one serialized registry
+# state. Later tag runs wait instead of replacing an in-progress release.
+concurrency:
+  group: breakglass-release-publication
+  cancel-in-progress: false
+
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
@@ -182,6 +188,7 @@ jobs:
       chart_names: ${{ steps.package-charts.outputs.chart_names }}
     permissions:
       contents: read
+      packages: read
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,6 +201,10 @@ jobs:
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:
           version: v4.2.2
+      - name: Login to GHCR for chart version selection
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
       - name: Download immutable catalogue utility references
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -240,8 +251,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Keep chart version from Chart.yaml; stamp appVersion with the release tag.
+          # Chart versions are independent from application versions. Reuse a
+          # version only for an exact release rerun; otherwise advance its
+          # patch component until the OCI version is unused.
           mkdir -p chart-dist
+          hack/select-helm-chart-version.sh \
+            charts/escalation-config \
+            "oci://ghcr.io/${{ github.repository }}/charts" \
+            "${{ github.ref_name }}"
           helm package charts/escalation-config \
             --destination chart-dist \
             --app-version "${{ github.ref_name }}"
@@ -257,6 +274,10 @@ jobs:
             hack/generate-release-values.sh "${refs_dir}" catalogue-release-values.yaml
             packaged_catalogue="${RUNNER_TEMP}/debug-session-catalogue"
             cp -R charts/debug-session-catalogue "${packaged_catalogue}"
+            hack/select-helm-chart-version.sh \
+              "${packaged_catalogue}" \
+              "oci://ghcr.io/${{ github.repository }}/charts" \
+              "${{ github.ref_name }}"
             ruby -ryaml -e '
               chart = YAML.safe_load(File.read(ARGV.fetch(0)), aliases: false)
               release = YAML.safe_load(File.read(ARGV.fetch(1)), aliases: false)
