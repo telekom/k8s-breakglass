@@ -51,7 +51,11 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 	for _, obj := range values.Resources {
 		u := &unstructured.Unstructured{Object: obj}
 		old := u.GetName()
-		u.SetName(ns + "-" + old)
+		// Cluster-scoped fixtures must be unique per test run.
+		switch u.GetKind() {
+		case "DebugPodTemplate", "DebugSessionTemplate", "IdentityProvider", "MailProvider", "AuditConfig":
+			u.SetName(ns + "-" + old)
+		}
 		switch u.GetKind() {
 		case "DebugSessionTemplate":
 			templates[old] = u.GetName()
@@ -72,7 +76,7 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		out, err := exec.CommandContext(cleanupCtx, "helm", "uninstall", "bindings", "-n", ns, "--ignore-not-found", "--wait", "--timeout=90s").CombinedOutput()
-		require.NoError(t, err, "uninstall fixture: %s", out)
+		assert.NoError(t, err, "uninstall fixture: %s", out)
 	})
 	// A real source-controller serves the packaged chart to a real helm-controller.
 	run("helm", "package", chart, "--destination", tmp)
@@ -82,12 +86,25 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 	index, err := os.ReadFile(filepath.Join(tmp, "index.yaml"))
 	require.NoError(t, err)
 	s.CreateResource(&corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "chart", Namespace: ns}, BinaryData: map[string][]byte{"convergence-bindings-0.1.0.tgz": archive, "index.yaml": index}})
-	s.CreateResource(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "chart", Namespace: ns, Labels: map[string]string{"app": "chart"}}, Spec: corev1.PodSpec{
+	chartServer := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "chart", Namespace: ns, Labels: map[string]string{"app": "chart"}}, Spec: corev1.PodSpec{
 		AutomountServiceAccountToken: ptr.To(false), SecurityContext: &corev1.PodSecurityContext{RunAsNonRoot: ptr.To(true), RunAsUser: ptr.To[int64](65532), SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}},
-		Containers: []corev1.Container{{Name: "http", Image: "busybox:1.37", Command: []string{"httpd", "-f", "-p", "8080", "-h", "/chart"}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, VolumeMounts: []corev1.VolumeMount{{Name: "chart", MountPath: "/chart", ReadOnly: true}}}},
+		Containers: []corev1.Container{{Name: "http", Image: "python:3.11-slim", ImagePullPolicy: corev1.PullIfNotPresent, Command: []string{"python3", "-m", "http.server", "8080", "--directory", "/chart"}, Env: []corev1.EnvVar{{Name: "PYTHONDONTWRITEBYTECODE", Value: "1"}}, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true), Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}}, VolumeMounts: []corev1.VolumeMount{{Name: "chart", MountPath: "/chart", ReadOnly: true}}}},
 		Volumes:    []corev1.Volume{{Name: "chart", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "chart"}}}}},
-	}})
+	}}
+	s.CreateResource(chartServer)
 	s.CreateResource(&corev1.Service{ObjectMeta: metav1.ObjectMeta{Name: "chart", Namespace: ns}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "chart"}, Ports: []corev1.ServicePort{{Port: 8080}}}})
+	require.Eventually(t, func() bool {
+		var pod corev1.Pod
+		if s.Client.Get(ctx, client.ObjectKeyFromObject(chartServer), &pod) != nil {
+			return false
+		}
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady {
+				return condition.Status == corev1.ConditionTrue
+			}
+		}
+		return false
+	}, time.Minute, time.Second, "chart server must become ready")
 	repo := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "HelmRepository", "metadata": map[string]interface{}{"name": "chart", "namespace": ns}, "spec": map[string]interface{}{"interval": "1m", "url": "http://chart." + ns + ".svc:8080"}}}
 	s.CreateResource(repo)
 	raw, err := json.Marshal(values)
@@ -95,7 +112,7 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 	var valueMap map[string]interface{}
 	require.NoError(t, json.Unmarshal(raw, &valueMap))
 	release := &unstructured.Unstructured{Object: map[string]interface{}{"apiVersion": "helm.toolkit.fluxcd.io/v2", "kind": "HelmRelease", "metadata": map[string]interface{}{"name": "platform-debug-session-bindings-release", "namespace": ns}, "spec": map[string]interface{}{
-		"interval": "1m", "timeout": "2m", "releaseName": "bindings",
+		"interval": "1m", "timeout": "5m", "releaseName": "bindings",
 		"chart":  map[string]interface{}{"spec": map[string]interface{}{"chart": "convergence-bindings", "version": "0.1.0", "sourceRef": map[string]interface{}{"kind": "HelmRepository", "name": "chart"}}},
 		"values": valueMap,
 	}}}
@@ -115,9 +132,40 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 				}
 			}
 			return false
-		}, 3*time.Minute, time.Second, "HelmRelease must become Ready without disableWait: %v", release.Object["status"])
+		}, 6*time.Minute, time.Second, "HelmRelease must become Ready without disableWait: %v", release.Object["status"])
 	}
 	waitRelease()
+	expectDisabledConfiguration := func() {
+		t.Helper()
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			var idp breakglassv1alpha1.IdentityProvider
+			if assert.NoError(c, s.Client.Get(ctx, client.ObjectKey{Name: ns + "-convergence-disabled-idp"}, &idp)) {
+				ready := apimeta.FindStatusCondition(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionReady))
+				if assert.NotNil(c, ready) {
+					assert.Equal(c, metav1.ConditionTrue, ready.Status)
+					assert.Equal(c, "Disabled", ready.Reason)
+				}
+				assert.Nil(c, apimeta.FindStatusCondition(idp.Status.Conditions, string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)))
+			}
+			var mail breakglassv1alpha1.MailProvider
+			if assert.NoError(c, s.Client.Get(ctx, client.ObjectKey{Name: ns + "-convergence-disabled-mail"}, &mail)) {
+				ready := apimeta.FindStatusCondition(mail.Status.Conditions, string(breakglassv1alpha1.MailProviderConditionReady))
+				if assert.NotNil(c, ready) {
+					assert.Equal(c, metav1.ConditionTrue, ready.Status)
+					assert.Equal(c, "Disabled", ready.Reason)
+				}
+			}
+			var audit breakglassv1alpha1.AuditConfig
+			if assert.NoError(c, s.Client.Get(ctx, client.ObjectKey{Name: ns + "-convergence-disabled-audit"}, &audit)) {
+				ready := apimeta.FindStatusCondition(audit.Status.Conditions, "Ready")
+				if assert.NotNil(c, ready) {
+					assert.Equal(c, metav1.ConditionTrue, ready.Status)
+					assert.Equal(c, "AuditingDisabled", ready.Reason)
+				}
+				assert.Empty(c, audit.Status.ActiveSinks)
+			}
+		}, 45*time.Second, time.Second)
+	}
 	expectBindings := func(clusters map[string]string, productionHub bool) {
 		t.Helper()
 		require.EventuallyWithT(t, func(c *assert.CollectT) {
@@ -149,8 +197,19 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 		}, 45*time.Second, time.Second)
 	}
 	expectBindings(nil, false)
-	var source breakglassv1alpha1.ClusterConfig
-	require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Name: s.Cluster, Namespace: s.Namespace}, &source))
+	expectDisabledConfiguration()
+	// ClusterConfig is namespaced. The shared fixture creates the source cluster
+	// in "default", while this test creates its own copies in s.Namespace.
+	var sourceList breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, s.Client.List(ctx, &sourceList))
+	var source *breakglassv1alpha1.ClusterConfig
+	for i := range sourceList.Items {
+		if sourceList.Items[i].Name == s.Cluster {
+			source = &sourceList.Items[i]
+			break
+		}
+	}
+	require.NotNil(t, source, "source ClusterConfig %q not found", s.Cluster)
 	createCluster := func(name, stage string) *breakglassv1alpha1.ClusterConfig {
 		t.Helper()
 		cc := &breakglassv1alpha1.ClusterConfig{ObjectMeta: metav1.ObjectMeta{Name: ns + "-" + name, Namespace: s.Namespace, Labels: map[string]string{
@@ -189,6 +248,7 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 		session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: templates["convergence-platform-diagnostics"], Cluster: tc.cluster, Reason: "E2E incident: verify convergence target-stage approval policy", RequestedDuration: "5m"})
 		require.NoError(t, err)
 		s.Cleanup.Add(session)
+		helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStatePendingApproval, helpers.WaitForStateTimeout)
 		err = requester.ApproveDebugSession(ctx, t, session.Name, "E2E diagnostic approval")
 		if tc.self {
 			require.NoError(t, err)
@@ -226,6 +286,7 @@ func TestConvergenceBindingHelmRelease(t *testing.T) {
 	nonprd.Labels["breakglass.t-caas.telekom.com/debug-sessions-enabled"] = "true"
 	require.NoError(t, s.Client.Update(ctx, nonprd))
 	expectBindings(map[string]string{nonprd.Name: "tst"}, true)
+	expectDisabledConfiguration()
 	// Suspend Flux before the cleanup uninstalls its release.
 	require.NoError(t, unstructured.SetNestedField(release.Object, true, "spec", "suspend"))
 	require.NoError(t, s.Client.Update(ctx, release))

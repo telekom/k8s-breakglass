@@ -19,6 +19,7 @@ package helpers
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/yaml"
+	sigsyaml "sigs.k8s.io/yaml"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 )
@@ -46,7 +48,16 @@ func TestFixturesAreValid(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() && (filepath.Ext(path) == ".yaml" || filepath.Ext(path) == ".yml") {
+		if info.IsDir() {
+			// Helm charts keep manifests in values.yaml and templates, which are
+			// not standalone Kubernetes documents. TestFixturesAreValid_HelmChartValues
+			// validates their resources list instead.
+			if _, statErr := os.Stat(filepath.Join(path, "Chart.yaml")); statErr == nil {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if filepath.Ext(path) == ".yaml" || filepath.Ext(path) == ".yml" {
 			fixtureFiles = append(fixtureFiles, path)
 		}
 		return nil
@@ -88,6 +99,52 @@ func TestFixturesAreValid(t *testing.T) {
 	}
 
 	t.Logf("Validated fixture kinds: %v", validatedKinds)
+}
+
+// TestFixturesAreValid_HelmChartValues validates the CRs rendered by Helm chart
+// fixture values. The chart directory itself is skipped by TestFixturesAreValid
+// because values.yaml and the templates are not standalone manifests.
+func TestFixturesAreValid_HelmChartValues(t *testing.T) {
+	fixturesRoot := FixturesDir()
+
+	var valuesFiles []string
+	err := filepath.Walk(fixturesRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() || filepath.Base(path) != "values.yaml" {
+			return nil
+		}
+		if _, statErr := os.Stat(filepath.Join(filepath.Dir(path), "Chart.yaml")); statErr != nil {
+			return nil
+		}
+		valuesFiles = append(valuesFiles, path)
+		return nil
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, valuesFiles, "no Helm chart values fixtures found in %s", fixturesRoot)
+
+	for _, file := range valuesFiles {
+		relPath, _ := filepath.Rel(fixturesRoot, file)
+		t.Run(relPath, func(t *testing.T) {
+			data, err := os.ReadFile(file)
+			require.NoError(t, err)
+
+			var values struct {
+				Resources []map[string]interface{} `json:"resources"`
+			}
+			require.NoError(t, sigsyaml.Unmarshal(data, &values))
+			require.NotEmpty(t, values.Resources)
+
+			for i, resource := range values.Resources {
+				raw, err := json.Marshal(resource)
+				require.NoError(t, err)
+				obj, _, err := fixtureDecoder.Decode(raw, nil, nil)
+				require.NoError(t, err, "resource %d failed to decode", i+1)
+				require.NoError(t, validateFixtureObject(obj), "resource %d (%T) failed validation", i+1, obj)
+			}
+		})
+	}
 }
 
 // splitYAMLDocs splits a multi-document YAML byte slice into individual documents.

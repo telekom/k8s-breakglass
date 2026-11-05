@@ -125,7 +125,7 @@ func TestIdentityProviderReconciler_ReconcileSuccess(t *testing.T) {
 	assert.Contains(t, recorder.events[0], "ConfigReloadSuccess")
 }
 
-func TestIdentityProviderReconciler_ReconcileDisabledProviderReportsUnavailable(t *testing.T) {
+func TestIdentityProviderReconciler_ReconcileDisabledProviderReportsReconciled(t *testing.T) {
 	log := zap.NewNop().Sugar()
 	scheme := newTestScheme(t)
 	idp := &breakglassv1alpha1.IdentityProvider{

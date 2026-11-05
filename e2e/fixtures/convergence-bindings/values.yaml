@@ -421,21 +421,21 @@ resources:
       \  node-role.kubernetes.io/control-plane: \"\"\n  kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}\ntolerations:\n\
       \  - key: node-role.kubernetes.io/control-plane\n    operator: Exists\n    effect: NoSchedule\nsecurityContext:\n  runAsUser:\
       \ 0\n  runAsGroup: 0\n  runAsNonRoot: false\n  seccompProfile:\n    type: RuntimeDefault\ninitContainers:\n  - name:\
-      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
       \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
       \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
       \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
-      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - health\n\
       \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
       \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
       \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
-      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: save\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: save\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - snapshot\n      - save\n\
@@ -443,7 +443,7 @@ resources:
       \      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"\
       ]\n    resources:\n      requests:\n        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"\
       256Mi\"\n    volumeMounts:\n      - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n     \
-      \ - name: snapshots\n        mountPath: /snapshots\ncontainers:\n  - name: verify\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ - name: snapshots\n        mountPath: /snapshots\ncontainers:\n  - name: verify\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdutl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - snapshot\n      - status\n      - {{ printf \"/snapshots/%s.db\" .session.name | yamlQuote }}\n      -\
       \ -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem:\
@@ -640,28 +640,28 @@ resources:
       \  node-role.kubernetes.io/control-plane: \"\"\n  kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}\ntolerations:\n\
       \  - key: node-role.kubernetes.io/control-plane\n    operator: Exists\n    effect: NoSchedule\nsecurityContext:\n  runAsUser:\
       \ 0\n  runAsGroup: 0\n  runAsNonRoot: false\n  seccompProfile:\n    type: RuntimeDefault\ninitContainers:\n  - name:\
-      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
       \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
       \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
       \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
-      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - health\n\
       \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
       \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
       \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
-      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: defrag\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: defrag\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=5m\n      - defrag\n    securityContext:\n\
       \      privileged: false\n      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem: true\n      capabilities:\n\
       \        drop: [\"ALL\"]\n    resources:\n      requests:\n        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n\
       \        memory: \"256Mi\"\n    volumeMounts:\n      - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly:\
-      \ true\ncontainers:\n  - name: status-after\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70"\
+      \ true\ncontainers:\n  - name: status-after\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
       \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
       \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
       \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
@@ -1061,6 +1061,7 @@ resources:
     oidc:
       authority: https://disabled.example.com
       clientID: disabled
+      expectedAudience: disabled
 - apiVersion: breakglass.t-caas.telekom.com/v1alpha1
   kind: MailProvider
   metadata:

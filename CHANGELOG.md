@@ -464,13 +464,6 @@ They were collected under Unreleased and not split per pre-release.
 
 ### Fixed
 
-- Treat empty DebugSessionClusterBinding cluster/template selector results as
-  successfully reconciled and clear stale resolved references. Stage-partitioned
-  catalogues no longer block Helm/Flux installation on hubs without matching targets.
-- Report intentionally disabled IdentityProvider, MailProvider and AuditConfig
-  resources as reconciled (`Ready=True`) while preserving their disabled runtime
-  behavior. Missing references and real validation/health failures remain errors.
-
 - A DebugSession now keeps an explicit `false` from its template for booleans
   whose CRD default is `true`. Examples are
   `kubectlDebug.ephemeralContainers.requireNonRoot`,
