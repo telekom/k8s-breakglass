@@ -435,7 +435,7 @@ func (r *AuditConfigReconciler) updateStatus(ctx context.Context, config *breakg
 	if !config.Spec.Enabled {
 		conditions = append(conditions, metav1.Condition{
 			Type:               "Ready",
-			Status:             metav1.ConditionFalse,
+			Status:             metav1.ConditionTrue,
 			Reason:             "AuditingDisabled",
 			Message:            "AuditConfig is intentionally disabled",
 			LastTransitionTime: metav1.Now(),

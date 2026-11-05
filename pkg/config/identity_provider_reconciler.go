@@ -233,7 +233,6 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	previousReadyCondition := idp.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionReady))
 	wasDisabled := previousReadyCondition != nil &&
-		previousReadyCondition.Status == metav1.ConditionFalse &&
 		previousReadyCondition.Reason == "Disabled"
 
 	// Reload configuration when IdentityProvider changes
@@ -275,10 +274,10 @@ func (r *IdentityProviderReconciler) Reconcile(ctx context.Context, req reconcil
 
 	if idp.Spec.Disabled {
 		// Reloading remains necessary to remove this provider from each replica's
-		// runtime configuration, but a disabled provider must not report itself as ready.
+		// runtime configuration; Ready reports successful reconciliation, not availability.
 		idp.SetCondition(metav1.Condition{
 			Type:               string(breakglassv1alpha1.IdentityProviderConditionReady),
-			Status:             metav1.ConditionFalse,
+			Status:             metav1.ConditionTrue,
 			ObservedGeneration: idp.Generation,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "Disabled",

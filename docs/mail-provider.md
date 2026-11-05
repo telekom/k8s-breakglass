@@ -499,3 +499,7 @@ kubectl get mailprovider -o json | jq '.items[] | select(.spec.default==true) | 
 - [ClusterConfig](./cluster-config.md)
 - [Email Templates](./email-templates.md)
 - [Metrics](./metrics.md)
+
+An intentionally disabled provider reports `Ready=True` with reason `Disabled`
+after reconciliation, so Helm/Flux can finish installing it. It remains excluded
+from provider selection and does not perform an SMTP health check.

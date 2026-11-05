@@ -163,7 +163,7 @@ func TestIdentityProviderReconciler_ReconcileDisabledProviderReportsUnavailable(
 	require.NoError(t, client.Get(context.Background(), types.NamespacedName{Name: idp.Name}, &updated))
 	ready := updated.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionReady))
 	require.NotNil(t, ready)
-	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, metav1.ConditionTrue, ready.Status)
 	assert.Equal(t, "Disabled", ready.Reason)
 	assert.Nil(t, updated.GetCondition(string(breakglassv1alpha1.IdentityProviderConditionGroupSyncHealthy)))
 	require.Len(t, recorder.events, 1)

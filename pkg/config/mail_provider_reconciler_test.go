@@ -128,12 +128,12 @@ func TestMailProviderReconciler_ReconcileDisabled(t *testing.T) {
 	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
-	// Check that Ready condition is False with reason "Disabled"
+	// Check that Ready condition is True with reason "Disabled"
 	found := false
 	for _, cond := range updated.Status.Conditions {
 		if cond.Type == string(breakglassv1alpha1.MailProviderConditionReady) {
 			found = true
-			assert.Equal(t, metav1.ConditionFalse, cond.Status)
+			assert.Equal(t, metav1.ConditionTrue, cond.Status)
 			assert.Equal(t, "Disabled", cond.Reason)
 		}
 	}
@@ -478,12 +478,12 @@ func TestMailProviderReconciler_UpdateStatusDisabled(t *testing.T) {
 	err = cli.Get(context.Background(), types.NamespacedName{Name: "test-provider"}, &updated)
 	require.NoError(t, err)
 
-	// Check Ready condition is False with reason "Disabled"
+	// Check Ready condition is True with reason "Disabled"
 	readyFound := false
 	for _, cond := range updated.Status.Conditions {
 		if cond.Type == string(breakglassv1alpha1.MailProviderConditionReady) {
 			readyFound = true
-			assert.Equal(t, metav1.ConditionFalse, cond.Status)
+			assert.Equal(t, metav1.ConditionTrue, cond.Status)
 			assert.Equal(t, "Disabled", cond.Reason)
 		}
 	}

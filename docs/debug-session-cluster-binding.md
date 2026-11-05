@@ -460,6 +460,16 @@ The controller refreshes this status when the binding changes and when matching
 cluster readiness, and selector label changes are reflected in
 `resolvedTemplates`, `resolvedClusters`, and the binding readiness conditions.
 
+A valid selector that currently matches no clusters or templates is successfully
+resolved: `Ready=True`, with `ClustersResolved=True` / `NoClustersMatched` or
+`TemplateResolved=True` / `NoTemplatesMatched`. The corresponding resolved list
+is cleared when its last match disappears. This allows stage-partitioned and
+optional catalogues to install through Helm/Flux even on hubs without targets
+for every binding. Such a binding grants no access until a target matches.
+Missing explicit references, invalid selectors/configuration, and API resolution
+errors still report `Ready=False`; transient errors retain the last known lists.
+Cluster readiness and authenticated authorization continue to gate session use.
+
 ## Use Cases
 
 ### Multi-Tenant Cluster Access

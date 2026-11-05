@@ -117,7 +117,7 @@ func (r *MailProviderReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	}
 
-	// If disabled, just mark as not ready and return
+	// A disabled provider is reconciled without checking SMTP availability.
 	if mp.Spec.Disabled {
 		return r.updateStatusDisabled(ctx, &mp)
 	}
@@ -436,7 +436,7 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 	skipInfo := coordinator.ShouldSkipStatusUpdateDetailed(
 		latest.Status.Conditions,
 		string(breakglassv1alpha1.MailProviderConditionReady),
-		metav1.ConditionFalse,
+		metav1.ConditionTrue,
 		"Disabled",
 	)
 	if skipInfo.Skipped {
@@ -451,7 +451,7 @@ func (r *MailProviderReconciler) updateStatusDisabled(ctx context.Context, mp *b
 	latest.Status.Conditions = r.updateCondition(latest.Status.Conditions,
 		metav1.Condition{
 			Type:               string(breakglassv1alpha1.MailProviderConditionReady),
-			Status:             metav1.ConditionFalse,
+			Status:             metav1.ConditionTrue,
 			Reason:             "Disabled",
 			Message:            "MailProvider is disabled",
 			LastTransitionTime: metav1.Now(),

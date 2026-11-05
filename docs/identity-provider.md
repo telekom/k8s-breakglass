@@ -249,9 +249,10 @@ spec:
 ```
 
 The controller still reloads its runtime configuration so that every replica excludes the
-provider. The disabled resource reports `Ready=False` with reason `Disabled`, removes any
+provider. The disabled resource reports `Ready=True` with reason `Disabled` after successful reconciliation, removes any
 previous `GroupSyncHealthy` condition, and emits an `IdentityProviderDisabled` event; it does not
-report a successful reload for the disabled provider. Enable it again by setting `disabled: false`.
+emit a `ConfigReloadSuccess` event or become available for authentication. Readiness describes
+reconciliation of the desired disabled state, not authentication availability. Enable it again by setting `disabled: false`.
 
 ## Session Limits
 

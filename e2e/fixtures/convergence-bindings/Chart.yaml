@@ -1,0 +1,5 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: convergence-bindings
+version: 0.1.0

@@ -148,11 +148,10 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 			LastTransitionTime: now,
 		})
 	} else if len(templatesResolved) == 0 {
-		allValid = false
-		binding.Status.ResolvedTemplates = prevTemplates
+		binding.Status.ResolvedTemplates = templatesResolved
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionTemplateResolved),
-			Status:             metav1.ConditionFalse,
+			Status:             metav1.ConditionTrue,
 			Reason:             "NoTemplatesMatched",
 			Message:            "No templates matched the selector",
 			LastTransitionTime: now,
@@ -181,11 +180,10 @@ func (r *DebugSessionClusterBindingReconciler) Reconcile(ctx context.Context, re
 			LastTransitionTime: now,
 		})
 	} else if len(clustersResolved) == 0 {
-		allValid = false
-		binding.Status.ResolvedClusters = prevClusters
+		binding.Status.ResolvedClusters = clustersResolved
 		apimeta.SetStatusCondition(&binding.Status.Conditions, metav1.Condition{
 			Type:               string(breakglassv1alpha1.DebugSessionClusterBindingConditionClustersResolved),
-			Status:             metav1.ConditionFalse,
+			Status:             metav1.ConditionTrue,
 			Reason:             "NoClustersMatched",
 			Message:            "No clusters matched the selector",
 			LastTransitionTime: now,
