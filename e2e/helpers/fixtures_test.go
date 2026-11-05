@@ -182,6 +182,10 @@ func validateFixtureObject(obj runtime.Object) error {
 		if r := breakglassv1alpha1.ValidateDebugSessionTemplate(o); len(r.Errors) > 0 {
 			return fmt.Errorf("validation errors: %v", r.Errors)
 		}
+	case *breakglassv1alpha1.DebugSessionClusterBinding:
+		if r := breakglassv1alpha1.ValidateDebugSessionClusterBinding(o); len(r.Errors) > 0 {
+			return fmt.Errorf("validation errors: %v", r.Errors)
+		}
 	case *breakglassv1alpha1.DebugPodTemplate:
 		if r := breakglassv1alpha1.ValidateDebugPodTemplate(o); len(r.Errors) > 0 {
 			return fmt.Errorf("validation errors: %v", r.Errors)
@@ -206,4 +210,13 @@ func validateFixtureObject(obj runtime.Object) error {
 		// Unknown breakglass type — still decoded successfully
 	}
 	return nil
+}
+
+func TestValidateFixtureObjectRejectsMalformedBinding(t *testing.T) {
+	binding := &breakglassv1alpha1.DebugSessionClusterBinding{}
+	binding.Name = "fixture"
+	binding.Spec.Clusters = []string{"target"}
+	require.Error(t, validateFixtureObject(binding))
+	binding.Spec.TemplateRef = &breakglassv1alpha1.TemplateReference{Name: "diagnostics"}
+	require.NoError(t, validateFixtureObject(binding))
 }
