@@ -13,6 +13,20 @@ writes it.
 
 ## [Unreleased]
 
+## [0.3.0-rc.19] - 2026-11-05
+
+### Fixes
+
+- keep empty bindings and disabled configuration ready ([#1581](https://github.com/telekom/k8s-breakglass/pull/1581))
+- A `DebugSessionClusterBinding` whose cluster or template selector matches
+  nothing now reports `Ready=True` with `NoClustersMatched` or
+  `NoTemplatesMatched` and clears its stale resolved references. Stage-
+  partitioned catalogues therefore install through Helm/Flux on hubs that do
+  not host every target stage. Missing explicit references, invalid selectors,
+  and resolution errors still report `Ready=False`. Intentionally disabled
+  `IdentityProvider`, `MailProvider`, and `AuditConfig` resources also report
+  `Ready=True` with their disabled reason while remaining inactive (#1581).
+
 ## [0.3.0-rc.15] - 2026-10-23
 
 ### Upgrade notes
@@ -2680,7 +2694,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.15...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.19...HEAD
+[0.3.0-rc.19]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.18...v0.3.0-rc.19
 [0.3.0-rc.15]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...v0.3.0-rc.15
 [0.3.0-rc.14]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...v0.3.0-rc.14
 [0.3.0-rc.13]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.12...v0.3.0-rc.13
