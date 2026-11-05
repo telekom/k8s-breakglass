@@ -1,0 +1,1084 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+resources:
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugPodTemplate
+  metadata:
+    name: convergence-tenant-network-tools
+  spec:
+    displayName: Tenant Network Diagnostics
+    description: No-token network diagnostic pod for DNS, egress, service, and connectivity troubleshooting.
+    template:
+      metadata:
+        labels:
+          breakglass.t-caas.telekom.com/profile: tenant-network-diagnostics
+          breakglass.t-caas.telekom.com/audit: required
+      spec:
+        automountServiceAccountToken: false
+        enableServiceLinks: false
+        restartPolicy: Never
+        terminationGracePeriodSeconds: 10
+        imagePullSecrets:
+        - name: unused-e2e-pull-secret
+        nodeSelector:
+          kubernetes.io/os: linux
+        securityContext:
+          seccompProfile:
+            type: RuntimeDefault
+        containers:
+        - name: netshoot
+          image: nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+          imagePullPolicy: IfNotPresent
+          command:
+          - /bin/sh
+          - -c
+          - exec timeout 4h sleep 4h
+          env:
+          - name: HOME
+            value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+              - ALL
+          resources:
+            limits:
+              memory: 256Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+          - name: tmp
+            mountPath: /tmp
+        volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionTemplate
+  metadata:
+    name: convergence-platform-diagnostics
+  spec:
+    motd:
+      message: E2E convergence diagnostics; use only the disposable test cluster.
+    displayName: Platform Diagnostics
+    description: Approved platform diagnostic shell for cluster-wide workload, DNS, egress, and service checks without host
+      namespaces.
+    mode: workload
+    podTemplateRef:
+      name: convergence-tenant-network-tools
+    workloadType: DaemonSet
+    replicas: 1
+    targetNamespace: breakglass-debug
+    failMode: closed
+    constraints:
+      maxDuration: 2h
+      defaultDuration: 30m
+      allowRenewal: false
+      maxRenewals: 0
+      maxConcurrentSessions: 2
+    namespaceConstraints:
+      defaultNamespace: breakglass-debug
+      allowUserNamespace: false
+      createIfNotExists: false
+    allowedPodOperations:
+      exec: true
+      attach: true
+      logs: true
+      portForward: false
+    audit:
+      enabled: true
+      enableShellHistory: true
+      enableTerminalRecording: false
+      recordingRetention: 90d
+    notification:
+      enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: true
+    requestReason:
+      mandatory: true
+      minLength: 30
+      maxLength: 700
+      description: Provide incident, affected services, customer impact, and planned diagnostic checks.
+    approvalReason:
+      mandatory: true
+      mandatoryForRejection: true
+      minLength: 10
+      description: Approver must record why platform diagnostics are justified.
+    expirationBehavior: terminate
+    gracePeriodBeforeExpiry: 10m
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionTemplate
+  metadata:
+    name: convergence-platform-node-diagnostics
+  spec:
+    motd:
+      message: E2E convergence diagnostics; use only the disposable test cluster.
+    displayName: Platform Node Diagnostics
+    description: Approved platform emergency node debug session with host network and PID inspection.
+    mode: kubectl-debug
+    targetNamespace: breakglass-debug
+    failMode: closed
+    kubectlDebug:
+      ephemeralContainers:
+        enabled: false
+      nodeDebug:
+        enabled: true
+        allowedImages:
+        - nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+        hostNamespaces:
+          hostNetwork: true
+          hostPID: true
+          hostIPC: false
+      podCopy:
+        enabled: false
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    auxiliaryResources:
+    - name: node-debug-policy-exception
+      category: policy-exceptions
+      description: Permit only this approved session's controller-built node debug Pod.
+      createBefore: true
+      deleteAfter: true
+      failurePolicy: fail
+      templateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ printf `debug-node-%s`\
+        \ (required `session UID is required` .session.uid) | yamlQuote }}\n  namespace: convergence-security\n  labels:\n    app.kubernetes.io/managed-by:\
+        \ breakglass\n    breakglass.telekom.com/debug-session: {{ .session.name | yamlQuote }}\nspec:\n  policyRefs:\n  \
+        \  - {kind: ValidatingPolicy, name: disallow-host-namespaces}\n    - {kind: ValidatingPolicy, name: disallow-host-path}\n\
+        \    - {kind: ValidatingPolicy, name: ensure-readonly-hostpath}\n    - {kind: ValidatingPolicy, name: restrict-volume-types}\n\
+        \    - {kind: ValidatingPolicy, name: require-ro-rootfs}\n    - {kind: ValidatingPolicy, name: restrict-controlplane-scheduling}\n\
+        \  matchConditions:\n    - name: controller-actor\n      expression: >-\n        request.userInfo.username == 'kubernetes-admin'\n\
+        \        && request.userInfo.?groups.orValue([]).exists(g, g in ['system:masters', 'kubeadm:cluster-admins'])\n  \
+        \  - name: approved-session\n      expression: {{ printf `request.operation in ['CREATE', 'UPDATE'] && request.kind.kind\
+        \ == 'Pod' && request.namespace == %q && object.metadata.?annotations.orValue({})[?'breakglass.t-caas.telekom.com/source-session-uid'].orValue('')\
+        \ == %q && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/debug-session'].orValue('') == %q` (required\
+        \ `target namespace is required` .target.namespace) (required `session UID is required` .session.uid) (required `session\
+        \ name is required` .session.name) | yamlQuote }}\n    - name: approved-node\n      expression: >-\n        object.metadata.name.startsWith('node-debugger-')\n\
+        \        && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/node-debug'].orValue('') == 'true'\n    \
+        \    && object.spec.?nodeName.orValue('') != ''\n        && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/target-node'].orValue('')\
+        \ == object.spec.nodeName\n    - name: exact-node-debug-pod\n      expression: >-\n        object.spec.?hostNetwork.orValue(false)\n\
+        \        && object.spec.?hostPID.orValue(false)\n        && !object.spec.?hostIPC.orValue(false)\n        && object.spec.?restartPolicy.orValue('')\
+        \ == 'Never'\n        && object.spec.?serviceAccountName.orValue('default') == 'default'\n        && object.spec.?securityContext.?sysctls.orValue([]).size()\
+        \ == 0\n        && object.spec.?initContainers.orValue([]).size() == 0\n        && object.spec.?ephemeralContainers.orValue([]).size()\
+        \ == 0\n        && object.spec.?tolerations.orValue([]).size() == 1\n        && object.spec.tolerations.all(t, !has(t.key)\
+        \ && t.?operator.orValue('') == 'Exists' && !has(t.effect))\n        && object.spec.containers.size() == 1\n     \
+        \   && object.spec.containers.all(c,\n             c.name == 'debugger'\n             && c.image == 'nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70'\n\
+        \             && c.?command.orValue([]) == ['sleep', 'infinity']\n             && c.?args.orValue([]).size() == 0\n\
+        \             && c.?ports.orValue([]).size() == 0\n             && c.?env.orValue([]).filter(e, !(e.name in ['BREAKGLASS_MOTD',\
+        \ 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND', 'BREAKGLASS_TOOLBOX'])).size() == 0\n             && c.?envFrom.orValue([]).size()\
+        \ == 0\n             && c.?volumeDevices.orValue([]).size() == 0\n             && !has(c.lifecycle) && !has(c.workingDir)\n\
+        \             && !has(c.startupProbe) && !has(c.livenessProbe) && !has(c.readinessProbe)\n             && c.?securityContext.?privileged.orValue(false)\n\
+        \             && c.?securityContext.?capabilities.?add.orValue([]).size() == 0\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).exists(m, m.name == 'host-root')\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).all(m,\n                  !has(m.subPath) && !has(m.subPathExpr)\
+        \ && !has(m.mountPropagation)\n                  && ((m.name == 'host-root' && m.mountPath == '/host')\n         \
+        \             || (m.name.startsWith('kube-api-access-')\n                          && m.mountPath == '/var/run/secrets/kubernetes.io/serviceaccount'\n\
+        \                          && m.?readOnly.orValue(false)))))\n        && object.spec.?volumes.orValue([]).filter(v,\
+        \ !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).filter(v, v.name == 'host-root').size() == 1\n        &&\
+        \ object.spec.?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).filter(v, v.name.startsWith('kube-api-access-')).size()\
+        \ <= 1\n        && object.spec.?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).all(v,\n\
+        \             (v.name == 'host-root' && has(v.hostPath) && v.hostPath.path == '/'\n              && v.hostPath.?type.orValue('')\
+        \ == '')\n             || (v.name.startsWith('kube-api-access-') && has(v.projected)\n                 && v.projected.sources.all(s,\n\
+        \                      (has(s.serviceAccountToken) && s.serviceAccountToken.?audience.orValue('') == '')\n       \
+        \               || (has(s.configMap) && s.configMap.name == 'kube-root-ca.crt')\n                      || (has(s.downwardAPI)\n\
+        \                          && s.downwardAPI.items.all(i, i.?fieldRef.?fieldPath.orValue('') == 'metadata.namespace')))))\n\
+        \    - name: breakglass-motd-hook\n      expression: >-\n        (object.spec.?volumes.orValue([]).all(v, v.name !=\
+        \ 'breakglass-motd')\n          && object.spec.containers.all(c,\n               c.?volumeMounts.orValue([]).all(m,\
+        \ m.name != 'breakglass-motd' && m.mountPath != '/etc/breakglass-motd')\n               && c.?env.orValue([]).all(e,\
+        \ !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND']))))\n        || (object.spec.?volumes.orValue([]).filter(v,\
+        \ v.name == 'breakglass-motd').size() == 1\n          && object.spec.volumes.filter(v, v.name == 'breakglass-motd').all(v,\n\
+        \               has(v.downwardAPI) && !has(v.hostPath) && !has(v.emptyDir) && !has(v.configMap) && !has(v.secret)\
+        \ && !has(v.projected)\n               && v.downwardAPI.?items.orValue([]).size() == 1\n               && v.downwardAPI.items.all(i,\
+        \ i.path == 'profile.sh'\n                    && i.?fieldRef.?fieldPath.orValue('') == \"metadata.annotations['breakglass.t-caas.telekom.com/motd-profile']\"\
+        \n                    && !has(i.resourceFieldRef) && !has(i.mode)))\n          && object.spec.containers.all(c,\n\
+        \               c.?volumeMounts.orValue([]).filter(m, m.name == 'breakglass-motd' || m.mountPath == '/etc/breakglass-motd').size()\
+        \ == 1\n               && c.volumeMounts.filter(m, m.name == 'breakglass-motd').size() == 1\n               && c.volumeMounts.filter(m,\
+        \ m.name == 'breakglass-motd').all(m, m.mountPath == '/etc/breakglass-motd'\n                    && m.?readOnly.orValue(false)\
+        \ == true && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation))\n               && c.?env.orValue([]).filter(e,\
+        \ e.name == 'BREAKGLASS_MOTD').size() == 1\n               && c.env.filter(e, e.name == 'BREAKGLASS_RUNBOOK_URL').size()\
+        \ <= 1\n               && c.env.filter(e, e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL']).all(e, has(e.value)\
+        \ && !has(e.valueFrom))\n               && c.env.filter(e, e.name == 'ENV').size() == 1\n               && c.env.filter(e,\
+        \ e.name == 'ENV').all(e, e.?value.orValue('') == '/etc/breakglass-motd/profile.sh' && !has(e.valueFrom))\n      \
+        \         && c.env.filter(e, e.name == 'PROMPT_COMMAND').size() == 1\n               && c.env.filter(e, e.name ==\
+        \ 'PROMPT_COMMAND').all(e, e.?value.orValue('') == '. /etc/breakglass-motd/profile.sh' && !has(e.valueFrom))))\n \
+        \   - name: breakglass-toolbox\n      expression: >-\n        (object.spec.?volumes.orValue([]).all(v, v.name != 'breakglass-toolbox')\n\
+        \          && object.spec.containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'breakglass-toolbox' && m.mountPath\
+        \ != '/opt/breakglass/toolbox') && c.?env.orValue([]).all(e, e.name != 'BREAKGLASS_TOOLBOX')))\n"
+    constraints:
+      maxDuration: 1h
+      defaultDuration: 20m
+      allowRenewal: false
+      maxRenewals: 0
+      maxConcurrentSessions: 1
+    namespaceConstraints:
+      defaultNamespace: breakglass-debug
+      allowUserNamespace: false
+      createIfNotExists: false
+    allowedPodOperations:
+      exec: true
+      attach: true
+      logs: true
+      portForward: false
+    audit:
+      enabled: true
+      enableShellHistory: true
+      enableTerminalRecording: false
+      recordingRetention: 365d
+    notification:
+      enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: true
+    requestReason:
+      mandatory: true
+      minLength: 30
+      maxLength: 700
+      description: Provide incident, affected node, customer impact, and planned commands.
+    approvalReason:
+      mandatory: true
+      mandatoryForRejection: true
+      minLength: 10
+      description: Approver must record why host-level diagnostics are justified.
+    expirationBehavior: terminate
+    gracePeriodBeforeExpiry: 10m
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionTemplate
+  metadata:
+    name: convergence-emergency-node-diagnostics
+  spec:
+    motd:
+      message: E2E convergence diagnostics; use only the disposable test cluster.
+    displayName: Emergency Node Diagnostics
+    description: Short-lived emergency node debug session for incidents that exceed normal platform diagnostics.
+    mode: kubectl-debug
+    targetNamespace: breakglass-debug
+    failMode: closed
+    kubectlDebug:
+      ephemeralContainers:
+        enabled: false
+      nodeDebug:
+        enabled: true
+        allowedImages:
+        - nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+        hostNamespaces:
+          hostNetwork: true
+          hostPID: true
+          hostIPC: false
+      podCopy:
+        enabled: false
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    auxiliaryResources:
+    - name: node-debug-policy-exception
+      category: policy-exceptions
+      description: Permit only this approved session's controller-built node debug Pod.
+      createBefore: true
+      deleteAfter: true
+      failurePolicy: fail
+      templateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ printf `debug-node-%s`\
+        \ (required `session UID is required` .session.uid) | yamlQuote }}\n  namespace: convergence-security\n  labels:\n    app.kubernetes.io/managed-by:\
+        \ breakglass\n    breakglass.telekom.com/debug-session: {{ .session.name | yamlQuote }}\nspec:\n  policyRefs:\n  \
+        \  - {kind: ValidatingPolicy, name: disallow-host-namespaces}\n    - {kind: ValidatingPolicy, name: disallow-host-path}\n\
+        \    - {kind: ValidatingPolicy, name: ensure-readonly-hostpath}\n    - {kind: ValidatingPolicy, name: restrict-volume-types}\n\
+        \    - {kind: ValidatingPolicy, name: require-ro-rootfs}\n    - {kind: ValidatingPolicy, name: restrict-controlplane-scheduling}\n\
+        \  matchConditions:\n    - name: controller-actor\n      expression: >-\n        request.userInfo.username == 'kubernetes-admin'\n\
+        \        && request.userInfo.?groups.orValue([]).exists(g, g in ['system:masters', 'kubeadm:cluster-admins'])\n  \
+        \  - name: approved-session\n      expression: {{ printf `request.operation in ['CREATE', 'UPDATE'] && request.kind.kind\
+        \ == 'Pod' && request.namespace == %q && object.metadata.?annotations.orValue({})[?'breakglass.t-caas.telekom.com/source-session-uid'].orValue('')\
+        \ == %q && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/debug-session'].orValue('') == %q` (required\
+        \ `target namespace is required` .target.namespace) (required `session UID is required` .session.uid) (required `session\
+        \ name is required` .session.name) | yamlQuote }}\n    - name: approved-node\n      expression: >-\n        object.metadata.name.startsWith('node-debugger-')\n\
+        \        && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/node-debug'].orValue('') == 'true'\n    \
+        \    && object.spec.?nodeName.orValue('') != ''\n        && object.metadata.?labels.orValue({})[?'breakglass.telekom.com/target-node'].orValue('')\
+        \ == object.spec.nodeName\n    - name: exact-node-debug-pod\n      expression: >-\n        object.spec.?hostNetwork.orValue(false)\n\
+        \        && object.spec.?hostPID.orValue(false)\n        && !object.spec.?hostIPC.orValue(false)\n        && object.spec.?restartPolicy.orValue('')\
+        \ == 'Never'\n        && object.spec.?serviceAccountName.orValue('default') == 'default'\n        && object.spec.?securityContext.?sysctls.orValue([]).size()\
+        \ == 0\n        && object.spec.?initContainers.orValue([]).size() == 0\n        && object.spec.?ephemeralContainers.orValue([]).size()\
+        \ == 0\n        && object.spec.?tolerations.orValue([]).size() == 1\n        && object.spec.tolerations.all(t, !has(t.key)\
+        \ && t.?operator.orValue('') == 'Exists' && !has(t.effect))\n        && object.spec.containers.size() == 1\n     \
+        \   && object.spec.containers.all(c,\n             c.name == 'debugger'\n             && c.image == 'nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70'\n\
+        \             && c.?command.orValue([]) == ['sleep', 'infinity']\n             && c.?args.orValue([]).size() == 0\n\
+        \             && c.?ports.orValue([]).size() == 0\n             && c.?env.orValue([]).filter(e, !(e.name in ['BREAKGLASS_MOTD',\
+        \ 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND', 'BREAKGLASS_TOOLBOX'])).size() == 0\n             && c.?envFrom.orValue([]).size()\
+        \ == 0\n             && c.?volumeDevices.orValue([]).size() == 0\n             && !has(c.lifecycle) && !has(c.workingDir)\n\
+        \             && !has(c.startupProbe) && !has(c.livenessProbe) && !has(c.readinessProbe)\n             && c.?securityContext.?privileged.orValue(false)\n\
+        \             && c.?securityContext.?capabilities.?add.orValue([]).size() == 0\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).exists(m, m.name == 'host-root')\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).all(m,\n                  !has(m.subPath) && !has(m.subPathExpr)\
+        \ && !has(m.mountPropagation)\n                  && ((m.name == 'host-root' && m.mountPath == '/host')\n         \
+        \             || (m.name.startsWith('kube-api-access-')\n                          && m.mountPath == '/var/run/secrets/kubernetes.io/serviceaccount'\n\
+        \                          && m.?readOnly.orValue(false)))))\n        && object.spec.?volumes.orValue([]).filter(v,\
+        \ !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).filter(v, v.name == 'host-root').size() == 1\n        &&\
+        \ object.spec.?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).filter(v, v.name.startsWith('kube-api-access-')).size()\
+        \ <= 1\n        && object.spec.?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).all(v,\n\
+        \             (v.name == 'host-root' && has(v.hostPath) && v.hostPath.path == '/'\n              && v.hostPath.?type.orValue('')\
+        \ == '')\n             || (v.name.startsWith('kube-api-access-') && has(v.projected)\n                 && v.projected.sources.all(s,\n\
+        \                      (has(s.serviceAccountToken) && s.serviceAccountToken.?audience.orValue('') == '')\n       \
+        \               || (has(s.configMap) && s.configMap.name == 'kube-root-ca.crt')\n                      || (has(s.downwardAPI)\n\
+        \                          && s.downwardAPI.items.all(i, i.?fieldRef.?fieldPath.orValue('') == 'metadata.namespace')))))\n\
+        \    - name: breakglass-motd-hook\n      expression: >-\n        (object.spec.?volumes.orValue([]).all(v, v.name !=\
+        \ 'breakglass-motd')\n          && object.spec.containers.all(c,\n               c.?volumeMounts.orValue([]).all(m,\
+        \ m.name != 'breakglass-motd' && m.mountPath != '/etc/breakglass-motd')\n               && c.?env.orValue([]).all(e,\
+        \ !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND']))))\n        || (object.spec.?volumes.orValue([]).filter(v,\
+        \ v.name == 'breakglass-motd').size() == 1\n          && object.spec.volumes.filter(v, v.name == 'breakglass-motd').all(v,\n\
+        \               has(v.downwardAPI) && !has(v.hostPath) && !has(v.emptyDir) && !has(v.configMap) && !has(v.secret)\
+        \ && !has(v.projected)\n               && v.downwardAPI.?items.orValue([]).size() == 1\n               && v.downwardAPI.items.all(i,\
+        \ i.path == 'profile.sh'\n                    && i.?fieldRef.?fieldPath.orValue('') == \"metadata.annotations['breakglass.t-caas.telekom.com/motd-profile']\"\
+        \n                    && !has(i.resourceFieldRef) && !has(i.mode)))\n          && object.spec.containers.all(c,\n\
+        \               c.?volumeMounts.orValue([]).filter(m, m.name == 'breakglass-motd' || m.mountPath == '/etc/breakglass-motd').size()\
+        \ == 1\n               && c.volumeMounts.filter(m, m.name == 'breakglass-motd').size() == 1\n               && c.volumeMounts.filter(m,\
+        \ m.name == 'breakglass-motd').all(m, m.mountPath == '/etc/breakglass-motd'\n                    && m.?readOnly.orValue(false)\
+        \ == true && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation))\n               && c.?env.orValue([]).filter(e,\
+        \ e.name == 'BREAKGLASS_MOTD').size() == 1\n               && c.env.filter(e, e.name == 'BREAKGLASS_RUNBOOK_URL').size()\
+        \ <= 1\n               && c.env.filter(e, e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL']).all(e, has(e.value)\
+        \ && !has(e.valueFrom))\n               && c.env.filter(e, e.name == 'ENV').size() == 1\n               && c.env.filter(e,\
+        \ e.name == 'ENV').all(e, e.?value.orValue('') == '/etc/breakglass-motd/profile.sh' && !has(e.valueFrom))\n      \
+        \         && c.env.filter(e, e.name == 'PROMPT_COMMAND').size() == 1\n               && c.env.filter(e, e.name ==\
+        \ 'PROMPT_COMMAND').all(e, e.?value.orValue('') == '. /etc/breakglass-motd/profile.sh' && !has(e.valueFrom))))\n \
+        \   - name: breakglass-toolbox\n      expression: >-\n        (object.spec.?volumes.orValue([]).all(v, v.name != 'breakglass-toolbox')\n\
+        \          && object.spec.containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'breakglass-toolbox' && m.mountPath\
+        \ != '/opt/breakglass/toolbox') && c.?env.orValue([]).all(e, e.name != 'BREAKGLASS_TOOLBOX')))\n"
+    constraints:
+      maxDuration: 30m
+      defaultDuration: 15m
+      allowRenewal: false
+      maxRenewals: 0
+      maxConcurrentSessions: 1
+    namespaceConstraints:
+      defaultNamespace: breakglass-debug
+      allowUserNamespace: false
+      createIfNotExists: false
+    allowedPodOperations:
+      exec: true
+      attach: true
+      logs: true
+      portForward: false
+    audit:
+      enabled: true
+      enableShellHistory: true
+      enableTerminalRecording: false
+      recordingRetention: 365d
+    notification:
+      enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: true
+    requestReason:
+      mandatory: true
+      minLength: 40
+      maxLength: 900
+      description: Provide incident, impacted services, why normal access is insufficient, and planned commands.
+    approvalReason:
+      mandatory: true
+      mandatoryForRejection: true
+      minLength: 20
+      description: Approver must record emergency justification and cleanup expectation.
+    expirationBehavior: terminate
+    gracePeriodBeforeExpiry: 5m
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionTemplate
+  metadata:
+    name: convergence-etcd-snapshot
+  spec:
+    motd:
+      message: E2E convergence diagnostics; use only the disposable test cluster.
+    displayName: Emergency etcd snapshot
+    description: 'Non-interactive, health-gated etcd snapshot on one approved control-plane node: etcdctl from the digest-pinned
+      toolbox image checks that every member answers and is healthy, saves a snapshot of the local member to /var/lib/etcd-snapshots/<session>.db
+      on that node, and prints its hash and revision in the Job logs.'
+    mode: workload
+    workloadType: Job
+    targetNamespace: breakglass-debug
+    failMode: closed
+    extraDeployVariables:
+    - name: targetNode
+      displayName: Control-plane node
+      description: Exact control-plane node whose local etcd member the Job uses. One member per session.
+      inputType: text
+      required: true
+      validation:
+        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+        maxLength: 253
+    - name: etcdClient
+      displayName: etcd client version
+      description: etcdctl/etcdutl matching the cluster's etcd (3.6 for Kubernetes 1.34+, 3.5 for 1.31-1.33).
+      inputType: select
+      required: true
+      default: /bin
+      options:
+      - value: /bin
+        displayName: etcd 3.6
+      - value: /bin/etcd-3.5
+        displayName: etcd 3.5
+    podTemplateString: "automountServiceAccountToken: false\nenableServiceLinks: false\nrestartPolicy: Never\nterminationGracePeriodSeconds:\
+      \ 10\nactiveDeadlineSeconds: 600\nhostNetwork: true\nhostPID: false\nhostIPC: false\ndnsPolicy: ClusterFirstWithHostNet\n\
+      imagePullSecrets:\n  - name: unused-e2e-pull-secret\nnodeSelector:\n  kubernetes.io/os: linux\n\
+      \  node-role.kubernetes.io/control-plane: \"\"\n  kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}\ntolerations:\n\
+      \  - key: node-role.kubernetes.io/control-plane\n    operator: Exists\n    effect: NoSchedule\nsecurityContext:\n  runAsUser:\
+      \ 0\n  runAsGroup: 0\n  runAsNonRoot: false\n  seccompProfile:\n    type: RuntimeDefault\ninitContainers:\n  - name:\
+      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
+      \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
+      \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
+      \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - health\n\
+      \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
+      \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
+      \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: save\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - snapshot\n      - save\n\
+      \      - {{ printf \"/snapshots/%s.db\" .session.name | yamlQuote }}\n    securityContext:\n      privileged: false\n\
+      \      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"\
+      ]\n    resources:\n      requests:\n        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"\
+      256Mi\"\n    volumeMounts:\n      - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n     \
+      \ - name: snapshots\n        mountPath: /snapshots\ncontainers:\n  - name: verify\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdutl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - snapshot\n      - status\n      - {{ printf \"/snapshots/%s.db\" .session.name | yamlQuote }}\n      -\
+      \ -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem:\
+      \ true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n        cpu: \"50m\"\n      \
+      \  memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n      - name: etcd-pki\n        mountPath:\
+      \ /etc/etcd-pki\n        readOnly: true\n      - name: snapshots\n        mountPath: /snapshots\nvolumes:\n  - name:\
+      \ etcd-pki\n    hostPath:\n      path: /etc/kubernetes/pki/etcd\n      type: Directory\n  - name: snapshots\n    hostPath:\n\
+      \      path: /var/lib/etcd-snapshots\n      type: DirectoryOrCreate\n"
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    auxiliaryResources:
+    - name: etcd-recipe-policy-exception
+      category: policy-exceptions
+      description: Permit only this approved session's fixed etcdctl Job on the approved control-plane node.
+      createBefore: true
+      deleteAfter: true
+      failurePolicy: fail
+      templateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ printf `etcd-recipe-%s`\
+        \ (required `session UID is required` .session.uid) | yamlQuote }}\n  namespace: convergence-security\n  labels:\n    app.kubernetes.io/managed-by:\
+        \ breakglass\n    breakglass.telekom.com/debug-session: {{ .session.name | yamlQuote }}\nspec:\n  policyRefs:\n  \
+        \  - {kind: ValidatingPolicy, name: disallow-host-namespaces}\n    - {kind: ValidatingPolicy, name: disallow-host-path}\n\
+        \    - {kind: ValidatingPolicy, name: restrict-volume-types}\n    - {kind: ValidatingPolicy, name: ensure-readonly-hostpath}\n\
+        \    - {kind: ValidatingPolicy, name: restrict-controlplane-scheduling}\n  matchConditions:\n    - name: approved-session\n\
+        \      expression: {{ printf `request.operation in ['CREATE', 'UPDATE'] && request.namespace == %q && request.kind.kind\
+        \ in ['Pod', 'Job'] && (request.kind.kind == 'Job' ? object.spec.template.metadata : object.metadata).annotations['breakglass.t-caas.telekom.com/source-session-uid']\
+        \ == %q && (request.kind.kind == 'Job' ? object.spec.template.metadata : object.metadata).labels['breakglass.telekom.com/debug-session']\
+        \ == %q && (request.kind.kind == 'Job' ? object.spec.template.metadata : object.metadata).labels['breakglass.telekom.com/debug-template']\
+        \ == 'convergence-etcd-snapshot'` .target.namespace (required `session UID is required` .session.uid) .session.name | yamlQuote\
+        \ }}\n    - name: controller-actor\n      expression: >-\n        request.kind.kind == 'Job'\n          ? (request.userInfo.username\
+        \ == 'kubernetes-admin'\n              && request.userInfo.?groups.orValue([]).exists(g, g in ['system:masters', 'kubeadm:cluster-admins']))\n\
+        \          : (request.userInfo.username in ['system:kube-controller-manager', 'system:serviceaccount:kube-system:job-controller']\n\
+        \              && object.metadata.?ownerReferences.orValue([]).exists(o, o.kind == 'Job' && o.apiVersion == 'batch/v1'\
+        \ && o.controller == true && o.uid != ''))\n    - name: approved-control-plane-node\n      expression: {{ printf `(request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?nodeSelector[?'kubernetes.io/hostname'].orValue('') == %q &&\
+        \ (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?nodeSelector[?'node-role.kubernetes.io/control-plane'].orValue('absent')\
+        \ == '' && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?nodeName.orValue('') in ['', %q]`\
+        \ (required `approved targetNode is required` .vars.targetNode) .vars.targetNode | yamlQuote }}\n    - name: approved-client\n\
+        \      expression: {{ printf `%q in ['/bin', '/bin/etcd-3.5']` (required `etcdClient is required` .vars.etcdClient)\
+        \ | yamlQuote }}\n    - name: exact-etcd-argv\n      expression: {{ printf `(request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).initContainers[0].name == 'members' && (request.kind.kind == 'Job' ? object.spec.template.spec :\
+        \ object.spec).initContainers[0].command == ['%[1]s/etcdctl', '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt',\
+        \ '--cert=/etc/etcd-pki/healthcheck-client.crt', '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s',\
+        \ 'endpoint', 'status', '--cluster', '-w', 'table'] && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[1].name\
+        \ == 'health' && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[1].command\
+        \ == ['%[1]s/etcdctl', '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt', '--cert=/etc/etcd-pki/healthcheck-client.crt',\
+        \ '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s', 'endpoint', 'health', '--cluster', '-w',\
+        \ 'table'] && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[2].name == 'save'\
+        \ && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[2].command == ['%[1]s/etcdctl',\
+        \ '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt', '--cert=/etc/etcd-pki/healthcheck-client.crt',\
+        \ '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s', 'snapshot', 'save', '/snapshots/%[2]s.db']\
+        \ && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).containers[0].name == 'verify' && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).containers[0].command == ['%[1]s/etcdutl', 'snapshot', 'status',\
+        \ '/snapshots/%[2]s.db', '-w', 'table']` (required `etcdClient is required` .vars.etcdClient) (required `session name\
+        \ is required` .session.name) | yamlQuote }}\n    - name: exact-etcd-pod\n      expression: >-\n        (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).hostNetwork == true\n        && !(request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).?hostPID.orValue(false)\n        && !(request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).?hostIPC.orValue(false)\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).automountServiceAccountToken\
+        \ == false\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).restartPolicy == 'Never'\n\
+        \        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?securityContext.?sysctls.orValue([]).size()\
+        \ == 0\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?ephemeralContainers.orValue([]).size()\
+        \ == 0\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).tolerations.exists(t, t.?key.orValue('')\
+        \ == 'node-role.kubernetes.io/control-plane' && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoSchedule')\n\
+        \        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).tolerations.all(t, (t.?key.orValue('')\
+        \ == 'node-role.kubernetes.io/control-plane' && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoSchedule')\n\
+        \             || (request.kind.kind == 'Pod' && t.?key.orValue('') in ['node.kubernetes.io/not-ready', 'node.kubernetes.io/unreachable']\
+        \ && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoExecute'))\n        && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).initContainers.size() == 3\n        && (request.kind.kind ==\
+        \ 'Job' ? object.spec.template.spec : object.spec).containers.size() == 1\n        && ((request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).initContainers + (request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).containers).all(c,\n             c.image == 'nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70'\n\
+        \             && c.?args.orValue([]).size() == 0\n             && !has(c.workingDir) && !has(c.lifecycle) && !has(c.stdin)\
+        \ && !has(c.tty)\n             && !has(c.startupProbe) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.restartPolicy)\
+        \ && !has(c.resizePolicy)\n             && c.?env.orValue([]).filter(e, !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL',\
+        \ 'ENV', 'PROMPT_COMMAND', 'BREAKGLASS_TOOLBOX'])).size() == 0 && c.?envFrom.orValue([]).size() == 0\n           \
+        \  && c.?ports.orValue([]).size() == 0 && c.?volumeDevices.orValue([]).size() == 0\n             && c.securityContext.privileged\
+        \ == false\n             && c.securityContext.allowPrivilegeEscalation == false\n             && c.securityContext.readOnlyRootFilesystem\
+        \ == true\n             && c.securityContext.capabilities.drop == ['ALL']\n             && c.securityContext.capabilities.?add.orValue([]).size()\
+        \ == 0\n             && c.securityContext.?procMount.orValue('Default') == 'Default'\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).all(m, !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation)\n\
+        \                  && ((m.name == 'etcd-pki' && m.mountPath == '/etc/etcd-pki' && m.?readOnly.orValue(false) == true)\n\
+        \                      || (m.name == 'snapshots' && m.mountPath == '/snapshots'))))\n        && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).initContainers.all(c, c.?env.orValue([]).size() == 0\n     \
+        \        && c.?volumeMounts.orValue([]).all(m, !(m.name in ['breakglass-motd', 'breakglass-toolbox'])\n          \
+        \        && !(m.mountPath in ['/etc/breakglass-motd', '/opt/breakglass/toolbox'])))\n        && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd',\
+        \ 'breakglass-toolbox'])).size() == 2\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v,\
+        \ !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).all(v, !has(v.emptyDir) && has(v.hostPath)\n           \
+        \  && ((v.name == 'etcd-pki' && v.hostPath.path == '/etc/kubernetes/pki/etcd' && v.hostPath.type == 'Directory')\n\
+        \                 || (v.name == 'snapshots' && v.hostPath.path == '/var/lib/etcd-snapshots' && v.hostPath.type ==\
+        \ 'DirectoryOrCreate')))\n    - name: breakglass-motd-hook\n      expression: >-\n        ((request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).?volumes.orValue([]).all(v, v.name != 'breakglass-motd')\n          &&\
+        \ (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).containers.all(c,\n               c.?volumeMounts.orValue([]).all(m,\
+        \ m.name != 'breakglass-motd' && m.mountPath != '/etc/breakglass-motd')\n               && c.?env.orValue([]).all(e,\
+        \ !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND']))))\n        || ((request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v, v.name == 'breakglass-motd').size()\
+        \ == 1\n          && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).volumes.filter(v, v.name\
+        \ == 'breakglass-motd').all(v,\n               has(v.downwardAPI) && !has(v.hostPath) && !has(v.emptyDir) && !has(v.configMap)\
+        \ && !has(v.secret) && !has(v.projected)\n               && v.downwardAPI.?items.orValue([]).size() == 1\n       \
+        \        && v.downwardAPI.items.all(i, i.path == 'profile.sh'\n                    && i.?fieldRef.?fieldPath.orValue('')\
+        \ == \"metadata.annotations['breakglass.t-caas.telekom.com/motd-profile']\"\n                    && !has(i.resourceFieldRef)\
+        \ && !has(i.mode)))\n          && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).containers.all(c,\n\
+        \               c.?volumeMounts.orValue([]).filter(m, m.name == 'breakglass-motd' || m.mountPath == '/etc/breakglass-motd').size()\
+        \ == 1\n               && c.volumeMounts.filter(m, m.name == 'breakglass-motd').size() == 1\n               && c.volumeMounts.filter(m,\
+        \ m.name == 'breakglass-motd').all(m, m.mountPath == '/etc/breakglass-motd'\n                    && m.?readOnly.orValue(false)\
+        \ == true && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation))\n               && c.?env.orValue([]).filter(e,\
+        \ e.name == 'BREAKGLASS_MOTD').size() == 1\n               && c.env.filter(e, e.name == 'BREAKGLASS_RUNBOOK_URL').size()\
+        \ <= 1\n               && c.env.filter(e, e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL']).all(e, has(e.value)\
+        \ && !has(e.valueFrom))\n               && c.env.filter(e, e.name == 'ENV').size() == 1\n               && c.env.filter(e,\
+        \ e.name == 'ENV').all(e, e.?value.orValue('') == '/etc/breakglass-motd/profile.sh' && !has(e.valueFrom))\n      \
+        \         && c.env.filter(e, e.name == 'PROMPT_COMMAND').size() == 1\n               && c.env.filter(e, e.name ==\
+        \ 'PROMPT_COMMAND').all(e, e.?value.orValue('') == '. /etc/breakglass-motd/profile.sh' && !has(e.valueFrom))))\n \
+        \   - name: breakglass-toolbox\n      expression: >-\n        ((request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).?volumes.orValue([]).all(v, v.name != 'breakglass-toolbox')\n          && (request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'breakglass-toolbox'\
+        \ && m.mountPath != '/opt/breakglass/toolbox') && c.?env.orValue([]).all(e, e.name != 'BREAKGLASS_TOOLBOX')))\n"
+    constraints:
+      maxDuration: 30m
+      defaultDuration: 15m
+      allowRenewal: false
+      maxRenewals: 0
+    namespaceConstraints:
+      defaultNamespace: breakglass-debug
+      allowUserNamespace: false
+      createIfNotExists: false
+    allowedPodOperations:
+      exec: false
+      attach: false
+      logs: true
+      portForward: false
+    audit:
+      enabled: true
+      enableShellHistory: false
+      enableTerminalRecording: false
+      recordingRetention: 365d
+    notification:
+      enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: true
+    requestReason:
+      mandatory: true
+      minLength: 40
+      maxLength: 900
+      description: Provide the CA-SM or HPSM incident ID, the control-plane node, why a snapshot is needed now (for example
+        before a defrag, a member change or a restore decision) and the free space of /var/lib on that node from monitoring
+        (node filesystem metric; more than twice the DB size).
+    approvalReason:
+      mandatory: true
+      mandatoryForRejection: true
+      minLength: 20
+      description: Approver must confirm the etcd evidence in the request and that only this node's member is used; for a
+        defrag also that the previous member finished healthy and the leader comes last.
+    expirationBehavior: terminate
+    gracePeriodBeforeExpiry: 5m
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionTemplate
+  metadata:
+    name: convergence-etcd-defrag
+  spec:
+    motd:
+      message: E2E convergence diagnostics; use only the disposable test cluster.
+    displayName: Emergency etcd member defrag
+    description: 'Non-interactive, health-gated online defrag of the local etcd member on one approved control-plane node
+      (D7): etcdctl from the digest-pinned toolbox image checks that every member answers and is healthy, defragments only
+      the local member and prints the member status of all members again in the Job logs. One member per session, leader last.'
+    mode: workload
+    workloadType: Job
+    targetNamespace: breakglass-debug
+    failMode: closed
+    extraDeployVariables:
+    - name: targetNode
+      displayName: Control-plane node
+      description: Exact control-plane node whose local etcd member the Job uses. One member per session.
+      inputType: text
+      required: true
+      validation:
+        pattern: ^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$
+        maxLength: 253
+    - name: etcdClient
+      displayName: etcd client version
+      description: etcdctl/etcdutl matching the cluster's etcd (3.6 for Kubernetes 1.34+, 3.5 for 1.31-1.33).
+      inputType: select
+      required: true
+      default: /bin
+      options:
+      - value: /bin
+        displayName: etcd 3.6
+      - value: /bin/etcd-3.5
+        displayName: etcd 3.5
+    podTemplateString: "automountServiceAccountToken: false\nenableServiceLinks: false\nrestartPolicy: Never\nterminationGracePeriodSeconds:\
+      \ 10\nactiveDeadlineSeconds: 600\nhostNetwork: true\nhostPID: false\nhostIPC: false\ndnsPolicy: ClusterFirstWithHostNet\n\
+      imagePullSecrets:\n  - name: unused-e2e-pull-secret\nnodeSelector:\n  kubernetes.io/os: linux\n\
+      \  node-role.kubernetes.io/control-plane: \"\"\n  kubernetes.io/hostname: {{ .vars.targetNode | yamlQuote }}\ntolerations:\n\
+      \  - key: node-role.kubernetes.io/control-plane\n    operator: Exists\n    effect: NoSchedule\nsecurityContext:\n  runAsUser:\
+      \ 0\n  runAsGroup: 0\n  runAsNonRoot: false\n  seccompProfile:\n    type: RuntimeDefault\ninitContainers:\n  - name:\
+      \ members\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
+      \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
+      \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
+      \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: health\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - health\n\
+      \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
+      \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
+      \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\n  - name: defrag\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=5m\n      - defrag\n    securityContext:\n\
+      \      privileged: false\n      allowPrivilegeEscalation: false\n      readOnlyRootFilesystem: true\n      capabilities:\n\
+      \        drop: [\"ALL\"]\n    resources:\n      requests:\n        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n\
+      \        memory: \"256Mi\"\n    volumeMounts:\n      - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly:\
+      \ true\ncontainers:\n  - name: status-after\n    image: \"nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70\"\
+      \n    imagePullPolicy: \"IfNotPresent\"\n    command:\n      - {{ printf \"%s/etcdctl\" .vars.etcdClient | yamlQuote\
+      \ }}\n      - --endpoints=https://127.0.0.1:2379\n      - --cacert=/etc/etcd-pki/ca.crt\n      - --cert=/etc/etcd-pki/healthcheck-client.crt\n\
+      \      - --key=/etc/etcd-pki/healthcheck-client.key\n      - --command-timeout=30s\n      - endpoint\n      - status\n\
+      \      - --cluster\n      - -w\n      - table\n    securityContext:\n      privileged: false\n      allowPrivilegeEscalation:\
+      \ false\n      readOnlyRootFilesystem: true\n      capabilities:\n        drop: [\"ALL\"]\n    resources:\n      requests:\n\
+      \        cpu: \"50m\"\n        memory: \"64Mi\"\n      limits:\n        memory: \"256Mi\"\n    volumeMounts:\n     \
+      \ - name: etcd-pki\n        mountPath: /etc/etcd-pki\n        readOnly: true\nvolumes:\n  - name: etcd-pki\n    hostPath:\n\
+      \      path: /etc/kubernetes/pki/etcd\n      type: Directory\n"
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    auxiliaryResources:
+    - name: etcd-recipe-policy-exception
+      category: policy-exceptions
+      description: Permit only this approved session's fixed etcdctl Job on the approved control-plane node.
+      createBefore: true
+      deleteAfter: true
+      failurePolicy: fail
+      templateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ printf `etcd-recipe-%s`\
+        \ (required `session UID is required` .session.uid) | yamlQuote }}\n  namespace: convergence-security\n  labels:\n    app.kubernetes.io/managed-by:\
+        \ breakglass\n    breakglass.telekom.com/debug-session: {{ .session.name | yamlQuote }}\nspec:\n  policyRefs:\n  \
+        \  - {kind: ValidatingPolicy, name: disallow-host-namespaces}\n    - {kind: ValidatingPolicy, name: disallow-host-path}\n\
+        \    - {kind: ValidatingPolicy, name: restrict-volume-types}\n    - {kind: ValidatingPolicy, name: restrict-controlplane-scheduling}\n\
+        \  matchConditions:\n    - name: approved-session\n      expression: {{ printf `request.operation in ['CREATE', 'UPDATE']\
+        \ && request.namespace == %q && request.kind.kind in ['Pod', 'Job'] && (request.kind.kind == 'Job' ? object.spec.template.metadata\
+        \ : object.metadata).annotations['breakglass.t-caas.telekom.com/source-session-uid'] == %q && (request.kind.kind ==\
+        \ 'Job' ? object.spec.template.metadata : object.metadata).labels['breakglass.telekom.com/debug-session'] == %q &&\
+        \ (request.kind.kind == 'Job' ? object.spec.template.metadata : object.metadata).labels['breakglass.telekom.com/debug-template']\
+        \ == 'convergence-etcd-defrag'` .target.namespace (required `session UID is required` .session.uid) .session.name | yamlQuote\
+        \ }}\n    - name: controller-actor\n      expression: >-\n        request.kind.kind == 'Job'\n          ? (request.userInfo.username\
+        \ == 'kubernetes-admin'\n              && request.userInfo.?groups.orValue([]).exists(g, g in ['system:masters', 'kubeadm:cluster-admins']))\n\
+        \          : (request.userInfo.username in ['system:kube-controller-manager', 'system:serviceaccount:kube-system:job-controller']\n\
+        \              && object.metadata.?ownerReferences.orValue([]).exists(o, o.kind == 'Job' && o.apiVersion == 'batch/v1'\
+        \ && o.controller == true && o.uid != ''))\n    - name: approved-control-plane-node\n      expression: {{ printf `(request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?nodeSelector[?'kubernetes.io/hostname'].orValue('') == %q &&\
+        \ (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?nodeSelector[?'node-role.kubernetes.io/control-plane'].orValue('absent')\
+        \ == '' && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?nodeName.orValue('') in ['', %q]`\
+        \ (required `approved targetNode is required` .vars.targetNode) .vars.targetNode | yamlQuote }}\n    - name: approved-client\n\
+        \      expression: {{ printf `%q in ['/bin', '/bin/etcd-3.5']` (required `etcdClient is required` .vars.etcdClient)\
+        \ | yamlQuote }}\n    - name: exact-etcd-argv\n      expression: {{ printf `(request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).initContainers[0].name == 'members' && (request.kind.kind == 'Job' ? object.spec.template.spec :\
+        \ object.spec).initContainers[0].command == ['%[1]s/etcdctl', '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt',\
+        \ '--cert=/etc/etcd-pki/healthcheck-client.crt', '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s',\
+        \ 'endpoint', 'status', '--cluster', '-w', 'table'] && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[1].name\
+        \ == 'health' && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[1].command\
+        \ == ['%[1]s/etcdctl', '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt', '--cert=/etc/etcd-pki/healthcheck-client.crt',\
+        \ '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s', 'endpoint', 'health', '--cluster', '-w',\
+        \ 'table'] && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[2].name == 'defrag'\
+        \ && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers[2].command == ['%[1]s/etcdctl',\
+        \ '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt', '--cert=/etc/etcd-pki/healthcheck-client.crt',\
+        \ '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=5m', 'defrag'] && (request.kind.kind == 'Job' ?\
+        \ object.spec.template.spec : object.spec).containers[0].name == 'status-after' && (request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).containers[0].command == ['%[1]s/etcdctl', '--endpoints=https://127.0.0.1:2379', '--cacert=/etc/etcd-pki/ca.crt',\
+        \ '--cert=/etc/etcd-pki/healthcheck-client.crt', '--key=/etc/etcd-pki/healthcheck-client.key', '--command-timeout=30s',\
+        \ 'endpoint', 'status', '--cluster', '-w', 'table']` (required `etcdClient is required` .vars.etcdClient) (required\
+        \ `session name is required` .session.name) | yamlQuote }}\n    - name: exact-etcd-pod\n      expression: >-\n   \
+        \     (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).hostNetwork == true\n        && !(request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?hostPID.orValue(false)\n        && !(request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).?hostIPC.orValue(false)\n        && (request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).automountServiceAccountToken == false\n        && (request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).restartPolicy == 'Never'\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?securityContext.?sysctls.orValue([]).size()\
+        \ == 0\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?ephemeralContainers.orValue([]).size()\
+        \ == 0\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).tolerations.exists(t, t.?key.orValue('')\
+        \ == 'node-role.kubernetes.io/control-plane' && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoSchedule')\n\
+        \        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).tolerations.all(t, (t.?key.orValue('')\
+        \ == 'node-role.kubernetes.io/control-plane' && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoSchedule')\n\
+        \             || (request.kind.kind == 'Pod' && t.?key.orValue('') in ['node.kubernetes.io/not-ready', 'node.kubernetes.io/unreachable']\
+        \ && t.?operator.orValue('') == 'Exists' && t.?effect.orValue('') == 'NoExecute'))\n        && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).initContainers.size() == 3\n        && (request.kind.kind ==\
+        \ 'Job' ? object.spec.template.spec : object.spec).containers.size() == 1\n        && ((request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).initContainers + (request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).containers).all(c,\n             c.image == 'nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70'\n\
+        \             && c.?args.orValue([]).size() == 0\n             && !has(c.workingDir) && !has(c.lifecycle) && !has(c.stdin)\
+        \ && !has(c.tty)\n             && !has(c.startupProbe) && !has(c.livenessProbe) && !has(c.readinessProbe) && !has(c.restartPolicy)\
+        \ && !has(c.resizePolicy)\n             && c.?env.orValue([]).filter(e, !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL',\
+        \ 'ENV', 'PROMPT_COMMAND', 'BREAKGLASS_TOOLBOX'])).size() == 0 && c.?envFrom.orValue([]).size() == 0\n           \
+        \  && c.?ports.orValue([]).size() == 0 && c.?volumeDevices.orValue([]).size() == 0\n             && c.securityContext.privileged\
+        \ == false\n             && c.securityContext.allowPrivilegeEscalation == false\n             && c.securityContext.readOnlyRootFilesystem\
+        \ == true\n             && c.securityContext.capabilities.drop == ['ALL']\n             && c.securityContext.capabilities.?add.orValue([]).size()\
+        \ == 0\n             && c.securityContext.?procMount.orValue('Default') == 'Default'\n             && c.?volumeMounts.orValue([]).filter(m,\
+        \ !(m.name in ['breakglass-motd', 'breakglass-toolbox'])).all(m, !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation)\n\
+        \                  && ((m.name == 'etcd-pki' && m.mountPath == '/etc/etcd-pki' && m.?readOnly.orValue(false) == true))))\n\
+        \        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).initContainers.all(c, c.?env.orValue([]).size()\
+        \ == 0\n             && c.?volumeMounts.orValue([]).all(m, !(m.name in ['breakglass-motd', 'breakglass-toolbox'])\n\
+        \                  && !(m.mountPath in ['/etc/breakglass-motd', '/opt/breakglass/toolbox'])))\n        && (request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v, !(v.name in ['breakglass-motd',\
+        \ 'breakglass-toolbox'])).size() == 1\n        && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v,\
+        \ !(v.name in ['breakglass-motd', 'breakglass-toolbox'])).all(v, !has(v.emptyDir) && has(v.hostPath)\n           \
+        \  && ((v.name == 'etcd-pki' && v.hostPath.path == '/etc/kubernetes/pki/etcd' && v.hostPath.type == 'Directory')))\n\
+        \    - name: breakglass-motd-hook\n      expression: >-\n        ((request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).?volumes.orValue([]).all(v, v.name != 'breakglass-motd')\n          && (request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).containers.all(c,\n               c.?volumeMounts.orValue([]).all(m,\
+        \ m.name != 'breakglass-motd' && m.mountPath != '/etc/breakglass-motd')\n               && c.?env.orValue([]).all(e,\
+        \ !(e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL', 'ENV', 'PROMPT_COMMAND']))))\n        || ((request.kind.kind\
+        \ == 'Job' ? object.spec.template.spec : object.spec).?volumes.orValue([]).filter(v, v.name == 'breakglass-motd').size()\
+        \ == 1\n          && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).volumes.filter(v, v.name\
+        \ == 'breakglass-motd').all(v,\n               has(v.downwardAPI) && !has(v.hostPath) && !has(v.emptyDir) && !has(v.configMap)\
+        \ && !has(v.secret) && !has(v.projected)\n               && v.downwardAPI.?items.orValue([]).size() == 1\n       \
+        \        && v.downwardAPI.items.all(i, i.path == 'profile.sh'\n                    && i.?fieldRef.?fieldPath.orValue('')\
+        \ == \"metadata.annotations['breakglass.t-caas.telekom.com/motd-profile']\"\n                    && !has(i.resourceFieldRef)\
+        \ && !has(i.mode)))\n          && (request.kind.kind == 'Job' ? object.spec.template.spec : object.spec).containers.all(c,\n\
+        \               c.?volumeMounts.orValue([]).filter(m, m.name == 'breakglass-motd' || m.mountPath == '/etc/breakglass-motd').size()\
+        \ == 1\n               && c.volumeMounts.filter(m, m.name == 'breakglass-motd').size() == 1\n               && c.volumeMounts.filter(m,\
+        \ m.name == 'breakglass-motd').all(m, m.mountPath == '/etc/breakglass-motd'\n                    && m.?readOnly.orValue(false)\
+        \ == true && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation))\n               && c.?env.orValue([]).filter(e,\
+        \ e.name == 'BREAKGLASS_MOTD').size() == 1\n               && c.env.filter(e, e.name == 'BREAKGLASS_RUNBOOK_URL').size()\
+        \ <= 1\n               && c.env.filter(e, e.name in ['BREAKGLASS_MOTD', 'BREAKGLASS_RUNBOOK_URL']).all(e, has(e.value)\
+        \ && !has(e.valueFrom))\n               && c.env.filter(e, e.name == 'ENV').size() == 1\n               && c.env.filter(e,\
+        \ e.name == 'ENV').all(e, e.?value.orValue('') == '/etc/breakglass-motd/profile.sh' && !has(e.valueFrom))\n      \
+        \         && c.env.filter(e, e.name == 'PROMPT_COMMAND').size() == 1\n               && c.env.filter(e, e.name ==\
+        \ 'PROMPT_COMMAND').all(e, e.?value.orValue('') == '. /etc/breakglass-motd/profile.sh' && !has(e.valueFrom))))\n \
+        \   - name: breakglass-toolbox\n      expression: >-\n        ((request.kind.kind == 'Job' ? object.spec.template.spec\
+        \ : object.spec).?volumes.orValue([]).all(v, v.name != 'breakglass-toolbox')\n          && (request.kind.kind == 'Job'\
+        \ ? object.spec.template.spec : object.spec).containers.all(c, c.?volumeMounts.orValue([]).all(m, m.name != 'breakglass-toolbox'\
+        \ && m.mountPath != '/opt/breakglass/toolbox') && c.?env.orValue([]).all(e, e.name != 'BREAKGLASS_TOOLBOX')))\n"
+    constraints:
+      maxDuration: 30m
+      defaultDuration: 15m
+      allowRenewal: false
+      maxRenewals: 0
+    namespaceConstraints:
+      defaultNamespace: breakglass-debug
+      allowUserNamespace: false
+      createIfNotExists: false
+    allowedPodOperations:
+      exec: false
+      attach: false
+      logs: true
+      portForward: false
+    audit:
+      enabled: true
+      enableShellHistory: false
+      enableTerminalRecording: false
+      recordingRetention: 365d
+    notification:
+      enabled: true
+      notifyOnRequest: true
+      notifyOnApproval: true
+      notifyOnExpiry: true
+      notifyOnTermination: true
+    requestReason:
+      mandatory: true
+      minLength: 40
+      maxLength: 900
+      description: 'Provide the CA-SM or HPSM incident ID, the control-plane node, the endpoint status of all members (DB
+        SIZE and IN USE) and the defrag order: the leader last, one member per session, each only after the previous session
+        finished healthy.'
+    approvalReason:
+      mandatory: true
+      mandatoryForRejection: true
+      minLength: 20
+      description: Approver must confirm the etcd evidence in the request and that only this node's member is used; for a
+        defrag also that the previous member finished healthy and the leader comes last.
+    expirationBehavior: terminate
+    gracePeriodBeforeExpiry: 5m
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-etcd-snapshot
+  spec:
+    displayName: Emergency etcd snapshot
+    templateRef:
+      name: convergence-etcd-snapshot
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/emergency-node-diagnostics: 'true'
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: true
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsPerCluster: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-etcd-defrag
+  spec:
+    displayName: Emergency etcd member defrag
+    templateRef:
+      name: convergence-etcd-defrag
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/emergency-node-diagnostics: 'true'
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: true
+    requiredAuxiliaryResourceCategories:
+    - policy-exceptions
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsPerCluster: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-platform-diagnostics
+  spec:
+    displayName: convergence-platform-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-platform-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/platform-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: NotIn
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: true
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 2
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-platform-diagnostics-nonprd
+  spec:
+    displayName: convergence-platform-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-platform-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/platform-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: In
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: false
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 2
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-platform-node-diagnostics
+  spec:
+    displayName: convergence-platform-node-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-platform-node-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/platform-node-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: NotIn
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: true
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-platform-node-diagnostics-nonprd
+  spec:
+    displayName: convergence-platform-node-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-platform-node-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/platform-node-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: In
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: false
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-emergency-node-diagnostics
+  spec:
+    displayName: convergence-emergency-node-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-emergency-node-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/emergency-node-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: NotIn
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: true
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: DebugSessionClusterBinding
+  metadata:
+    name: global-convergence-emergency-node-diagnostics-nonprd
+  spec:
+    displayName: convergence-emergency-node-diagnostics
+    description: Global targeted diagnostic workflow; an API escalation is not required.
+    templateRef:
+      name: convergence-emergency-node-diagnostics
+    clusterSelector:
+      matchLabels:
+        app.kubernetes.io/name: escalation-config
+        breakglass.t-caas.telekom.com/debug-sessions-enabled: 'true'
+        breakglass.t-caas.telekom.com/emergency-node-diagnostics: 'true'
+      matchExpressions:
+      - key: breakglass.t-caas.telekom.com/stage
+        operator: In
+        values:
+        - dev
+        - ref
+        - tst
+    allowed:
+      groups:
+      - ops
+    approvers:
+      groups:
+      - ops
+      - approver
+    blockSelfApproval: false
+    maxActiveSessionsPerUser: 1
+    maxActiveSessionsTotal: 1
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: IdentityProvider
+  metadata:
+    name: convergence-disabled-idp
+  spec:
+    disabled: true
+    oidc:
+      authority: https://disabled.example.com
+      clientID: disabled
+      expectedAudience: disabled
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: MailProvider
+  metadata:
+    name: convergence-disabled-mail
+  spec:
+    disabled: true
+    smtp:
+      host: disabled.example.com
+      port: 587
+    sender:
+      address: disabled@example.com
+- apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+  kind: AuditConfig
+  metadata:
+    name: convergence-disabled-audit
+  spec:
+    enabled: false
+    sinks:
+    - name: disabled-log
+      type: log

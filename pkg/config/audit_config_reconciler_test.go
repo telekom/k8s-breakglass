@@ -575,7 +575,7 @@ func TestAuditConfigReconciler_Reconcile_DisabledConfig(t *testing.T) {
 	require.NoError(t, r.client.Get(context.Background(), types.NamespacedName{Name: config.Name}, &stored))
 	condition := findCondition(stored.Status.Conditions, "Ready")
 	require.NotNil(t, condition)
-	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, metav1.ConditionTrue, condition.Status)
 	assert.Equal(t, "AuditingDisabled", condition.Reason)
 	assert.Empty(t, stored.Status.ActiveSinks)
 }

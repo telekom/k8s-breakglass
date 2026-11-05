@@ -1119,6 +1119,14 @@ jobs:
           # Enable audit webhook tests
           AUDIT_WEBHOOK_TEST: "true"
 
+      - name: Reproduce convergence HelmRelease readiness and target-stage policy
+        run: |
+          bash e2e/fixtures/convergence-bindings/setup-flux.sh
+          go test -tags=e2e_convergence -v ./e2e/api -run '^TestConvergence' -count=1 -timeout=20m
+        env:
+          E2E_TEST: "true"
+          E2E_NAMESPACE: "breakglass-system"
+
       - name: Provision diagnostic artifact HTTPS and private storage fixture
         id: artifact_fixture
         if: ${{ !cancelled() && steps.api_port_forwards.outcome == 'success' }}

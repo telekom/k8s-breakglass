@@ -645,3 +645,8 @@ Expiry and approval-timeout events apply the same policy regardless of whether
 the controller or periodic cleanup routine wins the status update.
 
 Policy lookup failures, including transient failures, do not default auditing to enabled: that could expose events from an explicitly opted-out template. Suppression can lose a lifecycle event and does not enqueue a durable retry; the warning records that limitation. Captured policy avoids this lookup and remains authoritative.
+
+An intentionally disabled AuditConfig reports `Ready=True` with reason
+`AuditingDisabled` after reconciliation. It contributes no active sinks and does
+not enable auditing. Enabled configurations with validation, reload, or sink
+health failures still report failure independently of intentional disablement.
