@@ -540,8 +540,9 @@ jobs:
     name: Build Image
     runs-on: ubuntu-latest
     # No direct 'needs' on quality-gate jobs — this build runs in parallel with lint/tests.
-    # Quality gates are enforced by the E2E jobs, whose 'needs' include
-    # lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, and helm-lint.
+    # The E2E jobs only need this image, so they start as soon as it is uploaded
+    # instead of waiting ~10 minutes for lint/unit/frontend tests. Quality gates
+    # are enforced by 'publish-image' (which needs every job) and the CI gate.
     # Registry push, SBOM, and attestation are in a separate 'publish-image' job
     # so E2E tests can start as soon as the image artifact is ready.
     permissions:
@@ -822,10 +823,28 @@ jobs:
   # ============================================================================
 
   single-cluster-e2e:
-    name: Single-Cluster E2E Tests
+    name: Single-Cluster E2E Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 120
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
+    needs: [build-image]
+    # The e2e/api suite runs ~50 serial minutes, so it is split across shards
+    # by top-level test name. The -run/-skip regexes are complementary: every
+    # test runs in exactly one api-* shard. Each shard gets its own cluster.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: api-oidc-expiry
+            api-run: '^TestOIDC_OfflineToken_AccessTokenExpiry'
+          - shard: api-oidc
+            api-run: '^TestOIDC'
+            api-skip: '^TestOIDC_OfflineToken_AccessTokenExpiry'
+          - shard: api-debug
+            api-run: '^Test(Debug|Escalation)'
+          - shard: api-rest
+            api-skip: '^Test(OIDC|Debug|Escalation)'
+          - shard: artifacts-local
+          - shard: artifacts-s3
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -926,7 +945,7 @@ jobs:
         if: steps.setup.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: single-cluster-setup-failure-logs
+          name: single-cluster-setup-failure-logs-${{ matrix.shard }}
           path: setup-failure-diagnostics/
           retention-days: 14
 
@@ -1099,6 +1118,7 @@ jobs:
           echo "AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:8090" >> $GITHUB_ENV
 
       - name: Run Core E2E tests (Kafka audit, metrics, debug session)
+        if: matrix.shard == 'api-rest'
         run: |
           set -o pipefail
           # Run top-level e2e tests (audit_test.go, metrics_test.go, debug_session_e2e_test.go, kubectl_debug_test.go)
@@ -1111,10 +1131,13 @@ jobs:
           KAFKA_TEST: "true"
 
       - name: Run API E2E tests
+        if: startsWith(matrix.shard, 'api-')
         run: |
           set -o pipefail
-          go test -v ./e2e/api/... -timeout 60m 2>&1 | tee e2e-results.txt
+          go test -v ./e2e/api/... -run "$API_RUN" -skip "$API_SKIP" -timeout 60m 2>&1 | tee e2e-results.txt
         env:
+          API_RUN: ${{ matrix.api-run }}
+          API_SKIP: ${{ matrix.api-skip }}
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
           E2E_SKIP_CLEANUP_ON_FAILURE: "true"
@@ -1124,6 +1147,7 @@ jobs:
           AUDIT_WEBHOOK_TEST: "true"
 
       - name: Reproduce convergence HelmRelease readiness and target-stage policy
+        if: matrix.shard == 'api-rest'
         run: |
           bash e2e/fixtures/convergence-bindings/setup-flux.sh
           go test -tags=e2e_convergence -v ./e2e/api -run '^TestConvergence' -count=1 -timeout=20m
@@ -1133,11 +1157,11 @@ jobs:
 
       - name: Provision diagnostic artifact HTTPS and private storage fixture
         id: artifact_fixture
-        if: ${{ !cancelled() && steps.api_port_forwards.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.api_port_forwards.outcome == 'success' && startsWith(matrix.shard, 'artifacts-') }}
         run: bash e2e/fixtures/artifacts/setup.sh
 
       - name: Run real diagnostic artifact collector E2E
-        if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
           go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-results.txt
@@ -1147,7 +1171,7 @@ jobs:
 
       - name: Explicitly select disposable S3 backend
         id: artifact_s3_fixture
-        if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-s3' }}
         run: bash e2e/fixtures/artifacts/select-s3.sh
 
       - name: Run real diagnostic artifact collector S3 matrix
@@ -1160,6 +1184,7 @@ jobs:
           E2E_NAMESPACE: "breakglass-system"
 
       - name: Run OIDC E2E tests
+        if: matrix.shard == 'api-oidc'
         run: |
           set -o pipefail
           chmod +x e2e/tests/oidc_tests.sh
@@ -1176,9 +1201,11 @@ jobs:
           KEYCLOAK_CLIENT_SECRET_NAME: breakglass-group-sync-secret
 
       - name: Build bgctl CLI
+        if: matrix.shard == 'api-oidc'
         run: make bgctl
 
       - name: Run CLI E2E tests
+        if: matrix.shard == 'api-oidc'
         run: |
           set -o pipefail
           go test -v ./e2e/cli/... -timeout 15m 2>&1 | tee cli-e2e-results.txt
@@ -1363,7 +1390,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: single-cluster-e2e-diagnostics
+          name: single-cluster-e2e-diagnostics-${{ matrix.shard }}
           path: e2e-diagnostics/
           retention-days: 14
 
@@ -1373,14 +1400,25 @@ jobs:
           kind delete cluster --name breakglass-hub || true
 
   oidc-comprehensive-e2e:
-    name: OIDC Comprehensive E2E Tests
+    name: OIDC Comprehensive E2E Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     # Setup currently takes about 25 minutes and the suite includes two
     # intentional 6.5-minute access-token expiry checks. Keep the job timeout
     # above the Go test timeout so the test process, not the runner, owns
     # suite-level timeout failures.
     timeout-minutes: 75
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
+    needs: [build-image]
+    # The two access-token expiry checks take ~13 minutes together, so they get
+    # their own cluster. The -skip regex keeps the shards complementary.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: expiry
+            api-run: '^TestOIDC_OfflineToken_AccessTokenExpiry'
+          - shard: rest
+            api-run: 'TestOIDC_'
+            api-skip: '^TestOIDC_OfflineToken_AccessTokenExpiry'
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1469,7 +1507,7 @@ jobs:
         if: steps.setup.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oidc-e2e-setup-failure-logs
+          name: oidc-e2e-setup-failure-logs-${{ matrix.shard }}
           path: oidc-setup-failure-diagnostics/
           retention-days: 14
 
@@ -1595,8 +1633,10 @@ jobs:
         run: |
           set -o pipefail
           echo "Running OIDC comprehensive tests (token renewal, offline tokens, audience, scopes, fallback policies, multi-cluster, recovery) ..."
-          go test -v -run "TestOIDC_" ./e2e/api/... -timeout 45m 2>&1 | tee oidc-comprehensive-results.txt
+          go test -v -run "$API_RUN" -skip "$API_SKIP" ./e2e/api/... -timeout 45m 2>&1 | tee oidc-comprehensive-results.txt
         env:
+          API_RUN: ${{ matrix.api-run }}
+          API_SKIP: ${{ matrix.api-skip }}
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
 
@@ -1656,7 +1696,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: oidc-comprehensive-e2e-diagnostics
+          name: oidc-comprehensive-e2e-diagnostics-${{ matrix.shard }}
           path: oidc-e2e-diagnostics/
           retention-days: 14
 
@@ -1666,10 +1706,15 @@ jobs:
           kind delete cluster --name oidc-e2e-cluster || true
 
   ui-e2e:
-    name: UI E2E Tests
+    name: UI E2E Tests (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
+    needs: [build-image]
+    # Playwright distributes spec files across shards; each gets its own cluster.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1785,7 +1830,7 @@ jobs:
         if: steps.setup.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ui-e2e-setup-failure-logs
+          name: ui-e2e-setup-failure-logs-${{ matrix.shard }}
           path: ui-setup-failure-diagnostics/
           retention-days: 14
 
@@ -2047,13 +2092,13 @@ jobs:
           echo "Realm: $KEYCLOAK_REALM"
           echo ""
           echo "=== Running Playwright E2E tests ==="
-          npx playwright test --config=playwright.e2e.config.ts
+          npx playwright test --config=playwright.e2e.config.ts --shard="${{ matrix.shard }}/2"
 
       - name: Upload Playwright report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-e2e-report
+          name: playwright-e2e-report-${{ matrix.shard }}
           path: frontend/playwright-report-e2e/
           retention-days: 14
 
@@ -2303,7 +2348,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ui-e2e-diagnostics
+          name: ui-e2e-diagnostics-${{ matrix.shard }}
           path: e2e-diagnostics/
           retention-days: 14
 
@@ -2311,7 +2356,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: playwright-e2e-results
+          name: playwright-e2e-results-${{ matrix.shard }}
           path: frontend/test-results/
           retention-days: 14
 
@@ -2321,10 +2366,28 @@ jobs:
           kind delete cluster --name breakglass-hub || true
 
   multi-cluster-e2e:
-    name: Multi-Cluster E2E Tests
+    name: Multi-Cluster E2E Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 150
-    needs: [build-image, lint, unit-tests-controller, unit-tests-cli, crd-validation, frontend-tests, helm-lint, utility-image-tests]
+    needs: [build-image]
+    # The e2e/api suite runs ~50 serial minutes, so it is split across shards
+    # by top-level test name. The -run/-skip regexes are complementary: every
+    # test runs in exactly one api-* shard. Each shard gets its own cluster.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: api-oidc-expiry
+            api-run: '^TestOIDC_OfflineToken_AccessTokenExpiry'
+          - shard: api-oidc
+            api-run: '^TestOIDC'
+            api-skip: '^TestOIDC_OfflineToken_AccessTokenExpiry'
+          - shard: api-debug
+            api-run: '^Test(Debug|Escalation)'
+          - shard: api-rest
+            api-skip: '^Test(OIDC|Debug|Escalation)'
+          - shard: artifacts-local
+          - shard: artifacts-s3
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2532,7 +2595,7 @@ jobs:
         if: steps.setup.outcome == 'failure'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: multi-cluster-setup-failure-logs
+          name: multi-cluster-setup-failure-logs-${{ matrix.shard }}
           path: e2e-setup-failure-logs/
           retention-days: 14
 
@@ -2723,15 +2786,18 @@ jobs:
           echo "AUDIT_WEBHOOK_RECEIVER_EXTERNAL_URL=http://localhost:8090" >> $GITHUB_ENV
 
       - name: Run multi-cluster E2E tests
+        if: startsWith(matrix.shard, 'api-')
         run: |
           set -o pipefail
           # Run all multi-cluster test suites:
           # - TestHubSpokeSuite (hub_spoke_test.go)
           # - TestSpokeHubAuthorizationSuite (spoke_hub_authorization_test.go)
           # - TestMultiIDPAuthorizationSuite (multi_idp_authorization_test.go)
-          go test -v -tags=multicluster ./e2e/api/... -timeout 60m \
+          go test -v -tags=multicluster ./e2e/api/... -run "$API_RUN" -skip "$API_SKIP" -timeout 60m \
             2>&1 | tee e2e-multi-results.txt
         env:
+          API_RUN: ${{ matrix.api-run }}
+          API_SKIP: ${{ matrix.api-skip }}
           E2E_TEST: "true"
           E2E_MULTI_CLUSTER: "true"
           E2E_NAMESPACE: "breakglass-system"
@@ -2755,6 +2821,7 @@ jobs:
           AUDIT_WEBHOOK_TEST: "true"
 
       - name: Run OIDC E2E tests (hub cluster)
+        if: matrix.shard == 'api-oidc'
         run: |
           set -o pipefail
           chmod +x e2e/tests/oidc_tests.sh
@@ -2775,6 +2842,7 @@ jobs:
           KEYCLOAK_CA_FILE: ${{ env.KEYCLOAK_CA_FILE }}
 
       - name: Run Multi-Cluster OIDC E2E tests
+        if: matrix.shard == 'api-oidc'
         run: |
           set -o pipefail
           chmod +x e2e/tests/multi_oidc_tests.sh
@@ -2795,14 +2863,14 @@ jobs:
 
       - name: Provision hub HTTPS and real spoke collector fixture
         id: multi_artifact_fixture
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && startsWith(matrix.shard, 'artifacts-') }}
         run: bash e2e/fixtures/artifacts/setup.sh
         env:
           E2E_MULTI_CLUSTER: "true"
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
 
       - name: Run real spoke diagnostic artifact collector local matrix
-        if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
           go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-multi-artifact-local-results.txt
@@ -2819,7 +2887,7 @@ jobs:
 
       - name: Explicitly select hub S3 backend for spoke collectors
         id: multi_artifact_s3_fixture
-        if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-s3' }}
         run: bash e2e/fixtures/artifacts/select-s3.sh
         env:
           KUBECONFIG: ${{ env.E2E_HUB_KUBECONFIG }}
@@ -3150,7 +3218,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: multi-cluster-e2e-diagnostics
+          name: multi-cluster-e2e-diagnostics-${{ matrix.shard }}
           path: e2e-diagnostics/
           retention-days: 14
 
