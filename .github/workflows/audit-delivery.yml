@@ -20,8 +20,10 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.32.0
+      - uses: ./.github/actions/setup-shellcheck
       - name: Verify shell
         run: shellcheck hack/audit-delivery-kind.sh
       - name: Real broker outage and recovery

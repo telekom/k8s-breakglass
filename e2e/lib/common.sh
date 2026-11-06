@@ -247,45 +247,31 @@ ensure_busybox_image() {
 }
 
 # Load image into Kind cluster.
-# Falls back to docker save + kind load image-archive only for the known containerd snapshotter issue.
+# `kind load docker-image` pipes a full `docker save` into
+# `ctr images import --all-platforms`. With Docker's containerd image store
+# (the default on Docker 29, e.g. ubuntu-26.04 runners) a pulled multi-arch
+# image saves as an index that lists every platform but only carries blobs for
+# the pulled one, so ctr fails with "content digest ... not found". Save only
+# the daemon's platform, which is the Kind node platform, and load that archive.
 e2e_load_image_into_kind() {
   local cluster_name="$1"
   local image="$2"
-  
+
   ensure_image_exists "$image" || return 1
-  
+
   log "Loading image $image into Kind cluster $cluster_name"
-  
-  # Try direct load first
-  local load_output
-  local load_status
-  if load_output=$($KIND load docker-image "$image" --name "$cluster_name" 2>&1); then
-    printf '%s\n' "$load_output" >&2
-    log "Successfully loaded $image into Kind cluster $cluster_name"
-    return 0
-  else
-    load_status=$?
-  fi
-  printf '%s\n' "$load_output" >&2
 
-  if printf '%s\n' "$load_output" | grep -q "failed to detect containerd snapshotter"; then
-    log_warn "Direct load failed due to containerd snapshotter issue, using archive method..."
-    local tmp_archive
-    local tmp_dir="${TMPDIR:-/tmp}"
-    tmp_archive=$(mktemp "${tmp_dir%/}/breakglass-kind-image.XXXXXX")
-    if $DOCKER save "$image" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$cluster_name"; then
-      log "Successfully loaded $image via archive method"
-      rm -f "$tmp_archive"
-      return 0
-    else
-      log_error "Failed to load image $image via archive method"
-      rm -f "$tmp_archive"
-      return 1
-    fi
+  local platform tmp_archive status=0
+  platform=$($DOCKER version --format '{{.Server.Os}}/{{.Server.Arch}}') || return 1
+  tmp_archive=$(mktemp "${TMPDIR:-/tmp}/breakglass-kind-image.XXXXXX") || return 1
+  $DOCKER save --platform "$platform" -o "$tmp_archive" "$image" &&
+    $KIND load image-archive "$tmp_archive" --name "$cluster_name" || status=$?
+  rm -f "$tmp_archive"
+  if [ "$status" -ne 0 ]; then
+    log_error "Failed to load image $image ($platform) into Kind cluster $cluster_name"
+    return "$status"
   fi
-
-  log_error "Failed to load image $image into Kind cluster $cluster_name"
-  return "$load_status"
+  log "Successfully loaded $image into Kind cluster $cluster_name"
 }
 
 # Load all standard images required for breakglass E2E
