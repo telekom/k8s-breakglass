@@ -85,7 +85,7 @@ jobs:
           install_status=1
           for attempt in 1 2 3; do
             if go get "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" "golang.org/x/tools@${X_TOOLS_VERSION}" &&
-               go install github.com/securego/gosec/v2/cmd/gosec; then
+               go build -o "$(go env GOPATH)/bin/" github.com/securego/gosec/v2/cmd/gosec; then
               install_status=0
               break
             fi
