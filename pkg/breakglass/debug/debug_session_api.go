@@ -1927,7 +1927,7 @@ func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, name
 			return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
 		}
 		current, err := c.getDebugSessionByName(apiCtx, name, namespace)
-		if err != nil || current.UID != session.UID {
+		if err != nil || current.UID != session.UID || isDebugSessionExpired(current, time.Now()) {
 			return ArtifactReadBinding{}, errors.New("artifact session changed during authorization")
 		}
 		if current.ResourceVersion == session.ResourceVersion {
