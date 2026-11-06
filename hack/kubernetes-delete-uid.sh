@@ -22,7 +22,7 @@ kubernetes_delete_uid() {
 		return 1
 	(
 		local proxy_pid proxy_port=${KUBECTL_PROXY_PORT:-$((49152 + RANDOM % 16384))} ready=false
-		# shellcheck disable=SC2317 # invoked by the EXIT trap below
+		# shellcheck disable=SC2317,SC2329 # invoked by the EXIT trap below
 		cleanup_proxy() {
 			[ -n "${proxy_pid:-}" ] || return 0
 			kill "$proxy_pid" 2>/dev/null || true
