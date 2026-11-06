@@ -154,6 +154,8 @@ for mode in mismatch incomplete network different pull-failure; do
 done
 
 bash "${script_dir}/test-slsa-provenance.sh"
+bash "${script_dir}/test-select-helm-chart-version.sh"
+bash "${script_dir}/test-release-concurrency.sh"
 
 if FAKE_REMOTE_MODE=missing FAKE_LOCAL_APP_VERSION=v2.0.0 run_publish >/dev/null 2>&1; then
   echo "release/appVersion mismatch did not fail closed" >&2
