@@ -116,6 +116,7 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 		pod = *current
 		return pod.Status.Phase == corev1.PodRunning
 	}, helpers.WaitForStateTimeout, time.Second, "node debug pod must become Running")
+	require.Equal(t, node, pod.Spec.NodeName, "debug pod must run on the selected node")
 	t.Cleanup(func() {
 		_ = kube.CoreV1().Pods(podNamespace).Delete(context.Background(), podName, metav1.DeleteOptions{})
 	})
