@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-shellcheck
       - name: Verify release provenance workflow
         run: make verify-release-provenance
       - name: Install SPDX schema validator
@@ -456,6 +457,7 @@ jobs:
         run: bash charts/escalation-config/ci/test-motd.sh
       - name: Validate default-off typed node-maintenance template rendering
         run: bash charts/escalation-config/ci/test-node-maintenance.sh
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
@@ -519,6 +521,7 @@ jobs:
             metadata: utils/images/diagnostic-artifact-collector/image-metadata.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-shellcheck
       - name: Run helper tests
         run: make -C "${{ matrix.make_dir }}" "${{ matrix.target }}"
       - name: ShellCheck helpers
@@ -862,6 +865,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
@@ -1416,6 +1420,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
@@ -1719,6 +1724,7 @@ jobs:
         working-directory: frontend
         run: npx playwright install --with-deps chromium
 
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
@@ -2360,6 +2366,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install Kind
         run: |
           curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64

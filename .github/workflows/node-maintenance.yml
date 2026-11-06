@@ -30,6 +30,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Exercise image helper contracts
         run: make -C utils/node-maintenance test
+      - uses: ./.github/actions/setup-shellcheck
       - name: ShellCheck image helpers
         run: shellcheck utils/node-maintenance/bin/* utils/node-maintenance/lib/*.sh utils/node-maintenance/tests/*.sh
       - name: Lint Dockerfile
