@@ -13,6 +13,28 @@ writes it.
 
 ## [Unreleased]
 
+## [0.3.0-rc.20] - 2026-11-06
+
+### CI, build and tests
+
+- extend convergence workflow coverage
+- fix convergence runtime identity and readiness checks
+- exercise node debug with requester credentials
+- align kind preloaded images with deployment
+- verify node diagnostics target
+- select kind image before loading shared defaults
+- fix CI on ubuntu-26.04 runners ([#1595](https://github.com/telekom/k8s-breakglass/pull/1595))
+
+### Docs
+
+- clarify template readiness evidence
+- update convergence runtime coverage
+
+### Dependencies
+
+- bump github/codeql-action/upload-sarif ([#1588](https://github.com/telekom/k8s-breakglass/pull/1588))
+- go: bump the go-minor-patch group with 4 updates ([#1587](https://github.com/telekom/k8s-breakglass/pull/1587))
+
 ## [0.3.0-rc.19] - 2026-11-05
 
 ### Fixes
@@ -2694,7 +2716,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.19...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.20...HEAD
+[0.3.0-rc.20]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.19...v0.3.0-rc.20
 [0.3.0-rc.19]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.18...v0.3.0-rc.19
 [0.3.0-rc.15]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...v0.3.0-rc.15
 [0.3.0-rc.14]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...v0.3.0-rc.14
