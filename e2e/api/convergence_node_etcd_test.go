@@ -19,6 +19,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/remotecommand"
 )
@@ -97,11 +98,15 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	}
 	require.NotEmpty(t, node, "disposable target cluster must have a Ready node")
 	requesterDebugAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, requesterUser))
-	status, _, err = requesterDebugAPI.CreateNodeDebugPod(ctx, t, active.Name, CreateNodeDebugPodRequest{NodeName: node})
+	status, createdPod, err := requesterDebugAPI.CreateNodeDebugPod(ctx, t, active.Name, CreateNodeDebugPodRequest{NodeName: node})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
-	podName := "node-debugger-" + node + "-" + active.Name[:min(8, len(active.Name))]
-	podNamespace := active.Spec.TargetNamespace
+	podName, ok := createdPod["podName"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, podName)
+	podNamespace, ok := createdPod["namespace"].(string)
+	require.True(t, ok)
+	require.NotEmpty(t, podNamespace)
 	var pod corev1.Pod
 	require.Eventually(t, func() bool {
 		current, getErr := kube.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
@@ -118,7 +123,8 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	request := kube.CoreV1().RESTClient().Post().Namespace(podNamespace).Resource("pods").Name(podName).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{Container: "debugger", Stdout: true, Stderr: true,
 			Command: []string{"sh", "-c", "uname -r; test -r /host/etc/os-release && head -n 1 /host/etc/os-release"}}, scheme.ParameterCodec)
-	executor, err := remotecommand.NewSPDYExecutor(config, http.MethodPost, request.URL())
+	userConfig := &rest.Config{Host: config.Host, TLSClientConfig: rest.TLSClientConfig{CAData: config.CAData, CAFile: config.CAFile, Insecure: config.Insecure, ServerName: config.ServerName}, BearerToken: s.TC.OIDCProvider().GetTokenForUser(t, ctx, requesterUser)}
+	executor, err := remotecommand.NewSPDYExecutor(userConfig, http.MethodPost, request.URL())
 	require.NoError(t, err)
 	var stdout, stderr bytes.Buffer
 	streamCtx, cancel := context.WithTimeout(ctx, time.Minute)
