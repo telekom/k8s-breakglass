@@ -96,7 +96,8 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, node, "disposable target cluster must have a Ready node")
-	status, _, err = approver.CreateNodeDebugPod(ctx, t, active.Name, CreateNodeDebugPodRequest{NodeName: node})
+	requesterDebugAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, requesterUser))
+	status, _, err = requesterDebugAPI.CreateNodeDebugPod(ctx, t, active.Name, CreateNodeDebugPodRequest{NodeName: node})
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status)
 	podName := "node-debugger-" + node + "-" + active.Name[:min(8, len(active.Name))]

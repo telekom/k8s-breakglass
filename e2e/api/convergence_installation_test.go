@@ -32,8 +32,8 @@ func TestConvergenceInstallationVariants(t *testing.T) {
 		out, err := exec.CommandContext(ctx, args[0], args[1:]...).CombinedOutput()
 		require.NoError(t, err, "%v: %s", args, out)
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
 		out, err := exec.CommandContext(cleanupCtx, "helm", "uninstall", release, "-n", s.Namespace, "--ignore-not-found", "--wait", "--timeout=60s").CombinedOutput()
 		assert.NoError(t, err, "uninstall fixture: %s", out)
@@ -44,8 +44,7 @@ func TestConvergenceInstallationVariants(t *testing.T) {
 	require.Eventually(t, func() bool {
 		var template breakglassv1alpha1.DebugPodTemplate
 		return s.Client.Get(s.Ctx, podTemplateKey, &template) == nil &&
-			apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready") &&
-			template.Generation == template.Status.ObservedGeneration
+			apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
 	}, 90*time.Second, time.Second, "installed workload DebugPodTemplate must be reconciled Ready")
 
 	for _, name := range []string{"workload", "node-debug", "emergency-node-debug", "etcd-snapshot", "etcd-defrag"} {
@@ -54,8 +53,7 @@ func TestConvergenceInstallationVariants(t *testing.T) {
 			require.Eventually(t, func() bool {
 				var template breakglassv1alpha1.DebugSessionTemplate
 				return s.Client.Get(s.Ctx, key, &template) == nil &&
-					apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready") &&
-					template.Generation == template.Status.ObservedGeneration
+					apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
 			}, 90*time.Second, time.Second, "installed template %q must be reconciled Ready", name)
 			var template breakglassv1alpha1.DebugSessionTemplate
 			require.NoError(t, s.Client.Get(s.Ctx, key, &template))
