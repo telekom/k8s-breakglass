@@ -548,11 +548,15 @@ if [ "$PWRU_READY" = true ]; then
 		"$IMAGE" nc -z -w 1 127.0.0.1 18080 >/dev/null 2>&1; then
 		requirement "refusing to reuse an occupied host trace fixture port"
 	fi
+	# The trace checks send back-to-back requests. A respawned one-shot nc
+	# listener leaves no socket bound between connections, and under pwru's
+	# kprobes the respawn is slow enough for the second request to be refused.
+	# http.server keeps one listening socket for the fixture's lifetime.
 	docker_call run --detach --name "$TRACE_FIXTURE_CONTAINER" --label "$DOCKER_OWNER_LABEL=$RUN_ID" \
 		--network host --cap-drop ALL --security-opt no-new-privileges=true "$IMAGE" sh -ec '
-			while :; do
-				printf "HTTP/1.1 200 OK\\r\\nContent-Length: 19\\r\\nConnection: close\\r\\n\\r\\nhost-trace-fixture\\n" | nc -l -p 18080 -s 127.0.0.1
-			done
+			mkdir -p /work/www
+			printf "%s\\n" host-trace-fixture > /work/www/index.html
+			exec python3 -m http.server 18080 --bind 127.0.0.1 --directory /work/www
 		' >/dev/null 2>&1 || requirement "could not start owned host trace fixture"
 	TRACE_FIXTURE_CONTAINER_ID=$(docker_capture_resource_id "$DOCKER_BIN" container "$TRACE_FIXTURE_CONTAINER") || requirement "could not capture owned host trace fixture ID"
 	TRACE_FIXTURE_CONTAINER_CREATED=true
