@@ -6,7 +6,7 @@
 `e2e_convergence` now has an additional Helm installation fixture at
 `e2e/fixtures/convergence-installation`. It installs one reconciled
 `DebugPodTemplate` and representative `DebugSessionTemplate` modes through
-Helm, then waits for Ready at the current observed generation:
+Helm, then waits for their Ready conditions:
 
 - workload diagnostics using a referenced pod template;
 - normal and emergency `kubectl-debug` node diagnostics;
