@@ -9,6 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 E2E_LOG_PREFIX="[single-e2e]"
 export E2E_DIR="$SCRIPT_DIR"
 KEYCLOAK_RELATIVE_PATH=${KEYCLOAK_RELATIVE_PATH-/auth}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
 
 # Source common library (provides shared functions for logging, TLS, network, etc.)
 if [ -f "${SCRIPT_DIR}/lib/common.sh" ]; then
@@ -30,7 +31,6 @@ IMAGE=${IMAGE:-breakglass:e2e}
 UI_FLAVOUR=${UI_FLAVOUR:-oss}
 export VITE_UI_FLAVOUR=$UI_FLAVOUR
 echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
 
 # --- Cluster / service names (defaults kept from original script) ---
 CLUSTER_NAME=${CLUSTER_NAME:-breakglass-hub}
