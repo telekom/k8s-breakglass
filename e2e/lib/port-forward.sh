@@ -16,7 +16,7 @@ start_keepalive_port_forward() {
       exec 3>>"$stderr" || exit 1
     fi
     local child_pid=""
-    # shellcheck disable=SC2317
+    # shellcheck disable=SC2317,SC2329 # invoked by the EXIT/TERM/INT trap below
     stop_forward() {
       trap - EXIT TERM INT
       if [ -n "$child_pid" ]; then

@@ -30,6 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-shellcheck
       - name: Verify release provenance workflow
         run: make verify-release-provenance
       - name: Install SPDX schema validator
@@ -519,6 +520,7 @@ jobs:
             metadata: utils/images/diagnostic-artifact-collector/image-metadata.yaml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./.github/actions/setup-shellcheck
       - name: Run helper tests
         run: make -C "${{ matrix.make_dir }}" "${{ matrix.target }}"
       - name: ShellCheck helpers

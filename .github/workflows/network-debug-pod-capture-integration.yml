@@ -42,6 +42,7 @@ jobs:
           go-version-file: go.mod
       - name: Run image helper behavior
         run: make -C utils/network-debug test
+      - uses: ./.github/actions/setup-shellcheck
       - name: ShellCheck image helpers
         run: shellcheck utils/network-debug/scripts/* utils/network-debug/tests/*.sh
       - name: Lint image Dockerfile
