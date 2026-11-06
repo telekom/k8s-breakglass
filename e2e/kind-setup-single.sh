@@ -30,7 +30,7 @@ IMAGE=${IMAGE:-breakglass:e2e}
 UI_FLAVOUR=${UI_FLAVOUR:-oss}
 export VITE_UI_FLAVOUR=$UI_FLAVOUR
 echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
 
 # --- Cluster / service names (defaults kept from original script) ---
 CLUSTER_NAME=${CLUSTER_NAME:-breakglass-hub}
@@ -1077,7 +1077,7 @@ load_image_into_kind "$BUSYBOX_IMAGE"
 ensure_image_exists "python:3.11-slim"
 load_image_into_kind "python:3.11-slim"
 # Load Kafka image for audit sink testing
-load_image_into_kind "apache/kafka:3.7.0"
+load_image_into_kind "apache/kafka:4.3.1"
 
 log 'Deploy development stack via kustomize (config/dev)'
 # Create TLS secret data for kustomize resources (if keycloak expects a secret, we create it first)
