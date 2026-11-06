@@ -144,34 +144,7 @@ fi
 load_image_into_kind() {
   # Usage: load_image_into_kind imageName
   # Uses global $CLUSTER_NAME
-  local img="$1"
-  ensure_image_exists "$img"
-  log "Loading image $img into kind cluster $CLUSTER_NAME"
-
-  # Try direct load first, fall back to archive method if containerd snapshotter detection fails
-  local load_output
-  if load_output=$($KIND load docker-image "$img" --name "$CLUSTER_NAME" 2>&1); then
-    printf '%s\n' "$load_output" >&2
-    return 0
-  fi
-  printf '%s\n' "$load_output" >&2
-  if grep -q "failed to detect containerd snapshotter" <<<"$load_output"; then
-    log "Direct load failed due to containerd snapshotter issue, using archive method..."
-    local tmp_archive
-    tmp_archive=$(mktemp --suffix=.tar)
-    if docker save "$img" -o "$tmp_archive" && $KIND load image-archive "$tmp_archive" --name "$CLUSTER_NAME"; then
-      log "Successfully loaded $img via archive method"
-    else
-      log "ERROR: Failed to load image $img via archive method"
-      rm -f "$tmp_archive"
-      return 1
-    fi
-    rm -f "$tmp_archive"
-    return 0
-  fi
-
-  log "ERROR: Failed to load image $img into kind cluster $CLUSTER_NAME"
-  return 1
+  e2e_load_image_into_kind "$CLUSTER_NAME" "$1"
 }
 
 debug_deployment_failure() {

@@ -1,0 +1,19 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Raise inotify limits for kind
+description: >-
+  The runner image sets the inotify limits kind needs in /etc/sysctl.conf,
+  which Ubuntu 26.04 no longer loads at boot. With the kernel default of 128
+  instances, containerd and kube-proxy in later kind nodes fail with
+  "fsnotify watcher: too many open files".
+
+runs:
+  using: composite
+  steps:
+    - name: Raise inotify limits
+      shell: bash
+      run: |
+        sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+        sudo sysctl -w fs.inotify.max_user_instances=1280 fs.inotify.max_user_watches=655360
