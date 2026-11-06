@@ -41,6 +41,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: ./.github/actions/kind-inotify-limits
       - name: Install Kind
         run: |
           curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
