@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -309,9 +310,20 @@ func TestSharedJWKSRefreshSurvivesAuthenticatorEviction(t *testing.T) {
 	if _, err := engine.Authenticate(t.Context(), token1, policy("https://one.example")); err != nil {
 		t.Fatal(err)
 	}
-	transport.keys = []jose.JSONWebKey{{Key: &secondKey.PublicKey, KeyID: "second", Use: "sig", Algorithm: "RS256"}}
+	transport.setKeys([]jose.JSONWebKey{{Key: &secondKey.PublicKey, KeyID: "second", Use: "sig", Algorithm: "RS256"}})
 	token2 := signTokenWithKID(t, secondKey, "second", map[string]any{"iss": "https://two.example", "aud": "breakglass", "sub": "two", "exp": time.Now().Add(time.Minute).Unix(), "iat": time.Now().Unix()})
-	if _, err := engine.Authenticate(t.Context(), token2, policy("https://two.example")); err != nil {
+	// go-oidc's RemoteKeySet signals waiters before it clears its in-flight
+	// refresh, so a verify issued right after the first refresh can join that
+	// finished refresh and see the pre-rotation keys. Retry until a new refresh runs.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		_, err = engine.Authenticate(t.Context(), token2, policy("https://two.example"))
+		if err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err != nil {
 		t.Fatalf("rotated key after authenticator eviction was not refreshed: %v", err)
 	}
 	if atomic.LoadInt32(&transport.requests) < 2 {
@@ -353,8 +365,15 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
 type rotatingJWKS struct {
+	mu       sync.Mutex
 	keys     []jose.JSONWebKey
 	requests int32
+}
+
+func (r *rotatingJWKS) setKeys(keys []jose.JSONWebKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.keys = keys
 }
 
 func (r *rotatingJWKS) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -362,7 +381,9 @@ func (r *rotatingJWKS) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, err
 	}
 	atomic.AddInt32(&r.requests, 1)
+	r.mu.Lock()
 	body, err := json.Marshal(map[string]any{"keys": r.keys})
+	r.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
