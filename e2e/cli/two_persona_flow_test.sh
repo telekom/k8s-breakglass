@@ -44,6 +44,7 @@ REQUESTER_TOKEN_FILE="$TEST_DIR/requester-token"
 APPROVER_TOKEN_FILE="$TEST_DIR/approver-token"
 
 # Cleanup on exit
+# shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
     echo -e "\n${YELLOW}Cleaning up...${NC}"
     

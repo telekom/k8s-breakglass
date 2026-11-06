@@ -32,7 +32,7 @@ esac
 # The controller keeps the Node cordoned unless a terminated executor proves
 # that no kexec image is left loaded, so every exit reports the kernel state
 # and the boot it ran in.
-# shellcheck disable=SC2317 # invoked only by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked only by the EXIT trap
 record_kexec_state() {
 	[ "$mode_action" = kexec-recovery ] || return 0
 	[ -w /dev/termination-log ] || return 0
