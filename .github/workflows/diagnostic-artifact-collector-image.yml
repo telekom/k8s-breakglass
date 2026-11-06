@@ -35,6 +35,7 @@ jobs:
           go-version-file: go.mod
       - name: Run copier and uploader tests
         run: make -C utils/images/diagnostic-artifact-collector test
+      - uses: ./.github/actions/setup-shellcheck
       - name: Lint image helper shell
         run: make -C utils/images/diagnostic-artifact-collector shellcheck
       - name: Lint image Dockerfile
