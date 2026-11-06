@@ -89,7 +89,7 @@ jobs:
 
   compatibility:
     name: Compatibility ${{ matrix.name }} (${{ matrix.platform }})
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    if: github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_rolling != true)))
     needs: contract
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -122,7 +122,7 @@ jobs:
 
   compatibility-result:
     name: Utility Publication Compatibility
-    if: always() && (github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
+    if: always() && (github.event_name == 'pull_request' || (github.ref == 'refs/heads/main' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_rolling != true))))
     needs: compatibility
     runs-on: ubuntu-latest
     timeout-minutes: 5
