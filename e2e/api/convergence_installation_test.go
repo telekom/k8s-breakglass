@@ -17,12 +17,12 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// This exercises the public resource contract for each installed mode. It does
-// not invoke the private T-CaaS Function or execute privileged diagnostics.
+// This checks that each Helm-installed template mode is reconciled Ready. It
+// does not invoke the private T-CaaS Function or start any session; the etcd-*
+// templates reuse the workload pod template and contain no etcd tooling.
 func TestConvergenceInstallationVariants(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithTimeout(8*time.Minute))
 	release := helpers.GenerateUniqueName("convergence-installation")
@@ -55,9 +55,6 @@ func TestConvergenceInstallationVariants(t *testing.T) {
 				return s.Client.Get(s.Ctx, key, &template) == nil &&
 					apimeta.IsStatusConditionTrue(template.Status.Conditions, "Ready")
 			}, 90*time.Second, time.Second, "installed template %q must be reconciled Ready", name)
-			var template breakglassv1alpha1.DebugSessionTemplate
-			require.NoError(t, s.Client.Get(s.Ctx, key, &template))
-			require.Equal(t, metav1.ConditionTrue, apimeta.FindStatusCondition(template.Status.Conditions, "Ready").Status)
 		})
 	}
 }

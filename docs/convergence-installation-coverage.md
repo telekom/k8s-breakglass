@@ -10,7 +10,8 @@ Helm, then waits for their Ready conditions:
 
 - workload diagnostics using a referenced pod template;
 - normal and emergency `kubectl-debug` node diagnostics;
-- Job-based etcd snapshot and defrag variants.
+- Job-based templates named after the etcd snapshot and defrag recipes; they
+  reuse the workload pod template and contain no etcd tooling.
 
 The existing `TestConvergenceBindingHelmRelease` remains the stronger Flux
 HelmRelease proof for the bindings, empty target transitions, disabled

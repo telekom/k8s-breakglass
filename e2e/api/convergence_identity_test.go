@@ -88,8 +88,10 @@ spec:
 	unmatched := createTemplate("prefixed")
 	api := NewDebugSessionAPIClient(token)
 
+	// includeUnavailable keeps cluster availability out of the decision, so the
+	// prefixed template can only be hidden by group authorization.
 	require.Eventually(t, func() bool {
-		items, status, err := api.ListTemplates(ctx, t)
+		items, status, err := api.ListTemplatesWithOptions(ctx, t, true)
 		if err != nil || status != 200 {
 			return false
 		}

@@ -134,6 +134,6 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	streamCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	require.NoError(t, executor.StreamWithContext(streamCtx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}), stderr.String())
-	require.Contains(t, stdout.String(), nodeKernel, "diagnostics must report the selected node kernel")
+	require.Contains(t, stdout.String(), nodeKernel, "diagnostics must report the node kernel release; node selection is asserted via Spec.NodeName")
 	require.Contains(t, stdout.String(), "NAME=", "diagnostics should read the selected node's host OS metadata")
 }
