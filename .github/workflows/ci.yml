@@ -571,6 +571,11 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # github.event.head_commit only exists for push events; PR and
+      # workflow_dispatch runs need the commit time from git.
+      - name: Resolve commit timestamp
+        id: commit
+        run: echo "timestamp=$(git log -1 --format=%cI)" >> "$GITHUB_OUTPUT"
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - name: Set up Buildx
@@ -605,7 +610,7 @@ jobs:
             org.opencontainers.image.vendor=Deutsche Telekom
             org.opencontainers.image.version=${{ github.sha }}
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.created=${{ github.event.head_commit.timestamp }}
+            org.opencontainers.image.created=${{ steps.commit.outputs.timestamp }}
             com.github.repo.branch=${{ github.ref_name }}
             com.github.repo.owner=${{ github.repository_owner }}
             com.buildkit.build.ref=${{ github.ref }}
@@ -624,7 +629,7 @@ jobs:
           build-args: |
             VERSION=${{ github.ref_name }}
             GIT_COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_DATE=${{ steps.commit.outputs.timestamp }}
           cache-from: type=local,src=/tmp/.buildx-cache
           cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
       - name: Tag image for E2E artifact

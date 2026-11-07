@@ -1911,22 +1911,36 @@ func (c *DebugSessionAPIController) AuthorizeArtifactRead(ctx *gin.Context, name
 	if err != nil {
 		return ArtifactReadBinding{}, fmt.Errorf("resolve artifact session: %w", err)
 	}
-	if session.UID == "" || !session.DeletionTimestamp.IsZero() || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || isDebugSessionExpired(session, time.Now()) {
-		return ArtifactReadBinding{}, errors.New("artifact session is not active")
+	// The decision only holds for a resourceVersion that is unchanged across the
+	// check. Routine controller status writes (allowed Pods, accounting) change
+	// it, so re-evaluate the newer version in full instead of denying an
+	// authorized reader; a session that keeps changing still fails closed.
+	for range artifactReadAuthorizationAttempts {
+		if session.UID == "" || !session.DeletionTimestamp.IsZero() || session.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || session.Namespace != namespace || session.Name != name || session.Status.State != breakglassv1alpha1.DebugSessionStateActive || session.Status.ExpiresAt == nil || isDebugSessionExpired(session, time.Now()) {
+			return ArtifactReadBinding{}, errors.New("artifact session is not active")
+		}
+		allowed, err := c.canReadDebugSession(apiCtx, session, identity)
+		if err != nil {
+			return ArtifactReadBinding{}, fmt.Errorf("authorize artifact session: %w", err)
+		}
+		if !allowed {
+			return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
+		}
+		current, err := c.getDebugSessionByName(apiCtx, name, namespace)
+		if err != nil || current.UID != session.UID || isDebugSessionExpired(current, time.Now()) {
+			return ArtifactReadBinding{}, errors.New("artifact session changed during authorization")
+		}
+		if current.ResourceVersion == session.ResourceVersion {
+			return ArtifactReadBinding{Namespace: session.Namespace, Name: session.Name, UID: session.UID}, nil
+		}
+		session = current
 	}
-	allowed, err := c.canReadDebugSession(apiCtx, session, identity)
-	if err != nil {
-		return ArtifactReadBinding{}, fmt.Errorf("authorize artifact session: %w", err)
-	}
-	if !allowed {
-		return ArtifactReadBinding{}, errors.New("artifact session read is forbidden")
-	}
-	current, err := c.getDebugSessionByName(apiCtx, name, namespace)
-	if err != nil || current.UID != session.UID || current.ResourceVersion != session.ResourceVersion || !current.DeletionTimestamp.IsZero() || current.Annotations[quotas.AdmissionAnnotation] == quotas.Pending || isDebugSessionExpired(current, time.Now()) {
-		return ArtifactReadBinding{}, errors.New("artifact session changed during authorization")
-	}
-	return ArtifactReadBinding{Namespace: session.Namespace, Name: session.Name, UID: session.UID}, nil
+	return ArtifactReadBinding{}, errors.New("artifact session changed during authorization")
 }
+
+// artifactReadAuthorizationAttempts bounds re-evaluation when the session is
+// written concurrently with an artifact read authorization.
+const artifactReadAuthorizationAttempts = 3
 
 func (a *debugSessionReadAuthorizer) canRead(ctx context.Context, session *breakglassv1alpha1.DebugSession) (bool, error) {
 	identity := a.identity
