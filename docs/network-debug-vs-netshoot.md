@@ -37,6 +37,9 @@ docker run --rm --platform linux/amd64 --entrypoint sh IMAGE@DIGEST \
   -c 'for c in tcpdump dig ...; do command -v "$c"; apk info -q --who-owns "$(command -v "$c")"; done'
 docker run --rm --platform linux/amd64 --entrypoint sh IMAGE@DIGEST -c 'apk list --installed PACKAGE'
 trivy image --platform linux/amd64 --scanners vuln IMAGE@DIGEST   # Trivy 0.76.2
+cosign verify IMAGE@DIGEST \
+  --certificate-identity-regexp '^https://github.com/telekom/k8s-breakglass/\.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
 Versions are the Alpine package versions (`apk list --installed`) or, for
@@ -140,14 +143,14 @@ differs between the images is in bold.
 | Tool (command) | network-debug | Netshoot | Version (network-debug / Netshoot) | Notes |
 |---|---|---|---|---|
 | bash | yes | yes | 5.3.9-r1 | |
-| zsh | yes | yes | 5.9-r7 | Netshoot default `CMD`; oh-my-zsh in `/root` |
+| zsh | yes | yes | 5.9-r7 | Netshoot default `CMD`, with oh-my-zsh in `/root`; network-debug has no oh-my-zsh |
 | jq | yes | yes | 1.8.2-r0 | |
 | vim | yes | yes | **9.2.1202-r0 / 9.2.0747-r0** | |
 | git | yes | yes | 2.54.0-r0 | |
 | ssh | yes | yes | openssh **10.3_p1-r2 / 10.3_p1-r0** | |
 | python3 | yes | yes | **3.14.10-r1 / 3.14.5-r2** | |
 | file | yes | yes | 5.47-r2 | |
-| net-debug, net-report | yes | no | network-debug 0.1.0 helpers | Bounded capture/trace wrapper and deterministic report |
+| net-debug, net-report | yes | no | v0.3.0-rc.20 / – | Bounded capture/trace wrapper and deterministic report |
 
 ## Gaps for breakglass debugging
 
@@ -177,7 +180,7 @@ The five missing tools, by relevance:
 | User | `0:0` (root) | `root` |
 | Default command | `net-debug shell` | `zsh` |
 | Capability contract | Declared per operation in `IMAGE-METADATA.yaml` (`NET_RAW` for Pod capture; `NET_ADMIN`, `BPF`, `PERFMON`, ... for host tracing) | None |
-| Version pinning | Base and build images pinned by digest | Alpine edge repositories, unpinned packages |
+| Version pinning | Base and build images pinned by digest; edge repositories removed; Alpine packages are upgraded to the current 3.24 stable at build time, not pinned | Alpine 3.24 and edge repositories; packages not pinned |
 | Trivy, all severities | 0 | 1,095 |
 | Trivy, CRITICAL / HIGH | 0 / 0 | 13 / 497 |
 | Trivy, MEDIUM / LOW / UNKNOWN | 0 / 0 / 0 | 428 / 148 / 9 |
@@ -185,9 +188,11 @@ The five missing tools, by relevance:
 
 Netshoot findings split into 535 in Alpine packages and 560 in the five static
 Go binaries (`ctop` 183, `termshark` 183, `grpcurl` 113, `calicoctl` 41,
-`fortio` 40). Most CRITICAL findings are old Go standard libraries in those
-binaries (`ctop` is built with Go 1.18). Removing the binaries and upgrading
-the Alpine packages is why network-debug reports zero.
+`fortio` 40). Ten of the 13 CRITICAL findings are old Go standard libraries in those
+binaries (`ctop` and `termshark` are built with Go 1.18). Removing the binaries and upgrading
+the Alpine packages is why network-debug reported zero on the inspection date.
+The counts are a snapshot of the Trivy database on 2026-11-07; new advisories
+change them, so rescan before relying on them.
 
 Both images run as root. That is not a difference: `tcpdump` and `pwru` need
 it, and the [network-debug runbook](network-debug-image.md#safety-and-permissions)
@@ -197,7 +202,10 @@ only the capabilities of the selected operation, whichever image it uses.
 
 ## Recommendation
 
-network-debug can replace Netshoot in debug profiles today for DNS, routing,
+This section is a recommendation from the comparison above, not a
+committed plan or a change made by this page.
+
+In our assessment, network-debug can replace Netshoot in debug profiles today for DNS, routing,
 transport, capture, netfilter and throughput investigations. To cover the
 remaining realistic gap, add one tool:
 
@@ -211,6 +219,7 @@ source of half of Netshoot's findings.
 After grpcurl is in a released image, switch the Netshoot references in
 `config/samples/` (`debug_pod_templates.yaml`,
 `debug-pod-template-comprehensive.yaml`, `debug_session_templates.yaml`,
+`debug-session-template-comprehensive.yaml`,
 `debug_session_template_namespace_selectors.yaml`) to the network-debug
 digest. This page adds no tools.
 
