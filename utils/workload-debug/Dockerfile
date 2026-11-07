@@ -14,8 +14,11 @@ ARG BIND_TOOLS_VERSION=9.20.30-r0
 ARG CA_CERTIFICATES_VERSION=20261020-r0
 ARG CURL_VERSION=8.23.0-r0
 ARG JQ_VERSION=1.8.2-r0
+ARG MUSL_VERSION=1.2.6-r3
+ARG MUSL_UTILS_VERSION=1.2.6-r3
 ARG OPENSSL_VERSION=3.5.9-r0
 ARG TINI_VERSION=0.19.0-r3
+ARG ZLIB_VERSION=1.4-r0
 
 # The Alpine 3.24 release and its base manifest are pinned. Refresh deps.lock
 # and the SBOM together whenever this is updated.
@@ -26,8 +29,11 @@ RUN apk add --no-cache \
       "ca-certificates=${CA_CERTIFICATES_VERSION}" \
       "curl=${CURL_VERSION}" \
       "jq=${JQ_VERSION}" \
+      "musl=${MUSL_VERSION}" \
+      "musl-utils=${MUSL_UTILS_VERSION}" \
       "openssl=${OPENSSL_VERSION}" \
       "tini=${TINI_VERSION}" \
+      "zlib=${ZLIB_VERSION}" \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && mkdir -p /home/debug /usr/share/breakglass/runbooks/upstream/workload-debug \
