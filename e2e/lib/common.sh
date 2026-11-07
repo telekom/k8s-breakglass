@@ -278,7 +278,7 @@ e2e_load_image_into_kind() {
 e2e_load_standard_images() {
   local cluster_name="$1"
   local breakglass_image="${2:-breakglass:e2e}"
-  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.7.1}"
+  local keycloak_image="${3:-quay.io/keycloak/keycloak:26.7.4}"
   
   log "Loading standard images into cluster $cluster_name..."
   
@@ -287,7 +287,7 @@ e2e_load_standard_images() {
   e2e_load_image_into_kind "$cluster_name" "mailhog/mailhog:v1.0.1"
   e2e_load_image_into_kind "$cluster_name" "curlimages/curl:8.4.0"
   e2e_load_image_into_kind "$cluster_name" "nicolaka/netshoot"
-  e2e_load_image_into_kind "$cluster_name" "apache/kafka:3.7.0"
+  e2e_load_image_into_kind "$cluster_name" "apache/kafka:4.3.1"
   e2e_load_image_into_kind "$cluster_name" "python:3.11-slim"
   ensure_tmux_debug_image
   e2e_load_image_into_kind "$cluster_name" "$TMUX_DEBUG_IMAGE"
@@ -979,7 +979,7 @@ cleanup_e2e() {
 
 # Default Keycloak settings
 KEYCLOAK_CONTAINER_NAME=${KEYCLOAK_CONTAINER_NAME:-e2e-keycloak}
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
 KEYCLOAK_ADMIN_USER=${KEYCLOAK_ADMIN_USER:-admin}
 KEYCLOAK_ADMIN_PASS=${KEYCLOAK_ADMIN_PASS:-admin}
 KEYCLOAK_HTTP_PORT=${KEYCLOAK_HTTP_PORT:-8080}
