@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -183,6 +186,15 @@ type Server struct {
 	TLSKeyFile     string   `yaml:"tlsKeyFile"`
 	TrustedProxies []string `yaml:"trustedProxies"` // IPs/CIDRS to trust for X-Forwarded-For headers (e.g., ["10.0.0.0/8", "127.0.0.1"])
 	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
+	// ClientCAFile is a PEM bundle of CAs that sign accepted client
+	// certificates. Required for clientAuth verifyIfGiven and require.
+	// Read once at startup; restart the server after changing it.
+	// +optional
+	ClientCAFile string `yaml:"clientCAFile,omitempty"`
+	// ClientAuth selects the TLS client-certificate policy: none (default),
+	// request, verifyIfGiven or require. Only applies when HTTPS is enabled.
+	// +optional
+	ClientAuth string `yaml:"clientAuth,omitempty"`
 	// HardenedIDPHints when true, prevents disclosure of available identity providers in error messages.
 	// Default: true (hardened) unless explicitly set to false in config.
 	// +optional
@@ -383,6 +395,55 @@ func (s Server) GetServerTimeouts() *ServerTimeouts {
 // GetShutdownTimeout returns the configured graceful shutdown timeout or the default value.
 func (s Server) GetShutdownTimeout() time.Duration {
 	return parseDurationOrDefault(s.ShutdownTimeout, DefaultShutdownTimeout)
+}
+
+// Client certificate modes accepted by Server.ClientAuth.
+const (
+	ClientAuthNone          = "none"
+	ClientAuthRequest       = "request"
+	ClientAuthVerifyIfGiven = "verifyIfGiven"
+	ClientAuthRequire       = "require"
+)
+
+var clientAuthTypes = map[string]tls.ClientAuthType{
+	"":                      tls.NoClientCert,
+	ClientAuthNone:          tls.NoClientCert,
+	ClientAuthRequest:       tls.RequestClientCert,
+	ClientAuthVerifyIfGiven: tls.VerifyClientCertIfGiven,
+	ClientAuthRequire:       tls.RequireAndVerifyClientCert,
+}
+
+// ClientTLS returns the TLS client authentication policy and the client CA
+// pool (nil when no CA is configured). It fails on an unknown mode, on a
+// verifying mode without clientCAFile, on clientCAFile without a verifying
+// mode, on client authentication without server TLS, and on an unreadable or
+// empty CA bundle.
+func (s Server) ClientTLS() (tls.ClientAuthType, *x509.CertPool, error) {
+	mode, ok := clientAuthTypes[s.ClientAuth]
+	if !ok {
+		return 0, nil, fmt.Errorf("server.clientAuth %q: want one of %s, %s, %s, %s",
+			s.ClientAuth, ClientAuthNone, ClientAuthRequest, ClientAuthVerifyIfGiven, ClientAuthRequire)
+	}
+	verifies := mode == tls.VerifyClientCertIfGiven || mode == tls.RequireAndVerifyClientCert
+	switch {
+	case mode != tls.NoClientCert && (s.TLSCertFile == "" || s.TLSKeyFile == ""):
+		return 0, nil, fmt.Errorf("server.clientAuth %q needs server.tlsCertFile and server.tlsKeyFile", s.ClientAuth)
+	case verifies && s.ClientCAFile == "":
+		return 0, nil, fmt.Errorf("server.clientAuth %q needs server.clientCAFile", s.ClientAuth)
+	case !verifies && s.ClientCAFile != "":
+		return 0, nil, errors.New("server.clientCAFile is set but server.clientAuth is not verifyIfGiven or require")
+	case !verifies:
+		return mode, nil, nil
+	}
+	pem, err := os.ReadFile(s.ClientCAFile)
+	if err != nil {
+		return 0, nil, fmt.Errorf("read server.clientCAFile: %w", err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return 0, nil, fmt.Errorf("server.clientCAFile %s contains no PEM certificates", s.ClientCAFile)
+	}
+	return mode, pool, nil
 }
 
 // parseDurationOrDefault parses a Go duration string, returning the default on empty, invalid, or non-positive input.
