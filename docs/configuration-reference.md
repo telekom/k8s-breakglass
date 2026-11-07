@@ -183,6 +183,65 @@ Path to TLS private key file for HTTPS.
 | **Default** | `` (HTTP only) |
 | **Example** | `/etc/breakglass/tls.key`, `/var/secrets/key.pem` |
 
+#### `clientAuth` (Optional)
+
+TLS client-certificate (mutual TLS) policy for the HTTPS server. Only valid
+when `tlsCertFile` and `tlsKeyFile` are set.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `none` (today's behaviour: no client certificate is requested) |
+| **Values** | `none`, `request`, `verifyIfGiven`, `require` |
+
+| Mode | Go `tls.ClientAuthType` | Behaviour |
+|------|-------------------------|-----------|
+| `none` | `NoClientCert` | No client certificate is requested. |
+| `request` | `RequestClientCert` | A certificate is requested but neither required nor verified. Informational only; not an access control. |
+| `verifyIfGiven` | `VerifyClientCertIfGiven` | Clients without a certificate are accepted; a presented certificate must chain to `clientCAFile`. Use it to roll out mTLS before switching to `require`. |
+| `require` | `RequireAndVerifyClientCert` | Every TLS connection must present a certificate that chains to `clientCAFile`. |
+
+mTLS is enforced at the TLS handshake and applies to every route on
+`listenAddress`, including the frontend, the REST API and the SAR
+authorization webhook. Under `require`:
+
+- browsers need a client certificate, or a TLS-terminating ingress or proxy
+  must present one to the backend (re-encrypt with a client certificate);
+- the kube-apiserver authorization webhook kubeconfig needs
+  `client-certificate`/`client-key` signed by `clientCAFile`;
+- `bgctl` and other API clients need a client certificate.
+
+Health probes are served on the separate `--health-probe-bind-address` port
+and are not affected. The client certificate only authenticates the TLS
+connection; OIDC authentication and authorization are unchanged.
+
+#### `clientCAFile` (Optional)
+
+Path to a PEM bundle of CA certificates that sign accepted client
+certificates. Required for `clientAuth: verifyIfGiven` and `require`; rejected
+for `none` and `request`, so a CA is never configured without being enforced.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `` (no client CA) |
+| **Example** | `/etc/breakglass/client-ca/ca.crt` |
+
+```yaml
+server:
+  tlsCertFile: /etc/breakglass/tls.crt
+  tlsKeyFile: /etc/breakglass/tls.key
+  clientAuth: require
+  clientCAFile: /etc/breakglass/client-ca/ca.crt
+```
+
+The controller validates `clientAuth` and `clientCAFile` at startup and
+refuses to start on an unknown mode, a missing or empty CA bundle, or a
+mode/CA mismatch. The file is read once at startup, like `tlsCertFile` and
+`tlsKeyFile` (the server certificate is not hot-reloaded either): restart the
+pods after rotating the client CA. During a rotation, put the old and the new
+CA in the same bundle.
+
 ---
 
 #### `allowedOrigins`

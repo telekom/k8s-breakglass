@@ -182,6 +182,10 @@ func run() error {
 		return fmt.Errorf("load config for breakglass controller: %w", err)
 	}
 
+	if _, _, err := cfg.Server.ClientTLS(); err != nil {
+		return fmt.Errorf("validate server TLS config: %w", err)
+	}
+
 	if err := validateArtifactDeployment(cfg.Artifacts.Enabled, cliConfig.EnableControllers); err != nil {
 		return err
 	}
