@@ -75,8 +75,26 @@ if modern
   dependencies = require_array(document["dependencies"], "dependencies must be a non-empty list")
   dependencies.each do |dependency|
     dependency = require_hash(dependency, "each dependency must be a mapping")
-    require_value(dependency["name"], "dependency.name is required")
-    require_value(dependency["version"], "dependency.version is required")
+    name = require_value(dependency["name"], "dependency.name is required")
+    version = dependency["version"]
+    source = dependency["versionSource"]
+    fail_contract("dependency #{name} needs exactly one of version or versionSource") unless version.nil? ^ source.nil?
+    next unless source
+
+    # A versionSource is either a Dependabot-tracked Go module lock in the
+    # build context that requires the dependency, or an absolute in-image
+    # record written at build time (for example the installed package list).
+    source = require_value(source.to_s, "dependency.versionSource is required")
+    next if source.start_with?("/") && !source.split("/").include?("..")
+
+    source_parts = source.split("/")
+    fail_contract("dependency #{name} versionSource must stay inside the context") if source_parts.include?("..") || source_parts.include?("")
+    source_path = File.join(repo_root, context_name, source)
+    fail_contract("dependency #{name} versionSource #{source} does not exist") unless File.file?(source_path)
+    if File.basename(source) == "go.mod"
+      required = File.readlines(source_path).any? { |line| line.split.first == name || line.split[1] == name }
+      fail_contract("dependency #{name} is not required by #{source}") unless required
+    end
   end
   require_array(contract["intents"], "contract.intents must be a non-empty list")
   modes_or_commands = contract["modes"] || contract["commands"]

@@ -37,34 +37,19 @@ ARG VERSION=dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-ARG ETHTOOL_VERSION=7.0-r0
-ARG FLOCK_VERSION=2.42.3-r1
-ARG IPROUTE2_VERSION=7.0.0-r0
-ARG KMOD_VERSION=34.2-r1
-ARG MUSL_VERSION=1.2.6-r3
-ARG MUSL_UTILS_VERSION=1.2.6-r3
-ARG XZ_LIBS_VERSION=5.8.4-r0
-ARG ZLIB_VERSION=1.4-r0
-ARG ZSTD_LIBS_VERSION=1.5.7-r2
-ARG LIBCRYPTO3_VERSION=3.5.8-r0
-ARG LIBSSL3_VERSION=3.5.8-r0
-ARG SED_VERSION=4.9-r2
-
 # Keep the runtime deliberately small. Do not add a general-purpose network
 # toolbox, a compiler, a package manager, or an interactive shell entrypoint.
-RUN apk add --no-cache \
-        "ethtool=${ETHTOOL_VERSION}" \
-        "flock=${FLOCK_VERSION}" \
-        "iproute2=${IPROUTE2_VERSION}" \
-        "kmod=${KMOD_VERSION}" \
-        "musl=${MUSL_VERSION}" \
-        "musl-utils=${MUSL_UTILS_VERSION}" \
-        "xz-libs=${XZ_LIBS_VERSION}" \
-        "zlib=${ZLIB_VERSION}" \
-        "zstd-libs=${ZSTD_LIBS_VERSION}" \
-        "libcrypto3=${LIBCRYPTO3_VERSION}" \
-        "libssl3=${LIBSSL3_VERSION}" \
-        "sed=${SED_VERSION}" \
+# Package versions follow the digest-pinned Alpine 3.24 base (Dependabot
+# docker): the inherited set is upgraded from the matching release repository
+# so security fixes land on rebuild, and the versions actually installed are
+# recorded in the image and its SBOM before apk is removed.
+# hadolint ignore=DL3018
+RUN apk upgrade --no-cache \
+    && apk add --no-cache ethtool flock iproute2 kmod sed \
+    && install -d /usr/share/breakglass \
+    && apk list --installed --no-network > /usr/share/breakglass/installed-packages 2>/dev/null \
+    && grep -q '^iproute2-' /usr/share/breakglass/installed-packages \
+    && chmod 0444 /usr/share/breakglass/installed-packages \
     && rm -f /sbin/apk /sbin/apk.static
 
 COPY bin/node-maintenance /usr/local/bin/node-maintenance

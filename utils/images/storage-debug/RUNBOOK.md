@@ -5,11 +5,12 @@ SPDX-License-Identifier: CC-BY-4.0
 
 # Storage-diagnostics runbook
 
-The digest-pinned Alpine base and exact `fio`/`ioping` versions are fixed
-inputs. This Dockerfile does not run `apk upgrade` or add a separate
-repository, so weekly rolling rebuilds do not silently refresh the inherited
-package layer. Update the reviewed base digest or package pins when security
-fixes are needed, then scan the exact built digest before publication.
+The digest-pinned Alpine base (updated by Dependabot) is the fixed input.
+Package versions follow it: the build runs `apk upgrade` against the base's
+own release repositories and installs `fio`/`ioping` unversioned, so a rebuild
+picks up Alpine security fixes. The installed versions are recorded in
+`/usr/share/breakglass/installed-packages` and the SBOM; scan the exact built
+digest before publication.
 
 ## Choose the least-powerful operation
 
