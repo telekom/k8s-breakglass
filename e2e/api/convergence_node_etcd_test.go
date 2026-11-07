@@ -85,10 +85,12 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, nodes.Items)
 	node := ""
+	nodeKernel := ""
 	for _, candidate := range nodes.Items {
 		for _, condition := range candidate.Status.Conditions {
 			if condition.Type == corev1.NodeReady && condition.Status == corev1.ConditionTrue {
 				node = candidate.Name
+				nodeKernel = candidate.Status.NodeInfo.KernelVersion
 				break
 			}
 		}
@@ -97,6 +99,7 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, node, "disposable target cluster must have a Ready node")
+	require.NotEmpty(t, nodeKernel, "selected node must report its kernel version")
 	requesterDebugAPI := NewDebugSessionAPIClient(s.TC.OIDCProvider().GetTokenForUser(t, ctx, requesterUser))
 	status, createdPod, err := requesterDebugAPI.CreateNodeDebugPod(ctx, t, active.Name, CreateNodeDebugPodRequest{NodeName: node})
 	require.NoError(t, err)
@@ -107,6 +110,9 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	podNamespace, ok := createdPod["namespace"].(string)
 	require.True(t, ok)
 	require.NotEmpty(t, podNamespace)
+	t.Cleanup(func() {
+		_ = kube.CoreV1().Pods(podNamespace).Delete(context.Background(), podName, metav1.DeleteOptions{})
+	})
 	var pod corev1.Pod
 	require.Eventually(t, func() bool {
 		current, getErr := kube.CoreV1().Pods(podNamespace).Get(ctx, podName, metav1.GetOptions{})
@@ -117,13 +123,10 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 		return pod.Status.Phase == corev1.PodRunning
 	}, helpers.WaitForStateTimeout, time.Second, "node debug pod must become Running")
 	require.Equal(t, node, pod.Spec.NodeName, "debug pod must run on the selected node")
-	t.Cleanup(func() {
-		_ = kube.CoreV1().Pods(podNamespace).Delete(context.Background(), podName, metav1.DeleteOptions{})
-	})
 
 	request := kube.CoreV1().RESTClient().Post().Namespace(podNamespace).Resource("pods").Name(podName).SubResource("exec").
 		VersionedParams(&corev1.PodExecOptions{Container: "debugger", Stdout: true, Stderr: true,
-			Command: []string{"sh", "-c", "uname -r; test -r /host/etc/os-release && head -n 1 /host/etc/os-release"}}, scheme.ParameterCodec)
+			Command: []string{"sh", "-c", "uname -r && test -r /host/etc/os-release && head -n 1 /host/etc/os-release"}}, scheme.ParameterCodec)
 	userConfig := &rest.Config{Host: config.Host, TLSClientConfig: rest.TLSClientConfig{CAData: config.CAData, CAFile: config.CAFile, Insecure: config.Insecure, ServerName: config.ServerName}, BearerToken: s.TC.OIDCProvider().GetTokenForUser(t, ctx, requesterUser)}
 	executor, err := remotecommand.NewSPDYExecutor(userConfig, http.MethodPost, request.URL())
 	require.NoError(t, err)
@@ -131,6 +134,6 @@ func TestConvergenceNodeDiagnosticsE2E(t *testing.T) {
 	streamCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	require.NoError(t, executor.StreamWithContext(streamCtx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}), stderr.String())
-	require.NotEmpty(t, bytes.TrimSpace(stdout.Bytes()), "node kernel and host OS diagnostics should be returned")
+	require.Contains(t, stdout.String(), nodeKernel, "diagnostics must report the selected node kernel")
 	require.Contains(t, stdout.String(), "NAME=", "diagnostics should read the selected node's host OS metadata")
 }

@@ -21,11 +21,9 @@ executes node repair, etcd snapshot, or defrag operations.
 
 At clusters reference commit `a0be2c81ce8ad170417e5cb5640419dd9f304cb3`, six
 management cluster definitions configure `k8s-breakglass`. Five supply a
-cluster-specific `hostname`, `tlsIssuerName=telesec-acme-prod-ca-schiff`, and
-`tlsIssuerKind=ClusterIssuer`; `t-caas-mgmt-1` additionally opts in to
-`enableDebugSessionCatalog=true` and supplies the same TLS issuer override.
-The cluster definitions point at Bundle releases `vsphere-management-36.1.0-rc.104`,
-`36.1.0-rc.108` (three hubs), `36.1.2`, and `36.1.3-rc.1`.
+cluster-specific hostname and a named ClusterIssuer; one explicitly enables
+`enableDebugSessionCatalog` and supplies the same type of issuer override.
+The definitions reference four distinct management Bundle releases.
 
 At bundles reference commit `19a0e0401defb8165ce15148a2383315e781b9a4`, the
 inventory contains 22 distinct Breakglass Function pins: `0.1.0`, `0.2.0`,
