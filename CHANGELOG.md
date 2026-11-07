@@ -13,6 +13,31 @@ writes it.
 
 ## [Unreleased]
 
+## [0.3.0-rc.20] - 2026-11-07
+
+### Fixes
+
+- debug: revalidate artifact read authorization on concurrent session writes ([#1597](https://github.com/telekom/k8s-breakglass/pull/1597))
+- frontend: bump minimatch to 11.0.1 for GHSA-g3hv-75wg-m249 ([#1593](https://github.com/telekom/k8s-breakglass/pull/1593))
+- resolve code quality findings ([#1591](https://github.com/telekom/k8s-breakglass/pull/1591))
+- utils: patch musl, zlib and x/net CVEs in utility images ([#1601](https://github.com/telekom/k8s-breakglass/pull/1601))
+
+### CI, build and tests
+
+- fix CI on ubuntu-26.04 runners ([#1595](https://github.com/telekom/k8s-breakglass/pull/1595))
+- oidc: deflake JWKS rotation after authenticator eviction ([#1589](https://github.com/telekom/k8s-breakglass/pull/1589))
+- pin unpinned dependency in security workflow ([#1590](https://github.com/telekom/k8s-breakglass/pull/1590))
+- deflake network-diagnostics host trace fixture ([#1596](https://github.com/telekom/k8s-breakglass/pull/1596))
+- gate merges on all checks and auto-merge green dependabot PRs ([#1594](https://github.com/telekom/k8s-breakglass/pull/1594))
+- shard kind E2E suites and start them right after the image build ([#1599](https://github.com/telekom/k8s-breakglass/pull/1599))
+
+### Dependencies
+
+- bump github/codeql-action/upload-sarif ([#1588](https://github.com/telekom/k8s-breakglass/pull/1588))
+- go: bump the go-minor-patch group with 4 updates ([#1587](https://github.com/telekom/k8s-breakglass/pull/1587))
+- bump golang.org/x/crypto for GO-2026-5932 ([#1592](https://github.com/telekom/k8s-breakglass/pull/1592))
+- npm: bump the npm-minor-patch group across 1 directory with 5 updates ([#1600](https://github.com/telekom/k8s-breakglass/pull/1600))
+
 ## [0.3.0-rc.19] - 2026-11-05
 
 ### Fixes
@@ -2694,7 +2719,8 @@ non-buggy case:
 
 ---
 
-[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.19...HEAD
+[Unreleased]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.20...HEAD
+[0.3.0-rc.20]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.19...v0.3.0-rc.20
 [0.3.0-rc.19]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.18...v0.3.0-rc.19
 [0.3.0-rc.15]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.14...v0.3.0-rc.15
 [0.3.0-rc.14]: https://github.com/telekom/k8s-breakglass/compare/v0.3.0-rc.13...v0.3.0-rc.14
