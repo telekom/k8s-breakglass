@@ -16,6 +16,7 @@ on:
       - ".github/workflows/hotfix-controller.yml"
   push:
     branches: [main]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
