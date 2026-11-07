@@ -136,6 +136,34 @@ reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed
 generation readiness requirement.
 
+### `stepUp` (Optional)
+
+Draft, disabled by default. Requires a fresh (and optionally stronger)
+authentication plus a single-use server challenge for critical API mutations
+(PSA PSM-14.47). See the [step-up design](design/step-up-authentication.md);
+the action list is pending confirmation by Platform IAM.
+
+```yaml
+stepUp:
+  enabled: true
+  maxAuthAge: 5m          # max age of the token's auth_time claim
+  requiredACR: ["gold"]   # optional: accepted acr claim values
+  actions: []             # empty = session.request, session.approve,
+                          # session.cancel, debugSession.create, debugSession.approve
+```
+
+| Field | Default | Description |
+| --- | --- | --- |
+| `enabled` | `false` | Turns step-up on. When off, nothing changes. |
+| `maxAuthAge` | unset | Go duration. Tokens with an older or missing `auth_time` get `401` with `WWW-Authenticate: Bearer error="insufficient_user_authentication", max_age="..."` (RFC 9470). |
+| `requiredACR` | unset | Accepted `acr` values; others get the same `401` with `acr_values`. |
+| `actions` | proposed list | Action names from the catalogue in the design doc. Unknown names stop startup. |
+
+`enabled: true` needs `maxAuthAge` or `requiredACR`. A request that passes the
+check gets `428` with an `X-Breakglass-Step-Up-Challenge` header and must be
+repeated with that header. Challenges live in memory per replica: use session
+affinity when several API replicas run.
+
 ### `server`
 
 HTTP server configuration.
