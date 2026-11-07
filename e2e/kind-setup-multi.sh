@@ -30,7 +30,7 @@ IMAGE=${IMAGE:-breakglass:e2e}
 UI_FLAVOUR=${UI_FLAVOUR:-oss}
 export VITE_UI_FLAVOUR=$UI_FLAVOUR
 echo "UI flavour selected: $UI_FLAVOUR (IMAGE=$IMAGE)"
-KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.1}
+KEYCLOAK_IMAGE=${KEYCLOAK_IMAGE:-quay.io/keycloak/keycloak:26.7.4}
 
 # --- Cluster names ---
 HUB_CLUSTER=${HUB_CLUSTER:-breakglass-hub}
@@ -609,7 +609,7 @@ setup_hub_cluster() {
   log "Loading hub-specific images..."
   load_image_into_cluster "$HUB_CLUSTER" "mailhog/mailhog:v1.0.1"
   load_image_into_cluster "$HUB_CLUSTER" "curlimages/curl:8.4.0"
-  load_image_into_cluster "$HUB_CLUSTER" "apache/kafka:3.7.0"
+  load_image_into_cluster "$HUB_CLUSTER" "apache/kafka:4.3.1"
   
   # Apply CRDs
   log "Applying CRDs..."
