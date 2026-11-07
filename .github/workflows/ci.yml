@@ -3260,3 +3260,54 @@ jobs:
           kind delete cluster --name spoke-cluster-a || true
           kind delete cluster --name spoke-cluster-b || true
           docker rm -f e2e-keycloak 2>/dev/null || true
+
+  # One check per sharded E2E suite under the suite's original name, so the
+  # release check inventory (hack/release-required-checks.json) does not need
+  # to list every shard. Skipped when the whole suite was skipped.
+  single-cluster-e2e-result:
+    name: Single-Cluster E2E Tests
+    if: ${{ always() && needs.single-cluster-e2e.result != 'skipped' }}
+    needs: single-cluster-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          RESULT: ${{ needs.single-cluster-e2e.result }}
+        run: test "${RESULT}" = success
+
+  oidc-comprehensive-e2e-result:
+    name: OIDC Comprehensive E2E Tests
+    if: ${{ always() && needs.oidc-comprehensive-e2e.result != 'skipped' }}
+    needs: oidc-comprehensive-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          RESULT: ${{ needs.oidc-comprehensive-e2e.result }}
+        run: test "${RESULT}" = success
+
+  ui-e2e-result:
+    name: UI E2E Tests
+    if: ${{ always() && needs.ui-e2e.result != 'skipped' }}
+    needs: ui-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          RESULT: ${{ needs.ui-e2e.result }}
+        run: test "${RESULT}" = success
+
+  multi-cluster-e2e-result:
+    name: Multi-Cluster E2E Tests
+    if: ${{ always() && needs.multi-cluster-e2e.result != 'skipped' }}
+    needs: multi-cluster-e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every shard to pass
+        env:
+          RESULT: ${{ needs.multi-cluster-e2e.result }}
+        run: test "${RESULT}" = success
