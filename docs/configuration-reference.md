@@ -207,13 +207,28 @@ authorization webhook. Under `require`:
 
 - browsers need a client certificate, or a TLS-terminating ingress or proxy
   must present one to the backend (re-encrypt with a client certificate);
-- the kube-apiserver authorization webhook kubeconfig needs
-  `client-certificate`/`client-key` signed by `clientCAFile`;
-- `bgctl` and other API clients need a client certificate.
+- the kube-apiserver authorization webhook kubeconfig of **every** spoke
+  cluster needs `client-certificate`/`client-key` (or the `-data` variants)
+  signed by `clientCAFile`. Without it the apiserver cannot reach the webhook,
+  and requests that depend on breakglass are denied or fall through to the
+  next authorizer, depending on the apiserver's webhook failure policy;
+- `bgctl` cannot present a client certificate today, so it cannot reach a
+  server running `require`. Use `verifyIfGiven`, or put a proxy in front
+  that presents a certificate. Other API clients need a client certificate.
 
-Health probes are served on the separate `--health-probe-bind-address` port
-and are not affected. The client certificate only authenticates the TLS
-connection; OIDC authentication and authorization are unchanged.
+Only the `listenAddress` server is affected. These listeners keep their own
+TLS settings and ignore `clientAuth`: health probes
+(`--health-probe-bind-address`, default `:8082`), controller metrics
+(`--metrics-bind-address`, default `:8081`), webhook metrics
+(`--webhooks-metrics-bind-address`) and the CRD validating webhook server
+(`--webhook-bind-address`, default `:9443`).
+
+mTLS here is transport-only. The server never reads the subject, SANs or any
+other field of the client certificate: any certificate that chains to
+`clientCAFile` is admitted, and it grants no identity, groups or permissions.
+OIDC authentication and authorization are unchanged. Use a dedicated client
+CA that signs only the intended clients, not a cluster CA that also signs
+kubelet or user certificates.
 
 #### `clientCAFile` (Optional)
 

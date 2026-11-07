@@ -48,15 +48,15 @@ func newTestCA(t *testing.T, name string) testCA {
 	return testCA{cert: cert, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
 }
 
-func (ca testCA) clientCert(t *testing.T) tls.Certificate {
+func (ca testCA) clientCert(t *testing.T, notAfter time.Time) tls.Certificate {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 	tmpl := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: "client"},
-		NotBefore:    time.Now().Add(-time.Hour),
-		NotAfter:     time.Now().Add(time.Hour),
+		NotBefore:    time.Now().Add(-2 * time.Hour),
+		NotAfter:     notAfter,
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
 	}
@@ -109,20 +109,23 @@ func TestServerTLSConfigClientAuth(t *testing.T) {
 		assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 		return nil
 	}
-	trustedCert := trusted.clientCert(t)
-	otherCert := other.clientCert(t)
+	trustedCert := trusted.clientCert(t, time.Now().Add(time.Hour))
+	expiredCert := trusted.clientCert(t, time.Now().Add(-time.Minute))
+	otherCert := other.clientCert(t, time.Now().Add(time.Hour))
 
 	tests := []struct {
 		name      string
 		mode      string
 		cert      *tls.Certificate
-		wantError bool
+		wantError string // substring of the TLS alert the client sees
 	}{
 		{name: "require/trusted", mode: config.ClientAuthRequire, cert: &trustedCert},
-		{name: "require/other-ca", mode: config.ClientAuthRequire, cert: &otherCert, wantError: true},
-		{name: "require/no-cert", mode: config.ClientAuthRequire, cert: nil, wantError: true},
+		{name: "require/other-ca", mode: config.ClientAuthRequire, cert: &otherCert, wantError: "tls: unknown certificate authority"},
+		{name: "require/expired", mode: config.ClientAuthRequire, cert: &expiredCert, wantError: "tls: expired certificate"},
+		{name: "require/no-cert", mode: config.ClientAuthRequire, cert: nil, wantError: "tls: certificate required"},
 		{name: "verifyIfGiven/trusted", mode: config.ClientAuthVerifyIfGiven, cert: &trustedCert},
-		{name: "verifyIfGiven/other-ca", mode: config.ClientAuthVerifyIfGiven, cert: &otherCert, wantError: true},
+		{name: "verifyIfGiven/other-ca", mode: config.ClientAuthVerifyIfGiven, cert: &otherCert, wantError: "tls: unknown certificate authority"},
+		{name: "verifyIfGiven/expired", mode: config.ClientAuthVerifyIfGiven, cert: &expiredCert, wantError: "tls: expired certificate"},
 		{name: "verifyIfGiven/no-cert", mode: config.ClientAuthVerifyIfGiven, cert: nil},
 		{name: "request/other-ca", mode: config.ClientAuthRequest, cert: &otherCert},
 		{name: "none/no-cert", mode: config.ClientAuthNone, cert: nil},
@@ -131,11 +134,22 @@ func TestServerTLSConfigClientAuth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := get(start(t, tt.mode), tt.cert)
-			if tt.wantError {
-				assert.Error(t, err)
+			if tt.wantError != "" {
+				assert.ErrorContains(t, err, tt.wantError)
 			} else {
 				assert.NoError(t, err)
 			}
 		})
 	}
+}
+
+// TestServerTLSConfigKeepsPolicy guards the server TLS baseline that mTLS
+// must not weaken.
+func TestServerTLSConfigKeepsPolicy(t *testing.T) {
+	cfg, err := serverTLSConfig(config.Server{TLSCertFile: "unused.crt", TLSKeyFile: "unused.key"})
+	require.NoError(t, err)
+	assert.Equal(t, uint16(tls.VersionTLS12), cfg.MinVersion)
+	assert.Len(t, cfg.CipherSuites, 6)
+	assert.Equal(t, tls.NoClientCert, cfg.ClientAuth)
+	assert.Nil(t, cfg.ClientCAs)
 }
