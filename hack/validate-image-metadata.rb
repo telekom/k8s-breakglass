@@ -84,9 +84,9 @@ if modern
       next
     end
 
-    # A versionSource is either a Dependabot-tracked Go module lock in the
-    # build context that requires the dependency, or the declared in-image
-    # installedPackages record that the context Dockerfile writes at build time.
+    # A versionSource is either the declared moduleLock (a Dependabot-tracked
+    # go.mod in the build context) that requires the dependency, or the
+    # declared installedPackages record the context Dockerfile writes.
     source = require_value(source.to_s, "dependency.versionSource is required")
     if source.start_with?("/")
       fail_contract("dependency #{name} versionSource #{source} must be the declared installedPackages record") unless source == document["installedPackages"]
@@ -95,16 +95,15 @@ if modern
       next
     end
 
+    fail_contract("dependency #{name} versionSource #{source} must be the declared moduleLock go.mod") unless source == document["moduleLock"] && File.basename(source) == "go.mod"
     source_parts = source.split("/")
     fail_contract("dependency #{name} versionSource must stay inside the context") if source_parts.include?("..") || source_parts.include?("")
     source_path = File.join(repo_root, context_name, source)
     fail_contract("dependency #{name} versionSource #{source} does not exist") unless File.file?(source_path)
-    if File.basename(source) == "go.mod"
-      # Match a require entry (single-line or inside a require block) with a
-      # version, not a tool, replace, exclude or comment line.
-      required = File.read(source_path).match?(/^(?:require\s+|\t)#{Regexp.escape(name)}\s+v\S+/)
-      fail_contract("dependency #{name} is not required by #{source}") unless required
-    end
+    # Match a require entry (single-line or inside a require block) with a
+    # version, not a tool, replace, exclude or comment line.
+    required = File.read(source_path).match?(/^(?:require\s+|\t)#{Regexp.escape(name)}\s+v\S+/)
+    fail_contract("dependency #{name} is not required by #{source}") unless required
   end
   require_array(contract["intents"], "contract.intents must be a non-empty list")
   modes_or_commands = contract["modes"] || contract["commands"]

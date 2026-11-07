@@ -23,6 +23,8 @@ cases=(
 	'{name: fio, versionSource: missing/go.mod}'
 	'{name: example.com/not-required, versionSource: kubestr/go.mod}'
 	'{name: github.com/graymeta/stow, versionSource: kubestr/go.mod}'
+	'{name: fio, versionSource: Dockerfile}'
+	'{name: github.com/kastenhq/kubestr, versionSource: kubestr/go.sum}'
 )
 for entry in "${cases[@]}"; do
 	mutated="${work}/image-metadata.yaml"
