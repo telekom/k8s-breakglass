@@ -372,10 +372,20 @@ controller-gen: $(CONTROLLER_GEN) ## Build controller-gen locally if necessary.
 $(CONTROLLER_GEN): $(TOOLS_DIR)/controller-gen/go.mod $(TOOLS_DIR)/controller-gen/go.sum | $(LOCALBIN)
 	$(call go-build-tool,$@,controller-gen,sigs.k8s.io/controller-tools/cmd/controller-gen)
 
-.PHONY: golangci-lint
-golangci-lint: $(GOLANGCI_LINT) ## Build golangci-lint locally if necessary.
-$(GOLANGCI_LINT): $(TOOLS_DIR)/golangci-lint/go.mod $(TOOLS_DIR)/golangci-lint/go.sum | $(LOCALBIN)
-	$(call go-build-tool,$@,golangci-lint,github.com/golangci/golangci-lint/v2/cmd/golangci-lint)
+# golangci-lint stays a versions.env pin: upstream recommends against building
+# it as a module dependency, and several of its linters are GPL-3.0, which the
+# dependency-review license policy rejects for tracked manifests.
+.PHONY: golangci-lint $(GOLANGCI_LINT)
+golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
+$(GOLANGCI_LINT): $(LOCALBIN)
+	@[ -f "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)" ] || { \
+	set -e; \
+	echo "Downloading github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)"; \
+	rm -f $(GOLANGCI_LINT) || true; \
+	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	mv $(GOLANGCI_LINT) $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION); \
+	} ; \
+	ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) $(GOLANGCI_LINT)
 
 .PHONY: setup-envtest
 setup-envtest: $(ENVTEST) ## Build setup-envtest locally if necessary.

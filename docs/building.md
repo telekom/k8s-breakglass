@@ -167,8 +167,7 @@ digests. Dependabot security alerts and security updates are repository settings
 separate from this version-update configuration.
 
 Go tools used by the Makefile and CI (kustomize, controller-gen,
-setup-envtest, golangci-lint, govulncheck, gosec, go-licenses, kind and
-actionlint) each have their own module under `hack/tools/<tool>/` with a
+setup-envtest, govulncheck, gosec, go-licenses, kind and actionlint) each have their own module under `hack/tools/<tool>/` with a
 `tool` directive. Dependabot `gomod` updates those `go.mod`/`go.sum` files;
 `make <tool>` and the `install-kind` composite action build the tool from
 them, and `go.sum` authenticates every downloaded module. Separate modules keep
@@ -212,7 +211,7 @@ a green Dependabot run as proof that these are current:
 
 | Pins | Required maintenance |
 | --- | --- |
-| Root `versions.env` (`ENVTEST_K8S_VERSION` only) | Review envtest asset availability manually against the kind node image minor. |
+| Root `versions.env` (`ENVTEST_K8S_VERSION`, `GOLANGCI_LINT_VERSION`) | Review manually. golangci-lint is not a tracked module because upstream recommends against building it as a dependency and some of its linters are GPL-3.0, which the dependency-review license policy rejects; the weekly `Check Tool Updates` workflow reports new releases. Check envtest asset availability against the kind node image minor. |
 | Utility Dockerfile package versions and `deps.lock` / `versions.env` | Review full Alpine/Debian binary-package versions, including epochs and rebuild revisions, against the package indexes for both amd64 and arm64. Synchronize the Dockerfile, lock and metadata; Debian source versions are not substitutes for exact binary versions. |
 | `pwru` and `kubestr` build inputs | Coordinate upstream versions, module checksums, commits and dependency overrides in the same reviewed update. |
 | kubectl, Node.js and cert-manager used by CI/E2E scripts | Review these unsupported version literals manually against the supported compatibility floor. |
