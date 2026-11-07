@@ -95,9 +95,11 @@ updates:
   # Makefile and CI Go tools. Each hack/tools/<tool> directory is a separate
   # module so every tool keeps exactly its own upstream dependency graph.
   # Only the tools themselves (recorded as indirect requirements by the `tool`
-  # directive) are updated, plus golang.org/x/tools, which gosec needs ahead of
-  # its own requirement for the current Go export-data format. Other indirect
-  # modules follow each tool's own releases.
+  # directive) are updated; indirect modules follow each tool's own releases.
+  # `allow` applies to every directory, so golang.org/x/tools is deliberately
+  # absent: listing it would also move controller-gen, govulncheck and
+  # go-licenses off their upstream graphs. gosec's x/tools floor (ahead of its
+  # own requirement, for the current Go export-data format) is raised manually.
   - package-ecosystem: "gomod"
     directories:
       - /hack/tools/*
@@ -117,8 +119,6 @@ updates:
       - dependency-name: "sigs.k8s.io/kind"
         dependency-type: "all"
       - dependency-name: "github.com/rhysd/actionlint"
-        dependency-type: "all"
-      - dependency-name: "golang.org/x/tools"
         dependency-type: "all"
     schedule:
       interval: "weekly"
