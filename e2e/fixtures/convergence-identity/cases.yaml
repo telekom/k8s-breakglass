@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+
+# The expected group comes from the configured test identity. This fixture
+# describes the compatibility prefix without copying production identifiers.
+groupClaim: groups
+compatibilityGroupPrefix: "oidc:"

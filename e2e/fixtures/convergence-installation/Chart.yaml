@@ -1,0 +1,7 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+# SPDX-License-Identifier: Apache-2.0
+apiVersion: v2
+name: convergence-installation
+description: Public Breakglass template modes exercised by convergence E2E
+type: application
+version: 0.1.0

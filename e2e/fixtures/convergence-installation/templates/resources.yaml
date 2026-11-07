@@ -1,0 +1,125 @@
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugPodTemplate
+metadata:
+  name: {{ .Release.Name }}-workload
+spec:
+  displayName: Convergence workload fixture
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/managed-by: convergence-installation
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: diagnostic
+        image: nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+        command: ["/bin/sh", "-c", "exec timeout 4h sleep 4h"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: [ALL]
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ .Release.Name }}-workload
+spec:
+  displayName: Convergence workload
+  mode: workload
+  podTemplateRef:
+    name: {{ .Release.Name }}-workload
+  workloadType: DaemonSet
+  targetNamespace: {{ .Release.Namespace }}
+  failMode: closed
+  constraints:
+    maxDuration: 2h
+    defaultDuration: 30m
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ .Release.Name }}-node-debug
+spec:
+  displayName: Convergence node diagnostics
+  mode: kubectl-debug
+  targetNamespace: {{ .Release.Namespace }}
+  failMode: closed
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: false
+    nodeDebug:
+      enabled: true
+      allowedImages:
+      - nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+        hostIPC: false
+    podCopy:
+      enabled: false
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ .Release.Name }}-emergency-node-debug
+spec:
+  displayName: Convergence emergency node diagnostics
+  mode: kubectl-debug
+  targetNamespace: {{ .Release.Namespace }}
+  failMode: closed
+  kubectlDebug:
+    ephemeralContainers:
+      enabled: false
+    nodeDebug:
+      enabled: true
+      allowedImages:
+      - nicolaka/netshoot@sha256:b09d9b21381f47a79b3cbcb30da25266dc17186ea00ae65e99fdc51396f48e70
+      hostNamespaces:
+        hostNetwork: true
+        hostPID: true
+        hostIPC: false
+    podCopy:
+      enabled: false
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ .Release.Name }}-etcd-snapshot
+spec:
+  displayName: Convergence etcd snapshot
+  mode: workload
+  podTemplateRef:
+    name: {{ .Release.Name }}-workload
+  workloadType: Job
+  targetNamespace: {{ .Release.Namespace }}
+  failMode: closed
+  constraints:
+    maxDuration: 2h
+    defaultDuration: 30m
+---
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionTemplate
+metadata:
+  name: {{ .Release.Name }}-etcd-defrag
+spec:
+  displayName: Convergence etcd defrag
+  mode: workload
+  podTemplateRef:
+    name: {{ .Release.Name }}-workload
+  workloadType: Job
+  targetNamespace: {{ .Release.Namespace }}
+  failMode: closed
+  constraints:
+    maxDuration: 2h
+    defaultDuration: 30m

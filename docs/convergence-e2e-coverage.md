@@ -23,8 +23,9 @@ and rc.26; those versions are not all independently executed by this fixture.
 | Production hub removes stage split | HelmRelease upgrade and target assertions |
 | Disabled providers do not block installation | Disabled IdentityProvider, MailProvider and AuditConfig fixtures |
 | Binding schema validity | Go validator, including malformed-binding negative regression |
-| Internal group and issuer mappings | Not equivalent: test identities replace internal identities |
-| Node diagnostics and etcd snapshot/defrag execution | Not proven: templates are installed but their tools are not executed |
+| Internal group and issuer mappings | A live OIDC token exercises exact group matching; test identities replace internal providers and are not equivalent |
+| Node diagnostics | Authenticated requester creates the node pod, verifies the selected node, and executes read-only diagnostics with an OIDC token |
+| etcd snapshot/defrag execution | Not proven: templates are installed but their tools are not executed |
 | Internal utility images and registries | Not proven: private images are replaced |
 | Actual Function installation and Bundle reconciliation | Not proven: the test starts from rendered resources in a Helm chart |
 | Historical Function versions and all cluster overrides | Not exhaustively executed |
