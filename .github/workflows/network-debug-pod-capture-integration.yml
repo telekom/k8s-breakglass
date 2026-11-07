@@ -28,6 +28,10 @@ env:
   KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
   NETWORK_DEBUG_IMAGE: network-debug:pod-capture-integration
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   static:
     name: Network-debug static behavior
