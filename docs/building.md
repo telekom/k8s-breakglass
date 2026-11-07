@@ -139,6 +139,10 @@ This includes:
 dependencies daily. A root Docker directory is not recursive: add each new
 Docker build context or Kubernetes manifest directory to its `directories` list.
 
+The `CI Gate` workflow merges a Dependabot PR once every other check on it has
+passed, then dispatches the main-branch workflows a merge would normally start.
+Semver-major updates other than GitHub Actions wait for a maintainer.
+
 Docker major and minor/patch version changes keep separate groups. The final
 `docker-digests` group has no `update-types` filter: digest-only changes do not
 increase a SemVer component and otherwise fall through to individual PRs.

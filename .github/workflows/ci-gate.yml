@@ -1,0 +1,172 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Single required check for the main ruleset, plus Dependabot auto-merge.
+#
+# all-checks-green waits until every other workflow run, check run and commit
+# status on the PR head commit has finished, and fails as soon as one of them
+# is not success, skipped or neutral. Path-filtered and conditional workflows
+# therefore never block a merge just because they did not run.
+#
+# dependabot-auto-merge merges Dependabot PRs once the gate is green. Merges
+# made with GITHUB_TOKEN do not trigger push workflows, so it then dispatches
+# the workflows that would have run on the push to main.
+name: CI Gate
+
+on:
+  pull_request:
+    branches: [main]
+    # edited: re-evaluate when the title or base branch changes (title checks
+    # re-run on edits; stacked PRs get retargeted to main).
+    types: [opened, synchronize, reopened, edited]
+
+permissions: {}
+
+concurrency:
+  group: ci-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  all-checks-green:
+    name: all-checks-green
+    runs-on: ubuntu-latest
+    # Slowest PR workflow (CI, kind E2E) takes ~2 hours, occasionally ~2h45m.
+    timeout-minutes: 245
+    permissions:
+      actions: read
+      checks: read
+      statuses: read
+    steps:
+      - name: Wait for all other checks on the head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SELF: ${{ github.workflow_ref }}
+          TIMEOUT_MINUTES: 240
+        run: |
+          set -uo pipefail
+          self_path="${SELF#"${GITHUB_REPOSITORY}"/}"
+          self_path="${self_path%@*}"
+          api="repos/${GITHUB_REPOSITORY}"
+          # One TSV line per item: kind+name, status, conclusion. Only the
+          # newest run per workflow and check run per app+name count, so
+          # superseded (re-run or concurrency-cancelled) attempts are ignored.
+          collect() {
+            gh api --paginate "${api}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" |
+              jq -rs --arg self "${self_path}" '[.[].workflow_runs[] | select(.path != $self)]
+                | group_by(.workflow_id)[] | max_by(.run_number)
+                | ["workflow " + .name, .status, .conclusion // ""] | @tsv' &&
+            gh api --paginate "${api}/commits/${HEAD_SHA}/check-runs?per_page=100" |
+              jq -rs '[.[].check_runs[] | select(.name != "all-checks-green" and .name != "dependabot-auto-merge")]
+                | group_by([.app.id, .name])[] | max_by(.id)
+                | ["check " + .name, .status, .conclusion // ""] | @tsv' &&
+            gh api "${api}/commits/${HEAD_SHA}/status?per_page=100" |
+              jq -r '.statuses[] | ["status " + .context, (if .state == "pending" then "pending" else "completed" end), .state] | @tsv'
+          }
+          deadline=$((SECONDS + TIMEOUT_MINUTES * 60))
+          sleep 30 # let workflows triggered by the same event register
+          while :; do
+            if state="$(collect)"; then
+              failed="$(awk -F'\t' '$2 == "completed" && $3 !~ /^(success|skipped|neutral)$/' <<<"${state}")"
+              pending="$(awk -F'\t' '$2 != "completed"' <<<"${state}")"
+              if [[ -n "${failed}" ]]; then
+                echo "::error::Checks did not pass:"
+                echo "${failed}"
+                exit 1
+              fi
+              if [[ -n "${state}" && -z "${pending}" ]]; then
+                echo "All checks are green:"
+                echo "${state}"
+                exit 0
+              fi
+              echo "Waiting for: $(cut -f1 <<<"${pending:-nothing registered yet}" | paste -sd, -)"
+            else
+              echo "::warning::GitHub API query failed, retrying"
+            fi
+            if ((SECONDS >= deadline)); then
+              echo "::error::Timed out after ${TIMEOUT_MINUTES} minutes"
+              exit 1
+            fi
+            sleep 30
+          done
+
+  dependabot-auto-merge:
+    name: dependabot-auto-merge
+    needs: all-checks-green
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # Major GitHub Actions bumps are routinely merged unchanged here; other
+      # major bumps usually need code changes, so they wait for a human.
+      - name: Merge and dispatch main workflows
+        if: steps.metadata.outputs.update-type != 'version-update:semver-major' || steps.metadata.outputs.package-ecosystem == 'github_actions'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Every workflow that runs on push to main, with any dispatch inputs.
+          DISPATCH: |
+            audit-delivery.yml
+            catalogue-utility-integration.yml -f ref=main
+            changelog.yml
+            ci.yml
+            diagnostic-artifact-collector-image.yml
+            hotfix-controller.yml
+            network-debug-pod-capture-integration.yml
+            node-maintenance-controller.yml
+            node-maintenance.yml
+            openssf-scorecard.yml
+            ort.yml
+            reuse-compliance.yml
+            security.yml
+            storage-image-behavior.yml
+            utility-image-security.yml
+            utility-release.yml
+            workload-debug.yml
+        run: |
+          set -euo pipefail
+          gh pr merge "${PR_NUMBER}" --squash --match-head-commit "${HEAD_SHA}"
+          changed="$(gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files?per_page=100" --jq '.[].filename')"
+          # Mirror on.push.paths: true when the workflow has no path filter or
+          # a changed file matches one. ponytail: bash globbing lets `*` cross
+          # `/`, so this can only over-dispatch; paths-ignore is not evaluated
+          # (always dispatches) and `!` patterns are unsupported (none in use).
+          wanted() {
+            local file pattern patterns
+            mapfile -t patterns < <(gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/.github/workflows/$1?ref=main" | yq '.on.push.paths // [] | .[]')
+            ((${#patterns[@]})) || return 0
+            while IFS= read -r file; do
+              for pattern in "${patterns[@]}"; do
+                # shellcheck disable=SC2053 # glob match is intended
+                [[ "${file}" == ${pattern} ]] && return 0
+              done
+            done <<<"${changed}"
+            return 1
+          }
+          rc=0
+          while read -r -a line; do
+            ((${#line[@]})) || continue
+            workflow="${line[0]}"
+            inputs=("${line[@]:1}")
+            if ! wanted "${workflow}"; then
+              echo "Skipping ${workflow}: no changed file matches its push paths"
+            elif gh workflow run "${workflow}" --ref main "${inputs[@]}"; then
+              echo "Dispatched ${workflow}"
+            else
+              echo "::error::Could not dispatch ${workflow}"
+              rc=1
+            fi
+          done <<<"${DISPATCH}"
+          exit "${rc}"
