@@ -15,6 +15,13 @@ path = ["*.go", "go.mod", "go.sum", "pkg/**.go", "internal/**.go", "api/**.go", 
 SPDX-FileCopyrightText = "2025 Deutsche Telekom AG"
 SPDX-License-Identifier = "Apache-2.0"
 
+# Go tool modules updated by Dependabot
+[[annotations]]
+precedence = "aggregate"
+path = ["hack/tools/**/go.mod", "hack/tools/**/go.sum"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"
+
 # Config files
 [[annotations]]
 precedence = "aggregate"

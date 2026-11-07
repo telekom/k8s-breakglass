@@ -34,7 +34,6 @@ permissions:
   attestations: read
 
 env:
-  KIND_VERSION: v0.32.0
   KIND_NODE_IMAGE: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
 
 concurrency:
@@ -54,16 +53,8 @@ jobs:
           go-version-file: go.mod
           cache: true
       - uses: ./.github/actions/kind-inotify-limits
-      - name: Install Kind
-        run: |
-          curl -fsSL -o ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
-          curl -fsSL -o ./kind.sha256sum "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64.sha256sum"
-          kind_sha256="$(awk '$2 == "kind-linux-amd64" { print $1 }' ./kind.sha256sum)"
-          test "${#kind_sha256}" -eq 64
-          printf '%s  ./kind\n' "$kind_sha256" | sha256sum --check --status
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+      - name: Install kind
+        uses: ./.github/actions/install-kind
       - name: Set up Helm
         uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
         with:

@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Install kind
+description: >-
+  Build kind from the Dependabot-tracked hack/tools/kind module. go.sum
+  authenticates every downloaded module, so a version bump is a reviewed
+  go.mod/go.sum change instead of a hand-maintained URL and checksum. The Go
+  toolchain named by that go.mod is selected automatically (GOTOOLCHAIN=auto).
+
+runs:
+  using: composite
+  steps:
+    - name: Build and install kind
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        out="$(mktemp -d)"
+        go -C "${GITHUB_WORKSPACE}/hack/tools/kind" build -trimpath -o "${out}/kind" sigs.k8s.io/kind
+        sudo install -m 0755 "${out}/kind" /usr/local/bin/kind
+        rm -rf "${out}"
+        kind version

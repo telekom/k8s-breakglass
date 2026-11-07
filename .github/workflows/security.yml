@@ -42,7 +42,7 @@ jobs:
       - name: Install govulncheck
         id: install
         continue-on-error: true
-        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+        run: go -C hack/tools/govulncheck install golang.org/x/vuln/cmd/govulncheck
 
       - name: Run govulncheck
         id: scan
@@ -75,17 +75,12 @@ jobs:
         id: install_gosec
         continue-on-error: true
         run: |
-          # Pin a Go 1.27-compatible export-data reader until gosec includes it.
-          mkdir -p .gosec-build
-          cd .gosec-build
-          go mod init breakglass.local/gosec-build
-          GOSEC_VERSION=v2.29.0
-          X_TOOLS_VERSION=v0.50.0
+          # hack/tools/gosec/go.mod pins gosec and a Go 1.27-compatible
+          # golang.org/x/tools export-data reader; Dependabot updates both.
           # Bounded retries tolerate transient proxy failures and fail closed.
           install_status=1
           for attempt in 1 2 3; do
-            if go get "github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}" "golang.org/x/tools@${X_TOOLS_VERSION}" &&
-               go build -o "$(go env GOPATH)/bin/" github.com/securego/gosec/v2/cmd/gosec; then
+            if go -C hack/tools/gosec build -o "$(go env GOPATH)/bin/" github.com/securego/gosec/v2/cmd/gosec; then
               install_status=0
               break
             fi
@@ -218,7 +213,7 @@ jobs:
           go-version-file: go.mod
 
       - name: Install go-licenses
-        run: go install github.com/google/go-licenses/v2@v2.0.1
+        run: go -C hack/tools/go-licenses install github.com/google/go-licenses/v2
 
       - name: Check dependency licenses
         run: |
