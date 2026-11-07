@@ -451,19 +451,11 @@ func (wc *BreakglassSessionController) resolveAndAddGroupMembers(
 			members = members[:MaxApproverGroupMembers]
 		}
 
-		// Log member count (after truncation) to avoid PII leakage for large groups.
-		// Only log individual members at Debug level when the group is small enough.
-		if len(members) <= 20 {
-			reqLog.Debugw("Resolved approver group members",
-				"group", system.RedactGroupName(group),
-				"escalation", p.Name,
-				"memberCount", len(members))
-		} else {
-			reqLog.Debugw("Resolved approver group members",
-				"group", system.RedactGroupName(group),
-				"escalation", p.Name,
-				"memberCount", len(members))
-		}
+		// Log only the member count (after truncation), never the members, to avoid PII leakage.
+		reqLog.Debugw("Resolved approver group members",
+			"group", system.RedactGroupName(group),
+			"escalation", p.Name,
+			"memberCount", len(members))
 
 		// Calculate how many more approvers we can add
 		remainingCapacity := MaxTotalApprovers - len(result.allApprovers)
