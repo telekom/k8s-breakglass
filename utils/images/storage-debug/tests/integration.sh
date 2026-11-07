@@ -112,13 +112,21 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
 fi
 
 build_info="$(run_docker --rm --network none --cap-drop ALL --entrypoint cat "$image" /usr/share/breakglass/kubestr-build-info)"
-# Build info omits unused modules; x/crypto is not necessarily linked by kubestr.
-for module in NET CRYPTO TEXT; do
-    version="$(awk -F= -v key="X_${module}_VERSION" '$1 == key { print $2 }' "$root/versions.env")"
-    lower="$(printf '%s' "$module" | tr '[:upper:]' '[:lower:]')"
-    printf '%s\n' "$build_info" | awk -v name="golang.org/x/$lower" -v expected="$version" \
-        'BEGIN { found = (name == "golang.org/x/crypto") } $1 == "dep" && $2 == name { found = ($3 == expected) } END { exit !found }' ||
-        fail "compiled kubestr module $lower differs from the dependency lock"
+# kubestr/go.mod is the Dependabot-tracked module lock. Build info omits
+# unused modules, so an x/* module absent from the lock must not be linked.
+for module in net crypto text; do
+    version="$(awk -v name="golang.org/x/$module" '$1 == name { print $2 }' "$root/kubestr/go.mod")"
+    printf '%s\n' "$build_info" | awk -v name="golang.org/x/$module" -v expected="$version" \
+        '$1 == "dep" && $2 == name { found = 1; ok = ($3 == expected) } END { exit !(found ? ok : expected == "") }' ||
+        fail "compiled kubestr module x/$module differs from kubestr/go.mod"
+done
+kubestr_version="$(awk '$1 == "github.com/kastenhq/kubestr" { print $2 }' "$root/kubestr/go.mod")"
+printf '%s\n' "$build_info" | awk -v expected="$kubestr_version" '$1 == "mod" && $2 == "github.com/kastenhq/kubestr" { found = ($3 == expected) } END { exit !found }' ||
+    fail 'compiled kubestr version differs from kubestr/go.mod'
+installed_packages="$(run_docker --rm --network none --cap-drop ALL --entrypoint cat "$image" /usr/share/breakglass/installed-packages)"
+for package in fio ioping musl zlib; do
+    printf '%s\n' "$installed_packages" | grep -E "^${package}-[0-9]" >/dev/null ||
+        fail "installed package record does not list $package"
 done
 
 [ "$(docker image inspect "$image" --format '{{.Config.User}}')" = '65532:65532' ] || \

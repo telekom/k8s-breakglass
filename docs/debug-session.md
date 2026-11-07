@@ -2444,8 +2444,7 @@ The following test categories are implemented:
 - **E2E tests**: Template creation, session lifecycle, multi-participant sessions, kubectl-debug operations
 - **Frontend tests**: 478 tests passing (Vitest)
 
-The workload-debug image pins its Alpine packages in `utils/workload-debug/deps.lock`, `Dockerfile`, and `IMAGE-METADATA.yaml`. Refresh all three together when Alpine replaces package revisions; the image behavior workflow verifies the resulting build.
-The node-maintenance image similarly keeps its Alpine flock pin aligned in its Dockerfile and dependency inventory.
+The workload-debug and node-maintenance images do not pin Alpine package versions. They follow the digest-pinned base image (updated by Dependabot), upgrade the inherited packages on build, and record the installed versions in `/usr/share/breakglass/installed-packages` and the SBOM; the image behavior workflows verify each rebuilt image.
 
 Tracked-resource cleanup keeps the recorded resource UID and cleanup status after
 an accepted deletion until the original resource is absent. Finalizers and
