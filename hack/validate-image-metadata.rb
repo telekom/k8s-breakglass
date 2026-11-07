@@ -29,6 +29,16 @@ def require_array(value, message)
   value
 end
 
+def validate_shared(platforms, base_digest, context_name, image_name, modern)
+  expected_platforms = ["linux/amd64", "linux/arm64"]
+  fail_contract("platform declarations must be exactly linux/amd64 and linux/arm64") unless platforms == expected_platforms
+  fail_contract("base digest is not an immutable sha256 digest") unless base_digest.match?(/\Asha256:[0-9a-f]{64}\z/)
+
+  context_components = context_name.split("/")
+  fail_contract("context must be a relative repository path") if context_name.start_with?("/") || context_name.empty? || context_components.include?("..") || context_components.include?("")
+  fail_contract("image name must match the context directory") if modern && File.basename(image_name.to_s) != File.basename(context_name)
+end
+
 metadata_file = ARGV.fetch(0) { fail_contract("metadata path is required") }
 repo_root = File.expand_path("..", __dir__)
 metadata_path = File.expand_path(metadata_file, repo_root)
@@ -47,37 +57,10 @@ if modern
   attestations = require_hash(document["attestations"], "attestations must be a mapping")
   signing = require_hash(document["signing"], "signing must be a mapping")
   platforms = require_array(document["platforms"], "platforms must be a non-empty list")
-  base_image = require_value(base["image"], "base.image is required")
+  require_value(base["image"], "base.image is required")
   base_digest = require_value(base["digest"], "base.digest is required")
-else
-  schema = document["schemaVersion"]
-  fail_contract("unsupported metadata schema") unless schema == 1
-  image = require_hash(document["image"], "image must be a mapping")
-  base = require_hash(image["base"], "image.base must be a mapping")
-  provenance = require_hash(document["provenance"], "provenance must be a mapping")
-  sbom = require_hash(provenance["sbom"], "provenance.sbom must be a mapping")
-  signing = require_hash(provenance["signing"], "provenance.signing must be a mapping")
-  image_name = require_value(image["name"], "image.name is required")
-  context_name = File.dirname(metadata_file)
-  platforms = require_array(image["platforms"], "image.platforms must be a non-empty list")
-  base_image = require_value(base["name"], "image.base.name is required")
-  base_digest = require_value(base["digest"], "image.base.digest is required")
-  fail_contract("provenance.sbom.format must be spdx-json") unless sbom["format"] == "spdx-json"
-  fail_contract("provenance.sbom.command must be executable") unless sbom["command"].to_s.include?("syft")
-  fail_contract("provenance.signing.tool must be cosign") unless signing["tool"] == "cosign"
-  fail_contract("provenance.signing.mode must be keyless") unless signing["mode"] == "keyless"
-  require_array(signing["commands"], "provenance.signing.commands must be a non-empty list")
-end
+  validate_shared(platforms, base_digest, context_name, image_name, modern)
 
-expected_platforms = ["linux/amd64", "linux/arm64"]
-fail_contract("platform declarations must be exactly linux/amd64 and linux/arm64") unless platforms == expected_platforms
-fail_contract("base digest is not an immutable sha256 digest") unless base_digest.match?(/\Asha256:[0-9a-f]{64}\z/)
-
-context_components = context_name.split("/")
-fail_contract("context must be a relative repository path") if context_name.start_with?("/") || context_name.empty? || context_components.include?("..") || context_components.include?("")
-fail_contract("image name must match the context directory") if modern && File.basename(image_name.to_s) != File.basename(context_name)
-
-if modern
   runtime_user = require_value(runtime["user"], "runtime.user is required")
   fail_contract("runtime.user must be numeric uid:gid") unless runtime_user.match?(/\A[0-9]+:[0-9]+\z/)
   fail_contract("runtime.user must not be root") if runtime_user.split(":", 2).first == "0"
@@ -110,7 +93,25 @@ if modern
   fail_contract("signing tool must be Cosign") unless signing["tool"] == "cosign"
   fail_contract("signing identity must be keyless") unless signing["identity"] == "keyless"
   fail_contract("signing verification must target an immutable digest") unless signing["verify_command"].to_s.include?("@DIGEST")
-
+else
+  schema = document["schemaVersion"]
+  fail_contract("unsupported metadata schema") unless schema == 1
+  image = require_hash(document["image"], "image must be a mapping")
+  base = require_hash(image["base"], "image.base must be a mapping")
+  provenance = require_hash(document["provenance"], "provenance must be a mapping")
+  sbom = require_hash(provenance["sbom"], "provenance.sbom must be a mapping")
+  signing = require_hash(provenance["signing"], "provenance.signing must be a mapping")
+  image_name = require_value(image["name"], "image.name is required")
+  context_name = File.dirname(metadata_file)
+  platforms = require_array(image["platforms"], "image.platforms must be a non-empty list")
+  require_value(base["name"], "image.base.name is required")
+  base_digest = require_value(base["digest"], "image.base.digest is required")
+  fail_contract("provenance.sbom.format must be spdx-json") unless sbom["format"] == "spdx-json"
+  fail_contract("provenance.sbom.command must be executable") unless sbom["command"].to_s.include?("syft")
+  fail_contract("provenance.signing.tool must be cosign") unless signing["tool"] == "cosign"
+  fail_contract("provenance.signing.mode must be keyless") unless signing["mode"] == "keyless"
+  require_array(signing["commands"], "provenance.signing.commands must be a non-empty list")
+  validate_shared(platforms, base_digest, context_name, image_name, modern)
 end
 
 puts "validated #{metadata_file} (#{image_name})"

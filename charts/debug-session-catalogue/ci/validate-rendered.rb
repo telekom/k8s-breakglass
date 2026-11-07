@@ -29,7 +29,7 @@ def objects_of(documents, kind)
   documents.select { |document| document.is_a?(Hash) && document["kind"] == kind }
 end
 
-begin
+documents = begin
   # Helm emits ordinary JSON-compatible Kubernetes objects. Use Psych's
   # restricted visitor for every stream document so a rendered value cannot
   # instantiate arbitrary Ruby classes while being validated.
@@ -37,7 +37,7 @@ begin
   class_loader = Psych::ClassLoader::Restricted.new([], [])
   scanner = Psych::ScalarScanner.new(class_loader)
   visitor = Psych::Visitors::NoAliasRuby.new(scanner, class_loader)
-  documents = stream.children.map { |document| visitor.accept(document.root) }.compact
+  stream.children.map { |document| visitor.accept(document.root) }.compact
 rescue StandardError => error
   fail_validation("Helm output is not valid YAML: #{error.message}")
 end
