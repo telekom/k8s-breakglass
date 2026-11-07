@@ -10,8 +10,8 @@ form is not. The test uses a generic test identity and does not copy production
 group names, user identifiers, issuer URLs, or credentials into its fixture.
 
 The case file at `e2e/fixtures/convergence-identity/cases.yaml` pins the claim
-name and the compatibility prefix. The actual group value comes from the
-issued token, so this proves the active E2E identity provider's group mapping
+name and the compatibility prefix. The expected group comes from the configured test identity and must occur in
+the issued token, so this proves the active E2E identity provider's group mapping
 and the application's exact-match authorization behavior together.
 
 This case does not prove all issuer/provider combinations, internal IdP object

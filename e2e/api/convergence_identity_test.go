@@ -39,8 +39,9 @@ func TestConvergenceIdentityGroupMapping(t *testing.T) {
 	user := helpers.TestUsers.PlatformIdentityRequester
 	token := s.TC.OIDCProvider().GetTokenForUser(t, ctx, user)
 	groups := oidcClaimStrings(t, token, cases.GroupClaim)
-	require.NotEmpty(t, groups, "the authenticated token must carry mapped groups")
-	group := groups[0]
+	require.NotEmpty(t, user.Groups, "the test identity must define its expected groups")
+	group := user.Groups[0]
+	require.Contains(t, groups, group, "the authenticated token must carry the configured group")
 
 	createTemplate := func(suffix string) *breakglassv1alpha1.DebugSessionTemplate {
 		t.Helper()
