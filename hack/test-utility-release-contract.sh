@@ -22,13 +22,19 @@ expect_fail() {
 	fi
 }
 
-actionlint_commit=03d0035246f3e81f36aed592ffb4bebf33a03106
-grep -F "github.com/rhysd/actionlint/cmd/actionlint@${actionlint_commit} -ignore" "${utility_workflow}" >/dev/null || {
-	printf '%s\n' 'utility workflow must pin actionlint to its verified v1.7.7 commit' >&2
+# actionlint is pinned by the Dependabot-tracked hack/tools/actionlint module;
+# go.sum (backed by the Go checksum database) makes the version immutable.
+grep -F "go -C hack/tools/actionlint tool actionlint -ignore" "${utility_workflow}" >/dev/null || {
+	printf '%s\n' 'utility workflow must run actionlint from hack/tools/actionlint' >&2
 	exit 1
 }
-if grep -E 'github.com/rhysd/actionlint/cmd/actionlint@v?1\.7\.7([[:space:]]|$)' "${utility_workflow}" >/dev/null; then
-	printf '%s\n' 'utility workflow uses a mutable actionlint version reference' >&2
+actionlint_version="$(awk '$1 == "github.com/rhysd/actionlint" { print $2 }' "${root}/hack/tools/actionlint/go.mod")"
+grep -E "^github\.com/rhysd/actionlint ${actionlint_version} h1:" "${root}/hack/tools/actionlint/go.sum" >/dev/null || {
+	printf '%s\n' 'hack/tools/actionlint/go.sum must authenticate the required actionlint module' >&2
+	exit 1
+}
+if grep -E 'github.com/rhysd/actionlint/cmd/actionlint@' "${utility_workflow}" >/dev/null; then
+	printf '%s\n' 'utility workflow must not install actionlint by an inline version reference' >&2
 	exit 1
 fi
 

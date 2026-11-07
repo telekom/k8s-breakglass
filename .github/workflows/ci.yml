@@ -17,7 +17,6 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  KIND_VERSION: 'v0.32.0'
   KIND_NODE_IMAGE: 'kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5'
 
 concurrency:
@@ -459,10 +458,7 @@ jobs:
         run: bash charts/escalation-config/ci/test-node-maintenance.sh
       - uses: ./.github/actions/kind-inotify-limits
       - name: Install kind
-        run: |
-          curl -fsSL -o /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
-          chmod +x /tmp/kind
-          sudo mv /tmp/kind /usr/local/bin/kind
+        uses: ./.github/actions/install-kind
       - name: Server dry-run optional ValidatingAdmissionPolicy resources
         run: |
           kind create cluster --name vap-validation --image "${KIND_NODE_IMAGE}" --wait 120s
@@ -914,12 +910,8 @@ jobs:
           cache: true
 
       - uses: ./.github/actions/kind-inotify-limits
-      - name: Install Kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+      - name: Install kind
+        uses: ./.github/actions/install-kind
 
       - name: Setup E2E environment
         id: setup
@@ -1488,12 +1480,8 @@ jobs:
           cache: true
 
       - uses: ./.github/actions/kind-inotify-limits
-      - name: Install Kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+      - name: Install kind
+        uses: ./.github/actions/install-kind
 
       - name: Setup E2E environment
         id: setup
@@ -1799,12 +1787,8 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - uses: ./.github/actions/kind-inotify-limits
-      - name: Install Kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+      - name: Install kind
+        uses: ./.github/actions/install-kind
 
       - name: Setup E2E environment
         id: setup
@@ -2461,12 +2445,8 @@ jobs:
           cache: true
 
       - uses: ./.github/actions/kind-inotify-limits
-      - name: Install Kind
-        run: |
-          curl -Lo ./kind https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64
-          chmod +x ./kind
-          sudo mv ./kind /usr/local/bin/kind
-          kind version
+      - name: Install kind
+        uses: ./.github/actions/install-kind
 
       - name: Run multi-cluster setup
         id: setup
