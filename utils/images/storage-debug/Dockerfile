@@ -10,9 +10,11 @@ ARG TARGETARCH
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
 # kubestr and its Go module graph come from kubestr/go.mod and kubestr/go.sum,
 # which Dependabot tracks; go.sum authenticates every downloaded module,
-# including kubestr itself. The patched source replaces only the kubestr
-# module, so the binary links exactly the tracked graph (checked below) and
-# dependency bumps (for example golang.org/x/net) need no Dockerfile edits.
+# including kubestr itself. The build fails if go.sum lacks an entry or if
+# kubestr's own replace directives are not mirrored in kubestr/go.mod. The
+# patched source replaces only the kubestr module, so the binary links exactly
+# the tracked graph (checked below) and dependency bumps (for example
+# golang.org/x/net) need no Dockerfile edits.
 # kubestr creates the fio Pod without a security context, registry credentials
 # or an owner. The patch runs it as the image user with fsGroup, passes the
 # runner's pull secrets and makes the runner Pod own every generated object.
@@ -20,15 +22,20 @@ COPY kubestr/go.mod kubestr/go.sum /src/tools/
 COPY patches/kubestr-fio-breakglass-pod-contract.patch /src/patches/
 WORKDIR /src/tools
 RUN set -eux; \
+    cp go.sum /tmp/tracked-go.sum; \
     go mod download github.com/kastenhq/kubestr; \
     go list -m -f '{{.Path}} {{.Version}}' all > /tmp/tracked-modules; \
     mkdir -p /src/kubestr /out; \
     cp -a "$(go list -m -f '{{.Dir}}' github.com/kastenhq/kubestr)/." /src/kubestr/; \
     chmod -R u+w /src/kubestr; \
-    git -C /src/kubestr apply /src/patches/kubestr-fio-breakglass-pod-contract.patch; \
+    sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' /src/kubestr/go.mod > /tmp/upstream-replaces; \
+    sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' go.mod > /tmp/tracked-replaces; \
+    cmp /tmp/upstream-replaces /tmp/tracked-replaces || { echo "kubestr replace directives differ from kubestr/go.mod" >&2; exit 1; }; \
+    git -C /src/kubestr apply --verbose /src/patches/kubestr-fio-breakglass-pod-contract.patch; \
     go mod edit -replace github.com/kastenhq/kubestr=/src/kubestr; \
     GOARCH="$(go env GOHOSTARCH)" go test github.com/kastenhq/kubestr/pkg/fio; \
     go build -trimpath -ldflags='-s -w' -o /out/kubestr github.com/kastenhq/kubestr; \
+    cmp go.sum /tmp/tracked-go.sum || { echo "kubestr/go.sum is incomplete; run go mod tidy in utils/images/storage-debug/kubestr" >&2; exit 1; }; \
     go version -m /out/kubestr > /out/kubestr-build-info; \
     cat /out/kubestr-build-info; \
     awk 'NR == FNR { tracked[$1] = $2; next } ($1 == "dep" || $1 == "mod") && tracked[$2] != $3 { print "linked " $2 " " $3 " differs from kubestr/go.mod"; bad = 1 } END { exit bad }' \

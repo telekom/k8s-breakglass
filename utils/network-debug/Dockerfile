@@ -13,13 +13,14 @@ ARG BUILD_DATE=unknown
 
 # pwru and its Go module graph come from pwru/go.mod and pwru/go.sum, which
 # Dependabot tracks; go.sum authenticates every downloaded module, including
-# pwru itself. The unpacked pwru module replaces only itself, so the binary
-# links exactly the tracked graph (checked below) and dependency bumps (for
-# example golang.org/x/net) need no Dockerfile edits. pwru's own Makefile
-# builds the static libpcap and runs its bpf2go code generation; the build
-# flags mirror its `pwru` target. The compiler and build dependencies never
-# enter the runtime image. Storage tooling is intentionally excluded; kubestr
-# belongs to storage-debug.
+# pwru itself. The build fails if go.sum lacks an entry or if pwru's own
+# replace directives are not mirrored in pwru/go.mod. The unpacked pwru module
+# replaces only itself, so the binary links exactly the tracked graph (checked
+# below) and dependency bumps (for example golang.org/x/net) need no Dockerfile
+# edits. pwru's own Makefile builds the static libpcap and runs its bpf2go code
+# generation; the build flags mirror its `pwru` target. The compiler and build
+# dependencies never enter the runtime image. Storage tooling is intentionally
+# excluded; kubestr belongs to storage-debug.
 FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS tools
 ARG TARGETARCH
 
@@ -34,6 +35,7 @@ RUN set -eux; \
 	apt-get update; \
 	apt-get install --no-install-recommends --yes clang llvm flex bison; \
 	rm -rf /var/lib/apt/lists/*; \
+	cp go.sum /tmp/tracked-go.sum; \
 	go mod download github.com/cilium/pwru; \
 	pwru_version="$(go list -m -f '{{.Version}}' github.com/cilium/pwru)"; \
 	go list -m -f '{{.Path}} {{.Version}}' all > /tmp/tracked-modules; \
@@ -41,12 +43,16 @@ RUN set -eux; \
 	cp -a "$(go list -m -f '{{.Dir}}' github.com/cilium/pwru)/." /src/pwru/; \
 	chmod -R u+w /src/pwru; \
 	chmod +x /src/pwru/libpcap/configure; \
+	sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' /src/pwru/go.mod > /tmp/upstream-replaces; \
+	sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' go.mod > /tmp/tracked-replaces; \
+	cmp /tmp/upstream-replaces /tmp/tracked-replaces || { echo "pwru replace directives differ from pwru/go.mod" >&2; exit 1; }; \
 	make -C /src/pwru libpcap/libpcap.a; \
 	TARGET_GOARCH="${TARGETARCH:-amd64}" go -C /src/pwru generate; \
 	go mod edit -replace github.com/cilium/pwru=/src/pwru; \
 	CGO_ENABLED=1 GOARCH="${TARGETARCH:-amd64}" go build \
 		-ldflags "-w -s -X 'github.com/cilium/pwru/internal/pwru.Version=${pwru_version}'" \
 		-o /out/pwru github.com/cilium/pwru; \
+	cmp go.sum /tmp/tracked-go.sum || { echo "pwru/go.sum is incomplete; run go mod tidy in utils/network-debug/pwru" >&2; exit 1; }; \
 	go version -m /out/pwru > /out/pwru-build-info; \
 	awk 'NR == FNR { tracked[$1] = $2; next } ($1 == "dep" || $1 == "mod") && tracked[$2] != $3 { print "linked " $2 " " $3 " differs from pwru/go.mod"; bad = 1 } END { exit bad }' \
 		/tmp/tracked-modules /out/pwru-build-info

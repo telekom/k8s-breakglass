@@ -79,20 +79,30 @@ if modern
     version = dependency["version"]
     source = dependency["versionSource"]
     fail_contract("dependency #{name} needs exactly one of version or versionSource") unless version.nil? ^ source.nil?
-    next unless source
+    unless source
+      require_value(version.to_s, "dependency #{name} version is required")
+      next
+    end
 
     # A versionSource is either a Dependabot-tracked Go module lock in the
-    # build context that requires the dependency, or an absolute in-image
-    # record written at build time (for example the installed package list).
+    # build context that requires the dependency, or the declared in-image
+    # installedPackages record that the context Dockerfile writes at build time.
     source = require_value(source.to_s, "dependency.versionSource is required")
-    next if source.start_with?("/") && !source.split("/").include?("..")
+    if source.start_with?("/")
+      fail_contract("dependency #{name} versionSource #{source} must be the declared installedPackages record") unless source == document["installedPackages"]
+      dockerfile = File.join(repo_root, context_name, "Dockerfile")
+      fail_contract("#{context_name}/Dockerfile does not write #{source}") unless File.file?(dockerfile) && File.read(dockerfile).include?("> #{source}")
+      next
+    end
 
     source_parts = source.split("/")
     fail_contract("dependency #{name} versionSource must stay inside the context") if source_parts.include?("..") || source_parts.include?("")
     source_path = File.join(repo_root, context_name, source)
     fail_contract("dependency #{name} versionSource #{source} does not exist") unless File.file?(source_path)
     if File.basename(source) == "go.mod"
-      required = File.readlines(source_path).any? { |line| line.split.first == name || line.split[1] == name }
+      # Match a require entry (single-line or inside a require block) with a
+      # version, not a tool, replace, exclude or comment line.
+      required = File.read(source_path).match?(/^(?:require\s+|\t)#{Regexp.escape(name)}\s+v\S+/)
       fail_contract("dependency #{name} is not required by #{source}") unless required
     end
   end
