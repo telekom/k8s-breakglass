@@ -182,6 +182,10 @@ func run() error {
 		return fmt.Errorf("load config for breakglass controller: %w", err)
 	}
 
+	if err := validateServerTLS(cfg.Server, cliConfig.EnableFrontend || cliConfig.EnableAPI); err != nil {
+		return err
+	}
+
 	if err := validateArtifactDeployment(cfg.Artifacts.Enabled, cliConfig.EnableControllers); err != nil {
 		return err
 	}
@@ -875,6 +879,19 @@ func resolveOTelSamplingRate(cliValue float64, configValue *float64, defaultValu
 		return *configValue
 	}
 	return defaultValue
+}
+
+// validateServerTLS checks the HTTP listener's client TLS settings only when
+// that listener runs, so cleanup-only and webhook-only deployments that share
+// the config do not need the client CA file mounted.
+func validateServerTLS(server config.Server, httpEnabled bool) error {
+	if !httpEnabled {
+		return nil
+	}
+	if _, _, err := server.ClientTLS(); err != nil {
+		return fmt.Errorf("validate server TLS config: %w", err)
+	}
+	return nil
 }
 
 func validateArtifactDeployment(artifactsEnabled, controllersEnabled bool) error {

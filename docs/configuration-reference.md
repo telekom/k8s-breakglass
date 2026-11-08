@@ -183,6 +183,83 @@ Path to TLS private key file for HTTPS.
 | **Default** | `` (HTTP only) |
 | **Example** | `/etc/breakglass/tls.key`, `/var/secrets/key.pem` |
 
+#### `clientAuth` (Optional)
+
+TLS client-certificate (mutual TLS) policy for the HTTPS server. Only valid
+when `tlsCertFile` and `tlsKeyFile` are set.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `none` (today's behaviour: no client certificate is requested) |
+| **Values** | `none`, `request`, `verifyIfGiven`, `require` |
+
+| Mode | Go `tls.ClientAuthType` | Behaviour |
+|------|-------------------------|-----------|
+| `none` | `NoClientCert` | No client certificate is requested. |
+| `request` | `RequestClientCert` | A certificate is requested but neither required nor verified. Informational only; not an access control. |
+| `verifyIfGiven` | `VerifyClientCertIfGiven` | Clients without a certificate are accepted; a presented certificate must chain to `clientCAFile`. Use it to roll out mTLS before switching to `require`. |
+| `require` | `RequireAndVerifyClientCert` | Every TLS connection must present a certificate that chains to `clientCAFile`. |
+
+mTLS is enforced at the TLS handshake and applies to every route on
+`listenAddress`, including the frontend, the REST API and the SAR
+authorization webhook. Under `require`:
+
+- browsers need a client certificate, or a TLS-terminating ingress or proxy
+  must present one to the backend (re-encrypt with a client certificate);
+- the kube-apiserver authorization webhook kubeconfig of **every** spoke
+  cluster needs `client-certificate`/`client-key` (or the `-data` variants)
+  signed by `clientCAFile`. Without it the apiserver cannot reach the webhook,
+  and requests that depend on breakglass are denied or fall through to the
+  next authorizer, depending on the apiserver's webhook failure policy;
+- `bgctl` cannot present a client certificate today, so it cannot reach a
+  server running `require`. Use `verifyIfGiven`, or put a proxy in front
+  that presents a certificate. Other API clients need a client certificate.
+
+Only the `listenAddress` server is affected. These listeners keep their own
+TLS settings and ignore `clientAuth`: health probes
+(`--health-probe-bind-address`, default `:8082`), controller metrics
+(`--metrics-bind-address`, default `:8081`), webhook metrics
+(`--webhooks-metrics-bind-address`) and the CRD validating webhook server
+(`--webhook-bind-address`, default `:9443`).
+
+mTLS here is transport-only. The server never reads the subject, SANs or any
+other field of the client certificate: any certificate that chains to
+`clientCAFile` is admitted, and it grants no identity, groups or permissions.
+OIDC authentication and authorization are unchanged. Use a dedicated client
+CA that signs only the intended clients, not a cluster CA that also signs
+kubelet or user certificates.
+
+#### `clientCAFile` (Optional)
+
+Path to a PEM bundle of CA certificates that sign accepted client
+certificates. Required for `clientAuth: verifyIfGiven` and `require`; rejected
+for `none` and `request`, so a CA is never configured without being enforced.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `string` |
+| **Default** | `` (no client CA) |
+| **Example** | `/etc/breakglass/client-ca/ca.crt` |
+
+```yaml
+server:
+  tlsCertFile: /etc/breakglass/tls.crt
+  tlsKeyFile: /etc/breakglass/tls.key
+  clientAuth: require
+  clientCAFile: /etc/breakglass/client-ca/ca.crt
+```
+
+When the frontend or API is enabled, the controller validates `clientAuth`
+and `clientCAFile` at startup and refuses to start on an unknown mode, a
+missing or empty CA bundle, or a mode/CA mismatch. Cleanup-only and
+webhook-only deployments (`--enable-frontend=false --enable-api=false`) do not
+start this listener and skip the check, so they can share the config without
+mounting the client CA. The file is read once at startup, like `tlsCertFile` and
+`tlsKeyFile` (the server certificate is not hot-reloaded either): restart the
+pods after rotating the client CA. During a rotation, put the old and the new
+CA in the same bundle.
+
 ---
 
 #### `allowedOrigins`

@@ -694,19 +694,13 @@ func (s *Server) Listen() {
 
 	var err error
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		s.httpServer.TLSConfig = &tls.Config{
-			MinVersion: tls.VersionTLS12,
-			CipherSuites: []uint16{
-				tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-				tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-				tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
-				tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
-			},
+		s.httpServer.TLSConfig, err = serverTLSConfig(s.config.Server)
+		if err != nil {
+			s.log.Sugar().Errorw("Invalid server TLS configuration", "error", err)
+			return
 		}
 		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress,
-			"tlsMinVersion", "TLS 1.2")
+			"tlsMinVersion", "TLS 1.2", "clientAuth", s.httpServer.TLSConfig.ClientAuth.String())
 		err = s.httpServer.ListenAndServeTLS(s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
 	} else {
 		s.log.Sugar().Infow("Starting HTTP server", "address", s.config.Server.ListenAddress)
@@ -715,6 +709,28 @@ func (s *Server) Listen() {
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.log.Sugar().Errorw("Server listen error", "error", err)
 	}
+}
+
+// serverTLSConfig returns the HTTPS server policy, including the optional
+// client certificate verification from server.clientAuth/clientCAFile.
+func serverTLSConfig(cfg config.Server) (*tls.Config, error) {
+	clientAuth, clientCAs, err := cfg.ClientTLS()
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		CipherSuites: []uint16{
+			tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
+			tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
+			tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,
+			tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
+		},
+		ClientAuth: clientAuth,
+		ClientCAs:  clientCAs,
+	}, nil
 }
 
 // Shutdown gracefully shuts down the HTTP server, allowing in-flight requests to complete.
