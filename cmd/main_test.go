@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -159,5 +160,16 @@ func TestArtifactDeploymentRequiresControllersOnlyWhenEnabled(t *testing.T) {
 				t.Fatalf("artifacts=%v controllers=%v: %v", artifacts, controllers, err)
 			}
 		}
+	}
+}
+
+func TestServerTLSValidatedOnlyWithHTTPListener(t *testing.T) {
+	// require mode with an unmounted client CA is invalid for the listener.
+	server := config.Server{TLSCertFile: "tls.crt", TLSKeyFile: "tls.key", ClientAuth: config.ClientAuthRequire, ClientCAFile: "/nonexistent/ca.crt"}
+	if err := validateServerTLS(server, false); err != nil {
+		t.Fatalf("HTTP listener disabled: %v", err)
+	}
+	if err := validateServerTLS(server, true); err == nil {
+		t.Fatal("HTTP listener enabled: want error for unreadable client CA")
 	}
 }
