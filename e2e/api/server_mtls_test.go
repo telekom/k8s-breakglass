@@ -33,6 +33,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -138,7 +139,7 @@ func TestServerMTLS(t *testing.T) {
 
 	type handshake struct {
 		cert    *tls.Certificate
-		wantErr string // TLS alert the client sees; empty means accepted
+		wantErr string // TLS 1.2 alert the client sees; empty means accepted
 	}
 	cases := map[string]map[string]handshake{
 		"default": {"no-cert": {}, "trusted": {cert: &trusted.tls}, "untrusted": {cert: &untrusted.tls}},
@@ -151,40 +152,57 @@ func TestServerMTLS(t *testing.T) {
 			"expired":   {cert: &expired.tls, wantErr: "tls: expired certificate"},
 		},
 		"require": {
-			"no-cert":   {wantErr: "tls: certificate required"},
+			"no-cert":   {wantErr: "tls: handshake failure"}, // TLS 1.3 would say "certificate required"
 			"trusted":   {cert: &trusted.tls},
 			"untrusted": {cert: &untrusted.tls, wantErr: "tls: unknown certificate authority"},
 			"expired":   {cert: &expired.tls, wantErr: "tls: expired certificate"},
 		},
 	}
+	// Whether the server asks for a client certificate at all; this is what
+	// tells default/none apart from request.
+	requestsCert := map[string]bool{"default": false, "none": false, "request": true, "verifyifgiven": true, "require": true}
 
 	for _, mode := range []string{"default", "none", "request", "verifyifgiven", "require"} {
 		t.Run(mode, func(t *testing.T) {
 			// kubectl port-forward exits when the server resets a rejected
 			// handshake, so every handshake gets its own forward.
-			forward := func(t *testing.T) string {
+			forward := func(t *testing.T) int {
 				port, stop := helpers.StartPortForward(t, ctx, s.Namespace, deployments[mode], 8080, 0)
 				t.Cleanup(stop)
-				return fmt.Sprintf("https://localhost:%d", port)
+				return port
 			}
 
 			for name, hs := range cases[mode] {
 				t.Run(name, func(t *testing.T) {
-					status, _, err := mtlsDo(ctx, mtlsClient(rootCAs, hs.cert), http.MethodGet, forward(t)+"/api/config", "", nil)
+					var requested atomic.Bool
+					cfg := mtlsTLSConfig(rootCAs, hs.cert, &requested)
+					port := forward(t)
 					if hs.wantErr != "" {
+						// Over TLS 1.2 the server verifies the client
+						// certificate before its Finished, so Handshake
+						// itself returns the alert; under TLS 1.3 the alert
+						// races with the first request.
+						cfg.MaxVersion = tls.VersionTLS12
+						conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 10 * time.Second}, "tcp", fmt.Sprintf("localhost:%d", port), cfg)
+						if err == nil {
+							_ = conn.Close()
+						}
 						require.Error(t, err, "handshake must be rejected")
 						assert.ErrorContains(t, err, hs.wantErr)
+						assert.True(t, requested.Load(), "server must request a client certificate")
 						return
 					}
+					status, _, err := mtlsDo(ctx, mtlsHTTPClient(cfg), http.MethodGet, fmt.Sprintf("https://localhost:%d/api/config", port), "", nil)
 					require.NoError(t, err)
 					assert.Equal(t, http.StatusOK, status)
+					assert.Equal(t, requestsCert[mode], requested.Load(), "client certificate requested")
 				})
 			}
 
 			// Once the handshake is accepted, the server behaves as before:
 			// frontend, OIDC-authenticated API and the SAR webhook.
-			c := mtlsClient(rootCAs, &trusted.tls)
-			baseURL := forward(t)
+			c := mtlsHTTPClient(mtlsTLSConfig(rootCAs, &trusted.tls, &atomic.Bool{}))
+			baseURL := fmt.Sprintf("https://localhost:%d", forward(t))
 			t.Run("frontend", func(t *testing.T) {
 				status, body, err := mtlsDo(ctx, c, http.MethodGet, baseURL+"/", "", nil)
 				require.NoError(t, err)
@@ -258,15 +276,27 @@ func TestServerMTLS(t *testing.T) {
 	})
 }
 
-// mtlsClient returns a client that trusts the test server CA and always
-// presents cert (if any). With tls.Config.Certificates, crypto/tls silently
+// mtlsTLSConfig trusts the test server CA and records in requested whether
+// the server asked for a client certificate. It always presents cert (or no
+// certificate when nil): with tls.Config.Certificates, crypto/tls silently
 // omits a certificate whose issuer the server does not list, which would not
 // exercise server-side verification.
-func mtlsClient(rootCAs *x509.CertPool, cert *tls.Certificate) *http.Client {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: rootCAs, ServerName: "localhost"}
-	if cert != nil {
-		cfg.GetClientCertificate = func(*tls.CertificateRequestInfo) (*tls.Certificate, error) { return cert, nil }
+func mtlsTLSConfig(rootCAs *x509.CertPool, cert *tls.Certificate, requested *atomic.Bool) *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		RootCAs:    rootCAs,
+		ServerName: "localhost",
+		GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+			requested.Store(true)
+			if cert == nil {
+				return &tls.Certificate{}, nil
+			}
+			return cert, nil
+		},
 	}
+}
+
+func mtlsHTTPClient(cfg *tls.Config) *http.Client {
 	return &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: cfg, DisableKeepAlives: true}}
 }
 
