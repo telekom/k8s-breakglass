@@ -250,9 +250,12 @@ server:
   clientCAFile: /etc/breakglass/client-ca/ca.crt
 ```
 
-The controller validates `clientAuth` and `clientCAFile` at startup and
-refuses to start on an unknown mode, a missing or empty CA bundle, or a
-mode/CA mismatch. The file is read once at startup, like `tlsCertFile` and
+When the frontend or API is enabled, the controller validates `clientAuth`
+and `clientCAFile` at startup and refuses to start on an unknown mode, a
+missing or empty CA bundle, or a mode/CA mismatch. Cleanup-only and
+webhook-only deployments (`--enable-frontend=false --enable-api=false`) do not
+start this listener and skip the check, so they can share the config without
+mounting the client CA. The file is read once at startup, like `tlsCertFile` and
 `tlsKeyFile` (the server certificate is not hot-reloaded either): restart the
 pods after rotating the client CA. During a rotation, put the old and the new
 CA in the same bundle.
