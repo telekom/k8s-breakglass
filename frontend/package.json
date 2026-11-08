@@ -47,7 +47,7 @@
     "jose": "^6.2.15",
     "oidc-client-ts": "^3.5.0",
     "pinia": "^4.1.0",
-    "vue": "^3.5.44",
+    "vue": "^3.5.45",
     "vue-router": "^5.4.0"
   },
   "devDependencies": {
