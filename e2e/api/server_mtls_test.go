@@ -160,13 +160,17 @@ func TestServerMTLS(t *testing.T) {
 
 	for _, mode := range []string{"default", "none", "request", "verifyifgiven", "require"} {
 		t.Run(mode, func(t *testing.T) {
-			port, stop := helpers.StartPortForward(t, ctx, s.Namespace, deployments[mode], 8080, 0)
-			defer stop()
-			baseURL := fmt.Sprintf("https://localhost:%d", port)
+			// kubectl port-forward exits when the server resets a rejected
+			// handshake, so every handshake gets its own forward.
+			forward := func(t *testing.T) string {
+				port, stop := helpers.StartPortForward(t, ctx, s.Namespace, deployments[mode], 8080, 0)
+				t.Cleanup(stop)
+				return fmt.Sprintf("https://localhost:%d", port)
+			}
 
 			for name, hs := range cases[mode] {
 				t.Run(name, func(t *testing.T) {
-					status, _, err := mtlsDo(ctx, mtlsClient(rootCAs, hs.cert), http.MethodGet, baseURL+"/api/config", "", nil)
+					status, _, err := mtlsDo(ctx, mtlsClient(rootCAs, hs.cert), http.MethodGet, forward(t)+"/api/config", "", nil)
 					if hs.wantErr != "" {
 						require.Error(t, err, "handshake must be rejected")
 						assert.ErrorContains(t, err, hs.wantErr)
@@ -180,6 +184,7 @@ func TestServerMTLS(t *testing.T) {
 			// Once the handshake is accepted, the server behaves as before:
 			// frontend, OIDC-authenticated API and the SAR webhook.
 			c := mtlsClient(rootCAs, &trusted.tls)
+			baseURL := forward(t)
 			t.Run("frontend", func(t *testing.T) {
 				status, body, err := mtlsDo(ctx, c, http.MethodGet, baseURL+"/", "", nil)
 				require.NoError(t, err)
