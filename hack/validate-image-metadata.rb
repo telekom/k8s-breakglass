@@ -100,9 +100,19 @@ if modern
     fail_contract("dependency #{name} versionSource must stay inside the context") if source_parts.include?("..") || source_parts.include?("")
     source_path = File.join(repo_root, context_name, source)
     fail_contract("dependency #{name} versionSource #{source} does not exist") unless File.file?(source_path)
-    # Match a require entry (single-line or inside a require block) with a
-    # version, not a tool, replace, exclude or comment line.
-    required = File.read(source_path).match?(/^(?:require\s+|\t)#{Regexp.escape(name)}\s+v\S+/)
+    # Match a versioned require entry (single-line or inside a require block);
+    # tool, replace and exclude directives or blocks do not count.
+    in_require_block = false
+    required = File.foreach(source_path).any? do |line|
+      line = line.sub(%r{//.*}, "").strip
+      if line.match?(/\Arequire\s*\(\z/)
+        in_require_block = true
+        next false
+      end
+      in_require_block = false if line == ")"
+      entry = in_require_block ? line : line[/\Arequire\s+(.*)/, 1]
+      entry&.match?(/\A#{Regexp.escape(name)}\s+v\S+\z/)
+    end
     fail_contract("dependency #{name} is not required by #{source}") unless required
   end
   require_array(contract["intents"], "contract.intents must be a non-empty list")
