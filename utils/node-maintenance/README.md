@@ -305,4 +305,6 @@ Linux/Docker prerequisites are absent.
 `make build-multiarch` requests provenance and an SPDX SBOM for amd64/arm64.
 Release automation must sign and attest only an immutable registry digest via
 `make sign DIGEST=...` and `make sbom DIGEST=... SBOM=...`; local targets do
-not push images. Pinned packages are recorded in [`deps.lock`](deps.lock).
+not push images. Package versions follow the digest-pinned Alpine base, which
+Dependabot updates; the build upgrades the inherited packages and records the
+installed versions in `/usr/share/breakglass/installed-packages` and the SBOM.

@@ -16,8 +16,9 @@ It combines two deliberately different execution boundaries:
 | `snapshot-source-clone` | Exercise kubestr's duplicate-snapshot-from-source check where explicitly approved | Stronger escalation profile; additionally creates and deletes a temporary VolumeSnapshotClass | StorageClass and VolumeSnapshotClass; provider acceptance required; not covered by the default Kind proof |
 | `block-volume` | Exercise raw block PVC attachment where a provider supplies a raw-block-capable class | Non-interactive Job with a controller-owned ServiceAccount | StorageClass; provider acceptance required; not covered by the default Kind proof |
 
-The cluster operations use kubestr v0.4.49 built from verified commit
-`01940ed37be9a0c7a70d80cd26c648eaa11e5174`. They intentionally expose only
+The cluster operations use kubestr (v0.4.49 at the time of writing) built from
+the module selected by [`kubestr/go.mod`](./kubestr/go.mod) and authenticated
+by `kubestr/go.sum`. They intentionally expose only
 the workflows above. The wrapper does not accept a command, container image,
 namespace, node selector, custom fio file, test name, run-as UID, capability,
 ServiceAccount, or RBAC object. `POD_NAMESPACE` comes from the Downward API and
@@ -162,8 +163,13 @@ from `storage-debug`. Existing TDCI-11722 flows map as follows:
 ## Build and verification
 
 The Alpine runtime and Go builder are pinned by immutable multi-architecture
-digests. Fio, ioping, and kubestr versions are recorded in `versions.env` and
-the final manifest is published with SPDX SBOM, provenance, and keyless Cosign
+digests; Dependabot updates both. kubestr and its Go modules are selected by
+`kubestr/go.mod` (Dependabot gomod) and the linked versions are recorded in
+`/usr/share/breakglass/kubestr-build-info`. Alpine package versions are not
+pinned: the build upgrades the inherited packages from the base release and
+installs `fio` and `ioping` unversioned, recording what was installed in
+`/usr/share/breakglass/installed-packages`. A rebuild of the same base digest
+can therefore pick up newer package revisions. The final manifest is published with SPDX SBOM, provenance, and keyless Cosign
 signatures.
 
 Run the hermetic contract tests with `make -C utils/images/storage-debug test`.

@@ -355,6 +355,12 @@ server:
 
 For webhook endpoints, the controller automatically generates TLS certificates. See [Webhook Setup](webhook-setup.md).
 
+To require client certificates (mutual TLS) on the breakglass server, set
+`server.clientAuth: require` and `server.clientCAFile`. The default `none`
+keeps today's behaviour. See
+[`clientAuth`](configuration-reference.md#clientauth-optional) for the modes and
+the clients that need a certificate under `require`.
+
 ### Network Policies
 
 Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port.

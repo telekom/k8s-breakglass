@@ -10,12 +10,15 @@ represented in the final image SBOM. See the [netshoot source
 repository](https://github.com/nicolaka/netshoot) and its Apache-2.0 license.
 
 This image additionally redistributes the following Apache-2.0 project as a
-statically built executable. Its source, release tag, and license are
-recorded in `/usr/share/breakglass/runbooks/upstream/network-debug/versions.env` and in the image SBOM:
+statically built executable. Its source and license are recorded in
+`/usr/share/breakglass/runbooks/upstream/network-debug/versions.env`; the
+release and linked module versions (selected by the Dependabot-tracked
+`pwru/go.mod`) are recorded in `/usr/share/breakglass/pwru-build-info` and in
+the image SBOM:
 
 | Tool | Release | Source | License |
 | --- | --- | --- | --- |
-| pwru | v1.0.12 | <https://github.com/cilium/pwru> | Apache-2.0 |
+| pwru | see `pwru/go.mod` | <https://github.com/cilium/pwru> | Apache-2.0 |
 
 The helper scripts and documentation are original project files under the
 Apache-2.0 or CC-BY-4.0 headers shown in those files. This image does not

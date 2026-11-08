@@ -263,15 +263,19 @@ context. Helm list profiles cannot be patched reliably with dotted map-style
 ## Utility Images
 
 Standalone diagnostic and maintenance images live under `utils/<image-name>/`.
-Each image directory owns its Dockerfile, pinned dependency inventory, helper
-tests, README, MOTD, and a Makefile with `test`, `build`, and
+Each image directory owns its Dockerfile, any Dependabot-tracked tool module
+(`go.mod`/`go.sum`), helper tests, README, MOTD, and a Makefile with `test`, `build`, and
 `build-multiarch` targets. Keep image names and examples stable across utility
 images; use the shared DebugSession intent `workload-diagnostics` for workload
 diagnostics instead of inventing per-image intent names.
 
-Runtime images must pin the base manifest by digest and pin every explicitly
-installed APK package to a version recorded in `deps.lock` and
-`IMAGE-METADATA.yaml`. Keep runtime users non-root with no capabilities unless
+Runtime images must pin the base manifest by digest in a directory covered by
+Dependabot's docker entry. Do not pin APK/apt package versions: run
+`apk upgrade --no-cache`, install packages unversioned, and record the
+installed set at build time (`/usr/share/breakglass/installed-packages`) so
+package versions follow the base image and security fixes land on rebuild.
+Go tools built from source get their own `go.mod`/`go.sum` with a `tool`
+directive and a Dependabot gomod entry instead of ARG-pinned versions. Keep runtime users non-root with no capabilities unless
 the operation demonstrably needs more privilege. Helpers must use bounded
 timeouts/output, avoid implicit credentials or controller metadata, and never
 write secrets to logs or command-line arguments. `build-multiarch` must produce
@@ -290,8 +294,9 @@ The standalone `utils/node-maintenance/` image is intentionally separate from
 the Breakglass controller image. Keep its runtime limited to the fixed
 `node-recovery` and `network-repair` dispatchers; do not add an
 unrestricted shell, package manager, compiler, packet capture, scanner, or
-general-purpose network toolbox. The Alpine base manifest and direct APK
-dependencies are pinned in `Dockerfile` and `deps.lock`.
+general-purpose network toolbox. The Alpine base manifest is pinned by digest in
+`Dockerfile`; direct APK dependencies follow it and their installed versions
+are recorded in the image.
 
 Every helper must require an explicit target node, interface, evidence
 directory, and command-specific confirmation token. Repair actions must be

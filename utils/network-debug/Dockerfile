@@ -11,55 +11,63 @@ ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
-# pwru is built from its immutable Go module version with the pinned builder.
-# The compiler and build dependencies never enter the runtime image. Storage
-# tooling is intentionally excluded; kubestr belongs to storage-debug.
+# pwru and its Go module graph come from pwru/go.mod and pwru/go.sum, which
+# Dependabot tracks; go.sum authenticates every downloaded module, including
+# pwru itself. The build fails if go.sum lacks an entry or if pwru's own
+# replace directives are not mirrored in pwru/go.mod. The unpacked pwru module
+# replaces only itself, so the binary links exactly the tracked graph (checked
+# below) and dependency bumps (for example golang.org/x/net) need no Dockerfile
+# edits. pwru's own Makefile builds the static libpcap and runs its bpf2go code
+# generation; the build flags mirror its `pwru` target. The compiler and build
+# dependencies never enter the runtime image. Storage tooling is intentionally
+# excluded; kubestr belongs to storage-debug.
 FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS tools
 ARG TARGETARCH
-ARG PWRU_VERSION=v1.0.12
-ARG PWRU_MODULE_SUM=h1:a8oQXdTJHznh4vCI3GLf31IDqGYIUmDJzjSaXHYpQPg=
-ARG PWRU_COMMIT=f1d6cf8898953ac1560401e181f3ac5f0e33b486
-ARG X_NET_VERSION=v0.62.0
-ARG CLANG_VERSION=1:19.0-63
-ARG LLVM_VERSION=1:19.0-63
-ARG FLEX_VERSION=2.6.4-8.2+b4
-ARG BISON_VERSION=2:3.8.2+dfsg-1+b2
 
-WORKDIR /src/pwru
+COPY pwru/go.mod pwru/go.sum /src/tools/
+WORKDIR /src/tools
 
+# The build-only clang/llvm/flex/bison packages follow the digest-pinned
+# builder's Debian release.
+# hadolint ignore=DL3008
 RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
-	apt-get install --no-install-recommends --yes \
-		"clang=${CLANG_VERSION}" "llvm=${LLVM_VERSION}" \
-		"flex=${FLEX_VERSION}" "bison=${BISON_VERSION}"; \
+	apt-get install --no-install-recommends --yes clang llvm flex bison; \
 	rm -rf /var/lib/apt/lists/*; \
-	module_json="$(go mod download -json "github.com/cilium/pwru@${PWRU_VERSION}")"; \
-	case "${module_json}" in *'"Sum": "'"${PWRU_MODULE_SUM}"'"'*) ;; *) exit 1 ;; esac; \
-	case "${module_json}" in *'"Hash": "'"${PWRU_COMMIT}"'"'*) ;; *) exit 1 ;; esac; \
+	cp go.sum /tmp/tracked-go.sum; \
+	go mod download github.com/cilium/pwru; \
+	pwru_version="$(go list -m -f '{{.Version}}' github.com/cilium/pwru)"; \
+	go list -m -f '{{.Path}} {{.Version}}' all > /tmp/tracked-modules; \
 	mkdir -p /src/pwru /out; \
-	cp -a "$(go env GOPATH)/pkg/mod/github.com/cilium/pwru@${PWRU_VERSION}/." /src/pwru/; \
-	test "$(awk '$1 == "go" { print $2 }' /src/pwru/go.mod)" = "1.25.0"; \
+	cp -a "$(go list -m -f '{{.Dir}}' github.com/cilium/pwru)/." /src/pwru/; \
 	chmod -R u+w /src/pwru; \
-	go -C /src/pwru get "golang.org/x/net@${X_NET_VERSION}"; \
-	go -C /src/pwru mod tidy; \
 	chmod +x /src/pwru/libpcap/configure; \
-	make VERSION="${PWRU_VERSION}" TARGET_GOARCH="${TARGETARCH:-amd64}" GOARCH="${TARGETARCH:-amd64}" pwru; \
-	install -m 0755 pwru /out/pwru; \
+	sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' /src/pwru/go.mod > /tmp/upstream-replaces; \
+	sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' go.mod > /tmp/tracked-replaces; \
+	cmp /tmp/upstream-replaces /tmp/tracked-replaces || { echo "pwru replace directives differ from pwru/go.mod" >&2; exit 1; }; \
+	make -C /src/pwru libpcap/libpcap.a; \
+	TARGET_GOARCH="${TARGETARCH:-amd64}" go -C /src/pwru generate; \
+	go mod edit -replace github.com/cilium/pwru=/src/pwru; \
+	CGO_ENABLED=1 GOARCH="${TARGETARCH:-amd64}" go build \
+		-ldflags "-w -s -X 'github.com/cilium/pwru/internal/pwru.Version=${pwru_version}'" \
+		-o /out/pwru github.com/cilium/pwru; \
+	cmp go.sum /tmp/tracked-go.sum || { echo "pwru/go.sum is incomplete; run go mod tidy in utils/network-debug/pwru" >&2; exit 1; }; \
 	go version -m /out/pwru > /out/pwru-build-info; \
-	awk -v expected="${X_NET_VERSION}" '$1 == "dep" && $2 == "golang.org/x/net" { found = ($3 == expected) } END { exit !found }' /out/pwru-build-info
+	awk 'NR == FNR { tracked[$1] = $2; next } ($1 == "dep" || $1 == "mod") && tracked[$2] != $3 { print "linked " $2 " " $3 " differs from pwru/go.mod"; bad = 1 } END { exit bad }' \
+		/tmp/tracked-modules /out/pwru-build-info
 
 FROM runtime
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-ARG PWRU_VERSION=v1.0.12
 ARG NETSHOOT_ALPINE_VERSION=3.24
 
 # The pinned netshoot image owns the runtime package set. Refresh it from the
-# matching Alpine 3.24 repositories to consume security fixes, then prove the
-# expected Alpine runtime before removing optional inherited binaries.
+# matching Alpine 3.24 repositories to consume security fixes, record the
+# installed package versions, then prove the expected Alpine runtime before
+# removing optional inherited binaries.
 RUN set -eux; \
 	sed -i '/\/alpine\/edge\//d' /etc/apk/repositories; \
 	printf '%s\n' \
@@ -68,8 +76,12 @@ RUN set -eux; \
 		>> /etc/apk/repositories; \
 	apk update; \
 	apk upgrade; \
-		rm -rf /var/cache/apk/*; \
-		case "$(cat /etc/alpine-release)" in "${NETSHOOT_ALPINE_VERSION}".*) ;; *) exit 1 ;; esac; \
+	install -d /usr/share/breakglass; \
+	apk list --installed --no-network > /usr/share/breakglass/installed-packages 2>/dev/null; \
+	grep -q '^tcpdump-' /usr/share/breakglass/installed-packages; \
+	chmod 0444 /usr/share/breakglass/installed-packages; \
+	rm -rf /var/cache/apk/*; \
+	case "$(cat /etc/alpine-release)" in "${NETSHOOT_ALPINE_VERSION}".*) ;; *) exit 1 ;; esac; \
 	test -x /usr/bin/tcpdump; \
 	rm -f /usr/local/bin/calicoctl /usr/local/bin/ctop /usr/local/bin/fortio \
 	/usr/local/bin/grpcurl /usr/local/bin/termshark

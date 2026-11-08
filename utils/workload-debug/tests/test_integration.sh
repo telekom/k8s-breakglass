@@ -104,12 +104,16 @@ fi
 
 docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --entrypoint /bin/sh "$image" -c '
+    set -eu
     test -r /usr/share/breakglass/runbooks/upstream/workload-debug/README.md
     test -r /usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md
     test -d /usr/share/breakglass/runbooks/internal
     test ! -e /usr/share/breakglass/runbooks/internal/INDEX.md
     workload-debug --help >/dev/null
-  ' || fail "standalone image did not expose generic runbooks and helper behavior"
+    for package in bash bind-tools ca-certificates curl jq musl openssl tini zlib; do
+      grep -Eq "^${package}-[0-9]" /usr/share/breakglass/installed-packages
+    done
+  ' || fail "standalone image did not expose generic runbooks, helper behavior and its installed package record"
 
 GOOS=linux CGO_ENABLED=0 go build -trimpath -o "$fixture_dir/fixture-server" "$root/tests/fixture-server.go"
 
