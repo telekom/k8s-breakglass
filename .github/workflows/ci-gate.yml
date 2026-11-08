@@ -55,7 +55,8 @@ jobs:
           # (e.g. synchronize and edited) can start runs together and
           # concurrency may cancel the newer one. Check runs of such dropped
           # runs are ignored; otherwise the newest check run per app+name
-          # counts, so a re-run attempt that times out still fails the gate.
+          # counts, so a re-run attempt that times out still fails the gate
+          # unless a sibling run of the same workflow succeeded.
           collect() {
             local runs dropped
             runs="$(gh api --paginate "${api}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" |
