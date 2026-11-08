@@ -60,6 +60,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      go-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
     commit-message:
       prefix: "deps(go)"
     open-pull-requests-limit: 10
@@ -99,6 +103,10 @@ updates:
         update-types:
           - "minor"
           - "patch"
+      npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
     commit-message:
       prefix: "deps(npm)"
     open-pull-requests-limit: 10
@@ -159,8 +167,27 @@ updates:
       default-days: 3
       semver-major-days: 14
     groups:
-      go-tools:
+      # One PR updates every tool module that has a minor/patch release; each
+      # module still resolves only its own tool's graph.
+      go-tools-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      # A major tool release waits for a maintainer; keep each one on its own.
+      go-tools-major:
         group-by: dependency-name
+        patterns:
+          - "*"
+        update-types:
+          - "major"
+      # Dependabot has raised security updates for modules in the tool graphs
+      # that `allow` does not list (golang.org/x/net, google.golang.org/grpc:
+      # #1617-#1620). Collect them in one PR instead of one per dependency
+      # and tool directory.
+      go-tools-security:
+        applies-to: "security-updates"
         patterns:
           - "*"
     commit-message:

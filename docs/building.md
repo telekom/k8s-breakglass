@@ -164,8 +164,9 @@ canonical `utils/cluster-validator/Dockerfile` instead. Generated CRD schemas
 are not dependency manifests. Our own `ghcr.io/telekom/k8s-breakglass*` image
 references, including zero-digest catalogue placeholders, are excluded from
 external updates: the signed release pipeline supplies verified immutable
-digests. Dependabot security alerts and security updates are repository settings,
-separate from this version-update configuration.
+digests. Dependabot security alerts and security updates are repository settings;
+when they are enabled, each `gomod` and `npm` entry collects its security
+updates in one `*-security` group PR.
 
 Go tools used by the Makefile and CI (kustomize, controller-gen,
 setup-envtest, govulncheck, gosec, go-licenses, kind and actionlint) each have
@@ -175,7 +176,12 @@ files; `make <tool>` and the `install-kind` composite action build the tool
 from them, and `go.sum` authenticates every downloaded module. Separate modules
 keep each tool on exactly its own upstream dependency graph. The exception is
 gosec's `golang.org/x/tools` floor, raised manually ahead of gosec's own
-requirement when a new Go export-data format needs it. golangci-lint stays a
+requirement when a new Go export-data format needs it. Minor/patch tool
+releases arrive together in one `go-tools-minor-patch` PR across all
+`hack/tools/*` modules, each major tool release in its own `go-tools-major` PR,
+and security updates in one `go-tools-security` PR. A failing tool bump holds
+the whole minor/patch bundle; split it out manually (update that tool in its
+own PR) if needed. golangci-lint stays a
 `versions.env` pin: upstream recommends against building it as a module
 dependency, and some of its linters are GPL-3.0, which the dependency-review
 license policy rejects for tracked manifests.
