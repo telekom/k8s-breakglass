@@ -32,7 +32,6 @@ import (
 	"math/big"
 	"net"
 	"net/http"
-	"path"
 	"strings"
 	"testing"
 	"time"
@@ -42,12 +41,8 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/intstr"
-	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/yaml"
 
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
 )
@@ -80,9 +75,6 @@ func TestServerMTLS(t *testing.T) {
 	expired := trustedCA.issue(t, x509.ExtKeyUsageClientAuth, time.Now().Add(-time.Minute))
 	untrusted := otherCA.issue(t, x509.ExtKeyUsageClientAuth, time.Now().Add(time.Hour))
 
-	base := mainControllerDeployment(t, ctx, s.Client, s.Namespace)
-	baseConfig := controllerConfig(t, ctx, s.Client, s.Namespace, base)
-
 	suffix := helpers.GenerateUniqueName("")
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "e2e-mtls" + suffix, Namespace: s.Namespace, Labels: helpers.E2ELabelsWithFeature("server-mtls")},
@@ -105,7 +97,32 @@ func TestServerMTLS(t *testing.T) {
 	}
 	deployments := map[string]string{}
 	for _, v := range variants {
-		deployments[v.name] = deployMTLSVariant(t, s, base, baseConfig, secret.Name, suffix, v)
+		deployments[v.name] = "e2e-mtls-" + v.name + suffix
+		httpOn := fmt.Sprint(!v.httpOff)
+		helpers.DeployServerReplica(t, s, helpers.ServerReplica{
+			Name: deployments[v.name],
+			EditConfig: func(cfg map[string]any) {
+				server, _ := cfg["server"].(map[string]any)
+				if server == nil {
+					server = map[string]any{}
+				}
+				server["tlsCertFile"] = mtlsMountPath + "/tls.crt"
+				server["tlsKeyFile"] = mtlsMountPath + "/tls.key"
+				if v.clientAuth != "" {
+					server["clientAuth"] = v.clientAuth
+				}
+				if v.withCA {
+					server["clientCAFile"] = mtlsMountPath + "/client-ca"
+				}
+				cfg["server"] = server
+			},
+			Flags: map[string]string{"enable-frontend": httpOn, "enable-api": httpOn},
+			Volumes: []corev1.Volume{{
+				Name:         "e2e-mtls",
+				VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secret.Name}},
+			}},
+			VolumeMounts: []corev1.VolumeMount{{Name: "e2e-mtls", MountPath: mtlsMountPath, ReadOnly: true}},
+		})
 	}
 	for _, v := range variants {
 		if v.name == "invalid" {
@@ -211,11 +228,9 @@ func TestServerMTLS(t *testing.T) {
 	})
 
 	t.Run("invalid-config-refuses-start", func(t *testing.T) {
-		kube, err := kubernetes.NewForConfig(helpers.GetConfig(t))
-		require.NoError(t, err)
 		want := `fatal: validate server TLS config: server.clientAuth "require" needs server.clientCAFile`
 		require.Eventually(t, func() bool {
-			return podLogsContain(ctx, kube, s.Namespace, "e2e-mtls-variant=invalid"+suffix, want)
+			return helpers.ServerReplicaLogsContain(t, ctx, s.Namespace, deployments["invalid"], want)
 		}, 3*time.Minute, 2*time.Second, "server with frontend/API must refuse an invalid client TLS config")
 		var d appsv1.Deployment
 		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: deployments["invalid"]}, &d))
@@ -227,7 +242,7 @@ func TestServerMTLS(t *testing.T) {
 		// and has not restarted.
 		var pods corev1.PodList
 		require.NoError(t, s.Client.List(ctx, &pods, client.InNamespace(s.Namespace),
-			client.MatchingLabels{"e2e-mtls-variant": "invalid-nohttp" + suffix}))
+			client.MatchingLabels{helpers.ServerReplicaLabel: deployments["invalid-nohttp"]}))
 		require.NotEmpty(t, pods.Items)
 		for _, p := range pods.Items {
 			for _, cs := range p.Status.ContainerStatuses {
@@ -236,173 +251,6 @@ func TestServerMTLS(t *testing.T) {
 			}
 		}
 	})
-}
-
-// mainControllerDeployment returns the deployment that runs the breakglass
-// controller under test.
-func mainControllerDeployment(t *testing.T, ctx context.Context, cli client.Client, ns string) *appsv1.Deployment {
-	t.Helper()
-	var list appsv1.DeploymentList
-	require.NoError(t, cli.List(ctx, &list, client.InNamespace(ns), client.MatchingLabels{"app": "breakglass"}))
-	require.Len(t, list.Items, 1, "expected exactly one breakglass controller deployment")
-	return &list.Items[0]
-}
-
-// controllerConfig returns the controller's parsed config.yaml.
-func controllerConfig(t *testing.T, ctx context.Context, cli client.Client, ns string, d *appsv1.Deployment) map[string]any {
-	t.Helper()
-	cm := configVolume(t, d).ConfigMap
-	var obj corev1.ConfigMap
-	require.NoError(t, cli.Get(ctx, client.ObjectKey{Namespace: ns, Name: cm.Name}, &obj))
-	var cfg map[string]any
-	require.NoError(t, yaml.Unmarshal([]byte(obj.Data[path.Base(configPath(t, d))]), &cfg))
-	return cfg
-}
-
-func configPath(t *testing.T, d *appsv1.Deployment) string {
-	t.Helper()
-	for _, a := range d.Spec.Template.Spec.Containers[0].Args {
-		if v, ok := strings.CutPrefix(a, "--config-path="); ok {
-			return v
-		}
-	}
-	t.Fatal("controller has no --config-path argument")
-	return ""
-}
-
-func configVolume(t *testing.T, d *appsv1.Deployment) *corev1.Volume {
-	t.Helper()
-	dir := path.Dir(configPath(t, d))
-	spec := &d.Spec.Template.Spec
-	for _, m := range spec.Containers[0].VolumeMounts {
-		if path.Clean(m.MountPath) != dir {
-			continue
-		}
-		for i := range spec.Volumes {
-			if spec.Volumes[i].Name == m.Name && spec.Volumes[i].ConfigMap != nil {
-				return &spec.Volumes[i]
-			}
-		}
-	}
-	t.Fatalf("no ConfigMap volume mounted at %s", dir)
-	return nil
-}
-
-// deployMTLSVariant creates a ConfigMap, Deployment and Service for one
-// variant and returns their shared name. Pod labels are replaced so the main
-// breakglass Service never routes to these pods.
-func deployMTLSVariant(t *testing.T, s *helpers.TestSetup, base *appsv1.Deployment, baseConfig map[string]any,
-	secretName, suffix string, v mtlsVariant,
-) string {
-	t.Helper()
-	name := "e2e-mtls-" + v.name + suffix
-	labels := helpers.E2ELabelsWithExtra(map[string]string{"e2e-mtls-variant": v.name + suffix})
-
-	cfg := map[string]any{}
-	for k, val := range baseConfig {
-		cfg[k] = val
-	}
-	server := map[string]any{}
-	if old, ok := cfg["server"].(map[string]any); ok {
-		for k, val := range old {
-			server[k] = val
-		}
-	}
-	server["tlsCertFile"] = mtlsMountPath + "/tls.crt"
-	server["tlsKeyFile"] = mtlsMountPath + "/tls.key"
-	if v.clientAuth != "" {
-		server["clientAuth"] = v.clientAuth
-	}
-	if v.withCA {
-		server["clientCAFile"] = mtlsMountPath + "/client-ca"
-	}
-	cfg["server"] = server
-	raw, err := yaml.Marshal(cfg)
-	require.NoError(t, err)
-
-	spec := base.Spec.Template.DeepCopy()
-	spec.Labels = labels
-	spec.Annotations = nil
-	cfgPath := configPath(t, base)
-	for i := range spec.Spec.Volumes {
-		if spec.Spec.Volumes[i].Name == configVolume(t, base).Name {
-			spec.Spec.Volumes[i].ConfigMap.Name = name
-		}
-	}
-	spec.Spec.Volumes = append(spec.Spec.Volumes, corev1.Volume{
-		Name:         "e2e-mtls",
-		VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: secretName}},
-	})
-	c := &spec.Spec.Containers[0]
-	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{Name: "e2e-mtls", MountPath: mtlsMountPath, ReadOnly: true})
-	c.Resources.Requests = corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("10m"),
-		corev1.ResourceMemory: resource.MustParse("64Mi"),
-	}
-	httpOn := fmt.Sprint(!v.httpOff)
-	c.Args = overrideFlags(c.Args, map[string]string{
-		"config-path":     cfgPath,
-		"enable-frontend": httpOn,
-		"enable-api":      httpOn,
-		// API/frontend replica: leave cleanup and the CRD webhook server to
-		// the main controller.
-		"enable-cleanup":             "false",
-		"enable-webhooks":            "false",
-		"enable-validating-webhooks": "false",
-	})
-
-	meta := metav1.ObjectMeta{Name: name, Namespace: s.Namespace, Labels: labels}
-	s.MustCreateResource(&corev1.ConfigMap{ObjectMeta: meta, Data: map[string]string{path.Base(cfgPath): string(raw)}})
-	replicas := int32(1)
-	s.MustCreateResource(&appsv1.Deployment{
-		ObjectMeta: meta,
-		Spec: appsv1.DeploymentSpec{
-			Replicas: &replicas,
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: *spec,
-		},
-	})
-	s.MustCreateResource(&corev1.Service{
-		ObjectMeta: meta,
-		Spec: corev1.ServiceSpec{
-			Selector: labels,
-			Ports:    []corev1.ServicePort{{Name: "https", Port: 8080, TargetPort: intstr.FromInt32(8080)}},
-		},
-	})
-	return name
-}
-
-// overrideFlags replaces or appends --name=value flags.
-func overrideFlags(args []string, set map[string]string) []string {
-	out := make([]string, 0, len(args)+len(set))
-	for _, a := range args {
-		name, _, _ := strings.Cut(strings.TrimLeft(a, "-"), "=")
-		if _, ok := set[name]; !ok {
-			out = append(out, a)
-		}
-	}
-	for k, v := range set {
-		out = append(out, "--"+k+"="+v)
-	}
-	return out
-}
-
-func podLogsContain(ctx context.Context, kube kubernetes.Interface, ns, selector, want string) bool {
-	pods, err := kube.CoreV1().Pods(ns).List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		return false
-	}
-	for _, p := range pods.Items {
-		for _, previous := range []bool{false, true} {
-			logs, err := kube.CoreV1().Pods(ns).GetLogs(p.Name, &corev1.PodLogOptions{
-				Container: p.Spec.Containers[0].Name, Previous: previous,
-			}).DoRaw(ctx)
-			if err == nil && bytes.Contains(logs, []byte(want)) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // mtlsClient returns a client that trusts the test server CA and always
