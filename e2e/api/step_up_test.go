@@ -38,7 +38,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
@@ -59,8 +61,10 @@ func TestStepUpAuthentication(t *testing.T) {
 	suffix := helpers.GenerateUniqueName("")
 	replicas := map[string]map[string]any{
 		"fresh": {"enabled": true, "maxAuthAge": "5m"},
-		"stale": {"enabled": true, "maxAuthAge": "1s"},
+		"stale": {"enabled": true, "maxAuthAge": "10s"},
 		"acr":   {"enabled": true, "requiredACR": []string{"gold"}},
+		// Keycloak issues acr "1" for a fresh password login.
+		"acr-ok": {"enabled": true, "requiredACR": []string{"1"}},
 		// Strict settings that must have no effect while enabled is false.
 		"disabled": {"enabled": false, "maxAuthAge": "1s", "requiredACR": []string{"gold"}},
 		"invalid":  {"enabled": true},
@@ -131,7 +135,10 @@ func TestStepUpAuthentication(t *testing.T) {
 	t.Run("disabled", func(t *testing.T) {
 		base := withReplica(t, "disabled")
 		esc := newEscalation(t)
-		token := oidc.GetToken(t, ctx, requester.Username, requester.Password)
+		// A browser login carries auth_time (and acr "1"), so the ignored
+		// maxAuthAge and requiredACR would both reject it if applied.
+		token := browserLoginToken(t, ctx, requester.Username, requester.Password)
+		require.Contains(t, jwtClaims(t, token), "auth_time")
 		time.Sleep(2 * time.Second) // older than the ignored maxAuthAge
 		r := stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, "", sessionRequest(esc))
 		require.Equal(t, http.StatusCreated, r.status, "body: %s", r.body)
@@ -139,7 +146,8 @@ func TestStepUpAuthentication(t *testing.T) {
 		assert.Empty(t, r.header.Get("WWW-Authenticate"))
 		session := created(t, r.body)
 
-		approverToken := oidc.GetToken(t, ctx, approver.Username, approver.Password)
+		approverToken := browserLoginToken(t, ctx, approver.Username, approver.Password)
+		time.Sleep(2 * time.Second)
 		r = stepUpCall(t, ctx, base, approverToken, http.MethodPost, sessionsAPIBasePath+"/"+session.Name+"/approve", "", nil)
 		require.Equal(t, http.StatusOK, r.status, "body: %s", r.body)
 	})
@@ -202,17 +210,25 @@ func TestStepUpAuthentication(t *testing.T) {
 		base := withReplica(t, "stale")
 		esc := newEscalation(t)
 		token := browserLoginToken(t, ctx, requester.Username, requester.Password)
-		time.Sleep(2 * time.Second)
+		time.Sleep(11 * time.Second) // older than maxAuthAge 10s
 		r := stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, "", sessionRequest(esc))
 		require.Equal(t, http.StatusUnauthorized, r.status, "body: %s", r.body)
 		www := r.header.Get("WWW-Authenticate")
 		assert.Contains(t, www, `error="insufficient_user_authentication"`)
 		assert.Contains(t, www, `error_description="authentication is not recent enough"`)
-		assert.Contains(t, www, `max_age="1"`)
+		assert.Contains(t, www, `max_age="10"`)
 		assert.Empty(t, r.header.Get(stepUpHeader), "no challenge before re-authentication")
 
 		r = stepUpCall(t, ctx, base, token, http.MethodGet, sessionsAPIBasePath, "", nil)
 		assert.Equal(t, http.StatusOK, r.status, "non-critical reads are unaffected")
+
+		// Re-authenticating satisfies maxAuthAge again.
+		token = browserLoginToken(t, ctx, requester.Username, requester.Password)
+		r = stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, "", sessionRequest(esc))
+		require.Equal(t, http.StatusPreconditionRequired, r.status, "body: %s", r.body)
+		r = stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, r.header.Get(stepUpHeader), sessionRequest(esc))
+		require.Equal(t, http.StatusCreated, r.status, "body: %s", r.body)
+		created(t, r.body)
 	})
 
 	t.Run("acr-not-accepted", func(t *testing.T) {
@@ -227,11 +243,27 @@ func TestStepUpAuthentication(t *testing.T) {
 		assert.Contains(t, www, `acr_values="gold"`)
 	})
 
+	t.Run("acr-accepted", func(t *testing.T) {
+		base := withReplica(t, "acr-ok")
+		esc := newEscalation(t)
+		token := oidc.GetToken(t, ctx, requester.Username, requester.Password)
+		require.Equal(t, "1", jwtClaims(t, token)["acr"])
+		r := stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, "", sessionRequest(esc))
+		require.Equal(t, http.StatusPreconditionRequired, r.status, "body: %s", r.body)
+		assert.Empty(t, r.header.Get("WWW-Authenticate"))
+		r = stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, r.header.Get(stepUpHeader), sessionRequest(esc))
+		require.Equal(t, http.StatusCreated, r.status, "body: %s", r.body)
+		created(t, r.body)
+	})
+
 	t.Run("invalid-config-refuses-start", func(t *testing.T) {
 		want := "fatal: register breakglass controllers: step-up configuration: stepUp.enabled requires stepUp.maxAuthAge or stepUp.requiredACR"
 		require.Eventually(t, func() bool {
 			return helpers.ServerReplicaLogsContain(t, ctx, s.Namespace, names["invalid"], want)
 		}, 3*time.Minute, 2*time.Second)
+		var d appsv1.Deployment
+		require.NoError(t, s.Client.Get(ctx, client.ObjectKey{Namespace: s.Namespace, Name: names["invalid"]}, &d))
+		assert.Zero(t, d.Status.AvailableReplicas)
 	})
 }
 

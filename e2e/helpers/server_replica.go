@@ -40,8 +40,9 @@ const ServerReplicaLabel = "e2e-server-replica"
 // ServerReplica is an extra breakglass API/frontend replica that runs the
 // image, service account and config.yaml of the controller under test, with
 // changes. It follows the API-only pattern in
-// docs/scaling-and-leader-election.md: cleanup and the CRD webhook server stay
-// with the main controller.
+// docs/scaling-and-leader-election.md: reconcilers, cleanup and the CRD
+// webhook server stay with the main controller, and the replica uses its own
+// leader-election lease so it never competes with the main controller.
 type ServerReplica struct {
 	// Name of the ConfigMap, Deployment and Service (port 8080).
 	Name string
@@ -82,11 +83,13 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 	spec.Spec.Volumes = append(spec.Spec.Volumes, r.Volumes...)
 	c.VolumeMounts = append(c.VolumeMounts, r.VolumeMounts...)
 	c.Resources.Requests = corev1.ResourceList{
-		corev1.ResourceCPU:    resource.MustParse("10m"),
-		corev1.ResourceMemory: resource.MustParse("64Mi"),
+		corev1.ResourceCPU:    resource.MustParse("50m"),
+		corev1.ResourceMemory: resource.MustParse("128Mi"),
 	}
 	flags := map[string]string{
+		"enable-controllers":         "false",
 		"enable-cleanup":             "false",
+		"leader-elect-id":            r.Name,
 		"enable-webhooks":            "false",
 		"enable-validating-webhooks": "false",
 	}
