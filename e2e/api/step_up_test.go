@@ -141,7 +141,7 @@ func TestStepUpAuthentication(t *testing.T) {
 		esc := newEscalation(t)
 		token := oidc.GetToken(t, ctx, requester.Username, requester.Password)
 		claims := jwtClaims(t, token)
-		require.Contains(t, claims, "auth_time", "Keycloak access tokens must carry auth_time for step-up")
+		require.Contains(t, claims, "auth_time", "the e2e realm maps auth_time into access tokens (breakglass-ui auth_time mapper)")
 		req := sessionRequest(esc)
 
 		t.Run("non-critical-read-unaffected", func(t *testing.T) {
@@ -199,6 +199,7 @@ func TestStepUpAuthentication(t *testing.T) {
 		require.Equal(t, http.StatusUnauthorized, r.status, "body: %s", r.body)
 		www := r.header.Get("WWW-Authenticate")
 		assert.Contains(t, www, `error="insufficient_user_authentication"`)
+		assert.Contains(t, www, `error_description="authentication is not recent enough"`)
 		assert.Contains(t, www, `max_age="1"`)
 		assert.Empty(t, r.header.Get(stepUpHeader), "no challenge before re-authentication")
 
@@ -214,6 +215,7 @@ func TestStepUpAuthentication(t *testing.T) {
 		require.Equal(t, http.StatusUnauthorized, r.status, "body: %s", r.body)
 		www := r.header.Get("WWW-Authenticate")
 		assert.Contains(t, www, `error="insufficient_user_authentication"`)
+		assert.Contains(t, www, `error_description="authentication context class not accepted"`)
 		assert.Contains(t, www, `acr_values="gold"`)
 	})
 
