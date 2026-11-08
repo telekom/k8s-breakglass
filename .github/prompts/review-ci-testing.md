@@ -118,8 +118,9 @@ and that CI configuration is correct.
   jobs) include quality-gate jobs in their `needs`, the comment is
   misleading. Comments should state the full dependency picture,
   including indirect enforcement through downstream `needs`.
-- **Version pinning**: Verify that all tool versions in `versions.env` and
-  CI workflow files are pinned to exact versions — never `latest`, `HEAD`,
+- **Version pinning**: Verify that Go tools are pinned by their
+  `hack/tools/<tool>/go.mod` (Dependabot-tracked, never `go install pkg@ver`
+  in workflows) and that remaining CI tool versions are pinned to exact versions — never `latest`, `HEAD`,
   or floating tags. For tools using Go pseudo-versions (e.g., setup-envtest),
   pin the full pseudo-version string. Non-deterministic versions cause
   unreproducible builds and silent behavior changes.

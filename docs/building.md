@@ -167,6 +167,19 @@ external updates: the signed release pipeline supplies verified immutable
 digests. Dependabot security alerts and security updates are repository settings,
 separate from this version-update configuration.
 
+Go tools used by the Makefile and CI (kustomize, controller-gen,
+setup-envtest, govulncheck, gosec, go-licenses, kind and actionlint) each have
+their own module under `hack/tools/<tool>/` with a `tool` directive.
+Dependabot `gomod` updates only the tool modules in those `go.mod`/`go.sum`
+files; `make <tool>` and the `install-kind` composite action build the tool
+from them, and `go.sum` authenticates every downloaded module. Separate modules
+keep each tool on exactly its own upstream dependency graph. The exception is
+gosec's `golang.org/x/tools` floor, raised manually ahead of gosec's own
+requirement when a new Go export-data format needs it. golangci-lint stays a
+`versions.env` pin: upstream recommends against building it as a module
+dependency, and some of its linters are GPL-3.0, which the dependency-review
+license policy rejects for tracked manifests.
+
 GitHub Dependabot is the only dependency updater. Unsupported pins listed below
 require manual review, not an external updater installation. The OPA constraint
 submodule appears only in `go.sum`; do not add a direct requirement merely to
@@ -221,10 +234,9 @@ current:
 | Pins | Required maintenance |
 | --- | --- |
 | Root `versions.env` | Review tool releases manually. The weekly `Check Tool Updates` workflow reports selected tools but does not open version-update PRs. |
-| `pwru` / `kubestr` patches and build steps | Dependabot bumps the tool modules; review that `kubestr-fio-breakglass-pod-contract.patch` still applies and that pwru's Makefile flow is unchanged. CI fails the image build otherwise. |
-| Kind, Node.js, Go security tools, license checker and cert-manager used by CI/E2E scripts | Review these unsupported version literals manually against the supported compatibility floor. |
+| `pwru` / `kubestr` patches and build steps | Dependabot bumps the tool modules; review that `kubestr-fio-breakglass-pod-contract.patch` still applies and that pwru's Makefile flow is unchanged. CI fails the image build otherwise. pwru and kubestr module integrity is covered by their `go.sum`. |
+| kubectl, Node.js and cert-manager used by CI/E2E scripts | Review these unsupported version literals manually against the supported compatibility floor. |
 | Kind node image references embedded in shell and workflow files; the ORT and local registry test images | Resolve published image tags and immutable digests manually; keep repeated references synchronized. Dependabot owns supported Dockerfiles and Kubernetes manifests. |
-| Fetched kind checksums | Cryptographic integrity anchors are not independently versioned. Review them only alongside the corresponding upstream release and never replace or remove the verification. pwru and kubestr module integrity is covered by their `go.sum`. |
 | kind node defaults in utility integration tests, the Kubernetes 1.34 `hard-expiry` lane, BusyBox digests in API tests, and MinIO source commit in `e2e/fixtures/artifacts/setup.sh` | Deliberate reproducible E2E fixtures / compatibility floors; update only with a reviewed fixture or support-policy change. |
 | `versions.env` base/build image mirrors, OCI base labels, image metadata, source-built product versions and generated SBOMs | These are release/integrity records; synchronize with the corresponding Dependabot Dockerfile or release change. |
 

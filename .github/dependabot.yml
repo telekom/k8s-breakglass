@@ -33,6 +33,9 @@ updates:
       # v0.32+ declares cel.dev/cel-go, not the legacy path used by Kubernetes.
       - dependency-name: "github.com/google/cel-go"
         versions: [">= 0.32.0"]
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     schedule:
       interval: "daily"
     groups:
@@ -63,6 +66,9 @@ updates:
 
   - package-ecosystem: "npm"
     directory: "/frontend"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     schedule:
       interval: "daily"
     groups:
@@ -99,6 +105,8 @@ updates:
 
   - package-ecosystem: "github-actions"
     directory: "/"
+    cooldown:
+      default-days: 3
     schedule:
       interval: "daily"
     groups:
@@ -115,6 +123,48 @@ updates:
           - "patch"
     commit-message:
       prefix: "ci(deps)"
+    open-pull-requests-limit: 5
+
+  # Makefile and CI Go tools. Each hack/tools/<tool> directory is a separate
+  # module so every tool keeps exactly its own upstream dependency graph.
+  # Only the tools themselves (recorded as indirect requirements by the `tool`
+  # directive) are updated; indirect modules follow each tool's own releases.
+  # `allow` applies to every directory, so golang.org/x/tools is deliberately
+  # absent: listing it would also move controller-gen, govulncheck and
+  # go-licenses off their upstream graphs. gosec's x/tools floor (ahead of its
+  # own requirement, for the current Go export-data format) is raised manually.
+  - package-ecosystem: "gomod"
+    directories:
+      - /hack/tools/*
+    allow:
+      - dependency-name: "sigs.k8s.io/kustomize/kustomize/v5"
+        dependency-type: "all"
+      - dependency-name: "sigs.k8s.io/controller-tools"
+        dependency-type: "all"
+      - dependency-name: "sigs.k8s.io/controller-runtime/tools/setup-envtest"
+        dependency-type: "all"
+      - dependency-name: "golang.org/x/vuln"
+        dependency-type: "all"
+      - dependency-name: "github.com/securego/gosec/v2"
+        dependency-type: "all"
+      - dependency-name: "github.com/google/go-licenses/v2"
+        dependency-type: "all"
+      - dependency-name: "sigs.k8s.io/kind"
+        dependency-type: "all"
+      - dependency-name: "github.com/rhysd/actionlint"
+        dependency-type: "all"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    groups:
+      go-tools:
+        group-by: dependency-name
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps(tools)"
     open-pull-requests-limit: 5
 
   - package-ecosystem: docker
@@ -142,6 +192,8 @@ updates:
       # Our own source-built images and zero-digest release placeholders are
       # resolved by the signed release pipeline, not external version updates.
       - dependency-name: "ghcr.io/telekom/k8s-breakglass*"
+    cooldown:
+      default-days: 3
     schedule:
       interval: "daily"
     groups:
@@ -173,6 +225,8 @@ updates:
       - /charts/*
     ignore:
       - dependency-name: "ghcr.io/telekom/k8s-breakglass*"
+    cooldown:
+      default-days: 3
     schedule:
       interval: "daily"
     groups:

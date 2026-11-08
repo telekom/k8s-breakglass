@@ -52,17 +52,16 @@ jobs:
             config/webhook/manifests.yaml
       - name: Require committed generated contract
         run: git diff --exit-code
-      - name: Install checksum-verified kind and kubectl
+      - name: Install kind
+        uses: ./.github/actions/install-kind
+      - name: Install checksum-verified kubectl
         run: |
           mkdir .node-maintenance-tools
-          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64 --output .node-maintenance-tools/kind
-          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64.sha256sum --output .node-maintenance-tools/kind.sha256sum
           cd .node-maintenance-tools
-          sed 's/kind-linux-amd64/kind/' kind.sha256sum | sha256sum --check --status
           curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl --output kubectl
           curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl.sha256 --output kubectl.sha256
           printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
-          chmod +x kind kubectl
+          chmod +x kubectl
           echo "$PWD" >> "$GITHUB_PATH"
       - name: Load the VRF kernel module for the exact VRF fixtures
         run: sudo modprobe vrf || { sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe vrf; }
