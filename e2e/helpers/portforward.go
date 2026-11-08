@@ -60,6 +60,7 @@ func StartPortForward(t *testing.T, ctx context.Context, namespace, service stri
 	if err := waitForPort(localPort, 10*time.Second); err != nil {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
 		}
 		t.Fatalf("Port-forward failed to become ready: %v", err)
 	}
@@ -67,6 +68,7 @@ func StartPortForward(t *testing.T, ctx context.Context, namespace, service stri
 	return localPort, func() {
 		if cmd.Process != nil {
 			_ = cmd.Process.Kill()
+			_ = cmd.Wait() // reap kubectl
 		}
 	}
 }
