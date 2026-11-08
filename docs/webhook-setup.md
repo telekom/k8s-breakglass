@@ -196,6 +196,12 @@ contexts:
 current-context: webhook
 ```
 
+If the breakglass server runs `server.clientAuth: require` (mutual TLS, see
+[`clientAuth`](configuration-reference.md#clientauth-optional)), the
+`kube-apiserver` user must use `client-certificate-data`/`client-key-data`
+signed by `server.clientCAFile`. A token alone is then rejected at the TLS
+handshake.
+
 ### Endpoint URL Format
 
 The webhook endpoint is exposed by the hub server. By default the controller registers the webhook

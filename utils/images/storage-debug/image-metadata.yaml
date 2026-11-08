@@ -15,6 +15,11 @@ builder:
   image: golang:1.27.3
   digest: sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b
 dependencyLock: versions.env
+# kubestr and its Go modules are selected by the Dependabot-tracked
+# kubestr/go.mod; Alpine package versions follow the digest-pinned base and are
+# recorded at build time. versionSource names where each version is recorded.
+moduleLock: kubestr/go.mod
+installedPackages: /usr/share/breakglass/installed-packages
 runtime:
   user: "65532:65532"
   writable_paths:
@@ -24,25 +29,16 @@ runtime:
   privileged: false
   network_required: operation-dependent
 dependencies:
+  - name: github.com/kastenhq/kubestr
+    versionSource: kubestr/go.mod
   - name: golang.org/x/net
-    version: v0.62.0
-  - name: golang.org/x/crypto
-    version: v0.58.0
+    versionSource: kubestr/go.mod
   - name: golang.org/x/text
-    version: v0.43.0
+    versionSource: kubestr/go.mod
   - name: fio
-    version: 3.41-r0
+    versionSource: /usr/share/breakglass/installed-packages
   - name: ioping
-    version: 1.3-r0
-  - name: musl
-    version: 1.2.6-r3
-  - name: musl-utils
-    version: 1.2.6-r3
-  - name: zlib
-    version: 1.4-r0
-  - name: kubestr
-    version: v0.4.49
-    commit: 01940ed37be9a0c7a70d80cd26c648eaa11e5174
+    versionSource: /usr/share/breakglass/installed-packages
 contract:
   schema_version: storage-diagnostics/v1
   executable: /usr/local/bin/storage-diagnostics

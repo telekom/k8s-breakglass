@@ -9,7 +9,10 @@ image:
   base:
     name: alpine:3.24
     digest: sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
-  dependencyLock: deps.lock
+  # Package versions follow the digest-pinned base; the installed versions are
+  # recorded in the image and in the generated SPDX SBOM.
+  installedPackages: /usr/share/breakglass/installed-packages
+  packages: [ethtool, flock, iproute2, kmod, sed]
   user: "0:0 (controller-selected operation only)"
   capabilities: [NET_ADMIN, SYS_BOOT, SYS_MODULE]
   operationCapabilities:

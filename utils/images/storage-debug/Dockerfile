@@ -6,51 +6,46 @@
 FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS kubestr-builder
 
 ARG TARGETARCH
-ARG KUBESTR_VERSION=v0.4.49
-ARG KUBESTR_COMMIT=01940ed37be9a0c7a70d80cd26c648eaa11e5174
-ARG X_NET_VERSION=v0.62.0
-ARG X_CRYPTO_VERSION=v0.58.0
-ARG X_TEXT_VERSION=v0.43.0
-ARG SPDYSTREAM_VERSION=v0.5.1
-ARG OAUTH2_VERSION=v0.27.0
 
 ENV CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} GOPROXY=https://proxy.golang.org
-# x/crypto is patched in the module graph; only require its version if linked.
+# kubestr and its Go module graph come from kubestr/go.mod and kubestr/go.sum,
+# which Dependabot tracks; go.sum authenticates every downloaded module,
+# including kubestr itself. The build fails if go.sum lacks an entry or if
+# kubestr's own replace directives are not mirrored in kubestr/go.mod. The
+# patched source replaces only the kubestr module, so the binary links exactly
+# the tracked graph (checked below) and dependency bumps (for example
+# golang.org/x/net) need no Dockerfile edits.
 # kubestr creates the fio Pod without a security context, registry credentials
 # or an owner. The patch runs it as the image user with fsGroup, passes the
 # runner's pull secrets and makes the runner Pod own every generated object.
+COPY kubestr/go.mod kubestr/go.sum /src/tools/
 COPY patches/kubestr-fio-breakglass-pod-contract.patch /src/patches/
-RUN git clone --depth=1 --branch "${KUBESTR_VERSION}" https://github.com/kastenhq/kubestr.git /src/kubestr \
-    && test "$(git -C /src/kubestr rev-parse HEAD)" = "${KUBESTR_COMMIT}" \
-    && git -C /src/kubestr apply /src/patches/kubestr-fio-breakglass-pod-contract.patch \
-    && go -C /src/kubestr get \
-        "github.com/moby/spdystream@${SPDYSTREAM_VERSION}" \
-        "golang.org/x/crypto@${X_CRYPTO_VERSION}" \
-        "golang.org/x/net@${X_NET_VERSION}" \
-        "golang.org/x/oauth2@${OAUTH2_VERSION}" \
-        "golang.org/x/text@${X_TEXT_VERSION}" \
-    && go -C /src/kubestr mod tidy \
-    && GOARCH="$(go env GOHOSTARCH)" go -C /src/kubestr test -mod=mod ./pkg/fio/ \
-    && go -C /src/kubestr build -mod=mod -trimpath -ldflags='-s -w' -o /out/kubestr . \
-    && test -x /out/kubestr \
-    && go version -m /out/kubestr > /out/kubestr-build-info \
-    && cat /out/kubestr-build-info \
-    && awk -v net="${X_NET_VERSION}" -v crypto="${X_CRYPTO_VERSION}" -v text="${X_TEXT_VERSION}" \
-        'BEGIN { c = 1 } $1 == "dep" { if ($2 == "golang.org/x/net") n = ($3 == net); if ($2 == "golang.org/x/crypto") c = ($3 == crypto); if ($2 == "golang.org/x/text") t = ($3 == text) } END { exit !(n && c && t) }' /out/kubestr-build-info
+WORKDIR /src/tools
+RUN set -eux; \
+    cp go.sum /tmp/tracked-go.sum; \
+    go mod download github.com/kastenhq/kubestr; \
+    go list -m -f '{{.Path}} {{.Version}}' all > /tmp/tracked-modules; \
+    mkdir -p /src/kubestr /out; \
+    cp -a "$(go list -m -f '{{.Dir}}' github.com/kastenhq/kubestr)/." /src/kubestr/; \
+    chmod -R u+w /src/kubestr; \
+    sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' /src/kubestr/go.mod > /tmp/upstream-replaces; \
+    sed -n 's/^replace //; s/^[[:space:]]*//; /=>/p' go.mod > /tmp/tracked-replaces; \
+    cmp /tmp/upstream-replaces /tmp/tracked-replaces || { echo "kubestr replace directives differ from kubestr/go.mod" >&2; exit 1; }; \
+    git -C /src/kubestr apply --verbose /src/patches/kubestr-fio-breakglass-pod-contract.patch; \
+    go mod edit -replace github.com/kastenhq/kubestr=/src/kubestr; \
+    GOARCH="$(go env GOHOSTARCH)" go test github.com/kastenhq/kubestr/pkg/fio; \
+    go build -trimpath -ldflags='-s -w' -o /out/kubestr github.com/kastenhq/kubestr; \
+    cmp go.sum /tmp/tracked-go.sum || { echo "kubestr/go.sum is incomplete; run go mod tidy in utils/images/storage-debug/kubestr" >&2; exit 1; }; \
+    go version -m /out/kubestr > /out/kubestr-build-info; \
+    cat /out/kubestr-build-info; \
+    awk 'NR == FNR { tracked[$1] = $2; next } ($1 == "dep" || $1 == "mod") && tracked[$2] != $3 { print "linked " $2 " " $3 " differs from kubestr/go.mod"; bad = 1 } END { exit bad }' \
+        /tmp/tracked-modules /out/kubestr-build-info
 
 FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 ARG VERSION=dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
-ARG FIO_VERSION=3.41-r0
-ARG IOPING_VERSION=1.3-r0
-ARG KUBESTR_VERSION=v0.4.49
-ARG LIBCRYPTO3_VERSION=3.5.8-r0
-ARG LIBSSL3_VERSION=3.5.8-r0
-ARG MUSL_VERSION=1.2.6-r3
-ARG MUSL_UTILS_VERSION=1.2.6-r3
-ARG ZLIB_VERSION=1.4-r0
 
 LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       org.opencontainers.image.description="Bounded mounted-volume, performance, CSI snapshot/restore, and block-volume diagnostics" \
@@ -65,17 +60,17 @@ LABEL org.opencontainers.image.title="Storage diagnostics utilities" \
       io.telekom.breakglass.intent="storage-diagnostics" \
       io.telekom.breakglass.image.role="debug-storage"
 
-# Install only the exact fio and ioping versions required by the utility
-# contract. Do not upgrade the inherited package set: the base digest and
-# exact package selections must remain reproducible as one Alpine release.
-RUN apk add --no-cache \
-      "fio=${FIO_VERSION}" \
-      "ioping=${IOPING_VERSION}" \
-      "libcrypto3=${LIBCRYPTO3_VERSION}" \
-      "libssl3=${LIBSSL3_VERSION}" \
-      "musl=${MUSL_VERSION}" \
-      "musl-utils=${MUSL_UTILS_VERSION}" \
-      "zlib=${ZLIB_VERSION}" \
+# Package versions follow the digest-pinned Alpine 3.24 base (Dependabot
+# docker): the inherited set is upgraded from the matching release repository
+# so security fixes land on rebuild, and the versions actually installed are
+# recorded in the image and its SBOM instead of being pinned here.
+# hadolint ignore=DL3018
+RUN apk upgrade --no-cache \
+    && apk add --no-cache fio ioping \
+    && install -d /usr/share/breakglass \
+    && apk list --installed --no-network > /usr/share/breakglass/installed-packages 2>/dev/null \
+    && grep -q "^fio-" /usr/share/breakglass/installed-packages \
+    && chmod 0444 /usr/share/breakglass/installed-packages \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && install -d -o debug -g debug /scratch /reports /usr/share/storage-debug \

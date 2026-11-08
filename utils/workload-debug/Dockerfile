@@ -9,31 +9,17 @@ ARG BUILD_DATE=unknown
 ARG REVISION=${VCS_REF}
 ARG CREATED=${BUILD_DATE}
 
-ARG BASH_VERSION=5.3.9-r1
-ARG BIND_TOOLS_VERSION=9.20.30-r0
-ARG CA_CERTIFICATES_VERSION=20261020-r0
-ARG CURL_VERSION=8.23.0-r0
-ARG JQ_VERSION=1.8.2-r0
-ARG MUSL_VERSION=1.2.6-r3
-ARG MUSL_UTILS_VERSION=1.2.6-r3
-ARG OPENSSL_VERSION=3.5.9-r0
-ARG TINI_VERSION=0.19.0-r3
-ARG ZLIB_VERSION=1.4-r0
-
-# The Alpine 3.24 release and its base manifest are pinned. Refresh deps.lock
-# and the SBOM together whenever this is updated.
+# Package versions follow the digest-pinned Alpine 3.24 base (Dependabot
+# docker): the inherited set is upgraded from the matching release repository
+# so security fixes land on rebuild, and the versions actually installed are
+# recorded in the image and its SBOM instead of being pinned here.
 # hadolint ignore=DL3018
-RUN apk add --no-cache \
-      "bash=${BASH_VERSION}" \
-      "bind-tools=${BIND_TOOLS_VERSION}" \
-      "ca-certificates=${CA_CERTIFICATES_VERSION}" \
-      "curl=${CURL_VERSION}" \
-      "jq=${JQ_VERSION}" \
-      "musl=${MUSL_VERSION}" \
-      "musl-utils=${MUSL_UTILS_VERSION}" \
-      "openssl=${OPENSSL_VERSION}" \
-      "tini=${TINI_VERSION}" \
-      "zlib=${ZLIB_VERSION}" \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache bash bind-tools ca-certificates curl jq openssl tini \
+    && install -d /usr/share/breakglass \
+    && apk list --installed --no-network > /usr/share/breakglass/installed-packages 2>/dev/null \
+    && grep -q '^tini-' /usr/share/breakglass/installed-packages \
+    && chmod 0444 /usr/share/breakglass/installed-packages \
     && addgroup -S -g 65532 debug \
     && adduser -S -D -H -u 65532 -G debug debug \
     && mkdir -p /home/debug /usr/share/breakglass/runbooks/upstream/workload-debug \

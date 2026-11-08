@@ -202,9 +202,10 @@ func TestFullQueueEmitWithoutDropOnFullEndsAtTheCallerDeadline(t *testing.T) {
 	require.Eventually(t, func() bool { return len(manager.asyncQueue) == 0 }, time.Second, 5*time.Millisecond)
 	manager.Emit(context.Background(), &Event{Type: EventAccessGranted})
 	require.Len(t, manager.asyncQueue, 1)
+	// Start the clock before the deadline exists, so elapsed always covers it.
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	start := time.Now()
 	assert.True(t, manager.Emit(ctx, &Event{Type: EventAccessDenied}))
 	elapsed := time.Since(start)
 	assert.GreaterOrEqual(t, elapsed, 50*time.Millisecond, "Emit must wait for queue capacity until the caller deadline")
