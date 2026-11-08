@@ -104,6 +104,7 @@ fi
 
 docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges --entrypoint /bin/sh "$image" -c '
+    set -eu
     test -r /usr/share/breakglass/runbooks/upstream/workload-debug/README.md
     test -r /usr/share/breakglass/runbooks/upstream/workload-debug/RUNBOOK.md
     test -d /usr/share/breakglass/runbooks/internal
