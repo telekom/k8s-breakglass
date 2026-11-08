@@ -74,7 +74,7 @@ require (
 	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	github.com/xlab/treeprint v1.2.0 // indirect
-	go.mongodb.org/mongo-driver v1.14.0 // indirect
+	go.mongodb.org/mongo-driver v1.17.7 // indirect
 	go.starlark.net v0.0.0-20240314022150-ee8ed142361c // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
