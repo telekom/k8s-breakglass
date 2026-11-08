@@ -77,8 +77,8 @@ Release images are built as multi-arch manifests supporting both `linux/amd64` a
 
 ### Optional OCI mirror configuration
 
-Artifactory publishing is temporarily disabled in both CI and release
-workflows while the configured mirror credentials are repaired. GHCR image
+Artifactory publishing is temporarily disabled while the configured mirror
+credentials are repaired; CI has no mirror job. GHCR image
 publication, signing, attestations, and chart publication remain enabled.
 The release mirror job runs only when the repository variable
 `ARTIFACTORY_MIRROR_ENABLED` is `true`; set it only after validating the four
