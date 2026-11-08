@@ -48,17 +48,16 @@ jobs:
             config/webhook/manifests.yaml
       - name: Require committed generated contract
         run: git diff --exit-code
-      - name: Install checksum-verified kind and kubectl
+      - name: Install kind
+        uses: ./.github/actions/install-kind
+      - name: Install checksum-verified kubectl
         run: |
           mkdir .hotfix-tools
-          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64 --output .hotfix-tools/kind
-          curl --fail --silent --show-error --location https://kind.sigs.k8s.io/dl/v0.32.0/kind-linux-amd64.sha256sum --output .hotfix-tools/kind.sha256sum
           cd .hotfix-tools
-          sed 's/kind-linux-amd64/kind/' kind.sha256sum | sha256sum --check --status
           curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl --output kubectl
           curl --fail --silent --show-error --location https://dl.k8s.io/release/v1.36.1/bin/linux/amd64/kubectl.sha256 --output kubectl.sha256
           printf '%s  kubectl\n' "$(cat kubectl.sha256)" | sha256sum --check --status
-          chmod +x kind kubectl
+          chmod +x kubectl
           echo "$PWD" >> "$GITHUB_PATH"
       - name: Prove the hotfix stages, four-eyes approval, executor and record
         run: bash hack/hotfix-controller-kind.sh

@@ -130,3 +130,10 @@ path = "hack/schemas/spdx-2.3.schema.json"
 precedence = "override"
 SPDX-FileCopyrightText = "SPDX contributors"
 SPDX-License-Identifier = "CC-BY-3.0"
+
+# Go tool modules updated by Dependabot
+[[annotations]]
+precedence = "aggregate"
+path = ["hack/tools/**/go.mod", "hack/tools/**/go.sum"]
+SPDX-FileCopyrightText = "2026 Deutsche Telekom AG"
+SPDX-License-Identifier = "Apache-2.0"

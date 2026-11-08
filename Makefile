@@ -96,9 +96,8 @@ verify-docs-snippets: ## Verify docs and workflow snippets use current dev workl
 	bash hack/verify-docs-snippets.sh
 
 .PHONY: vulncheck
-vulncheck: ## Run govulncheck to check for known vulnerabilities.
-	@command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION)
-	$(shell go env GOPATH)/bin/govulncheck ./...
+vulncheck: govulncheck ## Run govulncheck to check for known vulnerabilities.
+	$(GOVULNCHECK) ./...
 
 .PHONY: fmt
 fmt: ## Run go fmt against code.
@@ -356,26 +355,47 @@ KUBECTL ?= kubectl
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
 ENVTEST ?= $(LOCALBIN)/setup-envtest
+GOVULNCHECK ?= $(LOCALBIN)/govulncheck
+
+# Each Go tool is pinned by its own module under hack/tools/<tool> (go.mod
+# `tool` directive + go.sum), which Dependabot updates. A tool is rebuilt
+# whenever its go.mod changes.
+TOOLS_DIR := $(CURDIR)/hack/tools
 
 .PHONY: kustomize
-kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
-$(KUSTOMIZE): $(LOCALBIN)
-	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
+kustomize: $(KUSTOMIZE) ## Build kustomize locally if necessary.
+$(KUSTOMIZE): $(TOOLS_DIR)/kustomize/go.mod $(TOOLS_DIR)/kustomize/go.sum | $(LOCALBIN)
+	$(call go-build-tool,$@,kustomize,sigs.k8s.io/kustomize/kustomize/v5)
 
 .PHONY: controller-gen
-controller-gen: $(CONTROLLER_GEN) ## Download controller-gen locally if necessary.
-$(CONTROLLER_GEN): $(LOCALBIN)
-	$(call go-install-tool,$(CONTROLLER_GEN),sigs.k8s.io/controller-tools/cmd/controller-gen,$(CONTROLLER_TOOLS_VERSION))
+controller-gen: $(CONTROLLER_GEN) ## Build controller-gen locally if necessary.
+$(CONTROLLER_GEN): $(TOOLS_DIR)/controller-gen/go.mod $(TOOLS_DIR)/controller-gen/go.sum | $(LOCALBIN)
+	$(call go-build-tool,$@,controller-gen,sigs.k8s.io/controller-tools/cmd/controller-gen)
 
+# golangci-lint stays a versions.env pin: upstream recommends against building
+# it as a module dependency, and several of its linters are GPL-3.0, which the
+# dependency-review license policy rejects for tracked manifests.
 .PHONY: golangci-lint $(GOLANGCI_LINT)
 golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
-	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/v2/cmd/golangci-lint,$(GOLANGCI_LINT_VERSION))
+	@[ -f "$(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION)" ] || { \
+	set -e; \
+	echo "Downloading github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)"; \
+	rm -f $(GOLANGCI_LINT) || true; \
+	GOBIN=$(LOCALBIN) go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	mv $(GOLANGCI_LINT) $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION); \
+	} ; \
+	ln -sf $(GOLANGCI_LINT)-$(GOLANGCI_LINT_VERSION) $(GOLANGCI_LINT)
 
 .PHONY: setup-envtest
-setup-envtest: $(ENVTEST) ## Download setup-envtest locally if necessary.
-$(ENVTEST): $(LOCALBIN)
-	$(call go-install-tool,$(ENVTEST),sigs.k8s.io/controller-runtime/tools/setup-envtest,$(ENVTEST_VERSION))
+setup-envtest: $(ENVTEST) ## Build setup-envtest locally if necessary.
+$(ENVTEST): $(TOOLS_DIR)/setup-envtest/go.mod $(TOOLS_DIR)/setup-envtest/go.sum | $(LOCALBIN)
+	$(call go-build-tool,$@,setup-envtest,sigs.k8s.io/controller-runtime/tools/setup-envtest)
+
+.PHONY: govulncheck
+govulncheck: $(GOVULNCHECK) ## Build govulncheck locally if necessary.
+$(GOVULNCHECK): $(TOOLS_DIR)/govulncheck/go.mod $(TOOLS_DIR)/govulncheck/go.sum | $(LOCALBIN)
+	$(call go-build-tool,$@,govulncheck,golang.org/x/vuln/cmd/govulncheck)
 
 .PHONY: helm-validate
 helm-validate: ## Validate Helm chart syntax and templates
@@ -385,20 +405,13 @@ helm-validate: ## Validate Helm chart syntax and templates
 	helm template debug-session-catalogue charts/debug-session-catalogue --values charts/debug-session-catalogue/ci/test-values.yaml > /dev/null
 	@echo "Helm chart validation passed"
 
-# go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
-# $1 - target path with name of binary
-# $2 - package url which can be installed
-# $3 - specific version of package
-define go-install-tool
-@[ -f "$(1)-$(3)" ] || { \
-set -e; \
-package=$(2)@$(3) ;\
-echo "Downloading $${package}" ;\
-rm -f $(1) || true ;\
-GOBIN=$(LOCALBIN) go install $${package} ;\
-mv $(1) $(1)-$(3) ;\
-} ;\
-ln -sf $(1)-$(3) $(1)
+# go-build-tool builds a Go tool from its Dependabot-tracked module.
+# $1 - target path of the binary
+# $2 - module directory below hack/tools
+# $3 - package to build
+define go-build-tool
+@echo "Building $(3) from hack/tools/$(2)/go.mod"
+go -C $(TOOLS_DIR)/$(2) build -trimpath -o $(1) $(3)
 endef
 ##@ Release
 

@@ -54,17 +54,8 @@ jobs:
         run: sudo modprobe vrf || { sudo apt-get update -q && sudo apt-get install -y -q "linux-modules-extra-$(uname -r)" && sudo modprobe vrf; }
       - name: Exercise recovery, repair, boundary, evidence, and cleanup contracts
         run: make -C utils/node-maintenance integration
-      - name: Install checksum-verified Kind
-        env:
-          KIND_VERSION: v0.32.0
-          KIND_SHA256: 50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54
-        run: |
-          set -Eeuo pipefail
-          curl --fail --silent --show-error --location \
-            "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64" --output ./kind
-          printf '%s  ./kind\n' "${KIND_SHA256}" | sha256sum --check --status -
-          chmod 0755 ./kind
-          sudo mv ./kind /usr/local/bin/kind
+      - name: Install kind
+        uses: ./.github/actions/install-kind
       - name: Build image for disposable host-network proof
         run: docker build --pull=false --file utils/node-maintenance/Dockerfile --tag node-maintenance-host-network:ci utils/node-maintenance
       - name: Exercise the hotfix executor in the real image
