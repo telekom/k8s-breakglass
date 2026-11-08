@@ -49,16 +49,25 @@ jobs:
           self_path="${SELF#"${GITHUB_REPOSITORY}"/}"
           self_path="${self_path%@*}"
           api="repos/${GITHUB_REPOSITORY}"
-          # One TSV line per item: kind+name, status, conclusion. Only the
-          # newest run per workflow and check run per app+name count, so
-          # superseded (re-run or concurrency-cancelled) attempts are ignored.
+          # One TSV line per item: kind+name, status, conclusion. Per workflow
+          # the newest run counts, except that a cancelled run loses to any
+          # non-cancelled run of the same workflow: two events for one commit
+          # (e.g. synchronize and edited) can start runs together and
+          # concurrency may cancel the newer one. Check runs of such dropped
+          # runs are ignored; otherwise the newest check run per app+name
+          # counts, so a re-run attempt that times out still fails the gate
+          # unless a sibling run of the same workflow succeeded.
           collect() {
-            gh api --paginate "${api}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" |
-              jq -rs --arg self "${self_path}" '[.[].workflow_runs[] | select(.path != $self)]
-                | group_by(.workflow_id)[] | max_by(.run_number)
-                | ["workflow " + .name, .status, .conclusion // ""] | @tsv' &&
+            local runs dropped
+            runs="$(gh api --paginate "${api}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" |
+              jq -cs --arg self "${self_path}" '[.[].workflow_runs[] | select(.path != $self)]
+                | group_by(.workflow_id) | map(sort_by([.conclusion != "cancelled", .run_number]))')" &&
+            jq -r '.[] | last | ["workflow " + .name, .status, .conclusion // ""] | @tsv' <<<"${runs}" &&
+            dropped="$(jq -c '[.[] | .[:-1][] | select(.conclusion == "cancelled") | .check_suite_id]' <<<"${runs}")" &&
             gh api --paginate "${api}/commits/${HEAD_SHA}/check-runs?per_page=100" |
-              jq -rs '[.[].check_runs[] | select(.name != "all-checks-green" and .name != "dependabot-auto-merge")]
+              jq -rs --argjson dropped "${dropped}" '[.[].check_runs[]
+                  | select(.name != "all-checks-green" and .name != "dependabot-auto-merge")
+                  | select(.check_suite.id | IN($dropped[]) | not)]
                 | group_by([.app.id, .name])[] | max_by(.id)
                 | ["check " + .name, .status, .conclusion // ""] | @tsv' &&
             gh api "${api}/commits/${HEAD_SHA}/status?per_page=100" |
