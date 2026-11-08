@@ -24,7 +24,7 @@ import (
 // It defines how audit events are captured, filtered, and delivered to sinks.
 // AuditConfig is cluster-scoped and applies globally to all audit events.
 type AuditConfigApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *AuditConfigSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *AuditConfigStatusApplyConfiguration `json:"status,omitempty"`
