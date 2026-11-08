@@ -19,11 +19,19 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"crypto/tls"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -139,9 +147,9 @@ func TestStepUpAuthentication(t *testing.T) {
 	t.Run("fresh", func(t *testing.T) {
 		base := withReplica(t, "fresh")
 		esc := newEscalation(t)
-		token := oidc.GetToken(t, ctx, requester.Username, requester.Password)
+		token := browserLoginToken(t, ctx, requester.Username, requester.Password)
 		claims := jwtClaims(t, token)
-		require.Contains(t, claims, "auth_time", "the e2e realm maps auth_time into access tokens (breakglass-ui auth_time mapper)")
+		require.Contains(t, claims, "auth_time", "browser-flow access tokens carry auth_time")
 		req := sessionRequest(esc)
 
 		t.Run("non-critical-read-unaffected", func(t *testing.T) {
@@ -176,7 +184,7 @@ func TestStepUpAuthentication(t *testing.T) {
 		assert.Equal(t, http.StatusPreconditionRequired, r.status, "a consumed challenge must not be accepted")
 
 		// Approval is critical too.
-		approverToken := oidc.GetToken(t, ctx, approver.Username, approver.Password)
+		approverToken := browserLoginToken(t, ctx, approver.Username, approver.Password)
 		approve := sessionsAPIBasePath + "/" + session.Name + "/approve"
 		r = stepUpCall(t, ctx, base, approverToken, http.MethodPost, approve, "", nil)
 		require.Equal(t, http.StatusPreconditionRequired, r.status, "body: %s", r.body)
@@ -193,7 +201,7 @@ func TestStepUpAuthentication(t *testing.T) {
 	t.Run("stale-authentication", func(t *testing.T) {
 		base := withReplica(t, "stale")
 		esc := newEscalation(t)
-		token := oidc.GetToken(t, ctx, requester.Username, requester.Password)
+		token := browserLoginToken(t, ctx, requester.Username, requester.Password)
 		time.Sleep(2 * time.Second)
 		r := stepUpCall(t, ctx, base, token, http.MethodPost, sessionsAPIBasePath, "", sessionRequest(esc))
 		require.Equal(t, http.StatusUnauthorized, r.status, "body: %s", r.body)
@@ -265,4 +273,101 @@ func jwtClaims(t *testing.T, token string) map[string]any {
 	var claims map[string]any
 	require.NoError(t, json.Unmarshal(raw, &claims))
 	return claims
+}
+
+// browserLoginToken logs in through Keycloak's browser (authorization code +
+// PKCE) flow and returns the access token. Keycloak sets auth_time only for
+// interactive logins, not for the password grant that the other e2e tests
+// use. Like e2e/get-token.sh, it talks to the forwarded Keycloak port and
+// sends the in-cluster Host so the issuer matches the IdentityProvider.
+func browserLoginToken(t *testing.T, ctx context.Context, username, password string) string {
+	t.Helper()
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8443"
+	}
+	issuerHost := helpers.GetKeycloakIssuerHost()
+	if issuerHost == "" {
+		issuerHost = "breakglass-keycloak.breakglass-system.svc.cluster.local:8443"
+	}
+	relPath := "/" + strings.Trim(os.Getenv("KEYCLOAK_RELATIVE_PATH"), "/")
+	realmURL := "https://localhost:" + port + strings.TrimSuffix(relPath, "/") + "/realms/" + helpers.GetKeycloakRealm() + "/protocol/openid-connect"
+	const redirectURI = "http://localhost:28081/step-up-e2e"
+
+	jar, err := cookiejar.New(nil)
+	require.NoError(t, err)
+	c := &http.Client{
+		Timeout:       30 * time.Second,
+		Jar:           jar,
+		Transport:     &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, InsecureSkipVerify: true}}, // #nosec G402 -- e2e Keycloak uses a self-signed certificate.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	do := func(method, target string, form url.Values) *http.Response {
+		t.Helper()
+		var body io.Reader
+		if form != nil {
+			body = strings.NewReader(form.Encode())
+		}
+		req, err := http.NewRequestWithContext(ctx, method, target, body)
+		require.NoError(t, err)
+		req.Host = issuerHost
+		if form != nil {
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
+		resp, err := c.Do(req)
+		require.NoError(t, err)
+		return resp
+	}
+	// Keycloak renders URLs with the issuer host; send them to the forward.
+	local := func(raw string) string {
+		u, err := url.Parse(html.UnescapeString(raw))
+		require.NoError(t, err)
+		u.Scheme, u.Host = "https", "localhost:"+port
+		return u.String()
+	}
+
+	verifier := rand.Text() + rand.Text()
+	sum := sha256.Sum256([]byte(verifier))
+	resp := do(http.MethodGet, realmURL+"/auth?"+url.Values{
+		"client_id":             {"breakglass-ui"},
+		"response_type":         {"code"},
+		"scope":                 {"openid"},
+		"redirect_uri":          {redirectURI},
+		"state":                 {rand.Text()},
+		"code_challenge":        {base64.RawURLEncoding.EncodeToString(sum[:])},
+		"code_challenge_method": {"S256"},
+	}.Encode(), nil)
+	page, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "login page: %s", page)
+	action := regexp.MustCompile(`<form[^>]*id="kc-form-login"[^>]*action="([^"]+)"`).FindSubmatch(page)
+	if action == nil {
+		action = regexp.MustCompile(`<form[^>]*action="([^"]+)"[^>]*id="kc-form-login"`).FindSubmatch(page)
+	}
+	require.NotNil(t, action, "Keycloak login form not found")
+
+	resp = do(http.MethodPost, local(string(action[1])), url.Values{"username": {username}, "password": {password}, "credentialId": {""}})
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusFound, resp.StatusCode, "login must redirect with a code")
+	location, err := url.Parse(resp.Header.Get("Location"))
+	require.NoError(t, err)
+	code := location.Query().Get("code")
+	require.NotEmpty(t, code, "redirect without code: %s", location)
+
+	resp = do(http.MethodPost, realmURL+"/token", url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {"breakglass-ui"},
+		"code":          {code},
+		"redirect_uri":  {redirectURI},
+		"code_verifier": {verifier},
+	})
+	defer func() { _ = resp.Body.Close() }()
+	var tok struct {
+		AccessToken string `json:"access_token"`
+	}
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&tok))
+	require.NotEmpty(t, tok.AccessToken)
+	return tok.AccessToken
 }
