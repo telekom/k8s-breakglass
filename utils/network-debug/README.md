@@ -136,14 +136,19 @@ Kubernetes distributions and admission policies.
 The netshoot runtime and Go build image are pinned by immutable OCI manifest
 digests. The netshoot v0.16 release is the source of the inherited runtime
 packages, which are refreshed from the matching Alpine 3.24 repositories for
-security fixes. `pwru` is built from its immutable Go module sum with the
-pinned toolchain, so the resulting binary receives current standard-library
-fixes instead of inheriting the release asset's older compiler. Optional
+security fixes; the installed package versions are recorded in
+`/usr/share/breakglass/installed-packages` and the SBOM. `pwru` and its Go
+module graph are selected by [`pwru/go.mod`](./pwru/go.mod) and authenticated
+by `pwru/go.sum`, both updated by Dependabot. It is built with the pinned
+toolchain, so the resulting binary receives current standard-library and
+`golang.org/x/*` fixes instead of inheriting the release asset's older
+compiler; the linked module versions are recorded in
+`/usr/share/breakglass/pwru-build-info`. The build-only Debian packages
+(clang, llvm, flex, bison) follow the digest-pinned Go builder image. Optional
 inherited binaries that are outside this image's supported intent contract are
 removed so stale upstream tools cannot be shipped or scanned as part of the
 utility.
-`versions.env` is the
-human-readable lock record and the image carries OCI version, revision,
+`versions.env` records the remaining human-readable image inputs and the image carries OCI version, revision,
 creation, source, license, and base-digest labels. The multi-architecture Make
 target enables BuildKit SBOM and SLSA provenance attestations; signing is
 performed by the publishing pipeline, not by a Dockerfile secret.

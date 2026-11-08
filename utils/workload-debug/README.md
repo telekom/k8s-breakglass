@@ -51,10 +51,12 @@ or `/tmp`. If all are read-only, mount an ephemeral `/tmp` volume. Temporary
 data is removed on success, failure, and interruption. `IMAGE-METADATA.yaml`
 is the source of truth for OCI, provenance, signing, and SBOM metadata.
 
-Alpine repositories replace older package revisions. Refresh unavailable pins
-in `Dockerfile`, `deps.lock`, and `IMAGE-METADATA.yaml` together, then rebuild
-both supported architectures; do not remove version constraints to bypass a
-package-resolution failure.
+Package versions follow the digest-pinned Alpine base, which Dependabot
+updates. The build upgrades the inherited packages from the same Alpine release
+and installs the tool packages unversioned, so security fixes land on rebuild.
+The versions actually installed are recorded in
+`/usr/share/breakglass/installed-packages` and in the image's SPDX SBOM; a
+rebuild of the same base digest can therefore pick up newer package revisions.
 
 Run `make test` for fast validation and `make integration-test` for the real
 container proof. The integration proof builds the image, runs every helper

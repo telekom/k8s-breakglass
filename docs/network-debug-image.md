@@ -61,7 +61,8 @@ the image tag and final manifest digest alongside any evidence; image tags are
 human-readable selectors, while the digest is the reproducible artifact.
 
 See [`utils/network-debug/README.md`](../utils/network-debug/README.md) for the
-tool lock record, license notices, and BuildKit SBOM/provenance commands.
+pwru module (`pwru/go.mod`), installed-package record, license notices, and
+BuildKit SBOM/provenance commands.
 
 ## Release integration proofs
 

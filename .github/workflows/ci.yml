@@ -532,6 +532,9 @@ jobs:
           IMAGE_METADATA: ${{ matrix.metadata }}
         run: |
           ruby hack/validate-image-metadata.rb "$IMAGE_METADATA"
+      - name: Validator rejects invalid dependency metadata
+        if: matrix.metadata == 'utils/images/storage-debug/image-metadata.yaml'
+        run: hack/test-validate-image-metadata.sh
   # Fail-fast gate for the kind E2E jobs: gofmt and go vet (~3 minutes),
   # cheapest first. It runs in parallel with build-image and finishes earlier.
   preflight:

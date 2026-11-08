@@ -1,5 +1,30 @@
 version: 2
 updates:
+  # Go tools built from source inside utility images. Each directory is a
+  # standalone module whose go.mod/go.sum select the tool and its dependency
+  # graph; the Dockerfile builds against it, so these updates replace manual
+  # ARG/version-pin bumps. Indirect modules (for example golang.org/x/net)
+  # are what the images link, so all dependency types are allowed.
+  - package-ecosystem: "gomod"
+    directories:
+      - /utils/network-debug/pwru
+      - /utils/images/storage-debug/kubestr
+    allow:
+      - dependency-type: "all"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
+    groups:
+      utility-go-tools:
+        group-by: dependency-name
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "deps(utils)"
+    open-pull-requests-limit: 5
+
   - package-ecosystem: "gomod"
     directory: "/"
     allow:

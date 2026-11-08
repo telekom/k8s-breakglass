@@ -75,8 +75,45 @@ if modern
   dependencies = require_array(document["dependencies"], "dependencies must be a non-empty list")
   dependencies.each do |dependency|
     dependency = require_hash(dependency, "each dependency must be a mapping")
-    require_value(dependency["name"], "dependency.name is required")
-    require_value(dependency["version"], "dependency.version is required")
+    name = require_value(dependency["name"], "dependency.name is required")
+    version = dependency["version"]
+    source = dependency["versionSource"]
+    fail_contract("dependency #{name} needs exactly one of version or versionSource") unless version.nil? ^ source.nil?
+    unless source
+      require_value(version.to_s, "dependency #{name} version is required")
+      next
+    end
+
+    # A versionSource is either the declared moduleLock (a Dependabot-tracked
+    # go.mod in the build context) that requires the dependency, or the
+    # declared installedPackages record the context Dockerfile writes.
+    source = require_value(source.to_s, "dependency.versionSource is required")
+    if source.start_with?("/")
+      fail_contract("dependency #{name} versionSource #{source} must be the declared installedPackages record") unless source == document["installedPackages"]
+      dockerfile = File.join(repo_root, context_name, "Dockerfile")
+      fail_contract("#{context_name}/Dockerfile does not write #{source}") unless File.file?(dockerfile) && File.read(dockerfile).include?("> #{source}")
+      next
+    end
+
+    fail_contract("dependency #{name} versionSource #{source} must be the declared moduleLock go.mod") unless source == document["moduleLock"] && File.basename(source) == "go.mod"
+    source_parts = source.split("/")
+    fail_contract("dependency #{name} versionSource must stay inside the context") if source_parts.include?("..") || source_parts.include?("")
+    source_path = File.join(repo_root, context_name, source)
+    fail_contract("dependency #{name} versionSource #{source} does not exist") unless File.file?(source_path)
+    # Match a versioned require entry (single-line or inside a require block);
+    # tool, replace and exclude directives or blocks do not count.
+    in_require_block = false
+    required = File.foreach(source_path).any? do |line|
+      line = line.sub(%r{//.*}, "").strip
+      if line.match?(/\Arequire\s*\(\z/)
+        in_require_block = true
+        next false
+      end
+      in_require_block = false if line == ")"
+      entry = in_require_block ? line : line[/\Arequire\s+(.*)/, 1]
+      entry&.match?(/\A#{Regexp.escape(name)}\s+v\S+\z/)
+    end
+    fail_contract("dependency #{name} is not required by #{source}") unless required
   end
   require_array(contract["intents"], "contract.intents must be a non-empty list")
   modes_or_commands = contract["modes"] || contract["commands"]

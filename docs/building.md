@@ -152,6 +152,7 @@ directories without introducing another published base image.
 | Dependency surface | Update owner |
 | --- | --- |
 | Root `go.mod` / `go.sum`, including indirect modules | Dependabot `gomod` |
+| Source-built utility tools: `utils/network-debug/pwru` (pwru) and `utils/images/storage-debug/kubestr` (kubestr) `go.mod` / `go.sum`, including the linked `golang.org/x/*` modules | Dependabot `gomod` |
 | Frontend `package.json` / `package-lock.json`, production and development dependencies | Dependabot `npm` |
 | Pinned actions in `.github/workflows/` | Dependabot `github-actions` |
 | Root Dockerfile, seven utility build contexts, and `e2e/images/tmux-debug` | Dependabot `docker` |
@@ -212,21 +213,34 @@ compiler into their runtimes. A new published shared base would still require
 child digest updates, rebuilds, integration checks and signed attestations.
 
 Dependabot cannot update arbitrary shell variables, `RUN apk add` / `apt-get`
-package versions, tool checksums, or custom dependency inventories. Do not treat
-a green Dependabot run as proof that these are current:
+package versions, tool checksums, or custom dependency inventories. Prefer a
+form Dependabot tracks: a digest-pinned `FROM` in a covered directory, or a
+per-tool `go.mod` with a `tool` directive for anything built with `go build`.
+
+Utility images do not pin Alpine or Debian package versions. Package versions
+follow the digest-pinned base or builder image: Alpine runtimes run
+`apk upgrade --no-cache` against the base's own release repositories and
+install their packages unversioned, so security fixes land on the next
+rebuild. Each Alpine runtime records what was actually installed in
+`/usr/share/breakglass/installed-packages`, alongside the BuildKit SPDX SBOM
+and provenance. Two builds of the same commit can therefore contain different
+package revisions; the published digest, its SBOM and the installed-package
+record are the reproducibility evidence, not the Dockerfile. The blocking
+`Utility image vulnerability` scans run on every utility change.
+
+Do not treat a green Dependabot run as proof that these remaining pins are
+current:
 
 | Pins | Required maintenance |
 | --- | --- |
 | Root `versions.env` | Review tool releases manually. The weekly `Check Tool Updates` workflow reports selected tools but does not open version-update PRs. |
-| Utility Dockerfile package versions and `deps.lock` / `versions.env` | Review full Alpine/Debian binary-package versions, including epochs and rebuild revisions, against the package indexes for both amd64 and arm64. Synchronize the Dockerfile, lock and metadata; Debian source versions are not substitutes for exact binary versions. |
-| `pwru` and `kubestr` build inputs | Coordinate upstream versions, module checksums, commits and dependency overrides in the same reviewed update. |
+| `pwru` / `kubestr` patches and build steps | Dependabot bumps the tool modules; review that `kubestr-fio-breakglass-pod-contract.patch` still applies and that pwru's Makefile flow is unchanged. CI fails the image build otherwise. pwru and kubestr module integrity is covered by their `go.sum`. |
 | kubectl, Node.js and cert-manager used by CI/E2E scripts | Review these unsupported version literals manually against the supported compatibility floor. |
 | Kind node image references embedded in shell and workflow files; the ORT and local registry test images | Resolve published image tags and immutable digests manually; keep repeated references synchronized. Dependabot owns supported Dockerfiles and Kubernetes manifests. |
-| `PWRU_MODULE_SUM`, `PWRU_COMMIT` and `KUBESTR_COMMIT` | Cryptographic integrity anchors are not independently versioned. Review them only alongside the corresponding upstream release and never replace or remove the verification. |
 | kind node defaults in utility integration tests, the Kubernetes 1.34 `hard-expiry` lane, BusyBox digests in API tests, and MinIO source commit in `e2e/fixtures/artifacts/setup.sh` | Deliberate reproducible E2E fixtures / compatibility floors; update only with a reviewed fixture or support-policy change. |
 | `versions.env` base/build image mirrors, OCI base labels, image metadata, source-built product versions and generated SBOMs | These are release/integrity records; synchronize with the corresponding Dependabot Dockerfile or release change. |
 
-Keep immutable digests and exact package constraints. For image update PRs, run
+Keep immutable image digests. For image update PRs, run
 the image's helper tests, multi-architecture build, real-tool integration, and
 vulnerability checks before merging; regenerate release SBOM/provenance from
 the resulting images. For controller/tool updates, run `make lint` and

@@ -125,6 +125,16 @@ library vulnerabilities (`ignore-unfixed=true`); it is intentionally separate
 from the controller-image scan in `security.yml` and is included in the release
 required-check inventory.
 
+Utility base and builder images are pinned by digest and source-built Go tools
+by per-tool `go.mod`/`go.sum`, all updated by Dependabot. Alpine and Debian
+package versions are deliberately not pinned: they follow the digest-pinned
+base, and each build upgrades the inherited packages from that base's release
+repositories. A rebuild of the same commit (for example the weekly `nightly`
+rebuild) can therefore contain newer package revisions. The published digest,
+its SPDX SBOM and provenance, and the in-image
+`/usr/share/breakglass/installed-packages` record identify exactly what a given
+artifact contains; the Dockerfile alone does not.
+
 On a controller release tag, every utility is published under a unique
 `dev-<commit>-<run>-<attempt>` tag; the release version itself is deliberately
 not assigned as a mutable registry tag. The weekly scheduled rebuild publishes
