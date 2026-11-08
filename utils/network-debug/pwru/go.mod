@@ -12,7 +12,7 @@ require (
 	github.com/cilium/lumberjack/v2 v2.4.2 // indirect
 	github.com/cilium/pwru v1.0.12 // indirect
 	github.com/cloudflare/cbpfc v0.0.0-20260219140841-0661ad29132c // indirect
-	github.com/fatih/color v1.18.0 // indirect
+	github.com/fatih/color v1.19.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/jsimonetti/rtnetlink/v2 v2.2.0 // indirect
 	github.com/leonhwangprojects/bice v0.1.3 // indirect
