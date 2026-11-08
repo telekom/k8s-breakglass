@@ -22,7 +22,7 @@ import (
 //
 // BreakglassEscalation is the Schema for the breakglassescalations API.
 type BreakglassEscalationApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *BreakglassEscalationSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *BreakglassEscalationStatusApplyConfiguration `json:"status,omitempty"`

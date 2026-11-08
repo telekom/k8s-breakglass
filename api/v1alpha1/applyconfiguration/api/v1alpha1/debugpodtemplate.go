@@ -23,7 +23,7 @@ import (
 // DebugPodTemplate defines a reusable pod specification for debug sessions.
 // These templates can be referenced by multiple DebugSessionTemplates.
 type DebugPodTemplateApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugPodTemplateSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *DebugPodTemplateStatusApplyConfiguration `json:"status,omitempty"`

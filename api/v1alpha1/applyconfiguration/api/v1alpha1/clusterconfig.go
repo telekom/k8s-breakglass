@@ -22,7 +22,7 @@ import (
 //
 // ClusterConfig is the Schema for the clusterconfigs API.
 type ClusterConfigApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *ClusterConfigSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *ClusterConfigStatusApplyConfiguration `json:"status,omitempty"`

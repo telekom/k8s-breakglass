@@ -22,7 +22,7 @@ import (
 //
 // MailProvider is the Schema for the mailproviders API
 type MailProviderApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *MailProviderSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *MailProviderStatusApplyConfiguration `json:"status,omitempty"`

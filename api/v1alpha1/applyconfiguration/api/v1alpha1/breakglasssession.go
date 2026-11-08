@@ -23,7 +23,7 @@ import (
 // BreakglassSession is the Schema for the breakglasssessions API.
 // Session unique identifier is a triple - cluster name, username, RBAC group.
 type BreakglassSessionApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *BreakglassSessionSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *BreakglassSessionStatusApplyConfiguration `json:"status,omitempty"`

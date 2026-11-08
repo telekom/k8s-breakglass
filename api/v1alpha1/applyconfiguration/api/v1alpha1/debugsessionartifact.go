@@ -20,7 +20,7 @@ import (
 // DebugSessionArtifactApplyConfiguration represents a declarative configuration of the DebugSessionArtifact type for use
 // with apply.
 type DebugSessionArtifactApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugSessionArtifactSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *DebugSessionArtifactStatusApplyConfiguration `json:"status,omitempty"`

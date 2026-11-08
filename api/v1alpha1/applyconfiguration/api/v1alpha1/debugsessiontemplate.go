@@ -23,7 +23,7 @@ import (
 // DebugSessionTemplate defines a template for creating debug sessions.
 // It references a DebugPodTemplate and configures session parameters.
 type DebugSessionTemplateApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugSessionTemplateSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *DebugSessionTemplateStatusApplyConfiguration `json:"status,omitempty"`

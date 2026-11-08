@@ -23,7 +23,7 @@ import (
 // DebugSession represents an active or past debug session.
 // Debug sessions provide temporary, controlled access to debug pods.
 type DebugSessionApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugSessionSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *DebugSessionStatusApplyConfiguration `json:"status,omitempty"`
