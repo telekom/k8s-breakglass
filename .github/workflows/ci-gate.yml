@@ -52,14 +52,17 @@ jobs:
           # One TSV line per item: kind+name, status, conclusion. Only the
           # newest run per workflow and check run per app+name count, so
           # superseded (re-run or concurrency-cancelled) attempts are ignored.
+          # A cancelled run only counts when no other run of the same workflow or
+          # check exists: two events for one commit (e.g. synchronize and edited)
+          # can start runs together and concurrency may cancel the newer one.
           collect() {
             gh api --paginate "${api}/actions/runs?head_sha=${HEAD_SHA}&event=pull_request&per_page=100" |
               jq -rs --arg self "${self_path}" '[.[].workflow_runs[] | select(.path != $self)]
-                | group_by(.workflow_id)[] | max_by(.run_number)
+                | group_by(.workflow_id)[] | sort_by([.conclusion != "cancelled", .run_number]) | last
                 | ["workflow " + .name, .status, .conclusion // ""] | @tsv' &&
             gh api --paginate "${api}/commits/${HEAD_SHA}/check-runs?per_page=100" |
               jq -rs '[.[].check_runs[] | select(.name != "all-checks-green" and .name != "dependabot-auto-merge")]
-                | group_by([.app.id, .name])[] | max_by(.id)
+                | group_by([.app.id, .name])[] | sort_by([.conclusion != "cancelled", .id]) | last
                 | ["check " + .name, .status, .conclusion // ""] | @tsv' &&
             gh api "${api}/commits/${HEAD_SHA}/status?per_page=100" |
               jq -r '.statuses[] | ["status " + .context, (if .state == "pending" then "pending" else "completed" end), .state] | @tsv'
