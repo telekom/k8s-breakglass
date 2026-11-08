@@ -163,8 +163,9 @@ canonical `utils/cluster-validator/Dockerfile` instead. Generated CRD schemas
 are not dependency manifests. Our own `ghcr.io/telekom/k8s-breakglass*` image
 references, including zero-digest catalogue placeholders, are excluded from
 external updates: the signed release pipeline supplies verified immutable
-digests. Dependabot security alerts and security updates are repository settings,
-separate from this version-update configuration.
+digests. Dependabot security alerts and security updates are repository settings;
+when they are enabled, each `gomod` and `npm` entry collects its security
+updates in one `*-security` group PR.
 
 Go tools used by the Makefile and CI (kustomize, controller-gen,
 setup-envtest, govulncheck, gosec, go-licenses, kind and actionlint) each have
