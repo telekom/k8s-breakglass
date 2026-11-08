@@ -175,7 +175,12 @@ files; `make <tool>` and the `install-kind` composite action build the tool
 from them, and `go.sum` authenticates every downloaded module. Separate modules
 keep each tool on exactly its own upstream dependency graph. The exception is
 gosec's `golang.org/x/tools` floor, raised manually ahead of gosec's own
-requirement when a new Go export-data format needs it. golangci-lint stays a
+requirement when a new Go export-data format needs it. Minor/patch tool
+releases arrive together in one `go-tools-minor-patch` PR across all
+`hack/tools/*` modules, each major tool release in its own `go-tools-major` PR,
+and security updates in one `go-tools-security` PR. A failing tool bump holds
+the whole minor/patch bundle; split it out manually (update that tool in its
+own PR) if needed. golangci-lint stays a
 `versions.env` pin: upstream recommends against building it as a module
 dependency, and some of its linters are GPL-3.0, which the dependency-review
 license policy rejects for tracked manifests.

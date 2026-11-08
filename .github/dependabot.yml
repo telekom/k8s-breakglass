@@ -157,9 +157,10 @@ updates:
           - "*"
         update-types:
           - "major"
-      # Security updates bypass `allow` and can raise any module in the tool
-      # graphs (golang.org/x/net, google.golang.org/grpc, ...). Collect them
-      # in one PR instead of one per dependency and tool directory.
+      # Dependabot has raised security updates for modules in the tool graphs
+      # that `allow` does not list (golang.org/x/net, google.golang.org/grpc:
+      # #1617-#1620). Collect them in one PR instead of one per dependency
+      # and tool directory.
       go-tools-security:
         applies-to: "security-updates"
         patterns:
