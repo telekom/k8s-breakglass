@@ -31,6 +31,7 @@ Complete documentation for the breakglass privilege escalation system.
 - **[Workload-debug runbook](./runbooks/workload-debug.md)** - Restricted workload diagnostics image and bounded helper usage
 - **[DebugSession authoring guide](./debug-session-authoring.md)** - Generic template, identity, isolation, lifecycle, and utility-mode guidance
 - **[Network-debug runbook](./network-debug-image.md)** - Intent-driven network diagnostics and host/pod capture limits
+- **[Network-debug vs Netshoot](./network-debug-vs-netshoot.md)** - Tool parity matrix, CVE and signing comparison
 - **[Node-maintenance runbook](./node-maintenance.md)** - Controller-approved node evidence and bounded repair
 - **[Diagnostic artifact collector](../utils/images/diagnostic-artifact-collector/README.md)** - Crashdump and summary evidence collection
 - **[CI Logs and Artifacts](./ci-logs.md)** - Retrieve CI logs and artifacts with gh CLI
