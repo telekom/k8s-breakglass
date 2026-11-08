@@ -194,11 +194,16 @@ the Alpine packages is why network-debug reported zero on the inspection date.
 The counts are a snapshot of the Trivy database on 2026-11-07; new advisories
 change them, so rescan before relying on them.
 
-Both images run as root. That is not a difference: `tcpdump` and `pwru` need
-it, and the [network-debug runbook](network-debug-image.md#safety-and-permissions)
-limits it with dropped capabilities and namespace isolation. A DebugSession
-profile should keep `allowPrivilegeEscalation: false`, drop `ALL` and add back
-only the capabilities of the selected operation, whichever image it uses.
+Both images default to UID 0. That default is not a tool requirement. Live
+capture with `tcpdump` needs `NET_RAW` (root or the equivalent effective
+capability), host tracing with `pwru` needs the capabilities listed under
+`operationCapabilities` in `utils/network-debug/IMAGE-METADATA.yaml`, and
+offline work such as reading a pcap or DNS and HTTP probes needs neither. The
+[network-debug runbook](network-debug-image.md#safety-and-permissions) lists
+the requirements per operation. A DebugSession profile should keep
+`allowPrivilegeEscalation: false`, drop `ALL` and add back only the
+capabilities of the selected operation, whichever image it uses. It does not
+need extra privilege just because the image default is root.
 
 ## Recommendation
 
