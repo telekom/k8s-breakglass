@@ -390,38 +390,24 @@ func (c *DebugSessionAPIClient) RenewDebugSession(ctx context.Context, t *testin
 	return resp.StatusCode, nil
 }
 
-// TerminateDebugSession terminates a debug session. Like
-// helpers.APIClient.TerminateDebugSession it retries up to three optimistic
-// CONFLICT responses: the controller may update the session's status between
-// the server's read and its write, and the server asks the client to retry.
+// TerminateDebugSession terminates a debug session, retrying optimistic
+// conflicts like helpers.APIClient.TerminateDebugSession.
 func (c *DebugSessionAPIClient) TerminateDebugSession(ctx context.Context, t *testing.T, name string) (int, error) {
 	path := fmt.Sprintf("%s/%s/terminate", debugSessionsBasePath, name)
 
-	for attempt := 0; ; attempt++ {
-		resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
-		if err != nil {
-			return 0, fmt.Errorf("failed to terminate debug session: %w", err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		_ = resp.Body.Close()
-		if t != nil {
-			t.Logf("TerminateDebugSession: name=%s, status=%d, body=%s", name, resp.StatusCode, string(body))
-		}
-		if resp.StatusCode == http.StatusOK {
-			return resp.StatusCode, nil
-		}
-		var response struct {
-			Code string `json:"code"`
-		}
-		if resp.StatusCode != http.StatusConflict || attempt >= 3 || json.Unmarshal(body, &response) != nil || response.Code != "CONFLICT" {
-			return resp.StatusCode, fmt.Errorf("failed to terminate debug session: status=%d, body=%s", resp.StatusCode, string(body))
-		}
-		select {
-		case <-ctx.Done():
-			return resp.StatusCode, fmt.Errorf("retry terminate debug session: %w", ctx.Err())
-		case <-time.After(time.Duration(attempt+1) * 100 * time.Millisecond):
-		}
+	status, body, err := helpers.RetryOptimisticConflicts(ctx, t, func() (*http.Response, error) {
+		return c.doRequest(ctx, http.MethodPost, path, nil)
+	})
+	if err != nil {
+		return status, fmt.Errorf("failed to terminate debug session: %w", err)
 	}
+	if t != nil {
+		t.Logf("TerminateDebugSession: name=%s, status=%d, body=%s", name, status, string(body))
+	}
+	if status != http.StatusOK {
+		return status, fmt.Errorf("failed to terminate debug session: status=%d, body=%s", status, string(body))
+	}
+	return status, nil
 }
 
 // ListTemplates lists available debug session templates

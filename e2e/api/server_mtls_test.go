@@ -201,21 +201,23 @@ func TestServerMTLS(t *testing.T) {
 
 			// Once the handshake is accepted, the server behaves as before:
 			// frontend, OIDC-authenticated API and the SAR webhook.
+			// Each subtest gets its own forward too: a connection reset
+			// on a shared forward would fail every later subtest.
 			c := mtlsHTTPClient(mtlsTLSConfig(rootCAs, &trusted.tls, &atomic.Bool{}))
-			baseURL := fmt.Sprintf("https://localhost:%d", forward(t))
+			baseURL := func(t *testing.T) string { return fmt.Sprintf("https://localhost:%d", forward(t)) }
 			t.Run("frontend", func(t *testing.T) {
-				status, body, err := mtlsDo(ctx, c, http.MethodGet, baseURL+"/", "", nil)
+				status, body, err := mtlsDo(ctx, c, http.MethodGet, baseURL(t)+"/", "", nil)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusOK, status)
 				assert.Contains(t, strings.ToLower(string(body)), "<html")
 			})
 			t.Run("api-oidc", func(t *testing.T) {
-				status, _, err := mtlsDo(ctx, c, http.MethodGet, baseURL+"/api/breakglassSessions", token, nil)
+				status, _, err := mtlsDo(ctx, c, http.MethodGet, baseURL(t)+"/api/breakglassSessions", token, nil)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusOK, status)
 			})
 			t.Run("api-cert-grants-no-identity", func(t *testing.T) {
-				status, _, err := mtlsDo(ctx, c, http.MethodGet, baseURL+"/api/breakglassSessions", "", nil)
+				status, _, err := mtlsDo(ctx, c, http.MethodGet, baseURL(t)+"/api/breakglassSessions", "", nil)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusUnauthorized, status)
 			})
@@ -229,7 +231,7 @@ func TestServerMTLS(t *testing.T) {
 				}
 				body, err := json.Marshal(sar)
 				require.NoError(t, err)
-				status, resp, err := mtlsDo(ctx, c, http.MethodPost, baseURL+"/api/breakglass/webhook/authorize/"+s.Cluster, "", body)
+				status, resp, err := mtlsDo(ctx, c, http.MethodPost, baseURL(t)+"/api/breakglass/webhook/authorize/"+s.Cluster, "", body)
 				require.NoError(t, err)
 				assert.Equal(t, http.StatusOK, status, "webhook response: %s", resp)
 				var got authorizationv1.SubjectAccessReview
