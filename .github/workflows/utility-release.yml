@@ -31,6 +31,8 @@ on:
       - "hack/kubernetes-storage-cleanup.sh"
       - "hack/test-utility-workflow-paths.sh"
       - "hack/test-utility-image-security-contract.sh"
+      # The contract job is the only actionlint run; validate tool bumps here.
+      - "hack/tools/actionlint/**"
       - ".github/workflows/utility-release.yml"
       - ".github/workflows/utility-image-security.yml"
       - ".github/workflows/workload-debug.yml"

@@ -69,6 +69,9 @@ expected_helpers.each do |workflow_name, required|
   abort "#{workflow_name} has unrelated shared-helper path filters: #{unexpected.join(', ')}" unless unexpected.empty?
 end
 
+release = YAML.safe_load(File.read(File.join(root, ".github/workflows/utility-release.yml")), aliases: false)
+abort "utility-release.yml must run actionlint for hack/tools/actionlint updates" unless workflow_triggers(release, "utility-release.yml").fetch("pull_request").fetch("paths").include?("hack/tools/actionlint/**")
+
 catalogue = YAML.safe_load(File.read(File.join(root, ".github/workflows/catalogue-utility-integration.yml")), aliases: false)
 push = workflow_triggers(catalogue, "catalogue-utility-integration.yml").fetch("push")
 abort "catalogue utility behavior must run on every main push" unless push.fetch("branches").sort == %w[deployment-testing main]
