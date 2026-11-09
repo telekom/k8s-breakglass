@@ -27,7 +27,7 @@ import (
 // The Issuer field must be set to the OIDC issuer URL (matching the 'iss' claim in JWT tokens) to enable
 // multi-IDP support. ClusterConfig and BreakglassEscalation can restrict access to specific IDPs by name.
 type IdentityProviderApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *IdentityProviderSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *IdentityProviderStatusApplyConfiguration `json:"status,omitempty"`

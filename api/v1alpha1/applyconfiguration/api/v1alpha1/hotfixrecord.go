@@ -22,7 +22,7 @@ import (
 //
 // HotfixRecord tracks one platform hotfix as drift until it is closed.
 type HotfixRecordApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *HotfixRecordSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *HotfixRecordStatusApplyConfiguration `json:"status,omitempty"`

@@ -598,7 +598,9 @@ jobs:
   # Push multi-arch image to Artifactory OCI mirror
   # ---------------------------------------------------------------------------
   artifactory:
-    if: ${{ false }} # Temporarily disabled until the mirror credentials are repaired.
+    # Off until the mirror credentials are repaired; set the repository
+    # variable ARTIFACTORY_MIRROR_ENABLED=true to turn it back on.
+    if: ${{ vars.ARTIFACTORY_MIRROR_ENABLED == 'true' }}
     needs: [assemble]
     continue-on-error: true  # Artifactory mirror is best-effort; must not block releases
     env:

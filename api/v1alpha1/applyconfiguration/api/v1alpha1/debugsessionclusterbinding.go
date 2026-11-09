@@ -24,7 +24,7 @@ import (
 // with optional constraint overrides. This is a namespaced resource that enables
 // RBAC delegation - teams can manage their own bindings in their namespace.
 type DebugSessionClusterBindingApplyConfiguration struct {
-	v1.TypeMetaApplyConfiguration    `json:",inline"`
+	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugSessionClusterBindingSpecApplyConfiguration   `json:"spec,omitempty"`
 	Status                           *DebugSessionClusterBindingStatusApplyConfiguration `json:"status,omitempty"`
