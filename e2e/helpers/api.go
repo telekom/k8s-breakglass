@@ -1031,33 +1031,48 @@ func (c *APIClient) TerminateDebugSession(ctx context.Context, t *testing.T, ses
 		t.Logf("TerminateDebugSession: sending request with correlationID=%s, session=%s", cid, sessionName)
 	}
 
+	status, body, err := RetryOptimisticConflicts(ctx, t, func() (*http.Response, error) {
+		return c.doRequestWithCID(ctx, http.MethodPost, path, nil, cid)
+	})
+	if err != nil {
+		return fmt.Errorf("terminate debug session (cid=%s): %w", cid, err)
+	}
+	if status != http.StatusOK && status != http.StatusNoContent {
+		return fmt.Errorf("failed to terminate debug session (cid=%s): status=%d, body=%s", cid, status, string(body))
+	}
+	if t != nil {
+		t.Logf("TerminateDebugSession: terminated session=%s, correlationID=%s", sessionName, cid)
+	}
+	return nil
+}
+
+// RetryOptimisticConflicts calls send and retries up to three times, with
+// backoff, while the server answers 409 with code CONFLICT: a status patch
+// lost an optimistic-concurrency race (e.g. with the controller) and was not
+// applied. It returns the last status and body; err is set only when a
+// request, reading its body or the backoff (ctx) failed.
+func RetryOptimisticConflicts(ctx context.Context, t *testing.T, send func() (*http.Response, error)) (int, []byte, error) {
 	for attempt := 0; ; attempt++ {
-		resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, nil, cid)
+		resp, err := send()
 		if err != nil {
-			return fmt.Errorf("failed to terminate debug session (cid=%s): %w", cid, err)
+			return 0, nil, err
 		}
-		body, readErr := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
-		if readErr != nil {
-			return fmt.Errorf("read terminate debug session response (cid=%s): %w", cid, readErr)
-		}
-		if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
-			if t != nil {
-				t.Logf("TerminateDebugSession: terminated session=%s, correlationID=%s", sessionName, cid)
-			}
-			return nil
+		if err != nil {
+			return resp.StatusCode, nil, fmt.Errorf("read response: %w", err)
 		}
 		var response struct {
 			Code string `json:"code"`
 		}
 		if resp.StatusCode != http.StatusConflict || attempt >= 3 || json.Unmarshal(body, &response) != nil || response.Code != "CONFLICT" {
-			return fmt.Errorf("failed to terminate debug session (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+			return resp.StatusCode, body, nil
 		}
 		if t != nil {
-			t.Logf("TerminateDebugSession: optimistic conflict, retry %d/3, correlationID=%s", attempt+1, cid)
+			t.Logf("optimistic conflict, retry %d/3", attempt+1)
 		}
 		if !sleepOrCancel(ctx, time.Duration(attempt+1)*100*time.Millisecond) {
-			return fmt.Errorf("retry terminate debug session (cid=%s): %w", cid, ctx.Err())
+			return resp.StatusCode, body, fmt.Errorf("retry after conflict: %w", ctx.Err())
 		}
 	}
 }

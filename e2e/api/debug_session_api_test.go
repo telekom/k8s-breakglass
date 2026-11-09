@@ -390,26 +390,24 @@ func (c *DebugSessionAPIClient) RenewDebugSession(ctx context.Context, t *testin
 	return resp.StatusCode, nil
 }
 
-// TerminateDebugSession terminates a debug session
+// TerminateDebugSession terminates a debug session, retrying optimistic
+// conflicts like helpers.APIClient.TerminateDebugSession.
 func (c *DebugSessionAPIClient) TerminateDebugSession(ctx context.Context, t *testing.T, name string) (int, error) {
 	path := fmt.Sprintf("%s/%s/terminate", debugSessionsBasePath, name)
 
-	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	status, body, err := helpers.RetryOptimisticConflicts(ctx, t, func() (*http.Response, error) {
+		return c.doRequest(ctx, http.MethodPost, path, nil)
+	})
 	if err != nil {
-		return 0, fmt.Errorf("failed to terminate debug session: %w", err)
+		return status, fmt.Errorf("failed to terminate debug session: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-
-	body, _ := io.ReadAll(resp.Body)
 	if t != nil {
-		t.Logf("TerminateDebugSession: name=%s, status=%d, body=%s", name, resp.StatusCode, string(body))
+		t.Logf("TerminateDebugSession: name=%s, status=%d, body=%s", name, status, string(body))
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, fmt.Errorf("failed to terminate debug session: status=%d, body=%s", resp.StatusCode, string(body))
+	if status != http.StatusOK {
+		return status, fmt.Errorf("failed to terminate debug session: status=%d, body=%s", status, string(body))
 	}
-
-	return resp.StatusCode, nil
+	return status, nil
 }
 
 // ListTemplates lists available debug session templates
@@ -3477,15 +3475,8 @@ func TestDebugSessionAPIRenewalPermutations(t *testing.T) {
 		helpers.WaitForDebugSessionState(t, ctx, cli, session.Name, session.Namespace,
 			breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForConditionTimeout)
 
-		require.Eventually(t, func() bool {
-			terminateStatus, err := requesterClient.TerminateDebugSession(ctx, t, session.Name)
-			if terminateStatus == http.StatusConflict {
-				return false
-			}
-			require.NoError(t, err)
-			require.Contains(t, []int{http.StatusOK, http.StatusNoContent}, terminateStatus)
-			return true
-		}, helpers.WaitForConditionTimeout, time.Second, "retry only genuine concurrent status conflicts")
+		_, err = requesterClient.TerminateDebugSession(ctx, t, session.Name)
+		require.NoError(t, err)
 
 		time.Sleep(helpers.CachePropagationDelay)
 
