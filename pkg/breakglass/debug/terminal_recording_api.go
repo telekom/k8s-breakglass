@@ -94,6 +94,12 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
 		return
 	}
+	// Recording lifecycle events are the index to retained evidence. Without a
+	// running audit pipeline no stream may start.
+	if c.auditService == nil || !c.auditService.IsEnabled() {
+		apiresponses.RespondServiceUnavailable(ctx, "terminal recording requires an enabled audit configuration")
+		return
+	}
 	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
 		c.recordingStreams.Add(-1)
 		apiresponses.RespondTooManyRequests(ctx, "too many concurrent terminal recordings")
@@ -203,6 +209,12 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, ClusterName: session.Spec.Cluster, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
 	connection, err := c.recordingConnections.AcquireTerminalRecordingConnection(apiCtx, binding)
 	if err != nil {
+		if errors.Is(err, ErrTerminalRecordingGenerationConflict) {
+			// Another replica is publishing the same generation; nothing ran.
+			ctx.Header("Retry-After", "1")
+			apiresponses.RespondServiceUnavailable(ctx, "terminal recording credential generation is being published; retry")
+			return
+		}
 		apiresponses.RespondForbidden(ctx, "terminal recording connection is not available")
 		return
 	}
@@ -342,10 +354,11 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
 }
 
-// emitTerminalRecordingAudit records recording lifecycle metadata with the
-// request correlation ID. Terminal bytes are never included. Recording events
-// are emitted whenever recording is required, independent of audit.enabled,
-// because they are the index to the retained evidence.
+// emitTerminalRecordingAudit records recording lifecycle and access metadata
+// with the request correlation ID. Terminal bytes are never included. Recording
+// events ignore the template's audit.enabled switch because they are the index
+// to the retained evidence; streams refuse to start without an enabled audit
+// pipeline.
 func (c *DebugSessionAPIController) emitTerminalRecordingAudit(ctx *gin.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity, details map[string]interface{}) {
 	if c.auditService == nil || !c.auditService.IsEnabled() {
 		return
@@ -517,6 +530,11 @@ func (c *DebugSessionAPIController) handleListTerminalRecordings(ctx *gin.Contex
 		apiresponses.RespondForbidden(ctx, "recordings are not available to this user")
 		return
 	}
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.ArtifactID)
+	}
+	c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingAccessed, session, identity, map[string]interface{}{"access": "list", "recordingIds": ids})
 	ctx.JSON(http.StatusOK, records)
 }
 
@@ -557,6 +575,9 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		return
 	}
 	defer func() { _ = reader.Close() }()
+	c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingAccessed, session, identity, map[string]interface{}{
+		"access": "replay", "recordingId": reservation.ArtifactID, "sha256": record.SHA256, "bytes": record.Size,
+	})
 	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })
 	defer stopClose()
 	ctx.Header("Content-Type", "application/octet-stream")

@@ -42,6 +42,8 @@ func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
 	requester := s.TC.ClientForUser(requesterUser)
 	outsider := s.TC.ClientForUser(helpers.TestUsers.UnauthorizedUser)
 
+	ensureAuditPipeline(t, ctx, s)
+
 	template := &breakglassv1alpha1.DebugSessionTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("terminal-recording")},
 		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{

@@ -156,6 +156,9 @@ const (
 	EventDebugSessionTerminalRecordingStarted   EventType = "debug_session.terminal_recording_started"
 	EventDebugSessionTerminalRecordingFinalized EventType = "debug_session.terminal_recording_finalized"
 	EventDebugSessionTerminalRecordingFailed    EventType = "debug_session.terminal_recording_failed"
+	// EventDebugSessionTerminalRecordingAccessed records a successful listing
+	// or replay of terminal recordings by an authorized reader.
+	EventDebugSessionTerminalRecordingAccessed EventType = "debug_session.terminal_recording_accessed"
 
 	// === Pod and container events ===
 	EventPodCreated     EventType = "pod.created"
@@ -535,7 +538,7 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionHotfixNodeResult, EventDebugSessionHotfixResult,
 		EventDebugSessionBindingUnresolved,
 		EventDebugSessionTerminalRecordingStarted, EventDebugSessionTerminalRecordingFinalized,
-		EventDebugSessionTerminalRecordingFailed,
+		EventDebugSessionTerminalRecordingFailed, EventDebugSessionTerminalRecordingAccessed,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

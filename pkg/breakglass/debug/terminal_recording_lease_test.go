@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -270,6 +271,7 @@ func TestTerminalLeaseCredentialFailuresFailClosed(t *testing.T) {
 			connection, err := provider.AcquireTerminalRecordingConnection(context.Background(), TerminalRecordingConnectionBinding{SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)})
 			require.Nil(t, connection)
 			require.ErrorContains(t, err, "terminal recording credential generation")
+			require.Equal(t, credential.err == nil, errors.Is(err, ErrTerminalRecordingGenerationConflict), "only a concurrent change is retryable")
 			leases := &coordinationv1.LeaseList{}
 			require.NoError(t, hub.List(context.Background(), leases))
 			for _, lease := range leases.Items {

@@ -2,11 +2,14 @@ package cluster
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -368,50 +371,68 @@ func (p *ClientProvider) capturePrivilegedInputVersionsWithReader(ctx context.Co
 	return versions, nil
 }
 
-// PrivilegedCredentialIdentity returns the live UID and resourceVersion of
-// the primary hub Secret that authenticates the controller to cc's target
-// cluster: the kubeconfig Secret, else the OIDC client or refresh-token
-// Secret (directly configured, or for oidcFromIdentityProvider the explicit
-// Secrets or the IdentityProvider's Keycloak service-account Secret).
-// ClusterConfigs without such a Secret return an error so callers that bind
-// readiness to a credential identity fail closed.
+// PrivilegedCredentialIdentity identifies, without revealing, every hub input
+// that contributes credentials or trust to cc's privileged client: kubeconfig,
+// OIDC client, refresh-token, CA and token-exchange Secrets, and for
+// oidcFromIdentityProvider the IdentityProvider and its Keycloak Secret
+// (including the refresh-token fallback). It returns the UID of the primary
+// credential Secret and a digest over the live resourceVersions of all inputs,
+// so a change to any of them yields a new identity. ClusterConfigs without a
+// credential Secret return an error so callers that bind readiness to a
+// credential identity fail closed.
 func (p *ClientProvider) PrivilegedCredentialIdentity(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (types.UID, string, error) {
 	if cc == nil {
 		return "", "", fmt.Errorf("cluster config is required")
 	}
-	var candidates []*breakglassv1alpha1.SecretKeyReference
-	candidates = append(candidates, cc.Spec.KubeconfigSecretRef)
+	reader := p.liveReaderOrClient()
+	versions, err := p.capturePrivilegedInputVersionsWithReader(ctx, cc, reader)
+	if err != nil {
+		return "", "", fmt.Errorf("read cluster credential inputs: %w", err)
+	}
+	var primary *breakglassv1alpha1.SecretKeyReference
+	candidates := []*breakglassv1alpha1.SecretKeyReference{cc.Spec.KubeconfigSecretRef}
 	if oidc := cc.Spec.OIDCAuth; oidc != nil {
 		candidates = append(candidates, oidc.ClientSecretRef, oidc.RefreshTokenSecretRef)
 	}
 	if ref := cc.Spec.OIDCFromIdentityProvider; ref != nil {
 		candidates = append(candidates, ref.ClientSecretRef, ref.RefreshTokenSecretRef)
-		if ref.ClientSecretRef == nil && ref.RefreshTokenSecretRef == nil {
-			// The OIDC resolver falls back to the IdentityProvider's Keycloak
-			// service-account Secret; bind readiness to that Secret too.
-			idp := &breakglassv1alpha1.IdentityProvider{}
-			if err := p.liveReaderOrClient().Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
-				return "", "", fmt.Errorf("get referenced IdentityProvider %s: %w", ref.Name, err)
-			}
-			if idp.Spec.Keycloak != nil {
-				candidates = append(candidates, &idp.Spec.Keycloak.ClientSecretRef)
-			}
+		idp := &breakglassv1alpha1.IdentityProvider{}
+		if err := reader.Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
+			return "", "", fmt.Errorf("get referenced IdentityProvider %s: %w", ref.Name, err)
+		}
+		if idp.Spec.Keycloak != nil {
+			candidates = append(candidates, &idp.Spec.Keycloak.ClientSecretRef)
 		}
 	}
 	for _, ref := range candidates {
-		if ref == nil || ref.Name == "" {
-			continue
+		if ref != nil && ref.Name != "" {
+			primary = ref
+			break
 		}
-		secret := &corev1.Secret{}
-		if err := p.liveReaderOrClient().Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, secret); err != nil {
-			return "", "", fmt.Errorf("read cluster credential secret: %w", err)
-		}
-		if secret.UID == "" || secret.ResourceVersion == "" || !secret.DeletionTimestamp.IsZero() {
-			return "", "", fmt.Errorf("cluster credential secret identity is incomplete")
-		}
-		return secret.UID, secret.ResourceVersion, nil
 	}
-	return "", "", fmt.Errorf("cluster config %s has no credential secret", cc.Name)
+	if primary == nil {
+		return "", "", fmt.Errorf("cluster config %s has no credential secret", cc.Name)
+	}
+	secret := &corev1.Secret{}
+	if err := reader.Get(ctx, ctrlclient.ObjectKey{Namespace: primary.Namespace, Name: primary.Name}, secret); err != nil {
+		return "", "", fmt.Errorf("read cluster credential secret: %w", err)
+	}
+	if secret.UID == "" || !secret.DeletionTimestamp.IsZero() {
+		return "", "", fmt.Errorf("cluster credential secret identity is incomplete")
+	}
+	keys := make([]string, 0, len(versions))
+	for key := range versions {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	digest := sha256.New()
+	for _, key := range keys {
+		if versions[key] == "" {
+			return "", "", fmt.Errorf("cluster credential input %s has no resourceVersion", key)
+		}
+		_, _ = fmt.Fprintf(digest, "%s=%s\n", key, versions[key])
+	}
+	return secret.UID, "sha256:" + hex.EncodeToString(digest.Sum(nil)), nil
 }
 
 func (p *ClientProvider) liveReaderOrClient() ctrlclient.Reader {

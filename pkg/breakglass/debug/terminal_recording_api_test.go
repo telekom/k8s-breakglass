@@ -164,6 +164,7 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.NoError(t, err)
 			var events []*audit.Event
 			require.Eventually(t, func() bool { events = auditEvents.GetEvents(); return len(events) == 2 }, 5*time.Second, 20*time.Millisecond)
+			auditEvents.ClearEvents()
 			require.Equal(t, audit.EventDebugSessionTerminalRecordingStarted, events[0].Type)
 			require.Equal(t, audit.EventDebugSessionTerminalRecordingFinalized, events[1].Type)
 			for _, event := range events {
@@ -202,6 +203,20 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.NoError(t, listing.Body.Close())
 			require.Equal(t, http.StatusOK, listing.StatusCode)
 			require.Contains(t, string(listed), record.ArtifactID)
+			accessed := auditEvents.GetEvents()
+			require.Len(t, accessed, 2, "replay and list are audited")
+			for _, event := range accessed {
+				require.Equal(t, audit.EventDebugSessionTerminalRecordingAccessed, event.Type)
+				require.Equal(t, "alice", event.Actor.User)
+				require.Equal(t, string(session.UID), event.Target.UID)
+				require.NotContains(t, fmt.Sprint(event.Details), "prompt", "terminal bytes must never reach audit")
+				require.True(t, audit.IsSensitiveEvent(event.Type))
+			}
+			require.Equal(t, "replay", accessed[0].Details["access"])
+			require.Equal(t, record.ArtifactID, accessed[0].Details["recordingId"])
+			require.Equal(t, record.SHA256, accessed[0].Details["sha256"])
+			require.Equal(t, "list", accessed[1].Details["access"])
+			require.Equal(t, []string{record.ArtifactID}, accessed[1].Details["recordingIds"])
 			require.NotContains(t, string(listed), `"backendInstanceID"`)
 			require.NotContains(t, string(listed), `"versionID"`)
 			require.NoError(t, cli.Delete(context.Background(), stored))
@@ -305,7 +320,7 @@ func TestTerminalFlushWriterPreservesUntrustedBytesAsBinary(t *testing.T) {
 func TestTerminalRouteRejectsActiveSessionWithoutExpiry(t *testing.T) {
 	session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateActive}}
 	service, cli := terminalArtifactFixture(t, session)
-	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(terminalRecordingRouteProvider{}).WithAuditService(NewMockAuditEmitter(true))
 	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
 		t.Fatal("target lookup must not occur without session expiry")
 		return nil, nil, "", nil
@@ -331,4 +346,69 @@ func TestTerminalRouteRejectsWithoutWaitingForOpenInput(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+}
+
+type conflictingRecordingProvider struct{}
+
+func (conflictingRecordingProvider) AcquireTerminalRecordingConnection(context.Context, TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
+	return nil, fmt.Errorf("publish: %w", ErrTerminalRecordingGenerationConflict)
+}
+
+func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(time.Hour))
+	execAllowed := true
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+			ResolvedTemplate:     &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true}},
+			Participants:         []breakglassv1alpha1.DebugSessionParticipant{{User: "alice", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now}},
+			AllowedPods:          []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "pod", UID: "pod-uid"}},
+			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: &execAllowed},
+		},
+	}
+	executed := false
+	newController := func(audited *MockAuditEmitter, provider TerminalRecordingConnectionProvider) *httptest.Server {
+		service, cli := terminalArtifactFixture(t, session)
+		controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).
+			WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(provider)
+		if audited != nil {
+			controller.WithAuditService(audited)
+		}
+		controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
+			return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
+		}
+		controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
+			executed = true
+			return interactiveTerminalExecutor{}, nil
+		}
+		return httptest.NewServer(debugSessionAPITestRouter(t, controller, "alice", "", nil))
+	}
+	post := func(server *httptest.Server) (int, http.Header) {
+		response, err := http.Post(server.URL+"/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=sh", "application/octet-stream", strings.NewReader(""))
+		require.NoError(t, err)
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		return response.StatusCode, response.Header
+	}
+	for name, audited := range map[string]*MockAuditEmitter{"no audit service": nil, "audit disabled": NewMockAuditEmitter(false)} {
+		t.Run(name, func(t *testing.T) {
+			server := newController(audited, terminalRecordingRouteProvider{})
+			defer server.Close()
+			status, _ := post(server)
+			require.Equal(t, http.StatusServiceUnavailable, status, "no stream may start without its audit index")
+			require.False(t, executed)
+		})
+	}
+	t.Run("publish race", func(t *testing.T) {
+		server := newController(NewMockAuditEmitter(true), conflictingRecordingProvider{})
+		defer server.Close()
+		status, header := post(server)
+		require.Equal(t, http.StatusServiceUnavailable, status)
+		require.Equal(t, "1", header.Get("Retry-After"))
+		require.False(t, executed)
+	})
 }

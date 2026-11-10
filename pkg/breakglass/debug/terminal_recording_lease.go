@@ -152,6 +152,11 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 	return connection, nil
 }
 
+// ErrTerminalRecordingGenerationConflict reports that another replica or
+// stream changed the connection lease while this request published a
+// credential generation. The request failed closed and may be retried.
+var ErrTerminalRecordingGenerationConflict = errors.New("terminal recording credential generation changed concurrently")
+
 // ensureCredentialGeneration publishes a new lease generation when none is
 // ready or the target credential Secret changed since the last publication.
 // Publication uses the lease's staged/ready compare-and-swap, so concurrent
@@ -173,7 +178,7 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 	}
 	staged, err := p.service.StageGeneration(ctx, ref, current+1)
 	if err != nil {
-		return nil, fmt.Errorf("stage terminal recording credential generation: %w", err)
+		return nil, fmt.Errorf("stage terminal recording credential generation: %w: %w", ErrTerminalRecordingGenerationConflict, err)
 	}
 	if _, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
 		// The proof is re-read after staging so a rotation in between is never published.
@@ -186,7 +191,7 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 		}
 		return got, nil
 	}); err != nil {
-		return nil, fmt.Errorf("publish terminal recording credential generation: %w", err)
+		return nil, fmt.Errorf("publish terminal recording credential generation: %w: %w", ErrTerminalRecordingGenerationConflict, err)
 	}
 	published := &coordinationv1.Lease{}
 	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, published); err != nil {
