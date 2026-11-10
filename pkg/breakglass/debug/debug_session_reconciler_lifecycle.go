@@ -532,13 +532,31 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
+	// Operator acknowledgement retires residuals the controller cannot prove
+	// gone; it is applied before any target round trip.
+	acknowledged, acknowledgementErr := applyCleanupAcknowledgement(ds)
+	if acknowledgementErr != nil {
+		log.Warnw("Ignoring invalid cleanup acknowledgement", "error", acknowledgementErr)
+	} else if len(acknowledged) > 0 {
+		log.Infow("Retiring cleanup residuals acknowledged absent by an operator", "identities", acknowledged)
+	}
 	finishCleanup := func(operationErr error) error {
+		operationErr = errors.Join(acknowledgementErr, operationErr)
 		setCleanupCondition(ds)
+		if len(acknowledged) > 0 && !cleanupStatusHasResiduals(ds) {
+			condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+			condition.Reason = "CleanupAcknowledged"
+			condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources retired by operator acknowledgement.", len(acknowledged))
+			ds.SetCondition(*condition)
+		}
 		var previous metav1.Condition
 		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &previous)
 		liveWasFailed := previous.Status == metav1.ConditionTrue
 		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
+				if len(acknowledged) > 0 {
+					auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, acknowledged)
+				}
 				if cleanupConditionFailed(ds) {
 					// The condition message names the residual set. Emit once per
 					// distinct set rather than on every retry (#1663); the
@@ -584,9 +602,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, err)
 	}
 
-	// Unresolved create intents normally need no target round trip, but the
-	// target may prove them absent by not serving their kind (#1663).
-	if !cleanupNeedsTargetCluster(ds) && (c.disableUnservedKindHandling || !hasUnresolvedCleanupIntent(ds)) {
+	if !cleanupNeedsTargetCluster(ds) {
 		// AllowedPods are authorization references, not spoke resources. Remove
 		// this attempt's baseline refs while the status merge retains newer refs.
 		ds.Status.AllowedPods = nil
@@ -610,7 +626,6 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
-	targetClient = withKindDiscovery(targetClient, restCfg)
 
 	// Cleanup auxiliary resources first using the manager
 	auxiliaryCleanupFailed := false
@@ -858,9 +873,14 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
-			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
+			if desired := desiredCleanupCondition(desiredStatus.Conditions); desired != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)
+				// Keep the acknowledgement reason when the merged inventory agrees.
+				if merged := current.GetCondition(desired.Type); desired.Reason == "CleanupAcknowledged" && merged.Status == desired.Status {
+					merged.Reason, merged.Message = desired.Reason, desired.Message
+					current.SetCondition(*merged)
+				}
 			}
 
 			if current.Generation > 0 {
@@ -949,11 +969,6 @@ func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 }
 
 func hasUnresolvedCleanupIntent(session *breakglassv1alpha1.DebugSession) bool {
-	for _, ref := range session.Status.DeployedResources {
-		if ref.UID == "" && ref.CreateOperationID != "" && !utils.DebugSessionResourceIntentionallyRetained(session, ref) {
-			return true
-		}
-	}
 	for _, resource := range session.Status.AuxiliaryResourceStatuses {
 		if !resource.Deleted && resource.UID == "" && resource.CreateOperationID != "" {
 			return true
@@ -1257,13 +1272,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 
 	for _, ref := range ds.Status.DeployedResources {
 		if ref.UID == "" && ref.CreateOperationID != "" {
-			if !c.disableUnservedKindHandling && probeKindNotServed(ctx, targetClient, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name) {
-				// Dropped from the inventory like a confirmed deletion.
-				log.Infow("Debug resource kind is not served by the target cluster; treating its unresolved create as absent",
-					"apiVersion", ref.APIVersion, "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
-				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, ref.Source, "not_served").Inc()
-				continue
-			}
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("deployed resource %s/%s creation outcome is unresolved", ref.Namespace, ref.Name))
 			continue
@@ -1478,13 +1486,6 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		// retry rather than looking up a same-name replacement. A recorded UID
 		// is enough to continue cleanup safely even if Created was not persisted.
 		if status.UID == "" && (!status.Created || status.CreateOperationID != "") {
-			if !c.disableUnservedKindHandling && probeKindNotServed(ctx, targetClient, status.APIVersion, status.Kind, status.Namespace, status.ResourceName) {
-				// Dropped from the inventory like a confirmed deletion.
-				log.Infow("Pod template resource kind is not served by the target cluster; treating its unresolved create as absent",
-					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
-				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, "pod-template", "not_served").Inc()
-				continue
-			}
 			status.Error = "creation outcome unresolved; cleanup retry required"
 			remainingStatuses = append(remainingStatuses, *status)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("pod template resource %s/%s creation outcome is unresolved", status.Namespace, status.ResourceName))

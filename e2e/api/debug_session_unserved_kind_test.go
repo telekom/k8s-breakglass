@@ -130,9 +130,11 @@ spec:
 func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 	t.Helper()
 	ctx := s.Ctx
+	// The controller runs in its own namespace, independent of the test
+	// namespace (E2E_NAMESPACE may be "default").
 	var list appsv1.DeploymentList
-	require.NoError(t, s.Client.List(ctx, &list, client.InNamespace(s.Namespace), client.MatchingLabels{"app": "breakglass"}))
-	require.Len(t, list.Items, 1, "expected exactly one breakglass controller deployment")
+	require.NoError(t, s.Client.List(ctx, &list, client.MatchingLabels{"app": "breakglass"}))
+	require.Len(t, list.Items, 1, "expected exactly one breakglass controller deployment in the cluster")
 	key := client.ObjectKeyFromObject(&list.Items[0])
 	original := list.Items[0].Spec.Template.Spec.Containers[0].Env
 

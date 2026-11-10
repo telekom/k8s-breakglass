@@ -196,7 +196,7 @@ func Parse() *Config {
 		"Disable per-user session creation rate limiting (for testing and development only)")
 	flag.BoolVar(&config.DisableDebugSessionUnservedKindHandling, "disable-debug-session-unserved-kind-handling",
 		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", false),
-		"Transitional escape hatch: retry DebugSession cleanup of resources whose kind the target cluster does not serve instead of treating them as absent, and skip the activation preflight for required auxiliary kinds")
+		"Transitional escape hatch: skip the DebugSession activation preflight that fails a session early when a required auxiliary resource kind is not served by the target cluster")
 	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
 		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
 		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")

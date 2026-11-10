@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -18,6 +19,7 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -130,27 +132,43 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		return ds
 	}
 
-	t.Run("failed session cleanup completes", func(t *testing.T) {
-		ds := failedWithUnresolvedIntent(t, "lab-default")
+	// A recorded object of an uninstalled CRD gets NoMatch forever; only an
+	// operator acknowledgement retires it, and it never bypasses the audit.
+	t.Run("acknowledgement completes cleanup", func(t *testing.T) {
+		ds := failedWithUnresolvedIntent(t, "lab-ack")
+		ds.Status.AuxiliaryResourceStatuses[0].UID = "uid-of-removed-crd-object"
+		ds.Status.AuxiliaryResourceStatuses[0].CreateOperationID = ""
+		ds.Status.Conditions[0].Message = boundedCleanupConditionMessage(ds)
+		require.NoError(t, hub.Status().Update(ctx, ds))
 		sink := &cleanupAuditCaptureSink{}
 		c, manager := newController(true, sink)
+
 		result, err := c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
 		require.NoError(t, err)
-		require.NoError(t, manager.Close())
-		assert.Zero(t, result.RequeueAfter, "cleanup is complete; the Failed session is terminal")
+		assert.Greater(t, result.RequeueAfter, ExpiredSessionRequeue, "without acknowledgement the residual backs off")
 		require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), ds))
-		status := ds.Status.AuxiliaryResourceStatuses[0]
-		assert.True(t, status.Deleted)
-		assert.Contains(t, status.Error, "does not serve policies.kyverno.io/v1 PolicyException")
-		assert.False(t, cleanupConditionFailed(ds))
-		assert.Zero(t, countEvents(sink, audit.EventDebugSessionCleanupFailed))
-		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupRecovered), "recovery is the final event")
+		require.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
+
+		ack := fmt.Sprintf(`[{"apiVersion":"policies.kyverno.io/v1","kind":"PolicyException","namespace":"default","name":%q,"uid":"uid-of-removed-crd-object"}]`, ds.Name)
+		require.NoError(t, hub.Patch(ctx, ds, client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, CleanupAcknowledgedAbsentAnnotation, ack)))))
+		result, err = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+		require.NoError(t, err)
+		require.NoError(t, manager.Close())
+		assert.Zero(t, result.RequeueAfter, "acknowledged cleanup is complete")
+		require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), ds))
+		assert.True(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
+		condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "CleanupAcknowledged", condition.Reason)
+		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupAcknowledged))
+		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupRecovered))
 	})
 
-	t.Run("opt-out keeps the residual and backs off", func(t *testing.T) {
-		ds := failedWithUnresolvedIntent(t, "lab-opt-out")
+	t.Run("unresolved intent is never retired automatically and backs off", func(t *testing.T) {
+		ds := failedWithUnresolvedIntent(t, "lab-intent")
 		sink := &cleanupAuditCaptureSink{}
-		c, manager := newController(false, sink)
+		c, manager := newController(true, sink)
 		for range 3 {
 			result, err := c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
 			require.NoError(t, err)

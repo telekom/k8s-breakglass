@@ -119,10 +119,8 @@ type DebugSessionController struct {
 	beforeDebugTargetWrite func(string)
 	recordingArtifacts     *backend.Service
 	recordingConnections   TerminalRecordingConnectionProvider
-	// Transitional opt-outs for #1663; see WithUnservedKindHandling and
-	// WithCleanupBackoff.
-	disableUnservedKindHandling bool
-	disableCleanupBackoff       bool
+	// Transitional opt-out for #1663; see WithCleanupBackoff.
+	disableCleanupBackoff bool
 	// cleanupNotBefore maps a session's namespaced name to its
 	// cleanupDeadline, the earliest next cleanup attempt,
 	// so watch events cannot bypass the requeue backoff.
@@ -131,12 +129,10 @@ type DebugSessionController struct {
 	cleanupNotBefore sync.Map
 }
 
-// WithUnservedKindHandling controls whether cleanup treats resources of kinds
-// the target does not serve as already absent and whether activation
-// preflights required auxiliary kinds. Enabled by default; disabling restores
-// the previous retry-forever behaviour and is a transitional escape hatch.
+// WithUnservedKindHandling controls the activation preflight that fails a
+// session before any target write when a required auxiliary kind is not
+// served. Enabled by default; disabling is a transitional escape hatch.
 func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSessionController {
-	c.disableUnservedKindHandling = !enabled
 	if c.auxiliaryMgr != nil {
 		c.auxiliaryMgr.disableUnservedKindHandling = !enabled
 	}
@@ -891,7 +887,8 @@ func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.
 	}
 	if v, ok := c.cleanupNotBefore.Load(ctrlclient.ObjectKeyFromObject(ds)); ok {
 		// A recreated session with the same name must not inherit a deadline.
-		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID {
+		// A changed operator acknowledgement is acted on at once.
+		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID && deadline.acknowledgement == ds.Annotations[CleanupAcknowledgedAbsentAnnotation] {
 			return time.Until(deadline.notBefore)
 		}
 	}
@@ -899,15 +896,16 @@ func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.
 }
 
 type cleanupDeadline struct {
-	uid       types.UID
-	notBefore time.Time
+	uid             types.UID
+	notBefore       time.Time
+	acknowledgement string
 }
 
 // recordCleanupFailure stores the next allowed attempt and returns its delay.
 func (c *DebugSessionController) recordCleanupFailure(ds *breakglassv1alpha1.DebugSession) time.Duration {
 	retryAfter := c.cleanupRetryAfter(ds)
 	if !c.disableCleanupBackoff {
-		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter)})
+		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter), acknowledgement: ds.Annotations[CleanupAcknowledgedAbsentAnnotation]})
 	}
 	return retryAfter
 }

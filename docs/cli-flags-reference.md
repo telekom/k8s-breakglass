@@ -800,7 +800,7 @@ When **enabled** (default):
 
 #### `--disable-debug-session-unserved-kind-handling`
 
-Transitional escape hatch. Restores the previous DebugSession behaviour for API kinds that the target cluster does not serve: no activation preflight for required auxiliary kinds, and cleanup retries such entries indefinitely instead of treating them as absent. See [DebugSession cleanup recovery](debug-session-cleanup.md#kinds-the-target-cluster-does-not-serve).
+Transitional escape hatch. Skips the DebugSession activation preflight that fails a session before any target write when a required auxiliary resource kind is not served by the target cluster; the session then fails at the first create instead. See [DebugSession cleanup recovery](debug-session-cleanup.md#kinds-the-target-cluster-does-not-serve).
 
 | Property | Value |
 |----------|-------|

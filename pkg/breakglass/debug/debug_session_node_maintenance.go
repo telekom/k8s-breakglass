@@ -147,7 +147,6 @@ func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *brea
 		release()
 		return nil, nil, nil, err
 	}
-	target = withKindDiscovery(target, cfg)
 	fence := func() error {
 		return c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
 	}

@@ -1033,6 +1033,27 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 	})
 }
 
+// DebugSessionCleanupAcknowledged records residuals retired because an
+// operator acknowledged them absent, not because they were observed gone.
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster string, identities []string) {
+	m.Emit(ctx, &Event{
+		Type:     EventDebugSessionCleanupAcknowledged,
+		Severity: SeverityWarning,
+		Actor:    Actor{User: "system"},
+		Target: Target{
+			Kind:      "DebugSession",
+			Name:      sessionName,
+			Namespace: namespace,
+		},
+		Details: map[string]interface{}{
+			"cluster":    cluster,
+			"annotation": "breakglass.t-caas.telekom.com/cleanup-acknowledged-absent",
+			"retired":    append([]string(nil), identities...),
+		},
+		RequestContext: &RequestContext{DebugSessionName: sessionName},
+	})
+}
+
 // DebugSessionCleanupRecovered emits an audit event after all tracked
 // resources have been observed gone and a prior cleanup failure is cleared.
 func (m *Manager) DebugSessionCleanupRecovered(ctx context.Context, sessionName, namespace, cluster string) {

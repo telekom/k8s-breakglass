@@ -5,10 +5,9 @@ package debug
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -22,7 +21,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,13 +77,7 @@ func unservedTarget(t *testing.T, funcs interceptor.Funcs) client.Client {
 		}
 		return cl.List(ctx, list, opts...)
 	}
-	return confirmedAbsent(fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build())
-}
-
-// confirmedAbsent stands in for withKindDiscovery on a target whose
-// discovery documents do not list the kind.
-func confirmedAbsent(target client.Client) client.Client {
-	return &discoveryConfirmedClient{Client: target, confirm: func(context.Context, schema.GroupKind) (bool, error) { return true, nil }}
+	return fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build()
 }
 
 func TestIsKindNotServedError(t *testing.T) {
@@ -111,24 +103,6 @@ func TestIsKindNotServedError(t *testing.T) {
 	}
 }
 
-func TestTargetKindNotServedRequiresVersionAgnosticProof(t *testing.T) {
-	raw := fake.NewClientBuilder().WithScheme(Scheme).Build()
-	assert.False(t, targetKindNotServed(context.Background(), raw, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()),
-		"fail closed: a RESTMapper NoMatch without discovery confirmation is never absence")
-	empty := confirmedAbsent(raw)
-	assert.True(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", nil), "no operation error is no proof")
-	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", errors.New("timeout")))
-	assert.False(t, targetKindNotServed(context.Background(), nil, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-	assert.False(t, targetKindNotServed(context.Background(), empty, "a/b/c", "PolicyException", policyExceptionNoMatch()))
-
-	// The kind is still served at another version: objects may exist there.
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "policies.kyverno.io", Version: "v2"}})
-	mapper.Add(schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v2", Kind: "PolicyException"}, meta.RESTScopeNamespace)
-	otherVersion := confirmedAbsent(fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(mapper).Build())
-	assert.False(t, targetKindNotServed(context.Background(), otherVersion, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-}
-
 func unresolvedPolicyExceptionSession() *breakglassv1alpha1.DebugSession {
 	return &breakglassv1alpha1.DebugSession{
 		ObjectMeta: metav1.ObjectMeta{Name: "unserved", Namespace: "ns", UID: "session-uid"},
@@ -143,54 +117,6 @@ func unresolvedPolicyExceptionSession() *breakglassv1alpha1.DebugSession {
 			}},
 		},
 	}
-}
-
-func TestCleanupAuxiliaryResourcesTreatsUnservedKindAsAbsent(t *testing.T) {
-	t.Run("unresolved intent", func(t *testing.T) {
-		session := unresolvedPolicyExceptionSession()
-		require.NoError(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
-		status := session.Status.AuxiliaryResourceStatuses[0]
-		assert.True(t, status.Deleted)
-		assert.NotNil(t, status.DeletedAt)
-		assert.Contains(t, status.Error, "does not serve policies.kyverno.io/v1 PolicyException")
-		assert.False(t, auxiliaryStatusHasCleanupResidual(session, status))
-	})
-	t.Run("recorded objects are retained (APIService deregistration)", func(t *testing.T) {
-		// A deregistered APIService vanishes from discovery but its extension
-		// server keeps the stored objects; re-registration exposes them again.
-		// Only the never-resolved create is retired.
-		session := unresolvedPolicyExceptionSession()
-		session.Status.AuxiliaryResourceStatuses[0].UID = "recorded-uid"
-		session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{
-			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "child", UID: "child-uid"},
-			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "unresolved-child", CreateOperationID: "op-2"},
-		}
-		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
-		status := session.Status.AuxiliaryResourceStatuses[0]
-		assert.False(t, status.Deleted, "a recorded UID stays a residual")
-		assert.True(t, auxiliaryStatusHasCleanupResidual(session, status))
-		assert.False(t, status.AdditionalResources[0].Deleted, "a recorded child stays a residual")
-		assert.True(t, status.AdditionalResources[1].Deleted, "an unresolved child create is retired")
-		assert.Contains(t, status.AdditionalResources[1].Error, "does not serve")
-	})
-	t.Run("opt-out keeps retrying", func(t *testing.T) {
-		session := unresolvedPolicyExceptionSession()
-		mgr := newTestAuxiliaryResourceManager()
-		mgr.disableUnservedKindHandling = true
-		require.Error(t, mgr.CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
-		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
-	})
-	t.Run("transient failure keeps retrying", func(t *testing.T) {
-		session := unresolvedPolicyExceptionSession()
-		session.Status.AuxiliaryResourceStatuses[0].UID = "recorded-uid"
-		target := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
-			Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
-				return apierrors.NewServiceUnavailable("apiserver unavailable")
-			},
-		}).Build()
-		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, target))
-		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
-	})
 }
 
 func TestUnservedKindCreateIsDefinitiveRejection(t *testing.T) {
@@ -311,96 +237,6 @@ func TestCleanupFailedAuditIsEmittedOncePerResidualSet(t *testing.T) {
 	assert.Equal(t, 4, run(t, false), "opt-out restores one event per failed attempt")
 }
 
-func TestLegacyDiscoveryKindAbsent(t *testing.T) {
-	groups := `{"kind":"APIGroupList","groups":[{"name":"policies.kyverno.io","versions":[{"groupVersion":"policies.kyverno.io/v1","version":"v1"}]}]}`
-	for name, tc := range map[string]struct {
-		apis, version string
-		status        int
-		want          bool
-		wantErr       bool
-	}{
-		"group absent":           {apis: `{"kind":"APIGroupList","groups":[]}`, want: true},
-		"kind served":            {apis: groups, version: `{"kind":"APIResourceList","resources":[{"name":"policyexceptions","kind":"PolicyException"}]}`},
-		"other kind only":        {apis: groups, version: `{"kind":"APIResourceList","resources":[{"name":"policies","kind":"Policy"}]}`, want: true},
-		"unavailable APIService": {apis: groups, status: http.StatusServiceUnavailable, wantErr: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "application/json")
-				switch r.URL.Path {
-				case "/apis":
-					_, _ = w.Write([]byte(tc.apis))
-				case "/apis/policies.kyverno.io/v1":
-					if tc.status != 0 {
-						w.WriteHeader(tc.status)
-						return
-					}
-					_, _ = w.Write([]byte(tc.version))
-				default:
-					w.WriteHeader(http.StatusNotFound)
-				}
-			}))
-			defer srv.Close()
-			dc, err := discovery.NewDiscoveryClientForConfig(&rest.Config{Host: srv.URL})
-			require.NoError(t, err)
-			absent, err := legacyDiscoveryKindAbsent(context.Background(), dc.RESTClient(), policyExceptionGVK.GroupKind())
-			if tc.wantErr {
-				require.Error(t, err)
-				return
-			}
-			require.NoError(t, err)
-			assert.Equal(t, tc.want, absent)
-		})
-	}
-	absent, err := legacyDiscoveryKindAbsent(context.Background(), nil, schema.GroupKind{Kind: "ConfigMap"})
-	require.NoError(t, err)
-	assert.False(t, absent, "the core group is always served")
-}
-
-func TestTargetKindNotServedHonoursDiscoveryConfirmation(t *testing.T) {
-	empty := fake.NewClientBuilder().WithScheme(Scheme).Build()
-	for name, tc := range map[string]struct {
-		absent bool
-		err    error
-		want   bool
-	}{
-		"confirmed absent":      {absent: true, want: true},
-		"stale APIService":      {absent: false},
-		"discovery unreachable": {err: errors.New("dial tcp: i/o timeout")},
-	} {
-		t.Run(name, func(t *testing.T) {
-			target := &discoveryConfirmedClient{Client: empty, confirm: func(context.Context, schema.GroupKind) (bool, error) { return tc.absent, tc.err }}
-			assert.Equal(t, tc.want, targetKindNotServed(context.Background(), target, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-		})
-	}
-}
-
-func TestCleanupPodTemplateAndDeployedResourcesRetireOnlyUnresolvedIntents(t *testing.T) {
-	pe := func(name, uid, op string) breakglassv1alpha1.PodTemplateResourceStatus {
-		return breakglassv1alpha1.PodTemplateResourceStatus{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: name, Created: true, UID: uid, CreateOperationID: op}
-	}
-	ds := unresolvedPolicyExceptionSession()
-	ds.Status.AuxiliaryResourceStatuses = nil
-	ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{pe("unresolved", "", "op"), pe("recorded", "recorded-uid", "")}
-	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
-		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"},
-	}
-	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
-	target := unservedTarget(t, interceptor.Funcs{})
-	require.Error(t, c.cleanupPodTemplateResources(context.Background(), ds, target))
-	require.Len(t, ds.Status.PodTemplateResourceStatuses, 1, "the unresolved intent is retired")
-	assert.Equal(t, "recorded", ds.Status.PodTemplateResourceStatuses[0].ResourceName, "a recorded object survives discovery absence")
-	require.Error(t, c.cleanupDeployedResources(context.Background(), ds, target, false, false))
-	assert.Len(t, ds.Status.DeployedResources, 1, "a recorded deployed object survives discovery absence")
-
-	// Opt-out keeps the unresolved intent too.
-	optOut := unresolvedPolicyExceptionSession()
-	optOut.Status.AuxiliaryResourceStatuses = nil
-	optOut.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{pe("unresolved", "", "op")}
-	require.Error(t, c.WithUnservedKindHandling(false).cleanupPodTemplateResources(context.Background(), optOut, target))
-	assert.Len(t, optOut.Status.PodTemplateResourceStatuses, 1)
-}
-
 func TestCleanupBackoffCannotBeBypassedByWatchEvents(t *testing.T) {
 	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "uid"}}
 	ds.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))})
@@ -436,44 +272,6 @@ func TestCleanupResidualDigestSeesChangesBeyondMessageBounds(t *testing.T) {
 	assert.Empty(t, residualSetDigestFromMessage("Cleanup failed; residual resources: legacy"))
 }
 
-func TestCleanupDeployedUnresolvedIntentOfUnservedKind(t *testing.T) {
-	ds := unresolvedPolicyExceptionSession()
-	ds.Status.AuxiliaryResourceStatuses = nil
-	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "intent", CreateOperationID: "op", Source: "debug-extra"}}
-	require.True(t, hasUnresolvedCleanupIntent(ds), "deployed intents route cleanup to the target")
-	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
-	require.NoError(t, c.cleanupDeployedResources(context.Background(), ds, unservedTarget(t, interceptor.Funcs{}), false, false))
-	assert.Empty(t, ds.Status.DeployedResources)
-}
-
-func TestPrivilegedTargetClientsConfirmKindAbsence(t *testing.T) {
-	c, ds, _, _ := newDeploymentFenceFixture(t)
-	raw := fake.NewClientBuilder().WithScheme(Scheme).Build()
-	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return raw, nil }
-
-	maintenance, _, release, err := c.maintenanceClient(context.Background(), ds)
-	require.NoError(t, err)
-	release()
-	_, ok := maintenance.(kindAbsenceConfirmer)
-	assert.True(t, ok, "node-maintenance cleanup must confirm absence via discovery")
-
-	hotfix, _, _, release, err := c.hotfixClient(context.Background(), ds)
-	require.NoError(t, err)
-	release()
-	_, ok = hotfix.(kindAbsenceConfirmer)
-	assert.True(t, ok, "hotfix release must confirm absence via discovery")
-
-	// With an unreachable discovery endpoint (the fixture spoke is
-	// https://spoke.invalid) a NoMatch is never treated as absence, so the
-	// auxiliary entry stays a retryable residual on both paths.
-	for name, target := range map[string]client.Client{"maintenance": maintenance, "hotfix": hotfix} {
-		session := unresolvedPolicyExceptionSession()
-		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, target), name)
-		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted, name)
-	}
-	assert.Same(t, maintenance, withKindDiscovery(maintenance, &rest.Config{}), "wrapping is idempotent")
-}
-
 func TestCleanupBackoffDeadlineIsReleasedWhenSessionIsDeleted(t *testing.T) {
 	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "gone", Namespace: "ns", UID: "uid"}}
 	ds.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))})
@@ -492,4 +290,132 @@ func TestCleanupBackoffDeadlineIsReleasedWhenSessionIsDeleted(t *testing.T) {
 	recreated := ds.DeepCopy()
 	recreated.UID = "new-uid"
 	assert.Zero(t, c.cleanupBackoffRemaining(recreated), "a recreated session does not inherit the deadline")
+}
+
+func TestCleanupNeverRetiresResidualsOnDiscoveryAbsence(t *testing.T) {
+	// A NoMatch proves nothing about stored objects: a deregistered
+	// APIService keeps them, and an unresolved intent may be a committed
+	// create whose response was lost. Every entry stays a residual.
+	session := unresolvedPolicyExceptionSession()
+	session.Status.AuxiliaryResourceStatuses = append(session.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{
+		Name: "recorded", Category: "policy-exceptions", APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException",
+		Namespace: "breakglass-debug", ResourceName: "recorded", Created: true, UID: "recorded-uid",
+	})
+	require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
+	for _, status := range session.Status.AuxiliaryResourceStatuses {
+		assert.False(t, status.Deleted, status.ResourceName)
+	}
+}
+
+func acknowledgedSession(t *testing.T, ids ...CleanupAcknowledgedIdentity) *breakglassv1alpha1.DebugSession {
+	t.Helper()
+	ds := unresolvedPolicyExceptionSession()
+	ds.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "child", UID: "child-uid"},
+	}
+	ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "pod-template", Created: true, UID: "pt-uid"},
+	}
+	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"},
+		{APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: "other", UID: "other-uid", Source: "debug-extra"},
+	}
+	setCleanupCondition(ds)
+	require.True(t, cleanupConditionFailed(ds))
+	raw, err := json.Marshal(ids)
+	require.NoError(t, err)
+	ds.Annotations = map[string]string{CleanupAcknowledgedAbsentAnnotation: string(raw)}
+	return ds
+}
+
+var acknowledgedPolicyExceptions = []CleanupAcknowledgedIdentity{
+	{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "unserved-exception"},
+	{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "child", UID: "child-uid"},
+	{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "pod-template", UID: "pt-uid"},
+	{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid"},
+}
+
+func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	retired, err := applyCleanupAcknowledgement(ds)
+	require.NoError(t, err)
+	assert.Len(t, retired, 4)
+	aux := ds.Status.AuxiliaryResourceStatuses[0]
+	assert.True(t, aux.Deleted)
+	assert.Contains(t, aux.Error, CleanupAcknowledgedAbsentAnnotation)
+	assert.True(t, aux.AdditionalResources[0].Deleted)
+	assert.Empty(t, ds.Status.PodTemplateResourceStatuses)
+	require.Len(t, ds.Status.DeployedResources, 1, "an unlisted residual is kept")
+	assert.Equal(t, "other", ds.Status.DeployedResources[0].Name)
+
+	again, err := applyCleanupAcknowledgement(ds)
+	require.NoError(t, err)
+	assert.Empty(t, again, "re-applying an already applied acknowledgement is a no-op")
+}
+
+func TestApplyCleanupAcknowledgementRejectsUnmatchedOrInvalidEntries(t *testing.T) {
+	wrongUID := append([]CleanupAcknowledgedIdentity(nil), acknowledgedPolicyExceptions...)
+	wrongUID[3].UID = "another-uid"
+	for name, annotation := range map[string]string{
+		"wrong uid":      "",
+		"invalid json":   "{",
+		"missing fields": `[{"kind":"PolicyException"}]`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := acknowledgedSession(t, wrongUID...)
+			if annotation != "" {
+				ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = annotation
+			}
+			before := ds.Status.DeepCopy()
+			retired, err := applyCleanupAcknowledgement(ds)
+			require.Error(t, err)
+			assert.Empty(t, retired)
+			assert.Equal(t, *before, ds.Status, "nothing is retired unless every entry matches")
+		})
+	}
+	t.Run("not failing", func(t *testing.T) {
+		ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+		ds.Status.Conditions = nil
+		retired, err := applyCleanupAcknowledgement(ds)
+		require.NoError(t, err)
+		assert.Empty(t, retired, "an acknowledgement applies only after cleanup has failed")
+	})
+}
+
+func TestCleanupAcknowledgementCompletesCleanupAndIsAudited(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+	require.NoError(t, c.cleanupResources(context.Background(), ds))
+	require.NoError(t, manager.Close())
+
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	require.NotNil(t, condition)
+	assert.Equal(t, metav1.ConditionFalse, condition.Status)
+	assert.Equal(t, "CleanupAcknowledged", condition.Reason)
+	var acknowledged, recovered int
+	for _, event := range sink.Events() {
+		switch event.Type {
+		case audit.EventDebugSessionCleanupAcknowledged:
+			acknowledged++
+			assert.Len(t, event.Details["retired"], 4)
+		case audit.EventDebugSessionCleanupRecovered:
+			recovered++
+		}
+	}
+	assert.Equal(t, 1, acknowledged)
+	assert.Equal(t, 1, recovered)
+}
+
+func TestNewAcknowledgementBypassesCleanupBackoff(t *testing.T) {
+	ds := acknowledgedSession(t)
+	ds.Annotations = nil
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	c.recordCleanupFailure(ds)
+	require.Greater(t, c.cleanupBackoffRemaining(ds), time.Duration(0))
+	ds.Annotations = map[string]string{CleanupAcknowledgedAbsentAnnotation: "[]"}
+	assert.Zero(t, c.cleanupBackoffRemaining(ds), "a changed acknowledgement is acted on at once")
 }

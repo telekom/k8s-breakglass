@@ -47,8 +47,7 @@ type AuxiliaryResourceManager struct {
 	auditManager     *audit.Manager
 	auditProvider    func() *audit.Manager
 	readinessChecker *utils.ReadinessChecker
-	// disableUnservedKindHandling restores the pre-#1663 cleanup behaviour:
-	// an entry whose kind the target does not serve stays retryable forever.
+	// disableUnservedKindHandling skips the activation preflight (#1663).
 	disableUnservedKindHandling bool
 }
 
@@ -223,49 +222,15 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	var cleanupErrors []error
 
-	// notServed applies only to unresolved create intents (no recorded UID):
-	// a create of an unserved kind fails client-side and creates nothing.
-	// It is evaluated only when an intent cannot be resolved, so healthy
-	// cleanup pays no extra discovery.
-	notServed := func(i int, apiVersion, kind, resourceName, namespace string) bool {
-		if m.disableUnservedKindHandling || !probeKindNotServed(ctx, targetClient, apiVersion, kind, namespace, resourceName) {
-			return false
-		}
-		log.Infow("Auxiliary resource kind is not served by the target cluster; treating it as already deleted",
-			"resource", session.Status.AuxiliaryResourceStatuses[i].Name,
-			"apiVersion", apiVersion,
-			"kind", kind,
-			"resourceName", resourceName,
-			"namespace", namespace)
-		metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, session.Status.AuxiliaryResourceStatuses[i].Category, "not_served").Inc()
-		return true
-	}
-	markDeleted := func(i int, reason string) {
-		now := time.Now().UTC().Format(time.RFC3339)
-		session.Status.AuxiliaryResourceStatuses[i].Deleted = true
-		session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
-		if reason != "" {
-			session.Status.AuxiliaryResourceStatuses[i].Error = reason
-		}
-	}
-
 	for i, status := range session.Status.AuxiliaryResourceStatuses {
 		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
 		if !status.Deleted && status.UID == "" && status.CreateOperationID != "" {
-			// An unserved kind proves that the unresolved create made nothing.
-			if notServed(i, status.APIVersion, status.Kind, status.ResourceName, status.Namespace) {
-				markDeleted(i, kindNotServedReason(status.APIVersion, status.Kind))
-			} else {
-				err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
-				cleanupErrors = append(cleanupErrors, err)
-				session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
-			}
+			err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
+			cleanupErrors = append(cleanupErrors, err)
+			session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
 		} else if !status.Deleted && deleteAfter && (status.Created || status.UID != "") {
 			// A recorded UID is sufficient to delete safely even when the create
 			// response was interrupted before Created could be persisted.
-			// A recorded object really existed. Discovery absence does not
-			// prove it is gone (a deregistered APIService keeps its stored
-			// objects), so it stays a residual and only backs off.
 			err := m.deleteResource(ctx, targetClient, status, session)
 			if err != nil {
 				log.Warnw("Failed to delete auxiliary resource",
@@ -276,7 +241,9 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 				cleanupErrors = append(cleanupErrors, err)
 				session.Status.AuxiliaryResourceStatuses[i].Error = err.Error()
 			} else {
-				markDeleted(i, "")
+				now := time.Now().UTC().Format(time.RFC3339)
+				session.Status.AuxiliaryResourceStatuses[i].Deleted = true
+				session.Status.AuxiliaryResourceStatuses[i].DeletedAt = &now
 				metrics.AuxiliaryResourceCleanups.WithLabelValues(session.Spec.Cluster, status.Category, "success").Inc()
 			}
 		}
@@ -291,17 +258,6 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 		// Also delete any additional resources from multi-document YAML templates
 		for j, addlRes := range status.AdditionalResources {
 			if addlRes.Deleted {
-				continue
-			}
-			markChildNotServed := func() bool {
-				if !notServed(i, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace) {
-					return false
-				}
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Deleted = true
-				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = kindNotServedReason(addlRes.APIVersion, addlRes.Kind)
-				return true
-			}
-			if addlRes.UID == "" && addlRes.CreateOperationID != "" && markChildNotServed() {
 				continue
 			}
 			if addlRes.UID == "" && addlRes.CreateOperationID != "" {
