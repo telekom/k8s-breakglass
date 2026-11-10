@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 
@@ -164,7 +165,9 @@ func startBroker(t *testing.T) func() {
 	return forward(t)
 }
 
-// readIDs consumes the topic until want messages arrived and returns their IDs.
+// readIDs consumes the topic until want distinct event IDs arrived and
+// returns them in arrival order. Delivery is at least once, so a replayed
+// record is skipped.
 func readIDs(ctx context.Context, t *testing.T, topic string, want int) []string {
 	t.Helper()
 	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{"localhost:19093"}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6})
@@ -175,7 +178,9 @@ func readIDs(ctx context.Context, t *testing.T, topic string, want int) []string
 		require.NoError(t, err, "received %v", ids)
 		var event audit.Event
 		require.NoError(t, json.Unmarshal(message.Value, &event))
-		ids = append(ids, event.ID)
+		if !slices.Contains(ids, event.ID) {
+			ids = append(ids, event.ID)
+		}
 	}
 	return ids
 }
@@ -211,9 +216,11 @@ func TestOutageLongerThanRetryWindowRetainsEventsAndBreakerRecovers(t *testing.T
 	}
 	require.Eventually(t, func() bool { return svc.GetQueuedSinkHealth()[0].CircuitState == "open" }, time.Minute, time.Second)
 	require.Positive(t, testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(topic)))
-	// Outlast the retry window (3 s) and the breaker's 30 s open timeout so at
-	// least one half-open probe fails while the broker is still down.
-	time.Sleep(time.Until(outage.Add(45 * time.Second)))
+	// Keep the broker down until a half-open probe has failed, which is well
+	// past the retry window (3 s) and the breaker's 30 s open timeout.
+	failedProbes := metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(topic, "half-open", "open")
+	require.Eventually(t, func() bool { return testutil.ToFloat64(failedProbes) > 0 }, 2*time.Minute, time.Second)
+	require.Greater(t, time.Since(outage), 30*time.Second)
 	require.Zero(t, svc.GetQueuedSinkHealth()[0].DroppedEvents)
 
 	stop = startBroker(t)

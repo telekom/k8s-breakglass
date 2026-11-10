@@ -274,7 +274,11 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 			qs.recordDrop(1, "shutdown")
 			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 		case <-writeCtx.Done():
-			qs.recordDrop(1, "enqueue_timeout")
+			// Count every drop, but rate-limit the warning: with a full
+			// queue this path runs once per emitted event.
+			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "enqueue_timeout").Inc()
+			qs.droppedEvents.Add(1)
+			qs.logDropThrottled("enqueue_timeout")
 			return fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
 		}
 	}
