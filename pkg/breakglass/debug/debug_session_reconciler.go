@@ -47,6 +47,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -122,7 +123,8 @@ type DebugSessionController struct {
 	// WithCleanupBackoff.
 	disableUnservedKindHandling bool
 	disableCleanupBackoff       bool
-	// cleanupNotBefore maps session UID to the earliest next cleanup attempt,
+	// cleanupNotBefore maps a session's namespaced name to its
+	// cleanupDeadline, the earliest next cleanup attempt,
 	// so watch events cannot bypass the requeue backoff.
 	// ponytail: in-memory; a restart allows one early attempt, then the
 	// persisted CleanupFailed transition restores the backoff.
@@ -272,6 +274,7 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	if err := c.client.Get(ctx, req.NamespacedName, ds); err != nil {
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
+			c.cleanupNotBefore.Delete(req.NamespacedName)
 
 			releaseSessionMetricSeries(req.Name)
 
@@ -883,20 +886,28 @@ func (c *DebugSessionController) cleanupRetryAfter(ds *breakglassv1alpha1.DebugS
 // before the next cleanup attempt; zero means attempt now.
 func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.DebugSession) time.Duration {
 	if c.disableCleanupBackoff || !cleanupConditionFailed(ds) {
-		c.cleanupNotBefore.Delete(ds.UID)
+		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
 		return 0
 	}
-	if notBefore, ok := c.cleanupNotBefore.Load(ds.UID); ok {
-		return time.Until(notBefore.(time.Time))
+	if v, ok := c.cleanupNotBefore.Load(ctrlclient.ObjectKeyFromObject(ds)); ok {
+		// A recreated session with the same name must not inherit a deadline.
+		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID {
+			return time.Until(deadline.notBefore)
+		}
 	}
 	return 0
+}
+
+type cleanupDeadline struct {
+	uid       types.UID
+	notBefore time.Time
 }
 
 // recordCleanupFailure stores the next allowed attempt and returns its delay.
 func (c *DebugSessionController) recordCleanupFailure(ds *breakglassv1alpha1.DebugSession) time.Duration {
 	retryAfter := c.cleanupRetryAfter(ds)
 	if !c.disableCleanupBackoff {
-		c.cleanupNotBefore.Store(ds.UID, time.Now().Add(retryAfter))
+		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter)})
 	}
 	return retryAfter
 }

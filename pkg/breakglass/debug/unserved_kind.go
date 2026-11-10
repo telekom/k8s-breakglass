@@ -62,11 +62,15 @@ func targetKindNotServed(ctx context.Context, target client.Client, apiVersion, 
 	if _, err = target.RESTMapper().RESTMapping(gk); !isKindNotServedError(err) {
 		return false
 	}
-	if confirmer, ok := target.(kindAbsenceConfirmer); ok {
-		absent, err := confirmer.confirmKindAbsent(ctx, gk)
-		return err == nil && absent
+	// Fail closed: without a discovery confirmation the RESTMapper alone is
+	// not proof, so a client not wrapped by withKindDiscovery never reports
+	// a kind as absent.
+	confirmer, ok := target.(kindAbsenceConfirmer)
+	if !ok {
+		return false
 	}
-	return true
+	absent, err := confirmer.confirmKindAbsent(ctx, gk)
+	return err == nil && absent
 }
 
 type kindAbsenceConfirmer interface {
@@ -87,7 +91,7 @@ func (c *discoveryConfirmedClient) confirmKindAbsent(ctx context.Context, gk sch
 // withKindDiscovery wraps target so that unserved-kind decisions are
 // confirmed against the target's legacy discovery endpoints.
 func withKindDiscovery(target client.Client, cfg *rest.Config) client.Client {
-	if target == nil || cfg == nil {
+	if _, confirmed := target.(kindAbsenceConfirmer); confirmed || target == nil || cfg == nil {
 		return target
 	}
 	return &discoveryConfirmedClient{Client: target, confirm: func(ctx context.Context, gk schema.GroupKind) (bool, error) {

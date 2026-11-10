@@ -24,6 +24,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -78,7 +79,13 @@ func unservedTarget(t *testing.T, funcs interceptor.Funcs) client.Client {
 		}
 		return cl.List(ctx, list, opts...)
 	}
-	return fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build()
+	return confirmedAbsent(fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build())
+}
+
+// confirmedAbsent stands in for withKindDiscovery on a target whose
+// discovery documents do not list the kind.
+func confirmedAbsent(target client.Client) client.Client {
+	return &discoveryConfirmedClient{Client: target, confirm: func(context.Context, schema.GroupKind) (bool, error) { return true, nil }}
 }
 
 func TestIsKindNotServedError(t *testing.T) {
@@ -105,7 +112,10 @@ func TestIsKindNotServedError(t *testing.T) {
 }
 
 func TestTargetKindNotServedRequiresVersionAgnosticProof(t *testing.T) {
-	empty := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	raw := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	assert.False(t, targetKindNotServed(context.Background(), raw, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()),
+		"fail closed: a RESTMapper NoMatch without discovery confirmation is never absence")
+	empty := confirmedAbsent(raw)
 	assert.True(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
 	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", nil), "no operation error is no proof")
 	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", errors.New("timeout")))
@@ -115,7 +125,7 @@ func TestTargetKindNotServedRequiresVersionAgnosticProof(t *testing.T) {
 	// The kind is still served at another version: objects may exist there.
 	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "policies.kyverno.io", Version: "v2"}})
 	mapper.Add(schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v2", Kind: "PolicyException"}, meta.RESTScopeNamespace)
-	otherVersion := fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(mapper).Build()
+	otherVersion := confirmedAbsent(fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(mapper).Build())
 	assert.False(t, targetKindNotServed(context.Background(), otherVersion, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
 }
 
@@ -435,4 +445,52 @@ func TestCleanupDeployedUnresolvedIntentOfUnservedKind(t *testing.T) {
 	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
 	require.NoError(t, c.cleanupDeployedResources(context.Background(), ds, unservedTarget(t, interceptor.Funcs{}), false, false))
 	assert.Empty(t, ds.Status.DeployedResources)
+}
+
+func TestPrivilegedTargetClientsConfirmKindAbsence(t *testing.T) {
+	c, ds, _, _ := newDeploymentFenceFixture(t)
+	raw := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	c.targetClientFactory = func(*rest.Config) (client.Client, error) { return raw, nil }
+
+	maintenance, _, release, err := c.maintenanceClient(context.Background(), ds)
+	require.NoError(t, err)
+	release()
+	_, ok := maintenance.(kindAbsenceConfirmer)
+	assert.True(t, ok, "node-maintenance cleanup must confirm absence via discovery")
+
+	hotfix, _, _, release, err := c.hotfixClient(context.Background(), ds)
+	require.NoError(t, err)
+	release()
+	_, ok = hotfix.(kindAbsenceConfirmer)
+	assert.True(t, ok, "hotfix release must confirm absence via discovery")
+
+	// With an unreachable discovery endpoint (the fixture spoke is
+	// https://spoke.invalid) a NoMatch is never treated as absence, so the
+	// auxiliary entry stays a retryable residual on both paths.
+	for name, target := range map[string]client.Client{"maintenance": maintenance, "hotfix": hotfix} {
+		session := unresolvedPolicyExceptionSession()
+		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, target), name)
+		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted, name)
+	}
+	assert.Same(t, maintenance, withKindDiscovery(maintenance, &rest.Config{}), "wrapping is idempotent")
+}
+
+func TestCleanupBackoffDeadlineIsReleasedWhenSessionIsDeleted(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "gone", Namespace: "ns", UID: "uid"}}
+	ds.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))})
+	hub := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	c.recordCleanupFailure(ds)
+	_, tracked := c.cleanupNotBefore.Load(client.ObjectKeyFromObject(ds))
+	require.True(t, tracked)
+
+	_, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.NoError(t, err)
+	_, tracked = c.cleanupNotBefore.Load(client.ObjectKeyFromObject(ds))
+	assert.False(t, tracked, "a deleted session must not keep its backoff deadline")
+
+	c.recordCleanupFailure(ds)
+	recreated := ds.DeepCopy()
+	recreated.UID = "new-uid"
+	assert.Zero(t, c.cleanupBackoffRemaining(recreated), "a recreated session does not inherit the deadline")
 }

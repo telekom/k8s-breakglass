@@ -76,6 +76,7 @@ func (c *DebugSessionController) hotfixClient(ctx context.Context, ds *breakglas
 		release()
 		return nil, nil, nil, nil, err
 	}
+	target = withKindDiscovery(target, cfg)
 	return target, cfg, func() error { return c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured) }, release, nil
 }
 

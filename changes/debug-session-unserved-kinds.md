@@ -12,3 +12,7 @@ section: Behaviour changes
   every attempt. To restore the previous behaviour, use the transitional
   opt-outs `--disable-debug-session-unserved-kind-handling` and
   `--disable-debug-session-cleanup-backoff` (#1663).
+- Sessions already in `CleanupFailed` when you upgrade emit one more
+  `debug_session.cleanup_failed`, because their condition message predates the
+  residual-set digest. Their next retry then waits the full 5-minute backoff,
+  since they have been failing since before the upgrade (#1663).
