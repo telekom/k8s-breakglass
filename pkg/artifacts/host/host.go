@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"os"
 	"sort"
 	"strings"
 	"time"
@@ -360,28 +359,19 @@ func localConfig(cfg *config.ArtifactLocal) local.Config {
 }
 
 // ProvisionLocal runs the administrator-initiated provisioning of an empty
-// local artifact volume with exactly the settings the controller opens it
-// with, then creates a missing upload staging directory. Startup never calls
-// it, so an unprovisioned or repointed volume keeps failing closed.
+// local artifact volume and its upload staging directory with exactly the
+// settings the controller opens them with. Startup never calls it, so an
+// unprovisioned or repointed volume keeps failing closed.
 func ProvisionLocal(cfg config.Artifacts) (local.ProvisionResult, error) {
-	if cfg.Backend != "local" || cfg.Local == nil || cfg.S3 != nil {
-		return "", errors.New("artifacts.backend must be local with an artifacts.local section and no artifacts.s3 section")
+	if !cfg.Enabled || cfg.Backend != "local" || cfg.Local == nil || cfg.S3 != nil {
+		return "", errors.New("artifacts must be enabled with backend local, an artifacts.local section and no artifacts.s3 section")
 	}
-	result, err := local.Provision(localConfig(cfg.Local))
+	if cfg.StagingDir == "" {
+		return "", errors.New("artifacts.stagingDir is required")
+	}
+	result, err := local.Provision(localConfig(cfg.Local), cfg.StagingDir)
 	if err != nil {
 		return "", fmt.Errorf("provision local artifact storage: %w", err)
-	}
-	if cfg.StagingDir != "" {
-		if err := os.Mkdir(cfg.StagingDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-			return "", fmt.Errorf("create artifact upload staging directory: %w", err)
-		}
-		info, err := os.Lstat(cfg.StagingDir)
-		if err != nil {
-			return "", fmt.Errorf("inspect artifact upload staging directory: %w", err)
-		}
-		if !info.IsDir() {
-			return "", fmt.Errorf("artifact upload staging directory %s is not a directory", cfg.StagingDir)
-		}
 	}
 	return result, nil
 }

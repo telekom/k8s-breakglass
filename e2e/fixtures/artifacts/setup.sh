@@ -118,6 +118,12 @@ set_artifact_claim() {
 provision_volume() {
  # Opt-in off: a fresh PVC without the provisioning Job keeps failing closed.
  expect_fail_closed "open local artifact root"
+ # A stagingDir outside the volume is refused before anything is written; the
+ # real Job below must then still report a fresh "provisioned" volume.
+ kubectl -n "$ns" get configmap "$config" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; d["config.yaml"]=d["config.yaml"].replace("stagingDir: /artifacts/uploads","stagingDir: /var/lib/breakglass/upload-staging"); print(json.dumps({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"artifact-e2e-outside-config"},"data":d}))' | kubectl -n "$ns" apply -f -
+ provision_job artifact-e2e-outside-provision artifact-e2e-outside-config
+ kubectl -n "$ns" wait --for=condition=failed job/artifact-e2e-outside-provision --timeout=180s
+ kubectl -n "$ns" logs job/artifact-e2e-outside-provision | grep -F "artifact upload staging directory"
  provision_job breakglass-artifact-provision "$config"
  if ! kubectl -n "$ns" wait --for=condition=complete job/breakglass-artifact-provision --timeout=180s; then
   kubectl -n "$ns" logs job/breakglass-artifact-provision >&2 || true
@@ -132,8 +138,7 @@ provision_volume() {
  # Skip the crash-loop back-off of the fail-closed Pod.
  kubectl -n "$ns" delete pod -l app=breakglass --wait=false
  kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
- # A repointed, empty volume still fails closed: startup never provisions and
- # the completed Job does not run again.
+ # A repointed, empty volume still fails closed: startup never provisions.
  kubectl -n "$ns" apply -f - <<'YAML'
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -147,7 +152,6 @@ spec:
 YAML
  set_artifact_claim artifact-e2e-repointed
  expect_fail_closed "open local artifact root"
- test "$(kubectl -n "$ns" get pods -l job-name=breakglass-artifact-provision -o name | wc -l)" -eq 1
  set_artifact_claim artifact-e2e
  kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
 }

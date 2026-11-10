@@ -15,6 +15,10 @@ import (
 	artifactstorage "github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
 )
 
+func uploadDir(config Config) string {
+	return filepath.Join(filepath.Dir(config.ArtifactRoot), "uploads")
+}
+
 // freshVolumeConfig points both roots at missing directories below an empty
 // volume root, as on a newly bound PVC.
 func freshVolumeConfig(t *testing.T) Config {
@@ -33,11 +37,11 @@ func TestProvisionFreshVolumeOnceThenOpen(t *testing.T) {
 	if _, err := Open(config); err == nil {
 		t.Fatal("Open() accepted an unprovisioned volume")
 	}
-	result, err := Provision(config)
+	result, err := Provision(config, uploadDir(config))
 	if err != nil || result != Provisioned {
 		t.Fatalf("Provision() = %q, %v; want %q", result, err, Provisioned)
 	}
-	for _, root := range []string{config.ArtifactRoot, config.StagingRoot} {
+	for _, root := range []string{config.ArtifactRoot, config.StagingRoot, uploadDir(config)} {
 		info, err := os.Stat(root)
 		if err != nil {
 			t.Fatal(err)
@@ -45,6 +49,8 @@ func TestProvisionFreshVolumeOnceThenOpen(t *testing.T) {
 		if info.Mode() != os.ModeDir|rootMode {
 			t.Fatalf("root %s mode = %v, want %v", root, info.Mode(), os.ModeDir|rootMode)
 		}
+	}
+	for _, root := range []string{config.ArtifactRoot, config.StagingRoot} {
 		assertFileContent(t, filepath.Join(root, sentinelName), []byte(config.InstanceID+"\n"))
 	}
 	store, err := Open(config)
@@ -54,7 +60,7 @@ func TestProvisionFreshVolumeOnceThenOpen(t *testing.T) {
 	if err := store.Close(); err != nil {
 		t.Fatal(err)
 	}
-	result, err = Provision(config)
+	result, err = Provision(config, uploadDir(config))
 	if err != nil || result != AlreadyProvisioned {
 		t.Fatalf("second Provision() = %q, %v; want %q", result, err, AlreadyProvisioned)
 	}
@@ -62,7 +68,7 @@ func TestProvisionFreshVolumeOnceThenOpen(t *testing.T) {
 
 func TestProvisionAcceptsExistingEmptyPrivateRoots(t *testing.T) {
 	config := localTestConfig(t)
-	result, err := Provision(config)
+	result, err := Provision(config, uploadDir(config))
 	if err != nil || result != Provisioned {
 		t.Fatalf("Provision() = %q, %v; want %q", result, err, Provisioned)
 	}
@@ -133,14 +139,14 @@ func TestProvisionRefusesUnsafeVolumes(t *testing.T) {
 			prepare: func(t *testing.T, config *Config) {
 				config.ArtifactRoot = filepath.Join(filepath.Dir(config.ArtifactRoot), "absent", "objects")
 			},
-			want: "open parent directory",
+			want: "open local artifact root parent",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			config := localTestConfig(t)
 			test.prepare(t, &config)
-			result, err := Provision(config)
+			result, err := Provision(config, uploadDir(config))
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Provision() = %q, %v; want error containing %q", result, err, test.want)
 			}
@@ -154,10 +160,58 @@ func TestProvisionRefusesUnsafeVolumes(t *testing.T) {
 func TestProvisionRejectsInvalidConfig(t *testing.T) {
 	config := freshVolumeConfig(t)
 	config.ExplicitlyEnabled = false
-	if _, err := Provision(config); err == nil {
+	if _, err := Provision(config, uploadDir(config)); err == nil {
 		t.Fatal("Provision() accepted an invalid config")
 	}
 	if _, err := os.Lstat(config.ArtifactRoot); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Provision() created a root for an invalid config: %v", err)
+	}
+}
+
+func TestProvisionRefusesUnsafeUploadDirBeforeWriting(t *testing.T) {
+	tests := map[string]func(config Config) string{
+		"missing parent": func(config Config) string {
+			return filepath.Join(filepath.Dir(config.ArtifactRoot), "absent", "uploads")
+		},
+		"relative":     func(Config) string { return "uploads" },
+		"inside root":  func(config Config) string { return filepath.Join(config.ArtifactRoot, "uploads") },
+		"same as root": func(config Config) string { return config.StagingRoot },
+		"empty":        func(Config) string { return "" },
+		"symlinked parent": func(config Config) string {
+			link := filepath.Join(filepath.Dir(config.ArtifactRoot), "link")
+			if err := os.Symlink(filepath.Dir(config.ArtifactRoot), link); err != nil {
+				t.Fatal(err)
+			}
+			return filepath.Join(link, "uploads")
+		},
+	}
+	for name, dir := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := freshVolumeConfig(t)
+			if _, err := Provision(config, dir(config)); err == nil {
+				t.Fatal("Provision() accepted an unsafe upload directory")
+			}
+			for _, root := range []string{config.ArtifactRoot, config.StagingRoot} {
+				if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Provision() wrote %s before refusing: %v", root, err)
+				}
+			}
+		})
+	}
+}
+
+func TestProvisionRefusesUnsafeExistingUploadDir(t *testing.T) {
+	config := localTestConfig(t)
+	if err := os.Mkdir(uploadDir(config), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(uploadDir(config), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Provision(config, uploadDir(config)); err == nil || !strings.Contains(err.Error(), "ownership or mode is unsafe") {
+		t.Fatalf("Provision() error = %v; want unsafe upload directory", err)
+	}
+	if _, err := os.Lstat(filepath.Join(config.ArtifactRoot, sentinelName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Provision() wrote a sentinel before refusing: %v", err)
 	}
 }

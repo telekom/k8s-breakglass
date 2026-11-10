@@ -27,24 +27,62 @@ const (
 )
 
 // Provision is the administrator-initiated provisioning step for a fresh
-// volume. It creates missing roots as private directories owned by the calling
-// process and writes both sentinels, but only when both roots are empty. A
-// volume that already carries this instance's sentinels is left untouched.
-// Non-empty roots without a sentinel, foreign sentinels, partially provisioned
-// volumes and unsafe ownership or modes are refused. Open still never
-// provisions, so a repointed volume keeps failing closed until an
-// administrator runs this step again.
-func Provision(config Config) (ProvisionResult, error) {
+// volume. It creates missing roots and the upload directory as private
+// directories owned by the calling process and writes both sentinels, but
+// only when both roots are empty. A volume that already carries this
+// instance's sentinels is left untouched. Non-empty roots without a sentinel,
+// foreign sentinels, partially provisioned volumes and unsafe ownership or
+// modes are refused. Open still never provisions, so a repointed volume keeps
+// failing closed until an administrator runs this step again.
+//
+// uploadDir is the controller's upload staging directory. It must be a clean
+// absolute path on the same filesystem as the roots. It is checked before
+// anything is written, and sentinels are written last, so a refused run
+// leaves at most empty private directories that a later run accepts.
+func Provision(config Config, uploadDir string) (ProvisionResult, error) {
 	validated, err := config.validate()
 	if err != nil {
 		return "", err
 	}
-	for _, root := range []string{validated.ArtifactRoot, validated.StagingRoot} {
+	if err := checkUploadDir(validated, uploadDir); err != nil {
+		return "", err
+	}
+	for _, root := range []string{validated.ArtifactRoot, validated.StagingRoot, uploadDir} {
 		if err := createPrivateRoot(root); err != nil {
-			return "", fmt.Errorf("create local artifact root %s: %w", root, err)
+			return "", fmt.Errorf("create local artifact directory %s: %w", root, err)
 		}
 	}
+	upload, _, err := openRoot(uploadDir, validated)
+	if err != nil {
+		return "", fmt.Errorf("open artifact upload staging directory: %w", err)
+	}
+	if err := upload.Close(); err != nil {
+		return "", err
+	}
 	return provisionRoots(validated)
+}
+
+// checkUploadDir requires the upload directory's parent to exist, without
+// symlinks, on the filesystem that holds the artifact root.
+func checkUploadDir(config Config, uploadDir string) (result error) {
+	if !cleanAbsoluteRoot(uploadDir) || uploadDir == config.ArtifactRoot || uploadDir == config.StagingRoot ||
+		pathContains(config.ArtifactRoot, uploadDir) || pathContains(config.StagingRoot, uploadDir) {
+		return errors.New("artifact upload staging directory must be a clean absolute path outside the artifact and staging roots")
+	}
+	volume, volumeStat, err := openDirectoryNoFollow(filepath.Dir(config.ArtifactRoot))
+	if err != nil {
+		return fmt.Errorf("open local artifact root parent: %w", err)
+	}
+	defer func() { result = errors.Join(result, volume.Close()) }()
+	parent, parentStat, err := openDirectoryNoFollow(filepath.Dir(uploadDir))
+	if err != nil {
+		return fmt.Errorf("open artifact upload staging directory parent: %w", err)
+	}
+	defer func() { result = errors.Join(result, parent.Close()) }()
+	if parentStat.Dev != volumeStat.Dev {
+		return fmt.Errorf("artifact upload staging directory %s is not on the artifact volume", uploadDir)
+	}
+	return nil
 }
 
 func provisionRoots(config Config) (result ProvisionResult, resultErr error) {

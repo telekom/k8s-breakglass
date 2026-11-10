@@ -145,29 +145,38 @@ provisions a fresh volume once with the controller image and config:
 breakglass artifacts provision --config-path=/config/config.yaml
 ```
 
-The command reads `artifacts.backend: local` and `artifacts.local` from the
-same config file as the controller (`--config-path`, default
-`BREAKGLASS_CONFIG_PATH` or `./config.yaml`). It then does the following:
+The command reads `artifacts.enabled`, `artifacts.backend: local`,
+`artifacts.stagingDir` and `artifacts.local` from the same config file as the
+controller (`--config-path`, default `BREAKGLASS_CONFIG_PATH` or
+`./config.yaml`). For the local backend, `stagingDir` must be on the artifact
+volume, for example `/artifacts/uploads`, so the command can prepare it. It
+then does the following:
 
 - creates a missing `artifactRoot` and `stagingRoot` as `0700` directories
   owned by the calling UID/GID. Run it as `expectedUID`/`expectedGID`; it needs
   no root or capabilities. The volume root must be writable by that UID, for
   example the `0777` root of a local-path PVC or an `fsGroup` volume.
+- creates a missing `stagingDir` the same way.
 - writes the `0400` `.breakglass-artifact-instance-v1` sentinel with
-  `instanceID` into both roots, but only when both roots are empty.
-- creates a missing top-level `stagingDir` as `0700`.
+  `instanceID` into both roots, but only when both roots are empty. The
+  sentinels are written last.
 - prints `local artifact storage provisioned` and exits 0.
 
 On a volume that already carries this instance's sentinels it changes nothing
 and prints `local artifact storage already provisioned`. It exits non-zero and
-writes nothing for:
+writes no sentinel for any of the following. At most it leaves empty private
+directories, which a later run accepts.
+
+- `stagingDir` outside the artifact volume, for example a path in the
+  container image or under a missing parent;
 
 - a root that is not empty but has no sentinel;
 - a sentinel with a different instance ID;
 - a volume with only one sentinel, for example after an interrupted run. Make sure
   neither root holds objects, remove the single sentinel and run the command
   again;
-- a root that is a symlink, has another owner, or has a mode other than `0700`.
+- a root or `stagingDir` that is a symlink or not a directory, has another owner, or
+  has a mode other than `0700`. No path component may be a symlink.
 
 ### Opt-in provisioning Job
 
@@ -177,8 +186,16 @@ part of any default overlay. It adds the one-shot Job
 a read-only root filesystem, no capabilities and no service account token. It
 mounts the controller ConfigMap and the claim `breakglass-artifacts` at
 `/artifacts`; patch the claim, mount path and image to match the controller
-Deployment. A required pod affinity places it next to the controller Pod,
-which already holds the `ReadWriteOnce` volume.
+Deployment. If `expectedUID`/`expectedGID` are not `65532`, also patch the
+Job's `runAsUser`/`runAsGroup`/`fsGroup` to them. A required pod affinity
+places the Job next to the controller Pod, which already holds the
+`ReadWriteOnce` volume.
+
+The Job sets `fsGroupChangePolicy: OnRootMismatch`. On volume types that
+support `fsGroup`, set it on the controller Pod as well. The base Deployment
+sets `fsGroup: 65532` with the default `Always` policy. On every restart,
+recursive relabelling would add group permissions and the set-group-ID bit to
+the roots and sentinels, and startup would reject them.
 
 The Job has no `ttlSecondsAfterFinished`. The completed Job records that the
 volume was provisioned and does not run again by itself. If the volume is
@@ -205,8 +222,8 @@ the fail-closed check.
 
 To prepare the volume without the command, create the layout by hand:
 
-- both roots as directories owned by `expectedUID:expectedGID` with mode
-  `0700`;
+- both roots and `stagingDir` as directories owned by
+  `expectedUID:expectedGID` with mode `0700`;
 - in each root, a regular file `.breakglass-artifact-instance-v1` with mode
   `0400`, the same owner and content `<instanceID>` followed by one newline.
 

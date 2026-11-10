@@ -73,16 +73,30 @@ func TestArtifactsProvisionCommandRefusesMismatchedInstance(t *testing.T) {
 	require.Equal(t, "cmd-test-instance-0001\n", string(sentinel))
 }
 
-func TestArtifactsProvisionCommandRefusesNonDirectoryStagingDir(t *testing.T) {
-	for name, create := range map[string]func(path string) error{
-		"regular file": func(path string) error { return os.WriteFile(path, nil, 0o600) },
-		"symlink":      func(path string) error { return os.Symlink(os.TempDir(), path) },
+func TestArtifactsProvisionCommandRefusesUnsafeStagingDirBeforeWriting(t *testing.T) {
+	for name, prepare := range map[string]func(t *testing.T, configPath, volume string){
+		"regular file": func(t *testing.T, _, volume string) {
+			require.NoError(t, os.WriteFile(filepath.Join(volume, "uploads"), nil, 0o600))
+		},
+		"symlink": func(t *testing.T, _, volume string) {
+			require.NoError(t, os.Symlink(os.TempDir(), filepath.Join(volume, "uploads")))
+		},
+		// The documented non-volume example: its parent does not exist in the Job.
+		"outside the volume": func(t *testing.T, configPath, volume string) {
+			content, err := os.ReadFile(configPath)
+			require.NoError(t, err)
+			content = bytes.Replace(content, []byte("stagingDir: "+volume+"/uploads"), []byte("stagingDir: /var/lib/breakglass/upload-staging"), 1)
+			require.NoError(t, os.WriteFile(configPath, content, 0o600))
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			configPath, volume := writeArtifactProvisionConfig(t, "cmd-test-instance-0001")
-			require.NoError(t, create(filepath.Join(volume, "uploads")))
-			err := runArtifactsCommand([]string{"provision", "--config-path", configPath}, &bytes.Buffer{})
-			require.ErrorContains(t, err, "is not a directory")
+			prepare(t, configPath, volume)
+			require.Error(t, runArtifactsCommand([]string{"provision", "--config-path", configPath}, &bytes.Buffer{}))
+			for _, root := range []string{"objects", "staging"} {
+				_, err := os.Lstat(filepath.Join(volume, root, ".breakglass-artifact-instance-v1"))
+				require.ErrorIs(t, err, os.ErrNotExist, "sentinel written before refusal")
+			}
 		})
 	}
 }
@@ -101,7 +115,7 @@ func TestArtifactsCommandRejectsInvalidInvocations(t *testing.T) {
 		{name: "extra argument", args: []string{"provision", "--config-path", configPath, "extra"}, want: errArtifactsUsage.Error()},
 		{name: "unknown flag", args: []string{"provision", "--force"}, want: "flag provided but not defined"},
 		{name: "missing config", args: []string{"provision", "--config-path", filepath.Join(t.TempDir(), "absent.yaml")}, want: "load config"},
-		{name: "s3 backend", args: []string{"provision", "--config-path", s3Config}, want: "artifacts.backend must be local"},
+		{name: "s3 backend", args: []string{"provision", "--config-path", s3Config}, want: "artifacts must be enabled with backend local"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

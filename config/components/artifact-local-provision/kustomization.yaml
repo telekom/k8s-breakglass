@@ -24,7 +24,15 @@
 #
 # and patch the Job's `artifact-data` claim name and mount path to match the
 # controller Deployment (defaults: claim `breakglass-artifacts`, `/artifacts`).
-# Pin the Job image to the controller image.
+# Pin the Job image to the controller image. If expectedUID/expectedGID are not
+# 65532, patch the Job's runAsUser, runAsGroup and fsGroup to match.
+# artifacts.stagingDir must be on the same volume, for example
+# /artifacts/uploads.
+#
+# On fsGroup-capable volumes, also set fsGroupChangePolicy: OnRootMismatch on
+# the controller Pod. The base Deployment sets fsGroup with the default Always
+# policy, so every restart would relabel the 0700 roots and 0400 sentinels,
+# and startup would reject them.
 #
 # A Job's pod template is immutable. Keep this component in its own overlay,
 # applied once for the initial provisioning, not in the overlay that routine

@@ -130,14 +130,17 @@ func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
 
 func TestProvisionLocalRequiresExplicitLocalBackend(t *testing.T) {
 	for _, cfg := range []config.Artifacts{
-		{Backend: "s3", Local: &config.ArtifactLocal{}},
-		{Backend: "local"},
-		{Backend: "local", Local: &config.ArtifactLocal{}, S3: &config.ArtifactS3{}},
+		{Enabled: true, Backend: "s3", Local: &config.ArtifactLocal{}},
+		{Enabled: true, Backend: "local"},
+		{Enabled: true, Backend: "local", Local: &config.ArtifactLocal{}, S3: &config.ArtifactS3{}},
+		{Backend: "local", Local: &config.ArtifactLocal{}, StagingDir: "/artifacts/uploads"},
 	} {
 		_, err := ProvisionLocal(cfg)
-		require.ErrorContains(t, err, "artifacts.backend must be local")
+		require.ErrorContains(t, err, "artifacts must be enabled with backend local")
 	}
-	_, err := ProvisionLocal(config.Artifacts{Backend: "local", Local: &config.ArtifactLocal{}})
+	_, err := ProvisionLocal(config.Artifacts{Enabled: true, Backend: "local", Local: &config.ArtifactLocal{}})
+	require.ErrorContains(t, err, "artifacts.stagingDir is required")
+	_, err = ProvisionLocal(config.Artifacts{Enabled: true, Backend: "local", Local: &config.ArtifactLocal{}, StagingDir: "/artifacts/uploads"})
 	require.ErrorContains(t, err, "provision local artifact storage")
 }
 
