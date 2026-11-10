@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
 
@@ -26,6 +27,7 @@ import (
 func TestDebugSessionTerminalRecordingFailsClosedWithoutTransport(t *testing.T) {
 	s := helpers.SetupTest(t, helpers.WithLongTimeout())
 	ctx := s.Ctx
+	ensureAuditPipeline(t, ctx, s)
 	requesterUser := helpers.TestUsers.SecurityRequester
 	requester := s.TC.ClientForUser(requesterUser)
 	template := &breakglassv1alpha1.DebugSessionTemplate{
@@ -82,4 +84,33 @@ spec:
 	status, body, err := requester.GetRaw(ctx, "/api/debugSessions/"+url.PathEscape(session.Name)+"/terminal?namespace="+url.QueryEscape(session.Namespace))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusServiceUnavailable, status, string(body))
+}
+
+// ensureAuditPipeline makes sure an enabled, Ready AuditConfig exists:
+// recorded streams refuse to start without their audit index.
+func ensureAuditPipeline(t *testing.T, ctx context.Context, s *helpers.TestSetup) {
+	t.Helper()
+	ready := func() bool {
+		var configs breakglassv1alpha1.AuditConfigList
+		if s.Client.List(ctx, &configs) != nil {
+			return false
+		}
+		for _, config := range configs.Items {
+			if config.Spec.Enabled && meta.IsStatusConditionTrue(config.Status.Conditions, "Ready") {
+				return true
+			}
+		}
+		return false
+	}
+	if ready() {
+		return
+	}
+	config := &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("terminal-recording-audit")},
+		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog, Log: &breakglassv1alpha1.LogSinkSpec{Format: "json", Level: "info"},
+		}}},
+	}
+	require.NoError(t, s.CreateResource(config))
+	require.Eventually(t, ready, helpers.WaitForStateTimeout, time.Second, "an enabled AuditConfig must become Ready")
 }

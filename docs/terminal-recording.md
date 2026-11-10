@@ -24,24 +24,32 @@ credential generation; configuring storage alone does not establish readiness.
 ### Credential generation
 
 The controller executes the recorded exec/attach with its own ClusterConfig
-credentials, so readiness is bound to that credential. When a stream is
-requested, the serving replica reads the target ClusterConfig's credential
-Secret live (the kubeconfig Secret; otherwise the OIDC client or refresh-token
-Secret, configured directly or through `oidcFromIdentityProvider`) and compares
-its UID and resourceVersion with the `connection-secret-uid` and
-`connection-secret-resource-version` annotations of the target's connection
-Lease. If no generation is published yet, or the Secret identity differs, the
-replica stages generation `n+1` and publishes it with the Lease
-staged/ready compare-and-swap, re-reading the Secret as the readiness proof.
-Concurrent replicas cannot both publish; the losing request fails closed and
-the client retries. No Secret name or value is stored on the Lease.
+credentials, so readiness is bound to every hub input of that client: the
+kubeconfig Secret, the OIDC client, refresh-token, CA and token-exchange
+Secrets, and for `oidcFromIdentityProvider` the IdentityProvider object and its
+Keycloak service-account Secret (also used as refresh-token fallback). When a
+stream is requested, the serving replica reads these inputs live and computes a
+digest over their resourceVersions. The connection Lease stores the primary
+credential Secret UID (`connection-secret-uid`) and that digest
+(`connection-secret-resource-version`). If no generation is published yet, or
+either value differs, the replica stages generation `n+1` and publishes it with
+the Lease staged/ready compare-and-swap, re-reading the inputs as the readiness
+proof. No Secret name or value is stored on the Lease.
+
+Concurrent replicas cannot both publish. A request that loses the race (or sees
+the inputs change while publishing) executes nothing and gets `503` with
+`Retry-After: 1`; the client retries.
 
 A credential change therefore fails closed in two ways: the active stream's
-target check compares the credential inputs captured when the stream started
-and aborts within one check interval, and the next stream publishes a new
-generation that invalidates any stream still bound to the previous one.
-ClusterConfigs without a credential Secret (for example in-cluster or exec
-plugin credentials) are never ready for terminal recording.
+target check compares the inputs captured when the stream started and aborts
+within one check interval, and the next stream publishes a new generation that
+invalidates any stream still bound to the previous one. Any write to a bound
+input changes its resourceVersion, including metadata-only updates such as
+labels or annotations added by GitOps tooling or secret operators, and
+therefore also aborts active recorded streams. Avoid unnecessary writes to
+these objects while recorded sessions run. ClusterConfigs without a credential
+Secret (for example in-cluster or exec plugin credentials) are never ready for
+terminal recording.
 
 Without an artifact backend the template fails closed: sessions whose template
 requires recording are marked `Failed` with "terminal-byte transport is not
@@ -50,18 +58,21 @@ return `503`.
 
 ### Audit events
 
-Each stream emits audit events through the configured audit sinks, including
-Kafka. Events share the request correlation ID and never contain terminal
-bytes:
+Recording requires a running audit pipeline (an enabled `AuditConfig`). Without
+one, the terminal endpoint returns `503` and no stream starts, so retained
+evidence always has an audit index. Each stream and each read emits audit
+events through the configured sinks, including Kafka. Events of one request
+share its correlation ID and never contain terminal bytes:
 
 | Event | When | Details |
 |---|---|---|
 | `debug_session.terminal_recording_started` | Evidence reserved, before target execution | `recordingId`, pod namespace/name/UID, container, operation, `formatVersion`, lease UID, generation, `retentionExpiresAt` |
 | `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete` |
 | `debug_session.terminal_recording_failed` | Reservation or publication failed | `stage` (`reserve` or `finalize`) and the identifiers known at that point |
+| `debug_session.terminal_recording_accessed` | An authorized reader listed or replayed recordings | `access` (`list` or `replay`), `recordingIds` or `recordingId`, `sha256`, `bytes`; the actor is the reader |
 
-These events are always emitted while recording is required, independent of
-`audit.enabled`, and are never sampled.
+These events ignore the template's `audit.enabled` switch, because they index
+the retained evidence, and they are never sampled.
 
 Terminal stream and replay responses use `application/octet-stream` and
 `X-Content-Type-Options: nosniff`. Terminal bytes, including HTML-like text and
