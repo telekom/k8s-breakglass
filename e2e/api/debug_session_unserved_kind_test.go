@@ -146,7 +146,32 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 			return s.Client.Update(ctx, &current)
 		}))
 		require.NoError(t, helpers.WaitForDeploymentReady(ctx, s.Client, key.Namespace, key.Name, 3*time.Minute))
-		require.NoError(t, helpers.NewAPIClient().WaitForAPIReady(ctx, 2*time.Minute))
+		// A Ready rollout can still have terminating old pods, and the shared
+		// API port-forward may stay attached to one of them; the next test
+		// then reads EOF. Wait until only updated pods remain and the API
+		// answers several times in a row through the (re)connected forward.
+		require.Eventually(t, func() bool {
+			var deployment appsv1.Deployment
+			if s.Client.Get(ctx, key, &deployment) != nil {
+				return false
+			}
+			var pods corev1.PodList
+			if s.Client.List(ctx, &pods, client.InNamespace(key.Namespace), client.MatchingLabels(deployment.Spec.Selector.MatchLabels)) != nil {
+				return false
+			}
+			replicas := ptr.Deref(deployment.Spec.Replicas, 1)
+			return int32(len(pods.Items)) == replicas && deployment.Status.Replicas == replicas
+		}, 3*time.Minute, time.Second, "old controller pods must terminate")
+		api := helpers.NewAPIClient()
+		healthy := 0
+		require.Eventually(t, func() bool {
+			if api.HealthCheck(ctx) != nil {
+				healthy = 0
+				return false
+			}
+			healthy++
+			return healthy >= 5
+		}, 2*time.Minute, time.Second, "API must answer consistently after the controller restart")
 	}
 
 	env := make([]corev1.EnvVar, 0, len(original)+1)
