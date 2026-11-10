@@ -662,7 +662,7 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 		}
 		// Close bounds its drain by WriteTimeout too, so this write cannot
 		// outlive the shutdown budget by more than one write.
-		writeCtx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		writeCtx, cancel := context.WithTimeout(withRetainedAttempt(context.Background()), qs.config.WriteTimeout)
 		err := qs.invokeWrite(writeCtx, func(ctx context.Context) error { return write(ctx, events) })
 		cancel()
 		if err == nil {
@@ -677,6 +677,20 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 			return qs.splitOrDrop(events, operation, write, err, true)
 		}
 	}
+}
+
+type retainedAttemptKey struct{}
+
+// withRetainedAttempt marks a periodic retry of a retained batch. Sinks then
+// skip their own per-attempt error counters: retained retries count only as
+// error_type="retry".
+func withRetainedAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, retainedAttemptKey{}, true)
+}
+
+func isRetainedAttempt(ctx context.Context) bool {
+	retained, _ := ctx.Value(retainedAttemptKey{}).(bool)
+	return retained
 }
 
 func asynchronousKafkaSink(sink Sink) *KafkaSink {

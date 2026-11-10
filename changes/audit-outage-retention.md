@@ -12,9 +12,10 @@ section: Behaviour changes
   earlier drop behaviour; it is a transitional escape hatch and will be
   removed in a future release.
 - A reload that replaces the audit pipeline (changed AuditConfig, rotated
-  Secret) hands the events the old pipeline still holds to the sink with the same
-  AuditConfig and sink name in the new pipeline instead of dropping them as `shutdown`; only sinks
-  removed by the reload still drop them.
+  Secret) hands the events the old pipeline still holds to the sink with the
+  same AuditConfig and sink name in the new pipeline instead of dropping them
+  as `shutdown`; events still in the old manager's ingress queue move to the
+  new manager. Only sinks removed by the reload still drop them.
 - Permanent delivery failures no longer drop a whole batch: the batch is
   halved down to single events and only the failing event is dropped, with
   reason `rejected` (webhook HTTP 413/422, Kafka records or record lists too

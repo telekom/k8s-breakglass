@@ -58,6 +58,17 @@ type Manager struct {
 
 	// Batch processing for high-throughput
 	batchSink BatchSink
+
+	// successor receives ingress events still pending at shutdown (see
+	// HandOver) instead of dropping them with reason "shutdown".
+	successor atomic.Pointer[Manager]
+}
+
+// HandOver makes the manager pass ingress events it still holds at shutdown
+// to successor, the manager of the pipeline that replaces it. The successor
+// routes them through its own sinks and counts its own losses.
+func (m *Manager) HandOver(successor *Manager) {
+	m.successor.Store(successor)
 }
 
 // BatchSink is an optional interface for sinks that support batch writes.
@@ -554,7 +565,7 @@ func (m *Manager) processQueue(workerID int) {
 
 	for event := range m.asyncQueue {
 		if m.workerCtx.Err() != nil {
-			m.recordShutdownDrops(1)
+			m.shutdownDrop([]*Event{event})
 			continue
 		}
 		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
@@ -587,7 +598,7 @@ func (m *Manager) processBatchQueue(workerID int) {
 		}
 
 		if m.workerCtx.Err() != nil {
-			m.recordShutdownDrops(len(batch))
+			m.shutdownDrop(batch)
 			batch = batch[:0]
 			return
 		}
@@ -641,6 +652,43 @@ func (m *Manager) recordAsyncHandoff(count int) {
 func (m *Manager) recordShutdownDrops(count int) {
 	m.droppedEvents.Add(int64(count))
 	metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "shutdown").Add(float64(count))
+}
+
+// shutdownDrop hands events to the successor manager, or counts them lost.
+func (m *Manager) shutdownDrop(events []*Event) {
+	successor := m.successor.Load()
+	if successor == nil {
+		m.recordShutdownDrops(len(events))
+		return
+	}
+	for _, event := range events {
+		if !successor.enqueueHandedOver(event) {
+			m.recordShutdownDrops(1)
+		}
+	}
+}
+
+// enqueueHandedOver accepts an event handed over by a replaced manager. The
+// event already passed filtering, sampling and enrichment there. It waits
+// for capacity at most WriteTimeout and reports whether it accepted it.
+func (m *Manager) enqueueHandedOver(event *Event) bool {
+	m.closeMu.RLock()
+	defer m.closeMu.RUnlock()
+	if m.closed.Load() {
+		if successor := m.successor.Load(); successor != nil {
+			return successor.enqueueHandedOver(event)
+		}
+		return false
+	}
+	timer := time.NewTimer(m.config.WriteTimeout)
+	defer timer.Stop()
+	select {
+	case m.asyncQueue <- event:
+		m.queuedEvents.Add(1)
+		return true
+	case <-timer.C:
+		return false
+	}
 }
 
 // Close shuts down the audit manager gracefully.

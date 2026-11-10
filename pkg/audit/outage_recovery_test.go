@@ -23,6 +23,7 @@ import (
 	"github.com/segmentio/kafka-go"
 	"github.com/segmentio/kafka-go/protocol"
 	metadataAPI "github.com/segmentio/kafka-go/protocol/metadata"
+	produceAPI "github.com/segmentio/kafka-go/protocol/produce"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -523,4 +524,124 @@ func TestRetainedGaugeKeepsPendingSiblingCounted(t *testing.T) {
 		return qs.Health().ProcessedEvents == 4 && testutil.ToFloat64(retained) == before
 	}, 2*time.Second, 5*time.Millisecond)
 	require.Zero(t, qs.Health().DroppedEvents)
+}
+
+// stalledProduce answers metadata at once but holds every Produce request
+// until release is closed, like a broker whose partition leader hangs.
+type stalledProduce struct {
+	produced atomic.Int64
+	release  chan struct{}
+}
+
+func (s *stalledProduce) RoundTrip(ctx context.Context, _ net.Addr, req kafka.Request) (protocol.Message, error) {
+	switch r := req.(type) {
+	case *metadataAPI.Request:
+		return &metadataAPI.Response{
+			Brokers: []metadataAPI.ResponseBroker{{NodeID: 1, Host: "127.0.0.1", Port: 1}},
+			Topics: []metadataAPI.ResponseTopic{{Name: r.TopicNames[0],
+				Partitions: []metadataAPI.ResponsePartition{{PartitionIndex: 0, LeaderID: 1}}}},
+		}, nil
+	case *produceAPI.Request:
+		s.produced.Add(1)
+		select {
+		case <-s.release:
+			return &produceAPI.Response{Topics: []produceAPI.ResponseTopic{{Topic: r.Topics[0].Topic,
+				Partitions: []produceAPI.ResponsePartition{{Partition: 0}}}}}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	return nil, errors.New("unexpected request")
+}
+
+// A write cancelled by its context leaves its records inside kafka-go until
+// the writer's own produce attempt completes. Retries during that time must
+// not submit more copies: the sink refuses them until the records complete.
+func TestKafkaSinkBoundsRecordsPendingInTheWriter(t *testing.T) {
+	transport := &stalledProduce{release: make(chan struct{})}
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "stalled", Brokers: []string{"127.0.0.1:1"}, Topic: "audit", BatchSize: 1}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = transport
+	t.Cleanup(func() { close(transport.release); _ = sink.Close() })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	require.ErrorIs(t, sink.WriteBatch(ctx, []*Event{{ID: "a", Type: EventConfigChanged}}), context.DeadlineExceeded)
+	cancel()
+	require.Equal(t, int64(1), sink.pending.Load())
+	for range 20 {
+		require.ErrorIs(t, sink.Write(context.Background(), &Event{ID: "a", Type: EventConfigChanged}), errKafkaWriterBusy)
+	}
+	require.Eventually(t, func() bool { return transport.produced.Load() >= 1 }, time.Second, 5*time.Millisecond)
+	require.LessOrEqual(t, transport.produced.Load(), int64(1), "no copies submitted while the first write is pending")
+}
+
+// Records kafka-go never submitted (here: a metadata error before
+// balancing) are not counted as pending.
+func TestKafkaSinkReleasesRecordsThatWereNeverSubmitted(t *testing.T) {
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "unsubmitted", Brokers: []string{"127.0.0.1:1"}, Topic: "audit"}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = metadataWithoutPartitions{}
+	t.Cleanup(func() { _ = sink.Close() })
+	require.Error(t, sink.Write(context.Background(), &Event{ID: "x", Type: EventConfigChanged}))
+	require.Zero(t, sink.pending.Load())
+}
+
+// failingTransport fails every request, like an unreachable broker.
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(context.Context, net.Addr, kafka.Request) (protocol.Message, error) {
+	return nil, errors.New("connection refused")
+}
+
+// Retained retries reaching the Kafka writer count only as
+// error_type="retry", not again under the sink's classified error type.
+func TestRetainedKafkaRetriesCountOnlyAsRetry(t *testing.T) {
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "retained-kafka", Brokers: []string{"127.0.0.1:1"}, Topic: "audit"}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = failingTransport{}
+	qs := NewQueuedSink(sink, outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "held", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(sink.Name())) == 1
+	}, time.Second, 5*time.Millisecond)
+	classified := func() float64 {
+		return testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "other")) +
+			testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "network"))
+	}
+	retries := metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry")
+	classifiedBefore, retriesBefore := classified(), testutil.ToFloat64(retries)
+	require.Eventually(t, func() bool { return testutil.ToFloat64(retries) >= retriesBefore+3 }, 2*time.Second, 5*time.Millisecond)
+	require.Equal(t, classifiedBefore, classified())
+}
+
+// A reload hands ingress events that the old manager has not yet passed to
+// its sinks to the new manager instead of dropping them as "shutdown".
+func TestManagerHandsPendingIngressToTheReplacement(t *testing.T) {
+	// The old pipeline's sink blocks until the caller's context ends, like a
+	// QueuedSink with dropOnFull: false whose queue is full during an outage.
+	oldCfg := DefaultManagerConfig()
+	oldCfg.WorkerCount, oldCfg.BatchSize, oldCfg.QueueSize = 1, 1, 100
+	oldCfg.WriteTimeout = time.Minute // only the shutdown drain ends the blocked write
+	old := NewManager(contextBlockedSink{}, oldCfg, zap.NewNop())
+
+	var delivered atomic.Int64
+	next := NewManager(newFuncSink("ingress-new", func(events []*Event) error {
+		delivered.Add(int64(len(events)))
+		return nil
+	}), DefaultManagerConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+
+	for i := range 5 {
+		require.True(t, old.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return len(old.asyncQueue) == 4 }, time.Second, 5*time.Millisecond)
+	shutdown := metrics.AuditEventsDropped.WithLabelValues(contextBlockedSink{}.Name(), "shutdown")
+	before := testutil.ToFloat64(shutdown)
+	old.HandOver(next)
+	require.NoError(t, old.Close())
+	// The batch in the blocked write ends with the drain deadline; the four
+	// events still in ingress reach the replacement.
+	require.Eventually(t, func() bool { return delivered.Load() == 4 }, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, before, testutil.ToFloat64(shutdown))
 }

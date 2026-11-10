@@ -615,6 +615,11 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 	if oldMulti != nil && multi != nil {
 		oldMulti.handOver(multi)
 	}
+	// Ingress events the old manager has not yet passed to its sinks move
+	// to the new manager, which routes them through its own sinks.
+	if oldManager != nil && manager != nil {
+		oldManager.HandOver(manager)
+	}
 	go func() {
 		defer s.closing.Done()
 		// New events already go to the new pipeline. Let the old one finish

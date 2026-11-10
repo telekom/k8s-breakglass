@@ -135,7 +135,35 @@ type KafkaSink struct {
 	connected       atomic.Bool
 	lastError       atomic.Value // stores kafkaSinkError
 	lastSuccessTime atomic.Value // stores time.Time
+
+	// pending counts records of synchronous writes that kafka-go still holds:
+	// WriteMessages returns on context cancellation, but the writer keeps the
+	// submitted batch queued until its own produce attempts complete. New
+	// writes are refused while records are pending, so a retry loop during an
+	// outage cannot pile up copies inside the writer.
+	pending atomic.Int64
 }
+
+// writeToken marks the records of one synchronous write so that
+// countingBalancer can tell whether kafka-go submitted them.
+type writeToken struct{ balanced atomic.Int64 }
+
+// countingBalancer counts the records kafka-go assigned to a partition.
+// WriteMessages submits the records right after balancing the last one, so
+// a write whose records were not all balanced submitted none of them.
+type countingBalancer struct{ kafka.Balancer }
+
+func (b countingBalancer) Balance(msg kafka.Message, partitions ...int) int {
+	partition := b.Balancer.Balance(msg, partitions...)
+	if token, ok := msg.WriterData.(*writeToken); ok {
+		token.balanced.Add(1)
+	}
+	return partition
+}
+
+// errKafkaWriterBusy reports that earlier records are still pending inside
+// the kafka-go writer. It is an ordinary, retryable error.
+var errKafkaWriterBusy = errors.New("kafka writer still holds records from an earlier write")
 
 type kafkaSinkError struct {
 	err error
@@ -221,7 +249,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	writer := &kafka.Writer{
 		Addr:                   kafka.TCP(cfg.Brokers...),
 		Topic:                  cfg.Topic,
-		Balancer:               &kafka.LeastBytes{},
+		Balancer:               countingBalancer{&kafka.LeastBytes{}},
 		BatchSize:              batchSize,
 		BatchTimeout:           batchTimeout,
 		WriteTimeout:           writeTimeout,
@@ -243,6 +271,11 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		logger: logger.Named("kafka-audit"),
 	}
 	sink.connected.Store(!cfg.Async)
+	if !cfg.Async {
+		writer.Completion = func(messages []kafka.Message, _ error) {
+			sink.pending.Add(-int64(len(messages)))
+		}
+	}
 	if cfg.Async {
 		writer.Completion = func(messages []kafka.Message, err error) {
 			if err == nil {
@@ -391,7 +424,9 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 		errorType := classifyKafkaError(err)
 
 		// Update metrics
-		metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		if !isRetainedAttempt(ctx) {
+			metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		}
 		metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
 		s.messagesFailed.Add(1)
 
@@ -586,7 +621,9 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 		errorType := classifyKafkaError(err)
 
 		// Update metrics
-		metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		if !isRetainedAttempt(ctx) {
+			metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		}
 		metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
 		s.messagesFailed.Add(int64(len(messages)))
 
@@ -685,6 +722,26 @@ func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message
 			err = fmt.Errorf("kafka writer panic: %v", r)
 		}
 	}()
+	if !s.writer.Async {
+		// ponytail: one write in flight per sink, since a write cancelled by
+		// its context leaves its records inside kafka-go. Per-partition
+		// accounting if throughput ever needs concurrent writers.
+		if s.pending.Load() > 0 {
+			return errKafkaWriterBusy
+		}
+		token := &writeToken{}
+		for i := range messages {
+			messages[i].WriterData = token
+		}
+		s.pending.Add(int64(len(messages)))
+		defer func() {
+			// kafka-go submits the records only after it balanced all of
+			// them; otherwise no completion callback will release them.
+			if token.balanced.Load() < int64(len(messages)) {
+				s.pending.Add(-int64(len(messages)))
+			}
+		}()
+	}
 	err = s.writer.WriteMessages(ctx, messages...)
 	if kafkaRejected(err) {
 		err = fmt.Errorf("%w: %w", ErrRejected, err)

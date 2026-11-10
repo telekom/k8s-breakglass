@@ -67,7 +67,11 @@ The retention is logged once per
 batch at warning level, and `breakglass_audit_events_retained{sink}` shows the
 events currently held past their retry window.
 
-Memory stays bounded by `queue.size` plus one batch per worker. While the
+Memory stays bounded by `queue.size` plus one batch per worker. A synchronous
+Kafka write that times out leaves its records inside the kafka-go writer until
+the writer's own produce attempt ends; until then the sink refuses new writes
+with a retryable error, so retries during an outage do not pile up copies in
+the writer. While the
 workers hold their batches, new events wait in the sink queue; once it is full
 they are dropped and counted with reason `queue_full` (or, with
 `dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
@@ -77,9 +81,12 @@ replaces the pipeline (for example a changed AuditConfig or a rotated Secret
 during an outage) does not lose the events the old pipeline holds: after up to
 `retryTimeoutSeconds` the old sink hands its queued, retrying and retained
 events to the sink with the same AuditConfig and sink name in the new
-pipeline, which counts its own overflow. A replaced pipeline that is itself
-already closed forwards them along the chain of reloads. Only events of a sink
-that the reload removed are dropped as `shutdown`. Retention is in memory: a controller restart or crash
+pipeline, which counts its own overflow. Events still in the old manager's
+ingress queue (for example with `dropOnFull: false` while a sink queue is
+full) move to the new manager, which routes them through its own sinks. A
+replaced pipeline that is itself already closed forwards them along the chain
+of reloads. Only events of a sink that the reload removed are dropped as
+`shutdown`. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.
 
 Because the worker keeps retrying, the network circuit breaker keeps probing:
@@ -197,7 +204,7 @@ or queued sinks; those sinks report delivery separately. In-memory Manager
 - `breakglass_audit_events_retained{sink}` is the number of events held past
   their retry window until the sink recovers. Their periodic retries count only
   as `breakglass_audit_sink_errors_total{error_type="retry"}`, not as further
-  failed events.
+  failed events or as the Kafka sink's classified error types.
 - `breakglass_audit_circuit_breaker_state{sink}` (0 closed, 1 open, 2
   half-open) and `breakglass_audit_circuit_breaker_state_transitions_total`
   follow the network circuit breaker; each transition is logged.
