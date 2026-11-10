@@ -12,8 +12,8 @@ section: Behaviour changes
   earlier drop behaviour; it is a transitional escape hatch and will be
   removed in a future release.
 - A reload that replaces the audit pipeline (changed AuditConfig, rotated
-  Secret) hands the events the old pipeline still holds to the same-named sink
-  of the new pipeline instead of dropping them as `shutdown`; only sinks
+  Secret) hands the events the old pipeline still holds to the sink with the same
+  AuditConfig and sink name in the new pipeline instead of dropping them as `shutdown`; only sinks
   removed by the reload still drop them.
 - Permanent delivery failures no longer drop a whole batch: the batch is
   halved down to single events and only the failing event is dropped, with

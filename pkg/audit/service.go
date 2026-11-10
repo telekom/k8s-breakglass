@@ -207,6 +207,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	s.buildSecrets = nil
 	var allSinks []Sink
 	var sinkQueues []QueuedSinkConfig
+	var sinkOwners []string
 	var configNames []string
 	for _, config := range enabledConfigs {
 		sinks, err := s.buildSinks(buildCtx, config)
@@ -222,6 +223,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 		allSinks = append(allSinks, sinks...)
 		for range sinks {
 			sinkQueues = append(sinkQueues, queuedConfig(config.Spec.Queue))
+			sinkOwners = append(sinkOwners, config.Name)
 		}
 		configNames = append(configNames, config.Name)
 	}
@@ -282,6 +284,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	queuedSinkCfg.WorkerCount = workerCount
 	queuedSinkCfg.DropOnFull = dropOnFull
 	isolatedMultiSink := NewIsolatedMultiSink(allSinks, queuedSinkCfg, s.logger, sinkQueues...)
+	for i, qs := range isolatedMultiSink.sinks {
+		qs.owner = sinkOwners[i]
+	}
 
 	// Create manager config (now simpler since queuing is per-sink)
 	managerCfg := ManagerConfig{

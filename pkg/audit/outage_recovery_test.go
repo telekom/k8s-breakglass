@@ -379,3 +379,115 @@ func TestReloadHandsHeldEventsToTheReplacementPipeline(t *testing.T) {
 	require.Zero(t, old.sinks[0].Health().DroppedEvents)
 	require.Eventually(t, func() bool { return up.delivered.Load() == 3 }, time.Second, 5*time.Millisecond)
 }
+
+// funcSink delegates batch writes to a replaceable function.
+type funcSink struct {
+	name string
+	fn   atomic.Pointer[func([]*Event) error]
+}
+
+func newFuncSink(name string, fn func([]*Event) error) *funcSink {
+	s := &funcSink{name: name}
+	s.fn.Store(&fn)
+	return s
+}
+func (s *funcSink) set(fn func([]*Event) error) { s.fn.Store(&fn) }
+func (s *funcSink) Name() string                { return s.name }
+func (s *funcSink) Close() error                { return nil }
+func (s *funcSink) Write(ctx context.Context, e *Event) error {
+	return s.WriteBatch(ctx, []*Event{e})
+}
+func (s *funcSink) WriteBatch(_ context.Context, events []*Event) error {
+	return (*s.fn.Load())(events)
+}
+
+// A retained batch that is split counts only its still undelivered halves.
+func TestRetainedGaugeCountsOnlyUndeliveredHalvesAfterSplit(t *testing.T) {
+	sink := newFuncSink("retained-split", func([]*Event) error { return errors.New("broker unavailable") })
+	qs := NewQueuedSink(sink, splitConfig(4), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	retained := metrics.AuditEventsRetained.WithLabelValues(sink.Name())
+	before := testutil.ToFloat64(retained)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return testutil.ToFloat64(retained) == before+4 }, time.Second, 5*time.Millisecond)
+	// The broker is back but rejects batches above two records, and the
+	// partition of c and d is still unavailable.
+	sink.set(func(events []*Event) error {
+		if len(events) > 2 {
+			return fmt.Errorf("%w: %w", ErrRejected, kafka.RecordListTooLarge)
+		}
+		if events[0].ID == "c" {
+			return kafka.LeaderNotAvailable
+		}
+		return nil
+	})
+	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return testutil.ToFloat64(retained) == before+2 }, time.Second, 5*time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, before+2, testutil.ToFloat64(retained))
+	require.Zero(t, qs.Health().DroppedEvents)
+}
+
+// Reloads A -> B -> C where the idle B closes while A still holds events:
+// A's events reach C through B instead of being dropped by the closed B.
+func TestHandOverFollowsReloadChain(t *testing.T) {
+	down := &flakySink{}
+	down.down.Store(true)
+	a := NewIsolatedMultiSink([]Sink{down}, outageConfig(), zap.NewNop())
+	require.NoError(t, a.Write(context.Background(), &Event{ID: "held", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(down.Name())) >= 1
+	}, time.Second, 5*time.Millisecond)
+	b := NewIsolatedMultiSink([]Sink{&flakySink{}}, outageConfig(), zap.NewNop())
+	up := &flakySink{}
+	c := NewIsolatedMultiSink([]Sink{up}, outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	a.handOver(b)
+	b.handOver(c)
+	require.NoError(t, b.Close())
+	require.NoError(t, a.Close())
+	require.Zero(t, a.sinks[0].Health().DroppedEvents)
+	require.Zero(t, b.sinks[0].Health().DroppedEvents)
+	require.Eventually(t, func() bool { return up.delivered.Load() == 1 }, time.Second, 5*time.Millisecond)
+}
+
+// Sink names are unique only within one AuditConfig: each backlog goes to
+// the replacement with the same AuditConfig and sink name.
+func TestHandOverMatchesAuditConfigAndSinkName(t *testing.T) {
+	failing := func([]*Event) error { return errors.New("broker unavailable") }
+	var toA, toB atomic.Int64
+	oldA, oldB := newFuncSink("events", failing), newFuncSink("events", failing)
+	old := NewIsolatedMultiSink([]Sink{oldA, oldB}, outageConfig(), zap.NewNop())
+	old.sinks[0].owner, old.sinks[1].owner = "config-a", "config-b"
+	require.NoError(t, old.sinks[0].Write(context.Background(), &Event{ID: "for-a", Type: EventConfigChanged}))
+	require.NoError(t, old.sinks[1].Write(context.Background(), &Event{ID: "for-b", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return old.sinks[0].Health().FailedEvents > 0 && old.sinks[1].Health().FailedEvents > 0 },
+		time.Second, 5*time.Millisecond)
+
+	newB := newFuncSink("events", func(events []*Event) error {
+		for _, e := range events {
+			if e.ID != "for-b" {
+				t.Errorf("event %s reached the sink of config-b", e.ID)
+			}
+			toB.Add(1)
+		}
+		return nil
+	})
+	newA := newFuncSink("events", func(events []*Event) error {
+		for _, e := range events {
+			if e.ID != "for-a" {
+				t.Errorf("event %s reached the sink of config-a", e.ID)
+			}
+			toA.Add(1)
+		}
+		return nil
+	})
+	next := NewIsolatedMultiSink([]Sink{newB, newA}, outageConfig(), zap.NewNop())
+	next.sinks[0].owner, next.sinks[1].owner = "config-b", "config-a"
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	old.handOver(next)
+	require.NoError(t, old.Close())
+	require.Eventually(t, func() bool { return toA.Load() == 1 && toB.Load() == 1 }, time.Second, 5*time.Millisecond)
+}

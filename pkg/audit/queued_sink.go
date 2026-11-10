@@ -142,6 +142,10 @@ type QueuedSink struct {
 	// successor receives the events held at shutdown (see HandOver).
 	successor atomic.Pointer[QueuedSink]
 
+	// owner is the AuditConfig that defines the sink; sink names are unique
+	// only within one AuditConfig.
+	owner string
+
 	// Error tracking
 	mu              sync.RWMutex
 	lastError       string
@@ -251,13 +255,23 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	return qs
 }
 
+// closedWrite handles a write to a closed sink: a replaced sink forwards
+// the event to its successor (which may itself forward further along a chain
+// of reloads), otherwise the event is counted as a shutdown drop.
+func (qs *QueuedSink) closedWrite(ctx context.Context, event *Event) error {
+	if successor := qs.successor.Load(); successor != nil {
+		return successor.Write(ctx, event)
+	}
+	qs.recordDrop(1, "shutdown")
+	return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+}
+
 // Write enqueues an event for async processing. A sensitive event may
 // synchronously fall back to the underlying sink when a queue is full or its
 // circuit is open.
 func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
-		qs.recordDrop(1, "shutdown")
-		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		return qs.closedWrite(ctx, event)
 	}
 	if !queuedEventAllowed(qs.sink, event) {
 		return nil
@@ -268,15 +282,13 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		qs.sendMu.RLock()
 		defer qs.sendMu.RUnlock()
 		if qs.closed.Load() {
-			qs.recordDrop(1, "shutdown")
-			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+			return qs.closedWrite(ctx, event)
 		}
 		select {
 		case qs.queue <- event:
 			return nil
 		case <-qs.stop:
-			qs.recordDrop(1, "shutdown")
-			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+			return qs.closedWrite(ctx, event)
 		case <-writeCtx.Done():
 			// Count every drop, but rate-limit the warning: with a full
 			// queue this path runs once per emitted event.
@@ -321,8 +333,7 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		return nil
 	}
 	if qs.closed.Load() {
-		qs.recordDrop(1, "shutdown")
-		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		return qs.closedWrite(ctx, event)
 	}
 	// Queue is full
 	if IsSensitiveEvent(event.Type) {
@@ -620,7 +631,9 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 	count := len(events)
 	name := qs.sink.Name()
 	metrics.AuditEventsRetained.WithLabelValues(name).Add(float64(count))
-	defer metrics.AuditEventsRetained.WithLabelValues(name).Sub(float64(count))
+	// Release before a split: its halves account for their own retention.
+	release := sync.OnceFunc(func() { metrics.AuditEventsRetained.WithLabelValues(name).Sub(float64(count)) })
+	defer release()
 	qs.logger.Warn("audit delivery retry window exhausted; retaining events until the sink recovers",
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(lastErr))
 	start := time.Now()
@@ -647,6 +660,7 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 		qs.recordLastError(err)
 		metrics.AuditSinkErrors.WithLabelValues(name, "retry").Inc()
 		if permanentDeliveryError(err) || errors.Is(err, errSinkPanic) {
+			release()
 			qs.splitOrDrop(events, operation, write, err)
 			return
 		}
@@ -874,13 +888,13 @@ func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 	}
 }
 
-// handOver makes each sink pass the events it holds at shutdown to the
-// same-named sink of next. A sink without a successor (removed by the
+// handOver makes each sink pass the events it holds at shutdown to the sink
+// with the same AuditConfig and sink name in next. A sink without a successor (removed by the
 // reload) still counts them as "shutdown" drops.
 func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
 	for _, old := range ims.sinks {
 		for _, successor := range next.sinks {
-			if successor.Name() == old.Name() {
+			if successor.owner == old.owner && successor.Name() == old.Name() {
 				old.HandOver(successor)
 				break
 			}

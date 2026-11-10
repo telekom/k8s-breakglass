@@ -76,9 +76,10 @@ shutdown (reason `shutdown`) and the permanent failures above. A reload that
 replaces the pipeline (for example a changed AuditConfig or a rotated Secret
 during an outage) does not lose the events the old pipeline holds: after up to
 `retryTimeoutSeconds` the old sink hands its queued, retrying and retained
-events to the sink with the same name in the new pipeline, which counts its
-own overflow. Only events of a sink that the reload removed are dropped as
-`shutdown`. Retention is in memory: a controller restart or crash
+events to the sink with the same AuditConfig and sink name in the new
+pipeline, which counts its own overflow. A replaced pipeline that is itself
+already closed forwards them along the chain of reloads. Only events of a sink
+that the reload removed are dropped as `shutdown`. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.
 
 Because the worker keeps retrying, the network circuit breaker keeps probing:
