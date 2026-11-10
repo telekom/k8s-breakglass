@@ -54,9 +54,14 @@ Only the test-only storage/TLS fixture layer appends the CA to its own system
 roots, for MinIO and independent backend inventory. Collector Jobs do not use
 that layer.
 
-A single-replica Recreate controller mounts a private RWO PVC. A test-only init
-command calls `local.ProvisionSentinels`; production startup still fails closed
-on unprovisioned storage. The test observes the real object files through its
+A single-replica Recreate controller mounts a private RWO PVC. Setup first
+requires the controller to fail closed on the fresh PVC without provisioning.
+A Job whose `stagingDir` is outside the volume must fail before it writes
+anything.
+It then runs the shipped `config/components/artifact-local-provision` Job
+(`breakglass artifacts provision`) and requires the controller to start. The
+same Job with a foreign instance ID must fail on the provisioned volume. Moving
+the Deployment to a second, empty PVC must fail closed again. The test observes the real object files through its
 administrator fixture, verifies removal after artifact finalization, and keeps a
 second artifact readable while the first is deleted. The disposable Kind cluster
 and its PVC are removed by the existing CI cluster teardown. Generated private
