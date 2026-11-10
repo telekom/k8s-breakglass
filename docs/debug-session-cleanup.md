@@ -28,7 +28,8 @@ failing and again only when the set of residual identities changes, never with
 raw API errors or credentials; `debug_session.cleanup_recovered` is the final
 event. Failed cleanup is retried with bounded exponential backoff: the delay
 equals the time since `CleanupFailed` became `True`, clamped between 5 seconds
-and 5 minutes, so it survives controller restarts and resets on recovery. A missing
+and 5 minutes, so it survives controller restarts and resets on recovery.
+Status writes and other watch events do not bypass this delay. A missing
 `ClusterConfig`, REST configuration, or target client is a retryable outage,
 not proof that cleanup completed. A `NotFound` response is treated as
 successful cleanup. The delete request is UID-preconditioned and followed by a
@@ -111,7 +112,12 @@ CRD deletes its objects. The controller therefore handles it as follows:
   `deleted` and its `error` field records `target cluster does not serve
   <apiVersion> <kind>; nothing can exist to delete`. The
   `breakglass_auxiliary_resource_cleanups_total` counter uses
-  `status="not_served"` for these entries. A kind that is still served at
+  `status="not_served"` for these entries (the `category` label is the
+  auxiliary category, `pod-template`, or the deployed resource source). Pod-template and
+  deployed-resource entries are removed from the inventory like a confirmed
+  deletion. Absence is confirmed against the target's legacy discovery
+  documents as well, because aggregated discovery hides an unavailable
+  APIService; any discovery error keeps the entry retryable. A kind that is still served at
   another version, or a transient discovery failure, stays a retryable
   residual.
 

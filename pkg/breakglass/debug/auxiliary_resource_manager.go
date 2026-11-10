@@ -54,8 +54,8 @@ type AuxiliaryResourceManager struct {
 
 // kindNotServed reports whether opErr lets cleanup treat apiVersion/kind as
 // absent because the target serves no version of it.
-func (m *AuxiliaryResourceManager) kindNotServed(target client.Client, apiVersion, kind string, opErr error) bool {
-	return !m.disableUnservedKindHandling && targetKindNotServed(target, apiVersion, kind, opErr)
+func (m *AuxiliaryResourceManager) kindNotServed(ctx context.Context, target client.Client, apiVersion, kind string, opErr error) bool {
+	return !m.disableUnservedKindHandling && targetKindNotServed(ctx, target, apiVersion, kind, opErr)
 }
 
 // NewAuxiliaryResourceManager creates a new auxiliary resource manager.
@@ -240,7 +240,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			if !probeKindNotServed(ctx, targetClient, apiVersion, kind, namespace, resourceName) {
 				return false
 			}
-		} else if !m.kindNotServed(targetClient, apiVersion, kind, opErr) {
+		} else if !m.kindNotServed(ctx, targetClient, apiVersion, kind, opErr) {
 			return false
 		}
 		log.Infow("Auxiliary resource kind is not served by the target cluster; treating it as already deleted",

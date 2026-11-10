@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -103,17 +106,17 @@ func TestIsKindNotServedError(t *testing.T) {
 
 func TestTargetKindNotServedRequiresVersionAgnosticProof(t *testing.T) {
 	empty := fake.NewClientBuilder().WithScheme(Scheme).Build()
-	assert.True(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-	assert.False(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", nil), "no operation error is no proof")
-	assert.False(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", errors.New("timeout")))
-	assert.False(t, targetKindNotServed(nil, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
-	assert.False(t, targetKindNotServed(empty, "a/b/c", "PolicyException", policyExceptionNoMatch()))
+	assert.True(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", nil), "no operation error is no proof")
+	assert.False(t, targetKindNotServed(context.Background(), empty, "policies.kyverno.io/v1", "PolicyException", errors.New("timeout")))
+	assert.False(t, targetKindNotServed(context.Background(), nil, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+	assert.False(t, targetKindNotServed(context.Background(), empty, "a/b/c", "PolicyException", policyExceptionNoMatch()))
 
 	// The kind is still served at another version: objects may exist there.
 	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "policies.kyverno.io", Version: "v2"}})
 	mapper.Add(schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v2", Kind: "PolicyException"}, meta.RESTScopeNamespace)
 	otherVersion := fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(mapper).Build()
-	assert.False(t, targetKindNotServed(otherVersion, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+	assert.False(t, targetKindNotServed(context.Background(), otherVersion, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
 }
 
 func unresolvedPolicyExceptionSession() *breakglassv1alpha1.DebugSession {
@@ -293,4 +296,117 @@ func TestCleanupFailedAuditIsEmittedOncePerResidualSet(t *testing.T) {
 	}
 	assert.Equal(t, 2, run(t, true), "one event per distinct residual set")
 	assert.Equal(t, 4, run(t, false), "opt-out restores one event per failed attempt")
+}
+
+func TestLegacyDiscoveryKindAbsent(t *testing.T) {
+	groups := `{"kind":"APIGroupList","groups":[{"name":"policies.kyverno.io","versions":[{"groupVersion":"policies.kyverno.io/v1","version":"v1"}]}]}`
+	for name, tc := range map[string]struct {
+		apis, version string
+		status        int
+		want          bool
+		wantErr       bool
+	}{
+		"group absent":           {apis: `{"kind":"APIGroupList","groups":[]}`, want: true},
+		"kind served":            {apis: groups, version: `{"kind":"APIResourceList","resources":[{"name":"policyexceptions","kind":"PolicyException"}]}`},
+		"other kind only":        {apis: groups, version: `{"kind":"APIResourceList","resources":[{"name":"policies","kind":"Policy"}]}`, want: true},
+		"unavailable APIService": {apis: groups, status: http.StatusServiceUnavailable, wantErr: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/apis":
+					_, _ = w.Write([]byte(tc.apis))
+				case "/apis/policies.kyverno.io/v1":
+					if tc.status != 0 {
+						w.WriteHeader(tc.status)
+						return
+					}
+					_, _ = w.Write([]byte(tc.version))
+				default:
+					w.WriteHeader(http.StatusNotFound)
+				}
+			}))
+			defer srv.Close()
+			dc, err := discovery.NewDiscoveryClientForConfig(&rest.Config{Host: srv.URL})
+			require.NoError(t, err)
+			absent, err := legacyDiscoveryKindAbsent(context.Background(), dc.RESTClient(), policyExceptionGVK.GroupKind())
+			if tc.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, absent)
+		})
+	}
+	absent, err := legacyDiscoveryKindAbsent(context.Background(), nil, schema.GroupKind{Kind: "ConfigMap"})
+	require.NoError(t, err)
+	assert.False(t, absent, "the core group is always served")
+}
+
+func TestTargetKindNotServedHonoursDiscoveryConfirmation(t *testing.T) {
+	empty := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	for name, tc := range map[string]struct {
+		absent bool
+		err    error
+		want   bool
+	}{
+		"confirmed absent":      {absent: true, want: true},
+		"stale APIService":      {absent: false},
+		"discovery unreachable": {err: errors.New("dial tcp: i/o timeout")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			target := &discoveryConfirmedClient{Client: empty, confirm: func(context.Context, schema.GroupKind) (bool, error) { return tc.absent, tc.err }}
+			assert.Equal(t, tc.want, targetKindNotServed(context.Background(), target, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+		})
+	}
+}
+
+func TestCleanupPodTemplateAndDeployedResourcesTreatUnservedKindAsAbsent(t *testing.T) {
+	ds := unresolvedPolicyExceptionSession()
+	ds.Status.AuxiliaryResourceStatuses = nil
+	ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "unresolved", Created: true, CreateOperationID: "op"},
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "recorded", Created: true, UID: "recorded-uid"},
+	}
+	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
+		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"},
+	}
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	target := unservedTarget(t, interceptor.Funcs{})
+	require.NoError(t, c.cleanupPodTemplateResources(context.Background(), ds, target))
+	assert.Empty(t, ds.Status.PodTemplateResourceStatuses)
+	require.NoError(t, c.cleanupDeployedResources(context.Background(), ds, target, false, false))
+	assert.Empty(t, ds.Status.DeployedResources)
+
+	// Opt-out keeps both inventories retryable.
+	optOut := unresolvedPolicyExceptionSession()
+	optOut.Status.AuxiliaryResourceStatuses = nil
+	optOut.Status.PodTemplateResourceStatuses = ds.Status.PodTemplateResourceStatuses
+	c = c.WithUnservedKindHandling(false)
+	optOut.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "recorded", Created: true, UID: "recorded-uid"}}
+	optOut.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"}}
+	require.Error(t, c.cleanupPodTemplateResources(context.Background(), optOut, target))
+	assert.Len(t, optOut.Status.PodTemplateResourceStatuses, 1)
+	require.Error(t, c.cleanupDeployedResources(context.Background(), optOut, target, false, false))
+	assert.Len(t, optOut.Status.DeployedResources, 1)
+}
+
+func TestCleanupBackoffCannotBeBypassedByWatchEvents(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{UID: "uid"}}
+	ds.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	assert.Zero(t, c.cleanupBackoffRemaining(ds), "the first attempt runs at once")
+	retryAfter := c.recordCleanupFailure(ds)
+	remaining := c.cleanupBackoffRemaining(ds)
+	assert.Greater(t, remaining, time.Duration(0), "an early reconcile waits for the recorded deadline")
+	assert.LessOrEqual(t, remaining, retryAfter)
+
+	recovered := ds.DeepCopy()
+	recovered.Status.Conditions = nil
+	assert.Zero(t, c.cleanupBackoffRemaining(recovered), "recovery clears the deadline")
+
+	disabled := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil).WithCleanupBackoff(false)
+	disabled.recordCleanupFailure(ds)
+	assert.Zero(t, disabled.cleanupBackoffRemaining(ds))
 }

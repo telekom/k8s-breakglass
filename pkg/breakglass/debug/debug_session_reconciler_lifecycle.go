@@ -607,6 +607,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, fmt.Errorf("failed to create client: %w", err))
 		return finishCleanup(errors.Join(cleanupErrors...))
 	}
+	targetClient = withKindDiscovery(targetClient, restCfg)
 
 	// Cleanup auxiliary resources first using the manager
 	auxiliaryCleanupFailed := false
@@ -645,8 +646,8 @@ const (
 
 // kindNotServed reports whether opErr lets cleanup treat apiVersion/kind as
 // absent because the target serves no version of it.
-func (c *DebugSessionController) kindNotServed(target ctrlclient.Client, apiVersion, kind string, opErr error) bool {
-	return !c.disableUnservedKindHandling && targetKindNotServed(target, apiVersion, kind, opErr)
+func (c *DebugSessionController) kindNotServed(ctx context.Context, target ctrlclient.Client, apiVersion, kind string, opErr error) bool {
+	return !c.disableUnservedKindHandling && targetKindNotServed(ctx, target, apiVersion, kind, opErr)
 }
 
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
@@ -1285,9 +1286,10 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
 			}
-			if c.kindNotServed(targetClient, ref.APIVersion, ref.Kind, err) {
+			if c.kindNotServed(ctx, targetClient, ref.APIVersion, ref.Kind, err) {
 				log.Infow("Debug resource kind is not served by the target cluster; treating it as already deleted",
 					"apiVersion", ref.APIVersion, "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, ref.Source, "not_served").Inc()
 				continue
 			}
 			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace, "error", err)
@@ -1446,6 +1448,7 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				// Dropped from the inventory like a confirmed deletion.
 				log.Infow("Pod template resource kind is not served by the target cluster; treating its unresolved create as absent",
 					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, "pod-template", "not_served").Inc()
 				continue
 			}
 			status.Error = "creation outcome unresolved; cleanup retry required"
@@ -1480,9 +1483,10 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
 					"name", status.ResourceName)
-			} else if c.kindNotServed(targetClient, status.APIVersion, status.Kind, err) {
+			} else if c.kindNotServed(ctx, targetClient, status.APIVersion, status.Kind, err) {
 				log.Infow("Pod template resource kind is not served by the target cluster; treating it as already deleted",
 					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, "pod-template", "not_served").Inc()
 			} else {
 				log.Warnw("Failed to delete pod template resource",
 					"kind", status.Kind,

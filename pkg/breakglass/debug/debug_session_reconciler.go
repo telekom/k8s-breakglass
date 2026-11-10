@@ -122,6 +122,11 @@ type DebugSessionController struct {
 	// WithCleanupBackoff.
 	disableUnservedKindHandling bool
 	disableCleanupBackoff       bool
+	// cleanupNotBefore maps session UID to the earliest next cleanup attempt,
+	// so watch events cannot bypass the requeue backoff.
+	// ponytail: in-memory; a restart allows one early attempt, then the
+	// persisted CleanupFailed transition restores the backoff.
+	cleanupNotBefore sync.Map
 }
 
 // WithUnservedKindHandling controls whether cleanup treats resources of kinds
@@ -821,8 +826,11 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	if hasTrackedSpokeResources(ds) || cleanupConditionFailed(ds) {
+		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
 		if err := c.cleanupResources(ctx, ds); err != nil {
-			retryAfter := c.cleanupRetryAfter(ds)
+			retryAfter := c.recordCleanupFailure(ds)
 			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
 				"error", err, "retryAfter", retryAfter)
 			// Requeue rather than returning the error: the reason for the failure is
@@ -869,6 +877,28 @@ func (c *DebugSessionController) cleanupRetryAfter(ds *breakglassv1alpha1.DebugS
 		return ExpiredSessionRequeue
 	}
 	return min(max(time.Since(condition.LastTransitionTime.Time), ExpiredSessionRequeue), MaxCleanupRetryBackoff)
+}
+
+// cleanupBackoffRemaining returns how long a failing session must still wait
+// before the next cleanup attempt; zero means attempt now.
+func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	if c.disableCleanupBackoff || !cleanupConditionFailed(ds) {
+		c.cleanupNotBefore.Delete(ds.UID)
+		return 0
+	}
+	if notBefore, ok := c.cleanupNotBefore.Load(ds.UID); ok {
+		return time.Until(notBefore.(time.Time))
+	}
+	return 0
+}
+
+// recordCleanupFailure stores the next allowed attempt and returns its delay.
+func (c *DebugSessionController) recordCleanupFailure(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	retryAfter := c.cleanupRetryAfter(ds)
+	if !c.disableCleanupBackoff {
+		c.cleanupNotBefore.Store(ds.UID, time.Now().Add(retryAfter))
+	}
+	return retryAfter
 }
 
 // hasTrackedSpokeResources reports whether the session status still references
@@ -938,8 +968,11 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
+	if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+		return ctrl.Result{RequeueAfter: wait}, nil
+	}
 	if err := c.cleanupResources(ctx, ds); err != nil {
-		retryAfter := c.cleanupRetryAfter(ds)
+		retryAfter := c.recordCleanupFailure(ds)
 		log.Errorw("Failed to cleanup debug session resources", "error", err, "retryAfter", retryAfter)
 		return ctrl.Result{RequeueAfter: retryAfter}, nil
 	}
