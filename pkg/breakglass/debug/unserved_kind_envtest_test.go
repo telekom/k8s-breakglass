@@ -125,7 +125,7 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 			Name: exception.Name, Category: exception.Category, APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException",
 			Namespace: "default", ResourceName: name, Created: true, CreateOperationID: "lost-create",
 		}}
-		ds.Status.Conditions = []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: "Cleanup failed; residual resources: default/policies.kyverno.io/v1/PolicyException/" + name, LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))}}
+		ds.Status.Conditions = []metav1.Condition{{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", Message: boundedCleanupConditionMessage(ds), LastTransitionTime: metav1.NewTime(time.Now().Add(-time.Minute))}}
 		require.NoError(t, hub.Status().Update(ctx, ds))
 		return ds
 	}

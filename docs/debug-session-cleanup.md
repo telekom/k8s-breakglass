@@ -24,7 +24,9 @@ requeues DebugSession reconciliation. It also sets the durable
 of residual identities. The condition is cleared with reason
 `CleanupRecovered` only after a later attempt has observed the inventory gone.
 The `debug_session.cleanup_failed` audit event is emitted when cleanup starts
-failing and again only when the set of residual identities changes, never with
+failing and again only when the set of residual identities changes (compared
+by a digest of the complete set, shown as `residual set <digest>` at the start
+of the condition message, so truncation cannot hide a change), never with
 raw API errors or credentials; `debug_session.cleanup_recovered` is the final
 event. Failed cleanup is retried with bounded exponential backoff: the delay
 equals the time since `CleanupFailed` became `True`, clamped between 5 seconds
@@ -95,7 +97,10 @@ CRD deletes its objects. The controller therefore handles it as follows:
 - **Activation preflight.** Before the first target write (including target
   namespace creation), every enabled auxiliary resource with
   `failurePolicy: Fail` is rendered and its exact API version is resolved on
-  the target. If one is not served, the session fails at once with a message
+  the target with a `List` limited to one item. Only the error class matters:
+  the RESTMapper raises `NoMatch` before any request is sent, so the limit
+  never affects the decision, and other errors (for example `Forbidden`) do
+  not fail the preflight. If one is not served, the session fails at once with a message
   such as `auxiliary resource "policy-exception" requires
   policies.kyverno.io/v1 PolicyException, which target cluster "mgmt" does not
   serve; install the API on the target or remove the resource from the

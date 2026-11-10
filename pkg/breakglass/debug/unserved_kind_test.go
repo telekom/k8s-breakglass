@@ -410,3 +410,29 @@ func TestCleanupBackoffCannotBeBypassedByWatchEvents(t *testing.T) {
 	disabled.recordCleanupFailure(ds)
 	assert.Zero(t, disabled.cleanupBackoffRemaining(ds))
 }
+
+func TestCleanupResidualDigestSeesChangesBeyondMessageBounds(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{}
+	for i := range 40 {
+		ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: fmt.Sprintf("residual-with-a-long-name-%02d", i), UID: fmt.Sprintf("uid-%02d", i),
+		})
+	}
+	before := boundedCleanupConditionMessage(ds)
+	require.Len(t, before, maxCleanupConditionMessage, "message is truncated")
+	ds.Status.DeployedResources = ds.Status.DeployedResources[:39]
+	after := boundedCleanupConditionMessage(ds)
+	assert.NotEqual(t, residualSetDigestFromMessage(before), residualSetDigestFromMessage(after), "a change past the 16-identity report and message limit is a distinct set")
+	assert.Equal(t, cleanupResidualSetDigest(ds), residualSetDigestFromMessage(after))
+	assert.Empty(t, residualSetDigestFromMessage("Cleanup failed; residual resources: legacy"))
+}
+
+func TestCleanupDeployedUnresolvedIntentOfUnservedKind(t *testing.T) {
+	ds := unresolvedPolicyExceptionSession()
+	ds.Status.AuxiliaryResourceStatuses = nil
+	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "intent", CreateOperationID: "op", Source: "debug-extra"}}
+	require.True(t, hasUnresolvedCleanupIntent(ds), "deployed intents route cleanup to the target")
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	require.NoError(t, c.cleanupDeployedResources(context.Background(), ds, unservedTarget(t, interceptor.Funcs{}), false, false))
+	assert.Empty(t, ds.Status.DeployedResources)
+}

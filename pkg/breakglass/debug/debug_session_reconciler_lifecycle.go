@@ -2,8 +2,11 @@ package debug
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -540,7 +543,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 					// The condition message names the residual set. Emit once per
 					// distinct set rather than on every retry (#1663); the
 					// recovered event below is the final event.
-					if c.disableCleanupBackoff || !liveWasFailed || previous.Message != ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message {
+					if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
 						auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
 					}
 				} else if liveWasFailed {
@@ -678,10 +681,26 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 }
 
 func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
+	return residualIdentities(ds, true)
+}
+
+// cleanupResidualSetDigest identifies the complete residual set, independent
+// of the report and condition-message bounds, so a change beyond those bounds
+// is still a distinct cleanup failure (#1663).
+func cleanupResidualSetDigest(ds *breakglassv1alpha1.DebugSession) string {
+	identities := residualIdentities(ds, false)
+	slices.Sort(identities)
+	sum := sha256.Sum256([]byte(strings.Join(identities, "\n")))
+	return hex.EncodeToString(sum[:8])
+}
+
+// residualIdentities lists residual identities; bounded applies the audit
+// report's count and length limits.
+func residualIdentities(ds *breakglassv1alpha1.DebugSession, bounded bool) []string {
 	identities := make([]string, 0, maxCleanupResidualIdentities)
 	seen := make(map[string]struct{}, maxCleanupResidualIdentities)
 	add := func(apiVersion, kind, namespace, name, uid string) {
-		if name == "" || len(identities) >= maxCleanupResidualIdentities {
+		if name == "" || (bounded && len(identities) >= maxCleanupResidualIdentities) {
 			return
 		}
 		identity := kind + "/" + name
@@ -694,7 +713,7 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 		if uid != "" {
 			identity += " (uid=" + uid + ")"
 		}
-		if len(identity) > maxCleanupIdentityLength {
+		if bounded && len(identity) > maxCleanupIdentityLength {
 			identity = identity[:maxCleanupIdentityLength-len("...")] + "..."
 		}
 		if _, exists := seen[identity]; exists {
@@ -751,17 +770,32 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 	return identities
 }
 
+// cleanupConditionDigestPrefix starts every CleanupFailed message so the
+// residual-set digest survives message truncation.
+const cleanupConditionDigestPrefix = "Cleanup failed (residual set "
+
 func boundedCleanupConditionMessage(ds *breakglassv1alpha1.DebugSession) string {
-	const prefix = "Cleanup failed; residual resources: "
+	digest := cleanupResidualSetDigest(ds)
 	identities := cleanupResidualIdentities(ds)
 	if len(identities) == 0 {
-		return "Cleanup failed; residual resources remain in the durable inventory."
+		return cleanupConditionDigestPrefix + digest + "); residual resources remain in the durable inventory."
 	}
-	message := prefix + strings.Join(identities, ", ")
+	message := cleanupConditionDigestPrefix + digest + "); residual resources: " + strings.Join(identities, ", ")
 	if len(message) <= maxCleanupConditionMessage {
 		return message
 	}
 	return message[:maxCleanupConditionMessage-len("...")] + "..."
+}
+
+// residualSetDigestFromMessage extracts the digest written by
+// boundedCleanupConditionMessage; messages from older controllers yield "".
+func residualSetDigestFromMessage(message string) string {
+	rest, ok := strings.CutPrefix(message, cleanupConditionDigestPrefix)
+	if !ok {
+		return ""
+	}
+	digest, _, _ := strings.Cut(rest, ")")
+	return digest
 }
 
 func residualResourceIdentities(refs []breakglassv1alpha1.DeployedResourceRef) string {
@@ -921,6 +955,11 @@ func cleanupNeedsTargetCluster(session *breakglassv1alpha1.DebugSession) bool {
 }
 
 func hasUnresolvedCleanupIntent(session *breakglassv1alpha1.DebugSession) bool {
+	for _, ref := range session.Status.DeployedResources {
+		if ref.UID == "" && ref.CreateOperationID != "" && !utils.DebugSessionResourceIntentionallyRetained(session, ref) {
+			return true
+		}
+	}
 	for _, resource := range session.Status.AuxiliaryResourceStatuses {
 		if !resource.Deleted && resource.UID == "" && resource.CreateOperationID != "" {
 			return true
@@ -1224,6 +1263,13 @@ func (c *DebugSessionController) cleanupDeployedResources(
 
 	for _, ref := range ds.Status.DeployedResources {
 		if ref.UID == "" && ref.CreateOperationID != "" {
+			if !c.disableUnservedKindHandling && probeKindNotServed(ctx, targetClient, ref.APIVersion, ref.Kind, ref.Namespace, ref.Name) {
+				// Dropped from the inventory like a confirmed deletion.
+				log.Infow("Debug resource kind is not served by the target cluster; treating its unresolved create as absent",
+					"apiVersion", ref.APIVersion, "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, ref.Source, "not_served").Inc()
+				continue
+			}
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("deployed resource %s/%s creation outcome is unresolved", ref.Namespace, ref.Name))
 			continue

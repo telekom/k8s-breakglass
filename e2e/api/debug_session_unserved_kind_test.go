@@ -92,8 +92,10 @@ spec:
 			if s.Client.Get(ctx, key, current) != nil {
 				return false
 			}
+			// A definitively rejected create leaves an error-only status
+			// without identity; only creation evidence is a residual.
 			for _, status := range current.Status.AuxiliaryResourceStatuses {
-				if !status.Deleted {
+				if !status.Deleted && (status.UID != "" || status.CreateOperationID != "") {
 					return false
 				}
 			}
@@ -117,15 +119,15 @@ spec:
 	})
 
 	t.Run("opt-out fails at create without residuals", func(t *testing.T) {
-		restore := setControllerEnv(t, s, unservedKindOptOutEnv, "true")
-		t.Cleanup(restore)
+		setControllerEnv(t, s, unservedKindOptOutEnv, "true")
 		run(t, `no matches for kind "PolicyException"`)
 	})
 }
 
 // setControllerEnv sets an environment variable on the breakglass controller
-// deployment, waits for the rollout and the API, and returns a restore func.
-func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) func() {
+// deployment and waits for the rollout and the API. Restoration is registered
+// before the mutation, so a failed wait cannot leak the setting into later tests.
+func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 	t.Helper()
 	ctx := s.Ctx
 	var list appsv1.DeploymentList
@@ -153,10 +155,10 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) fu
 			env = append(env, e)
 		}
 	}
-	apply(ctx, append(env, corev1.EnvVar{Name: name, Value: value}))
-	return func() {
+	t.Cleanup(func() {
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		apply(restoreCtx, original)
-	}
+	})
+	apply(ctx, append(env, corev1.EnvVar{Name: name, Value: value}))
 }
