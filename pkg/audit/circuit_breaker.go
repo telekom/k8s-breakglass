@@ -217,6 +217,11 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 		r := recover()
 		cb.totalFailures.Add(1)
 		cb.lastFailureTime.Store(time.Now())
+		if r == nil {
+			// runtime.Goexit (for example t.FailNow): nothing to re-panic.
+			done(errors.New("audit sink write exited without returning"))
+			return
+		}
 		done(fmt.Errorf("audit sink panic: %v", r))
 		panic(r)
 	}()

@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -678,6 +679,9 @@ func (s *KafkaSink) HealthCheck() error {
 func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
+			// Retryable: the balancer panic depends on transient metadata.
+			s.logger.Error("kafka writer panicked",
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			err = fmt.Errorf("kafka writer panic: %v", r)
 		}
 	}()

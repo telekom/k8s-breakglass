@@ -604,6 +604,12 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 		return
 	}
 	s.closing.Add(1)
+	// Events the old pipeline still holds when it closes (queued, in retry
+	// or retained during an outage) move to the same-named sink of the new
+	// pipeline instead of being dropped with reason "shutdown".
+	if oldMulti != nil && multi != nil {
+		oldMulti.handOver(multi)
+	}
 	go func() {
 		defer s.closing.Done()
 		// New events already go to the new pipeline. Let the old one finish

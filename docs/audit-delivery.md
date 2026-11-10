@@ -48,11 +48,22 @@ Since #1538 a batch whose retry window (`retryAttempts` or
 `retryTimeoutSeconds`) is exhausted is **retained** instead of dropped: the
 sink worker keeps the batch with the same event IDs and retries it every
 `retryMaxBackoffMillis` until it is delivered, a permanent failure occurs, or
-the pipeline shuts down. Permanent failures are serialization errors (reason
-`serialization`) and payloads that a healthy sink refuses (reason `rejected`:
-webhook HTTP 400, 413 or 422, or Kafka records that are too large or invalid, not CRC errors);
-they are dropped at once, so they cannot block later events, and they do not
-trip the circuit breaker. The retention is logged once per
+the pipeline shuts down.
+
+Permanent failures are not retried and do not trip the circuit breaker:
+serialization errors, payloads that a healthy sink refuses (webhook HTTP 413
+or 422; Kafka records or record lists that are too large, or invalid records;
+not CRC errors) and a sink panic that persists past the retry window. Because
+such a failure may come from the batch size or from one event, a failed batch
+is halved and each half delivered again, down to single events; only a single
+event is dropped, with reason `serialization`, `rejected` or `panic`. Other
+events of the batch are delivered and cannot be blocked by it. Webhook HTTP
+400 stays retryable, because gateways also return it for configuration
+errors. Panics are logged with their stack. The kafka-go balancer panic on a
+metadata response without partitions is returned as an ordinary, retryable
+error.
+
+The retention is logged once per
 batch at warning level, and `breakglass_audit_events_retained{sink}` shows the
 events currently held past their retry window.
 
@@ -61,9 +72,13 @@ workers hold their batches, new events wait in the sink queue; once it is full
 they are dropped and counted with reason `queue_full` (or, with
 `dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
 ten seconds. So the only losses are the explicit, counted ones: a full queue,
-shutdown (reason `shutdown`; this includes a pipeline replaced by an
-AuditConfig change, which first waits up to `retryTimeoutSeconds`) and the
-permanent failures above. Retention is in memory: a controller restart or crash
+shutdown (reason `shutdown`) and the permanent failures above. A reload that
+replaces the pipeline (for example a changed AuditConfig or a rotated Secret
+during an outage) does not lose the events the old pipeline holds: after up to
+`retryTimeoutSeconds` the old sink hands its queued, retrying and retained
+events to the sink with the same name in the new pipeline, which counts its
+own overflow. Only events of a sink that the reload removed are dropped as
+`shutdown`. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.
 
 Because the worker keeps retrying, the network circuit breaker keeps probing:
@@ -173,11 +188,15 @@ or queued sinks; those sinks report delivery separately. In-memory Manager
 
 - `breakglass_audit_sink_errors_total{error_type="write"|"batch_write"}` counts
   failed event write attempts; `error_type="retry"` counts retry scheduling.
+- `reason="rejected"`, `serialization` and `panic` count single events that
+  failed permanently after their batch was split.
 - `breakglass_audit_events_dropped_total{reason="retry_exhausted"}` counts each
   event abandoned after the delivery bound with `dropAfterRetryWindow: true`,
   not merely failed batches.
 - `breakglass_audit_events_retained{sink}` is the number of events held past
-  their retry window until the sink recovers.
+  their retry window until the sink recovers. Their periodic retries count only
+  as `breakglass_audit_sink_errors_total{error_type="retry"}`, not as further
+  failed events.
 - `breakglass_audit_circuit_breaker_state{sink}` (0 closed, 1 open, 2
   half-open) and `breakglass_audit_circuit_breaker_state_transitions_total`
   follow the network circuit breaker; each transition is logged.

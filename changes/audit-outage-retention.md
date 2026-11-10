@@ -10,9 +10,17 @@ section: Behaviour changes
   the held events. Apply the CRDs before the controller: `AuditConfig` has the
   new field `queue.dropAfterRetryWindow`. Setting it to `true` restores the
   earlier drop behaviour; it is a transitional escape hatch and will be
-  removed in a future release. Payloads a sink refuses (webhook HTTP 400, 413,
-  422; Kafka records that are too large or invalid) are dropped at once with
-  reason `rejected` instead of being retried.
+  removed in a future release.
+- A reload that replaces the audit pipeline (changed AuditConfig, rotated
+  Secret) hands the events the old pipeline still holds to the same-named sink
+  of the new pipeline instead of dropping them as `shutdown`; only sinks
+  removed by the reload still drop them.
+- Permanent delivery failures no longer drop a whole batch: the batch is
+  halved down to single events and only the failing event is dropped, with
+  reason `rejected` (webhook HTTP 413/422, Kafka records or record lists too
+  large or invalid), `serialization` or `panic` (a sink panic that persists
+  past the retry window; panics are now logged with their stack). Webhook HTTP
+  400 stays retryable.
 - A panic in a sink write during a half-open circuit-breaker probe no longer
   leaves the breaker stuck reporting "circuit breaker is open" after the broker
   recovers; Kafka writer panics are returned as errors (TCAAS-1614).

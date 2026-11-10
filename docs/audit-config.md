@@ -532,8 +532,11 @@ resets sink clients, circuit breakers or queues. A rotated Secret is picked
 up by the next resync. When a reload replaces the pipeline with a new one, new
 events go to the new pipeline at once, and the old pipeline first finishes
 the events it still holds, including events in retry, for up to its longest
-`queue.retryTimeoutSeconds`, and then closes. A sink that was removed by that
-change can therefore still receive events that were emitted before it. When
+`queue.retryTimeoutSeconds`, and then closes. Events it still holds then
+(for example retained during a broker outage) are handed to the sink with the
+same name in the new pipeline; only a sink removed by the change drops them
+with reason `shutdown`. A sink that was removed by that change can therefore
+still receive events that were emitted before it. When
 auditing stops (all AuditConfigs disabled or deleted, or a changed
 AuditConfig that cannot be built), the old pipeline closes at once with the
 regular five-second shutdown drain. Controller shutdown ends the wait.

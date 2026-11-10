@@ -6,11 +6,15 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -99,6 +103,13 @@ func TestQueuedRetainsEventsBeyondRetryWindowAndRecovers(t *testing.T) {
 	require.Zero(t, health.DroppedEvents)
 	require.False(t, health.Healthy)
 	require.False(t, qs.circuitOpen.Load(), "retention must not open the queue's drop-on-write circuit")
+	// Retained retries count only as error_type="retry".
+	failedBefore := qs.Health().FailedEvents
+	retries := metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry")
+	retriesBefore := testutil.ToFloat64(retries)
+	time.Sleep(100 * time.Millisecond)
+	require.Equal(t, failedBefore, qs.Health().FailedEvents)
+	require.Greater(t, testutil.ToFloat64(retries), retriesBefore)
 	// A non-sensitive event during the outage is queued, not dropped.
 	require.NoError(t, qs.Write(context.Background(), &Event{ID: "d", Type: EventConfigChanged}))
 
@@ -170,6 +181,7 @@ func TestKafkaSinkTurnsWriterPanicIntoError(t *testing.T) {
 	t.Cleanup(func() { _ = sink.Close() })
 	err = sink.WriteBatch(context.Background(), []*Event{{ID: "x", Type: EventConfigChanged}})
 	require.ErrorContains(t, err, "kafka writer panic")
+	require.NotErrorIs(t, err, errSinkPanic, "the balancer panic stays retryable")
 	require.ErrorContains(t, sink.Write(context.Background(), &Event{ID: "y", Type: EventConfigChanged}), "kafka writer panic")
 }
 
@@ -211,4 +223,159 @@ func TestKafkaRejectedClassification(t *testing.T) {
 	require.True(t, kafkaRejected(kafka.InvalidRecord))
 	require.False(t, kafkaRejected(kafka.InvalidMessage))
 	require.False(t, kafkaRejected(kafka.WriteErrors{kafka.InvalidMessage}))
+}
+
+// batchLimitSink rejects batches above limit (like HTTP 413 or Kafka
+// MESSAGE_TOO_LARGE), rejects "too-big" on its own, and panics on "boom".
+type batchLimitSink struct {
+	limit     int
+	rejectErr error
+	mu        sync.Mutex
+	delivered []string
+}
+
+func (s *batchLimitSink) Name() string { return "batch-limit" }
+func (s *batchLimitSink) Close() error { return nil }
+func (s *batchLimitSink) Write(ctx context.Context, e *Event) error {
+	return s.WriteBatch(ctx, []*Event{e})
+}
+func (s *batchLimitSink) WriteBatch(_ context.Context, events []*Event) error {
+	for _, e := range events {
+		if e.ID == "boom" {
+			panic("deterministic sink bug")
+		}
+	}
+	if len(events) > s.limit || slices.ContainsFunc(events, func(e *Event) bool { return e.ID == "too-big" }) {
+		return s.rejectErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, e := range events {
+		s.delivered = append(s.delivered, e.ID)
+	}
+	return nil
+}
+
+func (s *batchLimitSink) ids() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.delivered)
+}
+
+func splitConfig(batch int) QueuedSinkConfig {
+	cfg := outageConfig()
+	cfg.BatchSize = batch
+	cfg.BatchTimeout = time.Hour
+	return cfg
+}
+
+// A batch-size rejection (HTTP 413, Kafka MESSAGE_TOO_LARGE or a writer-side
+// MessageTooLargeError) halves the batch until it fits; only an event that is
+// rejected on its own is dropped.
+func TestQueuedSplitsRejectedBatches(t *testing.T) {
+	for name, rejectErr := range map[string]error{
+		"webhook-413":       webhookStatusError("http://collector", http.StatusRequestEntityTooLarge),
+		"kafka-writer":      fmt.Errorf("%w: %w", ErrRejected, kafka.MessageTooLargeError{}),
+		"kafka-broker":      fmt.Errorf("%w: %w", ErrRejected, kafka.WriteErrors{kafka.MessageSizeTooLarge}),
+		"kafka-record-list": fmt.Errorf("%w: %w", ErrRejected, kafka.RecordListTooLarge),
+	} {
+		t.Run(name, func(t *testing.T) {
+			sink := &batchLimitSink{limit: 2, rejectErr: rejectErr}
+			qs := NewQueuedSink(sink, splitConfig(5), zap.NewNop())
+			t.Cleanup(func() { require.NoError(t, qs.Close()) })
+			ids := []string{"a", "b", "too-big", "c", "d"}
+			for _, id := range ids {
+				require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+			}
+			require.Eventually(t, func() bool { return len(sink.ids()) == 4 && qs.Health().DroppedEvents == 1 },
+				time.Second, 5*time.Millisecond)
+			require.ElementsMatch(t, []string{"a", "b", "c", "d"}, sink.ids())
+		})
+	}
+}
+
+// A deterministic panic is retried within the window, then treated as
+// permanent: the batch is split, the panicking event dropped as "panic" and
+// the others delivered, even in the default retention mode.
+func TestQueuedDeterministicPanicIsNotRetainedForever(t *testing.T) {
+	sink := &batchLimitSink{limit: 10}
+	qs := NewQueuedSink(sink, splitConfig(3), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	panics := metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "panic")
+	before := testutil.ToFloat64(panics)
+	for _, id := range []string{"a", "boom", "b"} {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return len(sink.ids()) == 2 && qs.Health().DroppedEvents == 1 },
+		2*time.Second, 5*time.Millisecond)
+	require.ElementsMatch(t, []string{"a", "b"}, sink.ids())
+	require.Equal(t, before+1, testutil.ToFloat64(panics))
+	require.Zero(t, testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(sink.Name())))
+}
+
+func TestWebhookStatusClassification(t *testing.T) {
+	for status, rejected := range map[int]bool{
+		http.StatusBadRequest: false, http.StatusUnauthorized: false, http.StatusNotFound: false,
+		http.StatusRequestEntityTooLarge: true, http.StatusUnprocessableEntity: true,
+		http.StatusTooManyRequests: false, http.StatusServiceUnavailable: false,
+	} {
+		require.Equal(t, rejected, errors.Is(webhookStatusError("http://collector", status), ErrRejected), "status %d", status)
+	}
+}
+
+func TestKafkaWriterPrecheckRejectsOversizedRecord(t *testing.T) {
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "oversized", Brokers: []string{"127.0.0.1:1"}, Topic: "audit"}, zap.NewNop())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sink.Close() })
+	sink.writer.BatchBytes = 512
+	err = sink.WriteBatch(context.Background(), []*Event{
+		{ID: "small", Type: EventConfigChanged},
+		{ID: "big", Type: EventConfigChanged, Details: map[string]interface{}{"blob": strings.Repeat("x", 1024)}},
+	})
+	require.ErrorIs(t, err, ErrRejected)
+	var tooLarge kafka.MessageTooLargeError
+	require.ErrorAs(t, err, &tooLarge)
+}
+
+// runtime.Goexit inside a write (t.FailNow in a fake sink) must release the
+// probe slot without panicking with a nil value.
+func TestCircuitBreakerHandlesGoexitInHalfOpenProbe(t *testing.T) {
+	cb := NewCircuitBreaker("goexit-probe", CircuitBreakerConfig{
+		FailureThreshold: 1, SuccessThreshold: 1, OpenTimeout: 20 * time.Millisecond, HalfOpenMaxRequests: 1,
+	}, zap.NewNop())
+	require.Error(t, cb.Execute(context.Background(), func(context.Context) error { return errors.New("down") }))
+	time.Sleep(30 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = cb.Execute(context.Background(), func(context.Context) error { runtime.Goexit(); return nil })
+	}()
+	<-done
+	require.Equal(t, CircuitOpen, cb.State())
+	require.Eventually(t, func() bool {
+		return cb.Execute(context.Background(), func(context.Context) error { return nil }) == nil &&
+			cb.State() == CircuitClosed
+	}, time.Second, 25*time.Millisecond)
+}
+
+// A reload during an outage hands the events the old pipeline holds to the
+// same-named sink of the new pipeline instead of dropping them.
+func TestReloadHandsHeldEventsToTheReplacementPipeline(t *testing.T) {
+	down := &flakySink{}
+	down.down.Store(true)
+	old := NewIsolatedMultiSink([]Sink{down}, outageConfig(), zap.NewNop())
+	for _, id := range []string{"a", "b", "c"} {
+		require.NoError(t, old.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(down.Name())) >= 1
+	}, time.Second, 5*time.Millisecond)
+
+	up := &flakySink{}
+	next := NewIsolatedMultiSink([]Sink{up}, outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	old.handOver(next)
+	require.NoError(t, old.Close())
+	require.Zero(t, old.sinks[0].Health().DroppedEvents)
+	require.Eventually(t, func() bool { return up.delivered.Load() == 3 }, time.Second, 5*time.Millisecond)
 }

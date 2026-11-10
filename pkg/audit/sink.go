@@ -50,19 +50,22 @@ func permanentDeliveryError(err error) bool {
 
 // lossReason names the drop reason for a permanent delivery error.
 func lossReason(err error) string {
-	if errors.Is(err, ErrRejected) {
+	switch {
+	case errors.Is(err, ErrRejected):
 		return "rejected"
+	case errors.Is(err, errSinkPanic):
+		return "panic"
 	}
 	return "serialization"
 }
 
-// webhookStatusError wraps payload rejections (400, 413, 422) with
-// ErrRejected. Other statuses, including 401/403/404 and 5xx, are treated as
-// transient: they depend on endpoint configuration or health, not on the
-// payload.
+// webhookStatusError wraps payload rejections (413, 422) with ErrRejected; a
+// queued sink splits a rejected batch before it drops a single event. Other
+// statuses, including 400 (gateways also return it for configuration errors),
+// 401/403/404 and 5xx, are transient.
 func webhookStatusError(url string, status int) error {
 	switch status {
-	case http.StatusBadRequest, http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+	case http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
 		return fmt.Errorf("webhook %s returned error status: %d: %w", url, status, ErrRejected)
 	}
 	return fmt.Errorf("webhook %s returned error status: %d", url, status)
