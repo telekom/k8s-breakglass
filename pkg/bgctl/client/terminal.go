@@ -41,8 +41,14 @@ type TerminalRequest struct {
 	PodNamespace, PodName string
 	Container             string
 	Command               []string
-	Stdin                 io.Reader
-	Stdout                io.Writer
+	// Stdin is read until EOF or until Terminal returns. Terminal never
+	// closes it. When Stdin implements SetReadDeadline (net.Conn, pollable
+	// *os.File), a pending read is interrupted and the reader goroutine has
+	// ended when Terminal returns. Otherwise a read already blocked when
+	// Terminal returns stays with the caller: its bytes are discarded, never
+	// sent, and the caller must end Stdin (EOF or close) before reusing it.
+	Stdin  io.Reader
+	Stdout io.Writer
 	// Resize delivers terminal sizes; the initial size should be sent first.
 	Resize <-chan TerminalSize
 }
@@ -96,6 +102,14 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 		payload, _ := json.Marshal(size)
 		return writeFrame(terminalFrameResize, payload)
 	}
+	inputDone := make(chan struct{})
+	defer func() {
+		cancel()
+		if deadliner, ok := request.Stdin.(interface{ SetReadDeadline(time.Time) error }); ok && deadliner.SetReadDeadline(time.Now()) == nil {
+			<-inputDone
+			_ = deadliner.SetReadDeadline(time.Time{})
+		}
+	}()
 	// Sizes queued before the stream (the initial size) precede any input.
 	var initial []TerminalSize
 	for queued := true; queued && request.Resize != nil; {
@@ -113,10 +127,12 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 	go func() {
 		for _, size := range initial {
 			if sendSize(size) != nil {
+				close(inputDone)
 				return
 			}
 		}
 		go func() {
+			defer close(inputDone)
 			if request.Stdin == nil {
 				// Without stdin the remote command gets EOF immediately.
 				_ = bodyWriter.Close()
@@ -125,6 +141,10 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 			buf := make([]byte, 32<<10)
 			for {
 				n, readErr := request.Stdin.Read(buf)
+				if streamCtx.Err() != nil {
+					// Terminal returned: input read now belongs to nobody.
+					return
+				}
 				if n > 0 && writeFrame(terminalFrameStdin, buf[:n]) != nil {
 					return
 				}

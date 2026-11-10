@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -57,7 +58,10 @@ sessions. The command defaults to "sh".`,
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithCancel(cmd.Context())
+			// SIGINT/SIGTERM cancel the stream so RunE unwinds through the
+			// raw-mode restore instead of the process dying in raw mode. In raw
+			// mode Ctrl-C is sent to the remote shell, not delivered as SIGINT.
+			ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
 			stdin, stdout, stderr := cmd.InOrStdin(), rt.Writer(), cmd.ErrOrStderr()
 			resize := make(chan client.TerminalSize, 4)

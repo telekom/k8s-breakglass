@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -238,4 +239,41 @@ func TestTerminalRecordingFrameSizeRejectsNativeIntegerOverflow(t *testing.T) {
 			t.Fatalf("large explicit limit: %v", err)
 		}
 	}
+}
+
+type fixedSizeQueue struct {
+	sizes chan remotecommand.TerminalSize
+}
+
+func (q fixedSizeQueue) Next() *remotecommand.TerminalSize {
+	size, ok := <-q.sizes
+	if !ok {
+		return nil
+	}
+	return &size
+}
+
+// resizeThenWaitExecutor consumes one size and then runs until canceled,
+// returning cleanly like an executor that ignores cancellation causes.
+type resizeThenWaitExecutor struct{}
+
+func (resizeThenWaitExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (resizeThenWaitExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	_ = options.TerminalSizeQueue.Next()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+	return nil
+}
+
+func TestStreamTerminalStopsWhenResizeCannotBeRecorded(t *testing.T) {
+	sizes := fixedSizeQueue{sizes: make(chan remotecommand.TerminalSize, 1)}
+	sizes.sizes <- remotecommand.TerminalSize{Width: 80, Height: 24}
+	// Room for the empty-evidence frame only, not for the resize payload.
+	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 1)
+	started := time.Now()
+	_, err := StreamTerminalWithResize(context.Background(), resizeThenWaitExecutor{}, nil, io.Discard, io.Discard, sizes, recorder)
+	require.ErrorContains(t, err, "record terminal resize", "an unrecordable resize fails the stream")
+	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly")
 }

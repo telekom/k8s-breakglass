@@ -9,10 +9,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -119,4 +121,24 @@ func TestRecordingsListAndDownload(t *testing.T) {
 	var httpErr *HTTPError
 	require.True(t, errors.As(err, &httpErr))
 	require.Equal(t, http.StatusForbidden, httpErr.StatusCode)
+}
+
+func TestTerminalStopsIdleStdinReaderOnReturn(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, http.NewResponseController(w).EnableFullDuplex())
+		_, _ = w.Write([]byte("done"))
+	}))
+	defer server.Close()
+	c, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+	stdin, typist := net.Pipe()
+	defer typist.Close()
+	defer stdin.Close()
+	_, err = c.Terminal(context.Background(), TerminalRequest{Session: "s1", PodNamespace: "n", PodName: "p", Command: []string{"sh"}, Stdin: stdin})
+	require.NoError(t, err)
+	// The reader goroutine has ended: a later write finds no reader and the
+	// bytes stay available to the next consumer.
+	require.NoError(t, typist.SetWriteDeadline(time.Now().Add(200*time.Millisecond)))
+	_, err = typist.Write([]byte("next session"))
+	require.Error(t, err, "no leaked reader may consume input meant for a later session")
 }

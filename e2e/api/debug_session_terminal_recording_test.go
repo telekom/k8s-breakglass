@@ -236,7 +236,10 @@ spec:
 
 		var cast bytes.Buffer
 		require.NoError(t, rec.WriteAsciicast(&cast, recording.AsciicastOptions{}))
-		require.Contains(t, strings.SplitN(cast.String(), "\n", 2)[0], `"width":101`)
+		// The executor may take the size before or after the first output, so
+		// it becomes the header size or a timed resize event; both carry it.
+		header := strings.SplitN(cast.String(), "\n", 2)[0]
+		require.True(t, strings.Contains(header, `"width":101`) || strings.Contains(cast.String(), `"r","101x31"`), cast.String())
 		require.Contains(t, cast.String(), "got:timed")
 	})
 

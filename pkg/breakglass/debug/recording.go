@@ -194,13 +194,23 @@ func StreamTerminalWithResize(
 	if stderr == nil {
 		stderr = io.Discard
 	}
-	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
+	streamCtx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	var sizeQueue remotecommand.TerminalSizeQueue
+	if sizes != nil {
+		sizeQueue = recordedSizeQueue{sizes: sizes, recorder: recorder, fail: cancel}
+	}
+	streamErr := executor.StreamWithContext(streamCtx, remotecommand.StreamOptions{
 		Stdin:             &recordingReader{reader: stdin, recorder: recorder, direction: TerminalRecordingInput},
 		Stdout:            io.MultiWriter(&recordingWriter{writer: stdout, recorder: recorder, direction: TerminalRecordingOutput}),
 		Stderr:            io.MultiWriter(&recordingWriter{writer: stderr, recorder: recorder, direction: TerminalRecordingOutput}),
 		Tty:               true,
-		TerminalSizeQueue: recordingSizeQueue(sizes, recorder),
+		TerminalSizeQueue: sizeQueue,
 	})
+	if cause := context.Cause(streamCtx); cause != nil && ctx.Err() == nil && streamErr == nil {
+		// The executor may return cleanly after cancellation; the stream still failed.
+		streamErr = cause
+	}
 	result, finalizeErr := recorder.Finalize()
 	if streamErr != nil {
 		return result, fmt.Errorf("stream terminal session: %w", streamErr)
@@ -240,21 +250,17 @@ func (w *recordingWriter) Write(payload []byte) (int, error) {
 	return w.writer.Write(payload)
 }
 
-func recordingSizeQueue(sizes remotecommand.TerminalSizeQueue, recorder *TerminalRecorder) remotecommand.TerminalSizeQueue {
-	if sizes == nil {
-		return nil
-	}
-	return recordedSizeQueue{sizes: sizes, recorder: recorder}
-}
-
 type recordedSizeQueue struct {
 	sizes    remotecommand.TerminalSizeQueue
 	recorder *TerminalRecorder
+	// fail stops the stream when a size cannot be recorded.
+	fail func(error)
 }
 
 // Next records the size before it is applied, so the recording never shows
-// output rendered at a size it does not contain. A recording failure ends
-// resizing; the byte limit then also stops the stream's next write.
+// output rendered at a size it does not contain. A size that cannot be
+// recorded (byte limit) ends resizing and the whole stream: the target must
+// not keep running with unrecorded state, and the evidence is incomplete.
 func (q recordedSizeQueue) Next() *remotecommand.TerminalSize {
 	size := q.sizes.Next()
 	if size == nil {
@@ -264,7 +270,11 @@ func (q recordedSizeQueue) Next() *remotecommand.TerminalSize {
 		Width  uint16 `json:"width"`
 		Height uint16 `json:"height"`
 	}{size.Width, size.Height})
-	if err != nil || q.recorder.Write(TerminalRecordingResize, payload) != nil {
+	if err == nil {
+		err = q.recorder.Write(TerminalRecordingResize, payload)
+	}
+	if err != nil {
+		q.fail(fmt.Errorf("record terminal resize: %w", err))
 		return nil
 	}
 	return size
