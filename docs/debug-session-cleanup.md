@@ -122,7 +122,9 @@ CRD deletes its objects. The controller therefore handles it as follows:
   deployed-resource entries are removed from the inventory like a confirmed
   deletion. Absence is confirmed against the target's legacy discovery
   documents as well, because aggregated discovery hides an unavailable
-  APIService; any discovery error keeps the entry retryable. A kind that is still served at
+  APIService; any discovery error keeps the entry retryable. Without that
+  confirmation the controller fails closed. Workload, node-maintenance and
+  hotfix cleanup all perform it. A kind that is still served at
   another version, or a transient discovery failure, stays a retryable
   residual.
 
