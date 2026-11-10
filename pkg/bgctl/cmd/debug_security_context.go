@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/yaml"
@@ -137,9 +138,9 @@ func ephemeralPolicy(session *breakglassv1alpha1.DebugSession) *breakglassv1alph
 	return session.Status.ResolvedTemplate.KubectlDebug.EphemeralContainers
 }
 
-// explainInjectRejection turns the server's deliberately generic policy
-// rejection into an actionable message: what was sent, what the template
-// enforces, and which flags change it.
+// explainInjectRejection adds diagnostics to the server's deliberately generic
+// 403: what was sent and what the template enforces. The same 403 also covers
+// lifecycle and authorization causes, so the hint names those too.
 func explainInjectRejection(err error, sent *corev1.SecurityContext, policy *breakglassv1alpha1.EphemeralContainersConfig) error {
 	var httpErr *client.HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusForbidden {
@@ -156,11 +157,15 @@ func explainInjectRejection(err error, sent *corev1.SecurityContext, policy *bre
 	}
 	policyText := "unknown (could not read the session)"
 	if policy != nil {
-		policyText = fmt.Sprintf("requireNonRoot=%t allowPrivileged=%t maxCapabilities=%v allowedImages=%v requireImageDigest=%t",
+		policyText = fmt.Sprintf("requireNonRoot=%t allowPrivileged=%t maxCapabilities=%q allowedImages=%q requireImageDigest=%t",
 			policy.RequireNonRoot, policy.AllowPrivileged, policy.MaxCapabilities, policy.AllowedImages, policy.RequireImageDigest)
 	}
-	return fmt.Errorf("%w\nthe session template's ephemeral-container policy rejected the request (image, namespace or security context).\n"+
+	// Policy values come from the server; %q escapes them and SafeText keeps
+	// any remaining control characters off the terminal.
+	return fmt.Errorf("%w\nthe request was denied: either the template's ephemeral-container policy (image, namespace or "+
+		"security context) or the session itself (expired, terminated, participant or lease change).\n"+
 		"  template policy: %s\n  sent securityContext: %s\n"+
-		"  adjust with --run-as-non-root, --run-as-user, --run-as-group, --add-capabilities, --drop-capabilities, "+
-		"--allow-privilege-escalation or --security-context-file", err, policyText, sentJSON)
+		"  check `bgctl debug session get` and the target pod before retrying; if the policy is the cause, adjust with "+
+		"--run-as-non-root, --run-as-user, --run-as-group, --add-capabilities, --drop-capabilities, "+
+		"--allow-privilege-escalation or --security-context-file", err, terminal.SafeText(policyText), terminal.SafeText(sentJSON))
 }

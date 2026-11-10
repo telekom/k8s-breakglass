@@ -156,15 +156,19 @@ func TestInjectSecurityContextFile(t *testing.T) {
 }
 
 func TestInjectRejectionExplainsPolicy(t *testing.T) {
-	policy := &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true, RequireNonRoot: true, MaxCapabilities: []string{"NET_RAW"}}
+	policy := &breakglassv1alpha1.EphemeralContainersConfig{
+		Enabled: true, RequireNonRoot: true, MaxCapabilities: []string{"NET_RAW"}, AllowedImages: []string{"evil\x1b[2J"},
+	}
 	_, _, err := runInject(t, policy, http.StatusForbidden, "--run-as-user", "0")
 	require.Error(t, err)
 	msg := err.Error()
 	assert.Contains(t, msg, "request failed (403): debug operation is not allowed")
 	assert.Contains(t, msg, "requireNonRoot=true")
-	assert.Contains(t, msg, "maxCapabilities=[NET_RAW]")
+	assert.Contains(t, msg, `maxCapabilities=["NET_RAW"]`)
+	assert.Contains(t, msg, "bgctl debug session get", "lifecycle causes share the same 403")
 	assert.Contains(t, msg, `"runAsUser":0`)
 	assert.Contains(t, msg, "--security-context-file")
+	assert.NotContains(t, msg, "\x1b", "server-provided policy values must not reach the terminal raw")
 
 	_, _, err = runInject(t, policy, http.StatusBadRequest)
 	require.Error(t, err)
