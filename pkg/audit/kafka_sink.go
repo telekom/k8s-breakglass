@@ -385,7 +385,7 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Inc()
 	defer metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Dec()
 
-	if err := s.writer.WriteMessages(ctx, msg); err != nil {
+	if err := s.writeMessages(ctx, msg); err != nil {
 		duration := time.Since(start)
 		errorType := classifyKafkaError(err)
 
@@ -580,7 +580,7 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 	metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Add(float64(len(messages)))
 	defer metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Sub(float64(len(messages)))
 
-	if err := s.writer.WriteMessages(ctx, messages...); err != nil {
+	if err := s.writeMessages(ctx, messages...); err != nil {
 		duration := time.Since(start)
 		errorType := classifyKafkaError(err)
 
@@ -669,4 +669,17 @@ func (s *KafkaSink) HealthCheck() error {
 	}
 
 	return nil
+}
+
+// writeMessages turns a kafka-go writer panic into an error. kafka-go's
+// balancers index the partition list without a length check, so a metadata
+// response that lists the topic without partitions panics in the caller's
+// goroutine.
+func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("kafka writer panic: %v", r)
+		}
+	}()
+	return s.writer.WriteMessages(ctx, messages...)
 }

@@ -264,6 +264,7 @@ func TestQueuedSink_CircuitBreaker(t *testing.T) {
 		CircuitBreakerThreshold: 3,
 		CircuitBreakerResetTime: 100 * time.Millisecond,
 		RetryAttempts:           1,
+		DropAfterRetryWindow:    true,
 	}
 
 	qs := NewQueuedSink(mock, cfg, logger)
@@ -379,6 +380,7 @@ func TestIsolatedMultiSink_FailureIsolation(t *testing.T) {
 		CircuitBreakerThreshold: 3,
 		CircuitBreakerResetTime: time.Hour, // Long reset to keep circuit open
 		RetryAttempts:           1,
+		DropAfterRetryWindow:    true,
 	}
 
 	ims := NewIsolatedMultiSink([]Sink{workingSink, failingSink}, cfg, logger)

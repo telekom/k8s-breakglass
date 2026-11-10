@@ -59,6 +59,13 @@ type QueuedSinkConfig struct {
 	RetryMaxBackoff     time.Duration
 	RetryTimeout        time.Duration
 
+	// DropAfterRetryWindow drops a batch once RetryAttempts or RetryTimeout
+	// is exhausted. When false (default), the worker retains the batch and
+	// retries it every RetryMaxBackoff until it is delivered or the sink
+	// closes; memory stays bounded by the queue plus one batch per worker,
+	// and new events beyond that are counted as queue_full/enqueue_timeout.
+	DropAfterRetryWindow bool
+
 	// CircuitBreakerThreshold is the number of consecutive failures before opening the circuit.
 	// Default: 5
 	CircuitBreakerThreshold int
@@ -129,6 +136,7 @@ type QueuedSink struct {
 	consecutiveFails atomic.Int32
 	circuitOpen      atomic.Bool
 	lastResetAttempt atomic.Int64 // Unix timestamp
+	lastDropLog      atomic.Int64 // Unix nanoseconds
 
 	// Error tracking
 	mu              sync.RWMutex
@@ -292,9 +300,10 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 					zap.String("event_type", string(event.Type)))
 				return qs.syncFallback(ctx, event)
 			}
-			// Non-sensitive event: drop silently
+			// Non-sensitive event: drop
 			qs.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open").Inc()
+			qs.logDropThrottled("circuit_open")
 			return nil
 		}
 	}
@@ -318,13 +327,24 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	// Non-sensitive event: drop
 	qs.droppedEvents.Add(1)
 	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
-	if !qs.config.DropOnFull {
-		qs.logger.Warn("audit queue full, dropping event",
-			zap.String("sink", qs.sink.Name()),
-			zap.String("event_type", string(event.Type)),
-			zap.String("event_id", event.ID))
-	}
+	qs.logDropThrottled("queue_full")
 	return nil
+}
+
+// dropLogInterval rate-limits warnings for per-event drops, which can occur
+// once per emitted event while a queue is full.
+const dropLogInterval = 10 * time.Second
+
+func (qs *QueuedSink) logDropThrottled(reason string) {
+	now := time.Now().UnixNano()
+	last := qs.lastDropLog.Load()
+	if now-last < int64(dropLogInterval) || !qs.lastDropLog.CompareAndSwap(last, now) {
+		return
+	}
+	qs.logger.Warn("audit events dropped",
+		zap.String("reason", reason),
+		zap.Int64("dropped_total", qs.droppedEvents.Load()),
+		zap.Int("queue_length", len(qs.queue)))
 }
 
 func queuedEventAllowed(sink Sink, event *Event) bool {
@@ -435,41 +455,25 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 	var err error
 	for attempt := 0; attempt < qs.config.RetryAttempts; attempt++ {
 		if retryCtx.Err() != nil {
-			reason := "retry_exhausted"
 			if qs.shutdownDeadline.Load() != 0 {
-				reason = "shutdown"
+				qs.recordDrop(count, "shutdown")
+				return
 			}
-			qs.recordDrop(count, reason)
+			if !qs.config.DropAfterRetryWindow {
+				qs.retain(count, operation, write, err)
+				return
+			}
+			qs.recordDrop(count, "retry_exhausted")
 			return
 		}
 		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
 		err = invokeQueuedWrite(writeCtx, write)
 		writeCancel()
 		if err == nil {
-			if asynchronousKafkaSink(qs.sink) != nil {
-				return
-			}
-			// Record the success first: a reader that sees the new
-			// Health().ProcessedEvents then also sees the healthy state.
-			qs.mu.Lock()
-			qs.lastSuccessTime = time.Now()
-			qs.mu.Unlock()
-			qs.consecutiveFails.Store(0)
-			qs.circuitOpen.Store(false)
-			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
-			qs.processedEvents.Add(int64(count))
+			qs.recordDelivered(count)
 			return
 		}
-		qs.failedEvents.Add(int64(count))
-		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), operation).Add(float64(count))
-		qs.mu.Lock()
-		qs.lastError = err.Error()
-		qs.lastErrorTime = time.Now()
-		qs.mu.Unlock()
-		if errors.Is(err, ErrSerialization) {
-			qs.recordDrop(count, "serialization")
-			qs.logger.Error("audit event serialization failed",
-				zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+		if qs.recordFailure(count, operation, err) {
 			return
 		}
 		if attempt+1 == qs.config.RetryAttempts || qs.closed.Load() || retryCtx.Err() != nil {
@@ -487,11 +491,16 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 			break
 		}
 	}
-	fails := qs.consecutiveFails.Add(1)
 	if qs.closed.Load() {
+		qs.consecutiveFails.Add(1)
 		qs.recordDrop(count, "shutdown")
 		return
 	}
+	if !qs.config.DropAfterRetryWindow {
+		qs.retain(count, operation, write, err)
+		return
+	}
+	fails := qs.consecutiveFails.Add(1)
 	if int(fails) >= qs.config.CircuitBreakerThreshold {
 		qs.circuitOpen.Store(true)
 		qs.lastResetAttempt.Store(time.Now().Unix())
@@ -499,6 +508,78 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 	qs.recordDrop(count, "retry_exhausted")
 	qs.logger.Error("audit delivery retries exhausted",
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+}
+
+// recordDelivered records a successful write of count events.
+func (qs *QueuedSink) recordDelivered(count int) {
+	if asynchronousKafkaSink(qs.sink) != nil {
+		return
+	}
+	// Record the success first: a reader that sees the new
+	// Health().ProcessedEvents then also sees the healthy state.
+	qs.mu.Lock()
+	qs.lastSuccessTime = time.Now()
+	qs.mu.Unlock()
+	qs.consecutiveFails.Store(0)
+	qs.circuitOpen.Store(false)
+	metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
+	qs.processedEvents.Add(int64(count))
+}
+
+// recordFailure records a failed write of count events. It returns true when
+// the failure is permanent and the events were dropped.
+func (qs *QueuedSink) recordFailure(count int, operation string, err error) bool {
+	qs.failedEvents.Add(int64(count))
+	metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), operation).Add(float64(count))
+	qs.mu.Lock()
+	qs.lastError = err.Error()
+	qs.lastErrorTime = time.Now()
+	qs.mu.Unlock()
+	if !errors.Is(err, ErrSerialization) {
+		return false
+	}
+	qs.recordDrop(count, "serialization")
+	qs.logger.Error("audit event serialization failed",
+		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+	return true
+}
+
+// retain keeps a batch whose retry window is exhausted and retries it every
+// RetryMaxBackoff until it is delivered, fails permanently or the sink
+// closes. Each write still goes through the sink's circuit breaker, whose
+// half-open probes therefore continue during a long outage.
+func (qs *QueuedSink) retain(count int, operation string, write func(context.Context) error, lastErr error) {
+	name := qs.sink.Name()
+	metrics.AuditEventsRetained.WithLabelValues(name).Add(float64(count))
+	defer metrics.AuditEventsRetained.WithLabelValues(name).Sub(float64(count))
+	qs.logger.Warn("audit delivery retry window exhausted; retaining events until the sink recovers",
+		zap.Int("count", count), zap.String("operation", operation), zap.Error(lastErr))
+	start := time.Now()
+	for {
+		timer := time.NewTimer(qs.config.RetryMaxBackoff)
+		select {
+		case <-timer.C:
+		case <-qs.stop:
+			timer.Stop()
+			qs.recordDrop(count, "shutdown")
+			return
+		}
+		// Close bounds its drain by WriteTimeout too, so this write cannot
+		// outlive the shutdown budget by more than one write.
+		writeCtx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		err := invokeQueuedWrite(writeCtx, write)
+		cancel()
+		if err == nil {
+			qs.recordDelivered(count)
+			qs.logger.Info("retained audit events delivered",
+				zap.Int("count", count), zap.Duration("retained_for", time.Since(start)))
+			return
+		}
+		if qs.recordFailure(count, operation, err) {
+			return
+		}
+		metrics.AuditSinkErrors.WithLabelValues(name, "retry").Inc()
+	}
 }
 
 func asynchronousKafkaSink(sink Sink) *KafkaSink {

@@ -34,4 +34,4 @@ kind create cluster --name "$name" --image "$node_image" \
 kubectl apply --server-side -f config/crd/bases/
 kubectl apply -f e2e/fixtures/audit-delivery-broker.yaml
 kubectl -n audit-delivery rollout status deployment/broker --timeout=180s
-AUDIT_DELIVERY_E2E=true go test -race -v ./e2e/auditdelivery -count=1 -timeout=8m
+AUDIT_DELIVERY_E2E=true go test -race -v ./e2e/auditdelivery -count=1 -timeout=20m

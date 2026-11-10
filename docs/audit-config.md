@@ -454,10 +454,15 @@ spec:
     retryInitialBackoffMillis: 1000
     retryMaxBackoffMillis: 10000
     retryTimeoutSeconds: 60
+    dropAfterRetryWindow: false  # transitional opt-out, see below
 ```
 
-Failed writes retain the same batch and event IDs while retrying. Exhaustion
-counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
+Failed writes retain the same batch and event IDs while retrying. After the
+retry window the worker keeps the batch and retries it every
+`retryMaxBackoffMillis` until the sink recovers, so an outage longer than the
+window only loses events that no longer fit in the queue (counted as
+`queue_full`/`enqueue_timeout`). `dropAfterRetryWindow: true` is a transitional
+opt-out that restores dropping the batch with reason `retry_exhausted`. `dropOnFull: false` blocks enqueue up
 to the caller deadline or five seconds. Each config's settings apply to its own
 sinks; the manager's shared ingress settings still come from the first
 enabled config by name.

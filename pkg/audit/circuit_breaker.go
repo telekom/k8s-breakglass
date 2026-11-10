@@ -19,6 +19,7 @@ package audit
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -201,7 +202,26 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 	}
 
 	cb.totalRequests.Add(1)
+	// A panicking fn must still release its gobreaker request and half-open
+	// probe slot. Otherwise a single panic during a half-open probe would keep
+	// the breaker half-open with no free probe slot, rejecting every later
+	// write as open even after the sink recovered.
+	completed := false
+	defer func() {
+		if completed {
+			return
+		}
+		if halfOpenProbe {
+			cb.finishHalfOpenProbe(halfOpenGeneration)
+		}
+		r := recover()
+		cb.totalFailures.Add(1)
+		cb.lastFailureTime.Store(time.Now())
+		done(fmt.Errorf("audit sink panic: %v", r))
+		panic(r)
+	}()
 	err = fn(ctx)
+	completed = true
 	if halfOpenProbe {
 		cb.finishHalfOpenProbe(halfOpenGeneration)
 	}

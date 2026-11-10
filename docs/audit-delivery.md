@@ -42,6 +42,51 @@ misleading group-based reference is not used for identity resolution.
 BreakglassEscalation owner reference, including after the escalation is deleted
 or recreated. A same-named current escalation is never substituted.
 
+## Outages longer than the retry window
+
+Since #1538 a batch whose retry window (`retryAttempts` or
+`retryTimeoutSeconds`) is exhausted is **retained** instead of dropped: the
+sink worker keeps the batch with the same event IDs and retries it every
+`retryMaxBackoffMillis` until it is delivered, a permanent (serialization)
+failure occurs, or the pipeline shuts down. The retention is logged once per
+batch at warning level, and `breakglass_audit_events_retained{sink}` shows the
+events currently held past their retry window.
+
+Memory stays bounded by `queue.size` plus one batch per worker. While the
+workers hold their batches, new events wait in the sink queue; once it is full
+they are dropped and counted with reason `queue_full` (or, with
+`dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
+ten seconds. So the only losses are the explicit, counted ones: a full queue,
+shutdown (reason `shutdown`; this includes a pipeline replaced by an
+AuditConfig change, which first waits up to `retryTimeoutSeconds`) and
+serialization failures. Retention is in memory: a controller restart or crash
+still loses the retained and queued events.
+
+Because the worker keeps retrying, the network circuit breaker keeps probing:
+after its 30-second open timeout the next retry is a half-open probe, and two
+successful probes close it again. A sink therefore recovers on its own after
+the broker returns, without a restart or an AuditConfig change. A panic in a
+sink write (kafka-go panics on a metadata response without partitions) counts
+as a failed probe and no longer leaves the breaker stuck half-open with no
+free probe slot, where it reported "circuit breaker is open" for every write
+until the controller restarted (TCAAS-1614).
+
+### Opt-out (transitional)
+
+`queue.dropAfterRetryWindow: true` restores the earlier behaviour: the batch is
+dropped and counted with reason `retry_exhausted` once the retry window is
+exhausted, and five exhausted batches in a row open the queue's own circuit,
+which drops non-sensitive events with reason `circuit_open`. This is a
+transitional escape hatch for deployments that prefer fresh events over old
+ones during a long outage; it will be removed in a future release. The
+circuit-breaker fix applies in both modes.
+
+```yaml
+spec:
+  queue:
+    dropAfterRetryWindow: true
+```
+
 ## Configuration
 
 ```yaml
@@ -55,6 +100,7 @@ spec:
     retryInitialBackoffMillis: 1000
     retryMaxBackoffMillis: 10000
     retryTimeoutSeconds: 60
+    dropAfterRetryWindow: false
   sinks:
     - name: events
       type: kafka
@@ -70,11 +116,12 @@ spec:
 ```
 
 The retry fields above are the defaults. Attempts include the initial write.
-Each write is bounded by five seconds and the complete delivery is additionally
+Each write is bounded by five seconds and the fast retry phase is additionally
 bounded by `retryTimeoutSeconds` (1–300). Backoff doubles to its configured cap.
-The worker holds the batch while retrying, bounding memory to the configured
-queue plus worker batches. Network circuit-open errors are retried within the
-same bound. Per-sink and per-config filters run before enqueueing, so excluded
+After that the batch is retained and retried every `retryMaxBackoffMillis`
+(see above). The worker holds the batch while retrying, bounding memory to the
+configured queue plus worker batches. Network circuit-open errors are retried
+like other failures. Per-sink and per-config filters run before enqueueing, so excluded
 events neither consume queue capacity nor count as failed or dropped delivery.
 A pipeline replaced by an AuditConfig change first finishes the events it
 holds, bounded by its retry window (see `docs/audit-config.md`, "Reload
@@ -93,8 +140,8 @@ With `dropOnFull: false`, enqueue blocks until capacity, caller cancellation, or
 five seconds. Cancellation/timeout returns an error at the sink and counts the
 lost event. Async `Manager.Emit` cannot return a delivery error, so its overflow
 is logged and counted. Blocking mode is an **in-memory** fallback, not a durable
-outbox: process crashes, exhausted retry windows, full queues and prolonged
-outages can still lose events. It does not provide unlimited lossless delivery.
+outbox: process crashes, full queues and (with `dropAfterRetryWindow: true`)
+exhausted retry windows can still lose events. It does not provide unlimited lossless delivery.
 Normal revocation and cleanup must not depend on the broker's availability.
 
 Use synchronous Kafka (`async: false`) with acknowledgements for retryable
@@ -123,9 +170,16 @@ or queued sinks; those sinks report delivery separately. In-memory Manager
 - `breakglass_audit_sink_errors_total{error_type="write"|"batch_write"}` counts
   failed event write attempts; `error_type="retry"` counts retry scheduling.
 - `breakglass_audit_events_dropped_total{reason="retry_exhausted"}` counts each
-  event abandoned after the delivery bound, not merely failed batches.
+  event abandoned after the delivery bound with `dropAfterRetryWindow: true`,
+  not merely failed batches.
+- `breakglass_audit_events_retained{sink}` is the number of events held past
+  their retry window until the sink recovers.
+- `breakglass_audit_circuit_breaker_state{sink}` (0 closed, 1 open, 2
+  half-open) and `breakglass_audit_circuit_breaker_state_transitions_total`
+  follow the network circuit breaker; each transition is logged.
 - `reason="enqueue_timeout"`, `queue_full` and `circuit_open` identify other
-  bounded loss paths. Exhaustion is logged at error level and drops at warning.
+  bounded loss paths. Exhaustion is logged at error level and drops at warning
+  (per-event queue drops at most every ten seconds).
 - Queued sink health exposes failed attempts, dropped/processed events,
   last error, queue occupancy and circuit status.
 
@@ -141,7 +195,12 @@ emits an audit event through the production service, confirms failed attempts,
 restarts the broker and consumes the retained event with the same ID, full
 groups and real Kubernetes target UID. It creates only a uniquely named kind
 cluster and deletes that cluster on completion; it never uses an existing lab.
-The `Audit delivery` workflow runs this test for PRs.
+Two more tests keep the broker down for longer than both the retry window and
+the breaker's open timeout: by default every event emitted during the outage
+is consumed after the broker returns, nothing is counted as dropped and the
+breaker closes again; with `dropAfterRetryWindow: true` the event is counted as
+`retry_exhausted` and the sink still delivers new events after recovery.
+The `Audit delivery` workflow runs these tests for PRs.
 
 The existing controller/Keycloak/Kafka kind `TestAuditLogging` performs real
 session request and approval via the API and now checks the persisted session

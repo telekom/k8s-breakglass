@@ -62,6 +62,9 @@ func retryTestConfig() QueuedSinkConfig {
 	cfg.RetryInitialBackoff = 5 * time.Millisecond
 	cfg.RetryMaxBackoff = 20 * time.Millisecond
 	cfg.RetryTimeout = time.Second
+	// These tests cover the bounded retry window and its loss accounting;
+	// retention past the window is covered in outage_recovery_test.go.
+	cfg.DropAfterRetryWindow = true
 	return cfg
 }
 
