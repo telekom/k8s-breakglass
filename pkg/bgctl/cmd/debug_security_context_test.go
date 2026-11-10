@@ -75,10 +75,13 @@ func TestInjectSecurityContextDefaults(t *testing.T) {
 	restricted := &corev1.SecurityContext{
 		RunAsNonRoot:             ptr.To(true),
 		RunAsUser:                ptr.To(int64(65534)),
+		RunAsGroup:               ptr.To(int64(65534)),
 		AllowPrivilegeEscalation: ptr.To(false),
 		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
 		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
 	}
+	restrictedWithoutAPE := restricted.DeepCopy()
+	restrictedWithoutAPE.AllowPrivilegeEscalation = nil
 	tests := []struct {
 		name   string
 		policy *breakglassv1alpha1.EphemeralContainersConfig
@@ -96,8 +99,25 @@ func TestInjectSecurityContextDefaults(t *testing.T) {
 			want:   &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)},
 		},
 		{
-			name: "session unreadable: base default only",
-			want: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(false)},
+			name: "session unreadable: restricted set",
+			want: restricted,
+		},
+		{
+			name:   "template allows privileged: no allowPrivilegeEscalation default",
+			policy: &breakglassv1alpha1.EphemeralContainersConfig{Enabled: true, AllowPrivileged: true},
+		},
+		{
+			name: "template forces privileged: no allowPrivilegeEscalation default",
+			policy: &breakglassv1alpha1.EphemeralContainersConfig{
+				Enabled: true, RequireNonRoot: true, SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(true)},
+			},
+			want: restrictedWithoutAPE,
+		},
+		{
+			name: "template sets allowPrivilegeEscalation: left to the template",
+			policy: &breakglassv1alpha1.EphemeralContainersConfig{
+				Enabled: true, SecurityContext: &corev1.SecurityContext{AllowPrivilegeEscalation: ptr.To(true)},
+			},
 		},
 		{
 			name:   "flags override defaults",

@@ -20,11 +20,12 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// defaultNonRootUID is the user the injected container runs as when the
-// template requires non-root and the caller sets no --run-as-user. Most debug
-// images (busybox, alpine, netshoot) default to root, which runAsNonRoot alone
-// makes the kubelet refuse; 65534 ("nobody") exists in all of them.
-const defaultNonRootUID int64 = 65534
+// defaultNonRootID is the user and group the injected container runs as when
+// the template requires non-root and the caller sets no --run-as-user or
+// --run-as-group. Most debug images (busybox, alpine, netshoot) default to
+// root, which runAsNonRoot alone makes the kubelet refuse; 65534 ("nobody")
+// exists in all of them.
+const defaultNonRootID int64 = 65534
 
 // ephemeralSecurityContextOptions holds the security-context flags of
 // `bgctl debug kubectl inject`.
@@ -47,9 +48,10 @@ var ephemeralSecurityContextFieldFlags = []string{
 func (o *ephemeralSecurityContextOptions) addFlags(cmd *cobra.Command) {
 	f := cmd.Flags()
 	f.BoolVar(&o.defaults, "default-security-context", true,
-		"Send a security context that satisfies the session template: allowPrivilegeEscalation=false, plus "+
-			"runAsNonRoot=true, runAsUser=65534, drop ALL capabilities and seccomp RuntimeDefault when the template "+
-			"requires non-root. Set to false to send only the fields given by flags")
+		"Send a security context that satisfies the session template: allowPrivilegeEscalation=false unless the "+
+			"template allows privileged containers, plus runAsNonRoot=true, runAsUser/runAsGroup=65534, drop ALL "+
+			"capabilities and seccomp RuntimeDefault when the template requires non-root or the session cannot be read. "+
+			"Set to false to send only the fields given by flags")
 	f.BoolVar(&o.runAsNonRoot, "run-as-non-root", false, "Set securityContext.runAsNonRoot")
 	f.Int64Var(&o.runAsUser, "run-as-user", 0, "Set securityContext.runAsUser")
 	f.Int64Var(&o.runAsGroup, "run-as-group", 0, "Set securityContext.runAsGroup")
@@ -67,8 +69,8 @@ func (o *ephemeralSecurityContextOptions) addFlags(cmd *cobra.Command) {
 }
 
 // build returns the security context to send. policy is the session's resolved
-// ephemeral-container policy; nil means unknown and only the base default
-// (allowPrivilegeEscalation=false) is applied.
+// ephemeral-container policy; nil means unknown, and then the restricted set is
+// sent: requireNonRoot is on by default and every policy accepts that set.
 func (o *ephemeralSecurityContextOptions) build(cmd *cobra.Command, policy *breakglassv1alpha1.EphemeralContainersConfig) (*corev1.SecurityContext, error) {
 	if o.file != "" {
 		data, err := os.ReadFile(o.file)
@@ -84,10 +86,13 @@ func (o *ephemeralSecurityContextOptions) build(cmd *cobra.Command, policy *brea
 
 	sc := &corev1.SecurityContext{}
 	if o.defaults {
-		sc.AllowPrivilegeEscalation = ptr.To(false)
-		if policy != nil && policy.RequireNonRoot {
+		if !templateMayBePrivileged(policy) {
+			sc.AllowPrivilegeEscalation = ptr.To(false)
+		}
+		if policy == nil || policy.RequireNonRoot {
 			sc.RunAsNonRoot = ptr.To(true)
-			sc.RunAsUser = ptr.To(defaultNonRootUID)
+			sc.RunAsUser = ptr.To(defaultNonRootID)
+			sc.RunAsGroup = ptr.To(defaultNonRootID)
 			sc.Capabilities = &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}}
 			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
 		}
@@ -121,6 +126,21 @@ func (o *ephemeralSecurityContextOptions) build(cmd *cobra.Command, policy *brea
 		return nil, nil
 	}
 	return sc, nil
+}
+
+// templateMayBePrivileged reports whether the template allows or forces a
+// privileged container. The server overlays the template's securityContext on
+// the request, and the apiserver rejects privileged=true together with
+// allowPrivilegeEscalation=false, so the default must not be sent then.
+func templateMayBePrivileged(policy *breakglassv1alpha1.EphemeralContainersConfig) bool {
+	if policy == nil {
+		return false
+	}
+	if policy.AllowPrivileged {
+		return true
+	}
+	sc := policy.SecurityContext
+	return sc != nil && (ptr.Deref(sc.Privileged, false) || sc.AllowPrivilegeEscalation != nil)
 }
 
 func toCapabilities(values []string) []corev1.Capability {

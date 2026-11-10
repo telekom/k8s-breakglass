@@ -203,10 +203,16 @@ bgctl debug kubectl node-debug SESSION_NAME \
 `inject` reads the session's resolved template and sends a security context
 that satisfies it, so restricted templates need no extra flags:
 
-- Always: `allowPrivilegeEscalation: false`.
+- `allowPrivilegeEscalation: false`, unless the template sets
+  `allowPrivileged` or its `securityContext` sets `privileged` or
+  `allowPrivilegeEscalation` (the API server rejects `privileged: true`
+  together with `allowPrivilegeEscalation: false`).
 - When the template sets `requireNonRoot` (the default): also
-  `runAsNonRoot: true`, `runAsUser: 65534`, `capabilities.drop: [ALL]` and
-  `seccompProfile.type: RuntimeDefault`.
+  `runAsNonRoot: true`, `runAsUser: 65534`, `runAsGroup: 65534`,
+  `capabilities.drop: [ALL]` and `seccompProfile.type: RuntimeDefault`.
+- When the session cannot be read, `bgctl` prints a warning and sends this
+  restricted set, which every template policy without a forced `privileged`
+  accepts.
 
 Fields set in the template's `kubectlDebug.ephemeralContainers.securityContext`
 still replace the requested values on the server.
@@ -215,8 +221,8 @@ still replace the requested values on the server.
 |------|-------------|
 | `--run-as-non-root` | Set `runAsNonRoot` |
 | `--run-as-user` | Set `runAsUser` (replaces the default `65534`) |
-| `--run-as-group` | Set `runAsGroup` |
-| `--allow-privilege-escalation` | Set `allowPrivilegeEscalation` (default `false`) |
+| `--run-as-group` | Set `runAsGroup` (replaces the default `65534`) |
+| `--allow-privilege-escalation` | Set `allowPrivilegeEscalation` (default `false`, see above) |
 | `--add-capabilities` | Capabilities to add, e.g. `NET_RAW,NET_ADMIN`; must be within the template's `maxCapabilities` |
 | `--drop-capabilities` | Capabilities to drop; replaces the default `ALL` |
 | `--security-context-file` | YAML or JSON `securityContext`, sent as is without defaults; cannot be combined with the flags above |
@@ -227,10 +233,11 @@ still replace the requested values on the server.
 bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
   --image busybox:1.36.1
 
-# Root template that allows NET_RAW
+# Template with requireNonRoot: false and maxCapabilities [NET_RAW]: the
+# defaults only add allowPrivilegeEscalation=false, so the image's own user
+# (root for busybox) is kept; add the capability the template allows
 bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
-  --image busybox:1.36.1 --run-as-user 0 --run-as-non-root=false \
-  --drop-capabilities ALL --add-capabilities NET_RAW
+  --image busybox:1.36.1 --add-capabilities NET_RAW
 ```
 
 When the template rejects the request, `bgctl` prints the template's

@@ -845,10 +845,12 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 				return err
 			}
 			// The resolved template tells us whether non-root is required, so
-			// the defaults satisfy it without flags. Inject still works without it.
+			// the defaults satisfy it without flags. Without it, build falls
+			// back to the restricted set.
 			session, getErr := apiClient.DebugSessions().Get(context.Background(), args[0], hintNS)
 			if getErr != nil {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read session %s to derive security-context defaults: %v\n", args[0], getErr)
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read session %s, sending the restricted security context "+
+					"(use --default-security-context=false or flags to change it): %v\n", args[0], getErr)
 			}
 			policy := ephemeralPolicy(session)
 			securityContext, err := secCtx.build(cmd, policy)

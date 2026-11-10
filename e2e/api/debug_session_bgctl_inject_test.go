@@ -166,6 +166,7 @@ func TestDebugSessionBgctlInjectSecurityContext(t *testing.T) {
 			require.NotNil(t, ec.SecurityContext)
 			require.Equal(t, ptr.To(true), ec.SecurityContext.RunAsNonRoot)
 			require.Equal(t, ptr.To(int64(65534)), ec.SecurityContext.RunAsUser)
+			require.Equal(t, ptr.To(int64(65534)), ec.SecurityContext.RunAsGroup)
 			require.Equal(t, ptr.To(false), ec.SecurityContext.AllowPrivilegeEscalation)
 		}
 		require.Equal(t, []string{"nonroot"}, names, "rejected attempts must leave the pod unmodified")
