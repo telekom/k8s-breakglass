@@ -98,17 +98,6 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 	}
 	req.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
-	// No client timeout: the stream lasts as long as the remote command.
-	responseCh := make(chan *http.Response, 1)
-	errCh := make(chan error, 1)
-	go func() {
-		resp, doErr := (&http.Client{Transport: c.HTTPClient.Transport}).Do(req)
-		if doErr != nil {
-			errCh <- doErr
-			return
-		}
-		responseCh <- resp
-	}()
 	output := make(chan string, 64)
 	interactErr := make(chan error, 1)
 	go func() {
@@ -118,13 +107,11 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 		}
 		interactErr <- err
 	}()
-	var resp *http.Response
-	select {
-	case resp = <-responseCh:
-	case err := <-errCh:
+	// No client timeout: the stream lasts as long as the remote command.
+	// Do returns once the server flushes the first output; input is typed concurrently.
+	resp, err := (&http.Client{Transport: c.HTTPClient.Transport}).Do(req)
+	if err != nil {
 		return TerminalStreamResult{}, err
-	case <-ctx.Done():
-		return TerminalStreamResult{}, ctx.Err()
 	}
 	defer func() { _ = resp.Body.Close() }()
 	result := TerminalStreamResult{StatusCode: resp.StatusCode}
