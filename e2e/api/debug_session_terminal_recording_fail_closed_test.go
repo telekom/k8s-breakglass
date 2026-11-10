@@ -51,8 +51,20 @@ spec:
 	require.NoError(t, s.CreateResource(template))
 	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "10m", Reason: "terminal recording fail-closed e2e"})
 	if err != nil {
-		require.Contains(t, strings.ToLower(err.Error()), "recording", "a rejected request must name the missing recording transport")
-		return
+		// The reconciler can fail the request before the API finishes its
+		// admission wait; the created session must then be Failed, never Active.
+		var sessions breakglassv1alpha1.DebugSessionList
+		require.NoError(t, s.Client.List(ctx, &sessions))
+		session = nil
+		for i := range sessions.Items {
+			if sessions.Items[i].Spec.TemplateRef == template.Name {
+				session = &sessions.Items[i]
+			}
+		}
+		if session == nil {
+			require.Contains(t, strings.ToLower(err.Error()), "recording", "a rejected request must name the missing recording transport")
+			return
+		}
 	}
 	s.Cleanup.Add(session)
 	t.Cleanup(func() { _ = requester.TerminateDebugSession(context.Background(), t, session.Name) })
