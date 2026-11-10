@@ -413,7 +413,7 @@ func (qs *QueuedSink) processQueue(workerID int) {
 			return
 		}
 		qs.inFlight.Add(1)
-		qs.deliver([]*Event{event}, "write", qs.writeSingle, false)
+		qs.deliver([]*Event{event}, "write", qs.writeSingle, false, false)
 		qs.inFlight.Add(-1)
 	}
 }
@@ -499,9 +499,19 @@ func invokeQueuedWrite(ctx context.Context, logger *zap.Logger, write func(conte
 // deliver retains the same event identities in the worker through bounded retries.
 // A Kafka acknowledgement may be lost after delivery, so consumers must deduplicate IDs.
 // split marks a half of a batch that already failed permanently; it treats a
-// panic as permanent at once instead of after another retry window.
-func (qs *QueuedSink) deliver(events []*Event, operation string, write func(context.Context, []*Event) error, split bool) {
+// panic as permanent at once instead of after another retry window. held
+// marks events that a retained ancestor batch already counts in
+// breakglass_audit_events_retained; deliver removes them from the gauge once
+// they are delivered or dropped, and leaves that to the halves when it splits.
+func (qs *QueuedSink) deliver(events []*Event, operation string, write func(context.Context, []*Event) error, split, held bool) {
 	count := len(events)
+	retained := metrics.AuditEventsRetained.WithLabelValues(qs.sink.Name())
+	handedToHalves := false
+	defer func() {
+		if held && !handedToHalves {
+			retained.Sub(float64(count))
+		}
+	}()
 	writeEvents := func(ctx context.Context) error { return write(ctx, events) }
 	retryCtx, cancel := context.WithTimeout(context.Background(), qs.config.RetryTimeout)
 	defer cancel()
@@ -532,7 +542,7 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		}
 		qs.recordFailure(count, operation, err)
 		if permanentDeliveryError(err) || (split && errors.Is(err, errSinkPanic)) {
-			qs.splitOrDrop(events, operation, write, err)
+			handedToHalves = qs.splitOrDrop(events, operation, write, err, held)
 			return
 		}
 		if attempt+1 == qs.config.RetryAttempts || qs.closed.Load() || retryCtx.Err() != nil {
@@ -556,11 +566,15 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		return
 	}
 	if errors.Is(err, errSinkPanic) {
-		qs.splitOrDrop(events, operation, write, err)
+		handedToHalves = qs.splitOrDrop(events, operation, write, err, held)
 		return
 	}
 	if !qs.config.DropAfterRetryWindow {
-		qs.retain(events, operation, write, err)
+		if !held {
+			retained.Add(float64(count))
+			held = true
+		}
+		handedToHalves = qs.retain(events, operation, write, err)
 		return
 	}
 	fails := qs.consecutiveFails.Add(1)
@@ -577,19 +591,21 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 // caused by one event (a record that cannot be serialized or panics the
 // sink) or by the batch size (HTTP 413, Kafka MESSAGE_TOO_LARGE), so a batch
 // is halved and each half delivered again; only a single event is dropped.
-func (qs *QueuedSink) splitOrDrop(events []*Event, operation string, write func(context.Context, []*Event) error, err error) {
+// It reports whether it split (and so passed held to the halves).
+func (qs *QueuedSink) splitOrDrop(events []*Event, operation string, write func(context.Context, []*Event) error, err error, held bool) bool {
 	if len(events) > 1 {
 		mid := len(events) / 2
 		qs.logger.Info("splitting audit batch after a permanent failure",
 			zap.Int("count", len(events)), zap.Error(err))
-		qs.deliver(events[:mid], operation, write, true)
-		qs.deliver(events[mid:], operation, write, true)
-		return
+		qs.deliver(events[:mid], operation, write, true, held)
+		qs.deliver(events[mid:], operation, write, true, held)
+		return true
 	}
 	qs.recordDrop(1, lossReason(err))
 	qs.logger.Error("audit event cannot be delivered",
 		zap.String("event_id", events[0].ID), zap.String("event_type", string(events[0].Type)),
 		zap.String("operation", operation), zap.Error(err))
+	return false
 }
 
 // recordDelivered records a successful write of count events.
@@ -627,13 +643,11 @@ func (qs *QueuedSink) recordLastError(err error) {
 // closes. Each write still goes through the sink's circuit breaker, whose
 // half-open probes therefore continue during a long outage. Retained
 // retries count only as error_type="retry", not as further failed events.
-func (qs *QueuedSink) retain(events []*Event, operation string, write func(context.Context, []*Event) error, lastErr error) {
+// The caller accounts the events in the retained gauge; retain reports
+// whether it split the batch.
+func (qs *QueuedSink) retain(events []*Event, operation string, write func(context.Context, []*Event) error, lastErr error) bool {
 	count := len(events)
 	name := qs.sink.Name()
-	metrics.AuditEventsRetained.WithLabelValues(name).Add(float64(count))
-	// Release before a split: its halves account for their own retention.
-	release := sync.OnceFunc(func() { metrics.AuditEventsRetained.WithLabelValues(name).Sub(float64(count)) })
-	defer release()
 	qs.logger.Warn("audit delivery retry window exhausted; retaining events until the sink recovers",
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(lastErr))
 	start := time.Now()
@@ -644,7 +658,7 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 		case <-qs.stop:
 			timer.Stop()
 			qs.shutdownDrop(events)
-			return
+			return false
 		}
 		// Close bounds its drain by WriteTimeout too, so this write cannot
 		// outlive the shutdown budget by more than one write.
@@ -655,14 +669,12 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 			qs.recordDelivered(count)
 			qs.logger.Info("retained audit events delivered",
 				zap.Int("count", count), zap.Duration("retained_for", time.Since(start)))
-			return
+			return false
 		}
 		qs.recordLastError(err)
 		metrics.AuditSinkErrors.WithLabelValues(name, "retry").Inc()
 		if permanentDeliveryError(err) || errors.Is(err, errSinkPanic) {
-			release()
-			qs.splitOrDrop(events, operation, write, err)
-			return
+			return qs.splitOrDrop(events, operation, write, err, true)
 		}
 	}
 }
@@ -939,7 +951,7 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 			batch = batch[:0]
 			return
 		}
-		qs.deliver(batch, "batch_write", batchSink.WriteBatch, false)
+		qs.deliver(batch, "batch_write", batchSink.WriteBatch, false, false)
 		qs.inFlight.Add(-int64(len(batch)))
 		batch = batch[:0]
 	}

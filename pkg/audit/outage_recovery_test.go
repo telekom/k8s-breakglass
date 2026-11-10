@@ -491,3 +491,36 @@ func TestHandOverMatchesAuditConfigAndSinkName(t *testing.T) {
 	require.NoError(t, old.Close())
 	require.Eventually(t, func() bool { return toA.Load() == 1 && toB.Load() == 1 }, time.Second, 5*time.Millisecond)
 }
+
+// While the first half of a split retained batch is retained again, the
+// second half waiting for its turn still counts as retained.
+func TestRetainedGaugeKeepsPendingSiblingCounted(t *testing.T) {
+	sink := newFuncSink("retained-sibling", func([]*Event) error { return errors.New("broker unavailable") })
+	qs := NewQueuedSink(sink, splitConfig(4), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	retained := metrics.AuditEventsRetained.WithLabelValues(sink.Name())
+	before := testutil.ToFloat64(retained)
+	for _, id := range []string{"a", "b", "c", "d"} {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return testutil.ToFloat64(retained) == before+4 }, time.Second, 5*time.Millisecond)
+	// Batches above two records are rejected and a and b stay unavailable.
+	unavailable := func(events []*Event) error {
+		if len(events) > 2 {
+			return fmt.Errorf("%w: %w", ErrRejected, kafka.RecordListTooLarge)
+		}
+		if events[0].ID == "a" {
+			return kafka.LeaderNotAvailable
+		}
+		return nil
+	}
+	sink.set(unavailable)
+	require.Eventually(t, func() bool { return qs.Health().FailedEvents >= 3 }, time.Second, 5*time.Millisecond)
+	time.Sleep(150 * time.Millisecond) // the first half is retained again
+	require.Equal(t, before+4, testutil.ToFloat64(retained), "c and d still wait behind a and b")
+	sink.set(func([]*Event) error { return nil })
+	require.Eventually(t, func() bool {
+		return qs.Health().ProcessedEvents == 4 && testutil.ToFloat64(retained) == before
+	}, 2*time.Second, 5*time.Millisecond)
+	require.Zero(t, qs.Health().DroppedEvents)
+}

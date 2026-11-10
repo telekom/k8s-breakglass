@@ -385,7 +385,7 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	qs := NewQueuedSink(NewFilteredSink(NewCircuitBreakerSink(sink, DefaultCircuitBreakerConfig(), zap.NewNop()), EventFilterConfig{}),
 		retryTestConfig(), zap.NewNop())
 	t.Cleanup(func() { require.NoError(t, qs.Close()) })
-	qs.deliver([]*Event{{ID: "first"}, {ID: "second"}}, "batch_write", func(context.Context, []*Event) error { return nil }, false)
+	qs.deliver([]*Event{{ID: "first"}, {ID: "second"}}, "batch_write", func(context.Context, []*Event) error { return nil }, false, false)
 	require.Zero(t, qs.Health().ProcessedEvents, "asynchronous submission is not successful delivery")
 	require.Equal(t, processedBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(sink.Name())))
 	sink.writer.Completion([]kafka.Message{{Key: []byte("first")}, {Key: []byte("second")}}, errors.New("delivery failed"))
@@ -565,7 +565,7 @@ func TestExpiredShutdownDoesNotInvokeSinkForBacklog(t *testing.T) {
 	qs.deliver([]*Event{{ID: "late"}}, "write", func(context.Context, []*Event) error {
 		t.Error("expired shutdown must not call sink")
 		return nil
-	}, false)
+	}, false, false)
 	require.Zero(t, sink.writeCount.Load())
 	require.Equal(t, int64(101), qs.droppedEvents.Load())
 }
