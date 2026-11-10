@@ -109,24 +109,32 @@ CRD deletes its objects. The controller therefore handles it as follows:
 - **Create.** A client-side `NoMatch` counts as a definitive rejection, like
   an API `Invalid` or `Forbidden` response, so the persisted create intent is
   retired instead of being left unresolved.
-- **Cleanup.** When reading, deleting, or resolving an unresolved create intent
-  for an auxiliary, pod-template, or deployed resource fails with `NoMatch` (or
-  a discovery error in which every group-version is `NotFound`), the controller
-  also checks that **no** version of that group/kind is served. If none is, the
-  entry is treated as already deleted: it is logged once at info level, marked
-  `deleted` and its `error` field records `target cluster does not serve
+- **Cleanup.** An *unresolved create intent* (a create operation ID with no
+  recorded UID) of an auxiliary, pod-template, or deployed resource is retired
+  when the target proves that the kind is not served:
+  - reading the object fails with `NoMatch` (or a discovery error in which
+    every group-version is `NotFound`);
+  - **no** version of the group/kind is served;
+  - the target's legacy discovery documents confirm the absence. Aggregated
+    discovery hides an unavailable APIService, so without this confirmation,
+    or on any discovery error, the controller fails closed. Workload,
+    node-maintenance and hotfix cleanup all perform it.
+
+  A create of an unserved kind is rejected before it reaches the API server,
+  so nothing can exist. The entry is logged once at info level, marked
+  `deleted` (pod-template and deployed intents are dropped from the
+  inventory) and its `error` field records `target cluster does not serve
   <apiVersion> <kind>; nothing can exist to delete`. The
   `breakglass_auxiliary_resource_cleanups_total` counter uses
-  `status="not_served"` for these entries (the `category` label is the
-  auxiliary category, `pod-template`, or the deployed resource source). Pod-template and
-  deployed-resource entries are removed from the inventory like a confirmed
-  deletion. Absence is confirmed against the target's legacy discovery
-  documents as well, because aggregated discovery hides an unavailable
-  APIService; any discovery error keeps the entry retryable. Without that
-  confirmation the controller fails closed. Workload, node-maintenance and
-  hotfix cleanup all perform it. A kind that is still served at
-  another version, or a transient discovery failure, stays a retryable
-  residual.
+  `status="not_served"` (`category` is the auxiliary category, `pod-template`,
+  or the deployed resource source).
+
+  An entry with a **recorded UID** really existed and is never retired this
+  way. Deregistering an APIService removes its kinds from discovery but keeps
+  the extension server's stored objects, which reappear when it is registered
+  again. Such entries stay residuals and are retried with backoff. A kind that
+  is still served at another version, or a transient discovery failure, also
+  stays a retryable residual.
 
 ### Transitional opt-outs
 

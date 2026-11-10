@@ -647,12 +647,6 @@ const (
 	maxCleanupConditionMessage   = 1024
 )
 
-// kindNotServed reports whether opErr lets cleanup treat apiVersion/kind as
-// absent because the target serves no version of it.
-func (c *DebugSessionController) kindNotServed(ctx context.Context, target ctrlclient.Client, apiVersion, kind string, opErr error) bool {
-	return !c.disableUnservedKindHandling && targetKindNotServed(ctx, target, apiVersion, kind, opErr)
-}
-
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	return condition != nil && condition.Status == metav1.ConditionTrue
@@ -1332,12 +1326,6 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
 			}
-			if c.kindNotServed(ctx, targetClient, ref.APIVersion, ref.Kind, err) {
-				log.Infow("Debug resource kind is not served by the target cluster; treating it as already deleted",
-					"apiVersion", ref.APIVersion, "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
-				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, ref.Source, "not_served").Inc()
-				continue
-			}
 			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace, "error", err)
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
@@ -1529,10 +1517,6 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
 					"name", status.ResourceName)
-			} else if c.kindNotServed(ctx, targetClient, status.APIVersion, status.Kind, err) {
-				log.Infow("Pod template resource kind is not served by the target cluster; treating it as already deleted",
-					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
-				metrics.AuxiliaryResourceCleanups.WithLabelValues(ds.Spec.Cluster, "pod-template", "not_served").Inc()
 			} else {
 				log.Warnw("Failed to delete pod template resource",
 					"kind", status.Kind,

@@ -155,20 +155,23 @@ func TestCleanupAuxiliaryResourcesTreatsUnservedKindAsAbsent(t *testing.T) {
 		assert.Contains(t, status.Error, "does not serve policies.kyverno.io/v1 PolicyException")
 		assert.False(t, auxiliaryStatusHasCleanupResidual(session, status))
 	})
-	t.Run("recorded object and child", func(t *testing.T) {
+	t.Run("recorded objects are retained (APIService deregistration)", func(t *testing.T) {
+		// A deregistered APIService vanishes from discovery but its extension
+		// server keeps the stored objects; re-registration exposes them again.
+		// Only the never-resolved create is retired.
 		session := unresolvedPolicyExceptionSession()
 		session.Status.AuxiliaryResourceStatuses[0].UID = "recorded-uid"
 		session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{
 			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "child", UID: "child-uid"},
 			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "unresolved-child", CreateOperationID: "op-2"},
 		}
-		require.NoError(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
+		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
 		status := session.Status.AuxiliaryResourceStatuses[0]
-		assert.True(t, status.Deleted)
-		for _, child := range status.AdditionalResources {
-			assert.True(t, child.Deleted, child.ResourceName)
-			assert.Contains(t, child.Error, "does not serve")
-		}
+		assert.False(t, status.Deleted, "a recorded UID stays a residual")
+		assert.True(t, auxiliaryStatusHasCleanupResidual(session, status))
+		assert.False(t, status.AdditionalResources[0].Deleted, "a recorded child stays a residual")
+		assert.True(t, status.AdditionalResources[1].Deleted, "an unresolved child create is retired")
+		assert.Contains(t, status.AdditionalResources[1].Error, "does not serve")
 	})
 	t.Run("opt-out keeps retrying", func(t *testing.T) {
 		session := unresolvedPolicyExceptionSession()
@@ -372,34 +375,30 @@ func TestTargetKindNotServedHonoursDiscoveryConfirmation(t *testing.T) {
 	}
 }
 
-func TestCleanupPodTemplateAndDeployedResourcesTreatUnservedKindAsAbsent(t *testing.T) {
+func TestCleanupPodTemplateAndDeployedResourcesRetireOnlyUnresolvedIntents(t *testing.T) {
+	pe := func(name, uid, op string) breakglassv1alpha1.PodTemplateResourceStatus {
+		return breakglassv1alpha1.PodTemplateResourceStatus{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: name, Created: true, UID: uid, CreateOperationID: op}
+	}
 	ds := unresolvedPolicyExceptionSession()
 	ds.Status.AuxiliaryResourceStatuses = nil
-	ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{
-		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "unresolved", Created: true, CreateOperationID: "op"},
-		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "recorded", Created: true, UID: "recorded-uid"},
-	}
+	ds.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{pe("unresolved", "", "op"), pe("recorded", "recorded-uid", "")}
 	ds.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{
 		{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"},
 	}
 	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
 	target := unservedTarget(t, interceptor.Funcs{})
-	require.NoError(t, c.cleanupPodTemplateResources(context.Background(), ds, target))
-	assert.Empty(t, ds.Status.PodTemplateResourceStatuses)
-	require.NoError(t, c.cleanupDeployedResources(context.Background(), ds, target, false, false))
-	assert.Empty(t, ds.Status.DeployedResources)
+	require.Error(t, c.cleanupPodTemplateResources(context.Background(), ds, target))
+	require.Len(t, ds.Status.PodTemplateResourceStatuses, 1, "the unresolved intent is retired")
+	assert.Equal(t, "recorded", ds.Status.PodTemplateResourceStatuses[0].ResourceName, "a recorded object survives discovery absence")
+	require.Error(t, c.cleanupDeployedResources(context.Background(), ds, target, false, false))
+	assert.Len(t, ds.Status.DeployedResources, 1, "a recorded deployed object survives discovery absence")
 
-	// Opt-out keeps both inventories retryable.
+	// Opt-out keeps the unresolved intent too.
 	optOut := unresolvedPolicyExceptionSession()
 	optOut.Status.AuxiliaryResourceStatuses = nil
-	optOut.Status.PodTemplateResourceStatuses = ds.Status.PodTemplateResourceStatuses
-	c = c.WithUnservedKindHandling(false)
-	optOut.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "recorded", Created: true, UID: "recorded-uid"}}
-	optOut.Status.DeployedResources = []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "deployed", UID: "deployed-uid", Source: "debug-extra"}}
-	require.Error(t, c.cleanupPodTemplateResources(context.Background(), optOut, target))
+	optOut.Status.PodTemplateResourceStatuses = []breakglassv1alpha1.PodTemplateResourceStatus{pe("unresolved", "", "op")}
+	require.Error(t, c.WithUnservedKindHandling(false).cleanupPodTemplateResources(context.Background(), optOut, target))
 	assert.Len(t, optOut.Status.PodTemplateResourceStatuses, 1)
-	require.Error(t, c.cleanupDeployedResources(context.Background(), optOut, target, false, false))
-	assert.Len(t, optOut.Status.DeployedResources, 1)
 }
 
 func TestCleanupBackoffCannotBeBypassedByWatchEvents(t *testing.T) {

@@ -52,12 +52,6 @@ type AuxiliaryResourceManager struct {
 	disableUnservedKindHandling bool
 }
 
-// kindNotServed reports whether opErr lets cleanup treat apiVersion/kind as
-// absent because the target serves no version of it.
-func (m *AuxiliaryResourceManager) kindNotServed(ctx context.Context, target client.Client, apiVersion, kind string, opErr error) bool {
-	return !m.disableUnservedKindHandling && targetKindNotServed(ctx, target, apiVersion, kind, opErr)
-}
-
 // NewAuxiliaryResourceManager creates a new auxiliary resource manager.
 func NewAuxiliaryResourceManager(log *zap.SugaredLogger, cli client.Client) *AuxiliaryResourceManager {
 	return &AuxiliaryResourceManager{
@@ -229,18 +223,12 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 
 	var cleanupErrors []error
 
-	// notServed is evaluated only after an entry failed to resolve or delete,
-	// so healthy cleanup pays no extra discovery. A nil opErr means an
-	// unresolved create intent, which is probed with a read.
-	notServed := func(i int, apiVersion, kind, resourceName, namespace string, opErr error) bool {
-		if m.disableUnservedKindHandling {
-			return false
-		}
-		if opErr == nil {
-			if !probeKindNotServed(ctx, targetClient, apiVersion, kind, namespace, resourceName) {
-				return false
-			}
-		} else if !m.kindNotServed(ctx, targetClient, apiVersion, kind, opErr) {
+	// notServed applies only to unresolved create intents (no recorded UID):
+	// a create of an unserved kind fails client-side and creates nothing.
+	// It is evaluated only when an intent cannot be resolved, so healthy
+	// cleanup pays no extra discovery.
+	notServed := func(i int, apiVersion, kind, resourceName, namespace string) bool {
+		if m.disableUnservedKindHandling || !probeKindNotServed(ctx, targetClient, apiVersion, kind, namespace, resourceName) {
 			return false
 		}
 		log.Infow("Auxiliary resource kind is not served by the target cluster; treating it as already deleted",
@@ -265,7 +253,7 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 		deleteAfter := shouldDeleteAuxiliaryResource(session, status.Name)
 		if !status.Deleted && status.UID == "" && status.CreateOperationID != "" {
 			// An unserved kind proves that the unresolved create made nothing.
-			if notServed(i, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, nil) {
+			if notServed(i, status.APIVersion, status.Kind, status.ResourceName, status.Namespace) {
 				markDeleted(i, kindNotServedReason(status.APIVersion, status.Kind))
 			} else {
 				err := fmt.Errorf("auxiliary resource %q creation outcome is unresolved", status.Name)
@@ -275,10 +263,11 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 		} else if !status.Deleted && deleteAfter && (status.Created || status.UID != "") {
 			// A recorded UID is sufficient to delete safely even when the create
 			// response was interrupted before Created could be persisted.
+			// A recorded object really existed. Discovery absence does not
+			// prove it is gone (a deregistered APIService keeps its stored
+			// objects), so it stays a residual and only backs off.
 			err := m.deleteResource(ctx, targetClient, status, session)
-			if err != nil && notServed(i, status.APIVersion, status.Kind, status.ResourceName, status.Namespace, err) {
-				markDeleted(i, kindNotServedReason(status.APIVersion, status.Kind))
-			} else if err != nil {
+			if err != nil {
 				log.Warnw("Failed to delete auxiliary resource",
 					"resource", status.Name,
 					"resourceName", status.ResourceName,
@@ -304,15 +293,15 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			if addlRes.Deleted {
 				continue
 			}
-			markChildNotServed := func(opErr error) bool {
-				if !notServed(i, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace, opErr) {
+			markChildNotServed := func() bool {
+				if !notServed(i, addlRes.APIVersion, addlRes.Kind, addlRes.ResourceName, addlRes.Namespace) {
 					return false
 				}
 				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Deleted = true
 				session.Status.AuxiliaryResourceStatuses[i].AdditionalResources[j].Error = kindNotServedReason(addlRes.APIVersion, addlRes.Kind)
 				return true
 			}
-			if addlRes.UID == "" && addlRes.CreateOperationID != "" && markChildNotServed(nil) {
+			if addlRes.UID == "" && addlRes.CreateOperationID != "" && markChildNotServed() {
 				continue
 			}
 			if addlRes.UID == "" && addlRes.CreateOperationID != "" {
@@ -337,9 +326,6 @@ func (m *AuxiliaryResourceManager) CleanupAuxiliaryResources(
 			}
 
 			err := m.deleteResource(ctx, targetClient, addlStatus, session)
-			if err != nil && markChildNotServed(err) {
-				continue
-			}
 			if err != nil {
 				log.Warnw("Failed to delete additional auxiliary resource",
 					"resource", status.Name,
