@@ -20,9 +20,48 @@ including its administrator-configured local or S3 store, keyring, staging
 limits, and independent artifact controller. No separate recording environment
 variables or store are used. The connection provider must also have a published
 credential generation; configuring storage alone does not establish readiness.
-The default lease adapter does not publish credential generations. Until an
-approved production generation publisher is wired, terminal recording remains
-fail closed even with storage configured.
+
+### Credential generation
+
+The controller executes the recorded exec/attach with its own ClusterConfig
+credentials, so readiness is bound to that credential. When a stream is
+requested, the serving replica reads the target ClusterConfig's credential
+Secret live (the kubeconfig Secret; otherwise the OIDC client or refresh-token
+Secret, configured directly or through `oidcFromIdentityProvider`) and compares
+its UID and resourceVersion with the `connection-secret-uid` and
+`connection-secret-resource-version` annotations of the target's connection
+Lease. If no generation is published yet, or the Secret identity differs, the
+replica stages generation `n+1` and publishes it with the Lease
+staged/ready compare-and-swap, re-reading the Secret as the readiness proof.
+Concurrent replicas cannot both publish; the losing request fails closed and
+the client retries. No Secret name or value is stored on the Lease.
+
+A credential change therefore fails closed in two ways: the active stream's
+target check compares the credential inputs captured when the stream started
+and aborts within one check interval, and the next stream publishes a new
+generation that invalidates any stream still bound to the previous one.
+ClusterConfigs without a credential Secret (for example in-cluster or exec
+plugin credentials) are never ready for terminal recording.
+
+Without an artifact backend the template fails closed: sessions whose template
+requires recording are marked `Failed` with "terminal-byte transport is not
+configured" before any debug workload is deployed, and the terminal endpoints
+return `503`.
+
+### Audit events
+
+Each stream emits audit events through the configured audit sinks, including
+Kafka. Events share the request correlation ID and never contain terminal
+bytes:
+
+| Event | When | Details |
+|---|---|---|
+| `debug_session.terminal_recording_started` | Evidence reserved, before target execution | `recordingId`, pod namespace/name/UID, container, operation, `formatVersion`, lease UID, generation, `retentionExpiresAt` |
+| `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete` |
+| `debug_session.terminal_recording_failed` | Reservation or publication failed | `stage` (`reserve` or `finalize`) and the identifiers known at that point |
+
+These events are always emitted while recording is required, independent of
+`audit.enabled`, and are never sampled.
 
 Terminal stream and replay responses use `application/octet-stream` and
 `X-Content-Type-Options: nosniff`. Terminal bytes, including HTML-like text and

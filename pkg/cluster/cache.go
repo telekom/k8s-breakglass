@@ -368,6 +368,40 @@ func (p *ClientProvider) capturePrivilegedInputVersionsWithReader(ctx context.Co
 	return versions, nil
 }
 
+// PrivilegedCredentialIdentity returns the live UID and resourceVersion of
+// the primary hub Secret that authenticates the controller to cc's target
+// cluster: the kubeconfig Secret, else the OIDC client or refresh-token
+// Secret (directly configured or inherited from an IdentityProvider).
+// ClusterConfigs without such a Secret return an error so callers that bind
+// readiness to a credential identity fail closed.
+func (p *ClientProvider) PrivilegedCredentialIdentity(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (types.UID, string, error) {
+	if cc == nil {
+		return "", "", fmt.Errorf("cluster config is required")
+	}
+	var candidates []*breakglassv1alpha1.SecretKeyReference
+	candidates = append(candidates, cc.Spec.KubeconfigSecretRef)
+	if oidc := cc.Spec.OIDCAuth; oidc != nil {
+		candidates = append(candidates, oidc.ClientSecretRef, oidc.RefreshTokenSecretRef)
+	}
+	if ref := cc.Spec.OIDCFromIdentityProvider; ref != nil {
+		candidates = append(candidates, ref.ClientSecretRef, ref.RefreshTokenSecretRef)
+	}
+	for _, ref := range candidates {
+		if ref == nil || ref.Name == "" {
+			continue
+		}
+		secret := &corev1.Secret{}
+		if err := p.liveReaderOrClient().Get(ctx, ctrlclient.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}, secret); err != nil {
+			return "", "", fmt.Errorf("read cluster credential secret: %w", err)
+		}
+		if secret.UID == "" || secret.ResourceVersion == "" || !secret.DeletionTimestamp.IsZero() {
+			return "", "", fmt.Errorf("cluster credential secret identity is incomplete")
+		}
+		return secret.UID, secret.ResourceVersion, nil
+	}
+	return "", "", fmt.Errorf("cluster config %s has no credential secret", cc.Name)
+}
+
 func (p *ClientProvider) liveReaderOrClient() ctrlclient.Reader {
 	if p.liveReader != nil {
 		return p.liveReader

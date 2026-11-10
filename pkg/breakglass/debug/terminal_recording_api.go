@@ -12,15 +12,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +46,7 @@ const maximumConcurrentTerminalRecordings = 2
 // supplied by the connection-lease service for one target stream.
 type TerminalRecordingConnectionBinding struct {
 	Namespace            string
+	ClusterName          string
 	SessionUID           string
 	TargetPodUID         string
 	TargetClusterUID     string
@@ -192,7 +196,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve terminal recording profile")
 		return
 	}
-	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
+	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, ClusterName: session.Spec.Cluster, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
 	connection, err := c.recordingConnections.AcquireTerminalRecordingConnection(apiCtx, binding)
 	if err != nil {
 		apiresponses.RespondForbidden(ctx, "terminal recording connection is not available")
@@ -262,10 +266,17 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		ExpiresAt: binding.ExpiresAt.Add(retention), Recording: &metadata,
 	}, connection.Validate)
 	if err != nil {
+		c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFailed, session, identity, map[string]interface{}{"stage": "reserve", "podNamespace": namespace, "podName": podName, "operation": operation})
 		apiresponses.RespondServiceUnavailable(ctx, "failed to reserve terminal evidence")
 		return
 	}
 	metadata = *reservation.Recording
+	recordingDetails := map[string]interface{}{
+		"recordingId": reservation.ArtifactID, "podNamespace": namespace, "podName": podName, "podUID": targetUID,
+		"container": ctx.Query("container"), "operation": operation, "formatVersion": metadata.FormatVersion,
+		"leaseUID": binding.LeaseUID, "generation": binding.Generation, "retentionExpiresAt": reservation.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingStarted, session, identity, recordingDetails)
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Content-Type-Options", "nosniff")
@@ -305,16 +316,60 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		}
 	}
 	ctx.Header("X-Breakglass-Recording-ID", reservation.ArtifactID)
+	recordingDetails["frames"] = metadata.Frames
+	recordingDetails["bytes"] = len(recording.Bytes)
+	recordingDetails["complete"] = metadata.Complete
+	if streamErr != nil {
+		recordingDetails["streamError"] = "stream aborted"
+	}
 	if err != nil {
+		recordingDetails["stage"] = "finalize"
+		c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFailed, session, identity, recordingDetails)
 		ctx.Header("X-Breakglass-Recording-Status", "finalization-pending")
 		return
 	}
+	recordingDetails["sha256"] = published.SHA256
+	c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFinalized, session, identity, recordingDetails)
 	ctx.Header("X-Breakglass-Recording-SHA256", published.SHA256)
 	if !metadata.Complete {
 		ctx.Header("X-Breakglass-Recording-Status", "incomplete")
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
+}
+
+// emitTerminalRecordingAudit records recording lifecycle metadata with the
+// request correlation ID. Terminal bytes are never included. Recording events
+// are emitted whenever recording is required, independent of audit.enabled,
+// because they are the index to the retained evidence.
+func (c *DebugSessionAPIController) emitTerminalRecordingAudit(ctx *gin.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity, details map[string]interface{}) {
+	if c.auditService == nil || !c.auditService.IsEnabled() {
+		return
+	}
+	// Detach from the request so a disconnected client cannot suppress the event.
+	emitCtx := context.WithoutCancel(ctx.Request.Context())
+	user := identity.email
+	if user == "" {
+		user = identity.username
+	}
+	event := &audit.Event{
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Actor:     audit.Actor{User: user, Groups: identity.groups, IdentityProvider: identity.provider, SourceIP: ctx.ClientIP()},
+		Target: audit.Target{
+			UID: string(session.UID), Kind: "DebugSession", Name: session.Name, Namespace: session.Namespace, Cluster: session.Spec.Cluster,
+		},
+		RequestContext: audit.SessionRequestContext(session),
+		Details:        maps.Clone(details),
+	}
+	cid := ctx.GetString(apiresponses.CIDKey)
+	if cid == "" {
+		// Keep all events of one stream correlated even without the API middleware.
+		cid = uuid.NewString()
+		ctx.Set(apiresponses.CIDKey, cid)
+	}
+	event.RequestContext.CorrelationID = cid
+	c.auditService.Emit(emitCtx, event)
 }
 
 // terminalRecordingFlushWriter keeps interactive exec/attach output flowing

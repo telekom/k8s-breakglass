@@ -1188,7 +1188,7 @@ jobs:
         if: ${{ !cancelled() && steps.artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
-          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-results.txt
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-results.txt
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
@@ -1202,7 +1202,7 @@ jobs:
         if: ${{ !cancelled() && steps.artifact_s3_fixture.outcome == 'success' }}
         run: |
           set -o pipefail
-          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-s3-results.txt
+          go test -tags=e2e -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E)$' -count=1 -timeout 30m 2>&1 | tee e2e-artifact-s3-results.txt
         env:
           E2E_TEST: "true"
           E2E_NAMESPACE: "breakglass-system"
@@ -2887,7 +2887,7 @@ jobs:
         if: ${{ !cancelled() && steps.multi_artifact_fixture.outcome == 'success' && matrix.shard == 'artifacts-local' }}
         run: |
           set -o pipefail
-          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-multi-artifact-local-results.txt
+          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E)$' -count=1 -timeout 30m 2>&1 | tee e2e-multi-artifact-local-results.txt
         env:
           E2E_TEST: "true"
           E2E_MULTI_CLUSTER: "true"
@@ -2910,7 +2910,7 @@ jobs:
         if: ${{ !cancelled() && steps.multi_artifact_s3_fixture.outcome == 'success' }}
         run: |
           set -o pipefail
-          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract)$' -count=1 -timeout 30m 2>&1 | tee e2e-multi-artifact-s3-results.txt
+          go test -tags=e2e,multicluster -v ./e2e/api -run '^Test(DebugSessionArtifactCollectorE2E|ArtifactArchiveMutationContract|DebugSessionTerminalRecordingE2E)$' -count=1 -timeout 30m 2>&1 | tee e2e-multi-artifact-s3-results.txt
         env:
           E2E_TEST: "true"
           E2E_MULTI_CLUSTER: "true"

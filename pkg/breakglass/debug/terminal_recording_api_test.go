@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/kube"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/token"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -80,6 +81,8 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 				WithTerminalRecordingArtifacts(service).
 				WithTerminalRecordingMaxBytes(1024).
 				WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+			auditEvents := NewMockAuditEmitter(true)
+			controller.WithAuditService(auditEvents)
 			controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
 				return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
 			}
@@ -159,6 +162,21 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.Nil(t, stored.Status.KubectlDebugStatus)
 			record, err := service.Recording(context.Background(), session.Namespace, session.Name, artifactID)
 			require.NoError(t, err)
+			var events []*audit.Event
+			require.Eventually(t, func() bool { events = auditEvents.GetEvents(); return len(events) == 2 }, 5*time.Second, 20*time.Millisecond)
+			require.Equal(t, audit.EventDebugSessionTerminalRecordingStarted, events[0].Type)
+			require.Equal(t, audit.EventDebugSessionTerminalRecordingFinalized, events[1].Type)
+			for _, event := range events {
+				require.Equal(t, "alice", event.Actor.User)
+				require.Equal(t, string(session.UID), event.Target.UID)
+				require.Equal(t, artifactID, event.Details["recordingId"])
+				require.NotEmpty(t, event.RequestContext.CorrelationID)
+				require.NotContains(t, fmt.Sprint(event.Details), "prompt", "terminal bytes must never reach audit")
+				require.True(t, audit.IsSensitiveEvent(event.Type))
+			}
+			require.Equal(t, record.SHA256, events[1].Details["sha256"])
+			require.Equal(t, !incomplete, events[1].Details["complete"])
+			require.Equal(t, events[0].RequestContext.CorrelationID, events[1].RequestContext.CorrelationID)
 			require.Equal(t, backend.StateAvailable, record.State)
 			require.Equal(t, int64(1024), record.MaxBytes)
 			require.Equal(t, "lease-uid", record.ConnectionLeaseUID)

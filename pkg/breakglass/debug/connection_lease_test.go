@@ -239,18 +239,20 @@ func TestConnectionLeaseGenerationRequiresReadinessAndKeepsSecretsOpaque(t *test
 	require.NoError(t, err)
 	_, err = service.PublishReady(ctx, staged, nil)
 	require.Error(t, err)
-	published, err := service.PublishReady(ctx, staged, func(context.Context) (types.UID, error) { return "secret-uid", nil })
+	published, err := service.PublishReady(ctx, staged, func(context.Context) (ConnectionCredential, error) {
+		return ConnectionCredential{UID: "secret-uid"}, nil
+	})
 	require.NoError(t, err)
 	require.Equal(t, types.UID("secret-uid"), published.SecretUID)
 	staged, err = service.StageGeneration(ctx, published.Lease, 2)
 	require.NoError(t, err)
-	_, err = service.PublishReady(ctx, staged, func(ctx context.Context) (types.UID, error) {
+	_, err = service.PublishReady(ctx, staged, func(ctx context.Context) (ConnectionCredential, error) {
 		current := &coordinationv1.Lease{}
 		require.NoError(t, client.Get(ctx, types.NamespacedName{Namespace: published.Lease.Namespace, Name: published.Lease.Name}, current))
 		current.Spec.HolderIdentity = connPtr("takeover")
 		current.Annotations[connectionLeaseEpochAnnotation] = "99"
 		require.NoError(t, client.Update(ctx, current))
-		return "secret-uid-2", nil
+		return ConnectionCredential{UID: "secret-uid-2"}, nil
 	})
 	require.Error(t, err)
 	current := &coordinationv1.Lease{}

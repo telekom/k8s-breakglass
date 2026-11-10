@@ -151,6 +151,11 @@ const (
 	// configuration, so an unresolvable ref means the approval requirement is
 	// INDETERMINATE and the session must not be activated on a guess.
 	EventDebugSessionBindingUnresolved EventType = "debug_session.binding_unresolved"
+	// Terminal recording lifecycle. Details carry recording identity, digest,
+	// size, completeness and retention deadline; never terminal bytes.
+	EventDebugSessionTerminalRecordingStarted   EventType = "debug_session.terminal_recording_started"
+	EventDebugSessionTerminalRecordingFinalized EventType = "debug_session.terminal_recording_finalized"
+	EventDebugSessionTerminalRecordingFailed    EventType = "debug_session.terminal_recording_failed"
 
 	// === Pod and container events ===
 	EventPodCreated     EventType = "pod.created"
@@ -529,6 +534,8 @@ func IsSensitiveEvent(eventType EventType) bool {
 		EventDebugSessionHotfixIntent, EventDebugSessionHotfixNodeIntent,
 		EventDebugSessionHotfixNodeResult, EventDebugSessionHotfixResult,
 		EventDebugSessionBindingUnresolved,
+		EventDebugSessionTerminalRecordingStarted, EventDebugSessionTerminalRecordingFinalized,
+		EventDebugSessionTerminalRecordingFailed,
 		EventClusterRoleBindingCreated, EventClusterRoleBindingDeleted,
 		EventResourceImpersonate, EventPolicyBypassed,
 		EventPodSecurityDenied, EventPodSecurityWarning, EventPodSecurityOverride:

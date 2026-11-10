@@ -1,0 +1,265 @@
+//go:build e2e
+
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
+package api
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/e2e/helpers"
+)
+
+// TestDebugSessionTerminalRecordingE2E proves the recorded terminal path on a
+// real cluster with the configured artifact backend: a participant runs an
+// interactive exec through the controller, the recording is retrievable by the
+// owner with an intact hash chain and the typed input/emitted output, an
+// unrelated user cannot list or replay it, and a credential rotation during
+// a stream aborts it and publishes the evidence as incomplete.
+func TestDebugSessionTerminalRecordingE2E(t *testing.T) {
+	s := helpers.SetupTest(t, helpers.WithLongTimeout())
+	ctx := s.Ctx
+	requesterUser := helpers.TestUsers.SecurityRequester
+	requester := s.TC.ClientForUser(requesterUser)
+	outsider := s.TC.ClientForUser(helpers.TestUsers.UnauthorizedUser)
+
+	template := &breakglassv1alpha1.DebugSessionTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("terminal-recording")},
+		Spec: breakglassv1alpha1.DebugSessionTemplateSpec{
+			Mode: breakglassv1alpha1.DebugSessionModeWorkload, TargetNamespace: s.Namespace,
+			Allowed:              &breakglassv1alpha1.DebugSessionAllowed{Clusters: []string{s.Cluster}, Groups: requesterUser.Groups},
+			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: ptr.To(true)},
+			Audit:                &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true, RecordingRetention: "1h"},
+			PodTemplateString: `apiVersion: v1
+kind: Pod
+metadata:
+  name: terminal-recording-target
+spec:
+  containers:
+  - name: shell
+    image: busybox:latest
+    imagePullPolicy: IfNotPresent
+    command: ["sleep", "3600"]
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop: ["ALL"]
+      runAsNonRoot: true
+      runAsUser: 65532
+      seccompProfile:
+        type: RuntimeDefault
+`,
+		},
+	}
+	require.NoError(t, s.CreateResource(template))
+	session, err := requester.CreateDebugSession(ctx, t, helpers.DebugSessionRequest{TemplateRef: template.Name, Cluster: s.Cluster, RequestedDuration: "30m", Reason: "terminal recording e2e"})
+	require.NoError(t, err)
+	s.Cleanup.Add(session)
+	t.Cleanup(func() { _ = requester.TerminateDebugSession(context.Background(), t, session.Name) })
+	active := helpers.WaitForDebugSessionState(t, ctx, s.Client, session.Name, session.Namespace, breakglassv1alpha1.DebugSessionStateActive, helpers.WaitForStateTimeout)
+	require.Eventually(t, func() bool {
+		if s.Client.Get(ctx, client.ObjectKeyFromObject(active), active) != nil {
+			return false
+		}
+		return len(active.Status.AllowedPods) > 0 && active.Status.AllowedPods[0].Ready
+	}, helpers.WaitForStateTimeout, time.Second, "recorded debug pod must become Ready")
+	pod := active.Status.AllowedPods[0]
+	base := "/api/debugSessions/" + url.PathEscape(session.Name) + "/terminal"
+	sessionQuery := "?namespace=" + url.QueryEscape(session.Namespace)
+
+	t.Run("record retrieve verify", func(t *testing.T) {
+		const typed = "hello-recording"
+		var result helpers.TerminalStreamResult
+		// The first stream of a session publishes the credential generation; a
+		// concurrent controller lease update can make that attempt conflict.
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+			defer cancel()
+			var streamErr error
+			result, streamErr = requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
+				Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
+				Command:  []string{"sh", "-c", `read line; echo "recorded:$line"`},
+				Interact: typeAfterOutput(typed + "\n"),
+			})
+			require.NoError(c, streamErr)
+			require.Equal(c, http.StatusOK, result.StatusCode, result.Body)
+		}, helpers.WaitForStateTimeout, 2*time.Second)
+		require.Contains(t, result.Output, "recorded:"+typed)
+		require.Equal(t, "completed", result.Status)
+		require.NotEmpty(t, result.RecordingID)
+		require.Len(t, result.SHA256, 64)
+
+		status, listed, err := requester.GetRaw(ctx, base+sessionQuery)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status, string(listed))
+		require.Contains(t, string(listed), result.RecordingID)
+
+		status, replay, err := requester.GetRaw(ctx, base+"/"+url.PathEscape(result.RecordingID)+sessionQuery)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status, string(replay))
+		digest := sha256.Sum256(replay)
+		require.Equal(t, result.SHA256, hex.EncodeToString(digest[:]), "replayed bytes must match the published digest")
+		frames, err := helpers.ParseTerminalRecording(replay)
+		require.NoError(t, err, "the replayed recording must have an intact hash chain")
+		var input, output strings.Builder
+		for _, frame := range frames {
+			switch frame.Direction {
+			case 'i':
+				input.Write(frame.Payload)
+			case 'o':
+				output.Write(frame.Payload)
+			default:
+				t.Fatalf("unexpected frame direction %q", frame.Direction)
+			}
+		}
+		require.Equal(t, typed+"\n", input.String(), "typed input is recorded exactly")
+		require.Contains(t, output.String(), "recorded:"+typed, "emitted output is recorded")
+
+		var listing []helpers.TerminalRecordingListing
+		require.NoError(t, json.Unmarshal(listed, &listing))
+		var entry *helpers.TerminalRecordingListing
+		for i := range listing {
+			if listing[i].ArtifactID == result.RecordingID {
+				entry = &listing[i]
+			}
+		}
+		require.NotNil(t, entry)
+		require.Equal(t, result.SHA256, entry.SHA256)
+		require.NotNil(t, entry.Recording)
+		require.True(t, entry.Recording.Complete)
+		require.Equal(t, pod.Name, entry.Recording.PodName)
+		require.EqualValues(t, len(frames), entry.Recording.Frames)
+
+		t.Run("unauthorized reader denied", func(t *testing.T) {
+			status, body, err := outsider.GetRaw(ctx, base+"/"+url.PathEscape(result.RecordingID)+sessionQuery)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusForbidden, status, string(body))
+			require.NotContains(t, string(body), typed)
+			status, body, err = outsider.GetRaw(ctx, base+sessionQuery)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusForbidden, status, string(body))
+		})
+		t.Run("unauthorized participant cannot record", func(t *testing.T) {
+			streamCtx, cancel := context.WithTimeout(ctx, time.Minute)
+			defer cancel()
+			denied, err := outsider.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name, Command: []string{"sh"}})
+			require.NoError(t, err)
+			require.Equal(t, http.StatusForbidden, denied.StatusCode, denied.Body)
+		})
+	})
+
+	t.Run("credential rotation aborts stream", func(t *testing.T) {
+		secretKey := clusterCredentialSecret(t, ctx, s.Client, s.Cluster)
+		started := make(chan struct{})
+		rotated := make(chan struct{})
+		go func() {
+			defer close(rotated)
+			<-started
+			var secret corev1.Secret
+			if err := s.Client.Get(ctx, secretKey, &secret); err != nil {
+				t.Errorf("read credential secret: %v", err)
+				return
+			}
+			patch := client.MergeFrom(secret.DeepCopy())
+			if secret.Annotations == nil {
+				secret.Annotations = map[string]string{}
+			}
+			secret.Annotations["e2e.breakglass.telekom.com/terminal-recording-rotation"] = fmt.Sprint(time.Now().UnixNano())
+			if err := s.Client.Patch(ctx, &secret, patch); err != nil {
+				t.Errorf("rotate credential secret: %v", err)
+			}
+		}()
+		streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		result, err := requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
+			Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
+			Command: []string{"sh", "-c", `echo ready; sleep 90; echo not-aborted`},
+			Interact: func(output <-chan string, _ io.Writer) error {
+				for chunk := range output {
+					if strings.Contains(chunk, "ready") {
+						close(started)
+						return nil
+					}
+				}
+				close(started)
+				return fmt.Errorf("stream ended before it was ready")
+			},
+		})
+		<-rotated
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, result.StatusCode, result.Body)
+		require.NotContains(t, result.Output, "not-aborted", "a rotated credential must abort the live stream")
+		require.True(t, result.Aborted || result.Status == "incomplete", "the stream must not complete normally: %+v", result)
+		var aborted helpers.TerminalRecordingListing
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			status, body, err := requester.GetRaw(ctx, base+sessionQuery)
+			require.NoError(c, err)
+			require.Equal(c, http.StatusOK, status, string(body))
+			var listing []helpers.TerminalRecordingListing
+			require.NoError(c, json.Unmarshal(body, &listing))
+			found := false
+			for _, entry := range listing {
+				if entry.Recording != nil && !entry.Recording.Complete && entry.State == "Available" {
+					aborted, found = entry, true
+				}
+			}
+			require.True(c, found, "evidence captured before the abort is published as incomplete: %s", body)
+		}, time.Minute, 2*time.Second)
+		status, replay, err := requester.GetRaw(ctx, base+"/"+url.PathEscape(aborted.ArtifactID)+sessionQuery)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, status, string(replay))
+		frames, err := helpers.ParseTerminalRecording(replay)
+		require.NoError(t, err)
+		var output strings.Builder
+		for _, frame := range frames {
+			output.Write(frame.Payload)
+		}
+		require.Contains(t, output.String(), "ready")
+		require.NotContains(t, output.String(), "not-aborted")
+	})
+}
+
+func typeAfterOutput(input string) func(<-chan string, io.Writer) error {
+	return func(output <-chan string, stdin io.Writer) error {
+		// Type only after the remote shell has produced its first byte, as a user would.
+		select {
+		case <-output:
+		case <-time.After(2 * time.Second):
+		}
+		_, err := io.WriteString(stdin, input)
+		return err
+	}
+}
+
+func clusterCredentialSecret(t *testing.T, ctx context.Context, cli client.Client, cluster string) client.ObjectKey {
+	t.Helper()
+	var configs breakglassv1alpha1.ClusterConfigList
+	require.NoError(t, cli.List(ctx, &configs))
+	for _, config := range configs.Items {
+		if config.Name == cluster {
+			require.NotNil(t, config.Spec.KubeconfigSecretRef, "the e2e ClusterConfig must use a kubeconfig Secret")
+			return client.ObjectKey{Namespace: config.Spec.KubeconfigSecretRef.Namespace, Name: config.Spec.KubeconfigSecretRef.Name}
+		}
+	}
+	t.Fatalf("ClusterConfig %s not found", cluster)
+	return client.ObjectKey{}
+}
