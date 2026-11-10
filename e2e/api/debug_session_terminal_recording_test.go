@@ -201,8 +201,11 @@ spec:
 			Command: []string{"sh", "-c", `echo ready; sleep 90; echo not-aborted`},
 			Interact: func(output <-chan string, _ io.Writer) error {
 				defer close(started)
+				// Output arrives in arbitrary chunks; match across them.
+				var seen strings.Builder
 				for chunk := range output {
-					if strings.Contains(chunk, "ready") {
+					seen.WriteString(chunk)
+					if strings.Contains(seen.String(), "ready") {
 						return nil
 					}
 				}

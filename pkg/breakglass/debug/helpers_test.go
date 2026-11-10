@@ -100,6 +100,8 @@ type MockAuditEmitter struct {
 	mu      sync.Mutex
 	enabled bool
 	events  []*audit.Event
+	// syncErr makes EmitSync fail without recording the event.
+	syncErr error
 }
 
 // NewMockAuditEmitter creates a new mock audit emitter
@@ -115,6 +117,17 @@ func (m *MockAuditEmitter) Emit(_ context.Context, event *audit.Event) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.events = append(m.events, event)
+}
+
+// EmitSync records the event unless syncErr is set.
+func (m *MockAuditEmitter) EmitSync(_ context.Context, event *audit.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.syncErr != nil {
+		return m.syncErr
+	}
+	m.events = append(m.events, event)
+	return nil
 }
 
 // IsEnabled implements AuditEmitter

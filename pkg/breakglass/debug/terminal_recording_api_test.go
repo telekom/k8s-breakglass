@@ -217,6 +217,22 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			require.Equal(t, record.SHA256, accessed[0].Details["sha256"])
 			require.Equal(t, "list", accessed[1].Details["access"])
 			require.Equal(t, []string{record.ArtifactID}, accessed[1].Details["recordingIds"])
+			auditEvents.mu.Lock()
+			auditEvents.syncErr = fmt.Errorf("sink unavailable")
+			auditEvents.mu.Unlock()
+			for _, url := range []string{replayURL, server.URL + "/api/v1/debugSessions/session/terminal?namespace=hub"} {
+				unaudited, err := httpClient.Get(url)
+				require.NoError(t, err)
+				body, err := io.ReadAll(unaudited.Body)
+				require.NoError(t, err)
+				require.NoError(t, unaudited.Body.Close())
+				require.Equal(t, http.StatusServiceUnavailable, unaudited.StatusCode, "reads are refused when their access cannot be audited")
+				require.NotContains(t, string(body), "prompt")
+				require.NotContains(t, string(body), record.ArtifactID)
+			}
+			auditEvents.mu.Lock()
+			auditEvents.syncErr = nil
+			auditEvents.mu.Unlock()
 			require.NotContains(t, string(listed), `"backendInstanceID"`)
 			require.NotContains(t, string(listed), `"versionID"`)
 			require.NoError(t, cli.Delete(context.Background(), stored))
@@ -382,8 +398,7 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 			return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
 		}
 		controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
-			executed = true
-			return interactiveTerminalExecutor{}, nil
+			return interactiveTerminalExecutor{before: func() error { executed = true; return nil }}, nil
 		}
 		return httptest.NewServer(debugSessionAPITestRouter(t, controller, "alice", "", nil))
 	}
@@ -403,6 +418,15 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 			require.False(t, executed)
 		})
 	}
+	t.Run("start event undeliverable", func(t *testing.T) {
+		undeliverable := NewMockAuditEmitter(true)
+		undeliverable.syncErr = fmt.Errorf("sink unavailable")
+		server := newController(undeliverable, terminalRecordingRouteProvider{})
+		defer server.Close()
+		status, _ := post(server)
+		require.Equal(t, http.StatusServiceUnavailable, status)
+		require.False(t, executed, "the target never runs without a delivered start event")
+	})
 	t.Run("publish race", func(t *testing.T) {
 		server := newController(NewMockAuditEmitter(true), conflictingRecordingProvider{})
 		defer server.Close()
