@@ -58,14 +58,18 @@ return `503`.
 
 ### Audit events
 
-Recording requires a running audit pipeline (an enabled `AuditConfig`).
-Recording events are delivered synchronously to every sink. The target never
+Recording requires a running audit pipeline: an enabled `AuditConfig` with at
+least one sink that confirms delivery (webhook or Kafka; log and chat sinks do
+not). Recording events are delivered synchronously to every sink. The target never
 runs unless the `terminal_recording_started` event was delivered, and list and
 replay return `503` without data unless their `terminal_recording_accessed`
 event was delivered. Without a pipeline, or when an `AuditConfig` event-type
 filter excludes these events, the endpoints return `503`. Retained evidence
-therefore always has an audit index. Delivery failures of `finalized` and
-`failed` events, which happen after the stream ran, are logged. Events of one request
+therefore always has an audit index. A start whose event cannot be delivered
+releases its evidence reservation. Because delivery can take seconds, stream
+authority is checked again after the start event and reader authority after
+the access event, before anything runs or is returned. Delivery failures of
+`finalized` and `failed` events, which happen after the stream ran, are logged. Events of one request
 share its correlation ID and never contain terminal bytes:
 
 | Event | When | Details |
