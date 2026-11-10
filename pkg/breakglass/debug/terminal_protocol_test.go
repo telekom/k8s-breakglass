@@ -128,7 +128,7 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	req.Header.Set(TerminalProtocolHeader, TerminalProtocolFramed)
 	go func() {
 		_ = EncodeTerminalFrame(inputWriter, TerminalFrameResize, []byte(`{"Width":132,"Height":43}`))
-		time.Sleep(30 * time.Millisecond)
+		time.Sleep(300 * time.Millisecond)
 		_ = EncodeTerminalFrame(inputWriter, TerminalFrameStdin, []byte("typed"))
 		_ = inputWriter.Close()
 	}()
@@ -155,5 +155,6 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	require.Equal(t, "orio", string(directions), "output, resize, input, echo")
 	require.JSONEq(t, `{"width":132,"height":43}`, string(rec.Frames[1].Payload))
 	require.Equal(t, "typed", string(rec.Frames[2].Payload))
-	require.GreaterOrEqual(t, rec.Frames[2].Offset-rec.Frames[1].Offset, 30*time.Millisecond)
+	// The size is recorded when the executor takes it, so allow scheduling slack.
+	require.GreaterOrEqual(t, rec.Frames[2].Offset-rec.Frames[1].Offset, 100*time.Millisecond)
 }
