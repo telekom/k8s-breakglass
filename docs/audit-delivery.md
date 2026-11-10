@@ -69,9 +69,10 @@ events currently held past their retry window.
 
 Memory stays bounded by `queue.size` plus one batch per worker. A synchronous
 Kafka write that times out leaves its records inside the kafka-go writer until
-the writer's own produce attempt ends; until then the sink refuses new writes
-with a retryable error, so retries during an outage do not pile up copies in
-the writer. While the
+the writer's own produce attempt ends. The sink admits one synchronous write
+at a time and keeps that slot until those records complete; other writers wait
+for it within their own deadline (a healthy write holds it only while it
+runs), so retries during an outage do not pile up copies in the writer. While the
 workers hold their batches, new events wait in the sink queue; once it is full
 they are dropped and counted with reason `queue_full` (or, with
 `dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
@@ -83,7 +84,9 @@ during an outage) does not lose the events the old pipeline holds: after up to
 events to the sink with the same AuditConfig and sink name in the new
 pipeline, which counts its own overflow. Events still in the old manager's
 ingress queue (for example with `dropOnFull: false` while a sink queue is
-full) move to the new manager, which routes them through its own sinks. A
+full) move to the new manager, which routes them through its own sinks,
+within one write timeout for the whole handover; events that do not fit by
+then are counted as `shutdown`. A
 replaced pipeline that is itself already closed forwards them along the chain
 of reloads. Only events of a sink that the reload removed are dropped as
 `shutdown`. Retention is in memory: a controller restart or crash

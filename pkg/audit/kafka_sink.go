@@ -136,11 +136,11 @@ type KafkaSink struct {
 	lastError       atomic.Value // stores kafkaSinkError
 	lastSuccessTime atomic.Value // stores time.Time
 
-	// pending counts records of synchronous writes that kafka-go still holds:
-	// WriteMessages returns on context cancellation, but the writer keeps the
-	// submitted batch queued until its own produce attempts complete. New
-	// writes are refused while records are pending, so a retry loop during an
-	// outage cannot pile up copies inside the writer.
+	// slot admits one synchronous write at a time. A write cancelled by its
+	// context leaves its records inside kafka-go until the writer's own
+	// produce attempt ends; the slot stays taken until then (pending reaches
+	// zero), so retries during an outage cannot pile up copies in the writer.
+	slot    chan struct{}
 	pending atomic.Int64
 }
 
@@ -161,9 +161,18 @@ func (b countingBalancer) Balance(msg kafka.Message, partitions ...int) int {
 	return partition
 }
 
-// errKafkaWriterBusy reports that earlier records are still pending inside
-// the kafka-go writer. It is an ordinary, retryable error.
+// errKafkaWriterBusy reports that the caller's context ended while an
+// earlier write, or records it left inside kafka-go, still held the writer.
+// It is an ordinary, retryable error.
 var errKafkaWriterBusy = errors.New("kafka writer still holds records from an earlier write")
+
+// releasePending marks n records of the current write as completed and frees
+// the write slot once none are left.
+func (s *KafkaSink) releasePending(n int64) {
+	if s.pending.Add(-n) == 0 {
+		<-s.slot
+	}
+}
 
 type kafkaSinkError struct {
 	err error
@@ -269,11 +278,12 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		name:   sinkName,
 		writer: writer,
 		logger: logger.Named("kafka-audit"),
+		slot:   make(chan struct{}, 1),
 	}
 	sink.connected.Store(!cfg.Async)
 	if !cfg.Async {
 		writer.Completion = func(messages []kafka.Message, _ error) {
-			sink.pending.Add(-int64(len(messages)))
+			sink.releasePending(int64(len(messages)))
 		}
 	}
 	if cfg.Async {
@@ -722,23 +732,26 @@ func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message
 			err = fmt.Errorf("kafka writer panic: %v", r)
 		}
 	}()
-	if !s.writer.Async {
-		// ponytail: one write in flight per sink, since a write cancelled by
-		// its context leaves its records inside kafka-go. Per-partition
-		// accounting if throughput ever needs concurrent writers.
-		if s.pending.Load() > 0 {
-			return errKafkaWriterBusy
+	if !s.writer.Async && len(messages) > 0 {
+		// ponytail: one synchronous write in flight per sink. A healthy write
+		// holds the slot only while it runs, so other writers wait for it
+		// within their own deadline; per-partition slots if throughput needs
+		// concurrent writers.
+		select {
+		case s.slot <- struct{}{}:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", errKafkaWriterBusy, ctx.Err())
 		}
 		token := &writeToken{}
 		for i := range messages {
 			messages[i].WriterData = token
 		}
-		s.pending.Add(int64(len(messages)))
+		s.pending.Store(int64(len(messages)))
 		defer func() {
 			// kafka-go submits the records only after it balanced all of
 			// them; otherwise no completion callback will release them.
 			if token.balanced.Load() < int64(len(messages)) {
-				s.pending.Add(-int64(len(messages)))
+				s.releasePending(int64(len(messages)))
 			}
 		}()
 	}

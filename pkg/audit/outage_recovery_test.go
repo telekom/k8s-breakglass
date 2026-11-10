@@ -569,10 +569,56 @@ func TestKafkaSinkBoundsRecordsPendingInTheWriter(t *testing.T) {
 	cancel()
 	require.Equal(t, int64(1), sink.pending.Load())
 	for range 20 {
-		require.ErrorIs(t, sink.Write(context.Background(), &Event{ID: "a", Type: EventConfigChanged}), errKafkaWriterBusy)
+		retryCtx, retryCancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+		require.ErrorIs(t, sink.Write(retryCtx, &Event{ID: "a", Type: EventConfigChanged}), errKafkaWriterBusy)
+		retryCancel()
 	}
 	require.Eventually(t, func() bool { return transport.produced.Load() >= 1 }, time.Second, 5*time.Millisecond)
 	require.LessOrEqual(t, transport.produced.Load(), int64(1), "no copies submitted while the first write is pending")
+}
+
+// Concurrent writers that all time out while the broker stalls still leave
+// at most one batch inside kafka-go: the slot is reserved atomically.
+func TestKafkaSinkAdmitsOneWriteAtATime(t *testing.T) {
+	transport := &stalledProduce{release: make(chan struct{})}
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "stalled-concurrent", Brokers: []string{"127.0.0.1:1"}, Topic: "audit", BatchSize: 1}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = transport
+	t.Cleanup(func() { close(transport.release); _ = sink.Close() })
+	var wg sync.WaitGroup
+	for i := range 16 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			_ = sink.Write(ctx, &Event{ID: fmt.Sprint(i), Type: EventConfigChanged})
+		}()
+	}
+	wg.Wait()
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, int64(1), transport.produced.Load())
+	require.Equal(t, int64(1), sink.pending.Load())
+}
+
+// A write that overlaps a healthy write in progress waits for it within its
+// own deadline instead of failing at once, so EmitSync gets its receipt.
+func TestKafkaSinkWaitsForAHealthyWriteInProgress(t *testing.T) {
+	transport := &stalledProduce{release: make(chan struct{})}
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "healthy-overlap", Brokers: []string{"127.0.0.1:1"}, Topic: "audit", BatchSize: 1}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = transport
+	t.Cleanup(func() { _ = sink.Close() })
+	first := make(chan error, 1)
+	go func() { first <- sink.Write(context.Background(), &Event{ID: "background", Type: EventConfigChanged}) }()
+	require.Eventually(t, func() bool { return transport.produced.Load() == 1 }, time.Second, 5*time.Millisecond)
+	second := make(chan error, 1)
+	go func() { second <- sink.Write(context.Background(), &Event{ID: "receipt", Type: EventAccessDenied}) }()
+	time.Sleep(20 * time.Millisecond)
+	close(transport.release) // the broker answers
+	require.NoError(t, <-first)
+	require.NoError(t, <-second)
+	require.Zero(t, sink.pending.Load())
 }
 
 // Records kafka-go never submitted (here: a metadata error before
@@ -584,6 +630,7 @@ func TestKafkaSinkReleasesRecordsThatWereNeverSubmitted(t *testing.T) {
 	t.Cleanup(func() { _ = sink.Close() })
 	require.Error(t, sink.Write(context.Background(), &Event{ID: "x", Type: EventConfigChanged}))
 	require.Zero(t, sink.pending.Load())
+	require.Empty(t, sink.slot, "the write slot is free again")
 }
 
 // failingTransport fails every request, like an unreachable broker.
@@ -644,4 +691,34 @@ func TestManagerHandsPendingIngressToTheReplacement(t *testing.T) {
 	// events still in ingress reach the replacement.
 	require.Eventually(t, func() bool { return delivered.Load() == 4 }, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, before, testutil.ToFloat64(shutdown))
+}
+
+// The handover of a retiring manager shares one deadline: when the
+// replacement's ingress stays full, the rest is counted as "shutdown" once
+// the budget is spent instead of waiting one write timeout per event.
+func TestManagerHandOverSharesOneDeadline(t *testing.T) {
+	oldCfg := DefaultManagerConfig()
+	oldCfg.WriteTimeout = 200 * time.Millisecond
+	old := NewManager(contextBlockedSink{}, oldCfg, zap.NewNop())
+	t.Cleanup(func() { _ = old.Close() })
+	// The replacement's ingress holds one event and its worker is blocked.
+	nextCfg := DefaultManagerConfig()
+	nextCfg.WorkerCount, nextCfg.QueueSize, nextCfg.BatchSize = 1, 1, 1
+	nextCfg.WriteTimeout = time.Minute
+	next := NewManager(contextBlockedSink{}, nextCfg, zap.NewNop())
+	t.Cleanup(func() { _ = next.Close() })
+	old.HandOver(next)
+	events := make([]*Event, 20)
+	for i := range events {
+		events[i] = &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}
+	}
+	shutdown := metrics.AuditEventsDropped.WithLabelValues(contextBlockedSink{}.Name(), "shutdown")
+	before := testutil.ToFloat64(shutdown)
+	start := time.Now()
+	old.shutdownDrop(events[:10])
+	old.shutdownDrop(events[10:]) // a second worker batch shares the budget
+	require.Less(t, time.Since(start), time.Second, "one handover budget, not one write timeout per event")
+	accepted := 20 - int(testutil.ToFloat64(shutdown)-before)
+	require.LessOrEqual(t, accepted, 2, "only the replacement's capacity is handed over")
+	require.Positive(t, accepted)
 }
