@@ -198,6 +198,46 @@ bgctl debug kubectl node-debug SESSION_NAME \
   --node worker-1
 ```
 
+### Ephemeral Container Security Context
+
+`inject` reads the session's resolved template and sends a security context
+that satisfies it, so restricted templates need no extra flags:
+
+- Always: `allowPrivilegeEscalation: false`.
+- When the template sets `requireNonRoot` (the default): also
+  `runAsNonRoot: true`, `runAsUser: 65534`, `capabilities.drop: [ALL]` and
+  `seccompProfile.type: RuntimeDefault`.
+
+Fields set in the template's `kubectlDebug.ephemeralContainers.securityContext`
+still replace the requested values on the server.
+
+| Flag | Description |
+|------|-------------|
+| `--run-as-non-root` | Set `runAsNonRoot` |
+| `--run-as-user` | Set `runAsUser` (replaces the default `65534`) |
+| `--run-as-group` | Set `runAsGroup` |
+| `--allow-privilege-escalation` | Set `allowPrivilegeEscalation` (default `false`) |
+| `--add-capabilities` | Capabilities to add, e.g. `NET_RAW,NET_ADMIN`; must be within the template's `maxCapabilities` |
+| `--drop-capabilities` | Capabilities to drop; replaces the default `ALL` |
+| `--security-context-file` | YAML or JSON `securityContext`, sent as is without defaults; cannot be combined with the flags above |
+| `--default-security-context=false` | Opt out of the defaults and send only the fields set by flags (the previous behaviour) |
+
+```bash
+# Non-root template: no flags needed
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1
+
+# Root template that allows NET_RAW
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1 --run-as-user 0 --run-as-non-root=false \
+  --drop-capabilities ALL --add-capabilities NET_RAW
+```
+
+When the template rejects the request, `bgctl` prints the template's
+ephemeral-container policy and the security context it sent, so you can see
+which flag to change. `copy-pod` and `node-debug` take their container security
+context from the template only; the API has no request field for it.
+
 ## Watch Mode
 
 Watch for real-time session state changes (polling-based, 2-second interval by default):
@@ -406,7 +446,7 @@ bgctl debug kubectl inject DEBUG_SESSION_NAME \
   --namespace production \
   --pod api-7d9c4f8b-xkj2p \
   --image alpine:3.20 \
-  --container-name debug
+  --container debug
 
 # Then use kubectl exec to attach
 kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
