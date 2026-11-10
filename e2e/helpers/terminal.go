@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -99,12 +100,17 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 	req.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
 	output := make(chan string, 64)
+	// Every exit ends the output stream so interaction callbacks never hang.
+	var closeOutput sync.Once
+	defer closeOutput.Do(func() { close(output) })
 	interactErr := make(chan error, 1)
 	go func() {
 		var err error
 		if request.Interact != nil {
 			err = request.Interact(output, stdinWriter)
 		}
+		// Typing is done: end stdin so input-consuming commands can finish.
+		_ = stdinWriter.Close()
 		interactErr <- err
 	}()
 	// No client timeout: the stream lasts as long as the remote command.
@@ -137,7 +143,7 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 			break
 		}
 	}
-	close(output)
+	closeOutput.Do(func() { close(output) })
 	select {
 	case err := <-interactErr:
 		if err != nil {

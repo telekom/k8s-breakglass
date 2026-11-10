@@ -173,7 +173,11 @@ spec:
 		rotated := make(chan struct{})
 		go func() {
 			defer close(rotated)
-			<-started
+			select {
+			case <-started:
+			case <-ctx.Done():
+				return
+			}
 			var secret corev1.Secret
 			if err := s.Client.Get(ctx, secretKey, &secret); err != nil {
 				t.Errorf("read credential secret: %v", err)
@@ -194,13 +198,12 @@ spec:
 			Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 			Command: []string{"sh", "-c", `echo ready; sleep 90; echo not-aborted`},
 			Interact: func(output <-chan string, _ io.Writer) error {
+				defer close(started)
 				for chunk := range output {
 					if strings.Contains(chunk, "ready") {
-						close(started)
 						return nil
 					}
 				}
-				close(started)
 				return fmt.Errorf("stream ended before it was ready")
 			},
 		})

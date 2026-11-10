@@ -371,7 +371,8 @@ func (p *ClientProvider) capturePrivilegedInputVersionsWithReader(ctx context.Co
 // PrivilegedCredentialIdentity returns the live UID and resourceVersion of
 // the primary hub Secret that authenticates the controller to cc's target
 // cluster: the kubeconfig Secret, else the OIDC client or refresh-token
-// Secret (directly configured or inherited from an IdentityProvider).
+// Secret (directly configured, or for oidcFromIdentityProvider the explicit
+// Secrets or the IdentityProvider's Keycloak service-account Secret).
 // ClusterConfigs without such a Secret return an error so callers that bind
 // readiness to a credential identity fail closed.
 func (p *ClientProvider) PrivilegedCredentialIdentity(ctx context.Context, cc *breakglassv1alpha1.ClusterConfig) (types.UID, string, error) {
@@ -385,6 +386,17 @@ func (p *ClientProvider) PrivilegedCredentialIdentity(ctx context.Context, cc *b
 	}
 	if ref := cc.Spec.OIDCFromIdentityProvider; ref != nil {
 		candidates = append(candidates, ref.ClientSecretRef, ref.RefreshTokenSecretRef)
+		if ref.ClientSecretRef == nil && ref.RefreshTokenSecretRef == nil {
+			// The OIDC resolver falls back to the IdentityProvider's Keycloak
+			// service-account Secret; bind readiness to that Secret too.
+			idp := &breakglassv1alpha1.IdentityProvider{}
+			if err := p.liveReaderOrClient().Get(ctx, ctrlclient.ObjectKey{Name: ref.Name}, idp); err != nil {
+				return "", "", fmt.Errorf("get referenced IdentityProvider %s: %w", ref.Name, err)
+			}
+			if idp.Spec.Keycloak != nil {
+				candidates = append(candidates, &idp.Spec.Keycloak.ClientSecretRef)
+			}
+		}
 	}
 	for _, ref := range candidates {
 		if ref == nil || ref.Name == "" {
