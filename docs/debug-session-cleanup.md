@@ -22,9 +22,13 @@ If a spoke API call fails, the controller retains the residual identities and
 requeues DebugSession reconciliation. It also sets the durable
 `CleanupFailed=True` condition with reason `CleanupFailed` and a bounded list
 of residual identities. The condition is cleared with reason
-`CleanupRecovered` only after a later attempt has observed the inventory gone;
-the failure event is emitted once per failed attempt without exposing raw API
-errors or credentials. A missing
+`CleanupRecovered` only after a later attempt has observed the inventory gone.
+The `debug_session.cleanup_failed` audit event is emitted when cleanup starts
+failing and again only when the set of residual identities changes, never with
+raw API errors or credentials; `debug_session.cleanup_recovered` is the final
+event. Failed cleanup is retried with bounded exponential backoff: the delay
+equals the time since `CleanupFailed` became `True`, clamped between 5 seconds
+and 5 minutes, so it survives controller restarts and resets on recovery. A missing
 `ClusterConfig`, REST configuration, or target client is a retryable outage,
 not proof that cleanup completed. A `NotFound` response is treated as
 successful cleanup. The delete request is UID-preconditioned and followed by a
@@ -78,3 +82,49 @@ authorization bookkeeping. Concurrently added entries survive the merge and retr
 spoke identities and unresolved create intents remain protected.
 
 Cleanup evidence deduplicates the normalized, length-limited identities actually reported. Once the 16-entry report is full, further inventory entries do not grow the evidence identity set. Durable resource inventory remains unchanged.
+
+## Kinds the target cluster does not serve
+
+A template can render an auxiliary resource whose API the target cluster does
+not serve, for example a Kyverno `PolicyException` on a management cluster
+without Kyverno. Such an object cannot exist: the client rejects the request
+with a RESTMapper `NoMatch` before it reaches the API server, and removing a
+CRD deletes its objects. The controller therefore handles it as follows:
+
+- **Activation preflight.** Before the first target write (including target
+  namespace creation), every enabled auxiliary resource with
+  `failurePolicy: Fail` is rendered and its exact API version is resolved on
+  the target. If one is not served, the session fails at once with a message
+  such as `auxiliary resource "policy-exception" requires
+  policies.kyverno.io/v1 PolicyException, which target cluster "mgmt" does not
+  serve; install the API on the target or remove the resource from the
+  template`. Nothing is applied. Optional (`Ignore`/`Warn`) resources are not
+  preflighted; their create fails definitively and follows their policy.
+- **Create.** A client-side `NoMatch` counts as a definitive rejection, like
+  an API `Invalid` or `Forbidden` response, so the persisted create intent is
+  retired instead of being left unresolved.
+- **Cleanup.** When reading, deleting, or resolving an unresolved create intent
+  for an auxiliary, pod-template, or deployed resource fails with `NoMatch` (or
+  a discovery error in which every group-version is `NotFound`), the controller
+  also checks that **no** version of that group/kind is served. If none is, the
+  entry is treated as already deleted: it is logged once at info level, marked
+  `deleted` and its `error` field records `target cluster does not serve
+  <apiVersion> <kind>; nothing can exist to delete`. The
+  `breakglass_auxiliary_resource_cleanups_total` counter uses
+  `status="not_served"` for these entries. A kind that is still served at
+  another version, or a transient discovery failure, stays a retryable
+  residual.
+
+### Transitional opt-outs
+
+Both behaviours are on by default. Each can be turned off with a flag on the
+controller. The flags are escape hatches and may be removed in a later
+release:
+
+| Flag | Environment | Restores |
+|------|-------------|----------|
+| `--disable-debug-session-unserved-kind-handling` | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` | No activation preflight; cleanup retries entries of unserved kinds indefinitely. |
+| `--disable-debug-session-cleanup-backoff` | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` | Fixed 5-second cleanup retries and one `debug_session.cleanup_failed` event per failed attempt. |
+
+The `NoMatch` create classification is not gated: it only records that a
+request which never left the client created nothing.

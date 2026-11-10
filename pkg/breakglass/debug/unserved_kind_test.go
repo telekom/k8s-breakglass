@@ -1,0 +1,296 @@
+// SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+// SPDX-License-Identifier: Apache-2.0
+
+package debug
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"go.uber.org/zap"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+)
+
+var policyExceptionGVK = schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v1", Kind: "PolicyException"}
+
+func policyExceptionNoMatch() error {
+	return &meta.NoKindMatchError{GroupKind: policyExceptionGVK.GroupKind(), SearchedVersions: []string{"v1"}}
+}
+
+// unservedTarget is a target whose RESTMapper does not know PolicyException
+// and whose reads and deletes of it fail as a real client would: with NoMatch
+// before any request reaches the API server.
+func unservedTarget(t *testing.T, funcs interceptor.Funcs) client.Client {
+	t.Helper()
+	isPolicyException := func(obj client.Object) bool {
+		return obj.GetObjectKind().GroupVersionKind() == policyExceptionGVK
+	}
+	get, del, create := funcs.Get, funcs.Delete, funcs.Create
+	funcs.Get = func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		if isPolicyException(obj) {
+			return policyExceptionNoMatch()
+		}
+		if get != nil {
+			return get(ctx, cl, key, obj, opts...)
+		}
+		return cl.Get(ctx, key, obj, opts...)
+	}
+	funcs.Delete = func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
+		if isPolicyException(obj) {
+			return policyExceptionNoMatch()
+		}
+		if del != nil {
+			return del(ctx, cl, obj, opts...)
+		}
+		return cl.Delete(ctx, obj, opts...)
+	}
+	funcs.Create = func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+		if isPolicyException(obj) {
+			return policyExceptionNoMatch()
+		}
+		if create != nil {
+			return create(ctx, cl, obj, opts...)
+		}
+		return cl.Create(ctx, obj, opts...)
+	}
+	funcs.List = func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if list.GetObjectKind().GroupVersionKind() == policyExceptionGVK.GroupVersion().WithKind("PolicyExceptionList") {
+			return policyExceptionNoMatch()
+		}
+		return cl.List(ctx, list, opts...)
+	}
+	return fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(funcs).Build()
+}
+
+func TestIsKindNotServedError(t *testing.T) {
+	gv := schema.GroupVersion{Group: "policies.kyverno.io", Version: "v1"}
+	notFound := apierrors.NewNotFound(schema.GroupResource{Group: gv.Group}, gv.String())
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"nil":            {nil, false},
+		"generic":        {errors.New("connection refused"), false},
+		"not found":      {notFound, false},
+		"no kind match":  {policyExceptionNoMatch(), true},
+		"wrapped match":  {fmt.Errorf("get: %w", policyExceptionNoMatch()), true},
+		"no resource":    {&meta.NoResourceMatchError{PartialResource: gv.WithResource("policyexceptions")}, true},
+		"discovery 404":  {&apiutil.ErrResourceDiscoveryFailed{gv: notFound}, true},
+		"discovery 503":  {&apiutil.ErrResourceDiscoveryFailed{gv: notFound, {Group: "other", Version: "v1"}: apierrors.NewServiceUnavailable("down")}, false},
+		"discovery none": {&apiutil.ErrResourceDiscoveryFailed{}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isKindNotServedError(tc.err))
+		})
+	}
+}
+
+func TestTargetKindNotServedRequiresVersionAgnosticProof(t *testing.T) {
+	empty := fake.NewClientBuilder().WithScheme(Scheme).Build()
+	assert.True(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+	assert.False(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", nil), "no operation error is no proof")
+	assert.False(t, targetKindNotServed(empty, "policies.kyverno.io/v1", "PolicyException", errors.New("timeout")))
+	assert.False(t, targetKindNotServed(nil, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+	assert.False(t, targetKindNotServed(empty, "a/b/c", "PolicyException", policyExceptionNoMatch()))
+
+	// The kind is still served at another version: objects may exist there.
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{{Group: "policies.kyverno.io", Version: "v2"}})
+	mapper.Add(schema.GroupVersionKind{Group: "policies.kyverno.io", Version: "v2", Kind: "PolicyException"}, meta.RESTScopeNamespace)
+	otherVersion := fake.NewClientBuilder().WithScheme(Scheme).WithRESTMapper(mapper).Build()
+	assert.False(t, targetKindNotServed(otherVersion, "policies.kyverno.io/v1", "PolicyException", policyExceptionNoMatch()))
+}
+
+func unresolvedPolicyExceptionSession() *breakglassv1alpha1.DebugSession {
+	return &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "unserved", Namespace: "ns", UID: "session-uid"},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "mgmt"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateFailed,
+			AuxiliaryResourceStatuses: []breakglassv1alpha1.AuxiliaryResourceStatus{{
+				Name: "policy-exception", Category: "policy-exceptions",
+				APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException",
+				Namespace: "breakglass-debug", ResourceName: "unserved-exception",
+				Created: true, CreateOperationID: "op-1",
+			}},
+		},
+	}
+}
+
+func TestCleanupAuxiliaryResourcesTreatsUnservedKindAsAbsent(t *testing.T) {
+	t.Run("unresolved intent", func(t *testing.T) {
+		session := unresolvedPolicyExceptionSession()
+		require.NoError(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
+		status := session.Status.AuxiliaryResourceStatuses[0]
+		assert.True(t, status.Deleted)
+		assert.NotNil(t, status.DeletedAt)
+		assert.Contains(t, status.Error, "does not serve policies.kyverno.io/v1 PolicyException")
+		assert.False(t, auxiliaryStatusHasCleanupResidual(session, status))
+	})
+	t.Run("recorded object and child", func(t *testing.T) {
+		session := unresolvedPolicyExceptionSession()
+		session.Status.AuxiliaryResourceStatuses[0].UID = "recorded-uid"
+		session.Status.AuxiliaryResourceStatuses[0].AdditionalResources = []breakglassv1alpha1.AdditionalResourceRef{
+			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "child", UID: "child-uid"},
+			{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", ResourceName: "unresolved-child", CreateOperationID: "op-2"},
+		}
+		require.NoError(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
+		status := session.Status.AuxiliaryResourceStatuses[0]
+		assert.True(t, status.Deleted)
+		for _, child := range status.AdditionalResources {
+			assert.True(t, child.Deleted, child.ResourceName)
+			assert.Contains(t, child.Error, "does not serve")
+		}
+	})
+	t.Run("opt-out keeps retrying", func(t *testing.T) {
+		session := unresolvedPolicyExceptionSession()
+		mgr := newTestAuxiliaryResourceManager()
+		mgr.disableUnservedKindHandling = true
+		require.Error(t, mgr.CleanupAuxiliaryResources(context.Background(), session, unservedTarget(t, interceptor.Funcs{})))
+		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	})
+	t.Run("transient failure keeps retrying", func(t *testing.T) {
+		session := unresolvedPolicyExceptionSession()
+		session.Status.AuxiliaryResourceStatuses[0].UID = "recorded-uid"
+		target := fake.NewClientBuilder().WithScheme(Scheme).WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+				return apierrors.NewServiceUnavailable("apiserver unavailable")
+			},
+		}).Build()
+		require.Error(t, newTestAuxiliaryResourceManager().CleanupAuxiliaryResources(context.Background(), session, target))
+		assert.False(t, session.Status.AuxiliaryResourceStatuses[0].Deleted)
+	})
+}
+
+func TestUnservedKindCreateIsDefinitiveRejection(t *testing.T) {
+	session := unresolvedPolicyExceptionSession()
+	session.Status.AuxiliaryResourceStatuses = nil
+	obj := &unstructured.Unstructured{}
+	obj.SetGroupVersionKind(policyExceptionGVK)
+	obj.SetName("exception")
+	obj.SetNamespace("breakglass-debug")
+	err := applyOrRecoverAuxiliaryResource(context.Background(), unservedTarget(t, interceptor.Funcs{}), obj, session, "policy-exception")
+	var rejected *auxiliaryCreateRejectedError
+	require.ErrorAs(t, err, &rejected)
+
+	tracked := obj.DeepCopy()
+	err = recoverTrackedCreateResult(context.Background(), unservedTarget(t, interceptor.Funcs{}), tracked, session, policyExceptionNoMatch())
+	assert.True(t, isTrackedCreateRejected(err))
+}
+
+func TestPreflightAuxiliaryKinds(t *testing.T) {
+	session := unresolvedPolicyExceptionSession()
+	session.Status = breakglassv1alpha1.DebugSessionStatus{}
+	exception := breakglassv1alpha1.AuxiliaryResource{
+		Name: "policy-exception", Category: "policy-exceptions",
+		TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ .session.name }}\n",
+	}
+	configMap := breakglassv1alpha1.AuxiliaryResource{Name: "config", Category: "config", TemplateString: "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: config\n"}
+	spec := func(resources ...breakglassv1alpha1.AuxiliaryResource) *breakglassv1alpha1.DebugSessionTemplateSpec {
+		return &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: resources, RequiredAuxiliaryResourceCategories: []string{"policy-exceptions", "config"}}
+	}
+	target := unservedTarget(t, interceptor.Funcs{})
+
+	err := newTestAuxiliaryResourceManager().PreflightAuxiliaryKinds(context.Background(), session, spec(configMap, exception), nil, target, "breakglass-debug")
+	require.ErrorIs(t, err, errAuxiliaryKindNotServed)
+	assert.Contains(t, err.Error(), `auxiliary resource "policy-exception" requires policies.kyverno.io/v1 PolicyException, which target cluster "mgmt" does not serve`)
+
+	require.NoError(t, newTestAuxiliaryResourceManager().PreflightAuxiliaryKinds(context.Background(), session, spec(configMap), nil, target, "breakglass-debug"))
+
+	optional := exception
+	optional.FailurePolicy = breakglassv1alpha1.AuxiliaryResourceFailurePolicyIgnore
+	require.NoError(t, newTestAuxiliaryResourceManager().PreflightAuxiliaryKinds(context.Background(), session, spec(optional), nil, target, "breakglass-debug"),
+		"optional resources fail definitively at create and follow their policy")
+
+	disabled := newTestAuxiliaryResourceManager()
+	disabled.disableUnservedKindHandling = true
+	require.NoError(t, disabled.PreflightAuxiliaryKinds(context.Background(), session, spec(exception), nil, target, "breakglass-debug"))
+}
+
+func TestActivationFailsBeforeTargetWriteWhenRequiredKindIsNotServed(t *testing.T) {
+	c, ds, template, _ := newDeploymentFenceFixture(t)
+	c.auxiliaryMgr = newTestAuxiliaryResourceManager()
+	writes := 0
+	target := unservedTarget(t, interceptor.Funcs{
+		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			writes++
+			return cl.Create(ctx, obj, opts...)
+		},
+	})
+	c.targetClientFactory = func(_ *rest.Config) (client.Client, error) { return target, nil }
+	template.Spec.RequiredAuxiliaryResourceCategories = []string{"policy-exceptions"}
+	template.Spec.AuxiliaryResources = []breakglassv1alpha1.AuxiliaryResource{{
+		Name: "policy-exception", Category: "policy-exceptions", CreateBefore: ptrBool(true),
+		TemplateString: "apiVersion: policies.kyverno.io/v1\nkind: PolicyException\nmetadata:\n  name: {{ .session.name }}\n",
+	}}
+	err := c.deployDebugResources(context.Background(), ds, template)
+	require.ErrorIs(t, err, errAuxiliaryKindNotServed)
+	assert.Zero(t, writes, "preflight must fail before any target write")
+	assert.Empty(t, ds.Status.AuxiliaryResourceStatuses)
+	assert.Empty(t, ds.Status.DeployedResources)
+}
+
+func TestCleanupRetryAfterBacksOffExponentially(t *testing.T) {
+	failing := func(since time.Duration) *breakglassv1alpha1.DebugSession {
+		ds := &breakglassv1alpha1.DebugSession{}
+		ds.SetCondition(metav1.Condition{Type: string(breakglassv1alpha1.DebugSessionConditionCleanupFailed), Status: metav1.ConditionTrue, Reason: "CleanupFailed", LastTransitionTime: metav1.NewTime(time.Now().Add(-since))})
+		return ds
+	}
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	assert.Equal(t, ExpiredSessionRequeue, c.cleanupRetryAfter(&breakglassv1alpha1.DebugSession{}))
+	assert.Equal(t, ExpiredSessionRequeue, c.cleanupRetryAfter(failing(time.Second)))
+	assert.InDelta(t, float64(time.Minute), float64(c.cleanupRetryAfter(failing(time.Minute))), float64(time.Second))
+	assert.Equal(t, MaxCleanupRetryBackoff, c.cleanupRetryAfter(failing(time.Hour)))
+	assert.Equal(t, ExpiredSessionRequeue, c.WithCleanupBackoff(false).cleanupRetryAfter(failing(time.Hour)))
+}
+
+func TestCleanupFailedAuditIsEmittedOncePerResidualSet(t *testing.T) {
+	run := func(t *testing.T, backoff bool) int {
+		session := &breakglassv1alpha1.DebugSession{
+			ObjectMeta: metav1.ObjectMeta{Name: "audit-dedup", Namespace: "ns", UID: "uid"},
+			Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "cluster"},
+			Status: breakglassv1alpha1.DebugSessionStatus{
+				State:             breakglassv1alpha1.DebugSessionStateTerminated,
+				DeployedResources: []breakglassv1alpha1.DeployedResourceRef{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: "residual", UID: "residual-uid"}},
+			},
+		}
+		hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(session).Build()
+		sink := &cleanupAuditCaptureSink{}
+		auditManager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+		// No cluster provider: every attempt fails with the same residual.
+		c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(auditManager).WithCleanupBackoff(backoff)
+		for range 3 {
+			require.Error(t, c.cleanupResources(context.Background(), session))
+		}
+		// A new residual is a distinct failure and is reported again.
+		require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(session), session))
+		session.Status.DeployedResources = append(session.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{APIVersion: "v1", Kind: "ConfigMap", Namespace: "target", Name: "second", UID: "second-uid"})
+		require.NoError(t, hub.Status().Update(context.Background(), session))
+		require.Error(t, c.cleanupResources(context.Background(), session))
+		require.NoError(t, auditManager.Close())
+		failed := 0
+		for _, event := range sink.Events() {
+			if event.Type == audit.EventDebugSessionCleanupFailed {
+				failed++
+			}
+		}
+		return failed
+	}
+	assert.Equal(t, 2, run(t, true), "one event per distinct residual set")
+	assert.Equal(t, 4, run(t, false), "opt-out restores one event per failed attempt")
+}

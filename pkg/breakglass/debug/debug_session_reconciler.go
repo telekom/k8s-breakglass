@@ -118,6 +118,31 @@ type DebugSessionController struct {
 	beforeDebugTargetWrite func(string)
 	recordingArtifacts     *backend.Service
 	recordingConnections   TerminalRecordingConnectionProvider
+	// Transitional opt-outs for #1663; see WithUnservedKindHandling and
+	// WithCleanupBackoff.
+	disableUnservedKindHandling bool
+	disableCleanupBackoff       bool
+}
+
+// WithUnservedKindHandling controls whether cleanup treats resources of kinds
+// the target does not serve as already absent and whether activation
+// preflights required auxiliary kinds. Enabled by default; disabling restores
+// the previous retry-forever behaviour and is a transitional escape hatch.
+func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSessionController {
+	c.disableUnservedKindHandling = !enabled
+	if c.auxiliaryMgr != nil {
+		c.auxiliaryMgr.disableUnservedKindHandling = !enabled
+	}
+	return c
+}
+
+// WithCleanupBackoff controls exponential cleanup retry backoff and
+// cleanup_failed audit deduplication. Enabled by default; disabling restores a
+// fixed retry interval with one audit event per failed attempt and is a
+// transitional escape hatch.
+func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionController {
+	c.disableCleanupBackoff = !enabled
+	return c
 }
 
 // WithTerminalRecordingArtifacts configures the shared artifact backend used by
@@ -797,12 +822,13 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 
 	if hasTrackedSpokeResources(ds) || cleanupConditionFailed(ds) {
 		if err := c.cleanupResources(ctx, ds); err != nil {
+			retryAfter := c.cleanupRetryAfter(ds)
 			log.Warnw("Retrying cleanup of spoke resources for a failed debug session",
-				"error", err)
+				"error", err, "retryAfter", retryAfter)
 			// Requeue rather than returning the error: the reason for the failure is
 			// already recorded in status and a hard error would only add log noise on a
 			// path that is expected to retry.
-			return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+			return ctrl.Result{RequeueAfter: retryAfter}, nil
 		}
 	}
 
@@ -811,7 +837,7 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	// session is not yet safe to abandon.
 	if hasTrackedSpokeResources(ds) {
 		log.Warnw("Cleanup reported success but spoke resources are still tracked; will retry")
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		return ctrl.Result{RequeueAfter: c.cleanupRetryAfter(ds)}, nil
 	}
 	if c.connectionLeases != nil {
 		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
@@ -826,6 +852,23 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	}
 	releaseSessionMetricSeries(ds.Name)
 	return ctrl.Result{}, nil
+}
+
+// MaxCleanupRetryBackoff bounds the delay between failed cleanup attempts.
+const MaxCleanupRetryBackoff = 5 * time.Minute
+
+// cleanupRetryAfter returns the delay before the next failed-cleanup attempt.
+// The delay equals the time cleanup has been failing (CleanupFailed=True
+// since LastTransitionTime), clamped to [ExpiredSessionRequeue,
+// MaxCleanupRetryBackoff], so each retry roughly doubles the gap.
+// ponytail: derived from the persisted condition instead of an attempt
+// counter; a controller restart keeps the backoff, a recovery resets it.
+func (c *DebugSessionController) cleanupRetryAfter(ds *breakglassv1alpha1.DebugSession) time.Duration {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+	if c.disableCleanupBackoff || condition == nil || condition.Status != metav1.ConditionTrue || condition.LastTransitionTime.IsZero() {
+		return ExpiredSessionRequeue
+	}
+	return min(max(time.Since(condition.LastTransitionTime.Time), ExpiredSessionRequeue), MaxCleanupRetryBackoff)
 }
 
 // hasTrackedSpokeResources reports whether the session status still references
@@ -896,9 +939,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 	}
 
 	if err := c.cleanupResources(ctx, ds); err != nil {
-		log.Errorw("Failed to cleanup debug session resources", "error", err)
-		// Requeue to retry cleanup
-		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
+		retryAfter := c.cleanupRetryAfter(ds)
+		log.Errorw("Failed to cleanup debug session resources", "error", err, "retryAfter", retryAfter)
+		return ctrl.Result{RequeueAfter: retryAfter}, nil
 	}
 	if c.connectionLeases != nil {
 		if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {

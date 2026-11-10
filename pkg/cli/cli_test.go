@@ -444,3 +444,21 @@ func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
 		})
 	}
 }
+
+func TestParse_DebugSessionCleanupOptOuts(t *testing.T) {
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "")
+	cfg := parseWithArgs(t, []string{})
+	assert.False(t, cfg.DisableDebugSessionUnservedKindHandling, "unserved-kind handling is on by default")
+	assert.False(t, cfg.DisableDebugSessionCleanupBackoff, "cleanup backoff is on by default")
+
+	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff"})
+	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
+	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
+
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "true")
+	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "true")
+	cfg = parseWithArgs(t, []string{})
+	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
+	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
+}

@@ -531,12 +531,18 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	wasCleanupFailed := cleanupConditionFailed(ds)
 	finishCleanup := func(operationErr error) error {
 		setCleanupCondition(ds)
-		liveWasFailed := false
-		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &liveWasFailed)
+		var previous metav1.Condition
+		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &previous)
+		liveWasFailed := previous.Status == metav1.ConditionTrue
 		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				if cleanupConditionFailed(ds) {
-					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+					// The condition message names the residual set. Emit once per
+					// distinct set rather than on every retry (#1663); the
+					// recovered event below is the final event.
+					if c.disableCleanupBackoff || !liveWasFailed || previous.Message != ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Message {
+						auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+					}
 				} else if liveWasFailed {
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 				}
@@ -575,7 +581,9 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 		cleanupErrors = append(cleanupErrors, err)
 	}
 
-	if !cleanupNeedsTargetCluster(ds) {
+	// Unresolved create intents normally need no target round trip, but the
+	// target may prove them absent by not serving their kind (#1663).
+	if !cleanupNeedsTargetCluster(ds) && (c.disableUnservedKindHandling || !hasUnresolvedCleanupIntent(ds)) {
 		// AllowedPods are authorization references, not spoke resources. Remove
 		// this attempt's baseline refs while the status merge retains newer refs.
 		ds.Status.AllowedPods = nil
@@ -634,6 +642,12 @@ const (
 	maxCleanupIdentityLength     = 256
 	maxCleanupConditionMessage   = 1024
 )
+
+// kindNotServed reports whether opErr lets cleanup treat apiVersion/kind as
+// absent because the target serves no version of it.
+func (c *DebugSessionController) kindNotServed(target ctrlclient.Client, apiVersion, kind string, opErr error) bool {
+	return !c.disableUnservedKindHandling && targetKindNotServed(target, apiVersion, kind, opErr)
+}
 
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
@@ -776,13 +790,16 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 	return c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, observed, nil)
 }
 
-func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, wasFailed *bool) error {
+// patchDebugSessionCleanupStatusWithTransition stores into previous (when
+// non-nil) the live CleanupFailed condition observed before the patch, or the
+// zero condition when none existed.
+func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
 		cleanupBaseline = *baseline
 	}
-	var previouslyFailed bool
+	var previousCondition metav1.Condition
 	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -790,7 +807,10 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 				return false, fmt.Errorf("debug session UID changed while patching cleanup status: expected %q, got %q", ds.UID, current.UID)
 			}
 
-			previouslyFailed = cleanupConditionFailed(current)
+			previousCondition = metav1.Condition{}
+			if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+				previousCondition = *condition
+			}
 			current.Status.DeployedResources = mergeCleanupInventory(
 				cleanupBaseline.DeployedResources, desiredStatus.DeployedResources, current.Status.DeployedResources,
 				deployedResourceKey,
@@ -824,8 +844,8 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 		return fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
 
-	if wasFailed != nil {
-		*wasFailed = previouslyFailed
+	if previous != nil {
+		*previous = previousCondition
 	}
 	ds.Status = patched.Status
 	ds.ResourceVersion = patched.ResourceVersion
@@ -1265,6 +1285,11 @@ func (c *DebugSessionController) cleanupDeployedResources(
 				log.Debugw("Debug resource already deleted", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
 				continue
 			}
+			if c.kindNotServed(targetClient, ref.APIVersion, ref.Kind, err) {
+				log.Infow("Debug resource kind is not served by the target cluster; treating it as already deleted",
+					"apiVersion", ref.APIVersion, "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace)
+				continue
+			}
 			log.Warnw("Failed to delete debug resource", "kind", ref.Kind, "name", ref.Name, "namespace", ref.Namespace, "error", err)
 			remainingDeployedResources = append(remainingDeployedResources, ref)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("delete debug resource %s %s/%s: %w", ref.Kind, ref.Namespace, ref.Name, err))
@@ -1417,6 +1442,12 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 		// retry rather than looking up a same-name replacement. A recorded UID
 		// is enough to continue cleanup safely even if Created was not persisted.
 		if status.UID == "" && (!status.Created || status.CreateOperationID != "") {
+			if !c.disableUnservedKindHandling && probeKindNotServed(ctx, targetClient, status.APIVersion, status.Kind, status.Namespace, status.ResourceName) {
+				// Dropped from the inventory like a confirmed deletion.
+				log.Infow("Pod template resource kind is not served by the target cluster; treating its unresolved create as absent",
+					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
+				continue
+			}
 			status.Error = "creation outcome unresolved; cleanup retry required"
 			remainingStatuses = append(remainingStatuses, *status)
 			cleanupErrors = append(cleanupErrors, fmt.Errorf("pod template resource %s/%s creation outcome is unresolved", status.Namespace, status.ResourceName))
@@ -1449,6 +1480,9 @@ func (c *DebugSessionController) cleanupPodTemplateResources(ctx context.Context
 				log.Debugw("Pod template resource already deleted",
 					"kind", status.Kind,
 					"name", status.ResourceName)
+			} else if c.kindNotServed(targetClient, status.APIVersion, status.Kind, err) {
+				log.Infow("Pod template resource kind is not served by the target cluster; treating it as already deleted",
+					"apiVersion", status.APIVersion, "kind", status.Kind, "name", status.ResourceName, "namespace", status.Namespace)
 			} else {
 				log.Warnw("Failed to delete pod template resource",
 					"kind", status.Kind,

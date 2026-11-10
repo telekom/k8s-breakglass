@@ -799,6 +799,11 @@ func (c *DebugSessionController) deployMaintenance(ctx context.Context, ds *brea
 		return err
 	}
 	defer release()
+	if c.auxiliaryMgr != nil {
+		if err := c.auxiliaryMgr.PreflightAuxiliaryKinds(ctx, ds, ds.Status.ResolvedTemplate, nil, target, breakglassv1alpha1.NodeMaintenanceNamespace); err != nil {
+			return err
+		}
+	}
 	if ds.Status.NodeMaintenance == nil {
 		namespace := &corev1.Namespace{}
 		if err := target.Get(ctx, ctrlclient.ObjectKey{Name: breakglassv1alpha1.NodeMaintenanceNamespace}, namespace); err != nil {

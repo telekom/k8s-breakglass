@@ -49,6 +49,10 @@ type Config struct {
 	DisableEmail            bool
 	DisableSessionRateLimit bool
 
+	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
+	DisableDebugSessionUnservedKindHandling bool
+	DisableDebugSessionCleanupBackoff       bool
+
 	// Interval flags
 	ClusterConfigCheckInterval string
 	EscalationStatusUpdateInt  string
@@ -190,6 +194,12 @@ func Parse() *Config {
 		"Disable email notifications for breakglass session requests")
 	flag.BoolVar(&config.DisableSessionRateLimit, "disable-session-rate-limit", getEnvBool("BREAKGLASS_DISABLE_SESSION_RATE_LIMIT", false),
 		"Disable per-user session creation rate limiting (for testing and development only)")
+	flag.BoolVar(&config.DisableDebugSessionUnservedKindHandling, "disable-debug-session-unserved-kind-handling",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", false),
+		"Transitional escape hatch: retry DebugSession cleanup of resources whose kind the target cluster does not serve instead of treating them as absent, and skip the activation preflight for required auxiliary kinds")
+	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
+		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
+		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -247,6 +257,8 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"breakglass_namespace", c.BreakglassNamespace,
 		"disable_email", c.DisableEmail,
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
+		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
+		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,
