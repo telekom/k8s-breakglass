@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,19 +181,25 @@ spec:
 		resize := make(chan bgclient.TerminalSize, 1)
 		resize <- bgclient.TerminalSize{Width: 101, Height: 31}
 		const pause = 1500 * time.Millisecond
+		out := &markerWriter{marker: "start", seen: make(chan struct{})}
 		go func() {
+			// Pace from the command's first output, not from request start,
+			// so connection setup latency cannot shorten the measured gap.
+			select {
+			case <-out.seen:
+			case <-time.After(time.Minute):
+			}
 			time.Sleep(pause)
 			_, _ = io.WriteString(stdinWriter, "timed\n")
 			time.Sleep(time.Second)
 			_ = stdinWriter.Close()
 		}()
-		var out bytes.Buffer
 		streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 		defer cancel()
 		result, err := bg.Terminal(streamCtx, bgclient.TerminalRequest{
 			Session: session.Name, Namespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 			Command: []string{"sh", "-c", `echo start; read line; stty size; echo "got:$line"`},
-			Stdin:   stdin, Stdout: &out, Resize: resize,
+			Stdin:   stdin, Stdout: out, Resize: resize,
 		})
 		require.NoError(t, err)
 		require.Equal(t, "completed", result.Status, out.String())
@@ -223,7 +230,7 @@ spec:
 		require.NotNil(t, firstOutput)
 		require.NotNil(t, typed)
 		require.Equal(t, "timed\n", string(typed.Payload))
-		require.GreaterOrEqual(t, typed.Offset-firstOutput.Offset, pause-500*time.Millisecond, "frame offsets reflect real time between output and typed input")
+		require.GreaterOrEqual(t, typed.Offset-firstOutput.Offset, pause, "frame offsets reflect real time between output and typed input")
 
 		var cast bytes.Buffer
 		require.NoError(t, rec.WriteAsciicast(&cast, recording.AsciicastOptions{}))
@@ -303,6 +310,31 @@ spec:
 		require.Contains(t, output.String(), "ready")
 		require.NotContains(t, output.String(), "not-aborted")
 	})
+}
+
+// markerWriter collects output and signals once marker was written.
+type markerWriter struct {
+	mu     sync.Mutex
+	buf    bytes.Buffer
+	marker string
+	seen   chan struct{}
+	once   sync.Once
+}
+
+func (w *markerWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.buf.Write(p)
+	if strings.Contains(w.buf.String(), w.marker) {
+		w.once.Do(func() { close(w.seen) })
+	}
+	return len(p), nil
+}
+
+func (w *markerWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 func typeAfterOutput(input, until string) func(<-chan string, io.Writer) error {

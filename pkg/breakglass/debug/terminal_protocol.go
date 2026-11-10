@@ -51,14 +51,20 @@ func (q *terminalSizeQueue) Next() *remotecommand.TerminalSize {
 }
 
 // decodeFramedTerminalInput splits a framed request body into stdin and a
-// size queue. The returned reader ends with the body; a malformed or
-// oversized frame ends stdin with an error so the stream fails closed.
-func decodeFramedTerminalInput(ctx context.Context, body io.Reader) (io.ReadCloser, *terminalSizeQueue) {
+// size queue. The returned reader ends with the body. A malformed or
+// oversized frame ends stdin with an error and calls abort, because an
+// executor may not surface a stdin error: the stream must stop and its
+// evidence must not be classified as complete.
+func decodeFramedTerminalInput(ctx context.Context, body io.Reader, abort func(error)) (io.ReadCloser, *terminalSizeQueue) {
 	stdin, stdinWriter := io.Pipe()
 	queue := &terminalSizeQueue{ctx: ctx, sizes: make(chan remotecommand.TerminalSize, 4)}
 	go func() {
 		defer close(queue.sizes)
-		stdinWriter.CloseWithError(decodeTerminalFrames(ctx, body, stdinWriter, queue.sizes))
+		err := decodeTerminalFrames(ctx, body, stdinWriter, queue.sizes)
+		stdinWriter.CloseWithError(err)
+		if err != nil && ctx.Err() == nil && abort != nil {
+			abort(err)
+		}
 	}()
 	return stdin, queue
 }

@@ -77,7 +77,7 @@ sessions. The command defaults to "sh".`,
 					}
 				}
 				sendSize()
-				stop := watchTerminalResize(ctx, sendSize)
+				stop := watchTerminalResize(sendSize)
 				defer stop()
 			}
 			result, err := apiClient.Terminal(ctx, client.TerminalRequest{
@@ -102,23 +102,27 @@ sessions. The command defaults to "sh".`,
 	return cmd
 }
 
-func watchTerminalResize(ctx context.Context, onResize func()) func() {
+// watchTerminalResize calls onResize for every SIGWINCH until the returned
+// stop function runs. stop does not depend on any context, so deferred
+// cleanup (and the raw-mode restore after it) can never block.
+func watchTerminalResize(onResize func()) func() {
 	signals := make(chan os.Signal, 1)
 	notifyResize(signals)
-	done := make(chan struct{})
+	quit, done := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(done)
 		for {
 			select {
 			case <-signals:
 				onResize()
-			case <-ctx.Done():
+			case <-quit:
 				return
 			}
 		}
 	}()
 	return func() {
 		signal.Stop(signals)
+		close(quit)
 		<-done
 	}
 }

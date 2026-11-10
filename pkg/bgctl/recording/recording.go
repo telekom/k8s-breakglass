@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 )
 
 // Frame directions.
@@ -153,13 +154,17 @@ func (rec *Recording) WriteAsciicast(w io.Writer, opts AsciicastOptions) error {
 	if width == 0 || height == 0 {
 		width, height = 80, 24
 	}
+	// Only a size set before anything was printed is the initial size; later
+	// resizes stay timed "r" events.
 	for _, frame := range rec.Frames {
+		if frame.Direction == Output && len(frame.Payload) > 0 {
+			break
+		}
 		if frame.Direction == Resize {
 			var size Size
 			if json.Unmarshal(frame.Payload, &size) == nil && size.Width > 0 && size.Height > 0 {
 				width, height = size.Width, size.Height
 			}
-			break
 		}
 	}
 	header := map[string]any{"version": 2, "width": width, "height": height}
@@ -170,13 +175,23 @@ func (rec *Recording) WriteAsciicast(w io.Writer, opts AsciicastOptions) error {
 	if err := encoder.Encode(header); err != nil {
 		return fmt.Errorf("write asciicast header: %w", err)
 	}
+	// Frames split at arbitrary byte boundaries; carry an incomplete UTF-8
+	// sequence into the next event of the same direction instead of letting
+	// JSON encoding replace its fragments.
+	pending := map[byte][]byte{}
+	var lastOffset time.Duration
 	for _, frame := range rec.Frames {
-		code, data := string(frame.Direction), string(frame.Payload)
+		lastOffset = frame.Offset
+		code, data := string(frame.Direction), ""
 		switch frame.Direction {
-		case Input:
-			if !opts.IncludeInput {
+		case Input, Output:
+			if frame.Direction == Input && !opts.IncludeInput {
 				continue
 			}
+			text := append(pending[frame.Direction], frame.Payload...)
+			cut := completeUTF8Prefix(text)
+			pending[frame.Direction] = append([]byte(nil), text[cut:]...)
+			data = string(text[:cut])
 		case Resize:
 			var size Size
 			if err := json.Unmarshal(frame.Payload, &size); err != nil {
@@ -184,12 +199,33 @@ func (rec *Recording) WriteAsciicast(w io.Writer, opts AsciicastOptions) error {
 			}
 			data = fmt.Sprintf("%dx%d", size.Width, size.Height)
 		}
-		if len(frame.Payload) == 0 && frame.Direction != Resize {
+		if data == "" && frame.Direction != Resize {
 			continue
 		}
 		if err := encoder.Encode([]any{frame.Offset.Seconds(), code, data}); err != nil {
 			return fmt.Errorf("write asciicast event: %w", err)
 		}
 	}
+	for _, direction := range []byte{Output, Input} {
+		if rest := pending[direction]; len(rest) > 0 {
+			if err := encoder.Encode([]any{lastOffset.Seconds(), string(direction), string(rest)}); err != nil {
+				return fmt.Errorf("write asciicast event: %w", err)
+			}
+		}
+	}
 	return nil
+}
+
+// completeUTF8Prefix returns the length of b without a trailing incomplete
+// (but possibly valid) UTF-8 sequence.
+func completeUTF8Prefix(b []byte) int {
+	for i := len(b) - 1; i >= 0 && i >= len(b)-utf8.UTFMax+1; i-- {
+		if utf8.RuneStart(b[i]) {
+			if !utf8.FullRune(b[i:]) {
+				return i
+			}
+			break
+		}
+	}
+	return len(b)
 }

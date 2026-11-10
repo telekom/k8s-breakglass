@@ -43,7 +43,7 @@ func resizeFrame(data string) func(io.Writer) error {
 
 func TestDecodeFramedTerminalInput(t *testing.T) {
 	body := framed(t, stdinFrame("ab"), resizeFrame(`{"Width":100,"Height":30}`), stdinFrame("c"))
-	stdin, sizes := decodeFramedTerminalInput(context.Background(), body)
+	stdin, sizes := decodeFramedTerminalInput(context.Background(), body, func(err error) { t.Errorf("unexpected abort: %v", err) })
 	data, err := io.ReadAll(stdin)
 	require.NoError(t, err)
 	require.Equal(t, "abc", string(data))
@@ -58,18 +58,22 @@ func TestDecodeFramedTerminalInput(t *testing.T) {
 		"truncated":    bytes.NewBuffer([]byte{0, 0, 0, 0, 4, 'a'}),
 	} {
 		t.Run(name, func(t *testing.T) {
-			stdin, _ := decodeFramedTerminalInput(context.Background(), body)
+			aborted := make(chan error, 1)
+			stdin, _ := decodeFramedTerminalInput(context.Background(), body, func(err error) { aborted <- err })
 			_, err := io.ReadAll(stdin)
 			require.Error(t, err, "malformed input must fail the stream closed")
+			require.Error(t, <-aborted, "the stream owner is told to stop")
 		})
 	}
 	require.Error(t, EncodeTerminalFrame(io.Discard, TerminalFrameStdin, make([]byte, MaxTerminalInputFrame+1)))
 }
 
-type resizingTerminalExecutor struct{}
+// resizingTerminalExecutor acknowledges the first size it takes, so the test
+// can pace input from the moment the size was recorded.
+type resizingTerminalExecutor struct{ resized chan struct{} }
 
 func (resizingTerminalExecutor) Stream(remotecommand.StreamOptions) error { return nil }
-func (resizingTerminalExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
+func (e resizingTerminalExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
 	if _, err := io.WriteString(options.Stdout, "prompt"); err != nil {
 		return err
 	}
@@ -77,12 +81,30 @@ func (resizingTerminalExecutor) StreamWithContext(_ context.Context, options rem
 	if size == nil {
 		return io.ErrUnexpectedEOF
 	}
+	close(e.resized)
 	input, err := io.ReadAll(options.Stdin)
 	if err != nil {
 		return err
 	}
 	_, err = options.Stdout.Write(input)
 	return err
+}
+
+// stdinIgnoringExecutor models an executor that never reports stdin errors
+// and exits successfully once its context ends.
+type stdinIgnoringExecutor struct{}
+
+func (stdinIgnoringExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (stdinIgnoringExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	if _, err := io.WriteString(options.Stdout, "prompt"); err != nil {
+		return err
+	}
+	go func() { _, _ = io.Copy(io.Discard, options.Stdin) }()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+	return nil
 }
 
 func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
@@ -107,8 +129,10 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
 		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
 	}
+	resized := make(chan struct{})
+	var executor remotecommand.Executor = resizingTerminalExecutor{resized: resized}
 	controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
-		return resizingTerminalExecutor{}, nil
+		return executor, nil
 	}
 	server := httptest.NewServer(debugSessionAPITestRouter(t, controller, "alice", "", nil))
 	defer server.Close()
@@ -128,7 +152,8 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	req.Header.Set(TerminalProtocolHeader, TerminalProtocolFramed)
 	go func() {
 		_ = EncodeTerminalFrame(inputWriter, TerminalFrameResize, []byte(`{"Width":132,"Height":43}`))
-		time.Sleep(300 * time.Millisecond)
+		<-resized
+		time.Sleep(100 * time.Millisecond)
 		_ = EncodeTerminalFrame(inputWriter, TerminalFrameStdin, []byte("typed"))
 		_ = inputWriter.Close()
 	}()
@@ -155,6 +180,37 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	require.Equal(t, "orio", string(directions), "output, resize, input, echo")
 	require.JSONEq(t, `{"width":132,"height":43}`, string(rec.Frames[1].Payload))
 	require.Equal(t, "typed", string(rec.Frames[2].Payload))
-	// The size is recorded when the executor takes it, so allow scheduling slack.
 	require.GreaterOrEqual(t, rec.Frames[2].Offset-rec.Frames[1].Offset, 100*time.Millisecond)
+
+	// A malformed frame must stop an executor that ignores stdin errors and
+	// leave the evidence incomplete.
+	executor = stdinIgnoringExecutor{}
+	input, inputWriter = io.Pipe()
+	req, err = http.NewRequest(http.MethodPost, endpoint, input)
+	require.NoError(t, err)
+	req.Header.Set(TerminalProtocolHeader, TerminalProtocolFramed)
+	go func() {
+		_ = EncodeTerminalFrame(inputWriter, 7, nil)
+		_ = inputWriter.Close()
+	}()
+	started := time.Now()
+	// The aborted stream may cut the connection before any response.
+	if response, err = (&http.Client{Timeout: 10 * time.Second}).Do(req); err == nil {
+		_, _ = io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		require.NotEqual(t, "completed", response.Trailer.Get("X-Breakglass-Recording-Status"))
+	}
+	require.Less(t, time.Since(started), 4*time.Second, "a malformed frame stops the stream")
+	require.Eventually(t, func() bool {
+		records, err := service.Recordings(context.Background(), session.Namespace, session.Name, string(session.UID), func(context.Context) error { return nil })
+		if err != nil || len(records) != 2 {
+			return false
+		}
+		for _, record := range records {
+			if record.SHA256 != rec.SHA256 {
+				return record.Recording != nil && !record.Recording.Complete
+			}
+		}
+		return false
+	}, 5*time.Second, 20*time.Millisecond, "malformed input never yields a complete recording")
 }

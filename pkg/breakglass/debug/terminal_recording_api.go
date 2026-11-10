@@ -293,7 +293,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	var input io.Reader = ctx.Request.Body
 	var sizes remotecommand.TerminalSizeQueue
 	if ctx.GetHeader(TerminalProtocolHeader) == TerminalProtocolFramed {
-		decoded, queue := decodeFramedTerminalInput(apiCtx, ctx.Request.Body)
+		// Cancelling the request context stops the executor and marks the
+		// recording incomplete.
+		decoded, queue := decodeFramedTerminalInput(apiCtx, ctx.Request.Body, func(error) { cancel() })
 		defer func() { _ = decoded.Close() }()
 		input, sizes = decoded, queue
 	}

@@ -122,3 +122,32 @@ func TestWriteAsciicast(t *testing.T) {
 	require.NoError(t, rec.WriteAsciicast(&out, AsciicastOptions{IncludeInput: true}))
 	require.Contains(t, out.String(), `"i","ls\r"`)
 }
+
+func TestWriteAsciicastKeepsSplitRunesAndLateResizes(t *testing.T) {
+	recorder := debug.NewTerminalRecorder(0)
+	euro := []byte("€") // three bytes, split across frames
+	require.NoError(t, recorder.Write(debug.TerminalRecordingOutput, append([]byte("price "), euro[:2]...)))
+	require.NoError(t, recorder.Write(debug.TerminalRecordingOutput, append(euro[2:], '!')))
+	require.NoError(t, recorder.Write(debug.TerminalRecordingResize, []byte(`{"width":120,"height":40}`)))
+	require.NoError(t, recorder.Write(debug.TerminalRecordingOutput, []byte{0xe2}))
+	out, err := recorder.Finalize()
+	require.NoError(t, err)
+	rec, err := Parse(bytes.NewReader(out.Bytes))
+	require.NoError(t, err)
+	var cast bytes.Buffer
+	require.NoError(t, rec.WriteAsciicast(&cast, AsciicastOptions{}))
+	lines := strings.Split(strings.TrimSpace(cast.String()), "\n")
+	var header map[string]any
+	require.NoError(t, json.Unmarshal([]byte(lines[0]), &header))
+	require.EqualValues(t, 80, header["width"], "a resize after output is not the initial size")
+	var text strings.Builder
+	for _, line := range lines[1:] {
+		var event []any
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		if event[1] == "o" {
+			text.WriteString(event[2].(string))
+		}
+	}
+	require.True(t, strings.HasPrefix(text.String(), "price €!"), text.String())
+	require.Contains(t, cast.String(), `"r","120x40"`)
+}
