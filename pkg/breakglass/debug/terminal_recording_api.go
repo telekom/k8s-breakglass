@@ -86,6 +86,10 @@ func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider Te
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
+	// Early error responses must not wait for an interactive client to end its
+	// request body: without full duplex the HTTP/1.1 server drains the body
+	// before it writes any response. Streaming below re-checks support.
+	_ = http.NewResponseController(ctx.Writer).EnableFullDuplex()
 	if c.recordingArtifacts == nil || c.recordingConnections == nil || (c.ccProvider == nil && c.terminalTargetResolver == nil) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
 		return

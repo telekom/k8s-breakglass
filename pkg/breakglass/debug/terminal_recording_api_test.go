@@ -316,3 +316,19 @@ func TestTerminalRouteRejectsActiveSessionWithoutExpiry(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, response.Code)
 	require.False(t, terminalRecordingBindingMatches(TerminalRecordingConnectionBinding{}, session, "pod"))
 }
+
+func TestTerminalRouteRejectsWithoutWaitingForOpenInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), nil, nil, nil)
+	server := httptest.NewServer(debugSessionAPITestRouter(t, controller, "alice", "", nil))
+	defer server.Close()
+	input, inputWriter := io.Pipe()
+	defer inputWriter.Close()
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/debugSessions/session/terminal?podNamespace=n&podName=p&operation=exec&command=sh", input)
+	require.NoError(t, err)
+	// An interactive client keeps stdin open; the rejection must still arrive.
+	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, http.StatusServiceUnavailable, response.StatusCode)
+}
