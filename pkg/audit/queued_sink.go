@@ -916,8 +916,11 @@ func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 }
 
 // handOver makes each sink pass the events it holds at shutdown to the sink
-// with the same AuditConfig, sink type and sink name in next. A sink without a successor (removed by the
-// reload) still counts them as "shutdown" drops.
+// with the same AuditConfig, sink type and sink name in next. That key is
+// unique: AuditConfig validation rejects duplicate sink names. A sink without
+// a successor (removed or retyped by the reload) still counts them as
+// "shutdown" drops. Each hand-over is bounded by the receiving queue's
+// enqueue rules and the manager's single handover deadline.
 func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
 	for _, old := range ims.sinks {
 		for _, successor := range next.sinks {
