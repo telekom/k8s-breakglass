@@ -370,8 +370,8 @@ func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 		qs.failedEvents.Add(1)
 		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "sync_fallback").Inc()
 		reason := "sync_fallback"
-		if errors.Is(err, ErrSerialization) {
-			reason = "serialization"
+		if permanentDeliveryError(err) {
+			reason = lossReason(err)
 		}
 		qs.recordDrop(1, reason)
 	}
@@ -539,11 +539,11 @@ func (qs *QueuedSink) recordFailure(count int, operation string, err error) bool
 	qs.lastError = err.Error()
 	qs.lastErrorTime = time.Now()
 	qs.mu.Unlock()
-	if !errors.Is(err, ErrSerialization) {
+	if !permanentDeliveryError(err) {
 		return false
 	}
-	qs.recordDrop(count, "serialization")
-	qs.logger.Error("audit event serialization failed",
+	qs.recordDrop(count, lossReason(err))
+	qs.logger.Error("audit events cannot be delivered",
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
 	return true
 }

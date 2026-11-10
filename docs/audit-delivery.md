@@ -47,8 +47,12 @@ or recreated. A same-named current escalation is never substituted.
 Since #1538 a batch whose retry window (`retryAttempts` or
 `retryTimeoutSeconds`) is exhausted is **retained** instead of dropped: the
 sink worker keeps the batch with the same event IDs and retries it every
-`retryMaxBackoffMillis` until it is delivered, a permanent (serialization)
-failure occurs, or the pipeline shuts down. The retention is logged once per
+`retryMaxBackoffMillis` until it is delivered, a permanent failure occurs, or
+the pipeline shuts down. Permanent failures are serialization errors (reason
+`serialization`) and payloads that a healthy sink refuses (reason `rejected`:
+webhook HTTP 400, 413 or 422, or Kafka records that are too large or invalid);
+they are dropped at once, so they cannot block later events, and they do not
+trip the circuit breaker. The retention is logged once per
 batch at warning level, and `breakglass_audit_events_retained{sink}` shows the
 events currently held past their retry window.
 
@@ -58,8 +62,8 @@ they are dropped and counted with reason `queue_full` (or, with
 `dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
 ten seconds. So the only losses are the explicit, counted ones: a full queue,
 shutdown (reason `shutdown`; this includes a pipeline replaced by an
-AuditConfig change, which first waits up to `retryTimeoutSeconds`) and
-serialization failures. Retention is in memory: a controller restart or crash
+AuditConfig change, which first waits up to `retryTimeoutSeconds`) and the
+permanent failures above. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.
 
 Because the worker keeps retrying, the network circuit breaker keeps probing:

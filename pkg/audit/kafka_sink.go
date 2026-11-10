@@ -681,5 +681,33 @@ func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message
 			err = fmt.Errorf("kafka writer panic: %v", r)
 		}
 	}()
-	return s.writer.WriteMessages(ctx, messages...)
+	err = s.writer.WriteMessages(ctx, messages...)
+	if kafkaRejected(err) {
+		err = fmt.Errorf("%w: %w", ErrRejected, err)
+	}
+	return err
+}
+
+// kafkaRejected reports whether the broker or writer refused the records
+// themselves: every failed record is too large or invalid.
+// ponytail: a batch with some rejected and some delivered records counts the
+// whole batch as dropped; per-record accounting if this ever matters.
+func kafkaRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	rejected := func(err error) bool {
+		return errors.Is(err, kafka.MessageSizeTooLarge) || errors.Is(err, kafka.RecordListTooLarge) ||
+			errors.Is(err, kafka.InvalidRecord) || errors.Is(err, kafka.InvalidMessage)
+	}
+	var writeErrors kafka.WriteErrors
+	if !errors.As(err, &writeErrors) {
+		return rejected(err)
+	}
+	for _, e := range writeErrors {
+		if e != nil && !rejected(e) {
+			return false
+		}
+	}
+	return writeErrors.Count() > 0
 }

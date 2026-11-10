@@ -10,7 +10,9 @@ section: Behaviour changes
   the held events. Apply the CRDs before the controller: `AuditConfig` has the
   new field `queue.dropAfterRetryWindow`. Setting it to `true` restores the
   earlier drop behaviour; it is a transitional escape hatch and will be
-  removed in a future release.
+  removed in a future release. Payloads a sink refuses (webhook HTTP 400, 413,
+  422; Kafka records that are too large or invalid) are dropped at once with
+  reason `rejected` instead of being retried.
 - A panic in a sink write during a half-open circuit-breaker probe no longer
   leaves the breaker stuck reporting "circuit breaker is open" after the broker
   recovers; Kafka writer panics are returned as errors (TCAAS-1614).

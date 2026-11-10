@@ -6,7 +6,11 @@ package audit
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,4 +171,41 @@ func TestKafkaSinkTurnsWriterPanicIntoError(t *testing.T) {
 	err = sink.WriteBatch(context.Background(), []*Event{{ID: "x", Type: EventConfigChanged}})
 	require.ErrorContains(t, err, "kafka writer panic")
 	require.ErrorContains(t, sink.Write(context.Background(), &Event{ID: "y", Type: EventConfigChanged}), "kafka writer panic")
+}
+
+// A payload the endpoint rejects (HTTP 413) must not be retained forever and
+// block later events: it is dropped as "rejected" without tripping the breaker.
+func TestQueuedRejectedPayloadDoesNotBlockLaterEvents(t *testing.T) {
+	var delivered atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(body), "too-big") {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
+		delivered.Add(1)
+	}))
+	t.Cleanup(server.Close)
+	webhook := NewWebhookSink(WebhookSinkConfig{Name: "rejecting", URL: server.URL}, zap.NewNop())
+	cb := NewCircuitBreakerSink(webhook, CircuitBreakerConfig{FailureThreshold: 1, OpenTimeout: time.Hour}, zap.NewNop())
+	qs := NewQueuedSink(cb, outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	rejected := metrics.AuditEventsDropped.WithLabelValues("rejecting", "rejected")
+	before := testutil.ToFloat64(rejected)
+
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "too-big", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 1 }, time.Second, 5*time.Millisecond)
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "fine", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return delivered.Load() == 1 }, time.Second, 5*time.Millisecond)
+	require.Equal(t, before+1, testutil.ToFloat64(rejected))
+	require.Equal(t, CircuitClosed, cb.Stats().State)
+}
+
+func TestKafkaRejectedClassification(t *testing.T) {
+	require.False(t, kafkaRejected(nil))
+	require.False(t, kafkaRejected(errors.New("connection refused")))
+	require.True(t, kafkaRejected(kafka.MessageTooLargeError{}))
+	require.True(t, kafkaRejected(kafka.WriteErrors{nil, kafka.MessageSizeTooLarge}))
+	require.False(t, kafkaRejected(kafka.WriteErrors{kafka.MessageSizeTooLarge, kafka.LeaderNotAvailable}))
+	require.False(t, kafkaRejected(kafka.WriteErrors{nil}))
 }

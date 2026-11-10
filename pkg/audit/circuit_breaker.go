@@ -149,7 +149,7 @@ func (cb *CircuitBreaker) newBreaker(generation int64) *gobreaker.TwoStepCircuit
 			cb.transitionState(generation, mapGobreakerState(from), mapGobreakerState(to))
 		},
 		IsExcluded: func(err error) bool {
-			return errors.Is(err, errHalfOpenProbeLimit) || errors.Is(err, ErrSerialization)
+			return errors.Is(err, errHalfOpenProbeLimit) || permanentDeliveryError(err)
 		},
 	})
 }
@@ -225,7 +225,7 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 	if halfOpenProbe {
 		cb.finishHalfOpenProbe(halfOpenGeneration)
 	}
-	if errors.Is(err, ErrSerialization) {
+	if permanentDeliveryError(err) {
 		done(err)
 		return err
 	}
