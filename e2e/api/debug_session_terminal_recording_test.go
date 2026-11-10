@@ -98,7 +98,7 @@ spec:
 			result, streamErr = requester.StreamRecordedTerminal(streamCtx, helpers.TerminalStreamRequest{
 				Session: session.Name, SessionNamespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
 				Command:  []string{"sh", "-c", `read line; echo "recorded:$line"`},
-				Interact: typeAfterOutput(typed + "\n"),
+				Interact: typeAfterOutput(typed+"\n", "recorded:"+typed),
 			})
 			require.NoError(c, streamErr)
 			require.Equal(c, http.StatusOK, result.StatusCode, result.Body)
@@ -241,27 +241,64 @@ spec:
 	})
 }
 
-func typeAfterOutput(input string) func(<-chan string, io.Writer) error {
+func typeAfterOutput(input, until string) func(<-chan string, io.Writer) error {
 	return func(output <-chan string, stdin io.Writer) error {
 		// Type only after the remote shell has produced its first byte, as a user would.
 		select {
 		case <-output:
 		case <-time.After(2 * time.Second):
 		}
-		_, err := io.WriteString(stdin, input)
-		return err
+		if _, err := io.WriteString(stdin, input); err != nil {
+			return err
+		}
+		// Keep stdin open until the command answered: ending a TTY's stdin
+		// early can end the exec before the shell read the line.
+		var seen strings.Builder
+		timeout := time.After(time.Minute)
+		for {
+			select {
+			case chunk, ok := <-output:
+				if !ok {
+					return nil
+				}
+				seen.WriteString(chunk)
+				if strings.Contains(seen.String(), until) {
+					return nil
+				}
+			case <-timeout:
+				return fmt.Errorf("no %q in terminal output %q", until, seen.String())
+			}
+		}
 	}
 }
 
+// clusterCredentialSecret mirrors the controller's credential selection:
+// kubeconfig, OIDC client/refresh Secret, or the IdentityProvider's Keycloak Secret.
 func clusterCredentialSecret(t *testing.T, ctx context.Context, cli client.Client, cluster string) client.ObjectKey {
 	t.Helper()
 	var configs breakglassv1alpha1.ClusterConfigList
 	require.NoError(t, cli.List(ctx, &configs))
 	for _, config := range configs.Items {
-		if config.Name == cluster {
-			require.NotNil(t, config.Spec.KubeconfigSecretRef, "the e2e ClusterConfig must use a kubeconfig Secret")
-			return client.ObjectKey{Namespace: config.Spec.KubeconfigSecretRef.Namespace, Name: config.Spec.KubeconfigSecretRef.Name}
+		if config.Name != cluster {
+			continue
 		}
+		refs := []*breakglassv1alpha1.SecretKeyReference{config.Spec.KubeconfigSecretRef}
+		if oidc := config.Spec.OIDCAuth; oidc != nil {
+			refs = append(refs, oidc.ClientSecretRef, oidc.RefreshTokenSecretRef)
+		}
+		if fromIDP := config.Spec.OIDCFromIdentityProvider; fromIDP != nil {
+			refs = append(refs, fromIDP.ClientSecretRef, fromIDP.RefreshTokenSecretRef)
+			var idp breakglassv1alpha1.IdentityProvider
+			if fromIDP.ClientSecretRef == nil && fromIDP.RefreshTokenSecretRef == nil && cli.Get(ctx, client.ObjectKey{Name: fromIDP.Name}, &idp) == nil && idp.Spec.Keycloak != nil {
+				refs = append(refs, &idp.Spec.Keycloak.ClientSecretRef)
+			}
+		}
+		for _, ref := range refs {
+			if ref != nil && ref.Name != "" {
+				return client.ObjectKey{Namespace: ref.Namespace, Name: ref.Name}
+			}
+		}
+		t.Fatalf("ClusterConfig %s has no credential Secret", cluster)
 	}
 	t.Fatalf("ClusterConfig %s not found", cluster)
 	return client.ObjectKey{}
