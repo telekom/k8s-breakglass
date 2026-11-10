@@ -215,3 +215,35 @@ func TestProvisionRefusesUnsafeExistingUploadDir(t *testing.T) {
 		t.Fatalf("Provision() wrote a sentinel before refusing: %v", err)
 	}
 }
+
+// An existing non-directory at the upload path must fail provisioning, not
+// leave a staging path that later uploads cannot create files in.
+func TestProvisionRefusesNonDirectoryUploadDir(t *testing.T) {
+	tests := map[string]func(t *testing.T, path string){
+		"regular file": func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		},
+		"symlink to directory": func(t *testing.T, path string) {
+			if err := os.Symlink(t.TempDir(), path); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	for name, prepare := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := freshVolumeConfig(t)
+			prepare(t, uploadDir(config))
+			result, err := Provision(config, uploadDir(config))
+			if err == nil || !strings.Contains(err.Error(), "open artifact upload staging directory") {
+				t.Fatalf("Provision() = %q, %v; want upload directory error", result, err)
+			}
+			for _, root := range []string{config.ArtifactRoot, config.StagingRoot} {
+				if _, err := os.Lstat(filepath.Join(root, sentinelName)); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Provision() wrote a sentinel in %s before refusing: %v", root, err)
+				}
+			}
+		})
+	}
+}
