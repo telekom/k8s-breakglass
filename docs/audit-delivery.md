@@ -50,7 +50,7 @@ sink worker keeps the batch with the same event IDs and retries it every
 `retryMaxBackoffMillis` until it is delivered, a permanent failure occurs, or
 the pipeline shuts down. Permanent failures are serialization errors (reason
 `serialization`) and payloads that a healthy sink refuses (reason `rejected`:
-webhook HTTP 400, 413 or 422, or Kafka records that are too large or invalid);
+webhook HTTP 400, 413 or 422, or Kafka records that are too large or invalid, not CRC errors);
 they are dropped at once, so they cannot block later events, and they do not
 trip the circuit breaker. The retention is logged once per
 batch at warning level, and `breakglass_audit_events_retained{sink}` shows the

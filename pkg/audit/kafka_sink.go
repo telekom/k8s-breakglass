@@ -689,7 +689,8 @@ func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message
 }
 
 // kafkaRejected reports whether the broker or writer refused the records
-// themselves: every failed record is too large or invalid.
+// themselves: every failed record is too large or invalid. InvalidMessage
+// (a CRC mismatch) is temporary in kafka-go and stays retryable.
 // ponytail: a batch with some rejected and some delivered records counts the
 // whole batch as dropped; per-record accounting if this ever matters.
 func kafkaRejected(err error) bool {
@@ -698,7 +699,7 @@ func kafkaRejected(err error) bool {
 	}
 	rejected := func(err error) bool {
 		return errors.Is(err, kafka.MessageSizeTooLarge) || errors.Is(err, kafka.RecordListTooLarge) ||
-			errors.Is(err, kafka.InvalidRecord) || errors.Is(err, kafka.InvalidMessage)
+			errors.Is(err, kafka.InvalidRecord)
 	}
 	var writeErrors kafka.WriteErrors
 	if !errors.As(err, &writeErrors) {

@@ -208,4 +208,7 @@ func TestKafkaRejectedClassification(t *testing.T) {
 	require.True(t, kafkaRejected(kafka.WriteErrors{nil, kafka.MessageSizeTooLarge}))
 	require.False(t, kafkaRejected(kafka.WriteErrors{kafka.MessageSizeTooLarge, kafka.LeaderNotAvailable}))
 	require.False(t, kafkaRejected(kafka.WriteErrors{nil}))
+	require.True(t, kafkaRejected(kafka.InvalidRecord))
+	require.False(t, kafkaRejected(kafka.InvalidMessage))
+	require.False(t, kafkaRejected(kafka.WriteErrors{kafka.InvalidMessage}))
 }
