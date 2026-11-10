@@ -292,9 +292,22 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		"container": ctx.Query("container"), "operation": operation, "formatVersion": metadata.FormatVersion,
 		"leaseUID": binding.LeaseUID, "generation": binding.Generation, "retentionExpiresAt": reservation.ExpiresAt.UTC().Format(time.RFC3339),
 	}
+	releaseReservation := func() {
+		// Nothing executed: release the slot instead of retaining an empty reservation.
+		if cancelErr := c.recordingArtifacts.CancelRecording(context.WithoutCancel(ctx.Request.Context()), reservation); cancelErr != nil {
+			c.log.Warnw("Failed to release unused terminal recording reservation", "session", session.Name, "recordingId", reservation.ArtifactID, "error", cancelErr)
+		}
+	}
 	if err := c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingStarted, session, identity, recordingDetails); err != nil {
-		// Nothing has executed; the empty reservation is never advertised as a recording.
+		releaseReservation()
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording audit event could not be delivered")
+		return
+	}
+	// Audit delivery may take seconds; authority must still hold before the
+	// target runs, not only at the first periodic check.
+	if err := connection.Validate(apiCtx); err != nil {
+		releaseReservation()
+		apiresponses.RespondForbidden(ctx, "terminal recording connection is no longer authorized")
 		return
 	}
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
@@ -559,6 +572,11 @@ func (c *DebugSessionAPIController) handleListTerminalRecordings(ctx *gin.Contex
 		apiresponses.RespondServiceUnavailable(ctx, "recording access could not be audited")
 		return
 	}
+	// Audit delivery may take seconds; recheck the reader before returning data.
+	if err := c.recordingReplayAuthority(session, identity)(ctx.Request.Context()); err != nil {
+		apiresponses.RespondForbidden(ctx, "recordings are not available to this user")
+		return
+	}
 	ctx.JSON(http.StatusOK, records)
 }
 
@@ -603,6 +621,10 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		"access": "replay", "recordingId": reservation.ArtifactID, "sha256": record.SHA256, "bytes": record.Size,
 	}); err != nil {
 		apiresponses.RespondServiceUnavailable(ctx, "recording access could not be audited")
+		return
+	}
+	if err := authorize(ctx.Request.Context()); err != nil {
+		apiresponses.RespondForbidden(ctx, "recording access denied")
 		return
 	}
 	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })

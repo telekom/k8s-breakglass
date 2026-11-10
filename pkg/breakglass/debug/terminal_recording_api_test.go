@@ -232,7 +232,29 @@ func TestRegisteredTerminalRouteStreamsAndPublishesRecording(t *testing.T) {
 			}
 			auditEvents.mu.Lock()
 			auditEvents.syncErr = nil
+			// Revoke the reader while its access event is delivered: no data.
+			// Removing alice as participant while her access event is delivered.
+			auditEvents.onSync = func(*audit.Event) {
+				var live breakglassv1alpha1.DebugSession
+				require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &live))
+				live.Status.Participants = nil
+				require.NoError(t, cli.Status().Update(context.Background(), &live))
+			}
 			auditEvents.mu.Unlock()
+			revoked, err := httpClient.Get(server.URL + "/api/v1/debugSessions/session/terminal?namespace=hub")
+			require.NoError(t, err)
+			revokedBody, err := io.ReadAll(revoked.Body)
+			require.NoError(t, err)
+			require.NoError(t, revoked.Body.Close())
+			require.Equal(t, http.StatusForbidden, revoked.StatusCode, "a reader revoked during audit delivery gets no data")
+			require.NotContains(t, string(revokedBody), record.ArtifactID)
+			auditEvents.mu.Lock()
+			auditEvents.onSync = nil
+			auditEvents.mu.Unlock()
+			var restored breakglassv1alpha1.DebugSession
+			require.NoError(t, cli.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), &restored))
+			restored.Status.Participants = session.Status.Participants
+			require.NoError(t, cli.Status().Update(context.Background(), &restored))
 			require.NotContains(t, string(listed), `"backendInstanceID"`)
 			require.NotContains(t, string(listed), `"versionID"`)
 			require.NoError(t, cli.Delete(context.Background(), stored))
@@ -387,8 +409,10 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 		},
 	}
 	executed := false
+	var service *backend.Service
+	var cli ctrlclient.Client
 	newController := func(audited *MockAuditEmitter, provider TerminalRecordingConnectionProvider) *httptest.Server {
-		service, cli := terminalArtifactFixture(t, session)
+		service, cli = terminalArtifactFixture(t, session)
 		controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).
 			WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(provider)
 		if audited != nil {
@@ -426,6 +450,28 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 		status, _ := post(server)
 		require.Equal(t, http.StatusServiceUnavailable, status)
 		require.False(t, executed, "the target never runs without a delivered start event")
+		var reservations breakglassv1alpha1.DebugSessionArtifactList
+		require.NoError(t, cli.List(context.Background(), &reservations))
+		require.Len(t, reservations.Items, 1)
+		require.NotEqual(t, string(backend.StatePending), string(reservations.Items[0].Status.State), "a failed start releases its reservation slot")
+		records, err := service.Recordings(context.Background(), session.Namespace, session.Name, string(session.UID), func(context.Context) error { return nil })
+		require.NoError(t, err)
+		require.Empty(t, records, "no recording is advertised for a start that never ran")
+	})
+	t.Run("revoked during start event delivery", func(t *testing.T) {
+		executed = false
+		revoking := NewMockAuditEmitter(true)
+		server := newController(revoking, &revocableRecordingProvider{})
+		defer server.Close()
+		revoking.onSync = func(event *audit.Event) {
+			if event.Type == audit.EventDebugSessionTerminalRecordingStarted {
+				revokedRecordingConnections.Store(true)
+			}
+		}
+		defer revokedRecordingConnections.Store(false)
+		status, _ := post(server)
+		require.Equal(t, http.StatusForbidden, status)
+		require.False(t, executed, "authority is rechecked after audit delivery, before execution")
 	})
 	t.Run("publish race", func(t *testing.T) {
 		server := newController(NewMockAuditEmitter(true), conflictingRecordingProvider{})
@@ -435,4 +481,27 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 		require.Equal(t, "1", header.Get("Retry-After"))
 		require.False(t, executed)
 	})
+}
+
+var revokedRecordingConnections atomic.Bool
+
+type revocableRecordingConnection struct {
+	terminalRecordingRouteConnection
+}
+
+func (revocableRecordingConnection) Validate(context.Context) error {
+	if revokedRecordingConnections.Load() {
+		return fmt.Errorf("revoked")
+	}
+	return nil
+}
+
+type revocableRecordingProvider struct{}
+
+func (*revocableRecordingProvider) AcquireTerminalRecordingConnection(ctx context.Context, binding TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
+	connection, err := terminalRecordingRouteProvider{}.AcquireTerminalRecordingConnection(ctx, binding)
+	if err != nil {
+		return nil, err
+	}
+	return revocableRecordingConnection{connection.(terminalRecordingRouteConnection)}, nil
 }

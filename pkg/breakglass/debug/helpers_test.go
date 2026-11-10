@@ -102,6 +102,8 @@ type MockAuditEmitter struct {
 	events  []*audit.Event
 	// syncErr makes EmitSync fail without recording the event.
 	syncErr error
+	// onSync runs during EmitSync, e.g. to revoke authority while delivering.
+	onSync func(*audit.Event)
 }
 
 // NewMockAuditEmitter creates a new mock audit emitter
@@ -121,6 +123,12 @@ func (m *MockAuditEmitter) Emit(_ context.Context, event *audit.Event) {
 
 // EmitSync records the event unless syncErr is set.
 func (m *MockAuditEmitter) EmitSync(_ context.Context, event *audit.Event) error {
+	m.mu.Lock()
+	hook := m.onSync
+	m.mu.Unlock()
+	if hook != nil {
+		hook(event)
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.syncErr != nil {

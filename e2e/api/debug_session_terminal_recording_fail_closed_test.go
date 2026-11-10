@@ -86,8 +86,10 @@ spec:
 	require.Equal(t, http.StatusServiceUnavailable, status, string(body))
 }
 
-// ensureAuditPipeline makes sure an enabled, Ready AuditConfig exists:
-// recorded streams refuse to start without their audit index.
+// ensureAuditPipeline makes sure an enabled, Ready AuditConfig with a sink
+// that confirms delivery (webhook) exists: recorded streams deliver their audit
+// events synchronously and refuse to start without one. Log sinks give no
+// delivery receipt and are not sufficient.
 func ensureAuditPipeline(t *testing.T, ctx context.Context, s *helpers.TestSetup) {
 	t.Helper()
 	ready := func() bool {
@@ -96,8 +98,13 @@ func ensureAuditPipeline(t *testing.T, ctx context.Context, s *helpers.TestSetup
 			return false
 		}
 		for _, config := range configs.Items {
-			if config.Spec.Enabled && meta.IsStatusConditionTrue(config.Status.Conditions, "Ready") {
-				return true
+			if !config.Spec.Enabled || !meta.IsStatusConditionTrue(config.Status.Conditions, "Ready") {
+				continue
+			}
+			for _, sink := range config.Spec.Sinks {
+				if sink.Type == breakglassv1alpha1.AuditSinkTypeWebhook || sink.Type == breakglassv1alpha1.AuditSinkTypeKafka {
+					return true
+				}
 			}
 		}
 		return false
@@ -108,9 +115,10 @@ func ensureAuditPipeline(t *testing.T, ctx context.Context, s *helpers.TestSetup
 	config := &breakglassv1alpha1.AuditConfig{
 		ObjectMeta: metav1.ObjectMeta{Name: helpers.GenerateUniqueName("terminal-recording-audit")},
 		Spec: breakglassv1alpha1.AuditConfigSpec{Enabled: true, Sinks: []breakglassv1alpha1.AuditSinkConfig{{
-			Name: "log", Type: breakglassv1alpha1.AuditSinkTypeLog, Log: &breakglassv1alpha1.LogSinkSpec{Format: "json", Level: "info"},
+			Name: "recording-webhook", Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: "http://breakglass-audit-webhook-receiver.breakglass-system.svc.cluster.local:80/audit", TimeoutSeconds: 10},
 		}}},
 	}
 	require.NoError(t, s.CreateResource(config))
-	require.Eventually(t, ready, helpers.WaitForStateTimeout, time.Second, "an enabled AuditConfig must become Ready")
+	require.Eventually(t, ready, helpers.WaitForStateTimeout, time.Second, "an AuditConfig with a confirming sink must become Ready")
 }
