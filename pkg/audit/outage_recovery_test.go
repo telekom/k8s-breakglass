@@ -461,7 +461,7 @@ func TestHandOverMatchesAuditConfigAndSinkName(t *testing.T) {
 	var toA, toB atomic.Int64
 	oldA, oldB := newFuncSink("events", failing), newFuncSink("events", failing)
 	old := NewIsolatedMultiSink([]Sink{oldA, oldB}, outageConfig(), zap.NewNop())
-	old.sinks[0].owner, old.sinks[1].owner = "config-a", "config-b"
+	old.sinks[0].owner, old.sinks[1].owner = "config-a/kafka", "config-b/kafka"
 	require.NoError(t, old.sinks[0].Write(context.Background(), &Event{ID: "for-a", Type: EventConfigChanged}))
 	require.NoError(t, old.sinks[1].Write(context.Background(), &Event{ID: "for-b", Type: EventConfigChanged}))
 	require.Eventually(t, func() bool { return old.sinks[0].Health().FailedEvents > 0 && old.sinks[1].Health().FailedEvents > 0 },
@@ -486,7 +486,7 @@ func TestHandOverMatchesAuditConfigAndSinkName(t *testing.T) {
 		return nil
 	})
 	next := NewIsolatedMultiSink([]Sink{newB, newA}, outageConfig(), zap.NewNop())
-	next.sinks[0].owner, next.sinks[1].owner = "config-b", "config-a"
+	next.sinks[0].owner, next.sinks[1].owner = "config-b/kafka", "config-a/kafka"
 	t.Cleanup(func() { require.NoError(t, next.Close()) })
 	old.handOver(next)
 	require.NoError(t, old.Close())
@@ -721,4 +721,26 @@ func TestManagerHandOverSharesOneDeadline(t *testing.T) {
 	accepted := 20 - int(testutil.ToFloat64(shutdown)-before)
 	require.LessOrEqual(t, accepted, 2, "only the replacement's capacity is handed over")
 	require.Positive(t, accepted)
+}
+
+// A reload that keeps a sink's name but changes its type (Kafka to log)
+// must not move the Kafka backlog into the log sink.
+func TestHandOverNeverCrossesSinkTypes(t *testing.T) {
+	failing := newFuncSink("events", func([]*Event) error { return errors.New("broker unavailable") })
+	old := NewIsolatedMultiSink([]Sink{failing}, outageConfig(), zap.NewNop())
+	old.sinks[0].owner = "config/kafka"
+	require.NoError(t, old.Write(context.Background(), &Event{ID: "kafka-only", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return old.sinks[0].Health().FailedEvents > 0 }, time.Second, 5*time.Millisecond)
+	var received atomic.Int64
+	next := NewIsolatedMultiSink([]Sink{newFuncSink("events", func(events []*Event) error {
+		received.Add(int64(len(events)))
+		return nil
+	})}, outageConfig(), zap.NewNop())
+	next.sinks[0].owner = "config/log"
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	old.handOver(next)
+	require.NoError(t, old.Close())
+	time.Sleep(50 * time.Millisecond)
+	require.Zero(t, received.Load())
+	require.Equal(t, int64(1), old.sinks[0].Health().DroppedEvents)
 }

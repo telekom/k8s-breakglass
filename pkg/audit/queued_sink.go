@@ -142,8 +142,9 @@ type QueuedSink struct {
 	// successor receives the events held at shutdown (see HandOver).
 	successor atomic.Pointer[QueuedSink]
 
-	// owner is the AuditConfig that defines the sink; sink names are unique
-	// only within one AuditConfig.
+	// owner identifies the AuditConfig and sink type that define the sink;
+	// sink names are unique only within one AuditConfig, and a reload may
+	// change a sink's type while keeping its name.
 	owner string
 
 	// Error tracking
@@ -915,7 +916,7 @@ func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 }
 
 // handOver makes each sink pass the events it holds at shutdown to the sink
-// with the same AuditConfig and sink name in next. A sink without a successor (removed by the
+// with the same AuditConfig, sink type and sink name in next. A sink without a successor (removed by the
 // reload) still counts them as "shutdown" drops.
 func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
 	for _, old := range ims.sinks {

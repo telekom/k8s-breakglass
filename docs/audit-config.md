@@ -534,7 +534,7 @@ events go to the new pipeline at once, and the old pipeline first finishes
 the events it still holds, including events in retry, for up to its longest
 `queue.retryTimeoutSeconds`, and then closes. Events it still holds then
 (for example retained during a broker outage) are handed to the sink with the
-same AuditConfig and sink name in the new pipeline (or a later one, if several
+same AuditConfig, sink type and sink name in the new pipeline (or a later one, if several
 reloads follow each other); only a sink removed by the change drops them
 with reason `shutdown`. A sink that was removed by that change can therefore
 still receive events that were emitted before it. When

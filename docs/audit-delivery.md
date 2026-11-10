@@ -81,7 +81,7 @@ shutdown (reason `shutdown`) and the permanent failures above. A reload that
 replaces the pipeline (for example a changed AuditConfig or a rotated Secret
 during an outage) does not lose the events the old pipeline holds: after up to
 `retryTimeoutSeconds` the old sink hands its queued, retrying and retained
-events to the sink with the same AuditConfig and sink name in the new
+events to the sink with the same AuditConfig, sink type and sink name in the new
 pipeline, which counts its own overflow. Events still in the old manager's
 ingress queue (for example with `dropOnFull: false` while a sink queue is
 full) move to the new manager, which routes them through its own sinks,

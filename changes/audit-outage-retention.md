@@ -13,7 +13,7 @@ section: Behaviour changes
   removed in a future release.
 - A reload that replaces the audit pipeline (changed AuditConfig, rotated
   Secret) hands the events the old pipeline still holds to the sink with the
-  same AuditConfig and sink name in the new pipeline instead of dropping them
+  same AuditConfig, sink type and sink name in the new pipeline instead of dropping them
   as `shutdown`; events still in the old manager's ingress queue move to the
   new manager. Only sinks removed by the reload still drop them.
 - Permanent delivery failures no longer drop a whole batch: the batch is

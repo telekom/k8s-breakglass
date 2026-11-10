@@ -221,9 +221,11 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			return s.keepPreviousPipeline(enabledConfigs, fmt.Errorf("build audit sinks from config %q: %w", config.Name, err))
 		}
 		allSinks = append(allSinks, sinks...)
-		for range sinks {
+		for i := range sinks {
 			sinkQueues = append(sinkQueues, queuedConfig(config.Spec.Queue))
-			sinkOwners = append(sinkOwners, config.Name)
+			// A handover must never cross AuditConfigs or sink types (for
+			// example a Kafka backlog into a log sink of the same name).
+			sinkOwners = append(sinkOwners, config.Name+"/"+string(config.Spec.Sinks[i].Type))
 		}
 		configNames = append(configNames, config.Name)
 	}
