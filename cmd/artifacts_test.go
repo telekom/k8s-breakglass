@@ -73,6 +73,20 @@ func TestArtifactsProvisionCommandRefusesMismatchedInstance(t *testing.T) {
 	require.Equal(t, "cmd-test-instance-0001\n", string(sentinel))
 }
 
+func TestArtifactsProvisionCommandRefusesNonDirectoryStagingDir(t *testing.T) {
+	for name, create := range map[string]func(path string) error{
+		"regular file": func(path string) error { return os.WriteFile(path, nil, 0o600) },
+		"symlink":      func(path string) error { return os.Symlink(os.TempDir(), path) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			configPath, volume := writeArtifactProvisionConfig(t, "cmd-test-instance-0001")
+			require.NoError(t, create(filepath.Join(volume, "uploads")))
+			err := runArtifactsCommand([]string{"provision", "--config-path", configPath}, &bytes.Buffer{})
+			require.ErrorContains(t, err, "is not a directory")
+		})
+	}
+}
+
 func TestArtifactsCommandRejectsInvalidInvocations(t *testing.T) {
 	configPath, _ := writeArtifactProvisionConfig(t, "cmd-test-instance-0001")
 	s3Config := filepath.Join(t.TempDir(), "config.yaml")

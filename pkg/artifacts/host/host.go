@@ -375,6 +375,13 @@ func ProvisionLocal(cfg config.Artifacts) (local.ProvisionResult, error) {
 		if err := os.Mkdir(cfg.StagingDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 			return "", fmt.Errorf("create artifact upload staging directory: %w", err)
 		}
+		info, err := os.Lstat(cfg.StagingDir)
+		if err != nil {
+			return "", fmt.Errorf("inspect artifact upload staging directory: %w", err)
+		}
+		if !info.IsDir() {
+			return "", fmt.Errorf("artifact upload staging directory %s is not a directory", cfg.StagingDir)
+		}
 	}
 	return result, nil
 }

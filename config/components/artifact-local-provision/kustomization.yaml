@@ -26,6 +26,13 @@
 # controller Deployment (defaults: claim `breakglass-artifacts`, `/artifacts`).
 # Pin the Job image to the controller image.
 #
+# A Job's pod template is immutable. Keep this component in its own overlay,
+# applied once for the initial provisioning, not in the overlay that routine
+# controller upgrades change. Otherwise the next image bump fails to apply.
+# Deleting the Job to get past that error re-runs provisioning. On the
+# provisioned volume that only reports "already provisioned"; on a repointed
+# empty volume it would provision it.
+#
 # See docs/diagnostic-artifacts.md#local-volume-provisioning.
 
 apiVersion: kustomize.config.k8s.io/v1alpha1

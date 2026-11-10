@@ -164,7 +164,9 @@ writes nothing for:
 
 - a root that is not empty but has no sentinel;
 - a sentinel with a different instance ID;
-- a volume with only one sentinel;
+- a volume with only one sentinel, for example after an interrupted run. Make sure
+  neither root holds objects, remove the single sentinel and run the command
+  again;
 - a root that is a symlink, has another owner, or has a mode other than `0700`.
 
 ### Opt-in provisioning Job
@@ -184,6 +186,14 @@ later replaced or repointed, the controller fails closed. To provision a new
 volume on purpose, delete the completed Job so that the overlay re-creates it.
 A Job that fails because the volume was refused is not retried
 (`backoffLimit: 0`). Read its log, fix the volume, then delete the Job.
+
+A Job's pod template is immutable. Apply the component from its own overlay,
+for example a separate Flux Kustomization, for the first provisioning, and
+keep it out of the overlay that routine controller upgrades change. Otherwise
+the next image bump fails to apply the Job. Deleting the Job to get past that
+error re-runs provisioning: on the provisioned volume this only reports
+`already provisioned`, but on a repointed, empty volume it provisions that
+volume.
 
 ### Manual alternative
 
