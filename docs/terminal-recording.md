@@ -155,9 +155,10 @@ a positive duration at admission. The controller does not copy template
 webhook headers, bearer tokens, Secret values, or recording bytes into status,
 audit details, or failure messages.
 
-The server assigns the `terminal-recording.v1` metadata policy and version 1 to
-recording reservations. This identifies framing and metadata; it does not redact
-or alter the authorized terminal stream bytes.
+The server assigns the `terminal-recording.v1` metadata policy to recording
+reservations and records the framing in `formatVersion` (2 for new recordings,
+1 for recordings made before timing was added). This identifies framing and
+metadata; it does not redact or alter the authorized terminal stream bytes.
 
 ### Revocation and in-flight output
 

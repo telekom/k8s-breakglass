@@ -109,11 +109,13 @@ func TestRecordingsListAndDownload(t *testing.T) {
 	require.Len(t, list, 1)
 	require.True(t, list[0].Recording.Complete)
 	var out bytes.Buffer
-	digest, err := c.DebugSessions().DownloadRecording(context.Background(), "s1", "hub", "rec-1", &out)
+	digest, err := c.DebugSessions().DownloadRecording(context.Background(), "s1", "hub", "rec-1", &out, int64(len(big)))
 	require.NoError(t, err)
 	require.Equal(t, "abc", digest)
 	require.Equal(t, len(big), out.Len(), "downloads are not capped like JSON responses")
-	_, err = c.DebugSessions().DownloadRecording(context.Background(), "s1", "hub", "denied", io.Discard)
+	_, err = c.DebugSessions().DownloadRecording(context.Background(), "s1", "hub", "rec-1", io.Discard, int64(len(big))-1)
+	require.ErrorContains(t, err, "exceeds", "downloads are capped at the caller's limit")
+	_, err = c.DebugSessions().DownloadRecording(context.Background(), "s1", "hub", "denied", io.Discard, 1<<20)
 	var httpErr *HTTPError
 	require.True(t, errors.As(err, &httpErr))
 	require.Equal(t, http.StatusForbidden, httpErr.StatusCode)

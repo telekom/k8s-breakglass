@@ -209,7 +209,7 @@ spec:
 		require.Contains(t, out.String(), "got:timed")
 
 		var raw bytes.Buffer
-		published, err := bg.DebugSessions().DownloadRecording(ctx, session.Name, session.Namespace, result.RecordingID, &raw)
+		published, err := bg.DebugSessions().DownloadRecording(ctx, session.Name, session.Namespace, result.RecordingID, &raw, recording.MaxRecordingBytes)
 		require.NoError(t, err)
 		require.Equal(t, result.SHA256, published)
 		rec, err := recording.Parse(&raw)

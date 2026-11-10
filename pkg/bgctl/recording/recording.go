@@ -26,6 +26,10 @@ const (
 	Resize byte = 'r'
 )
 
+// MaxRecordingBytes is the largest recording the server can produce (the
+// controller's 512 MiB per-stream limit). Clients refuse larger downloads.
+const MaxRecordingBytes = 512 << 20
+
 // MaxFramePayload bounds a single decoded frame to keep a hostile artifact
 // from forcing a large allocation.
 const MaxFramePayload = 64 << 20

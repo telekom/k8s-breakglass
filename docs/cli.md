@@ -223,7 +223,11 @@ asciinema play session.cast
 ```
 
 Every download is verified before it is written: the hash chain, monotonic
-timing and the digest the server published must match. `export --format raw`
+timing and the digest the server published must match. Downloads are limited
+to 512 MiB, the server's per-stream maximum. The published digest comes from
+the same response, so for independent verification pass the digest from the
+`debug_session.terminal_recording_finalized` audit event with
+`--expect-sha256` (accepted by `get`, `verify` and `export`). `export --format raw`
 writes the verified frames; `--include-input` adds typed input as asciicast
 `"i"` events (it may contain secrets). Files are created with mode `0600` and
 never overwrite existing files. See [terminal recording](terminal-recording.md).

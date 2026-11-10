@@ -169,7 +169,7 @@ func newRecordingsListCommand() *cobra.Command {
 }
 
 func newRecordingsGetCommand() *cobra.Command {
-	var namespace, file string
+	var expect, namespace, file string
 	cmd := &cobra.Command{
 		Use:   "get SESSION ID",
 		Short: "Download and verify a raw terminal recording",
@@ -179,7 +179,7 @@ func newRecordingsGetCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1])
+			data, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1], expect)
 			if err != nil {
 				return err
 			}
@@ -188,12 +188,13 @@ func newRecordingsGetCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Debug session namespace hint")
+	cmd.Flags().StringVar(&expect, "expect-sha256", "", "Also require this digest, obtained independently (e.g. from the terminal_recording_finalized audit event)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Write to this file instead of stdout")
 	return cmd
 }
 
 func newRecordingsVerifyCommand() *cobra.Command {
-	var namespace string
+	var expect, namespace string
 	cmd := &cobra.Command{
 		Use:   "verify SESSION ID",
 		Short: "Verify a recording's digest, hash chain and timing",
@@ -203,7 +204,7 @@ func newRecordingsVerifyCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			_, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1])
+			_, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1], expect)
 			if err != nil {
 				return err
 			}
@@ -216,11 +217,12 @@ func newRecordingsVerifyCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Debug session namespace hint")
+	cmd.Flags().StringVar(&expect, "expect-sha256", "", "Also require this digest, obtained independently (e.g. from the terminal_recording_finalized audit event)")
 	return cmd
 }
 
 func newRecordingsExportCommand() *cobra.Command {
-	var namespace, file, format string
+	var expect, namespace, file, format string
 	var includeInput bool
 	cmd := &cobra.Command{
 		Use:   "export SESSION ID",
@@ -234,7 +236,7 @@ func newRecordingsExportCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			data, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1])
+			data, rec, err := downloadVerifiedRecording(cmd.Context(), apiClient, args[0], namespace, args[1], expect)
 			if err != nil {
 				return err
 			}
@@ -249,6 +251,7 @@ func newRecordingsExportCommand() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Debug session namespace hint")
+	cmd.Flags().StringVar(&expect, "expect-sha256", "", "Also require this digest, obtained independently (e.g. from the terminal_recording_finalized audit event)")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "Write to this file instead of stdout")
 	cmd.Flags().StringVar(&format, "format", "asciicast-v2", "Export format: asciicast-v2 or raw")
 	cmd.Flags().BoolVar(&includeInput, "include-input", false, "Include typed input as asciicast \"i\" events")
@@ -264,11 +267,13 @@ func runtimeClient(cmd *cobra.Command) (*runtimeState, *client.Client, error) {
 	return rt, apiClient, err
 }
 
-// downloadVerifiedRecording fails unless the hash chain verifies and the
-// artifact digest equals the digest the server published.
-func downloadVerifiedRecording(ctx context.Context, apiClient *client.Client, session, namespace, id string) ([]byte, *recording.Recording, error) {
+// downloadVerifiedRecording fails unless the hash chain verifies, the
+// artifact digest equals the digest the server published and, when given, the
+// independently obtained expected digest (for example from the
+// terminal_recording_finalized audit event).
+func downloadVerifiedRecording(ctx context.Context, apiClient *client.Client, session, namespace, id, expected string) ([]byte, *recording.Recording, error) {
 	var buf bytes.Buffer
-	published, err := apiClient.DebugSessions().DownloadRecording(ctx, session, namespace, id, &buf)
+	published, err := apiClient.DebugSessions().DownloadRecording(ctx, session, namespace, id, &buf, recording.MaxRecordingBytes)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -278,6 +283,9 @@ func downloadVerifiedRecording(ctx context.Context, apiClient *client.Client, se
 	}
 	if !strings.EqualFold(rec.SHA256, published) {
 		return nil, nil, fmt.Errorf("recording %s digest %s does not match published %s", terminal.SafeText(id), rec.SHA256, terminal.SafeText(published))
+	}
+	if expected != "" && !strings.EqualFold(rec.SHA256, strings.TrimPrefix(expected, "sha256:")) {
+		return nil, nil, fmt.Errorf("recording %s digest %s does not match expected %s", terminal.SafeText(id), rec.SHA256, terminal.SafeText(expected))
 	}
 	return buf.Bytes(), rec, nil
 }

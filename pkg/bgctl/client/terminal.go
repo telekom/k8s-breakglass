@@ -226,8 +226,9 @@ func (s *DebugSessionService) Recordings(ctx context.Context, name, namespace st
 }
 
 // DownloadRecording streams one recording to w and returns the digest the
-// server published for it. The body is not size-capped like JSON responses.
-func (s *DebugSessionService) DownloadRecording(ctx context.Context, name, namespace, id string, w io.Writer) (string, error) {
+// server published for it. The body is not limited to the JSON response cap
+// but to maxBytes; a larger body fails.
+func (s *DebugSessionService) DownloadRecording(ctx context.Context, name, namespace, id string, w io.Writer, maxBytes int64) (string, error) {
 	c := s.client
 	endpoint := *c.baseURL
 	endpoint.Path = path.Join(endpoint.Path, "api/debugSessions", url.PathEscape(name), "terminal", url.PathEscape(id))
@@ -252,8 +253,12 @@ func (s *DebugSessionService) DownloadRecording(ctx context.Context, name, names
 	if resp.StatusCode >= 400 {
 		return "", decodeError(resp, correlationID)
 	}
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	n, err := io.Copy(w, io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
 		return "", fmt.Errorf("download recording: %w", err)
+	}
+	if n > maxBytes {
+		return "", fmt.Errorf("recording exceeds %d bytes", maxBytes)
 	}
 	digest := resp.Header.Get("X-Breakglass-Recording-SHA256")
 	if digest == "" {

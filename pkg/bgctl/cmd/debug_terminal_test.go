@@ -132,6 +132,12 @@ func TestDebugRecordingsCommands(t *testing.T) {
 	_, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "get", "s1", "rec-1", "-f", file)
 	require.Error(t, err, "existing files are never overwritten")
 
+	out, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "verify", "s1", "rec-1", "--expect-sha256", "sha256:"+digest)
+	require.NoError(t, err, "a matching independent digest verifies")
+	require.Contains(t, out, "verified")
+	_, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "export", "s1", "rec-1", "--expect-sha256", strings.Repeat("1", 64))
+	require.ErrorContains(t, err, "does not match expected", "the server's own header is not trusted alone")
+
 	published = strings.Repeat("0", 64)
 	_, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "verify", "s1", "rec-1")
 	require.ErrorContains(t, err, "does not match published")
