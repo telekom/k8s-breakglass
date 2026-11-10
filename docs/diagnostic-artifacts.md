@@ -134,6 +134,77 @@ epoch, and expiry before each artifact operation. The binding source reads the
 immutable artifact record in the configured backend namespace, so request
 parameters cannot select a different target or session.
 
+## Local volume provisioning
+
+Controller startup never creates the local roots or sentinels. On an empty,
+replaced or repointed volume it fails closed, for example with
+`open local artifact root: no such file or directory`. An administrator
+provisions a fresh volume once with the controller image and config:
+
+```bash
+breakglass artifacts provision --config-path=/config/config.yaml
+```
+
+The command reads `artifacts.backend: local` and `artifacts.local` from the
+same config file as the controller (`--config-path`, default
+`BREAKGLASS_CONFIG_PATH` or `./config.yaml`). It then does the following:
+
+- creates a missing `artifactRoot` and `stagingRoot` as `0700` directories
+  owned by the calling UID/GID. Run it as `expectedUID`/`expectedGID`; it needs
+  no root or capabilities. The volume root must be writable by that UID, for
+  example the `0777` root of a local-path PVC or an `fsGroup` volume.
+- writes the `0400` `.breakglass-artifact-instance-v1` sentinel with
+  `instanceID` into both roots, but only when both roots are empty.
+- creates a missing top-level `stagingDir` as `0700`.
+- prints `local artifact storage provisioned` and exits 0.
+
+On a volume that already carries this instance's sentinels it changes nothing
+and prints `local artifact storage already provisioned`. It exits non-zero and
+writes nothing for:
+
+- a root that is not empty but has no sentinel;
+- a sentinel with a different instance ID;
+- a volume with only one sentinel;
+- a root that is a symlink, has another owner, or has a mode other than `0700`.
+
+### Opt-in provisioning Job
+
+The kustomize component `config/components/artifact-local-provision` is not
+part of any default overlay. It adds the one-shot Job
+`breakglass-artifact-provision`. The Job runs the command as `65532:65532` with
+a read-only root filesystem, no capabilities and no service account token. It
+mounts the controller ConfigMap and the claim `breakglass-artifacts` at
+`/artifacts`; patch the claim, mount path and image to match the controller
+Deployment. A required pod affinity places it next to the controller Pod,
+which already holds the `ReadWriteOnce` volume.
+
+The Job has no `ttlSecondsAfterFinished`. The completed Job records that the
+volume was provisioned and does not run again by itself. If the volume is
+later replaced or repointed, the controller fails closed. To provision a new
+volume on purpose, delete the completed Job so that the overlay re-creates it.
+A Job that fails because the volume was refused is not retried
+(`backoffLimit: 0`). Read its log, fix the volume, then delete the Job.
+
+### Manual alternative
+
+Run the command once from any Pod that mounts the volume with the controller
+image, config and `expectedUID`/`expectedGID`, for example
+`kubectl debug` or a hand-written Job. Do not run it from an init container
+of the controller Pod: it would provision every replacement volume and remove
+the fail-closed check.
+
+To prepare the volume without the command, create the layout by hand:
+
+- both roots as directories owned by `expectedUID:expectedGID` with mode
+  `0700`;
+- in each root, a regular file `.breakglass-artifact-instance-v1` with mode
+  `0400`, the same owner and content `<instanceID>` followed by one newline.
+
+On volume types that support `fsGroup`, set
+`fsGroupChangePolicy: OnRootMismatch` on the controller Pod. Recursive
+relabelling adds group permissions and the set-group-ID bit to the roots and
+sentinels, and startup rejects them.
+
 
 Provider object keys are 64 lowercase hexadecimal SHA-256 characters derived from the immutable artifact resource UID with a domain separator. Public artifact IDs remain unchanged. Same-named artifacts with different resource UIDs occupy separate provider objects, including during upload recovery and cleanup.
 

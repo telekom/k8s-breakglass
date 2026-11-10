@@ -103,6 +103,7 @@ func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
 	}{
 		{name: "accepts origin", raw: "https://breakglass.example", want: "https://breakglass.example"},
 		{name: "accepts root slash", raw: "https://breakglass.example/", want: "https://breakglass.example"},
+		{name: "keeps non-default port", raw: "https://breakglass.example:31443/", want: "https://breakglass.example:31443"},
 		{name: "normalizes whitespace", raw: " https://breakglass.example/ ", want: "https://breakglass.example"},
 		{name: "rejects userinfo", raw: "https://user@breakglass.example", wantErr: true},
 		{name: "rejects password", raw: "https://user:secret@breakglass.example", wantErr: true},
@@ -125,6 +126,19 @@ func TestControllerOriginRejectsUserinfoAndNonRootPath(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestProvisionLocalRequiresExplicitLocalBackend(t *testing.T) {
+	for _, cfg := range []config.Artifacts{
+		{Backend: "s3", Local: &config.ArtifactLocal{}},
+		{Backend: "local"},
+		{Backend: "local", Local: &config.ArtifactLocal{}, S3: &config.ArtifactS3{}},
+	} {
+		_, err := ProvisionLocal(cfg)
+		require.ErrorContains(t, err, "artifacts.backend must be local")
+	}
+	_, err := ProvisionLocal(config.Artifacts{Backend: "local", Local: &config.ArtifactLocal{}})
+	require.ErrorContains(t, err, "provision local artifact storage")
 }
 
 func TestLoadKeyringReadsOnlyConfiguredNamespaceAndEnforcesKeyFloor(t *testing.T) {

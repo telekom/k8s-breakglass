@@ -64,6 +64,13 @@ import (
 // patterns for hub vs spoke cluster deployments.
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == artifactsCommand {
+		if err := runArtifactsCommand(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)

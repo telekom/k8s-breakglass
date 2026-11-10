@@ -130,7 +130,10 @@ For `backend: local`, replace `s3` with `local`:
 | `minimumFreeBytes` | Nonnegative free-space reserve, bounded against object/header size overflow |
 
 Local storage never substitutes for unavailable S3 and does not provision its
-own directories or sentinels at startup. Configure the separate top-level
+own directories or sentinels at startup. Provision an empty volume once with
+`breakglass artifacts provision` or the opt-in
+`config/components/artifact-local-provision` Job; see
+[local volume provisioning](diagnostic-artifacts.md#local-volume-provisioning). Configure the separate top-level
 `stagingDir` as well. See [diagnostic artifacts](diagnostic-artifacts.md) for
 reservation, publication, replay and cleanup behavior, and
 [terminal recording](terminal-recording.md) for its additional fail-closed

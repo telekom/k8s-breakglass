@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -344,7 +345,7 @@ func openStore(ctx context.Context, cfg config.Artifacts, client ctrlclient.Clie
 		if cfg.Local == nil || cfg.S3 != nil {
 			return nil, nil, errors.New("local artifact configuration is required and cannot be combined with S3")
 		}
-		store, err := local.Open(local.Config{ExplicitlyEnabled: true, PrivateRootAcknowledged: cfg.Local.PrivateRootAcknowledged, ArtifactRoot: cfg.Local.ArtifactRoot, StagingRoot: cfg.Local.StagingRoot, InstanceID: cfg.Local.InstanceID, ExpectedUID: cfg.Local.ExpectedUID, ExpectedGID: cfg.Local.ExpectedGID, ServingReplicas: cfg.Local.ServingReplicas, AccessMode: cfg.Local.AccessMode, DeploymentStrategy: cfg.Local.DeploymentStrategy, EncryptionAcknowledged: cfg.Local.EncryptionAcknowledged, SnapshotPolicy: cfg.Local.SnapshotPolicy, MaximumObjectBytes: cfg.Local.MaximumObjectBytes, MinimumFreeBytes: cfg.Local.MinimumFreeBytes})
+		store, err := local.Open(localConfig(cfg.Local))
 		if err != nil {
 			return nil, nil, fmt.Errorf("open local artifact store: %w", err)
 		}
@@ -352,6 +353,30 @@ func openStore(ctx context.Context, cfg config.Artifacts, client ctrlclient.Clie
 	default:
 		return nil, nil, errors.New("artifact backend must be explicitly set to s3 or local")
 	}
+}
+
+func localConfig(cfg *config.ArtifactLocal) local.Config {
+	return local.Config{ExplicitlyEnabled: true, PrivateRootAcknowledged: cfg.PrivateRootAcknowledged, ArtifactRoot: cfg.ArtifactRoot, StagingRoot: cfg.StagingRoot, InstanceID: cfg.InstanceID, ExpectedUID: cfg.ExpectedUID, ExpectedGID: cfg.ExpectedGID, ServingReplicas: cfg.ServingReplicas, AccessMode: cfg.AccessMode, DeploymentStrategy: cfg.DeploymentStrategy, EncryptionAcknowledged: cfg.EncryptionAcknowledged, SnapshotPolicy: cfg.SnapshotPolicy, MaximumObjectBytes: cfg.MaximumObjectBytes, MinimumFreeBytes: cfg.MinimumFreeBytes}
+}
+
+// ProvisionLocal runs the administrator-initiated provisioning of an empty
+// local artifact volume with exactly the settings the controller opens it
+// with, then creates a missing upload staging directory. Startup never calls
+// it, so an unprovisioned or repointed volume keeps failing closed.
+func ProvisionLocal(cfg config.Artifacts) (local.ProvisionResult, error) {
+	if cfg.Backend != "local" || cfg.Local == nil || cfg.S3 != nil {
+		return "", errors.New("artifacts.backend must be local with an artifacts.local section and no artifacts.s3 section")
+	}
+	result, err := local.Provision(localConfig(cfg.Local))
+	if err != nil {
+		return "", fmt.Errorf("provision local artifact storage: %w", err)
+	}
+	if cfg.StagingDir != "" {
+		if err := os.Mkdir(cfg.StagingDir, 0o700); err != nil && !errors.Is(err, os.ErrExist) {
+			return "", fmt.Errorf("create artifact upload staging directory: %w", err)
+		}
+	}
+	return result, nil
 }
 
 type uploadTokenIssuer struct {

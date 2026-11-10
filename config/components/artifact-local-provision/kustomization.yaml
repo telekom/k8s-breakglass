@@ -1,0 +1,35 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: one-shot provisioning of an EMPTY local artifact volume.
+#
+# Opt-in. Without this component nothing provisions the local artifact
+# backend and controller startup fails closed on an unprovisioned volume.
+#
+# The Job runs `breakglass artifacts provision` with the controller config. It
+# creates the private roots and sentinels on an empty volume, succeeds without
+# changes on a volume already provisioned for the same instance, and refuses
+# non-empty, foreign or partially provisioned volumes.
+#
+# The Job has no ttlSecondsAfterFinished on purpose: the completed Job is the
+# record that the volume was provisioned. It never runs again by itself, so a
+# volume that is later replaced or repointed keeps failing closed. To provision
+# a new volume, delete the completed Job and let the overlay re-create it.
+#
+# Usage — add to the overlay that mounts the artifact PVC on the controller:
+#
+#   components:
+#     - ../../components/artifact-local-provision
+#
+# and patch the Job's `artifact-data` claim name and mount path to match the
+# controller Deployment (defaults: claim `breakglass-artifacts`, `/artifacts`).
+# Pin the Job image to the controller image.
+#
+# See docs/diagnostic-artifacts.md#local-volume-provisioning.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - job.yaml
