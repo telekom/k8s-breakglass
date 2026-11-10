@@ -125,7 +125,7 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 	}
 	service, cli := terminalArtifactFixture(t, session)
 	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).
-		WithTerminalRecordingArtifacts(service).WithTerminalRecordingMaxBytes(4096).WithTerminalRecordingConnections(terminalRecordingRouteProvider{})
+		WithTerminalRecordingArtifacts(service).WithTerminalRecordingMaxBytes(4096).WithTerminalRecordingConnections(terminalRecordingRouteProvider{}).WithAuditService(NewMockAuditEmitter(true))
 	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
 		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
 	}
