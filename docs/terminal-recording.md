@@ -58,10 +58,14 @@ return `503`.
 
 ### Audit events
 
-Recording requires a running audit pipeline (an enabled `AuditConfig`). Without
-one, the terminal endpoint returns `503` and no stream starts, so retained
-evidence always has an audit index. Each stream and each read emits audit
-events through the configured sinks, including Kafka. Events of one request
+Recording requires a running audit pipeline (an enabled `AuditConfig`).
+Recording events are delivered synchronously to every sink. The target never
+runs unless the `terminal_recording_started` event was delivered, and list and
+replay return `503` without data unless their `terminal_recording_accessed`
+event was delivered. Without a pipeline, or when an `AuditConfig` event-type
+filter excludes these events, the endpoints return `503`. Retained evidence
+therefore always has an audit index. Delivery failures of `finalized` and
+`failed` events, which happen after the stream ran, are logged. Events of one request
 share its correlation ID and never contain terminal bytes:
 
 | Event | When | Details |
