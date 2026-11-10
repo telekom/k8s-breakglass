@@ -10,11 +10,13 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
 	"sync"
+	"time"
 
 	"k8s.io/client-go/tools/remotecommand"
 
@@ -23,10 +25,15 @@ import (
 
 const (
 	defaultTerminalRecordingMaxBytes int64 = 512 << 20
-	terminalRecordingFrameVersion          = byte(1)
-	terminalRecordingDirectionInput        = byte('i')
-	terminalRecordingDirectionOutput       = byte('o')
-	terminalRecordingFrameHeaderSize       = 1 + 1 + 8 + sha256.Size
+	// TerminalRecordingFormatVersion is the framing written by the recorder:
+	// version | direction | monotonic offset ns (8) | length (8) | prev SHA-256 | payload.
+	// Version 1 (no offset) artifacts remain verifiable by the artifact backend.
+	TerminalRecordingFormatVersion   = 2
+	terminalRecordingFrameVersion    = byte(TerminalRecordingFormatVersion)
+	terminalRecordingDirectionInput  = byte('i')
+	terminalRecordingDirectionOutput = byte('o')
+	terminalRecordingDirectionResize = byte('r')
+	terminalRecordingFrameHeaderSize = 1 + 1 + 8 + 8 + sha256.Size
 )
 
 var (
@@ -42,6 +49,8 @@ type TerminalRecordingDirection byte
 const (
 	TerminalRecordingInput  TerminalRecordingDirection = TerminalRecordingDirection(terminalRecordingDirectionInput)
 	TerminalRecordingOutput TerminalRecordingDirection = TerminalRecordingDirection(terminalRecordingDirectionOutput)
+	// TerminalRecordingResize frames carry a JSON {"width":W,"height":H} payload.
+	TerminalRecordingResize TerminalRecordingDirection = TerminalRecordingDirection(terminalRecordingDirectionResize)
 )
 
 // TerminalRecording is the finalized, framed terminal byte stream. The
@@ -63,6 +72,7 @@ type TerminalRecorder struct {
 	previous [sha256.Size]byte
 	closed   bool
 	frames   int64
+	started  time.Time
 }
 
 // NewTerminalRecorder creates a bounded recorder. A zero limit uses the
@@ -71,14 +81,14 @@ func NewTerminalRecorder(maxBytes int64) *TerminalRecorder {
 	if maxBytes == 0 {
 		maxBytes = defaultTerminalRecordingMaxBytes
 	}
-	return &TerminalRecorder{maxBytes: maxBytes}
+	return &TerminalRecorder{maxBytes: maxBytes, started: time.Now()}
 }
 
 // Write records one complete terminal frame. The frame includes the previous
 // frame hash, sequence-independent direction and payload length, then payload;
 // the SHA-256 chain is computed over the serialized frame.
 func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload []byte) error {
-	if direction != TerminalRecordingInput && direction != TerminalRecordingOutput {
+	if direction != TerminalRecordingInput && direction != TerminalRecordingOutput && direction != TerminalRecordingResize {
 		return fmt.Errorf("invalid terminal recording direction %q", direction)
 	}
 	if len(payload) == 0 {
@@ -102,8 +112,10 @@ func (r *TerminalRecorder) Write(direction TerminalRecordingDirection, payload [
 	frame := make([]byte, frameSize)
 	frame[0] = terminalRecordingFrameVersion
 	frame[1] = byte(direction)
-	binary.BigEndian.PutUint64(frame[2:10], uint64(len(payload)))
-	copy(frame[10:10+sha256.Size], r.previous[:])
+	// time.Since uses the monotonic clock, so offsets never go backwards.
+	binary.BigEndian.PutUint64(frame[2:10], uint64(time.Since(r.started)))
+	binary.BigEndian.PutUint64(frame[10:18], uint64(len(payload)))
+	copy(frame[18:18+sha256.Size], r.previous[:])
 	copy(frame[terminalRecordingFrameHeaderSize:], payload)
 	if _, err := r.bytes.Write(frame); err != nil {
 		return fmt.Errorf("append terminal recording frame: %w", err)
@@ -135,6 +147,7 @@ func (r *TerminalRecorder) Finalize() (TerminalRecording, error) {
 			}
 			frame := make([]byte, terminalRecordingFrameHeaderSize)
 			frame[0], frame[1] = terminalRecordingFrameVersion, terminalRecordingDirectionOutput
+			binary.BigEndian.PutUint64(frame[2:10], uint64(time.Since(r.started)))
 			_, _ = r.bytes.Write(frame)
 			r.frames = 1
 		}
@@ -156,6 +169,19 @@ func StreamTerminal(
 	stdout, stderr io.Writer,
 	recorder *TerminalRecorder,
 ) (TerminalRecording, error) {
+	return StreamTerminalWithResize(ctx, executor, stdin, stdout, stderr, nil, recorder)
+}
+
+// StreamTerminalWithResize is StreamTerminal with a client terminal size
+// queue. Every size delivered to the target is recorded as a resize frame.
+func StreamTerminalWithResize(
+	ctx context.Context,
+	executor remotecommand.Executor,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	sizes remotecommand.TerminalSizeQueue,
+	recorder *TerminalRecorder,
+) (TerminalRecording, error) {
 	if executor == nil || recorder == nil {
 		return TerminalRecording{}, errors.New("terminal stream requires an executor and recorder")
 	}
@@ -169,10 +195,11 @@ func StreamTerminal(
 		stderr = io.Discard
 	}
 	streamErr := executor.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdin:  &recordingReader{reader: stdin, recorder: recorder, direction: TerminalRecordingInput},
-		Stdout: io.MultiWriter(&recordingWriter{writer: stdout, recorder: recorder, direction: TerminalRecordingOutput}),
-		Stderr: io.MultiWriter(&recordingWriter{writer: stderr, recorder: recorder, direction: TerminalRecordingOutput}),
-		Tty:    true,
+		Stdin:             &recordingReader{reader: stdin, recorder: recorder, direction: TerminalRecordingInput},
+		Stdout:            io.MultiWriter(&recordingWriter{writer: stdout, recorder: recorder, direction: TerminalRecordingOutput}),
+		Stderr:            io.MultiWriter(&recordingWriter{writer: stderr, recorder: recorder, direction: TerminalRecordingOutput}),
+		Tty:               true,
+		TerminalSizeQueue: recordingSizeQueue(sizes, recorder),
 	})
 	result, finalizeErr := recorder.Finalize()
 	if streamErr != nil {
@@ -211,6 +238,36 @@ func (w *recordingWriter) Write(payload []byte) (int, error) {
 		return 0, fmt.Errorf("record terminal output: %w", err)
 	}
 	return w.writer.Write(payload)
+}
+
+func recordingSizeQueue(sizes remotecommand.TerminalSizeQueue, recorder *TerminalRecorder) remotecommand.TerminalSizeQueue {
+	if sizes == nil {
+		return nil
+	}
+	return recordedSizeQueue{sizes: sizes, recorder: recorder}
+}
+
+type recordedSizeQueue struct {
+	sizes    remotecommand.TerminalSizeQueue
+	recorder *TerminalRecorder
+}
+
+// Next records the size before it is applied, so the recording never shows
+// output rendered at a size it does not contain. A recording failure ends
+// resizing; the byte limit then also stops the stream's next write.
+func (q recordedSizeQueue) Next() *remotecommand.TerminalSize {
+	size := q.sizes.Next()
+	if size == nil {
+		return nil
+	}
+	payload, err := json.Marshal(struct {
+		Width  uint16 `json:"width"`
+		Height uint16 `json:"height"`
+	}{size.Width, size.Height})
+	if err != nil || q.recorder.Write(TerminalRecordingResize, payload) != nil {
+		return nil
+	}
+	return size
 }
 
 type httpNoBodyReader struct{}

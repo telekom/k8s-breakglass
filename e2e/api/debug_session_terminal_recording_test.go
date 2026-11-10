@@ -6,6 +6,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -27,6 +28,8 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	bgclient "github.com/telekom/k8s-breakglass/pkg/bgctl/client"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/recording"
 )
 
 // TestDebugSessionTerminalRecordingE2E proves the recorded terminal path on a
@@ -118,10 +121,13 @@ spec:
 		require.Equal(t, http.StatusOK, status, string(replay))
 		digest := sha256.Sum256(replay)
 		require.Equal(t, result.SHA256, hex.EncodeToString(digest[:]), "replayed bytes must match the published digest")
-		frames, err := helpers.ParseTerminalRecording(replay)
+		parsed, err := recording.Parse(bytes.NewReader(replay))
 		require.NoError(t, err, "the replayed recording must have an intact hash chain")
+		frames := parsed.Frames
+		require.Equal(t, result.SHA256, parsed.SHA256)
 		var input, output strings.Builder
 		for _, frame := range frames {
+			require.EqualValues(t, 2, frame.Version, "new recordings carry timing")
 			switch frame.Direction {
 			case 'i':
 				input.Write(frame.Payload)
@@ -165,6 +171,64 @@ spec:
 			require.NoError(t, err)
 			require.Equal(t, http.StatusForbidden, denied.StatusCode, denied.Body)
 		})
+	})
+
+	t.Run("bgctl client records resize and timing", func(t *testing.T) {
+		bg, err := bgclient.New(bgclient.WithServer(helpers.GetAPIBaseURL()), bgclient.WithToken(requester.AuthToken))
+		require.NoError(t, err)
+		stdin, stdinWriter := io.Pipe()
+		resize := make(chan bgclient.TerminalSize, 1)
+		resize <- bgclient.TerminalSize{Width: 101, Height: 31}
+		const pause = 1500 * time.Millisecond
+		go func() {
+			time.Sleep(pause)
+			_, _ = io.WriteString(stdinWriter, "timed\n")
+			time.Sleep(time.Second)
+			_ = stdinWriter.Close()
+		}()
+		var out bytes.Buffer
+		streamCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+		defer cancel()
+		result, err := bg.Terminal(streamCtx, bgclient.TerminalRequest{
+			Session: session.Name, Namespace: session.Namespace, PodNamespace: pod.Namespace, PodName: pod.Name,
+			Command: []string{"sh", "-c", `echo start; read line; stty size; echo "got:$line"`},
+			Stdin:   stdin, Stdout: &out, Resize: resize,
+		})
+		require.NoError(t, err)
+		require.Equal(t, "completed", result.Status, out.String())
+		require.Contains(t, out.String(), "31 101", "the initial size reaches the target TTY")
+		require.Contains(t, out.String(), "got:timed")
+
+		var raw bytes.Buffer
+		published, err := bg.DebugSessions().DownloadRecording(ctx, session.Name, session.Namespace, result.RecordingID, &raw)
+		require.NoError(t, err)
+		require.Equal(t, result.SHA256, published)
+		rec, err := recording.Parse(&raw)
+		require.NoError(t, err)
+		require.Equal(t, published, rec.SHA256)
+		var resized, firstOutput, typed *recording.Frame
+		for i := range rec.Frames {
+			frame := &rec.Frames[i]
+			switch {
+			case frame.Direction == recording.Resize && resized == nil:
+				resized = frame
+			case frame.Direction == recording.Output && firstOutput == nil:
+				firstOutput = frame
+			case frame.Direction == recording.Input && typed == nil:
+				typed = frame
+			}
+		}
+		require.NotNil(t, resized, "the resize is recorded")
+		require.JSONEq(t, `{"width":101,"height":31}`, string(resized.Payload))
+		require.NotNil(t, firstOutput)
+		require.NotNil(t, typed)
+		require.Equal(t, "timed\n", string(typed.Payload))
+		require.GreaterOrEqual(t, typed.Offset-firstOutput.Offset, pause-500*time.Millisecond, "frame offsets reflect real time between output and typed input")
+
+		var cast bytes.Buffer
+		require.NoError(t, rec.WriteAsciicast(&cast, recording.AsciicastOptions{}))
+		require.Contains(t, strings.SplitN(cast.String(), "\n", 2)[0], `"width":101`)
+		require.Contains(t, cast.String(), "got:timed")
 	})
 
 	t.Run("credential rotation aborts stream", func(t *testing.T) {
@@ -230,10 +294,10 @@ spec:
 		status, replay, err := requester.GetRaw(ctx, base+"/"+url.PathEscape(aborted.ArtifactID)+sessionQuery)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, status, string(replay))
-		frames, err := helpers.ParseTerminalRecording(replay)
+		parsed, err := recording.Parse(bytes.NewReader(replay))
 		require.NoError(t, err)
 		var output strings.Builder
-		for _, frame := range frames {
+		for _, frame := range parsed.Frames {
 			output.Write(frame.Payload)
 		}
 		require.Contains(t, output.String(), "ready")

@@ -138,9 +138,12 @@ spec:
                     format: date-time
                     type: string
                   formatVersion:
-                    description: formatVersion is controller-supplied recording metadata.
+                    description: |-
+                      formatVersion is controller-supplied recording metadata: 1 (untimed
+                      frames) or 2 (frames with monotonic time offsets and resize events).
                     enum:
                     - 1
+                    - 2
                     format: int32
                     type: integer
                   frames:
@@ -467,9 +470,12 @@ spec:
                     format: date-time
                     type: string
                   formatVersion:
-                    description: formatVersion is controller-supplied recording metadata.
+                    description: |-
+                      formatVersion is controller-supplied recording metadata: 1 (untimed
+                      frames) or 2 (frames with monotonic time offsets and resize events).
                     enum:
                     - 1
+                    - 2
                     format: int32
                     type: integer
                   frames:

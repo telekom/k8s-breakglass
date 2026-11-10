@@ -198,6 +198,36 @@ bgctl debug kubectl node-debug SESSION_NAME \
   --node worker-1
 ```
 
+## Recorded Terminals
+
+Sessions whose template sets `audit.enableTerminalRecording` deny direct
+`kubectl exec`/`attach`. Use the controller-recorded terminal instead:
+
+```bash
+bgctl debug terminal SESSION_NAME --pod NAMESPACE/POD [--container NAME] [-- COMMAND...]
+```
+
+The command defaults to `sh`. On a TTY it switches to raw mode and sends the
+initial size and every resize (`SIGWINCH`). Input, output, resizes and their
+timing are recorded. When the stream ends, the recording ID, status and digest
+are printed to stderr; a status other than `completed` exits non-zero.
+
+Authorized session readers can retrieve recordings:
+
+```bash
+bgctl debug recordings list SESSION_NAME
+bgctl debug recordings verify SESSION_NAME RECORDING_ID
+bgctl debug recordings get SESSION_NAME RECORDING_ID -f recording.raw
+bgctl debug recordings export SESSION_NAME RECORDING_ID > session.cast   # asciicast v2
+asciinema play session.cast
+```
+
+Every download is verified before it is written: the hash chain, monotonic
+timing and the digest the server published must match. `export --format raw`
+writes the verified frames; `--include-input` adds typed input as asciicast
+`"i"` events (it may contain secrets). Files are created with mode `0600` and
+never overwrite existing files. See [terminal recording](terminal-recording.md).
+
 ## Watch Mode
 
 Watch for real-time session state changes (polling-based, 2-second interval by default):

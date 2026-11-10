@@ -159,7 +159,7 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	aborted := make(chan struct{})
 	recorder := NewTerminalRecorder(1024)
 	var stdout bytes.Buffer
-	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder, func() { close(aborted) })
+	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, nil, recorder, func() { close(aborted) })
 	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
 	}
@@ -178,7 +178,7 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		var aborts atomic.Int32
-		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() { aborts.Add(1) })
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want cancellation", i, err)
 		}
@@ -191,7 +191,7 @@ func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) 
 func TestStreamTerminalWithLeaseDoesNotAbortTransportOnCompletion(t *testing.T) {
 	var aborts atomic.Int32
 	executor := &testTerminalExecutor{output: []byte("done")}
-	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() { aborts.Add(1) })
 	if err != nil {
 		t.Fatalf("streamTerminalWithLease() error = %v", err)
 	}
