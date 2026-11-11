@@ -1212,3 +1212,28 @@ func TestHandOverKeepsItsDeadlineAcrossFullOpenHops(t *testing.T) {
 	// per hop.
 	require.Less(t, time.Since(start), time.Second)
 }
+
+// A handover started by a cancelled caller (a manager batch the reload drain
+// cancelled) still waits within its own budget for a replacement whose queue
+// frees up shortly, instead of failing at once with the caller's
+// cancellation.
+func TestUnmarkedHandOverIgnoresTheCallersCancellation(t *testing.T) {
+	cfg := outageConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+	cfg.WriteTimeout = 2 * time.Second
+	release := make(chan struct{})
+	next := NewQueuedSink(newFuncSink("detached", func([]*Event) error { <-release; return nil }), cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	require.NoError(t, next.Write(context.Background(), &Event{ID: "busy", Type: EventConfigChanged}))
+	require.NoError(t, next.Write(context.Background(), &Event{ID: "fills-queue", Type: EventConfigChanged}))
+	old := NewQueuedSink(&flakySink{}, cfg, zap.NewNop())
+	old.HandOver(next)
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	timeouts := metrics.AuditEventsDropped.WithLabelValues("detached", "enqueue_timeout")
+	before := testutil.ToFloat64(timeouts)
+	go func() { time.Sleep(100 * time.Millisecond); close(release) }() // capacity frees up within the budget
+	old.handOverWithin(cancelled, []*Event{{ID: "handed-over", Type: EventConfigChanged}})
+	require.Equal(t, before, testutil.ToFloat64(timeouts), "the event waited for capacity")
+	require.Zero(t, next.Health().DroppedEvents)
+}
