@@ -1036,12 +1036,13 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 // DebugSessionCleanupAcknowledged records an operator acknowledgement of
 // cleanup residuals as absent, with the acknowledging user as actor. Applied
 // is false when the controller rejected it; message then says why.
-func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, user, reason string, applied bool, identities []string, message string) {
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, acknowledgement, user, reason string, applied bool, identities []string, message string) {
 	details := map[string]interface{}{
-		"cluster":    cluster,
-		"annotation": "breakglass.t-caas.telekom.com/cleanup-acknowledged-absent",
-		"applied":    applied,
-		"retired":    append([]string(nil), identities...),
+		"cluster":         cluster,
+		"source":          "DebugSessionCleanupAcknowledgement",
+		"acknowledgement": acknowledgement,
+		"applied":         applied,
+		"retired":         append([]string(nil), identities...),
 	}
 	if reason != "" {
 		details["reason"] = reason

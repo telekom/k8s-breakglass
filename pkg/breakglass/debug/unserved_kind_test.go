@@ -312,15 +312,24 @@ func TestDeletionCleanupFailurePersistsCleanupFailed(t *testing.T) {
 	now := metav1.Now()
 	ds := unresolvedPolicyExceptionSession()
 	ds.Status.Conditions = nil
+	ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+	expires := metav1.NewTime(time.Now().Add(time.Hour))
+	ds.Status.ExpiresAt = &expires
 	ds.Finalizers = []string{maintenanceFinalizer}
 	ds.DeletionTimestamp = &now
 	ds.Status.NodeMaintenance = &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "op"}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
 	c.acknowledgementWebhookActive = webhookActive
-	_, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
-	require.Error(t, err, "maintenance cleanup cannot run without a cluster provider")
+	result, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.NoError(t, err, "a failed deletion cleanup backs off instead of returning an error")
+	assert.GreaterOrEqual(t, result.RequeueAfter, ExpiredSessionRequeue)
+	// A second reconcile within the backoff does not retry the target.
+	result, err = c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.NoError(t, err)
+	assert.Greater(t, result.RequeueAfter, time.Duration(0))
 	persisted := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
 	assert.True(t, cleanupConditionFailed(persisted), "a failed deletion cleanup is recorded, so it can be acknowledged")
+	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, persisted.Status.State, "a deleted active session is terminalized first")
 }

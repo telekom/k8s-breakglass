@@ -16,10 +16,12 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 )
 
@@ -158,6 +160,8 @@ func TestCleanupAcknowledgementIsAuditedWithTheOperatorAsActor(t *testing.T) {
 	assert.Equal(t, "operator@example.com", acks[0].Actor.User)
 	assert.Equal(t, true, acks[0].Details["applied"])
 	assert.Equal(t, "CHG-1663: Kyverno CRDs removed", acks[0].Details["reason"])
+	assert.Equal(t, "DebugSessionCleanupAcknowledgement", acks[0].Details["source"])
+	assert.Equal(t, "a", acks[0].Details["acknowledgement"])
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	require.NotNil(t, condition)
 	assert.Equal(t, metav1.ConditionFalse, condition.Status)
@@ -191,6 +195,58 @@ func TestCleanupAcknowledgementsMergeAppendOnlyByUID(t *testing.T) {
 	assert.True(t, acknowledgementProcessed(persisted, "uid-a"), "the first record survives the second write")
 	assert.True(t, acknowledgementProcessed(persisted, "uid-b"))
 	assert.Len(t, persisted.Status.CleanupAcknowledgements, 2)
+	// The second, stale writer must not restore the residual the first retired.
+	for _, ref := range persisted.Status.DeployedResources {
+		assert.NotEqual(t, "deployed", ref.Name, "an acknowledged deployed residual stays retired")
+	}
+	for _, entry := range persisted.Status.PodTemplateResourceStatuses {
+		assert.NotEqual(t, "pod-template", entry.ResourceName, "an acknowledged pod-template residual stays retired")
+	}
+}
+
+func TestStaleWriterCannotRestoreAcknowledgedAuxiliaryDeletion(t *testing.T) {
+	ds := failingSession(t)
+	f := newAckFixture(t, ds)
+	baseline := ds.Status.DeepCopy()
+	acknowledged, stale := ds.DeepCopy(), ds.DeepCopy()
+	applyCleanupAcknowledgement(acknowledged, acknowledgement(ds, "a", acknowledgedPolicyExceptions[0], acknowledgedPolicyExceptions[1]), "")
+	require.NoError(t, f.c.patchDebugSessionCleanupStatus(context.Background(), acknowledged, baseline))
+	stale.Status.AuxiliaryResourceStatuses[0].Error = "stale retry"
+	require.NoError(t, f.c.patchDebugSessionCleanupStatus(context.Background(), stale, baseline))
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	aux := persisted.Status.AuxiliaryResourceStatuses[0]
+	assert.True(t, aux.Deleted, "acknowledged primary deletion is monotonic")
+	assert.True(t, aux.AdditionalResources[0].Deleted, "acknowledged child deletion is monotonic")
+}
+
+func TestConcurrentProcessingOfOneAcknowledgementAuditsOnce(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	f := newAckFixture(t, ds, ack)
+	// Two replicas list the same unprocessed acknowledgement before either commits.
+	first, second := ds.DeepCopy(), ds.DeepCopy()
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), first))
+	other := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, ack})
+	other.acknowledgementWebhookActive = webhookActive
+	require.NoError(t, other.processCleanupAcknowledgement(context.Background(), second))
+	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
+	assert.Len(t, acks, 1, "only the replica that inserted the record audits it")
+}
+
+// fakeListOnly serves a stale acknowledgement list, as a replica would before
+// observing the other replica's status write.
+type fakeListOnly struct {
+	client.Client
+	ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement
+}
+
+func (f fakeListOnly) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	if l, ok := list.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgementList); ok {
+		l.Items = []breakglassv1alpha1.DebugSessionCleanupAcknowledgement{*f.ack}
+		return nil
+	}
+	return f.Client.List(ctx, list, opts...)
 }
 
 func TestCleanupAcknowledgementRefusedWithoutValidatingWebhook(t *testing.T) {
@@ -235,6 +291,14 @@ func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
 		"object selector": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.ObjectSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"x": "y"}}
 		})}},
+		"cluster scope": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
+			scope := admissionregistrationv1.ClusterScope
+			w.Rules[0].Scope = &scope
+		})}},
+		"namespaced scope": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
+			scope := admissionregistrationv1.NamespacedScope
+			w.Rules[0].Scope = &scope
+		})}, want: true},
 		"match condition": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "skip", Expression: "false"}}
 		})}},
@@ -293,4 +357,19 @@ func TestCleanupAcknowledgementWebhookVerifiesTheActor(t *testing.T) {
 	require.Error(t, err, "acknowledgedBy must name the creating user")
 	_, err = validator.ValidateCreate(context.Background(), ack)
 	require.Error(t, err, "no admission request")
+}
+
+func TestCleanupProceedsWhenAcknowledgementCRDIsMissing(t *testing.T) {
+	ds := failingSession(t)
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).WithInterceptorFuncs(interceptor.Funcs{
+		List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if _, ok := list.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgementList); ok {
+				return &meta.NoKindMatchError{GroupKind: breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind()}
+			}
+			return cl.List(ctx, list, opts...)
+		},
+	}).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds), "a missing optional CRD must not block cleanup")
+	assert.Empty(t, ds.Status.CleanupAcknowledgements)
 }

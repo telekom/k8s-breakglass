@@ -678,7 +678,8 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		}
 		setCleanupCondition(ds)
 		var previous metav1.Condition
-		if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+		inserted, err := c.patchDebugSessionCleanupStatusReportingInserts(ctx, ds, baseline, &previous)
+		if err != nil {
 			return fmt.Errorf("persist cleanup acknowledgement %s: %w", ack.Name, err)
 		}
 		if !acknowledgementProcessed(ds, record.UID) {
@@ -689,9 +690,13 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			})
 			return nil
 		}
+		if !inserted[record.UID] {
+			// Another replica processed this acknowledgement first and audits it.
+			continue
+		}
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, record.AcknowledgedBy, record.Reason, record.Applied, record.Retired, record.Message)
+				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, record.AcknowledgedBy, record.Reason, record.Applied, record.Retired, record.Message)
 				switch {
 				case previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
@@ -904,12 +909,21 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 // non-nil) the live CleanupFailed condition observed before the patch, or the
 // zero condition when none existed.
 func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
+	_, err := c.patchDebugSessionCleanupStatusReportingInserts(ctx, ds, baseline, previous)
+	return err
+}
+
+// patchDebugSessionCleanupStatusReportingInserts also returns the UIDs of
+// acknowledgement records that this write inserted. A concurrent writer that
+// committed the same UID first wins; only the inserting writer audits it.
+func (c *DebugSessionController) patchDebugSessionCleanupStatusReportingInserts(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) (map[string]bool, error) {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
 		cleanupBaseline = *baseline
 	}
 	var previousCondition metav1.Condition
+	var inserted map[string]bool
 	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -940,11 +954,16 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
 			// Append-only by UID: keep every live record and add new ones.
+			inserted = map[string]bool{}
 			for _, record := range desiredStatus.CleanupAcknowledgements {
 				if !acknowledgementProcessed(current, record.UID) {
 					current.Status.CleanupAcknowledgements = append(current.Status.CleanupAcknowledgements, record)
+					inserted[record.UID] = true
 				}
 			}
+			// Residuals retired by an applied acknowledgement stay retired even
+			// when a stale concurrent writer still lists them.
+			retireAcknowledgedResiduals(current)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)
@@ -957,7 +976,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			return true, nil
 		})
 	if err != nil {
-		return fmt.Errorf("patch debug session cleanup status: %w", err)
+		return nil, fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
 
 	if previous != nil {
@@ -965,7 +984,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 	}
 	ds.Status = patched.Status
 	ds.ResourceVersion = patched.ResourceVersion
-	return nil
+	return inserted, nil
 }
 
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
@@ -1188,6 +1207,34 @@ func mergeAuxiliaryResourceStatuses(
 ) []breakglassv1alpha1.AuxiliaryResourceStatus {
 	desired = promoteObservedCleanupIntents(desired, current)
 	merged := append([]breakglassv1alpha1.AuxiliaryResourceStatus(nil), desired...)
+	defer func() {
+		// Deletion evidence is monotonic: a stale writer cannot undo a
+		// concurrently recorded deletion of a primary or child.
+		live := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(current))
+		for _, status := range current {
+			live[auxiliaryResourceStatusKey(status)] = status
+		}
+		for i := range merged {
+			cur, ok := live[auxiliaryResourceStatusKey(merged[i])]
+			if !ok {
+				continue
+			}
+			if cur.Deleted && !merged[i].Deleted {
+				merged[i].Deleted, merged[i].DeletedAt, merged[i].Error = true, cur.DeletedAt, cur.Error
+			}
+			deletedChildren := make(map[string]breakglassv1alpha1.AdditionalResourceRef)
+			for _, child := range cur.AdditionalResources {
+				if child.Deleted {
+					deletedChildren[additionalResourceKey(child)] = child
+				}
+			}
+			for j := range merged[i].AdditionalResources {
+				if child, ok := deletedChildren[additionalResourceKey(merged[i].AdditionalResources[j])]; ok && !merged[i].AdditionalResources[j].Deleted {
+					merged[i].AdditionalResources[j].Deleted, merged[i].AdditionalResources[j].Error = true, child.Error
+				}
+			}
+		}
+	}()
 	desiredByKey := make(map[string]int, len(desired))
 	baselineByKey := make(map[string]breakglassv1alpha1.AuxiliaryResourceStatus, len(baseline))
 	for i, status := range desired {

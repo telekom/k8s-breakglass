@@ -100,3 +100,9 @@ patches:
       - op: replace
         path: /webhooks/10/clientConfig/service/namespace
         value: breakglass-system
+      - op: replace
+        path: /webhooks/11/clientConfig/service/name
+        value: breakglass-webhook-service
+      - op: replace
+        path: /webhooks/11/clientConfig/service/namespace
+        value: breakglass-system

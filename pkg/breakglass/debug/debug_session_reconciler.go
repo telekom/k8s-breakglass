@@ -133,6 +133,7 @@ type DebugSessionController struct {
 	// webhook authorizes acknowledgements; tests replace it.
 	acknowledgementWebhookActive func(context.Context) (bool, error)
 	crdOutdatedOnce              sync.Once
+	ackCRDMissingOnce            sync.Once
 }
 
 // WithUnservedKindHandling controls the activation preflight that fails a
@@ -330,18 +331,38 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if !ds.DeletionTimestamp.IsZero() && hasMaintenanceFinalizer(ds) {
+		// A deleted session that is still active becomes terminal first: an
+		// expired active session accepts only terminal status updates, and
+		// cleanup and acknowledgements record their outcome in the status.
+		if !debugSessionTerminal(ds) {
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if isDebugSessionExpired(ds, time.Now().UTC()) {
+				state = breakglassv1alpha1.DebugSessionStateExpired
+			}
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = state
+				status.Message = "Session deleted; releasing node maintenance"
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
-		// Record a failed deletion cleanup as CleanupFailed, so it is visible
-		// and an operator acknowledgement can retire unprovable residuals.
+		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, nil
+		}
+		// Record a failed deletion cleanup as CleanupFailed, so it is visible,
+		// backs off like other cleanup, and can be acknowledged.
 		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupHotfix} {
 			if err := cleanup(ctx, ds); err != nil {
 				setCleanupCondition(ds)
 				if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
 					return ctrl.Result{}, errors.Join(err, patchErr)
 				}
-				return ctrl.Result{}, err
+				retryAfter := c.recordCleanupFailure(ds)
+				log.Warnw("Deletion cleanup failed; retrying", "error", err, "retryAfter", retryAfter)
+				return ctrl.Result{RequeueAfter: retryAfter}, nil
 			}
 		}
 		// activateSession acquires the hub connection lease before the

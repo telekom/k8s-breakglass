@@ -207,6 +207,13 @@ jobs:
           # Also build CRDs only
           ./bin/kustomize build config/crd > manifests-current/crds.yaml
           echo "✅ config/crd built successfully"
+          # Every webhook must point at the deployed service. The kustomize
+          # patches address webhooks by index, so a new webhook needs a new patch.
+          unpatched=$(grep -c 'name: webhook-service$' manifests-current/base.yaml || true)
+          if [ "$unpatched" != "0" ]; then
+            echo "::error::$unpatched webhook(s) still reference the unpatched webhook-service; add patches in config/webhook/kustomization.yaml"
+            exit 1
+          fi
       - name: Get latest release tag
         id: get_release
         run: |

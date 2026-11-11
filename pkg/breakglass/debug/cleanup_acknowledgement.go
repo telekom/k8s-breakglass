@@ -120,6 +120,14 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]breakglassv1alpha1.DebugSessionCleanupAcknowledgement, error) {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
+		if isKindNotServedError(err) {
+			// Without the CRD nobody can have acknowledged anything; cleanup
+			// must not depend on an optional resource being installed.
+			c.ackCRDMissingOnce.Do(func() {
+				c.log.Warnw("DebugSessionCleanupAcknowledgement CRD is not installed; cleanup acknowledgements are unavailable until it is applied")
+			})
+			return nil, nil
+		}
 		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
 	}
 	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
@@ -159,6 +167,7 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 				if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) &&
 					(slices.Contains(rule.APIVersions, breakglassv1alpha1.GroupVersion.Version) || slices.Contains(rule.APIVersions, "*")) &&
 					slices.Contains(rule.Resources, "debugsessioncleanupacknowledgements") &&
+					(rule.Scope == nil || *rule.Scope == admissionregistrationv1.NamespacedScope || *rule.Scope == admissionregistrationv1.AllScopes) &&
 					(slices.Contains(rule.Operations, admissionregistrationv1.Create) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
 					return true, nil
 				}
@@ -166,4 +175,51 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 		}
 	}
 	return false, nil
+}
+
+// retireAcknowledgedResiduals removes or marks deleted every inventory entry
+// named by an applied acknowledgement record. It is idempotent and keeps
+// acknowledged retirements monotonic across concurrent status writers.
+func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
+	retired := map[string]bool{}
+	for _, record := range ds.Status.CleanupAcknowledgements {
+		if record.Applied {
+			for _, id := range record.Retired {
+				retired[id] = true
+			}
+		}
+	}
+	if len(retired) == 0 {
+		return
+	}
+	is := func(apiVersion, kind, namespace, name, uid string) bool {
+		return retired[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}.String()]
+	}
+	status := &ds.Status
+	deployed := status.DeployedResources[:0]
+	for _, ref := range status.DeployedResources {
+		if !is(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID) {
+			deployed = append(deployed, ref)
+		}
+	}
+	status.DeployedResources = deployed
+	podTemplates := status.PodTemplateResourceStatuses[:0]
+	for _, entry := range status.PodTemplateResourceStatuses {
+		if entry.Deleted || !is(entry.APIVersion, entry.Kind, entry.Namespace, entry.ResourceName, entry.UID) {
+			podTemplates = append(podTemplates, entry)
+		}
+	}
+	status.PodTemplateResourceStatuses = podTemplates
+	for i := range status.AuxiliaryResourceStatuses {
+		entry := &status.AuxiliaryResourceStatuses[i]
+		if !entry.Deleted && is(entry.APIVersion, entry.Kind, entry.Namespace, entry.ResourceName, entry.UID) {
+			entry.Deleted, entry.Error = true, acknowledgedAbsentReason
+		}
+		for j := range entry.AdditionalResources {
+			child := &entry.AdditionalResources[j]
+			if !child.Deleted && is(child.APIVersion, child.Kind, child.Namespace, child.ResourceName, child.UID) {
+				child.Deleted, child.Error = true, acknowledgedAbsentReason
+			}
+		}
+	}
 }
