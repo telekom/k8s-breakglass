@@ -24,6 +24,18 @@ type panicWriter struct{}
 
 func (panicWriter) Write([]byte) (int, error) { panic("stdout failed") }
 
+// outputWriter closes received on the first output bytes bgctl writes, which
+// proves the client has the response and is streaming.
+type outputWriter struct {
+	once     sync.Once
+	received chan struct{}
+}
+
+func (w *outputWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() { close(w.received) })
+	return len(p), nil
+}
+
 // TestDebugTerminalRestoresTTY runs the raw-mode path on a real pseudo-terminal
 // and asserts the original termios is restored after SIGTERM and after a panic.
 func TestDebugTerminalRestoresTTY(t *testing.T) {
@@ -31,12 +43,15 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 		name      string
 		interrupt bool
 		noHeaders bool
-		stdout    io.Writer
+		panics    bool
 	}{
-		{name: "SIGTERM", interrupt: true, stdout: io.Discard},
-		// The transport waits for its request body writer before Do returns.
-		{name: "SIGTERM before response", interrupt: true, noHeaders: true, stdout: io.Discard},
-		{name: "panic", stdout: panicWriter{}},
+		// Needs the client to end its request body on cancel: the transport
+		// waits for its body writer before Do returns.
+		{name: "SIGTERM before response", interrupt: true, noHeaders: true},
+		// Covered by the deferred restore alone: canceling the context aborts
+		// the response body read.
+		{name: "SIGTERM while streaming output", interrupt: true},
+		{name: "panic", panics: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ptmx, tty, err := pty.Open()
@@ -84,7 +99,12 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			defer server.CloseClientConnections()
 			defer unblock()
 
-			root := NewRootCommand(Config{ConfigPath: writeTestConfigForDebug(t, server.URL), OutputWriter: tc.stdout})
+			output := &outputWriter{received: make(chan struct{})}
+			var stdout io.Writer = output
+			if tc.panics {
+				stdout = panicWriter{}
+			}
+			root := NewRootCommand(Config{ConfigPath: writeTestConfigForDebug(t, server.URL), OutputWriter: stdout})
 			root.SetIn(stdin)
 			root.SetErr(io.Discard)
 			root.SetArgs([]string{"--server", server.URL, "--token", "t", "debug", "terminal", "s1", "--pod", "ns/pod"})
@@ -100,6 +120,9 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			unblock()
 			receive(t, wrote, "the server to write output")
 			if tc.interrupt {
+				if !tc.noHeaders {
+					receive(t, output.received, "bgctl to print the response output")
+				}
 				require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
 				require.Nil(t, receive(t, done, "bgctl to exit after SIGTERM"))
 			} else {
