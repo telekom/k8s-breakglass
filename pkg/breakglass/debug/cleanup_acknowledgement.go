@@ -153,11 +153,27 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 
 // sessionPartyMatches reports whether user is the session's requester,
 // approver or a participant under any recorded identity.
+//
+// acknowledgedBy is the hub API server username, which may carry a prefix
+// configured on the API server (for example "oidc:alice@example.com"), while
+// session identities are stored without it or with a spoke prefix. Both sides
+// are therefore also compared without any "prefix:" part. This can reject an
+// unrelated user whose name matches after the prefix, which errs on the safe
+// side. Groups are not compared: four-eyes is about the acting person, and a
+// shared group membership does not make the acknowledger a session party.
 func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool {
 	if user == "" {
 		return false
 	}
-	same := func(identity string) bool { return identity != "" && strings.EqualFold(identity, user) }
+	unprefixed := func(name string) string {
+		if i := strings.LastIndex(name, ":"); i >= 0 {
+			return name[i+1:]
+		}
+		return name
+	}
+	same := func(identity string) bool {
+		return identity != "" && (strings.EqualFold(identity, user) || strings.EqualFold(unprefixed(identity), unprefixed(user)))
+	}
 	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) {
 		return true
 	}

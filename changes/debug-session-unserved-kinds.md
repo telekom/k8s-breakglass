@@ -14,10 +14,10 @@ section: Behaviour changes
   `debug_session.cleanup_acknowledged` (#1663).
 - Creating a `DebugSessionCleanupAcknowledgement` requires RBAC `create` on
   the new resource; the new ClusterRole `debugsession-cleanup-acknowledger` is
-  bound to nobody. The ValidatingAdmissionPolicy
-  `breakglass-cleanup-acknowledgement-actor` ships with the CRD and requires
-  `acknowledgedBy` to equal the creating user, so Kubernetes 1.30 or newer is
-  required. Acknowledgements are processed only while their validating webhook
+  bound to nobody. On Kubernetes 1.30+, add the optional kustomize component
+  `config/components/cleanup-acknowledgement-policy`: its
+  ValidatingAdmissionPolicy enforces `acknowledgedBy` in the API server, even
+  before the webhook is deployed. Acknowledgements are processed only while their validating webhook
   is active with `failurePolicy: Fail`. An acknowledgement by the session's
   requester, approver or a participant is rejected (#1663).
 - Upgrade order: apply the CRDs (the new

@@ -254,17 +254,23 @@ func (c *DebugSessionController) currentAuditManager() *audit.Manager {
 
 // SetupWithManager sets up the controller with the Manager
 func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&breakglassv1alpha1.DebugSession{}).
-		// A new acknowledgement reconciles its session at once.
-		Watches(&breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj ctrlclient.Object) []reconcile.Request {
+	builder := ctrl.NewControllerManagedBy(mgr).For(&breakglassv1alpha1.DebugSession{})
+	// A new acknowledgement reconciles its session at once. Watch it only when
+	// its CRD is served, so the controller still starts on a hub where the
+	// optional CRD is not installed; acknowledgements are then unavailable.
+	if _, err := mgr.GetRESTMapper().RESTMapping(breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind(),
+		breakglassv1alpha1.GroupVersion.Version); err == nil {
+		builder = builder.Watches(&breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj ctrlclient.Object) []reconcile.Request {
 			ack, ok := obj.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
 			if !ok {
 				return nil
 			}
 			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: ack.Namespace, Name: ack.Spec.SessionName}}}
-		})).
-		Complete(c)
+		}))
+	} else if c.log != nil {
+		c.log.Warnw("DebugSessionCleanupAcknowledgement CRD is not served; cleanup acknowledgements are unavailable until it is applied and the controller restarts", "error", err)
+	}
+	return builder.Complete(c)
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete

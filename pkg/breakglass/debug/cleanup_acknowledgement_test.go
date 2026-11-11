@@ -303,24 +303,47 @@ func TestCleanupProceedsWhenAcknowledgementCRDIsMissing(t *testing.T) {
 }
 
 func TestFourEyesRejectsSessionParties(t *testing.T) {
-	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSession){
-		"requester": func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBy = "operator@example.com" },
-		"approver": func(ds *breakglassv1alpha1.DebugSession) {
+	for name, tc := range map[string]struct {
+		mutate func(*breakglassv1alpha1.DebugSession)
+		by     string
+	}{
+		"requester": {mutate: func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBy = "operator@example.com" }},
+		"approver": {mutate: func(ds *breakglassv1alpha1.DebugSession) {
 			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "Operator@example.com"}
-		},
-		"participant": func(ds *breakglassv1alpha1.DebugSession) {
+		}},
+		"participant": {mutate: func(ds *breakglassv1alpha1.DebugSession) {
 			ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "x", Email: "operator@example.com"}}
+		}},
+		"prefixed hub username vs unprefixed requester": {
+			mutate: func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBy = "operator@example.com" },
+			by:     "oidc:operator@example.com",
+		},
+		"prefixed hub username vs spoke-prefixed approver": {
+			mutate: func(ds *breakglassv1alpha1.DebugSession) {
+				ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "spoke:operator@example.com"}
+			},
+			by: "oidc:operator@example.com",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ds := failingSession(t)
-			mutate(ds)
-			record := applyCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "")
+			tc.mutate(ds)
+			ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+			if tc.by != "" {
+				ack.Spec.AcknowledgedBy = tc.by
+			}
+			record := applyCleanupAcknowledgement(ds, ack, "")
 			assert.False(t, record.Applied)
 			assert.Contains(t, record.Message, "four-eyes")
 			assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
 		})
 	}
+}
+
+func TestFourEyesDoesNotRejectAnUnrelatedPrefixedUser(t *testing.T) {
+	ds := failingSession(t)
+	ds.Spec.RequestedBy = "requester@example.com"
+	assert.False(t, sessionPartyMatches(ds, "oidc:operator@example.com"))
 }
 
 func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {

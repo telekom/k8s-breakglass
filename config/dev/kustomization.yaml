@@ -131,3 +131,8 @@ secretGenerator:
   literals:
   - client-secret=breakglass-group-sync-secret
   type: "Opaque"
+
+# The e2e hub runs Kubernetes 1.30+, so enforce the acknowledgement actor in
+# the API server as well.
+components:
+- ../components/cleanup-acknowledgement-policy

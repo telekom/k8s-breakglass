@@ -151,15 +151,22 @@ of the sessions they acknowledge.
 - The object is immutable: the CRD rejects any change to `spec`.
 - It is bound to one session instance by `sessionUID`.
 - `acknowledgedBy` must equal the creating user, so the audit actor cannot be
-  forged. The ValidatingAdmissionPolicy `breakglass-cleanup-acknowledgement-actor`
-  (`config/crd/policies/`) enforces this in the API server. It ships together
-  with the CRD, so it applies even before the controller and its webhook are
-  deployed (for example during an upgrade). The validating webhook
+  forged. The validating webhook
   `debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com`
-  checks the same rule. **Kubernetes 1.30 or newer is required**
-  (ValidatingAdmissionPolicy GA).
+  enforces this, and the controller refuses acknowledgements while that
+  webhook is inactive.
+- On Kubernetes 1.30 or newer, also deploy the optional kustomize component
+  `config/components/cleanup-acknowledgement-policy`. Its
+  ValidatingAdmissionPolicy enforces the same rule in the API server itself,
+  even before the controller and its webhook are deployed (for example during
+  an upgrade). The component is not part of `config/crd` or `config/base`, so
+  hubs from Kubernetes 1.24 keep working.
 - **Four-eyes.** An acknowledgement whose `acknowledgedBy` is the session's
   requester, approver or a participant is rejected, recorded and audited.
+  Usernames are also compared without any `prefix:` part, because the hub API
+  server may prefix usernames (for example `oidc:alice@example.com`) while
+  session identities are stored unprefixed or with a spoke prefix. Group
+  membership is not compared: four-eyes concerns the acting person.
 
 **Requirements.**
 
@@ -171,7 +178,10 @@ of the sessions they acknowledge.
   recorded and audited with this reason.
 - **CRD before controller.** Apply the current CRDs (including
   `debugsessioncleanupacknowledgements` and the DebugSession status field
-  `cleanupAcknowledgements`) before the controller. An older DebugSession CRD
+  `cleanupAcknowledgements`) before the controller. Without the
+  acknowledgement CRD the controller still starts and cleans up as before,
+  but acknowledgements are unavailable until the CRD is applied and the
+  controller restarts. An older DebugSession CRD
   prunes the status field; the controller then logs an error once. The
   retirement itself still persists and is audited, but the session keeps no
   provenance record and no `CleanupAcknowledged` reason.
@@ -219,8 +229,10 @@ acknowledgement triggers a reconcile of its session at once.
 - After completing an Applied decision on the session, the replica marks the
   acknowledgement completed (`status.completedAt`) with a guarded write. Only
   the replica that wins this write audits the Applied outcome, so it is
-  audited exactly once, also when cleanup had already removed the residuals
-  or a completion was retried. A completed acknowledgement is never processed
+  audited at most once, also when cleanup had already removed the residuals
+  or a completion was retried. If that replica stops right after the write and
+  before it emits the event, the event is lost (the outcome stays recorded on
+  the acknowledgement). A completed acknowledgement is never processed
   again, and the residuals it retired stay retired even when no session
   record could be kept. The replica that records a rejection audits it.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
