@@ -664,13 +664,9 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	for i := range pending {
 		ack := &pending[i]
 		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
-		decidedHere := false
 		if ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied {
 			// Decided earlier; only the session completion is outstanding.
-			record = breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
-				Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason,
-				Applied: true, Retired: ack.Status.Retired, ProcessedAt: *ack.Status.ProcessedAt,
-			}
+			record = appliedRecord(ack)
 		} else {
 			claimedAt := metav1.Now()
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &claimedAt}
@@ -697,60 +693,70 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 				}
 				return fmt.Errorf("record cleanup acknowledgement %s decision: %w", ack.Name, err)
 			}
-			decidedHere = true
+			if !record.Applied {
+				// Rejections change no session state; the deciding replica
+				// audits them.
+				log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", ack.Spec.AcknowledgedBy, "reason", record.Message)
+				if c.shouldEmitAudit(ctx, ds) {
+					if auditManager := c.currentAuditManager(); auditManager != nil {
+						auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, false, nil, record.Message)
+					}
+				}
+				continue
+			}
 		}
 
+		// Complete an Applied decision. The replica whose completion write
+		// changes the session audits it, so a transient failure after the
+		// decision is retried and still audited exactly once.
 		var previous metav1.Condition
-		if record.Applied {
-			patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
-				func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
-				func(current *breakglassv1alpha1.DebugSession) (bool, error) {
-					if ds.UID != "" && current.UID != ds.UID {
-						return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
-					}
-					previous = metav1.Condition{}
-					if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
-						previous = *condition
-					}
-					if !completeCleanupAcknowledgement(current, record) {
-						return false, nil
-					}
-					setCleanupCondition(current)
-					if current.Generation > 0 {
-						current.Status.ObservedGeneration = current.Generation
-					}
-					return true, nil
-				})
-			if err != nil {
-				return fmt.Errorf("apply cleanup acknowledgement %s: %w", ack.Name, err)
-			}
-			ds.Status = patched.Status
-			ds.ResourceVersion = patched.ResourceVersion
-			c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
-			if !acknowledgementProcessed(ds, record.UID) {
-				// The API server pruned the field: the DebugSession CRD predates
-				// this controller. The retirement persisted; only the provenance
-				// record and the CleanupAcknowledged reason are lost.
-				c.crdOutdatedOnce.Do(func() {
-					log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
-				})
-			}
+		completed := false
+		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+				if ds.UID != "" && current.UID != ds.UID {
+					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
+				}
+				previous = metav1.Condition{}
+				if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+					previous = *condition
+				}
+				completed = false
+				if !completeCleanupAcknowledgement(current, record) {
+					return false, nil
+				}
+				completed = true
+				setCleanupCondition(current)
+				if current.Generation > 0 {
+					current.Status.ObservedGeneration = current.Generation
+				}
+				return true, nil
+			})
+		if err != nil {
+			return fmt.Errorf("apply cleanup acknowledgement %s: %w", ack.Name, err)
 		}
-		if !decidedHere {
-			continue // the deciding replica audited it
+		ds.Status = patched.Status
+		ds.ResourceVersion = patched.ResourceVersion
+		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+		if completed && !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
+			// The API server pruned the field: the DebugSession CRD predates
+			// this controller. The retirement persisted; only the provenance
+			// record and the CleanupAcknowledged reason are lost.
+			c.crdOutdatedOnce.Do(func() {
+				log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
+			})
 		}
-		if record.Applied {
-			log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
-		} else {
-			log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", ack.Spec.AcknowledgedBy, "reason", record.Message)
+		if !completed {
+			continue // another replica completed and audited it
 		}
+		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, record.Applied, record.Retired, record.Message)
+				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, true, record.Retired, "")
 				switch {
-				case record.Applied && previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
+				case previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
-				case record.Applied && cleanupConditionFailed(ds) && residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds):
+				case cleanupConditionFailed(ds) && residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds):
 					// A partial acknowledgement leaves a different residual
 					// set; report it once, as finishCleanup would.
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))

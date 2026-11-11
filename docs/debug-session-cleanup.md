@@ -211,7 +211,14 @@ acknowledgement triggers a reconcile of its session at once.
   entries are dropped) with the reason in their `error` field. The DebugSession
   also records the acknowledgement in `status.cleanupAcknowledgements` (at most
   64 per session). The last slot is reserved for an acknowledgement that
-  retires **all** remaining residuals, so a session can always be cleaned up.
+  retires **all** remaining residuals. An Applied decision whose record no
+  longer fits is still carried out, with its provenance kept on the
+  acknowledgement object, so the record limit can never block cleanup. An
+  Applied acknowledgement is only ever applied to the session instance named
+  by its `sessionUID`.
+- The replica that records a rejection audits it. The replica that completes
+  an Applied decision on the session audits that, so a completion retried
+  after a transient failure is still audited once.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
   - If residuals remain, the new residual set is reported once with

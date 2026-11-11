@@ -51,6 +51,8 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
 		return reject("cleanup is not failing; acknowledgements apply only to CleanupFailed residuals")
+	case len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords:
+		return reject("the session already records %d applied acknowledgements, the maximum", len(ds.Status.CleanupAcknowledgements))
 	}
 	outstanding := outstandingCleanupResiduals(ds)
 	var retired, unmatched []string
@@ -108,14 +110,35 @@ func outstandingCleanupResiduals(ds *breakglassv1alpha1.DebugSession) map[string
 }
 
 // completeCleanupAcknowledgement applies an Applied decision to ds: it
-// retires the decided identities that are still listed and appends the
-// record. It reports false when ds already holds the record.
+// retires the decided identities that are still outstanding and appends the
+// record while there is room. A full record list never blocks the
+// retirement; the decision on the acknowledgement object stays the
+// provenance. It reports false when there was nothing left to do.
 func completeCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool {
-	if acknowledgementProcessed(ds, record.UID) {
+	if acknowledgementCompleted(ds, record) {
 		return false
 	}
-	ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, record)
-	retireAcknowledgedResiduals(ds)
+	if !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
+		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, record)
+	}
+	retireIdentities(ds, record.Retired)
+	return true
+}
+
+// acknowledgementCompleted reports whether an Applied acknowledgement needs
+// no further session change: it is recorded, or none of the identities it
+// retires is still outstanding (for example when the record list was full or
+// an outdated CRD pruned it).
+func acknowledgementCompleted(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool {
+	if acknowledgementProcessed(ds, record.UID) {
+		return true
+	}
+	outstanding := outstandingCleanupResiduals(ds)
+	for _, id := range record.Retired {
+		if outstanding[id] {
+			return false
+		}
+	}
 	return true
 }
 
@@ -221,7 +244,9 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 		case breakglassv1alpha1.CleanupAcknowledgementRejected:
 			continue
 		case breakglassv1alpha1.CleanupAcknowledgementApplied:
-			if acknowledgementProcessed(ds, string(ack.UID)) {
+			// An acknowledgement bound to an earlier session of the same name
+			// is never applied to this one.
+			if ack.Spec.SessionUID != string(ds.UID) || acknowledgementCompleted(ds, appliedRecord(&ack)) {
 				continue
 			}
 			// Decided but not yet completed on the session.
@@ -273,17 +298,36 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 	return false, nil
 }
 
+// appliedRecord rebuilds the session record of an Applied acknowledgement.
+func appliedRecord(ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+	record := breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
+		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason,
+		Applied: true, Retired: ack.Status.Retired, ProcessedAt: ack.CreationTimestamp,
+	}
+	if ack.Status.ProcessedAt != nil {
+		record.ProcessedAt = *ack.Status.ProcessedAt
+	}
+	return record
+}
+
 // retireAcknowledgedResiduals removes or marks deleted every inventory entry
 // named by an applied acknowledgement record. It is idempotent and keeps
 // acknowledged retirements monotonic across concurrent status writers.
 func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
-	retired := map[string]bool{}
+	var ids []string
 	for _, record := range ds.Status.CleanupAcknowledgements {
 		if record.Applied {
-			for _, id := range record.Retired {
-				retired[id] = true
-			}
+			ids = append(ids, record.Retired...)
 		}
+	}
+	retireIdentities(ds, ids)
+}
+
+// retireIdentities removes or marks deleted every inventory entry named in ids.
+func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []string) {
+	retired := map[string]bool{}
+	for _, id := range ids {
+		retired[id] = true
 	}
 	if len(retired) == 0 {
 		return
