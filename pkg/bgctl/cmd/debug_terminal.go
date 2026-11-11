@@ -203,7 +203,7 @@ func newRecordingsGetCommand() *cobra.Command {
 				return err
 			}
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "verified %d frames, sha256 %s\n", len(rec.Frames), rec.SHA256)
-			return writeRecordingOutput(rt, file, data)
+			return writeRecordingOutput(rt, file, data, true)
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Debug session namespace hint")
@@ -266,7 +266,7 @@ func newRecordingsExportCommand() *cobra.Command {
 				}
 				data = buf.Bytes()
 			}
-			return writeRecordingOutput(rt, file, data)
+			return writeRecordingOutput(rt, file, data, format == "raw")
 		},
 	}
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Debug session namespace hint")
@@ -296,7 +296,7 @@ func downloadVerifiedRecording(ctx context.Context, apiClient *client.Client, se
 	if err != nil {
 		return nil, nil, err
 	}
-	rec, err := recording.Parse(bytes.NewReader(buf.Bytes()))
+	rec, err := recording.ParseBytes(buf.Bytes())
 	if err != nil {
 		return nil, nil, fmt.Errorf("recording %s failed verification: %w", terminal.SafeText(id), err)
 	}
@@ -309,8 +309,18 @@ func downloadVerifiedRecording(ctx context.Context, apiClient *client.Client, se
 	return buf.Bytes(), rec, nil
 }
 
-func writeRecordingOutput(rt *runtimeState, file string, data []byte) error {
+// errRawRecordingToTerminal refuses to print raw frames to a terminal: the
+// payload is untrusted terminal output and can contain escape sequences that
+// rewrite the operator's screen or title, or trigger terminal features.
+var errRawRecordingToTerminal = errors.New("refusing to write raw recording frames to a terminal: use -f FILE or redirect stdout")
+
+// writeRecordingOutput writes data to file, or to stdout. raw marks binary
+// recording frames, which are never written to an interactive terminal.
+func writeRecordingOutput(rt *runtimeState, file string, data []byte, raw bool) error {
 	if file == "" {
+		if raw && isTerminalWriter(rt.Writer()) {
+			return errRawRecordingToTerminal
+		}
 		_, err := io.Copy(rt.Writer(), bytes.NewReader(data))
 		return err
 	}
@@ -320,9 +330,41 @@ func writeRecordingOutput(rt *runtimeState, file string, data []byte) error {
 	if err != nil {
 		return fmt.Errorf("create %s: %w", file, err)
 	}
-	if _, err := f.Write(data); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write %s: %w", file, err)
+	return finishRecordingFile(f, file, data)
+}
+
+// finishRecordingFile writes, syncs and closes f; on any failure the partial
+// file is removed.
+func finishRecordingFile(f interface {
+	io.Writer
+	Sync() error
+	Close() error
+}, file string, data []byte) error {
+	_, err := f.Write(data)
+	if err == nil {
+		err = f.Sync()
 	}
-	return f.Close()
+	if closeErr := f.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return removePartialRecording(file, fmt.Errorf("write %s: %w", file, err))
+	}
+	return nil
+}
+
+// removePartialRecording deletes an incomplete output file so a retry is not
+// blocked by the no-overwrite rule and no truncated recording is left behind.
+func removePartialRecording(file string, cause error) error {
+	if err := os.Remove(file); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return errors.Join(cause, fmt.Errorf("remove partial %s: %w", file, err))
+	}
+	return cause
+}
+
+// isTerminalWriter reports whether w is an interactive terminal. It is a
+// variable so tests can simulate a terminal without a pseudo-terminal.
+var isTerminalWriter = func(w io.Writer) bool {
+	file, ok := w.(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
 }

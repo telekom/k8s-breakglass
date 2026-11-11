@@ -151,3 +151,22 @@ func TestWriteAsciicastKeepsSplitRunesAndLateResizes(t *testing.T) {
 	require.True(t, strings.HasPrefix(text.String(), "price €!"), text.String())
 	require.Contains(t, cast.String(), `"r","120x40"`)
 }
+
+func TestParseBytesMatchesParseWithoutCopying(t *testing.T) {
+	data := recorded(t)
+	streamed, err := Parse(bytes.NewReader(data))
+	require.NoError(t, err)
+	inPlace, err := ParseBytes(data)
+	require.NoError(t, err)
+	require.Equal(t, streamed.SHA256, inPlace.SHA256)
+	require.Equal(t, streamed.Bytes, inPlace.Bytes)
+	require.Equal(t, streamed.Frames, inPlace.Frames)
+	last := inPlace.Frames[len(inPlace.Frames)-1].Payload
+	require.Same(t, &data[len(data)-len(last)], &last[0], "payloads alias the downloaded buffer")
+	_, err = ParseBytes(data[:len(data)-3])
+	require.Error(t, err, "truncation is still detected")
+	tampered := append([]byte(nil), data...)
+	tampered[50] ^= 1
+	_, err = ParseBytes(tampered)
+	require.Error(t, err, "the chain is still verified")
+}

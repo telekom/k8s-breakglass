@@ -57,10 +57,39 @@ type Recording struct {
 	Bytes  int64
 }
 
+// ParseBytes verifies a recording that is already in memory. Frame payloads
+// are sub-slices of data rather than copies, so peak memory is one copy of
+// the recording plus frame headers; data must not be modified afterwards.
+func ParseBytes(data []byte) (*Recording, error) {
+	rec, err := parse(bytes.NewReader(data), func(n uint64, reader io.Reader, offset int64) ([]byte, error) {
+		if uint64(len(data))-uint64(offset) < n {
+			return nil, io.ErrUnexpectedEOF
+		}
+		payload := data[offset : offset+int64(n) : offset+int64(n)]
+		if _, err := io.CopyN(io.Discard, reader, int64(n)); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	})
+	return rec, err
+}
+
 // Parse reads and verifies a recording: frame versions are consistent,
 // directions are known, every frame carries the SHA-256 of its predecessor,
 // and version 2 time offsets never go backwards.
 func Parse(r io.Reader) (*Recording, error) {
+	return parse(r, func(n uint64, reader io.Reader, _ int64) ([]byte, error) {
+		payload := make([]byte, n)
+		_, err := io.ReadFull(reader, payload)
+		return payload, err
+	})
+}
+
+// payloadFunc returns the next n payload bytes from reader; offset is the
+// payload's position in the stream.
+type payloadFunc func(n uint64, reader io.Reader, offset int64) ([]byte, error)
+
+func parse(r io.Reader, readPayload payloadFunc) (*Recording, error) {
 	digest := sha256.New()
 	counted := &countingReader{r: io.TeeReader(r, digest)}
 	reader := bufio.NewReader(counted)
@@ -68,6 +97,7 @@ func Parse(r io.Reader) (*Recording, error) {
 	var frames []Frame
 	var version byte
 	var last time.Duration
+	var offset int64
 	for {
 		first, err := reader.ReadByte()
 		if errors.Is(err, io.EOF) {
@@ -114,10 +144,12 @@ func Parse(r io.Reader) (*Recording, error) {
 		if !bytes.Equal(header[lengthAt+8:], previous[:]) {
 			return nil, fmt.Errorf("frame %d: hash chain broken", len(frames))
 		}
-		frame.Payload = make([]byte, length)
-		if _, err := io.ReadFull(reader, frame.Payload); err != nil {
+		payload, err := readPayload(length, reader, offset+int64(headerSize))
+		if err != nil {
 			return nil, fmt.Errorf("frame %d: truncated payload: %w", len(frames), err)
 		}
+		frame.Payload = payload
+		offset += int64(headerSize) + int64(length)
 		chain := sha256.New()
 		chain.Write(header)
 		chain.Write(frame.Payload)

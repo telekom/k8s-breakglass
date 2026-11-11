@@ -10,11 +10,13 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -127,9 +129,12 @@ func TestDebugRecordingsCommands(t *testing.T) {
 	written, err := os.ReadFile(file)
 	require.NoError(t, err)
 	require.Equal(t, data, written)
-	info, err := os.Stat(file)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		// Windows uses a protected owner-only DACL instead (privatefile tests).
+		info, err := os.Stat(file)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 	_, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "get", "s1", "rec-1", "-f", file)
 	require.Error(t, err, "existing files are never overwritten")
 
@@ -158,4 +163,52 @@ func TestLatestSizeKeepsFinalSize(t *testing.T) {
 	require.Len(t, queue, 2)
 	<-queue
 	require.Equal(t, uint16(10), (<-queue).Width, "the latest size survives a full queue")
+}
+
+type failingRecordingFile struct {
+	writeErr, syncErr, closeErr error
+	closed                      bool
+}
+
+func (f *failingRecordingFile) Write(p []byte) (int, error) { return len(p), f.writeErr }
+func (f *failingRecordingFile) Sync() error                 { return f.syncErr }
+func (f *failingRecordingFile) Close() error                { f.closed = true; return f.closeErr }
+
+func TestFinishRecordingFileRemovesPartialOutput(t *testing.T) {
+	for name, f := range map[string]*failingRecordingFile{
+		"write": {writeErr: errors.New("disk full")},
+		"sync":  {syncErr: errors.New("io error")},
+		"close": {closeErr: errors.New("io error")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "recording.raw")
+			require.NoError(t, os.WriteFile(path, []byte("partial"), 0o600))
+			require.Error(t, finishRecordingFile(f, path, []byte("data")))
+			require.True(t, f.closed)
+			_, err := os.Stat(path)
+			require.ErrorIs(t, err, os.ErrNotExist, "a failed write leaves no partial file, so a retry is not blocked")
+		})
+	}
+	path := filepath.Join(t.TempDir(), "recording.raw")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	require.NoError(t, finishRecordingFile(&failingRecordingFile{}, path, []byte("data")))
+	_, err := os.Stat(path)
+	require.NoError(t, err, "a successful write keeps the file")
+}
+
+func TestRawRecordingIsNeverWrittenToATerminal(t *testing.T) {
+	var screen bytes.Buffer
+	original := isTerminalWriter
+	isTerminalWriter = func(w io.Writer) bool { return w == &screen }
+	t.Cleanup(func() { isTerminalWriter = original })
+	rt := &runtimeState{writer: &screen}
+	require.ErrorIs(t, writeRecordingOutput(rt, "", []byte("\x1b]0;owned\x07"), true), errRawRecordingToTerminal)
+	require.Empty(t, screen.String(), "nothing reaches the terminal")
+	require.NoError(t, writeRecordingOutput(rt, "", []byte(`{"version":2}`), false), "asciicast JSON escapes control bytes and may go to a terminal")
+	var redirected bytes.Buffer
+	require.NoError(t, writeRecordingOutput(&runtimeState{writer: &redirected}, "", []byte("raw"), true), "raw frames may be redirected")
+	require.Equal(t, "raw", redirected.String())
+	file := filepath.Join(t.TempDir(), "raw")
+	require.NoError(t, writeRecordingOutput(rt, file, []byte("raw"), true), "-f is always allowed")
+	require.False(t, isTerminalWriter(&redirected))
 }

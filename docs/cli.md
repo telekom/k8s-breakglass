@@ -224,13 +224,18 @@ asciinema play session.cast
 
 Every download is verified before it is written: the hash chain, monotonic
 timing and the digest the server published must match. Downloads are limited
-to 512 MiB, the server's per-stream maximum. The published digest comes from
+to 512 MiB, the server's per-stream maximum, and are held in memory while they
+are verified: expect up to about the recording size for `get`, `verify` and
+`export --format raw`, plus the asciicast text for `export --format
+asciicast-v2`. The published digest comes from
 the same response, so for independent verification pass the digest from the
 `debug_session.terminal_recording_finalized` audit event with
 `--expect-sha256` (accepted by `get`, `verify` and `export`). `export --format raw`
-writes the verified frames; `--include-input` adds typed input as asciicast
+writes the verified frames (raw output, including `get`, is refused when stdout
+is a terminal because the frames carry untrusted escape sequences: use `-f` or
+redirect); `--include-input` adds typed input as asciicast
 `"i"` events (it may contain secrets). Files are created owner-only (mode `0600`, or a protected current-user
-DACL on Windows) before any byte is written, and never overwrite existing files. See [terminal recording](terminal-recording.md).
+DACL on Windows) before any byte is written, and never overwrite existing files. A failed write removes the partial file. See [terminal recording](terminal-recording.md).
 
 ## Watch Mode
 
