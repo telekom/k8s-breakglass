@@ -538,24 +538,7 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
 	finishCleanup := func(operationErr error) error {
-		setCleanupCondition(ds)
-		var previous metav1.Condition
-		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &previous)
-		liveWasFailed := previous.Status == metav1.ConditionTrue
-		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
-			if auditManager := c.currentAuditManager(); auditManager != nil {
-				if cleanupConditionFailed(ds) {
-					// The condition message names the residual set. Emit once per
-					// distinct set rather than on every retry (#1663); the
-					// recovered event below is the final event.
-					if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
-						auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
-					}
-				} else if liveWasFailed {
-					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
-				}
-			}
-		}
+		patchErr := c.recordCleanupOutcome(ctx, ds, cleanupBaseline)
 		if patchErr == nil && (cleanupStatusHasResiduals(ds) || len(ds.Status.AllowedPods) > 0) {
 			operationErr = errors.Join(operationErr, errors.New("cleanup inventory remains unresolved"))
 		}
@@ -732,6 +715,37 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// recordCleanupOutcome persists the CleanupFailed condition for the current
+// inventory and audits the transition: cleanup_failed once per distinct
+// residual set, cleanup_recovered when a failure clears. Every cleanup path,
+// including deletion, uses it.
+func (c *DebugSessionController) recordCleanupOutcome(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus) error {
+	setCleanupCondition(ds)
+	var previous metav1.Condition
+	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+		return err
+	}
+	liveWasFailed := previous.Status == metav1.ConditionTrue
+	if !c.shouldEmitAudit(ctx, ds) {
+		return nil
+	}
+	auditManager := c.currentAuditManager()
+	if auditManager == nil {
+		return nil
+	}
+	if cleanupConditionFailed(ds) {
+		// The condition message names the residual set. Emit once per
+		// distinct set rather than on every retry (#1663); the recovered
+		// event is the final event.
+		if c.disableCleanupBackoff || !liveWasFailed || residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds) {
+			auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
+		}
+	} else if liveWasFailed {
+		auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 	}
 	return nil
 }

@@ -333,3 +333,43 @@ func TestDeletionCleanupFailurePersistsCleanupFailed(t *testing.T) {
 	assert.True(t, cleanupConditionFailed(persisted), "a failed deletion cleanup is recorded, so it can be acknowledged")
 	assert.Equal(t, breakglassv1alpha1.DebugSessionStateTerminated, persisted.Status.State, "a deleted active session is terminalized first")
 }
+
+func TestDeletionCleanupFailureThenSuccessIsAudited(t *testing.T) {
+	now := metav1.Now()
+	ds := unresolvedPolicyExceptionSession()
+	ds.Status.AuxiliaryResourceStatuses = nil
+	ds.Status.Conditions = nil
+	ds.Finalizers = []string{maintenanceFinalizer}
+	ds.DeletionTimestamp = &now
+	ds.Status.NodeMaintenance = &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "op"}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+	c.acknowledgementWebhookActive = webhookActive
+	key := client.ObjectKeyFromObject(ds)
+
+	// Maintenance cleanup fails (incomplete provenance) on two attempts.
+	for range 2 {
+		_, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+		require.NoError(t, err)
+		c.cleanupNotBefore.Delete(key)
+	}
+	// The executor is released out of band; the next attempt succeeds.
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), key, live))
+	require.True(t, cleanupConditionFailed(live))
+	live.Status.NodeMaintenance.Released = true
+	require.NoError(t, hub.Status().Update(context.Background(), live))
+	_, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+	require.NoError(t, err)
+	require.NoError(t, manager.Close())
+
+	counts := map[audit.EventType]int{}
+	for _, event := range sink.Events() {
+		counts[event.Type]++
+	}
+	assert.Equal(t, 1, counts[audit.EventDebugSessionCleanupFailed], "one failure event for one residual set")
+	assert.Equal(t, 1, counts[audit.EventDebugSessionCleanupRecovered], "recovery is audited before the session disappears")
+	assert.True(t, apierrors.IsNotFound(hub.Get(context.Background(), key, live)), "the finalizer is removed after recovery")
+}

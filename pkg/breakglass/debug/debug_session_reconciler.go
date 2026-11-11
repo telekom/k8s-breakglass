@@ -352,17 +352,22 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
-		// Record a failed deletion cleanup as CleanupFailed, so it is visible,
-		// backs off like other cleanup, and can be acknowledged.
+		// Record deletion cleanup like any other cleanup: CleanupFailed with
+		// its audit on failure, backoff, and cleanup_recovered once it clears.
 		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupHotfix} {
+			baseline := ds.Status.DeepCopy()
 			if err := cleanup(ctx, ds); err != nil {
-				setCleanupCondition(ds)
-				if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
-					return ctrl.Result{}, errors.Join(err, patchErr)
+				if recordErr := c.recordCleanupOutcome(ctx, ds, baseline); recordErr != nil {
+					return ctrl.Result{}, errors.Join(err, recordErr)
 				}
 				retryAfter := c.recordCleanupFailure(ds)
 				log.Warnw("Deletion cleanup failed; retrying", "error", err, "retryAfter", retryAfter)
 				return ctrl.Result{RequeueAfter: retryAfter}, nil
+			}
+		}
+		if cleanupConditionFailed(ds) {
+			if err := c.recordCleanupOutcome(ctx, ds, ds.Status.DeepCopy()); err != nil {
+				return ctrl.Result{}, err
 			}
 		}
 		// activateSession acquires the hub connection lease before the
