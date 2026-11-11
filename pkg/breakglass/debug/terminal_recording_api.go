@@ -388,6 +388,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
 }
 
+// errTerminalStreamExpired reports that the stream reached its binding expiry.
+var errTerminalStreamExpired = fmt.Errorf("terminal stream reached its expiry: %w", context.DeadlineExceeded)
+
 // terminalRecordingAbortReason classifies why a recorded stream ended early.
 func terminalRecordingAbortReason(err error) string {
 	message := err.Error()
@@ -516,11 +519,19 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 		stopClose := context.AfterFunc(streamCtx, func() { _ = closer.Close() })
 		defer stopClose()
 	}
+	validationErr := make(chan error, 1)
 	if !expiresAt.IsZero() {
-		timer := time.AfterFunc(time.Until(expiresAt), cancel)
+		// The session's hard expiry ends the stream; report it as such rather
+		// than as a plain cancellation.
+		timer := time.AfterFunc(time.Until(expiresAt), func() {
+			select {
+			case validationErr <- errTerminalStreamExpired:
+			default:
+			}
+			cancel()
+		})
 		defer timer.Stop()
 	}
-	validationErr := make(chan error, 1)
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)

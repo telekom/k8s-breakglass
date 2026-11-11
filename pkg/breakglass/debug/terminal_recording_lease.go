@@ -8,10 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -55,7 +57,14 @@ func ClusterConfigCredentialSource(provider *cluster.ClientProvider) TerminalRec
 		return nil
 	}
 	return func(ctx context.Context, binding TerminalRecordingConnectionBinding) (ConnectionCredential, error) {
-		configured, err := provider.GetAcrossAllNamespaces(ctx, binding.ClusterName)
+		// Accept the same references as target resolution: name or namespace/name.
+		var configured *breakglassv1alpha1.ClusterConfig
+		var err error
+		if namespace, name, qualified := strings.Cut(binding.ClusterName, "/"); qualified && namespace != "" && name != "" {
+			configured, err = provider.GetInNamespaceLive(ctx, namespace, name)
+		} else {
+			configured, err = provider.GetAcrossAllNamespaces(ctx, binding.ClusterName)
+		}
 		if err != nil {
 			return ConnectionCredential{}, fmt.Errorf("resolve terminal recording cluster: %w", err)
 		}

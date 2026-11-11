@@ -161,8 +161,11 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	recorder := NewTerminalRecorder(1024)
 	var stdout bytes.Buffer
 	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, nil, recorder, func() { close(aborted) })
-	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
+	if !errors.Is(err, errTerminalStreamExpired) {
+		t.Fatalf("streamTerminalWithLease() error = %v, want the expiry cause", err)
+	}
+	if reason := terminalRecordingAbortReason(err); reason != "expired" {
+		t.Fatalf("an expiring stream is reported as %q, want expired", reason)
 	}
 	select {
 	case <-aborted:
@@ -180,8 +183,9 @@ func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) 
 	for i := 0; i < 500; i++ {
 		var aborts atomic.Int32
 		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() { aborts.Add(1) })
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want cancellation", i, err)
+		// The immediate expiry cancels the stream; it is reported as expiry.
+		if !errors.Is(err, errTerminalStreamExpired) {
+			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want expiry", i, err)
 		}
 		if got := aborts.Load(); got != 1 {
 			t.Fatalf("iteration %d: transport aborted %d times, want exactly once", i, got)

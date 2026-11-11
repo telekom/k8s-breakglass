@@ -141,6 +141,10 @@ func NewServer(log *zap.Logger, cfg config.Config,
 				// A terminal body is a long-lived input stream, bounded by the
 				// recording budget (512 MiB per stream), not a JSON document.
 				limit = terminalStreamBodySize
+				// Rejections by later middleware (auth, rate limits) must reach a
+				// client whose input stays open: without full duplex the HTTP/1.1
+				// server drains the body before writing any response.
+				_ = http.NewResponseController(c.Writer).EnableFullDuplex()
 			}
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}

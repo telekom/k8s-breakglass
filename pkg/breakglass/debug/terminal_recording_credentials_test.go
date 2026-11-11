@@ -35,6 +35,12 @@ func TestClusterConfigCredentialSourceBindsToClusterUID(t *testing.T) {
 	require.Equal(t, "secret-uid", string(credential.UID))
 	require.NotEmpty(t, credential.ResourceVersion)
 
+	qualified, err := source(context.Background(), TerminalRecordingConnectionBinding{ClusterName: "hub/spoke", TargetClusterUID: "cluster-uid"})
+	require.NoError(t, err, "namespace-qualified cluster references resolve like target resolution")
+	require.Equal(t, credential, qualified)
+	_, err = source(context.Background(), TerminalRecordingConnectionBinding{ClusterName: "other/spoke", TargetClusterUID: "cluster-uid"})
+	require.Error(t, err, "a qualified reference names exactly one namespace")
+
 	_, err = source(context.Background(), TerminalRecordingConnectionBinding{ClusterName: "spoke", TargetClusterUID: "replaced-uid"})
 	require.ErrorContains(t, err, "cluster identity changed", "a replaced ClusterConfig must not inherit readiness")
 	_, err = source(context.Background(), TerminalRecordingConnectionBinding{ClusterName: "absent", TargetClusterUID: "cluster-uid"})

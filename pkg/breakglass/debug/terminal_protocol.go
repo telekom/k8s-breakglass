@@ -89,6 +89,11 @@ func decodeTerminalFrames(ctx context.Context, body io.Reader, stdin io.Writer, 
 		switch header[0] {
 		case TerminalFrameStdin:
 			if _, err := stdin.Write(payload[:length]); err != nil {
+				if errors.Is(err, io.ErrClosedPipe) {
+					// The executor finished and its stdin was closed: input that
+					// was never consumed is not a protocol error.
+					return nil
+				}
 				return err
 			}
 		case TerminalFrameResize:
