@@ -828,6 +828,7 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 		image     string
 		command   []string
 		hintNS    string
+		secCtx    ephemeralSecurityContextOptions
 	)
 	cmd := &cobra.Command{
 		Use:   "inject NAME",
@@ -845,15 +846,29 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			resp, err := apiClient.DebugSessions().InjectEphemeralContainer(context.Background(), args[0], hintNS, client.InjectEphemeralContainerRequest{
-				Namespace:     namespace,
-				PodName:       pod,
-				ContainerName: container,
-				Image:         image,
-				Command:       command,
-			})
+			// The resolved template tells us whether non-root is required, so
+			// the defaults satisfy it without flags. Without it, build falls
+			// back to the restricted set.
+			session, getErr := apiClient.DebugSessions().Get(context.Background(), args[0], hintNS)
+			if getErr != nil {
+				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not read session %s, sending the restricted security context "+
+					"(use --default-security-context=false or flags to change it): %v\n", args[0], getErr)
+			}
+			policy := ephemeralPolicy(session)
+			securityContext, err := secCtx.build(cmd, policy)
 			if err != nil {
 				return err
+			}
+			resp, err := apiClient.DebugSessions().InjectEphemeralContainer(context.Background(), args[0], hintNS, client.InjectEphemeralContainerRequest{
+				Namespace:       namespace,
+				PodName:         pod,
+				ContainerName:   container,
+				Image:           image,
+				Command:         command,
+				SecurityContext: securityContext,
+			})
+			if err != nil {
+				return explainInjectRejection(err, securityContext, policy)
 			}
 			return writeRuntimeObject(rt, resp, output.FormatJSON, output.FormatYAML, output.FormatTable)
 		},
@@ -864,6 +879,7 @@ func newDebugKubectlInjectCommand() *cobra.Command {
 	cmd.Flags().StringVar(&image, "image", "", "Ephemeral container image")
 	cmd.Flags().StringSliceVar(&command, "command", nil, "Command for container")
 	cmd.Flags().StringVar(&hintNS, "session-namespace", "", "Debug session namespace hint")
+	secCtx.addFlags(cmd)
 	_ = cmd.MarkFlagRequired("namespace")
 	_ = cmd.MarkFlagRequired("pod")
 	_ = cmd.MarkFlagRequired("image")

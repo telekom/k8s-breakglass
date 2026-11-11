@@ -389,6 +389,7 @@ func assertRotationAborts(t *testing.T, ctx context.Context, s *helpers.TestSetu
 	}, time.Minute, 2*time.Second)
 	require.Equal(t, false, finalized.Details["complete"])
 	require.Equal(t, reason, finalized.Details["abortReason"], "the expected fence ended the stream")
+	t.Logf("verified: finalized audit event recordingId=%v complete=%v abortReason=%v (correlationId=%s)", finalized.Details["recordingId"], finalized.Details["complete"], finalized.Details["abortReason"], cid)
 
 	recordingID, _ := finalized.Details["recordingId"].(string)
 	require.NotEmpty(t, recordingID)
@@ -408,6 +409,7 @@ func assertRotationAborts(t *testing.T, ctx context.Context, s *helpers.TestSetu
 	require.NotNil(t, entry, "the aborted stream's evidence is retained")
 	require.NotNil(t, entry.Recording)
 	require.False(t, entry.Recording.Complete)
+	t.Logf("verified: retained recording %s complete=%v", entry.ArtifactID, entry.Recording.Complete)
 	status, replay, err := requester.GetRaw(ctx, base+"/"+url.PathEscape(recordingID)+sessionQuery)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, status, string(replay))

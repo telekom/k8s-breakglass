@@ -236,6 +236,52 @@ is a terminal because the frames carry untrusted escape sequences: use `-f` or
 redirect); `--include-input` adds typed input as asciicast
 `"i"` events (it may contain secrets). Files are created owner-only (mode `0600`, or a protected current-user
 DACL on Windows) before any byte is written, and never overwrite existing files. A failed write removes the partial file. See [terminal recording](terminal-recording.md).
+### Ephemeral Container Security Context
+
+`inject` reads the session's resolved template and sends a security context
+that satisfies it, so restricted templates need no extra flags:
+
+- `allowPrivilegeEscalation: false`, unless the template sets
+  `allowPrivileged` or its `securityContext` sets `privileged` or
+  `allowPrivilegeEscalation` (the API server rejects `privileged: true`
+  together with `allowPrivilegeEscalation: false`).
+- When the template sets `requireNonRoot` (the default): also
+  `runAsNonRoot: true`, `runAsUser: 65534`, `runAsGroup: 65534`,
+  `capabilities.drop: [ALL]` and `seccompProfile.type: RuntimeDefault`.
+- When the session cannot be read, `bgctl` prints a warning and sends this
+  restricted set, which every template policy without a forced `privileged`
+  accepts.
+
+Fields set in the template's `kubectlDebug.ephemeralContainers.securityContext`
+still replace the requested values on the server.
+
+| Flag | Description |
+|------|-------------|
+| `--run-as-non-root` | Set `runAsNonRoot` |
+| `--run-as-user` | Set `runAsUser` (replaces the default `65534`) |
+| `--run-as-group` | Set `runAsGroup` (replaces the default `65534`) |
+| `--allow-privilege-escalation` | Set `allowPrivilegeEscalation` (default `false`, see above) |
+| `--add-capabilities` | Capabilities to add, e.g. `NET_RAW,NET_ADMIN`; must be within the template's `maxCapabilities` |
+| `--drop-capabilities` | Capabilities to drop; replaces the default `ALL` |
+| `--security-context-file` | YAML or JSON `securityContext`, sent as is without defaults; cannot be combined with the flags above |
+| `--default-security-context=false` | Opt out of the defaults and send only the fields set by flags (the previous behaviour) |
+
+```bash
+# Non-root template: no flags needed
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1
+
+# Template with requireNonRoot: false and maxCapabilities [NET_RAW]: the
+# defaults only add allowPrivilegeEscalation=false, so the image's own user
+# (root for busybox) is kept; add the capability the template allows
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1 --add-capabilities NET_RAW
+```
+
+When the template rejects the request, `bgctl` prints the template's
+ephemeral-container policy and the security context it sent, so you can see
+which flag to change. `copy-pod` and `node-debug` take their container security
+context from the template only; the API has no request field for it.
 
 ## Watch Mode
 
@@ -445,7 +491,7 @@ bgctl debug kubectl inject DEBUG_SESSION_NAME \
   --namespace production \
   --pod api-7d9c4f8b-xkj2p \
   --image alpine:3.20 \
-  --container-name debug
+  --container debug
 
 # Then use kubectl exec to attach
 kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh

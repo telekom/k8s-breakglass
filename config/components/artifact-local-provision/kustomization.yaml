@@ -1,0 +1,50 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Kustomize Component: one-shot provisioning of an EMPTY local artifact volume.
+#
+# Opt-in. Without this component nothing provisions the local artifact
+# backend and controller startup fails closed on an unprovisioned volume.
+#
+# The Job runs `breakglass artifacts provision` with the controller config. It
+# creates the private roots and sentinels on an empty volume, succeeds without
+# changes on a volume already provisioned for the same instance, and refuses
+# non-empty, foreign or partially provisioned volumes.
+#
+# The Job has no ttlSecondsAfterFinished on purpose: the completed Job is the
+# record that the volume was provisioned. It never runs again by itself, so a
+# volume that is later replaced or repointed keeps failing closed. To provision
+# a new volume, delete the completed Job and let the overlay re-create it.
+#
+# Usage — add to the overlay that mounts the artifact PVC on the controller:
+#
+#   components:
+#     - ../../components/artifact-local-provision
+#
+# and patch the Job's `artifact-data` claim name and mount path to match the
+# controller Deployment (defaults: claim `breakglass-artifacts`, `/artifacts`).
+# Pin the Job image to the controller image. If expectedUID/expectedGID are not
+# 65532, patch the Job's runAsUser, runAsGroup and fsGroup to match.
+# artifacts.stagingDir must be on the same volume, for example
+# /artifacts/uploads.
+#
+# On fsGroup-capable volumes, also set fsGroupChangePolicy: OnRootMismatch on
+# the controller Pod. The base Deployment sets fsGroup with the default Always
+# policy, so every restart would relabel the 0700 roots and 0400 sentinels,
+# and startup would reject them.
+#
+# A Job's pod template is immutable. Keep this component in its own overlay,
+# applied once for the initial provisioning, not in the overlay that routine
+# controller upgrades change. Otherwise the next image bump fails to apply.
+# Deleting the Job to get past that error re-runs provisioning. On the
+# provisioned volume that only reports "already provisioned"; on a repointed
+# empty volume it would provision it.
+#
+# See docs/diagnostic-artifacts.md#local-volume-provisioning.
+
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - job.yaml

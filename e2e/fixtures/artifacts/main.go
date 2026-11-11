@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 // SPDX-License-Identifier: Apache-2.0
 
-// A test-only provisioner and TLS edge for the single-cluster Kind fixture.
+// A test-only CA bundle writer, TLS edge and S3 helper for the Kind fixture.
 package main
 
 import (
@@ -20,13 +20,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage/local"
 	artifacts3 "github.com/telekom/k8s-breakglass/pkg/artifacts/storage/s3"
 )
 
 func main() {
 	if len(os.Args) != 2 {
-		log.Fatal("expected provision or serve")
+		log.Fatal("expected ca-bundle or serve")
 	}
 	if strings.HasPrefix(os.Args[1], "s3-") {
 		if err := s3Fixture(os.Args[1]); err != nil {
@@ -34,24 +33,14 @@ func main() {
 		}
 		return
 	}
-	if os.Args[1] == "provision" {
+	if os.Args[1] == "ca-bundle" {
+		// Storage roots and sentinels come from the production
+		// `breakglass artifacts provision` Job, not from this fixture.
 		bundle, err := os.ReadFile("/etc/ssl/certs/ca-certificates.crt")
 		if err != nil {
 			log.Fatal(err)
 		}
 		if err := os.WriteFile("/artifacts/ca-bundle.pem", bundle, 0600); err != nil {
-			log.Fatal(err)
-		}
-		for _, path := range []string{"/artifacts/objects", "/artifacts/staging", "/artifacts/uploads"} {
-			if err := os.MkdirAll(path, 0700); err != nil {
-				log.Fatal(err)
-			}
-			if err := os.Chmod(path, 0700); err != nil {
-				log.Fatal(err)
-			}
-		}
-		err = local.ProvisionSentinels(local.Config{ExplicitlyEnabled: true, PrivateRootAcknowledged: true, ArtifactRoot: "/artifacts/objects", StagingRoot: "/artifacts/staging", InstanceID: "kind-artifact-fixture-v1", ExpectedUID: 65532, ExpectedGID: 65532, ServingReplicas: 1, AccessMode: local.AccessModeReadWriteOnce, DeploymentStrategy: local.StrategyRecreate, EncryptionAcknowledged: true, SnapshotPolicy: local.SnapshotsProhibited})
-		if err != nil {
 			log.Fatal(err)
 		}
 		return

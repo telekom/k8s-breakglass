@@ -931,12 +931,28 @@ func verifySentinel(root *os.File, config Config) (result error) {
 }
 
 func openRoot(root string, config Config) (*os.File, *unix.Stat_t, error) {
+	file, stat, err := openDirectoryNoFollow(root)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !safeRootStat(stat, config) {
+		return nil, nil, errors.Join(errors.New("local artifact root ownership or mode is unsafe"), file.Close())
+	}
+	return file, stat, nil
+}
+
+// openDirectoryNoFollow opens an absolute directory one component at a time
+// without following symbolic links in any component.
+func openDirectoryNoFollow(root string) (*os.File, *unix.Stat_t, error) {
 	components := strings.Split(strings.TrimPrefix(filepath.Clean(root), string(filepath.Separator)), string(filepath.Separator))
 	fd, err := unix.Open(string(filepath.Separator), unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, nil, err
 	}
 	for _, component := range components {
+		if component == "" {
+			continue
+		}
 		next, openErr := unix.Openat(fd, component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 		closeErr := unix.Close(fd)
 		if openErr != nil {
@@ -954,9 +970,6 @@ func openRoot(root string, config Config) (*os.File, *unix.Stat_t, error) {
 	stat, err := statDescriptor(file)
 	if err != nil {
 		return nil, nil, errors.Join(err, file.Close())
-	}
-	if !safeRootStat(stat, config) {
-		return nil, nil, errors.Join(errors.New("local artifact root ownership or mode is unsafe"), file.Close())
 	}
 	return file, stat, nil
 }

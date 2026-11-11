@@ -115,4 +115,5 @@ func TestTerminalRecordingGenerationAcrossReplicasWithRealAPI(t *testing.T) {
 	require.NoError(t, hub.List(ctx, &leases, client.InNamespace("execution")))
 	require.Equal(t, "2", leases.Items[0].Annotations[connectionLeaseGenerationAnnotation])
 	require.Error(t, winner.Validate(ctx), "a stream on the old generation fails validation")
+	t.Logf("verified: replicas=2 published generations 1 then 2 on one API server; concurrent losers retried; old-generation stream rejected")
 }

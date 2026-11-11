@@ -1,0 +1,76 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: breakglass-artifact-provision
+  namespace: breakglass-system
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: artifact-provision
+spec:
+  # Provisioning refusals are deterministic; inspect the log, fix the volume
+  # and delete the Job instead of retrying.
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: breakglass
+        app.kubernetes.io/component: artifact-provision
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        # Recursive fsGroup relabelling would add group bits to the 0700
+        # roots and 0400 sentinels, which startup rejects.
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        # A ReadWriteOnce volume attaches to one node; run next to the
+        # controller Pod that already mounts it.
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app: breakglass
+              topologyKey: kubernetes.io/hostname
+      containers:
+        - name: provision
+          image: ghcr.io/telekom/k8s-breakglass:latest
+          args:
+            - artifacts
+            - provision
+            - --config-path=/config/config.yaml
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 64Mi
+          volumeMounts:
+            - name: config
+              mountPath: /config/
+              readOnly: true
+            - name: artifact-data
+              mountPath: /artifacts
+      volumes:
+        - name: config
+          configMap:
+            name: config
+        - name: artifact-data
+          persistentVolumeClaim:
+            claimName: breakglass-artifacts
