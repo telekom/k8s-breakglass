@@ -216,9 +216,13 @@ acknowledgement triggers a reconcile of its session at once.
   acknowledgement object, so the record limit can never block cleanup. An
   Applied acknowledgement is only ever applied to the session instance named
   by its `sessionUID`.
-- The replica that records a rejection audits it. The replica that completes
-  an Applied decision on the session audits that, so a completion retried
-  after a transient failure is still audited once.
+- After completing an Applied decision on the session, the replica marks the
+  acknowledgement completed (`status.completedAt`) with a guarded write. Only
+  the replica that wins this write audits the Applied outcome, so it is
+  audited exactly once, also when cleanup had already removed the residuals
+  or a completion was retried. A completed acknowledgement is never processed
+  again, and the residuals it retired stay retired even when no session
+  record could be kept. The replica that records a rejection audits it.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
   - If residuals remain, the new residual set is reported once with

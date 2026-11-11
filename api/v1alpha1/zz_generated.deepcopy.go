@@ -2308,6 +2308,10 @@ func (in *DebugSessionCleanupAcknowledgementObjectStatus) DeepCopyInto(out *Debu
 		in, out := &in.ProcessedAt, &out.ProcessedAt
 		*out = (*in).DeepCopy()
 	}
+	if in.CompletedAt != nil {
+		in, out := &in.CompletedAt, &out.CompletedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Retired != nil {
 		in, out := &in.Retired, &out.Retired
 		*out = make([]string, len(*in))

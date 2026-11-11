@@ -597,6 +597,53 @@ func TestTwoCompleteAcknowledgementsForTheLastSlotDoNotWedge(t *testing.T) {
 	pending, err := f.c.pendingCleanupAcknowledgements(context.Background(), ds)
 	require.NoError(t, err)
 	assert.Empty(t, pending, "nothing is replayed")
+	for _, name := range []string{"a", "b"} {
+		assert.NotNil(t, acknowledgementPhase(t, f, name).CompletedAt, "%s is marked Completed", name)
+	}
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 2, "each Applied acknowledgement is audited exactly once")
+}
+
+func TestAppliedAcknowledgementIsAuditedWhenCleanupGotThereFirst(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions[3])
+	decision := decideCleanupAcknowledgement(ds, ack, "")
+	require.True(t, decision.Applied)
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
+	ds.Status.DeployedResources = ds.Status.DeployedResources[1:] // normal cleanup removed it first
+	f := newAckFixture(t, ds, ack)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	assert.NotNil(t, acknowledgementPhase(t, f, "a").CompletedAt)
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1)
+}
+
+func TestCompletedAcknowledgementWithoutRecordIsNotReplayedAfterStaleReAdd(t *testing.T) {
+	ds := failingSession(t)
+	fillRecords(ds, maxCleanupAcknowledgementRecords) // no room for a record
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions[3])
+	decision := decideCleanupAcknowledgement(func() *breakglassv1alpha1.DebugSession {
+		d := ds.DeepCopy()
+		d.Status.CleanupAcknowledgements = nil
+		return d
+	}(), ack, "")
+	require.True(t, decision.Applied)
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
+	f := newAckFixture(t, ds, ack)
+	baseline := ds.DeepCopy() // a stale cleanup writer still lists the residual
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NotNil(t, acknowledgementPhase(t, f, "a").CompletedAt)
+
+	baseline.Status.DeployedResources[1].Name = "other" // unrelated edit
+	require.NoError(t, f.c.patchDebugSessionCleanupStatus(context.Background(), baseline, ds.Status.DeepCopy()))
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	for _, ref := range persisted.Status.DeployedResources {
+		assert.NotEqual(t, "deployed", ref.Name, "a completed retirement stays retired without a session record")
+	}
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), persisted))
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1, "no replay, no second audit")
 }
 
 func TestAcknowledgementDecidedAtCapacityRetiresWithoutRecording(t *testing.T) {

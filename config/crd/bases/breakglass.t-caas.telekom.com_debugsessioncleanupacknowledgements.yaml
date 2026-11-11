@@ -136,6 +136,13 @@ spec:
                   stale claim is taken over by another replica.
                 format: date-time
                 type: string
+              completedAt:
+                description: |-
+                  completedAt is when an Applied decision was completed on the session
+                  and audited. A completed acknowledgement is never processed again, and
+                  its retired identities stay retired.
+                format: date-time
+                type: string
               message:
                 description: message explains a rejection.
                 type: string

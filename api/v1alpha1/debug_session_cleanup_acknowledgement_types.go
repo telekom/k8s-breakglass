@@ -117,6 +117,11 @@ type DebugSessionCleanupAcknowledgementObjectStatus struct {
 	// processedAt is when the final phase was recorded.
 	// +optional
 	ProcessedAt *metav1.Time `json:"processedAt,omitempty"`
+	// completedAt is when an Applied decision was completed on the session
+	// and audited. A completed acknowledgement is never processed again, and
+	// its retired identities stay retired.
+	// +optional
+	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 	// retired lists the identities retired by an applied acknowledgement.
 	// +optional
 	Retired []string `json:"retired,omitempty"`

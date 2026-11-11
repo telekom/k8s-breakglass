@@ -637,17 +637,23 @@ const (
 //
 // The decision is made durable on the acknowledgement before the session is
 // changed:
+//
 //  1. A replica claims the acknowledgement with an optimistic status write.
+//
 //  2. It decides against the live session and records Applied or Rejected on
 //     the acknowledgement, guarded by the claim's resourceVersion. A replica
 //     whose claim was taken over loses this write and changes nothing.
+//
 //  3. Only a recorded Applied decision is completed on the session. Completion
 //     is idempotent by UID, so a replica that resumes after a crash finishes
 //     it instead of deciding again.
 //
-// Each outcome is audited by the replica that recorded the decision.
-// ponytail: a replica that stops after recording the decision but before
-// emitting the audit event loses that event (at-most-once).
+//  4. The acknowledgement is marked Completed with a guarded write.
+//
+// A rejection is audited by the replica that recorded it; an Applied outcome
+// by the replica whose Completed write wins.
+// ponytail: a replica that stops after that write but before emitting the
+// audit event loses that event (at-most-once).
 func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	pending, err := c.pendingCleanupAcknowledgements(ctx, ds)
 	if err != nil || len(pending) == 0 {
@@ -706,11 +712,12 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			}
 		}
 
-		// Complete an Applied decision. The replica whose completion write
-		// changes the session audits it, so a transient failure after the
-		// decision is retried and still audited exactly once.
+		// Complete an Applied decision on the session (idempotent), then mark
+		// the acknowledgement Completed with a write guarded by its
+		// resourceVersion. Only the replica that wins that write audits the
+		// Applied outcome, so it is audited exactly once even if the
+		// residuals were already gone or a completion was retried.
 		var previous metav1.Condition
-		completed := false
 		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -721,11 +728,9 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 				if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
 					previous = *condition
 				}
-				completed = false
 				if !completeCleanupAcknowledgement(current, record) {
 					return false, nil
 				}
-				completed = true
 				setCleanupCondition(current)
 				if current.Generation > 0 {
 					current.Status.ObservedGeneration = current.Generation
@@ -738,16 +743,22 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		ds.Status = patched.Status
 		ds.ResourceVersion = patched.ResourceVersion
 		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
-		if completed && !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
+		if !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
 			// The API server pruned the field: the DebugSession CRD predates
-			// this controller. The retirement persisted; only the provenance
-			// record and the CleanupAcknowledged reason are lost.
+			// this controller. The retirement persisted and the
+			// acknowledgement keeps its provenance; only the session record
+			// and the CleanupAcknowledged reason are lost.
 			c.crdOutdatedOnce.Do(func() {
 				log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
 			})
 		}
-		if !completed {
-			continue // another replica completed and audited it
+		completedAt := metav1.Now()
+		ack.Status.CompletedAt = &completedAt
+		if err := c.client.Status().Update(ctx, ack); err != nil {
+			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+				continue // another replica completed and audits it
+			}
+			return fmt.Errorf("record cleanup acknowledgement %s completion: %w", ack.Name, err)
 		}
 		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
 		if c.shouldEmitAudit(ctx, ds) {
@@ -1002,6 +1013,12 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 		cleanupBaseline = *baseline
 	}
 	var previousCondition metav1.Condition
+	// Completed acknowledgements may have retired identities without a
+	// session record; keep those retired against stale writers too.
+	completed, err := c.completedRetirements(ctx, ds)
+	if err != nil {
+		return err
+	}
 	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -1037,6 +1054,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			// Residuals retired by an applied acknowledgement stay retired even
 			// when a stale concurrent writer still lists them.
 			retireAcknowledgedResiduals(current)
+			retireIdentities(current, completed)
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)

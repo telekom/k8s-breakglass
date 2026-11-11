@@ -27,6 +27,10 @@ type DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration struct {
 	ClaimedAt *v1.Time `json:"claimedAt,omitempty"`
 	// processedAt is when the final phase was recorded.
 	ProcessedAt *v1.Time `json:"processedAt,omitempty"`
+	// completedAt is when an Applied decision was completed on the session
+	// and audited. A completed acknowledgement is never processed again, and
+	// its retired identities stay retired.
+	CompletedAt *v1.Time `json:"completedAt,omitempty"`
 	// retired lists the identities retired by an applied acknowledgement.
 	Retired []string `json:"retired,omitempty"`
 	// message explains a rejection.
@@ -60,6 +64,14 @@ func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithC
 // If called multiple times, the ProcessedAt field is set to the value of the last call.
 func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithProcessedAt(value v1.Time) *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration {
 	b.ProcessedAt = &value
+	return b
+}
+
+// WithCompletedAt sets the CompletedAt field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CompletedAt field is set to the value of the last call.
+func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithCompletedAt(value v1.Time) *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration {
+	b.CompletedAt = &value
 	return b
 }
 

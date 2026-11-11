@@ -1804,6 +1804,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: claimedAt
       type:
         namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: completedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
     - name: message
       type:
         scalar: string

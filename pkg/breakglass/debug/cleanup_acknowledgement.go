@@ -245,11 +245,11 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 			continue
 		case breakglassv1alpha1.CleanupAcknowledgementApplied:
 			// An acknowledgement bound to an earlier session of the same name
-			// is never applied to this one.
-			if ack.Spec.SessionUID != string(ds.UID) || acknowledgementCompleted(ds, appliedRecord(&ack)) {
+			// is never applied to this one; a completed one is finished.
+			if ack.Spec.SessionUID != string(ds.UID) || ack.Status.CompletedAt != nil {
 				continue
 			}
-			// Decided but not yet completed on the session.
+			// Decided but not yet completed and audited.
 		case breakglassv1alpha1.CleanupAcknowledgementProcessing:
 			if claimLive(ack.Status.ClaimedAt, now) {
 				continue // another replica is processing it
@@ -296,6 +296,27 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 		}
 	}
 	return false, nil
+}
+
+// completedRetirements lists the identities retired by completed
+// acknowledgements of ds. Cleanup status merges keep them retired, also for
+// acknowledgements that retired without a session record (record list full).
+func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]string, error) {
+	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
+	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
+		if isKindNotServedError(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
+	}
+	var ids []string
+	for _, ack := range list.Items {
+		if ack.Spec.SessionName == ds.Name && ack.Spec.SessionUID == string(ds.UID) &&
+			ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied && ack.Status.CompletedAt != nil {
+			ids = append(ids, ack.Status.Retired...)
+		}
+	}
+	return ids, nil
 }
 
 // appliedRecord rebuilds the session record of an Applied acknowledgement.
