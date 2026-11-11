@@ -102,8 +102,9 @@ counting them as `enqueue_timeout`. Each retiring sink likewise hands over all i
 batches within one write timeout; the replacement counts what it cannot take
 (`queue_full` or `enqueue_timeout`). A
 replaced pipeline that is itself already closed forwards them along the chain
-of reloads. The destination is the Kafka brokers and topic or the webhook URL
-and batch URL, plus the names of the referenced Secrets: a rotated Secret
+of reloads. The destination is the Kafka brokers and topic or the webhook URL,
+batch URL and headers (a header can select a tenant on a shared endpoint),
+plus the names of the referenced Secrets: a rotated Secret
 still hands over, while a sink retargeted to other brokers, another topic or
 another URL drops its old backlog as `shutdown` instead of delivering it to
 the new destination. Only events of a sink that the reload removed or

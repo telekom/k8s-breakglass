@@ -769,6 +769,12 @@ func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string 
 			batchURL = sink.Webhook.URL
 		}
 		parts = append(parts, sink.Webhook.URL, batchURL, ref(sink.Webhook.AuthSecretRef))
+		// Headers can select the receiving tenant or stream on a shared
+		// endpoint, so any header change is a new destination.
+		names := slices.Sorted(maps.Keys(sink.Webhook.Headers))
+		for _, name := range names {
+			parts = append(parts, name+"="+sink.Webhook.Headers[name])
+		}
 		if tls := sink.Webhook.TLS; tls != nil {
 			parts = append(parts, ref(tls.CASecretRef))
 		}

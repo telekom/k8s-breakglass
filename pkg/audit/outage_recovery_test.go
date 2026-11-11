@@ -740,6 +740,16 @@ func TestHandOverKeyFollowsTheDestination(t *testing.T) {
 	require.Equal(t, webhook("https://a/events", ""), webhook("https://a/events", ""))
 	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://b/events", ""))
 	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://a/events", "https://a/batch"))
+	withHeaders := func(headers map[string]string) string {
+		return handOverKey("config", breakglassv1alpha1.AuditSinkConfig{Name: "events", Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: "https://shared/events", Headers: headers}})
+	}
+	// A header that selects the tenant on a shared endpoint is part of the
+	// destination; header order is not.
+	require.NotEqual(t, withHeaders(map[string]string{"X-Tenant": "a"}), withHeaders(map[string]string{"X-Tenant": "b"}))
+	require.NotEqual(t, withHeaders(nil), withHeaders(map[string]string{"X-Tenant": "a"}))
+	require.Equal(t, withHeaders(map[string]string{"X-Tenant": "a", "X-Stream": "audit"}),
+		withHeaders(map[string]string{"X-Stream": "audit", "X-Tenant": "a"}))
 	// An empty batch URL means "use the URL": equivalent configurations
 	// keep the handover.
 	require.Equal(t, webhook("https://a/events", ""), webhook("https://a/events", "https://a/events"))
