@@ -54,17 +54,21 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			before, err := term.GetState(fd)
 			require.NoError(t, err)
 
-			// The first resize frame is sent after raw mode is enabled.
-			streaming := make(chan struct{})
+			// The first resize frame is sent after raw mode is enabled. Output
+			// waits for release so the panic case cannot restore the terminal
+			// before raw mode is asserted.
+			streaming, release, wrote := make(chan struct{}), make(chan struct{}), make(chan struct{})
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = http.NewResponseController(w).EnableFullDuplex()
 				var header [5]byte
 				_, _ = io.ReadFull(r.Body, header[:])
+				close(streaming)
+				<-release
 				if !tc.noHeaders {
 					_, _ = w.Write([]byte("$ "))
 					w.(http.Flusher).Flush()
 				}
-				close(streaming)
+				close(wrote)
 				_, _ = io.Copy(io.Discard, r.Body) // until the client ends the stream
 			}))
 			defer server.Close()
@@ -82,6 +86,8 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			raw, err := term.GetState(fd)
 			require.NoError(t, err)
 			require.NotEqual(t, before, raw, "raw mode must be active while streaming")
+			close(release)
+			<-wrote
 			if tc.interrupt {
 				require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
 				require.Nil(t, <-done)
