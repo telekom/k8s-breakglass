@@ -473,6 +473,14 @@ func TestTerminalRouteFailsClosedWithoutAuditAndRetriesPublishRace(t *testing.T)
 		require.Equal(t, http.StatusForbidden, status)
 		require.False(t, executed, "authority is rechecked after audit delivery, before execution")
 	})
+	t.Run("expired lease is denied, not retried", func(t *testing.T) {
+		server := newController(NewMockAuditEmitter(true), deniedRecordingProvider{})
+		defer server.Close()
+		status, header := post(server)
+		require.Equal(t, http.StatusForbidden, status)
+		require.Empty(t, header.Get("Retry-After"))
+		require.False(t, executed)
+	})
 	t.Run("publish race", func(t *testing.T) {
 		server := newController(NewMockAuditEmitter(true), conflictingRecordingProvider{})
 		defer server.Close()
@@ -504,4 +512,26 @@ func (*revocableRecordingProvider) AcquireTerminalRecordingConnection(ctx contex
 		return nil, err
 	}
 	return revocableRecordingConnection{connection.(terminalRecordingRouteConnection)}, nil
+}
+
+type deniedRecordingProvider struct{}
+
+func (deniedRecordingProvider) AcquireTerminalRecordingConnection(context.Context, TerminalRecordingConnectionBinding) (TerminalRecordingConnection, error) {
+	return nil, generationPublishError("publish", fmt.Errorf("connection lease is stale or expired"))
+}
+
+func TestTerminalRecordingAbortReason(t *testing.T) {
+	for want, err := range map[string]error{
+		"credential_changed":        fmt.Errorf("terminal recording connection validation failed: %w", fmt.Errorf("privileged input secret/hub/kubeconfig changed")),
+		"cluster_config_changed":    fmt.Errorf("ClusterConfig hub/spoke was replaced"),
+		"target_changed":            fmt.Errorf("terminal target identity changed"),
+		"session_authority_changed": fmt.Errorf("terminal session authority changed"),
+		"lease_changed":             fmt.Errorf("terminal stream claim expired or changed"),
+		"expired":                   fmt.Errorf("stream: %w", context.DeadlineExceeded),
+		"client_disconnected":       fmt.Errorf("stream: %w", context.Canceled),
+		"stream_failed":             io.ErrUnexpectedEOF,
+	} {
+		require.Equal(t, want, terminalRecordingAbortReason(err), err.Error())
+		require.NotContains(t, want, "kubeconfig", "reason codes never carry Secret names")
+	}
 }
