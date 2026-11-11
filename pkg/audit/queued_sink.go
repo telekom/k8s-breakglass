@@ -804,8 +804,16 @@ func (qs *QueuedSink) retain(events []*Event, operation string, write func(conte
 		}
 		qs.recordLastError(err)
 		metrics.AuditSinkErrors.WithLabelValues(name, "retry").Inc()
-		if permanentDeliveryError(err) || errors.Is(err, errSinkPanic) {
+		if permanentDeliveryError(err) {
 			return qs.splitOrDrop(events, operation, write, err, true)
+		}
+		if errors.Is(err, errSinkPanic) {
+			// A first panic during retention is not yet proof of a poisoned
+			// event: hand the batch back to a fresh retry window (split = a
+			// batch splits there at once). It is dropped only if it keeps
+			// panicking through that window.
+			qs.deliver(events, operation, write, len(events) > 1, true)
+			return true
 		}
 	}
 }
