@@ -563,7 +563,7 @@ func (m *Manager) processQueue(workerID int) {
 			m.shutdownDrop([]*Event{event})
 			continue
 		}
-		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+		ctx, cancel := m.writeContext()
 		if err := m.sink.Write(ctx, event); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit event",
@@ -597,7 +597,7 @@ func (m *Manager) processBatchQueue(workerID int) {
 			batch = batch[:0]
 			return
 		}
-		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+		ctx, cancel := m.writeContext()
 		if err := m.batchSink.WriteBatch(ctx, batch); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit batch",
@@ -660,13 +660,31 @@ func (m *Manager) shutdownDrop(events []*Event) {
 		m.recordShutdownDrops(len(events))
 		return
 	}
-	m.handOverDeadline.CompareAndSwap(0, time.Now().Add(m.config.WriteTimeout).UnixNano())
-	ctx, cancel := withHandOverDeadline(context.Background(), time.Unix(0, m.handOverDeadline.Load()))
+	ctx, cancel := withHandOverDeadline(context.Background(), m.handOverBudget())
 	defer cancel()
 	for _, event := range events {
 		multi.handOverIngress(ctx, event)
 	}
 }
+
+// handOverBudget returns the single handover deadline of this retiring
+// manager, set by its first handover: one WriteTimeout covers the batches
+// cancelled in their sink write and the ingress events not yet routed.
+func (m *Manager) handOverBudget() time.Time {
+	m.handOverDeadline.CompareAndSwap(0, time.Now().Add(m.config.WriteTimeout).UnixNano())
+	return time.Unix(0, m.handOverDeadline.Load())
+}
+
+// writeContext bounds one sink write by WriteTimeout and the drain. When
+// the drain cancels the write during a reload, a sink handing the unqueued
+// events over sees a context marked with this manager's handover budget, so
+// the cancelled batch and the queued ingress share one handover window.
+func (m *Manager) writeContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+	return context.WithValue(ctx, managerHandOverKey{}, m), cancel
+}
+
+type managerHandOverKey struct{}
 
 // Close shuts down the audit manager gracefully.
 func (m *Manager) Close() error {

@@ -1283,3 +1283,60 @@ func TestPanickingEventDoesNotTripTheBreakerForItsBatch(t *testing.T) {
 		})
 	}
 }
+
+// A batch cancelled in its sink write and the ingress events not yet routed
+// share one handover window: against a replacement that stays full, the
+// retiring manager finishes within its drain plus one write timeout, not two.
+func TestCancelledBatchAndIngressShareOneHandOverWindow(t *testing.T) {
+	// Sinks that block until their write context ends (they honor
+	// cancellation, as sinks must).
+	blocked := func(name string) Sink { return contextBlockedNamed{name} }
+	full := outageConfig()
+	full.QueueSize, full.WorkerCount, full.BatchSize, full.DropOnFull = 1, 1, 1, false
+	full.WriteTimeout = time.Minute
+	oldMulti := NewIsolatedMultiSink([]Sink{blocked("one-window")}, full, zap.NewNop())
+	oldMulti.sinks[0].owner = "config/kafka/events"
+	mcfg := DefaultManagerConfig()
+	mcfg.WorkerCount, mcfg.BatchSize, mcfg.QueueSize, mcfg.BatchTimeout = 1, 5, 100, time.Hour
+	mcfg.WriteTimeout = 2 * time.Second
+	oldManager := NewManager(oldMulti, mcfg, zap.NewNop())
+	// The replacement is full and stays full.
+	nextMulti := NewIsolatedMultiSink([]Sink{blocked("one-window")}, full, zap.NewNop())
+	nextMulti.sinks[0].owner = "config/kafka/events"
+	require.NoError(t, nextMulti.sinks[0].Write(context.Background(), &Event{ID: "busy", Type: EventConfigChanged}))
+	require.NoError(t, nextMulti.sinks[0].Write(context.Background(), &Event{ID: "queued", Type: EventConfigChanged}))
+	t.Cleanup(func() { go func() { _ = nextMulti.Close() }() })
+
+	for i := range 10 {
+		require.True(t, oldManager.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return len(oldManager.asyncQueue) == 5 }, time.Second, 5*time.Millisecond)
+	oldMulti.handOver(nextMulti)
+	oldManager.closed.Store(true) // stop new emits; retire as Close does
+	start := time.Now()
+	close(oldManager.stopStats)
+	drain := time.AfterFunc(5*time.Second, oldManager.stopWorkers)
+	defer drain.Stop()
+	oldManager.closeMu.Lock()
+	close(oldManager.asyncQueue)
+	oldManager.closeMu.Unlock()
+	oldManager.wg.Wait()
+	// Drain deadline (5 s) plus one handover window (2 s), with margin; two
+	// separate windows would take at least 9 s.
+	require.Less(t, time.Since(start), 8*time.Second)
+	go func() { _ = oldMulti.Close() }()
+}
+
+// contextBlockedNamed blocks every write until its context ends.
+type contextBlockedNamed struct{ name string }
+
+func (s contextBlockedNamed) Name() string { return s.name }
+func (contextBlockedNamed) Close() error   { return nil }
+func (contextBlockedNamed) Write(ctx context.Context, _ *Event) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+func (contextBlockedNamed) WriteBatch(ctx context.Context, _ []*Event) error {
+	<-ctx.Done()
+	return ctx.Err()
+}

@@ -552,9 +552,14 @@ func (qs *QueuedSink) handOverWithin(parent context.Context, events []*Event) {
 		deadline := time.Unix(0, qs.handOverDeadline.Load())
 		ctx := parent
 		if parent.Value(handOverContextKey{}) == nil {
-			// A handover starts here: this sink's budget applies, detached
-			// from the caller's cancellation (a manager batch cancelled by
-			// the reload drain must not cancel its own handover).
+			// A handover starts here, detached from the caller's
+			// cancellation (a manager batch cancelled by the reload drain
+			// must not cancel its own handover). A write from a retiring
+			// manager uses that manager's single handover budget, shared
+			// with its queued ingress; otherwise this sink's budget applies.
+			if m, ok := parent.Value(managerHandOverKey{}).(*Manager); ok {
+				deadline = m.handOverBudget()
+			}
 			var cancel context.CancelFunc
 			ctx, cancel = withHandOverDeadline(context.WithoutCancel(parent), deadline)
 			defer cancel()
