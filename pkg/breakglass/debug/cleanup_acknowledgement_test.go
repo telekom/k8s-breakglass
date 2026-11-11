@@ -5,6 +5,7 @@ package debug
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -319,6 +320,15 @@ func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
 			scope := admissionregistrationv1.NamespacedScope
 			w.Rules[0].Scope = &scope
 		})}, want: true},
+		"wrong name": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) { w.Name = "other.validation.example.com" })}},
+		"namespace selector": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
+			w.NamespaceSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"x": "y"}}
+		})}},
+		"ignore on a second entry": {objects: []client.Object{func() client.Object {
+			c := config(func(w *admissionregistrationv1.ValidatingWebhook) { w.FailurePolicy = &ignore })
+			c.Name = "second"
+			return c
+		}()}},
 		"match condition": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "skip", Expression: "false"}}
 		})}},
@@ -392,4 +402,50 @@ func TestCleanupProceedsWhenAcknowledgementCRDIsMissing(t *testing.T) {
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
 	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds), "a missing optional CRD must not block cleanup")
 	assert.Empty(t, ds.Status.CleanupAcknowledgements)
+}
+
+func TestFourEyesRejectsSessionParties(t *testing.T) {
+	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSession){
+		"requester": func(ds *breakglassv1alpha1.DebugSession) { ds.Spec.RequestedBy = "operator@example.com" },
+		"approver": func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "Operator@example.com"}
+		},
+		"participant": func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.Participants = []breakglassv1alpha1.DebugSessionParticipant{{User: "x", Email: "operator@example.com"}}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := failingSession(t)
+			mutate(ds)
+			record := applyCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "")
+			assert.False(t, record.Applied)
+			assert.Contains(t, record.Message, "four-eyes")
+			assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
+		})
+	}
+}
+
+func TestCleanupAcknowledgementRecordsAreBounded(t *testing.T) {
+	ds := failingSession(t)
+	base := time.Now().Add(-time.Hour)
+	for i := range maxCleanupAcknowledgementRecords {
+		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
+			UID: fmt.Sprintf("old-%02d", i), Applied: i == 0, ProcessedAt: metav1.NewTime(base.Add(time.Duration(i) * time.Second)),
+		})
+	}
+	applyCleanupAcknowledgement(ds, acknowledgement(ds, "new", CleanupAcknowledgedIdentity{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown"}), "")
+	records := ds.Status.CleanupAcknowledgements
+	require.Len(t, records, maxCleanupAcknowledgementRecords)
+	assert.True(t, acknowledgementProcessed(ds, "old-00"), "applied records are kept")
+	assert.False(t, acknowledgementProcessed(ds, "old-01"), "the oldest rejected record is dropped")
+	assert.True(t, acknowledgementProcessed(ds, "uid-new"))
+
+	// A trimmed acknowledgement is not processed again.
+	trimmed := acknowledgement(ds, "old-01", acknowledgedPolicyExceptions...)
+	trimmed.UID = "old-01"
+	trimmed.CreationTimestamp = metav1.NewTime(base)
+	f := newAckFixture(t, ds, trimmed)
+	pending, err := f.c.pendingCleanupAcknowledgements(context.Background(), ds)
+	require.NoError(t, err)
+	assert.Empty(t, pending)
 }

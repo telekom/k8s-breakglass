@@ -39,7 +39,7 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason, ProcessedAt: metav1.Now(),
 	}
 	finish := func(status *breakglassv1alpha1.DebugSessionStatus) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-		status.CleanupAcknowledgements = append(status.CleanupAcknowledgements, record)
+		status.CleanupAcknowledgements = boundCleanupAcknowledgementRecords(append(status.CleanupAcknowledgements, record))
 		ds.Status = *status
 		return record
 	}
@@ -50,6 +50,8 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 	switch {
 	case refusal != "":
 		return reject("%s", refusal)
+	case sessionPartyMatches(ds, ack.Spec.AcknowledgedBy):
+		return reject("four-eyes: %q is the requester, approver or a participant of this session and cannot acknowledge its cleanup", ack.Spec.AcknowledgedBy)
 	case ack.Spec.SessionUID != string(ds.UID):
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
@@ -115,6 +117,56 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 	return finish(status)
 }
 
+// sessionPartyMatches reports whether user is the session's requester,
+// approver or a participant under any recorded identity.
+func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool {
+	if user == "" {
+		return false
+	}
+	same := func(identity string) bool { return identity != "" && strings.EqualFold(identity, user) }
+	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) {
+		return true
+	}
+	if approval := ds.Status.Approval; approval != nil && same(approval.ApprovedBy) {
+		return true
+	}
+	for _, participant := range ds.Status.Participants {
+		if same(participant.User) || same(participant.KubernetesUser) || same(participant.Email) {
+			return true
+		}
+	}
+	return false
+}
+
+// maxCleanupAcknowledgementRecords bounds status.cleanupAcknowledgements; it
+// matches the CRD maxItems.
+const maxCleanupAcknowledgementRecords = 64
+
+// boundCleanupAcknowledgementRecords keeps the list within the CRD bound,
+// dropping the oldest rejected records first and only then the oldest applied
+// ones. Retired residuals are already gone from the inventory, so a dropped
+// applied record loses only its history, not a retirement.
+// pendingCleanupAcknowledgements skips objects older than the oldest kept
+// record once the list is full, so trimmed records are not processed again.
+func boundCleanupAcknowledgementRecords(records []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+	for _, rejectedOnly := range []bool{true, false} {
+		excess := len(records) - maxCleanupAcknowledgementRecords
+		if excess <= 0 {
+			return records
+		}
+		kept := make([]breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus, 0, len(records))
+		for _, record := range records {
+			if excess > 0 && (!rejectedOnly || !record.Applied) {
+				excess--
+				continue
+			}
+			kept = append(kept, record)
+		}
+		records = kept
+	}
+	return records
+}
+
 // pendingCleanupAcknowledgements lists unprocessed acknowledgements for ds,
 // oldest first.
 func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]breakglassv1alpha1.DebugSessionCleanupAcknowledgement, error) {
@@ -130,8 +182,20 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 		}
 		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
 	}
+	var horizon metav1.Time
+	if records := ds.Status.CleanupAcknowledgements; len(records) >= maxCleanupAcknowledgementRecords {
+		horizon = records[0].ProcessedAt
+		for _, record := range records {
+			if record.ProcessedAt.Before(&horizon) {
+				horizon = record.ProcessedAt
+			}
+		}
+	}
 	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
 	for _, ack := range list.Items {
+		if !horizon.IsZero() && ack.CreationTimestamp.Before(&horizon) {
+			continue // its record was trimmed; it was already processed
+		}
 		if ack.Spec.SessionName == ds.Name && ack.DeletionTimestamp.IsZero() && !acknowledgementProcessed(ds, string(ack.UID)) {
 			pending = append(pending, ack)
 		}

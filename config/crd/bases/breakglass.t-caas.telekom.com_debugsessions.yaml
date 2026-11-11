@@ -1805,8 +1805,9 @@ spec:
                 type: array
               cleanupAcknowledgements:
                 description: |-
-                  cleanupAcknowledgements records every processed
-                  DebugSessionCleanupAcknowledgement for this session, applied or not.
+                  cleanupAcknowledgements records processed
+                  DebugSessionCleanupAcknowledgements for this session, applied or not.
+                  It keeps at most 64 entries, dropping the oldest rejected records first.
                 items:
                   description: |-
                     DebugSessionCleanupAcknowledgementStatus records how the controller
@@ -1850,6 +1851,7 @@ spec:
                   - processedAt
                   - uid
                   type: object
+                maxItems: 64
                 type: array
                 x-kubernetes-list-map-keys:
                 - uid

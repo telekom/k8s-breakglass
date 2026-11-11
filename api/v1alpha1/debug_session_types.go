@@ -229,11 +229,13 @@ type DebugSessionStatus struct {
 	// It contains no Secret name or credential material.
 	// +optional
 	ConnectionLease *DebugSessionConnectionLease `json:"connectionLease,omitempty"`
-	// cleanupAcknowledgements records every processed
-	// DebugSessionCleanupAcknowledgement for this session, applied or not.
+	// cleanupAcknowledgements records processed
+	// DebugSessionCleanupAcknowledgements for this session, applied or not.
+	// It keeps at most 64 entries, dropping the oldest rejected records first.
 	// +optional
 	// +listType=map
 	// +listMapKey=uid
+	// +kubebuilder:validation:MaxItems=64
 	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatus `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	// +optional

@@ -261,6 +261,7 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 
 	err = as(operator).Create(ctx, ack("forged", requester))
 	require.Error(t, err, "acknowledgedBy must name the creating user")
+	assert.True(t, apierrors.IsInvalid(err), "the admission policy rejects a forged actor as Invalid, got %v", err)
 
 	// The controller records the processed acknowledgement with the operator.
 	require.Eventually(t, func() bool {

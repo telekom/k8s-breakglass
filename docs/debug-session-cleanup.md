@@ -150,10 +150,16 @@ of the sessions they acknowledge.
 
 - The object is immutable: the CRD rejects any change to `spec`.
 - It is bound to one session instance by `sessionUID`.
-- The validating webhook
+- `acknowledgedBy` must equal the creating user, so the audit actor cannot be
+  forged. The ValidatingAdmissionPolicy `breakglass-cleanup-acknowledgement-actor`
+  (`config/crd/policies/`) enforces this in the API server. It ships together
+  with the CRD, so it applies even before the controller and its webhook are
+  deployed (for example during an upgrade). The validating webhook
   `debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com`
-  requires `acknowledgedBy` to equal the creating user, so the audit actor
-  cannot be forged.
+  checks the same rule. **Kubernetes 1.30 or newer is required**
+  (ValidatingAdmissionPolicy GA).
+- **Four-eyes.** An acknowledgement whose `acknowledgedBy` is the session's
+  requester, approver or a participant is rejected, recorded and audited.
 
 **Requirements.**
 
@@ -183,7 +189,9 @@ once.
   namespace, name and UID). Unlisted residuals are kept.
 - Every outcome is appended to the DebugSession's
   `status.cleanupAcknowledgements` (name, UID, `acknowledgedBy`, reason,
-  `applied`, `retired`, `message`). It is audited as
+  `applied`, `retired`, `message`). The list holds at most 64 entries; the
+  oldest rejected records are dropped first, and acknowledgements older than
+  the oldest kept record are not processed again. It is audited as
   `debug_session.cleanup_acknowledged` (severity warning) with the
   acknowledging user as actor.
 - **Rejected:** nothing is retired, the cleanup backoff is unchanged, and the
