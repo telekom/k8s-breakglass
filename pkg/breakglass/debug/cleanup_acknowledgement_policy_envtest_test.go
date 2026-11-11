@@ -5,8 +5,8 @@ package debug
 
 import (
 	"bytes"
-	"errors"
 	"context"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
