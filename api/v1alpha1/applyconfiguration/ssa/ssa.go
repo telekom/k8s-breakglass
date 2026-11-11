@@ -264,6 +264,18 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
+	if a := status.CleanupAcknowledgement; a != nil {
+		ack := ac.DebugSessionCleanupAcknowledgementStatus().
+			WithDigest(a.Digest).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
+			WithRetired(a.Retired...)
+		if a.Reason != "" {
+			ack.WithReason(a.Reason)
+		}
+		if a.Message != "" {
+			ack.WithMessage(a.Message)
+		}
+		result.WithCleanupAcknowledgement(ack)
+	}
 
 	if status.LastActivity != nil {
 		result.WithLastActivity(*status.LastActivity)

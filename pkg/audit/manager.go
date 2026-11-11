@@ -1033,23 +1033,32 @@ func (m *Manager) DebugSessionCleanupFailed(ctx context.Context, sessionName, na
 	})
 }
 
-// DebugSessionCleanupAcknowledged records residuals retired because an
-// operator acknowledged them absent, not because they were observed gone.
-func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster string, identities []string) {
+// DebugSessionCleanupAcknowledged records an operator acknowledgement of
+// cleanup residuals as absent, with the acknowledging user as actor. Applied
+// is false when the controller rejected it; message then says why.
+func (m *Manager) DebugSessionCleanupAcknowledged(ctx context.Context, sessionName, namespace, cluster, user, reason string, applied bool, identities []string, message string) {
+	details := map[string]interface{}{
+		"cluster":    cluster,
+		"annotation": "breakglass.t-caas.telekom.com/cleanup-acknowledged-absent",
+		"applied":    applied,
+		"retired":    append([]string(nil), identities...),
+	}
+	if reason != "" {
+		details["reason"] = reason
+	}
+	if message != "" {
+		details["message"] = message
+	}
 	m.Emit(ctx, &Event{
 		Type:     EventDebugSessionCleanupAcknowledged,
 		Severity: SeverityWarning,
-		Actor:    Actor{User: "system"},
+		Actor:    Actor{User: user},
 		Target: Target{
 			Kind:      "DebugSession",
 			Name:      sessionName,
 			Namespace: namespace,
 		},
-		Details: map[string]interface{}{
-			"cluster":    cluster,
-			"annotation": "breakglass.t-caas.telekom.com/cleanup-acknowledged-absent",
-			"retired":    append([]string(nil), identities...),
-		},
+		Details:        details,
 		RequestContext: &RequestContext{DebugSessionName: sessionName},
 	})
 }

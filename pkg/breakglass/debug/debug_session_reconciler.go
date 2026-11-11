@@ -251,6 +251,8 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete
+// The DebugSession validating webhook authorizes cleanup acknowledgements with a SubjectAccessReview.
+// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates,verbs=get;list;watch
@@ -313,6 +315,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	if !ds.DeletionTimestamp.IsZero() && hasMaintenanceFinalizer(ds) {
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -811,6 +816,11 @@ func (c *DebugSessionController) sendDebugSessionExpiredEmail(ds breakglassv1alp
 // but reconciliation keeps retrying the delete until the status lists are empty.
 func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrl.Result, error) {
 	if !hasTrackedSpokeResources(ds) && !cleanupConditionFailed(ds) {
+		// Record (and audit) an acknowledgement set on a session with nothing
+		// left to clean up; it is rejected because cleanup is not failing.
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		if c.connectionLeases != nil {
 			if err := c.connectionLeases.RevokeSession(ctx, ds); err != nil {
 				return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
@@ -825,6 +835,11 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 
 	if hasTrackedSpokeResources(ds) || cleanupConditionFailed(ds) {
+		// Acknowledgements touch only hub status, so they are processed even
+		// while the target attempt backs off. Only an applied one retries now.
+		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
 			return ctrl.Result{RequeueAfter: wait}, nil
 		}
@@ -887,8 +902,7 @@ func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.
 	}
 	if v, ok := c.cleanupNotBefore.Load(ctrlclient.ObjectKeyFromObject(ds)); ok {
 		// A recreated session with the same name must not inherit a deadline.
-		// A changed operator acknowledgement is acted on at once.
-		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID && deadline.acknowledgement == ds.Annotations[CleanupAcknowledgedAbsentAnnotation] {
+		if deadline := v.(cleanupDeadline); deadline.uid == ds.UID {
 			return time.Until(deadline.notBefore)
 		}
 	}
@@ -896,16 +910,15 @@ func (c *DebugSessionController) cleanupBackoffRemaining(ds *breakglassv1alpha1.
 }
 
 type cleanupDeadline struct {
-	uid             types.UID
-	notBefore       time.Time
-	acknowledgement string
+	uid       types.UID
+	notBefore time.Time
 }
 
 // recordCleanupFailure stores the next allowed attempt and returns its delay.
 func (c *DebugSessionController) recordCleanupFailure(ds *breakglassv1alpha1.DebugSession) time.Duration {
 	retryAfter := c.cleanupRetryAfter(ds)
 	if !c.disableCleanupBackoff {
-		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter), acknowledgement: ds.Annotations[CleanupAcknowledgedAbsentAnnotation]})
+		c.cleanupNotBefore.Store(ctrlclient.ObjectKeyFromObject(ds), cleanupDeadline{uid: ds.UID, notBefore: time.Now().Add(retryAfter)})
 	}
 	return retryAfter
 }
@@ -977,6 +990,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 		return ctrl.Result{RequeueAfter: ExpiredSessionRequeue}, nil
 	}
 
+	if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	if wait := c.cleanupBackoffRemaining(ds); wait > 0 {
 		return ctrl.Result{RequeueAfter: wait}, nil
 	}

@@ -12,6 +12,14 @@ section: Behaviour changes
   residuals until an operator lists them in the new
   `breakglass.t-caas.telekom.com/cleanup-acknowledged-absent` annotation, which
   emits `debug_session.cleanup_acknowledged` (#1663).
+- Setting that annotation requires the new RBAC verb `acknowledge-cleanup` on
+  `debugsessions`, checked by the DebugSession webhook with a
+  SubjectAccessReview. The controller ClusterRole now includes
+  `subjectaccessreviews: create`. The new ClusterRole
+  `debugsession-cleanup-acknowledger` is bound to nobody; bind it to the
+  operators who may acknowledge. The new `status.cleanupAcknowledgement` field
+  requires the updated DebugSession CRD, so apply CRDs before the controller
+  (#1663).
 - Failed cleanup backs off exponentially up to 5 minutes and emits
   `debug_session.cleanup_failed` once per distinct residual set instead of on
   every attempt. To restore the previous behaviour, use the transitional

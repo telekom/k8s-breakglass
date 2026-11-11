@@ -1492,6 +1492,10 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 				session.Annotations = make(map[string]string)
 			}
 			for k, v := range resolvedBinding.Spec.Annotations {
+				// Cleanup acknowledgements require an authorized update (#1663).
+				if slices.Contains(breakglassv1alpha1.DebugSessionCleanupAcknowledgementAnnotations, k) {
+					continue
+				}
 				session.Annotations[k] = v
 			}
 		}

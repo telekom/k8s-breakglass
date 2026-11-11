@@ -4,20 +4,22 @@
 package debug
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/utils"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// CleanupAcknowledgedAbsentAnnotation lets an operator retire cleanup
-// residuals that the controller cannot prove gone, for example objects of a
-// CRD that was uninstalled (which deletes them) or an unresolved create
-// intent. The value is a JSON array of exact residual identities. Only
-// entries matching every field are retired; nothing is inferred.
-const CleanupAcknowledgedAbsentAnnotation = "breakglass.t-caas.telekom.com/cleanup-acknowledged-absent"
+// CleanupAcknowledgedAbsentAnnotation lets an authorized operator retire
+// cleanup residuals that the controller cannot prove gone. Setting it requires
+// the acknowledge-cleanup verb, enforced by the DebugSession webhook.
+const CleanupAcknowledgedAbsentAnnotation = breakglassv1alpha1.DebugSessionCleanupAcknowledgedAbsentAnnotation
 
 // CleanupAcknowledgedIdentity names one residual by its full recorded identity.
 // UID is empty only for an unresolved create intent.
@@ -39,45 +41,75 @@ func (i CleanupAcknowledgedIdentity) String() string {
 
 const acknowledgedAbsentReason = "retired by operator acknowledgement (" + CleanupAcknowledgedAbsentAnnotation + ")"
 
-// applyCleanupAcknowledgement retires the residuals named in the annotation.
-// It applies only while cleanup is failing, and only if every acknowledged
-// identity matches an outstanding residual; otherwise it changes nothing and
-// returns an error. Identities that match nothing outstanding because an
-// earlier attempt already retired them are ignored as a whole. It returns the
-// identities retired by this call.
-func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) ([]string, error) {
+// pendingCleanupAcknowledgement returns the digest of an acknowledgement that
+// has not been processed yet, or "" when there is none.
+func pendingCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) string {
 	raw := ds.Annotations[CleanupAcknowledgedAbsentAnnotation]
-	if raw == "" || !cleanupConditionFailed(ds) {
-		return nil, nil
+	if raw == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(raw + "\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation]))
+	digest := hex.EncodeToString(sum[:8])
+	if processed := ds.Status.CleanupAcknowledgement; processed != nil && processed.Digest == digest {
+		return ""
+	}
+	return digest
+}
+
+// applyCleanupAcknowledgement processes a pending acknowledgement once. It
+// retires residuals only if every listed identity matches an outstanding
+// residual exactly; otherwise nothing is retired and the rejection is
+// recorded. The outcome is stored in ds.Status.CleanupAcknowledgement.
+// It returns the record when an acknowledgement was processed.
+func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+	digest := pendingCleanupAcknowledgement(ds)
+	if digest == "" {
+		return nil
+	}
+	record := &breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
+		Digest:         digest,
+		AcknowledgedBy: ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation],
+		Reason:         ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedReasonAnnotation],
+		ProcessedAt:    metav1.Now(),
+	}
+	ds.Status.CleanupAcknowledgement = record
+	reject := func(format string, args ...any) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+		record.Message = fmt.Sprintf(format, args...)
+		return record
+	}
+	if record.AcknowledgedBy == "" {
+		return reject("acknowledgement has no %s; it was not set through the admission webhook", breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)
 	}
 	var acknowledged []CleanupAcknowledgedIdentity
-	if err := json.Unmarshal([]byte(raw), &acknowledged); err != nil {
-		return nil, fmt.Errorf("invalid %s annotation: %w", CleanupAcknowledgedAbsentAnnotation, err)
+	if err := json.Unmarshal([]byte(ds.Annotations[CleanupAcknowledgedAbsentAnnotation]), &acknowledged); err != nil {
+		return reject("invalid acknowledgement: %v", err)
+	}
+	if len(acknowledged) == 0 {
+		return reject("acknowledgement lists no identities")
 	}
 	for _, id := range acknowledged {
 		if id.APIVersion == "" || id.Kind == "" || id.Name == "" {
-			return nil, fmt.Errorf("invalid %s annotation: entry %q needs apiVersion, kind and name", CleanupAcknowledgedAbsentAnnotation, id)
+			return reject("acknowledgement entry %q needs apiVersion, kind and name", id)
 		}
 	}
-
-	matches := func(id CleanupAcknowledgedIdentity, apiVersion, kind, namespace, name, uid string) bool {
-		return id.APIVersion == apiVersion && id.Kind == kind && id.Namespace == namespace && id.Name == name && id.UID == uid
+	if !cleanupConditionFailed(ds) {
+		return reject("cleanup is not failing; acknowledgements apply only to CleanupFailed residuals")
 	}
+
 	matched := make([]bool, len(acknowledged))
 	find := func(apiVersion, kind, namespace, name, uid string) bool {
 		for i, id := range acknowledged {
-			if matches(id, apiVersion, kind, namespace, name, uid) {
+			if id.APIVersion == apiVersion && id.Kind == kind && id.Namespace == namespace && id.Name == name && id.UID == uid {
 				matched[i] = true
 				return true
 			}
 		}
 		return false
 	}
-
 	status := ds.Status.DeepCopy()
 	deployed := status.DeployedResources[:0]
 	for _, ref := range status.DeployedResources {
-		if find(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID) {
+		if !utils.DebugSessionResourceIntentionallyRetained(ds, ref) && find(ref.APIVersion, ref.Kind, ref.Namespace, ref.Name, ref.UID) {
 			continue
 		}
 		deployed = append(deployed, ref)
@@ -105,7 +137,6 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) ([]string,
 			}
 		}
 	}
-
 	var retired, unmatched []string
 	for i, id := range acknowledged {
 		if matched[i] {
@@ -114,14 +145,13 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) ([]string,
 			unmatched = append(unmatched, id.String())
 		}
 	}
-	if len(retired) == 0 {
-		return nil, nil // Already applied by an earlier attempt.
-	}
 	if len(unmatched) > 0 {
-		return nil, fmt.Errorf("%s annotation names identities that are not outstanding cleanup residuals: %s; nothing was retired",
-			CleanupAcknowledgedAbsentAnnotation, strings.Join(unmatched, ", "))
+		return reject("identities are not outstanding cleanup residuals: %s; nothing was retired", strings.Join(unmatched, ", "))
 	}
+	status.CleanupAcknowledgement = record
 	ds.Status = *status
 	slices.Sort(retired)
-	return retired, nil
+	record.Applied = true
+	record.Retired = retired
+	return record
 }

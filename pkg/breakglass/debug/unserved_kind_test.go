@@ -324,7 +324,11 @@ func acknowledgedSession(t *testing.T, ids ...CleanupAcknowledgedIdentity) *brea
 	require.True(t, cleanupConditionFailed(ds))
 	raw, err := json.Marshal(ids)
 	require.NoError(t, err)
-	ds.Annotations = map[string]string{CleanupAcknowledgedAbsentAnnotation: string(raw)}
+	ds.Annotations = map[string]string{
+		CleanupAcknowledgedAbsentAnnotation:                                string(raw),
+		breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation:     "operator@example.com",
+		breakglassv1alpha1.DebugSessionCleanupAcknowledgedReasonAnnotation: "CHG-1663: Kyverno CRDs removed",
+	}
 	return ds
 }
 
@@ -337,9 +341,11 @@ var acknowledgedPolicyExceptions = []CleanupAcknowledgedIdentity{
 
 func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.T) {
 	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
-	retired, err := applyCleanupAcknowledgement(ds)
-	require.NoError(t, err)
-	assert.Len(t, retired, 4)
+	record := applyCleanupAcknowledgement(ds)
+	require.NotNil(t, record)
+	assert.True(t, record.Applied)
+	assert.Equal(t, "operator@example.com", record.AcknowledgedBy)
+	assert.Len(t, record.Retired, 4)
 	aux := ds.Status.AuxiliaryResourceStatuses[0]
 	assert.True(t, aux.Deleted)
 	assert.Contains(t, aux.Error, CleanupAcknowledgedAbsentAnnotation)
@@ -347,75 +353,112 @@ func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.
 	assert.Empty(t, ds.Status.PodTemplateResourceStatuses)
 	require.Len(t, ds.Status.DeployedResources, 1, "an unlisted residual is kept")
 	assert.Equal(t, "other", ds.Status.DeployedResources[0].Name)
+	assert.Same(t, record, ds.Status.CleanupAcknowledgement)
 
-	again, err := applyCleanupAcknowledgement(ds)
-	require.NoError(t, err)
-	assert.Empty(t, again, "re-applying an already applied acknowledgement is a no-op")
+	assert.Nil(t, applyCleanupAcknowledgement(ds), "a processed acknowledgement is not processed again")
 }
 
-func TestApplyCleanupAcknowledgementRejectsUnmatchedOrInvalidEntries(t *testing.T) {
+func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
 	wrongUID := append([]CleanupAcknowledgedIdentity(nil), acknowledgedPolicyExceptions...)
 	wrongUID[3].UID = "another-uid"
-	for name, annotation := range map[string]string{
-		"wrong uid":      "",
-		"invalid json":   "{",
-		"missing fields": `[{"kind":"PolicyException"}]`,
+	for name, mutate := range map[string]func(*breakglassv1alpha1.DebugSession){
+		"wrong uid":    func(*breakglassv1alpha1.DebugSession) {},
+		"invalid json": func(ds *breakglassv1alpha1.DebugSession) { ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = "{" },
+		"missing fields": func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = `[{"kind":"PolicyException"}]`
+		},
+		"empty list": func(ds *breakglassv1alpha1.DebugSession) { ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = `[]` },
+		"no acknowledging user": func(ds *breakglassv1alpha1.DebugSession) {
+			delete(ds.Annotations, breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)
+		},
+		"not failing": func(ds *breakglassv1alpha1.DebugSession) { ds.Status.Conditions = nil },
 	} {
 		t.Run(name, func(t *testing.T) {
 			ds := acknowledgedSession(t, wrongUID...)
-			if annotation != "" {
-				ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = annotation
-			}
+			mutate(ds)
 			before := ds.Status.DeepCopy()
-			retired, err := applyCleanupAcknowledgement(ds)
-			require.Error(t, err)
-			assert.Empty(t, retired)
+			record := applyCleanupAcknowledgement(ds)
+			require.NotNil(t, record, "a never-matching acknowledgement is reported, not ignored")
+			assert.False(t, record.Applied)
+			assert.NotEmpty(t, record.Message)
+			assert.Empty(t, record.Retired)
+			before.CleanupAcknowledgement = record
 			assert.Equal(t, *before, ds.Status, "nothing is retired unless every entry matches")
+			assert.Nil(t, applyCleanupAcknowledgement(ds), "the rejection is recorded once")
 		})
 	}
-	t.Run("not failing", func(t *testing.T) {
-		ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
-		ds.Status.Conditions = nil
-		retired, err := applyCleanupAcknowledgement(ds)
-		require.NoError(t, err)
-		assert.Empty(t, retired, "an acknowledgement applies only after cleanup has failed")
+}
+
+func TestCleanupAcknowledgementIsAuditedWithTheOperatorAsActor(t *testing.T) {
+	run := func(t *testing.T, ids []CleanupAcknowledgedIdentity) (*breakglassv1alpha1.DebugSession, []*audit.Event) {
+		ds := acknowledgedSession(t, ids...)
+		ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
+		hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+		sink := &cleanupAuditCaptureSink{}
+		manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+		c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+		_ = c.cleanupResources(context.Background(), ds)
+		// A second attempt keeps the persisted outcome and audits nothing new.
+		require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), ds))
+		_ = c.cleanupResources(context.Background(), ds)
+		require.NoError(t, manager.Close())
+		require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), ds))
+		var acks []*audit.Event
+		for _, event := range sink.Events() {
+			if event.Type == audit.EventDebugSessionCleanupAcknowledged {
+				acks = append(acks, event)
+			}
+		}
+		return ds, acks
+	}
+	t.Run("applied", func(t *testing.T) {
+		ds, acks := run(t, acknowledgedPolicyExceptions)
+		require.Len(t, acks, 1)
+		assert.Equal(t, "operator@example.com", acks[0].Actor.User)
+		assert.Equal(t, true, acks[0].Details["applied"])
+		assert.Equal(t, "CHG-1663: Kyverno CRDs removed", acks[0].Details["reason"])
+		condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
+		require.NotNil(t, condition)
+		assert.Equal(t, metav1.ConditionFalse, condition.Status)
+		assert.Equal(t, "CleanupAcknowledged", condition.Reason, "the reason survives the second reconcile")
+		require.NotNil(t, ds.Status.CleanupAcknowledgement)
+		assert.True(t, ds.Status.CleanupAcknowledgement.Applied)
+	})
+	t.Run("rejected", func(t *testing.T) {
+		wrong := append([]CleanupAcknowledgedIdentity(nil), acknowledgedPolicyExceptions...)
+		wrong[0].Name = "not-a-residual"
+		ds, acks := run(t, wrong)
+		require.Len(t, acks, 1)
+		assert.Equal(t, false, acks[0].Details["applied"])
+		assert.Contains(t, acks[0].Details["message"], "not outstanding cleanup residuals")
+		assert.True(t, cleanupConditionFailed(ds))
+		require.NotNil(t, ds.Status.CleanupAcknowledgement)
+		assert.False(t, ds.Status.CleanupAcknowledgement.Applied)
 	})
 }
 
-func TestCleanupAcknowledgementCompletesCleanupAndIsAudited(t *testing.T) {
-	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
-	ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
-	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
-	sink := &cleanupAuditCaptureSink{}
-	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
-	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
-	require.NoError(t, c.cleanupResources(context.Background(), ds))
-	require.NoError(t, manager.Close())
-
-	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
-	require.NotNil(t, condition)
-	assert.Equal(t, metav1.ConditionFalse, condition.Status)
-	assert.Equal(t, "CleanupAcknowledged", condition.Reason)
-	var acknowledged, recovered int
-	for _, event := range sink.Events() {
-		switch event.Type {
-		case audit.EventDebugSessionCleanupAcknowledged:
-			acknowledged++
-			assert.Len(t, event.Details["retired"], 4)
-		case audit.EventDebugSessionCleanupRecovered:
-			recovered++
-		}
-	}
-	assert.Equal(t, 1, acknowledged)
-	assert.Equal(t, 1, recovered)
-}
-
-func TestNewAcknowledgementBypassesCleanupBackoff(t *testing.T) {
+func TestCleanupAcknowledgementDoesNotBypassBackoff(t *testing.T) {
 	ds := acknowledgedSession(t)
 	ds.Annotations = nil
 	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
 	c.recordCleanupFailure(ds)
 	require.Greater(t, c.cleanupBackoffRemaining(ds), time.Duration(0))
 	ds.Annotations = map[string]string{CleanupAcknowledgedAbsentAnnotation: "[]"}
-	assert.Zero(t, c.cleanupBackoffRemaining(ds), "a changed acknowledgement is acted on at once")
+	assert.Greater(t, c.cleanupBackoffRemaining(ds), time.Duration(0), "a new annotation waits for the next attempt")
+}
+
+// TestCleanupAcknowledgementPrecedesModeSpecificCleanup proves that an
+// acknowledgement is applied even when maintenance cleanup fails first, so a
+// retired auxiliary residual cannot keep the node Lease held.
+func TestCleanupAcknowledgementPrecedesModeSpecificCleanup(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	ds.Status.NodeMaintenance = &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "op"}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	require.Error(t, c.cleanupResources(context.Background(), ds), "maintenance cleanup cannot run without a cluster provider")
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.NotNil(t, persisted.Status.CleanupAcknowledgement)
+	assert.True(t, persisted.Status.CleanupAcknowledgement.Applied)
+	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].Deleted, "the acknowledged auxiliary residual is retired before maintenance cleanup")
 }

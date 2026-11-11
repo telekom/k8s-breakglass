@@ -229,6 +229,10 @@ type DebugSessionStatus struct {
 	// It contains no Secret name or credential material.
 	// +optional
 	ConnectionLease *DebugSessionConnectionLease `json:"connectionLease,omitempty"`
+	// cleanupAcknowledgement records the processing of the operator's
+	// cleanup-acknowledged-absent annotation.
+	// +optional
+	CleanupAcknowledgement *DebugSessionCleanupAcknowledgementStatus `json:"cleanupAcknowledgement,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
@@ -889,6 +893,7 @@ func (ds *DebugSession) GetCondition(condType string) *metav1.Condition {
 func (ds *DebugSession) ValidateCreate(ctx context.Context, obj *DebugSession) (admission.Warnings, error) {
 	// Use shared validation function for consistent validation between webhooks and reconcilers
 	result := ValidateDebugSession(obj)
+	result.Errors = append(result.Errors, forbidCleanupAcknowledgementAnnotations(obj.Annotations, field.NewPath("metadata").Child("annotations"))...)
 	if obj.Status.State == DebugSessionStateActive &&
 		(obj.Status.ExpiresAt == nil || obj.Status.ExpiresAt.IsZero() || !time.Now().Before(obj.Status.ExpiresAt.Time)) {
 		result.Errors = append(result.Errors, field.Invalid(field.NewPath("status").Child("expiresAt"),
@@ -1244,6 +1249,7 @@ func (ds *DebugSession) ValidateUpdate(ctx context.Context, oldObj, newObj *Debu
 	if !result.IsValid() {
 		allErrs = append(allErrs, result.Errors...)
 	}
+	allErrs = append(allErrs, validateCleanupAcknowledgementUpdate(ctx, oldObj, newObj)...)
 
 	allErrs = append(allErrs, validateDebugSessionMonotonicStatusFields(oldObj, newObj)...)
 	if oldObj.Status.KubectlDebugStatus != nil || newObj.Status.KubectlDebugStatus != nil {

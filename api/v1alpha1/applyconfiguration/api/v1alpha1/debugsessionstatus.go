@@ -29,6 +29,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
+	// cleanupAcknowledgement records the processing of the operator's
+	// cleanup-acknowledged-absent annotation.
+	CleanupAcknowledgement *DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgement,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
@@ -141,6 +144,14 @@ func (b *DebugSessionStatusApplyConfiguration) WithHotfix(value *HotfixStatusApp
 // If called multiple times, the ConnectionLease field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithConnectionLease(value *DebugSessionConnectionLeaseApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.ConnectionLease = value
+	return b
+}
+
+// WithCleanupAcknowledgement sets the CleanupAcknowledgement field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CleanupAcknowledgement field is set to the value of the last call.
+func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgement(value *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	b.CleanupAcknowledgement = value
 	return b
 }
 

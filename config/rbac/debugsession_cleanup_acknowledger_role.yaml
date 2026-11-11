@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Grants the dedicated verb that lets an operator retire DebugSession cleanup
+# residuals with the cleanup-acknowledged-absent annotation. Bound to nobody by
+# default: bind it only to operators who are independent of the sessions they
+# acknowledge (see docs/debug-session-cleanup.md). Holders also need update or
+# patch on debugsessions to set the annotation.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: debugsession-cleanup-acknowledger
+rules:
+- apiGroups:
+  - breakglass.t-caas.telekom.com
+  resources:
+  - debugsessions
+  verbs:
+  - acknowledge-cleanup

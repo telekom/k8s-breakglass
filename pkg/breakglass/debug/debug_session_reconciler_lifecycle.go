@@ -498,6 +498,11 @@ func buildContainerStatus(pod *corev1.Pod) *breakglassv1alpha1.PodContainerStatu
 
 // cleanupResources removes deployed resources from the target cluster
 func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	// Process an operator acknowledgement before any mode-specific cleanup, so
+	// a retired auxiliary residual cannot keep a maintenance or hotfix Lease.
+	if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
+		return err
+	}
 	if ds.Status.AdmissionRecipe != nil && !ds.Status.AdmissionRecipe.Reverted {
 		if err := c.revertAdmissionRecipe(ctx, ds); err != nil {
 			setCleanupCondition(ds)
@@ -532,31 +537,13 @@ func (c *DebugSessionController) cleanupResources(ctx context.Context, ds *break
 	// attempt actually retired.
 	cleanupBaseline := ds.Status.DeepCopy()
 	wasCleanupFailed := cleanupConditionFailed(ds)
-	// Operator acknowledgement retires residuals the controller cannot prove
-	// gone; it is applied before any target round trip.
-	acknowledged, acknowledgementErr := applyCleanupAcknowledgement(ds)
-	if acknowledgementErr != nil {
-		log.Warnw("Ignoring invalid cleanup acknowledgement", "error", acknowledgementErr)
-	} else if len(acknowledged) > 0 {
-		log.Infow("Retiring cleanup residuals acknowledged absent by an operator", "identities", acknowledged)
-	}
 	finishCleanup := func(operationErr error) error {
-		operationErr = errors.Join(acknowledgementErr, operationErr)
 		setCleanupCondition(ds)
-		if len(acknowledged) > 0 && !cleanupStatusHasResiduals(ds) {
-			condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
-			condition.Reason = "CleanupAcknowledged"
-			condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources retired by operator acknowledgement.", len(acknowledged))
-			ds.SetCondition(*condition)
-		}
 		var previous metav1.Condition
 		patchErr := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, cleanupBaseline, &previous)
 		liveWasFailed := previous.Status == metav1.ConditionTrue
 		if patchErr == nil && c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				if len(acknowledged) > 0 {
-					auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, acknowledged)
-				}
 				if cleanupConditionFailed(ds) {
 					// The condition message names the residual set. Emit once per
 					// distinct set rather than on every retry (#1663); the
@@ -662,6 +649,39 @@ const (
 	maxCleanupConditionMessage   = 1024
 )
 
+// processCleanupAcknowledgement applies a pending operator acknowledgement,
+// persists the outcome and audits it with the acknowledging user as actor.
+// An acknowledgement is processed once per distinct value; a rejected one is
+// recorded and audited but retires nothing and does not shorten the backoff.
+func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	baseline := ds.Status.DeepCopy()
+	record := applyCleanupAcknowledgement(ds)
+	if record == nil {
+		return nil
+	}
+	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "acknowledgedBy", record.AcknowledgedBy)
+	if record.Applied {
+		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "identities", record.Retired)
+		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+	} else {
+		log.Warnw("Rejected cleanup acknowledgement", "reason", record.Message)
+	}
+	setCleanupCondition(ds)
+	var previous metav1.Condition
+	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
+		return fmt.Errorf("persist cleanup acknowledgement: %w", err)
+	}
+	if c.shouldEmitAudit(ctx, ds) {
+		if auditManager := c.currentAuditManager(); auditManager != nil {
+			auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, record.AcknowledgedBy, record.Reason, record.Applied, record.Retired, record.Message)
+			if previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds) {
+				auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			}
+		}
+	}
+	return nil
+}
+
 func cleanupConditionFailed(ds *breakglassv1alpha1.DebugSession) bool {
 	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
 	return condition != nil && condition.Status == metav1.ConditionTrue
@@ -678,6 +698,11 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "CleanupFailed"
 		condition.Message = boundedCleanupConditionMessage(ds)
+	} else if ack := ds.Status.CleanupAcknowledgement; ack != nil && ack.Applied {
+		// Keep the distinction between acknowledged and observed deletion.
+		condition.Status = metav1.ConditionFalse
+		condition.Reason = "CleanupAcknowledged"
+		condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources were retired by an operator acknowledgement from %s.", len(ack.Retired), ack.AcknowledgedBy)
 	} else {
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "CleanupRecovered"
@@ -873,14 +898,12 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
-			if desired := desiredCleanupCondition(desiredStatus.Conditions); desired != nil {
+			if desiredStatus.CleanupAcknowledgement != nil {
+				current.Status.CleanupAcknowledgement = desiredStatus.CleanupAcknowledgement.DeepCopy()
+			}
+			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.
 				setCleanupCondition(current)
-				// Keep the acknowledgement reason when the merged inventory agrees.
-				if merged := current.GetCondition(desired.Type); desired.Reason == "CleanupAcknowledged" && merged.Status == desired.Status {
-					merged.Reason, merged.Message = desired.Reason, desired.Message
-					current.SetCondition(*merged)
-				}
 			}
 
 			if current.Generation > 0 {

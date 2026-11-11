@@ -150,7 +150,10 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		require.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
 
 		ack := fmt.Sprintf(`[{"apiVersion":"policies.kyverno.io/v1","kind":"PolicyException","namespace":"default","name":%q,"uid":"uid-of-removed-crd-object"}]`, ds.Name)
-		require.NoError(t, hub.Patch(ctx, ds, client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`, CleanupAcknowledgedAbsentAnnotation, ack)))))
+		// envtest runs without the admission webhook, which would otherwise
+		// authorize the operator and require acknowledged-by to name them.
+		require.NoError(t, hub.Patch(ctx, ds, client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q,%q:"operator@example.com"}}}`,
+			CleanupAcknowledgedAbsentAnnotation, ack, breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)))))
 		result, err = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
 		require.NoError(t, err)
 		require.NoError(t, manager.Close())
@@ -162,6 +165,8 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, condition.Status)
 		assert.Equal(t, "CleanupAcknowledged", condition.Reason)
 		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupAcknowledged))
+		require.NotNil(t, ds.Status.CleanupAcknowledgement)
+		assert.Equal(t, "operator@example.com", ds.Status.CleanupAcknowledgement.AcknowledgedBy)
 		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupRecovered))
 	})
 

@@ -150,6 +150,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionArtifactStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionAuditConfig"):
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementStatus"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBinding"):
 		return &apiv1alpha1.DebugSessionClusterBindingApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionClusterBindingSpec"):
