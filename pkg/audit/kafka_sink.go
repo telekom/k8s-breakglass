@@ -227,6 +227,14 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	if batchTimeout <= 0 {
 		batchTimeout = time.Second
 	}
+	if !cfg.Async {
+		// Synchronous writes are admitted one at a time (see slot), so no
+		// other write can join a partial kafka-go batch while it waits.
+		// Waiting for BatchTimeout would only delay the receipt past the
+		// queue's write deadline; the queued sink already batches. Flush at
+		// once instead.
+		batchTimeout = time.Millisecond
+	}
 
 	writeTimeout := cfg.WriteTimeout
 	if writeTimeout <= 0 {

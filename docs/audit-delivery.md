@@ -72,7 +72,11 @@ Kafka write that times out leaves its records inside the kafka-go writer until
 the writer's own produce attempt ends. The sink admits one synchronous write
 at a time and keeps that slot until those records complete; other writers wait
 for it within their own deadline (a healthy write holds it only while it
-runs), so retries during an outage do not pile up copies in the writer. While the
+runs), so retries during an outage do not pile up copies in the writer. Because
+writes are admitted one at a time, a synchronous Kafka sink flushes each
+write at once instead of waiting `kafka.batchTimeoutSeconds` for other writes
+that cannot join it; the queued sink already batches events (`queue` batch
+settings), so the receipt arrives well within the queue's write deadline. While the
 workers hold their batches, new events wait in the sink queue; once it is full
 they are dropped and counted with reason `queue_full` (or, with
 `dropOnFull: false`, `enqueue_timeout`), and a warning is logged at most every
@@ -89,7 +93,10 @@ an event passes it to its matching successor, within one write timeout for
 the whole handover, so they never reach a retargeted destination; events that
 do not fit by then, or whose sink has no matching successor, are counted as
 `shutdown`. A handover waiting on a full replacement that closes in turn
-follows that replacement's successor at once. Each retiring sink likewise hands over all its
+follows that replacement's successor at once. A manager batch that is already waiting on a
+full sink queue when the reload's drain deadline cancels it hands its
+not-yet-queued events to that sink's matching successor too, instead of
+counting them as `enqueue_timeout`. Each retiring sink likewise hands over all its
 batches within one write timeout; the replacement counts what it cannot take
 (`queue_full` or `enqueue_timeout`). A
 replaced pipeline that is itself already closed forwards them along the chain

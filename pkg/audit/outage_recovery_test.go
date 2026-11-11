@@ -1069,3 +1069,117 @@ func TestManagerIngressHandOverNeverCrossesSinks(t *testing.T) {
 		require.Equal(t, EventConfigChanged, typ, "sink b's replacement got sink a's event")
 	}
 }
+
+// healthyProduce answers metadata and Produce requests at once, counting
+// the records it receives.
+type healthyProduce struct{ records atomic.Int64 }
+
+func (h *healthyProduce) RoundTrip(_ context.Context, _ net.Addr, req kafka.Request) (protocol.Message, error) {
+	switch r := req.(type) {
+	case *metadataAPI.Request:
+		return &metadataAPI.Response{
+			Brokers: []metadataAPI.ResponseBroker{{NodeID: 1, Host: "127.0.0.1", Port: 1}},
+			Topics: []metadataAPI.ResponseTopic{{Name: r.TopicNames[0],
+				Partitions: []metadataAPI.ResponsePartition{{PartitionIndex: 0, LeaderID: 1}}}},
+		}, nil
+	case *produceAPI.Request:
+		for _, p := range r.Topics[0].Partitions {
+			for {
+				if _, err := p.RecordSet.Records.ReadRecord(); err != nil {
+					break
+				}
+				h.records.Add(1)
+			}
+		}
+		return &produceAPI.Response{Topics: []produceAPI.ResponseTopic{{Topic: r.Topics[0].Topic,
+			Partitions: []produceAPI.ResponsePartition{{Partition: 0}}}}}, nil
+	}
+	return nil, errors.New("unexpected request")
+}
+
+// Single-partition topic, Kafka batchSize 200 and batchTimeoutSeconds 10,
+// two queue workers writing 100-event batches: each partial batch is
+// delivered well within the queue's write deadline instead of waiting for
+// the Kafka batch timeout, so nothing is retried or dropped.
+func TestKafkaPartialBatchesFlushWithinTheWriteDeadline(t *testing.T) {
+	transport := &healthyProduce{}
+	sink, err := NewKafkaSink(KafkaSinkConfig{Name: "partial-batches", Brokers: []string{"127.0.0.1:1"}, Topic: "audit",
+		BatchSize: 200, BatchTimeout: 10 * time.Second}, zap.NewNop())
+	require.NoError(t, err)
+	sink.writer.Transport = transport
+	cfg := DefaultQueuedSinkConfig()
+	cfg.WorkerCount, cfg.BatchSize = 2, 100
+	qs := NewQueuedSink(sink, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	start := time.Now()
+	for i := range 400 {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return transport.records.Load() == 400 }, 5*time.Second, 10*time.Millisecond)
+	require.Less(t, time.Since(start), 5*time.Second)
+	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 400 }, time.Second, 10*time.Millisecond)
+	health := qs.Health()
+	require.Zero(t, health.FailedEvents, "no write ran into the queue's deadline")
+	require.Zero(t, health.DroppedEvents)
+}
+
+// During a reload with dropOnFull: false, a manager batch already waiting in
+// WriteBatch on the old sink's full queue hands its unqueued events to the
+// matching successor when the manager's drain deadline cancels it. Every
+// accepted event reaches the replacement or the old sink.
+func TestReloadHandsOverABatchWaitingOnAFullQueue(t *testing.T) {
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seen := map[string]int{}
+	record := func(events []*Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, e := range events {
+			seen[e.ID]++
+		}
+	}
+	oldSink := newFuncSink("waiting-batch", func(events []*Event) error { <-release; record(events); return nil })
+	cfg := outageConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.BatchSize, cfg.DropOnFull = 1, 1, 1, false
+	cfg.WriteTimeout = time.Minute
+	oldMulti := NewIsolatedMultiSink([]Sink{oldSink}, cfg, zap.NewNop())
+	oldMulti.sinks[0].owner = "config/kafka/events"
+	mcfg := DefaultManagerConfig()
+	// One manager batch holds all events, so they are all inside WriteBatch.
+	mcfg.WorkerCount, mcfg.BatchSize, mcfg.QueueSize, mcfg.BatchTimeout = 1, 10, 100, time.Hour
+	mcfg.WriteTimeout = time.Minute
+	oldManager := NewManager(oldMulti, mcfg, zap.NewNop())
+
+	nextMulti := NewIsolatedMultiSink([]Sink{newFuncSink("waiting-batch", func(events []*Event) error {
+		record(events)
+		return nil
+	})}, outageConfig(), zap.NewNop())
+	nextMulti.sinks[0].owner = "config/kafka/events"
+	t.Cleanup(func() { require.NoError(t, nextMulti.Close()) })
+
+	ids := make([]string, 10)
+	for i := range ids {
+		ids[i] = fmt.Sprint("accepted-", i)
+		require.True(t, oldManager.Emit(context.Background(), &Event{ID: ids[i], Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return len(oldMulti.sinks[0].queue) == 1 }, time.Second, 5*time.Millisecond)
+	oldMulti.handOver(nextMulti)
+	timeouts := metrics.AuditEventsDropped.WithLabelValues("waiting-batch", "enqueue_timeout")
+	before := testutil.ToFloat64(timeouts)
+	closed := make(chan struct{})
+	go func() { _ = oldManager.Close(); close(closed) }()
+	time.Sleep(6 * time.Second) // past the manager's drain deadline
+	close(release)
+	<-closed
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(seen) == len(ids)
+	}, 3*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, id := range ids {
+		require.Positive(t, seen[id], "accepted event %s was lost", id)
+	}
+	require.Equal(t, before, testutil.ToFloat64(timeouts), "no event counted as enqueue_timeout")
+}

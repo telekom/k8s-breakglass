@@ -305,6 +305,13 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	}
 	if !qs.config.DropOnFull {
 		enqueued, closed, err := qs.blockingEnqueue(ctx, event)
+		if errors.Is(err, errHandOverPending) {
+			// The caller (a retiring manager) gave up while this sink is
+			// being replaced: the matching successor takes the event within
+			// the shared handover deadline.
+			qs.shutdownDrop([]*Event{event})
+			return nil
+		}
 		if closed {
 			// Follow the successor without holding sendMu, so Close of this
 			// sink is not delayed by a forward into a full replacement.
@@ -317,6 +324,10 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	}
 	return qs.writeNonBlocking(ctx, event)
 }
+
+// errHandOverPending reports a blocking enqueue that ran out of time while
+// the sink is being replaced; the caller hands the event to the successor.
+var errHandOverPending = errors.New("audit sink is being replaced")
 
 // blockingEnqueue waits for queue capacity up to WriteTimeout or ctx. It
 // reports closed when the sink closed before or during the wait.
@@ -342,6 +353,9 @@ func (qs *QueuedSink) blockingEnqueue(ctx context.Context, event *Event) (enqueu
 	case <-qs.stop:
 		return false, true, nil
 	case <-writeCtx.Done():
+		if qs.successor.Load() != nil {
+			return false, false, errHandOverPending
+		}
 		// Count every drop, but rate-limit the warning: with a full queue
 		// this path runs once per emitted event.
 		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "enqueue_timeout").Inc()
