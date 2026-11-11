@@ -188,6 +188,7 @@ func TestStatsIncludeSinkQueueDrops(t *testing.T) {
 	sink.failures.Store(1 << 20)
 	queued := DefaultQueuedSinkConfig()
 	queued.RetryAttempts = 1
+	queued.DropAfterRetryWindow = true
 	multi := NewIsolatedMultiSink([]Sink{sink}, queued, zap.NewNop())
 	svc := NewService(fake.NewClientBuilder().WithScheme(newServiceTestScheme(t)).Build(), nil, zap.NewNop(), "test-namespace")
 	t.Cleanup(func() { _ = svc.Close() })

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,13 @@ type QueuedSinkConfig struct {
 	RetryInitialBackoff time.Duration
 	RetryMaxBackoff     time.Duration
 	RetryTimeout        time.Duration
+
+	// DropAfterRetryWindow drops a batch once RetryAttempts or RetryTimeout
+	// is exhausted. When false (default), the worker retains the batch and
+	// retries it every RetryMaxBackoff until it is delivered or the sink
+	// closes; memory stays bounded by the queue plus one batch per worker,
+	// and new events beyond that are counted as queue_full/enqueue_timeout.
+	DropAfterRetryWindow bool
 
 	// CircuitBreakerThreshold is the number of consecutive failures before opening the circuit.
 	// Default: 5
@@ -129,6 +137,19 @@ type QueuedSink struct {
 	consecutiveFails atomic.Int32
 	circuitOpen      atomic.Bool
 	lastResetAttempt atomic.Int64 // Unix timestamp
+	lastDropLog      atomic.Int64 // Unix nanoseconds
+
+	// successor receives the events held at shutdown (see HandOver).
+	successor atomic.Pointer[QueuedSink]
+	// handOverDeadline bounds all hand-overs of this sink together (Unix
+	// nanoseconds, set on the first one): worker batches and retained
+	// batches share one WriteTimeout instead of one each.
+	handOverDeadline atomic.Int64
+
+	// owner identifies the AuditConfig and sink type that define the sink;
+	// sink names are unique only within one AuditConfig, and a reload may
+	// change a sink's type while keeping its name.
+	owner string
 
 	// Error tracking
 	mu              sync.RWMutex
@@ -239,38 +260,114 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 	return qs
 }
 
+// closedWrite handles a write to a closed sink: a replaced sink forwards
+// the event to its successor (which may itself forward further along a chain
+// of reloads), otherwise the event is counted as a shutdown drop.
+func (qs *QueuedSink) closedWrite(ctx context.Context, event *Event) error {
+	if successor := qs.successor.Load(); successor != nil {
+		// writeHandedOver, not Write: an event the successor's filters
+		// exclude is counted ("handover_filtered") instead of vanishing.
+		return successor.writeHandedOver(ctx, event)
+	}
+	qs.recordDrop(1, "shutdown")
+	return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+}
+
+// writeHandedOver accepts an event handed over by the sink this one
+// replaced. A closed sink forwards it along the chain of reloads; the sink
+// that finally receives it counts it as "handover_filtered" when its filters
+// exclude it, since such an event is not delivered anywhere.
+func (qs *QueuedSink) writeHandedOver(ctx context.Context, event *Event) error {
+	if qs.closed.Load() {
+		if successor := qs.successor.Load(); successor != nil {
+			return successor.writeHandedOver(ctx, event)
+		}
+	}
+	if !qs.closed.Load() && !queuedEventAllowed(qs.sink, event) {
+		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "handover_filtered").Inc()
+		qs.droppedEvents.Add(1)
+		qs.logger.Debug("handed-over audit event excluded by this sink's filters",
+			zap.String("event_id", event.ID), zap.String("event_type", string(event.Type)))
+		return nil
+	}
+	return qs.Write(ctx, event)
+}
+
 // Write enqueues an event for async processing. A sensitive event may
 // synchronously fall back to the underlying sink when a queue is full or its
 // circuit is open.
 func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if qs.closed.Load() {
-		qs.recordDrop(1, "shutdown")
-		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		return qs.closedWrite(ctx, event)
 	}
 	if !queuedEventAllowed(qs.sink, event) {
 		return nil
 	}
 	if !qs.config.DropOnFull {
-		writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
-		defer cancel()
-		qs.sendMu.RLock()
-		defer qs.sendMu.RUnlock()
-		if qs.closed.Load() {
-			qs.recordDrop(1, "shutdown")
-			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
-		}
-		select {
-		case qs.queue <- event:
+		enqueued, closed, err := qs.blockingEnqueue(ctx, event)
+		if errors.Is(err, errHandOverPending) {
+			// The caller gave up while this sink is being replaced: the
+			// matching successor takes the event. A cancelled manager write
+			// starts this sink's handover budget; a handover passing through
+			// keeps its own deadline.
+			qs.handOverWithin(ctx, []*Event{event})
 			return nil
-		case <-qs.stop:
-			qs.recordDrop(1, "shutdown")
-			return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
-		case <-writeCtx.Done():
-			qs.recordDrop(1, "enqueue_timeout")
-			return fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
 		}
+		if closed {
+			// Follow the successor without holding sendMu, so Close of this
+			// sink is not delayed by a forward into a full replacement.
+			return qs.closedWrite(ctx, event)
+		}
+		if enqueued {
+			return nil
+		}
+		return err
 	}
+	return qs.writeNonBlocking(ctx, event)
+}
 
+// errHandOverPending reports a blocking enqueue that ran out of time while
+// the sink is being replaced; the caller hands the event to the successor.
+var errHandOverPending = errors.New("audit sink is being replaced")
+
+// blockingEnqueue waits for queue capacity up to WriteTimeout or ctx. It
+// reports closed when the sink closed before or during the wait.
+func (qs *QueuedSink) blockingEnqueue(ctx context.Context, event *Event) (enqueued, closed bool, err error) {
+	writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+	defer cancel()
+	qs.sendMu.RLock()
+	defer qs.sendMu.RUnlock()
+	if qs.closed.Load() {
+		return false, true, nil
+	}
+	// Free capacity always wins, even with an expired context (for example a
+	// late handover sharing an already spent deadline); the select below
+	// would otherwise pick at random between the send and Done.
+	select {
+	case qs.queue <- event:
+		return true, false, nil
+	default:
+	}
+	select {
+	case qs.queue <- event:
+		return true, false, nil
+	case <-qs.stop:
+		return false, true, nil
+	case <-writeCtx.Done():
+		if qs.successor.Load() != nil {
+			return false, false, errHandOverPending
+		}
+		// Count every drop, but rate-limit the warning: with a full queue
+		// this path runs once per emitted event.
+		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "enqueue_timeout").Inc()
+		qs.droppedEvents.Add(1)
+		qs.logDropThrottled("enqueue_timeout")
+		return false, false, fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
+	}
+}
+
+// writeNonBlocking enqueues with dropOnFull: true semantics.
+func (qs *QueuedSink) writeNonBlocking(ctx context.Context, event *Event) error {
 	// Check circuit breaker
 	if qs.circuitOpen.Load() {
 		// Try to reset circuit if enough time has passed
@@ -292,9 +389,10 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 					zap.String("event_type", string(event.Type)))
 				return qs.syncFallback(ctx, event)
 			}
-			// Non-sensitive event: drop silently
+			// Non-sensitive event: drop
 			qs.droppedEvents.Add(1)
 			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "circuit_open").Inc()
+			qs.logDropThrottled("circuit_open")
 			return nil
 		}
 	}
@@ -304,8 +402,7 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		return nil
 	}
 	if qs.closed.Load() {
-		qs.recordDrop(1, "shutdown")
-		return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
+		return qs.closedWrite(ctx, event)
 	}
 	// Queue is full
 	if IsSensitiveEvent(event.Type) {
@@ -318,13 +415,24 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	// Non-sensitive event: drop
 	qs.droppedEvents.Add(1)
 	metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "queue_full").Inc()
-	if !qs.config.DropOnFull {
-		qs.logger.Warn("audit queue full, dropping event",
-			zap.String("sink", qs.sink.Name()),
-			zap.String("event_type", string(event.Type)),
-			zap.String("event_id", event.ID))
-	}
+	qs.logDropThrottled("queue_full")
 	return nil
+}
+
+// dropLogInterval rate-limits warnings for per-event drops, which can occur
+// once per emitted event while a queue is full.
+const dropLogInterval = 10 * time.Second
+
+func (qs *QueuedSink) logDropThrottled(reason string) {
+	now := time.Now().UnixNano()
+	last := qs.lastDropLog.Load()
+	if now-last < int64(dropLogInterval) || !qs.lastDropLog.CompareAndSwap(last, now) {
+		return
+	}
+	qs.logger.Warn("audit events dropped",
+		zap.String("reason", reason),
+		zap.Int64("dropped_total", qs.droppedEvents.Load()),
+		zap.Int("queue_length", len(qs.queue)))
 }
 
 func queuedEventAllowed(sink Sink, event *Event) bool {
@@ -341,13 +449,13 @@ func queuedEventAllowed(sink Sink, event *Event) bool {
 func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 	writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
 	defer cancel()
-	err := invokeQueuedWrite(writeCtx, func(ctx context.Context) error { return qs.sink.Write(ctx, event) })
+	err := qs.invokeWrite(writeCtx, func(ctx context.Context) error { return qs.sink.Write(ctx, event) })
 	if err != nil {
 		qs.failedEvents.Add(1)
 		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "sync_fallback").Inc()
 		reason := "sync_fallback"
-		if errors.Is(err, ErrSerialization) {
-			reason = "serialization"
+		if permanentDeliveryError(err) {
+			reason = lossReason(err)
 		}
 		qs.recordDrop(1, reason)
 	}
@@ -357,12 +465,14 @@ func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 // processQueue is the worker goroutine that processes events from the queue.
 func (qs *QueuedSink) processQueue(workerID int) {
 	defer qs.wg.Done()
+	var held int64 // events this worker took from the queue and still holds
 	defer func() {
 		if r := recover(); r != nil {
 			qs.logger.Error("panic in audit queue worker recovered",
 				zap.Int("worker", workerID),
-				zap.Any("panic", r))
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			qs.releasePanickedBatch(held)
 			// Restart the worker to maintain processing capacity
 			qs.wg.Add(1)
 			go qs.processQueue(workerID)
@@ -370,35 +480,100 @@ func (qs *QueuedSink) processQueue(workerID int) {
 	}()
 
 	for event := range qs.queue {
-		if qs.dropShutdownBacklog(1) {
+		if qs.dropShutdownBacklog([]*Event{event}) {
 			return
 		}
 		qs.inFlight.Add(1)
-		qs.deliver(1, "write", func(ctx context.Context) error {
-			return qs.sink.Write(ctx, event)
-		})
+		held = 1
+		qs.deliver([]*Event{event}, "write", qs.writeSingle, false, false)
+		held = 0
 		qs.inFlight.Add(-1)
 	}
 }
 
-func (qs *QueuedSink) dropShutdownBacklog(pending int) bool {
+// writeSingle writes a one-event batch through the sink's single-event API.
+func (qs *QueuedSink) writeSingle(ctx context.Context, events []*Event) error {
+	return qs.sink.Write(ctx, events[0])
+}
+
+// dropShutdownBacklog hands pending and every still queued event over (or
+// drops them as "shutdown") once the shutdown deadline has passed.
+func (qs *QueuedSink) dropShutdownBacklog(pending []*Event) bool {
 	deadline := qs.shutdownDeadline.Load()
 	if deadline == 0 || time.Now().UnixNano() < deadline {
 		return false
 	}
+	backlog := append([]*Event(nil), pending...)
 	for {
 		select {
-		case _, ok := <-qs.queue:
-			if !ok {
-				qs.recordDrop(pending, "shutdown")
-				return true
+		case event, ok := <-qs.queue:
+			if ok {
+				backlog = append(backlog, event)
+				continue
 			}
-			pending++
 		default:
-			qs.recordDrop(pending, "shutdown")
-			return true
 		}
+		qs.shutdownDrop(backlog)
+		return true
 	}
+}
+
+// HandOver makes this sink pass the events it still holds at shutdown
+// (queued, in retry or retained) to successor instead of dropping them with
+// reason "shutdown". Used when a reload replaces the pipeline.
+func (qs *QueuedSink) HandOver(successor *QueuedSink) {
+	qs.successor.Store(successor)
+}
+
+// shutdownDrop hands events to the successor sink, or counts them as lost.
+func (qs *QueuedSink) shutdownDrop(events []*Event) {
+	qs.handOverWithin(context.Background(), events)
+}
+
+type handOverContextKey struct{}
+
+// withHandOverDeadline marks ctx as a handover context whose deadline later
+// hops must keep.
+func withHandOverDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.WithValue(parent, handOverContextKey{}, true), deadline)
+}
+
+// handOverWithin hands events to the successor, or counts them lost. A
+// handover started here gets this sink's shared deadline; a handover that
+// already carries one (it is passing through this sink along a chain of
+// reloads) keeps the originating, possibly earlier deadline, so each hop
+// cannot add a fresh write timeout.
+func (qs *QueuedSink) handOverWithin(parent context.Context, events []*Event) {
+	if len(events) == 0 {
+		return
+	}
+	if successor := qs.successor.Load(); successor != nil {
+		qs.handOverDeadline.CompareAndSwap(0, time.Now().Add(qs.config.WriteTimeout).UnixNano())
+		deadline := time.Unix(0, qs.handOverDeadline.Load())
+		ctx := parent
+		if parent.Value(handOverContextKey{}) == nil {
+			// A handover starts here, detached from the caller's
+			// cancellation (a manager batch cancelled by the reload drain
+			// must not cancel its own handover). A write from a retiring
+			// manager uses that manager's single handover budget, shared
+			// with its queued ingress; otherwise this sink's budget applies.
+			if m, ok := parent.Value(managerHandOverKey{}).(*Manager); ok {
+				deadline = m.handOverBudget()
+			}
+			var cancel context.CancelFunc
+			ctx, cancel = withHandOverDeadline(context.WithoutCancel(parent), deadline)
+			defer cancel()
+		}
+		// The successor counts its own losses (queue_full, enqueue_timeout).
+		for _, event := range events {
+			// The receiving sink, which may sit further along a chain of
+			// reloads, counts events its filters exclude.
+			_ = successor.writeHandedOver(ctx, event)
+		}
+		qs.logger.Info("audit events handed over to the replacement pipeline", zap.Int("count", len(events)))
+		return
+	}
+	qs.recordDrop(len(events), "shutdown")
 }
 
 func (qs *QueuedSink) recordDrop(count int, reason string) {
@@ -409,10 +584,21 @@ func (qs *QueuedSink) recordDrop(count int, reason string) {
 	qs.logger.Warn("audit events dropped", zap.Int("count", count), zap.String("reason", reason))
 }
 
-func invokeQueuedWrite(ctx context.Context, write func(context.Context) error) (err error) {
+// errSinkPanic marks a write that panicked. It is retried within the retry
+// window (a panic may depend on transient sink state), then treated as
+// permanent so that a deterministic panic cannot hold a worker forever.
+var errSinkPanic = errors.New("audit sink panic")
+
+func (qs *QueuedSink) invokeWrite(ctx context.Context, write func(context.Context) error) error {
+	return invokeQueuedWrite(ctx, qs.logger, write)
+}
+
+func invokeQueuedWrite(ctx context.Context, logger *zap.Logger, write func(context.Context) error) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
-			err = fmt.Errorf("audit sink panic: %v", recovered)
+			logger.Error("audit sink write panicked",
+				zap.Any("panic", recovered), zap.ByteString("stack", debug.Stack()))
+			err = fmt.Errorf("%w: %v", errSinkPanic, recovered)
 		}
 	}()
 	return write(ctx)
@@ -420,7 +606,21 @@ func invokeQueuedWrite(ctx context.Context, write func(context.Context) error) (
 
 // deliver retains the same event identities in the worker through bounded retries.
 // A Kafka acknowledgement may be lost after delivery, so consumers must deduplicate IDs.
-func (qs *QueuedSink) deliver(count int, operation string, write func(context.Context) error) {
+// split marks a half of a batch that already failed permanently; it treats a
+// panic as permanent at once instead of after another retry window. held
+// marks events that a retained ancestor batch already counts in
+// breakglass_audit_events_retained; deliver removes them from the gauge once
+// they are delivered or dropped, and leaves that to the halves when it splits.
+func (qs *QueuedSink) deliver(events []*Event, operation string, write func(context.Context, []*Event) error, split, held bool) {
+	count := len(events)
+	retained := metrics.AuditEventsRetained.WithLabelValues(qs.sink.Name())
+	handedToHalves := false
+	defer func() {
+		if held && !handedToHalves {
+			retained.Sub(float64(count))
+		}
+	}()
+	writeEvents := func(ctx context.Context) error { return write(ctx, events) }
 	retryCtx, cancel := context.WithTimeout(context.Background(), qs.config.RetryTimeout)
 	defer cancel()
 	if deadline := qs.shutdownDeadline.Load(); deadline != 0 {
@@ -433,43 +633,29 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 		Steps: qs.config.RetryAttempts, Cap: qs.config.RetryMaxBackoff,
 	}
 	var err error
+	// panicked remembers a panic in any attempt: a later attempt can fail
+	// differently (for example circuit open because of other failures),
+	// which must not hide that the batch carries a panicking event.
+	panicked := false
 	for attempt := 0; attempt < qs.config.RetryAttempts; attempt++ {
 		if retryCtx.Err() != nil {
-			reason := "retry_exhausted"
 			if qs.shutdownDeadline.Load() != 0 {
-				reason = "shutdown"
-			}
-			qs.recordDrop(count, reason)
-			return
-		}
-		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
-		err = invokeQueuedWrite(writeCtx, write)
-		writeCancel()
-		if err == nil {
-			if asynchronousKafkaSink(qs.sink) != nil {
+				qs.shutdownDrop(events)
 				return
 			}
-			// Record the success first: a reader that sees the new
-			// Health().ProcessedEvents then also sees the healthy state.
-			qs.mu.Lock()
-			qs.lastSuccessTime = time.Now()
-			qs.mu.Unlock()
-			qs.consecutiveFails.Store(0)
-			qs.circuitOpen.Store(false)
-			metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
-			qs.processedEvents.Add(int64(count))
+			break
+		}
+		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
+		err = qs.invokeWrite(writeCtx, writeEvents)
+		panicked = panicked || errors.Is(err, errSinkPanic)
+		writeCancel()
+		if err == nil {
+			qs.recordDelivered(count)
 			return
 		}
-		qs.failedEvents.Add(int64(count))
-		metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), operation).Add(float64(count))
-		qs.mu.Lock()
-		qs.lastError = err.Error()
-		qs.lastErrorTime = time.Now()
-		qs.mu.Unlock()
-		if errors.Is(err, ErrSerialization) {
-			qs.recordDrop(count, "serialization")
-			qs.logger.Error("audit event serialization failed",
-				zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+		qs.recordFailure(count, operation, err)
+		if permanentDeliveryError(err) || (split && errors.Is(err, errSinkPanic)) {
+			handedToHalves = qs.splitOrDrop(events, operation, write, err, held)
 			return
 		}
 		if attempt+1 == qs.config.RetryAttempts || qs.closed.Load() || retryCtx.Err() != nil {
@@ -487,11 +673,31 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 			break
 		}
 	}
-	fails := qs.consecutiveFails.Add(1)
 	if qs.closed.Load() {
-		qs.recordDrop(count, "shutdown")
+		qs.consecutiveFails.Add(1)
+		qs.shutdownDrop(events)
 		return
 	}
+	// A panic in any attempt marks the batch as possibly poisoned: split it
+	// so the halves retry independently (a half panics as permanent at
+	// once). A single event is dropped only if its last attempt panicked;
+	// if it last failed transiently it is retained like any other event.
+	if panicked && (len(events) > 1 || errors.Is(err, errSinkPanic)) {
+		if !errors.Is(err, errSinkPanic) {
+			err = fmt.Errorf("%w (an earlier attempt panicked): %w", errSinkPanic, err)
+		}
+		handedToHalves = qs.splitOrDrop(events, operation, write, err, held)
+		return
+	}
+	if !qs.config.DropAfterRetryWindow {
+		if !held {
+			retained.Add(float64(count))
+			held = true
+		}
+		handedToHalves = qs.retain(events, operation, write, err)
+		return
+	}
+	fails := qs.consecutiveFails.Add(1)
 	if int(fails) >= qs.config.CircuitBreakerThreshold {
 		qs.circuitOpen.Store(true)
 		qs.lastResetAttempt.Store(time.Now().Unix())
@@ -499,6 +705,123 @@ func (qs *QueuedSink) deliver(count int, operation string, write func(context.Co
 	qs.recordDrop(count, "retry_exhausted")
 	qs.logger.Error("audit delivery retries exhausted",
 		zap.Int("count", count), zap.String("operation", operation), zap.Error(err))
+}
+
+// splitOrDrop handles a batch that failed permanently. The failure may be
+// caused by one event (a record that cannot be serialized or panics the
+// sink) or by the batch size (HTTP 413, Kafka MESSAGE_TOO_LARGE), so a batch
+// is halved and each half delivered again; only a single event is dropped.
+// It reports whether it split (and so passed held to the halves).
+func (qs *QueuedSink) splitOrDrop(events []*Event, operation string, write func(context.Context, []*Event) error, err error, held bool) bool {
+	if len(events) > 1 {
+		mid := len(events) / 2
+		qs.logger.Info("splitting audit batch after a permanent failure",
+			zap.Int("count", len(events)), zap.Error(err))
+		qs.deliver(events[:mid], operation, write, true, held)
+		qs.deliver(events[mid:], operation, write, true, held)
+		return true
+	}
+	qs.recordDrop(1, lossReason(err))
+	qs.logger.Error("audit event cannot be delivered",
+		zap.String("event_id", events[0].ID), zap.String("event_type", string(events[0].Type)),
+		zap.String("operation", operation), zap.Error(err))
+	return false
+}
+
+// releasePanickedBatch accounts for the events a worker held when it panicked
+// outside the guarded sink write: they are lost, so they count as a "panic"
+// drop and no longer as in flight (drain would otherwise wait for them).
+func (qs *QueuedSink) releasePanickedBatch(count int64) {
+	if count == 0 {
+		return
+	}
+	qs.inFlight.Add(-count)
+	qs.recordDrop(int(count), "panic")
+}
+
+// recordDelivered records a successful write of count events.
+func (qs *QueuedSink) recordDelivered(count int) {
+	if asynchronousKafkaSink(qs.sink) != nil {
+		return
+	}
+	// Record the success first: a reader that sees the new
+	// Health().ProcessedEvents then also sees the healthy state.
+	qs.mu.Lock()
+	qs.lastSuccessTime = time.Now()
+	qs.mu.Unlock()
+	qs.consecutiveFails.Store(0)
+	qs.circuitOpen.Store(false)
+	metrics.AuditEventsProcessed.WithLabelValues(qs.sink.Name()).Add(float64(count))
+	qs.processedEvents.Add(int64(count))
+}
+
+// recordFailure records a failed write of count events.
+func (qs *QueuedSink) recordFailure(count int, operation string, err error) {
+	qs.failedEvents.Add(int64(count))
+	metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), operation).Add(float64(count))
+	qs.recordLastError(err)
+}
+
+func (qs *QueuedSink) recordLastError(err error) {
+	qs.mu.Lock()
+	qs.lastError = err.Error()
+	qs.lastErrorTime = time.Now()
+	qs.mu.Unlock()
+}
+
+// retain keeps a batch whose retry window is exhausted and retries it every
+// RetryMaxBackoff until it is delivered, fails permanently or the sink
+// closes. Each write still goes through the sink's circuit breaker, whose
+// half-open probes therefore continue during a long outage. Retained
+// retries count only as error_type="retry", not as further failed events.
+// The caller accounts the events in the retained gauge; retain reports
+// whether it split the batch.
+func (qs *QueuedSink) retain(events []*Event, operation string, write func(context.Context, []*Event) error, lastErr error) bool {
+	count := len(events)
+	name := qs.sink.Name()
+	qs.logger.Warn("audit delivery retry window exhausted; retaining events until the sink recovers",
+		zap.Int("count", count), zap.String("operation", operation), zap.Error(lastErr))
+	start := time.Now()
+	for {
+		timer := time.NewTimer(qs.config.RetryMaxBackoff)
+		select {
+		case <-timer.C:
+		case <-qs.stop:
+			timer.Stop()
+			qs.shutdownDrop(events)
+			return false
+		}
+		// Close bounds its drain by WriteTimeout too, so this write cannot
+		// outlive the shutdown budget by more than one write.
+		writeCtx, cancel := context.WithTimeout(withRetainedAttempt(context.Background()), qs.config.WriteTimeout)
+		err := qs.invokeWrite(writeCtx, func(ctx context.Context) error { return write(ctx, events) })
+		cancel()
+		if err == nil {
+			qs.recordDelivered(count)
+			qs.logger.Info("retained audit events delivered",
+				zap.Int("count", count), zap.Duration("retained_for", time.Since(start)))
+			return false
+		}
+		qs.recordLastError(err)
+		metrics.AuditSinkErrors.WithLabelValues(name, "retry").Inc()
+		if permanentDeliveryError(err) || errors.Is(err, errSinkPanic) {
+			return qs.splitOrDrop(events, operation, write, err, true)
+		}
+	}
+}
+
+type retainedAttemptKey struct{}
+
+// withRetainedAttempt marks a periodic retry of a retained batch. Sinks then
+// skip their own per-attempt error counters: retained retries count only as
+// error_type="retry".
+func withRetainedAttempt(ctx context.Context) context.Context {
+	return context.WithValue(ctx, retainedAttemptKey{}, true)
+}
+
+func isRetainedAttempt(ctx context.Context) bool {
+	retained, _ := ctx.Value(retainedAttemptKey{}).(bool)
+	return retained
 }
 
 func asynchronousKafkaSink(sink Sink) *KafkaSink {
@@ -722,6 +1045,52 @@ func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 	}
 }
 
+// handOver makes each sink pass the events it holds at shutdown to the sink
+// with the same AuditConfig, sink type and sink name in next. That key is
+// unique: AuditConfig is cluster-scoped and its validation rejects duplicate
+// sink names. A sink without
+// a successor (removed or retyped by the reload) still counts them as
+// "shutdown" drops. Each hand-over is bounded by the receiving queue's
+// enqueue rules and one handover deadline per retiring sink and manager.
+func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
+	for _, old := range ims.sinks {
+		for _, successor := range next.sinks {
+			if successor.owner == old.owner && successor.Name() == old.Name() {
+				old.HandOver(successor)
+				break
+			}
+		}
+	}
+}
+
+// handingOver reports whether a reload set successors for this pipeline.
+func (ims *IsolatedMultiSink) handingOver() bool {
+	for _, qs := range ims.sinks {
+		if qs.successor.Load() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// handOverIngress passes an event the manager accepted but did not yet route
+// to every sink of this retiring pipeline that would have taken it. Each
+// sink forwards it only to its own matching successor, so a retargeted or
+// removed sink counts it as "shutdown" instead of sending it elsewhere.
+func (ims *IsolatedMultiSink) handOverIngress(ctx context.Context, event *Event) {
+	for _, qs := range ims.sinks {
+		if !queuedEventAllowed(qs.sink, event) {
+			continue
+		}
+		successor := qs.successor.Load()
+		if successor == nil {
+			qs.recordDrop(1, "shutdown")
+			continue
+		}
+		_ = successor.writeHandedOver(ctx, event)
+	}
+}
+
 // IsHealthy returns true if all sinks are healthy.
 func (ims *IsolatedMultiSink) IsHealthy() bool {
 	for _, qs := range ims.sinks {
@@ -735,18 +1104,19 @@ func (ims *IsolatedMultiSink) IsHealthy() bool {
 // processBatchQueue handles events from the async queue using batch writes.
 func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 	defer qs.wg.Done()
+	batch := make([]*Event, 0, qs.config.BatchSize)
 	defer func() {
 		if r := recover(); r != nil {
 			qs.logger.Error("panic in audit batch queue worker recovered",
 				zap.Int("worker", workerID),
-				zap.Any("panic", r))
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			qs.releasePanickedBatch(int64(len(batch)))
 			qs.wg.Add(1)
 			go qs.processBatchQueue(workerID, batchSink)
 		}
 	}()
 
-	batch := make([]*Event, 0, qs.config.BatchSize)
 	ticker := time.NewTicker(qs.config.BatchTimeout)
 	defer ticker.Stop()
 
@@ -754,14 +1124,12 @@ func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 		if len(batch) == 0 {
 			return
 		}
-		if qs.dropShutdownBacklog(len(batch)) {
+		if qs.dropShutdownBacklog(batch) {
 			qs.inFlight.Add(-int64(len(batch)))
 			batch = batch[:0]
 			return
 		}
-		qs.deliver(len(batch), "batch_write", func(ctx context.Context) error {
-			return batchSink.WriteBatch(ctx, batch)
-		})
+		qs.deliver(batch, "batch_write", batchSink.WriteBatch, false, false)
 		qs.inFlight.Add(-int64(len(batch)))
 		batch = batch[:0]
 	}

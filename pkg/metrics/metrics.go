@@ -607,6 +607,10 @@ var (
 		Help:    "Latency of audit sink writes",
 		Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 	}, []string{"sink"})
+	AuditEventsRetained = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "breakglass_audit_events_retained",
+		Help: "Audit events held by sink workers past their retry window until the sink recovers",
+	}, []string{"sink"})
 	AuditQueueLength = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "breakglass_audit_queue_length",
 		Help: "Current number of events in the audit queue",
@@ -846,6 +850,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(AuditSensitiveEventsSyncWritten)
 	ctrlmetrics.Registry.MustRegister(AuditSinkErrors)
 	ctrlmetrics.Registry.MustRegister(AuditSinkLatency)
+	ctrlmetrics.Registry.MustRegister(AuditEventsRetained)
 	ctrlmetrics.Registry.MustRegister(AuditQueueLength)
 	ctrlmetrics.Registry.MustRegister(AuditQueueCapacity)
 	ctrlmetrics.Registry.MustRegister(AuditSinkConnected)

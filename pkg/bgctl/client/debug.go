@@ -10,6 +10,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -79,12 +80,12 @@ type ApprovalRequest struct {
 }
 
 type InjectEphemeralContainerRequest struct {
-	Namespace       string                 `json:"namespace"`
-	PodName         string                 `json:"podName"`
-	ContainerName   string                 `json:"containerName"`
-	Image           string                 `json:"image"`
-	Command         []string               `json:"command,omitempty"`
-	SecurityContext map[string]interface{} `json:"securityContext,omitempty"`
+	Namespace       string                  `json:"namespace"`
+	PodName         string                  `json:"podName"`
+	ContainerName   string                  `json:"containerName"`
+	Image           string                  `json:"image"`
+	Command         []string                `json:"command,omitempty"`
+	SecurityContext *corev1.SecurityContext `json:"securityContext,omitempty"`
 }
 
 type CreatePodCopyRequest struct {

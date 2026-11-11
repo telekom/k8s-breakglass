@@ -198,6 +198,92 @@ bgctl debug kubectl node-debug SESSION_NAME \
   --node worker-1
 ```
 
+### Ephemeral Container Security Context
+
+`inject` reads the session's resolved template and sends a security context
+that satisfies it, so restricted templates need no extra flags:
+
+- `allowPrivilegeEscalation: false`, unless the template sets
+  `allowPrivileged` or its `securityContext` sets `privileged` or
+  `allowPrivilegeEscalation` (the API server rejects `privileged: true`
+  together with `allowPrivilegeEscalation: false`).
+- When the template sets `requireNonRoot` (the default): also
+  `runAsNonRoot: true`, `runAsUser: 65534`, `runAsGroup: 65534`,
+  `capabilities.drop: [ALL]` and `seccompProfile.type: RuntimeDefault`.
+- When the session cannot be read, `bgctl` prints a warning and sends this
+  restricted set, which every template policy without a forced `privileged`
+  accepts.
+
+Fields set in the template's `kubectlDebug.ephemeralContainers.securityContext`
+still replace the requested values on the server.
+
+| Flag | Description |
+|------|-------------|
+| `--run-as-non-root` | Set `runAsNonRoot` |
+| `--run-as-user` | Set `runAsUser` (replaces the default `65534`) |
+| `--run-as-group` | Set `runAsGroup` (replaces the default `65534`) |
+| `--allow-privilege-escalation` | Set `allowPrivilegeEscalation` (default `false`, see above) |
+| `--add-capabilities` | Capabilities to add, e.g. `NET_RAW,NET_ADMIN`; must be within the template's `maxCapabilities` |
+| `--drop-capabilities` | Capabilities to drop; replaces the default `ALL` |
+| `--security-context-file` | YAML or JSON `securityContext`, sent as is without defaults; cannot be combined with the flags above |
+| `--default-security-context=false` | Opt out of the defaults and send only the fields set by flags (the previous behaviour) |
+
+```bash
+# Non-root template: no flags needed
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1
+
+# Template with requireNonRoot: false and maxCapabilities [NET_RAW]: the
+# defaults only add allowPrivilegeEscalation=false, so the image's own user
+# (root for busybox) is kept; add the capability the template allows
+bgctl debug kubectl inject SESSION_NAME --namespace default --pod api-7d9c \
+  --image busybox:1.36.1 --add-capabilities NET_RAW
+```
+
+When the template rejects the request, `bgctl` prints the template's
+ephemeral-container policy and the security context it sent, so you can see
+which flag to change. `copy-pod` and `node-debug` take their container security
+context from the template only; the API has no request field for it.
+
+## Recorded Terminals
+
+Sessions whose template sets `audit.enableTerminalRecording` deny direct
+`kubectl exec`/`attach`. Use the controller-recorded terminal instead:
+
+```bash
+bgctl debug terminal SESSION_NAME --pod NAMESPACE/POD [--container NAME] [-- COMMAND...]
+```
+
+The command defaults to `sh`. On a TTY it switches to raw mode and sends the
+initial size and every resize (`SIGWINCH`). Input, output, resizes and their
+timing are recorded. When the stream ends, the recording ID, status and digest
+are printed to stderr; a status other than `completed` exits non-zero.
+
+Authorized session readers can retrieve recordings:
+
+```bash
+bgctl debug recordings list SESSION_NAME
+bgctl debug recordings verify SESSION_NAME RECORDING_ID
+bgctl debug recordings get SESSION_NAME RECORDING_ID -f recording.raw
+bgctl debug recordings export SESSION_NAME RECORDING_ID > session.cast   # asciicast v2
+asciinema play session.cast
+```
+
+Every download is verified before it is written: the hash chain, monotonic
+timing and the digest the server published must match. Downloads are limited
+to 512 MiB, the server's per-stream maximum, and are held in memory while they
+are verified: expect up to about the recording size for `get`, `verify` and
+`export --format raw`, plus the asciicast text for `export --format
+asciicast-v2`. The published digest comes from
+the same response, so for independent verification pass the digest from the
+`debug_session.terminal_recording_finalized` audit event with
+`--expect-sha256` (accepted by `get`, `verify` and `export`). `export --format raw`
+writes the verified frames (raw output, including `get`, is refused when stdout
+is a terminal because the frames carry untrusted escape sequences: use `-f` or
+redirect); `--include-input` adds typed input as asciicast
+`"i"` events (it may contain secrets). Files are created owner-only (mode `0600`, or a protected current-user
+DACL on Windows) before any byte is written, and never overwrite existing files. A failed write removes the partial file. See [terminal recording](terminal-recording.md).
+
 ## Watch Mode
 
 Watch for real-time session state changes (polling-based, 2-second interval by default):
@@ -406,7 +492,7 @@ bgctl debug kubectl inject DEBUG_SESSION_NAME \
   --namespace production \
   --pod api-7d9c4f8b-xkj2p \
   --image alpine:3.20 \
-  --container-name debug
+  --container debug
 
 # Then use kubectl exec to attach
 kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh

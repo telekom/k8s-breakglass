@@ -58,6 +58,12 @@ type Manager struct {
 
 	// Batch processing for high-throughput
 	batchSink BatchSink
+
+	// handOverDeadline bounds the handover of ingress events still pending
+	// at shutdown (Unix nanoseconds, set on the first one), shared by all
+	// workers, so a full replacement cannot keep a retiring manager alive
+	// for one write timeout per event.
+	handOverDeadline atomic.Int64
 }
 
 // BatchSink is an optional interface for sinks that support batch writes.
@@ -554,10 +560,10 @@ func (m *Manager) processQueue(workerID int) {
 
 	for event := range m.asyncQueue {
 		if m.workerCtx.Err() != nil {
-			m.recordShutdownDrops(1)
+			m.shutdownDrop([]*Event{event})
 			continue
 		}
-		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+		ctx, cancel := m.writeContext()
 		if err := m.sink.Write(ctx, event); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit event",
@@ -587,11 +593,11 @@ func (m *Manager) processBatchQueue(workerID int) {
 		}
 
 		if m.workerCtx.Err() != nil {
-			m.recordShutdownDrops(len(batch))
+			m.shutdownDrop(batch)
 			batch = batch[:0]
 			return
 		}
-		ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+		ctx, cancel := m.writeContext()
 		if err := m.batchSink.WriteBatch(ctx, batch); err != nil {
 			// Use string representation to avoid noisy stacktraces for transient errors
 			m.logger.Error("failed to write audit batch",
@@ -642,6 +648,43 @@ func (m *Manager) recordShutdownDrops(count int) {
 	m.droppedEvents.Add(int64(count))
 	metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "shutdown").Add(float64(count))
 }
+
+// shutdownDrop handles ingress events still pending at shutdown. When the
+// pipeline is being replaced, each of its sinks hands them to its matching
+// successor (same AuditConfig, type, name and destination), which applies
+// its own filters; a sink without one counts them as "shutdown". Otherwise
+// the events are counted as "shutdown" here.
+func (m *Manager) shutdownDrop(events []*Event) {
+	multi, ok := m.sink.(*IsolatedMultiSink)
+	if !ok || !multi.handingOver() {
+		m.recordShutdownDrops(len(events))
+		return
+	}
+	ctx, cancel := withHandOverDeadline(context.Background(), m.handOverBudget())
+	defer cancel()
+	for _, event := range events {
+		multi.handOverIngress(ctx, event)
+	}
+}
+
+// handOverBudget returns the single handover deadline of this retiring
+// manager, set by its first handover: one WriteTimeout covers the batches
+// cancelled in their sink write and the ingress events not yet routed.
+func (m *Manager) handOverBudget() time.Time {
+	m.handOverDeadline.CompareAndSwap(0, time.Now().Add(m.config.WriteTimeout).UnixNano())
+	return time.Unix(0, m.handOverDeadline.Load())
+}
+
+// writeContext bounds one sink write by WriteTimeout and the drain. When
+// the drain cancels the write during a reload, a sink handing the unqueued
+// events over sees a context marked with this manager's handover budget, so
+// the cancelled batch and the queued ingress share one handover window.
+func (m *Manager) writeContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(m.workerCtx, m.config.WriteTimeout)
+	return context.WithValue(ctx, managerHandOverKey{}, m), cancel
+}
+
+type managerHandOverKey struct{}
 
 // Close shuts down the audit manager gracefully.
 func (m *Manager) Close() error {

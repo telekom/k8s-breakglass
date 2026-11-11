@@ -207,6 +207,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	s.buildSecrets = nil
 	var allSinks []Sink
 	var sinkQueues []QueuedSinkConfig
+	var sinkOwners []string
 	var configNames []string
 	for _, config := range enabledConfigs {
 		sinks, err := s.buildSinks(buildCtx, config)
@@ -220,8 +221,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 			return s.keepPreviousPipeline(enabledConfigs, fmt.Errorf("build audit sinks from config %q: %w", config.Name, err))
 		}
 		allSinks = append(allSinks, sinks...)
-		for range sinks {
+		for i := range sinks {
 			sinkQueues = append(sinkQueues, queuedConfig(config.Spec.Queue))
+			sinkOwners = append(sinkOwners, handOverKey(config.Name, config.Spec.Sinks[i]))
 		}
 		configNames = append(configNames, config.Name)
 	}
@@ -282,6 +284,9 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 	queuedSinkCfg.WorkerCount = workerCount
 	queuedSinkCfg.DropOnFull = dropOnFull
 	isolatedMultiSink := NewIsolatedMultiSink(allSinks, queuedSinkCfg, s.logger, sinkQueues...)
+	for i, qs := range isolatedMultiSink.sinks {
+		qs.owner = sinkOwners[i]
+	}
 
 	// Create manager config (now simpler since queuing is per-sink)
 	managerCfg := ManagerConfig{
@@ -604,6 +609,14 @@ func (s *Service) swap(manager *Manager, sinks []Sink, multi *IsolatedMultiSink,
 		return
 	}
 	s.closing.Add(1)
+	// Events the old pipeline still holds when it closes (queued, in retry
+	// or retained during an outage) move to the same-named sink of the new
+	// pipeline instead of being dropped with reason "shutdown".
+	if oldMulti != nil && multi != nil {
+		oldMulti.handOver(multi)
+	}
+	// Ingress events the old manager has not yet passed to its sinks follow
+	// the same per-sink handover (Manager.shutdownDrop).
 	go func() {
 		defer s.closing.Done()
 		// New events already go to the new pipeline. Let the old one finish
@@ -719,6 +732,54 @@ func (s *Service) closePipeline(manager *Manager, sinks []Sink) error {
 		}
 	}
 	return closeErr
+}
+
+// handOverKey identifies where a sink delivers, for handing its backlog to
+// the sink that replaces it on a reload. It never crosses AuditConfigs, sink
+// types or destinations: a Kafka sink retargeted to other brokers or another
+// topic, or a webhook sink to another URL, gets a new key and its old backlog
+// is dropped as "shutdown". Secret references count by name only, so a
+// rotated Secret (new resourceVersion) still hands over.
+func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string {
+	ref := func(ref *breakglassv1alpha1.SecretKeySelector) string {
+		if ref == nil {
+			return ""
+		}
+		return ref.Namespace + "/" + ref.Name
+	}
+	parts := []string{config, string(sink.Type), sink.Name}
+	// Only the block of the active type counts: validation allows an unused
+	// block of another type, and buildSink ignores it too.
+	switch {
+	case sink.Type == breakglassv1alpha1.AuditSinkTypeKafka && sink.Kafka != nil:
+		brokers := slices.Clone(sink.Kafka.Brokers)
+		slices.Sort(brokers)
+		parts = append(parts, strings.Join(brokers, ","), sink.Kafka.Topic)
+		if tls := sink.Kafka.TLS; tls != nil {
+			parts = append(parts, ref(tls.CASecretRef), ref(tls.ClientCertSecretRef))
+		}
+		if sasl := sink.Kafka.SASL; sasl != nil {
+			parts = append(parts, ref(&sasl.CredentialsSecretRef))
+		}
+	case sink.Type == breakglassv1alpha1.AuditSinkTypeWebhook && sink.Webhook != nil:
+		// The webhook sink sends batches to URL when BatchURL is empty, so
+		// both spellings name the same destination.
+		batchURL := sink.Webhook.BatchURL
+		if batchURL == "" {
+			batchURL = sink.Webhook.URL
+		}
+		parts = append(parts, sink.Webhook.URL, batchURL, ref(sink.Webhook.AuthSecretRef))
+		// Headers can select the receiving tenant or stream on a shared
+		// endpoint, so any header change is a new destination.
+		names := slices.Sorted(maps.Keys(sink.Webhook.Headers))
+		for _, name := range names {
+			parts = append(parts, name+"="+sink.Webhook.Headers[name])
+		}
+		if tls := sink.Webhook.TLS; tls != nil {
+			parts = append(parts, ref(tls.CASecretRef))
+		}
+	}
+	return strings.Join(parts, "\x00")
 }
 
 // buildSinks creates sinks based on AuditConfig.

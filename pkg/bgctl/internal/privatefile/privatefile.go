@@ -7,6 +7,13 @@ import (
 	"path/filepath"
 )
 
+// CreateNew creates path for secret-bearing content readable only by the
+// current user (mode 0600, or a protected owner-only DACL on Windows). It never
+// replaces an existing file: an existing path fails with os.ErrExist.
+func CreateNew(path string) (*os.File, error) {
+	return createPrivateNew(path)
+}
+
 // Write stores secret-bearing local state with owner-only permissions.
 func Write(path string, content []byte) (err error) {
 	dir := filepath.Dir(path)

@@ -1,6 +1,7 @@
 package privatefile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -58,4 +59,18 @@ func requireUnwritableDir(t *testing.T, dir string) {
 		t.Skip("directory write permission is not enforced for this test user")
 	}
 	require.True(t, os.IsPermission(err), "expected permission error, got %v", err)
+}
+
+func TestCreateNewIsExclusive(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recording.raw")
+	f, err := CreateNew(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateNew(path); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("existing file must not be replaced: %v", err)
+	}
 }

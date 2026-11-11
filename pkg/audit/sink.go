@@ -38,6 +38,39 @@ import (
 // ErrSerialization marks an event that cannot be delivered regardless of sink health.
 var ErrSerialization = errors.New("audit event serialization failed")
 
+// ErrRejected marks a payload that a healthy sink refused (for example HTTP
+// 413 or a Kafka record that is too large). Resending the same payload
+// cannot succeed, so it is not retried and does not trip circuit breakers.
+var ErrRejected = errors.New("audit sink rejected the payload")
+
+// permanentDeliveryError reports whether err cannot be fixed by retrying.
+func permanentDeliveryError(err error) bool {
+	return errors.Is(err, ErrSerialization) || errors.Is(err, ErrRejected)
+}
+
+// lossReason names the drop reason for a permanent delivery error.
+func lossReason(err error) string {
+	switch {
+	case errors.Is(err, ErrRejected):
+		return "rejected"
+	case errors.Is(err, errSinkPanic):
+		return "panic"
+	}
+	return "serialization"
+}
+
+// webhookStatusError wraps payload rejections (413, 422) with ErrRejected; a
+// queued sink splits a rejected batch before it drops a single event. Other
+// statuses, including 400 (gateways also return it for configuration errors),
+// 401/403/404 and 5xx, are transient.
+func webhookStatusError(url string, status int) error {
+	switch status {
+	case http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity:
+		return fmt.Errorf("webhook %s returned error status: %d: %w", url, status, ErrRejected)
+	}
+	return fmt.Errorf("webhook %s returned error status: %d", url, status)
+}
+
 // Sink defines the interface for audit event destinations.
 type Sink interface {
 	// Write sends an audit event to the sink.
@@ -258,7 +291,7 @@ func (s *WebhookSink) post(ctx context.Context, body []byte, event *Event) error
 			zap.String("event_id", event.ID),
 			zap.String("event_type", string(event.Type)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.url), resp.StatusCode)
+		return webhookStatusError(redactURL(s.url), resp.StatusCode)
 	}
 
 	s.eventsWritten.Add(1)
@@ -322,7 +355,7 @@ func (s *WebhookSink) WriteBatch(ctx context.Context, events []*Event) error {
 			zap.String("url", redactURL(s.batchURL)),
 			zap.Int("batch_size", len(events)),
 			zap.Int("status_code", resp.StatusCode))
-		return fmt.Errorf("webhook %s returned error status: %d", redactURL(s.batchURL), resp.StatusCode)
+		return webhookStatusError(redactURL(s.batchURL), resp.StatusCode)
 	}
 
 	s.eventsWritten.Add(int64(len(events)))

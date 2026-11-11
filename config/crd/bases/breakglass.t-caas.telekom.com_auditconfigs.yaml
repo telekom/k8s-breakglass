@@ -262,6 +262,14 @@ spec:
               queue:
                 description: Queue configures the async event queue.
                 properties:
+                  dropAfterRetryWindow:
+                    default: false
+                    description: |-
+                      DropAfterRetryWindow restores the earlier behaviour: a batch whose retry
+                      window is exhausted is dropped (reason "retry_exhausted") instead of
+                      being retained until the sink recovers. Transitional escape hatch; it
+                      will be removed in a future release.
+                    type: boolean
                   dropOnFull:
                     default: true
                     description: |-
@@ -292,8 +300,10 @@ spec:
                   retryTimeoutSeconds:
                     default: 60
                     description: |-
-                      RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
-                      Failed batches remain in the worker until delivered or this bound is reached.
+                      RetryTimeoutSeconds bounds the fast retry phase, including backoff.
+                      After this bound (or RetryAttempts) the worker keeps the batch and retries
+                      it every RetryMaxBackoffMillis until it is delivered or the pipeline shuts
+                      down, unless DropAfterRetryWindow is true.
                     maximum: 300
                     minimum: 1
                     type: integer

@@ -8,6 +8,7 @@ package privatefile
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,7 +30,10 @@ func currentUserACL() (*windows.ACL, error) {
 	}}, nil)
 }
 
-func createTempPrivate(dir, pattern string) (*os.File, error) {
+// createPrivateNew creates path exclusively with a protected DACL granting
+// only the current user access, so the file is never readable by others, not
+// even before its first write.
+func createPrivateNew(path string) (*os.File, error) {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {
 		return nil, err
@@ -39,21 +43,31 @@ func createTempPrivate(dir, pattern string) (*os.File, error) {
 		return nil, err
 	}
 	attrs := &windows.SecurityAttributes{Length: uint32(unsafe.Sizeof(windows.SecurityAttributes{})), SecurityDescriptor: sd}
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, attrs, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_FILE_EXISTS) {
+			return nil, &os.PathError{Op: "create", Path: path, Err: os.ErrExist}
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(h), path), nil
+}
+
+func createTempPrivate(dir, pattern string) (*os.File, error) {
 	for range 10 {
 		var suffix [12]byte
 		if _, err := rand.Read(suffix[:]); err != nil {
 			return nil, err
 		}
-		path := filepath.Join(dir, pattern+hex.EncodeToString(suffix[:]))
-		name, err := windows.UTF16PtrFromString(path)
-		if err != nil {
-			return nil, err
-		}
-		h, err := windows.CreateFile(name, windows.GENERIC_READ|windows.GENERIC_WRITE, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE, attrs, windows.CREATE_NEW, windows.FILE_ATTRIBUTE_NORMAL, 0)
+		file, err := createPrivateNew(filepath.Join(dir, pattern+hex.EncodeToString(suffix[:])))
 		if err == nil {
-			return os.NewFile(uintptr(h), path), nil
+			return file, nil
 		}
-		if err != windows.ERROR_FILE_EXISTS {
+		if !errors.Is(err, os.ErrExist) {
 			return nil, err
 		}
 	}

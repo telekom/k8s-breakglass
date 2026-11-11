@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
@@ -159,9 +160,12 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 	aborted := make(chan struct{})
 	recorder := NewTerminalRecorder(1024)
 	var stdout bytes.Buffer
-	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, recorder, func() { close(aborted) })
-	if err == nil || !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("streamTerminalWithLease() error = %v, want expiry cancellation", err)
+	recording, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(250*time.Millisecond), blockingTerminalExecutor{}, nil, &stdout, &stdout, nil, recorder, func() { close(aborted) })
+	if !errors.Is(err, errTerminalStreamExpired) {
+		t.Fatalf("streamTerminalWithLease() error = %v, want the expiry cause", err)
+	}
+	if reason := terminalRecordingAbortReason(err); reason != "expired" {
+		t.Fatalf("an expiring stream is reported as %q, want expired", reason)
 	}
 	select {
 	case <-aborted:
@@ -178,9 +182,10 @@ func TestStreamTerminalWithLeaseStopsAtBindingExpiryAndKeepsEvidence(t *testing.
 func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) {
 	for i := 0; i < 500; i++ {
 		var aborts atomic.Int32
-		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
-		if !errors.Is(err, context.Canceled) {
-			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want cancellation", i, err)
+		_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now(), blockingTerminalExecutor{}, nil, io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+		// The immediate expiry cancels the stream; it is reported as expiry.
+		if !errors.Is(err, errTerminalStreamExpired) {
+			t.Fatalf("iteration %d: streamTerminalWithLease() error = %v, want expiry", i, err)
 		}
 		if got := aborts.Load(); got != 1 {
 			t.Fatalf("iteration %d: transport aborted %d times, want exactly once", i, got)
@@ -191,7 +196,7 @@ func TestStreamTerminalWithLeaseAlwaysAbortsTransportWhenCanceled(t *testing.T) 
 func TestStreamTerminalWithLeaseDoesNotAbortTransportOnCompletion(t *testing.T) {
 	var aborts atomic.Int32
 	executor := &testTerminalExecutor{output: []byte("done")}
-	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, NewTerminalRecorder(1024), func() { aborts.Add(1) })
+	_, err := streamTerminalWithLease(context.Background(), testTerminalRecordingConnection{}, time.Now().Add(time.Minute), executor, strings.NewReader("in"), io.Discard, io.Discard, nil, NewTerminalRecorder(1024), func() { aborts.Add(1) })
 	if err != nil {
 		t.Fatalf("streamTerminalWithLease() error = %v", err)
 	}
@@ -238,4 +243,41 @@ func TestTerminalRecordingFrameSizeRejectsNativeIntegerOverflow(t *testing.T) {
 			t.Fatalf("large explicit limit: %v", err)
 		}
 	}
+}
+
+type fixedSizeQueue struct {
+	sizes chan remotecommand.TerminalSize
+}
+
+func (q fixedSizeQueue) Next() *remotecommand.TerminalSize {
+	size, ok := <-q.sizes
+	if !ok {
+		return nil
+	}
+	return &size
+}
+
+// resizeThenWaitExecutor consumes one size and then runs until canceled,
+// returning cleanly like an executor that ignores cancellation causes.
+type resizeThenWaitExecutor struct{}
+
+func (resizeThenWaitExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (resizeThenWaitExecutor) StreamWithContext(ctx context.Context, options remotecommand.StreamOptions) error {
+	_ = options.TerminalSizeQueue.Next()
+	select {
+	case <-ctx.Done():
+	case <-time.After(5 * time.Second):
+	}
+	return nil
+}
+
+func TestStreamTerminalStopsWhenResizeCannotBeRecorded(t *testing.T) {
+	sizes := fixedSizeQueue{sizes: make(chan remotecommand.TerminalSize, 1)}
+	sizes.sizes <- remotecommand.TerminalSize{Width: 80, Height: 24}
+	// Room for the empty-evidence frame only, not for the resize payload.
+	recorder := NewTerminalRecorder(terminalRecordingFrameHeaderSize + 1)
+	started := time.Now()
+	_, err := StreamTerminalWithResize(context.Background(), resizeThenWaitExecutor{}, nil, io.Discard, io.Discard, sizes, recorder)
+	require.ErrorContains(t, err, "record terminal resize", "an unrecordable resize fails the stream")
+	require.Less(t, time.Since(started), 3*time.Second, "the stream stops promptly")
 }

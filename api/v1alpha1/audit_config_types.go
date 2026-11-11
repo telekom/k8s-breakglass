@@ -359,13 +359,23 @@ type AuditQueueConfig struct {
 	// +optional
 	RetryMaxBackoffMillis int `json:"retryMaxBackoffMillis,omitempty"`
 
-	// RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
-	// Failed batches remain in the worker until delivered or this bound is reached.
+	// RetryTimeoutSeconds bounds the fast retry phase, including backoff.
+	// After this bound (or RetryAttempts) the worker keeps the batch and retries
+	// it every RetryMaxBackoffMillis until it is delivered or the pipeline shuts
+	// down, unless DropAfterRetryWindow is true.
 	// +kubebuilder:default=60
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=300
 	// +optional
 	RetryTimeoutSeconds int `json:"retryTimeoutSeconds,omitempty"`
+
+	// DropAfterRetryWindow restores the earlier behaviour: a batch whose retry
+	// window is exhausted is dropped (reason "retry_exhausted") instead of
+	// being retained until the sink recovers. Transitional escape hatch; it
+	// will be removed in a future release.
+	// +kubebuilder:default=false
+	// +optional
+	DropAfterRetryWindow *bool `json:"dropAfterRetryWindow,omitempty"`
 }
 
 // AuditFilterConfig controls which events are captured.

@@ -6,15 +6,19 @@ package auditdelivery
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
+	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -64,12 +68,7 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	scheme := runtime.NewScheme()
-	require.NoError(t, corev1.AddToScheme(scheme))
-	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
-	kube := config.GetConfigOrDie()
-	cli, err := client.New(kube, client.Options{Scheme: scheme})
-	require.NoError(t, err)
+	cli := kubeClient(t)
 	ns := &corev1.Namespace{}
 	require.NoError(t, cli.Get(ctx, client.ObjectKey{Name: "audit-delivery"}, ns))
 	require.NotEmpty(t, ns.UID)
@@ -122,4 +121,155 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 		stats := svc.GetQueuedSinkHealth()
 		return len(stats) == 1 && stats[0].ProcessedEvents == 1 && stats[0].DroppedEvents == 0
 	}, 10*time.Second, time.Second)
+}
+
+func kubeClient(t *testing.T) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme))
+	cli, err := client.New(config.GetConfigOrDie(), client.Options{Scheme: scheme})
+	require.NoError(t, err)
+	return cli
+}
+
+func newKafkaService(ctx context.Context, t *testing.T, cli client.Client, topic string, queue *breakglassv1alpha1.AuditQueueConfig) *audit.Service {
+	t.Helper()
+	svc := audit.NewService(cli, nil, zap.NewNop(), "audit-delivery")
+	require.NoError(t, svc.Reload(ctx, &breakglassv1alpha1.AuditConfig{
+		ObjectMeta: metav1.ObjectMeta{Name: topic},
+		Spec: breakglassv1alpha1.AuditConfigSpec{
+			Enabled: true,
+			Sinks: []breakglassv1alpha1.AuditSinkConfig{{
+				Name: topic, Type: breakglassv1alpha1.AuditSinkTypeKafka,
+				Kafka: &breakglassv1alpha1.KafkaSinkSpec{Brokers: []string{"localhost:19093"}, Topic: topic, RequiredAcks: -1, BatchSize: 1},
+			}},
+			Queue: queue,
+		},
+	}))
+	t.Cleanup(func() { require.NoError(t, svc.Close()) })
+	return svc
+}
+
+func stopBroker(t *testing.T, stopForward func()) {
+	t.Helper()
+	kubectl(t, "-n", "audit-delivery", "scale", "deployment/broker", "--replicas=0")
+	kubectl(t, "-n", "audit-delivery", "wait", "--for=delete", "pod", "-l", "app=audit-delivery", "--timeout=90s")
+	stopForward()
+}
+
+func startBroker(t *testing.T) func() {
+	t.Helper()
+	kubectl(t, "-n", "audit-delivery", "scale", "deployment/broker", "--replicas=1")
+	kubectl(t, "-n", "audit-delivery", "rollout", "status", "deployment/broker", "--timeout=90s")
+	return forward(t)
+}
+
+// readIDs consumes the topic until want distinct event IDs arrived and
+// returns them in arrival order. Delivery is at least once, so a replayed
+// record is skipped.
+func readIDs(ctx context.Context, t *testing.T, topic string, want int) []string {
+	t.Helper()
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{"localhost:19093"}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6})
+	defer func() { require.NoError(t, reader.Close()) }()
+	ids := make([]string, 0, want)
+	for len(ids) < want {
+		message, err := reader.ReadMessage(ctx)
+		require.NoError(t, err, "received %v", ids)
+		var event audit.Event
+		require.NoError(t, json.Unmarshal(message.Value, &event))
+		if !slices.Contains(ids, event.ID) {
+			ids = append(ids, event.ID)
+		}
+	}
+	return ids
+}
+
+func emit(ctx context.Context, svc *audit.Service, id string) {
+	svc.Emit(ctx, &audit.Event{ID: id, Type: audit.EventConfigChanged, Actor: audit.Actor{User: "operator"}})
+}
+
+// An outage longer than both the retry window and the circuit breaker's open
+// timeout loses nothing by default: the worker retains the batch, the breaker
+// keeps probing half-open and closes again after the broker returns
+// (#1538, TCAAS-1614).
+func TestOutageLongerThanRetryWindowRetainsEventsAndBreakerRecovers(t *testing.T) {
+	if os.Getenv("AUDIT_DELIVERY_E2E") != "true" {
+		t.Skip("run hack/audit-delivery-kind.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+	cli := kubeClient(t)
+	stop := forward(t)
+	t.Cleanup(func() { stop() })
+	const topic = "audit-retained"
+	svc := newKafkaService(ctx, t, cli, topic, &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1,
+		RetryAttempts: 2, RetryInitialBackoffMillis: 500, RetryMaxBackoffMillis: 2000, RetryTimeoutSeconds: 3})
+	emit(ctx, svc, "before-outage")
+	require.Eventually(t, func() bool { return svc.GetQueuedSinkHealth()[0].ProcessedEvents == 1 }, time.Minute, time.Second)
+
+	stopBroker(t, stop)
+	stop = func() {}
+	outage := time.Now()
+	for _, id := range []string{"outage-1", "outage-2", "outage-3"} {
+		emit(ctx, svc, id)
+	}
+	require.Eventually(t, func() bool { return svc.GetQueuedSinkHealth()[0].CircuitState == "open" }, time.Minute, time.Second)
+	require.Positive(t, testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(topic)))
+	// Keep the broker down until a half-open probe has failed, which is well
+	// past the retry window (3 s) and the breaker's 30 s open timeout.
+	failedProbes := metrics.AuditCircuitBreakerStateTransitions.WithLabelValues(topic, "half-open", "open")
+	require.Eventually(t, func() bool { return testutil.ToFloat64(failedProbes) > 0 }, 2*time.Minute, time.Second)
+	require.Greater(t, time.Since(outage), 30*time.Second)
+	require.Zero(t, svc.GetQueuedSinkHealth()[0].DroppedEvents)
+
+	stop = startBroker(t)
+	require.ElementsMatch(t, []string{"outage-1", "outage-2", "outage-3"}, readIDs(ctx, t, topic, 3))
+	emit(ctx, svc, "after-recovery")
+	require.Eventually(t, func() bool {
+		health := svc.GetQueuedSinkHealth()[0]
+		return health.ProcessedEvents == 5 && health.CircuitState == "closed" && health.Healthy
+	}, 2*time.Minute, time.Second)
+	health := svc.GetQueuedSinkHealth()[0]
+	require.Zero(t, health.DroppedEvents)
+	require.Zero(t, testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(topic)))
+}
+
+// queue.dropAfterRetryWindow restores the earlier contract: the batch is
+// dropped and counted once the retry window is exhausted, and the sink still
+// recovers on its own after the broker returns.
+func TestDropAfterRetryWindowOptOut(t *testing.T) {
+	if os.Getenv("AUDIT_DELIVERY_E2E") != "true" {
+		t.Skip("run hack/audit-delivery-kind.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cli := kubeClient(t)
+	stop := forward(t)
+	t.Cleanup(func() { stop() })
+	const topic = "audit-opt-out"
+	svc := newKafkaService(ctx, t, cli, topic, &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1,
+		RetryAttempts: 2, RetryInitialBackoffMillis: 500, RetryMaxBackoffMillis: 2000, RetryTimeoutSeconds: 3,
+		DropAfterRetryWindow: ptr.To(true)})
+	exhausted := metrics.AuditEventsDropped.WithLabelValues(topic, "retry_exhausted")
+	before := testutil.ToFloat64(exhausted)
+
+	stopBroker(t, stop)
+	stop = func() {}
+	emit(ctx, svc, "dropped")
+	require.Eventually(t, func() bool { return svc.GetQueuedSinkHealth()[0].DroppedEvents == 1 }, time.Minute, time.Second)
+	require.Equal(t, before+1, testutil.ToFloat64(exhausted))
+
+	stop = startBroker(t)
+	// With the short window, events emitted while the restarted broker still
+	// creates the topic may be dropped too; keep emitting until one arrives.
+	attempt := 0
+	require.Eventually(t, func() bool {
+		attempt++
+		emit(ctx, svc, fmt.Sprintf("after-recovery-%d", attempt))
+		return svc.GetQueuedSinkHealth()[0].ProcessedEvents > 0
+	}, 2*time.Minute, 5*time.Second)
+	ids := readIDs(ctx, t, topic, int(svc.GetQueuedSinkHealth()[0].ProcessedEvents))
+	require.NotContains(t, ids, "dropped")
+	require.Contains(t, ids[0], "after-recovery-")
 }

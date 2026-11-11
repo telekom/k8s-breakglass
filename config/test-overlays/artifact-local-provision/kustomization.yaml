@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Test overlay for validating the artifact-local-provision component.
+# Run: kustomize build config/test-overlays/artifact-local-provision/
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/artifact-local-provision

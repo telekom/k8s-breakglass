@@ -71,6 +71,90 @@ done
 image="docker.io/library/artifact-collector-e2e@$digest"
 export ARTIFACT_FIXTURE_IMAGE="$image"
 export ARTIFACT_COLLECTOR_IMAGE="docker.io/library/artifact-collector-e2e@$collector_digest"
+# Fail-closed evidence: the controller exits during artifact startup and logs
+# the reason. Only the newest Pod counts, so an earlier Pod cannot satisfy it.
+expect_fail_closed() {
+ local reason=$1 pod
+ for _ in $(seq 1 60); do
+  pod=$(kubectl -n "$ns" get pods -l app=breakglass --sort-by=.metadata.creationTimestamp -o jsonpath='{.items[-1:].metadata.name}')
+  if [[ -n "$pod" ]] && { kubectl -n "$ns" logs "$pod" -c breakglass --tail=200 2>/dev/null || true; kubectl -n "$ns" logs "$pod" -c breakglass --previous --tail=200 2>/dev/null || true; } | grep -F -- "$reason" >/dev/null; then
+   echo "controller Pod $pod failed closed: $reason"
+   return 0
+  fi
+  sleep 3
+ done
+ echo "controller did not fail closed with: $reason" >&2
+ kubectl -n "$ns" get pods -l app=breakglass -o wide >&2 || true
+ return 1
+}
+# Renders the opt-in provisioning component as shipped, pointed at the fixture
+# claim, the given controller config and the controller image.
+provision_job() {
+ local name=$1 configmap=$2
+ kubectl kustomize config/test-overlays/artifact-local-provision > "$work/overlay.yaml"
+ python3 - "$work/overlay.yaml" > "$work/job.yaml" <<'PY'
+import sys
+docs=open(sys.argv[1]).read().split('\n---\n')
+print(next(d for d in docs if '\nkind: Job\n' in '\n'+d+'\n'))
+PY
+ kubectl create --dry-run=client -o json -f "$work/job.yaml" > "$work/job.json"
+ python3 - "$work/job.json" "$name" "$configmap" "$(cat "$work/controller-image")" <<'PY'
+import json,sys
+path,name,configmap,image=sys.argv[1:]
+j=json.load(open(path)); j['metadata']['name']=name; s=j['spec']['template']['spec']
+c=s['containers'][0]; c['image']=image; c['imagePullPolicy']='IfNotPresent'
+for v in s['volumes']:
+    if v['name']=='config': v['configMap']['name']=configmap
+    if v['name']=='artifact-data': v['persistentVolumeClaim']['claimName']='artifact-e2e'
+open(path,'w').write(json.dumps(j))
+PY
+ kubectl -n "$ns" apply -f "$work/job.json"
+}
+set_artifact_claim() {
+ local index
+ index=$(kubectl -n "$ns" get deployment breakglass-manager -o json | python3 -c 'import json,sys; print(next(i for i,v in enumerate(json.load(sys.stdin)["spec"]["template"]["spec"]["volumes"]) if v["name"]=="artifact-data"))')
+ kubectl -n "$ns" patch deployment breakglass-manager --type=json -p "[{\"op\":\"replace\",\"path\":\"/spec/template/spec/volumes/$index/persistentVolumeClaim/claimName\",\"value\":\"$1\"}]"
+}
+provision_volume() {
+ # Opt-in off: a fresh PVC without the provisioning Job keeps failing closed.
+ expect_fail_closed "open local artifact root"
+ # A stagingDir outside the volume is refused before anything is written; the
+ # real Job below must then still report a fresh "provisioned" volume.
+ kubectl -n "$ns" get configmap "$config" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; d["config.yaml"]=d["config.yaml"].replace("stagingDir: /artifacts/uploads","stagingDir: /var/lib/breakglass/upload-staging"); print(json.dumps({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"artifact-e2e-outside-config"},"data":d}))' | kubectl -n "$ns" apply -f -
+ provision_job artifact-e2e-outside-provision artifact-e2e-outside-config
+ kubectl -n "$ns" wait --for=condition=failed job/artifact-e2e-outside-provision --timeout=180s
+ kubectl -n "$ns" logs job/artifact-e2e-outside-provision | grep -F "artifact upload staging directory"
+ provision_job breakglass-artifact-provision "$config"
+ if ! kubectl -n "$ns" wait --for=condition=complete job/breakglass-artifact-provision --timeout=180s; then
+  kubectl -n "$ns" logs job/breakglass-artifact-provision >&2 || true
+  exit 1
+ fi
+ kubectl -n "$ns" logs job/breakglass-artifact-provision | grep -F "local artifact storage provisioned (instance kind-artifact-fixture-v1)"
+ # A foreign instance ID on the provisioned volume is refused.
+ kubectl -n "$ns" get configmap "$config" -o json | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; d["config.yaml"]=d["config.yaml"].replace("instanceID: kind-artifact-fixture-v1","instanceID: kind-artifact-foreign-v1"); print(json.dumps({"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"artifact-e2e-foreign-config"},"data":d}))' | kubectl -n "$ns" apply -f -
+ provision_job artifact-e2e-foreign-provision artifact-e2e-foreign-config
+ kubectl -n "$ns" wait --for=condition=failed job/artifact-e2e-foreign-provision --timeout=180s
+ kubectl -n "$ns" logs job/artifact-e2e-foreign-provision | grep -F "verify local artifact sentinel"
+ # Skip the crash-loop back-off of the fail-closed Pod.
+ kubectl -n "$ns" delete pod -l app=breakglass --wait=false
+ kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
+ # A repointed, empty volume still fails closed: startup never provisions.
+ kubectl -n "$ns" apply -f - <<'YAML'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: artifact-e2e-repointed
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 1Gi
+YAML
+ set_artifact_claim artifact-e2e-repointed
+ expect_fail_closed "open local artifact root"
+ set_artifact_claim artifact-e2e
+ kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
+}
 kubectl -n "$ns" get deployment breakglass-manager -o json > "$work/deployment.json"
 config=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(next(v["configMap"]["name"] for v in d["spec"]["template"]["spec"]["volumes"] if v["name"]=="config"))' "$work/deployment.json")
 kubectl -n "$ns" get configmap "$config" -o json > "$work/config.json"
@@ -111,10 +195,11 @@ controller=next(c for c in s['containers'] if c['name']=='breakglass')
 controller['volumeMounts'].append(mount)
 controller.setdefault('env',[]).append({'name':'SSL_CERT_FILE','value':'/artifacts/ca-bundle.pem'})
 security={'allowPrivilegeEscalation':False,'readOnlyRootFilesystem':True,'capabilities':{'drop':['ALL']},'runAsUser':65532,'runAsGroup':65532}
-s.setdefault('initContainers',[]).append({'name':'artifact-provision','image':image,'imagePullPolicy':'IfNotPresent','command':['/fixture','provision'],'volumeMounts':[mount],'securityContext':security})
+s.setdefault('initContainers',[]).append({'name':'artifact-ca-bundle','image':image,'imagePullPolicy':'IfNotPresent','command':['/fixture','ca-bundle'],'volumeMounts':[mount],'securityContext':security})
 s['containers'].append({'name':'artifact-tls','image':image,'imagePullPolicy':'IfNotPresent','command':['/fixture','serve'],'volumeMounts':[mount,{'name':'artifact-tls','mountPath':'/fixture-tls','readOnly':True},{'name':'artifact-s3-credentials','mountPath':'/fixture-s3','readOnly':True}],'securityContext':security})
 s['containers'].append({'name':'artifact-s3','image':image,'imagePullPolicy':'IfNotPresent','command':['/minio','server','/artifacts/minio','--certs-dir','/s3-tls','--address',':9000'],'env':[{'name':'MINIO_ROOT_USER','valueFrom':{'secretKeyRef':{'name':'artifact-e2e-s3','key':'accessKeyID'}}},{'name':'MINIO_ROOT_PASSWORD','valueFrom':{'secretKeyRef':{'name':'artifact-e2e-s3','key':'secretAccessKey'}}},{'name':'MINIO_BROWSER','value':'off'}],'volumeMounts':[mount,{'name':'artifact-s3-tls','mountPath':'/s3-tls','readOnly':True}],'securityContext':security})
 (p/'deployment.json').write_text(json.dumps(d))
+(p/'controller-image').write_text(controller['image'])
 PY
 kubectl -n "$ns" apply -f - <<'YAML'
 apiVersion: v1
@@ -189,7 +274,7 @@ spec:
 YAML
 kubectl replace -f "$work/config.json"
 kubectl replace -f "$work/deployment.json"
-kubectl -n "$ns" rollout status deployment/breakglass-manager --timeout=180s
+provision_volume
 for attempt in $(seq 1 30); do
  if kubectl -n "$ns" exec deployment/breakglass-manager -c artifact-tls -- /fixture s3-ready; then break; fi
  if [[ "$attempt" == 30 ]]; then exit 1; fi

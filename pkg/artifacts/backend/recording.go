@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/storage"
@@ -43,7 +44,7 @@ func (service *Service) ReserveRecording(ctx context.Context, record Record, aut
 	return service.reserve(ctx, record, authorize)
 }
 func validRecording(m *RecordingMetadata) bool {
-	return m != nil && m.FormatVersion == 1 && m.PodNamespace != "" && m.PodName != "" && m.PodUID != "" && m.LeaseUID != "" && m.LeaseEpoch != "" && m.Generation != "" && (m.Operation == "exec" || m.Operation == "attach") && !m.StartedAt.IsZero() && m.StreamExpiresAt.After(m.StartedAt)
+	return m != nil && (m.FormatVersion == 1 || m.FormatVersion == 2) && m.PodNamespace != "" && m.PodName != "" && m.PodUID != "" && m.LeaseUID != "" && m.LeaseEpoch != "" && m.Generation != "" && (m.Operation == "exec" || m.Operation == "attach") && !m.StartedAt.IsZero() && m.StreamExpiresAt.After(m.StartedAt)
 }
 func recordingIdentity(m *RecordingMetadata) *RecordingMetadata {
 	if m == nil {
@@ -59,6 +60,16 @@ func recordingIdentity(m *RecordingMetadata) *RecordingMetadata {
 }
 func sameRecording(a, b Record) bool {
 	return a.ArtifactUID != "" && a.ArtifactUID == b.ArtifactUID && a.ArtifactID == b.ArtifactID && a.Namespace == b.Namespace && a.SessionName == b.SessionName && a.SessionUID == b.SessionUID && a.TargetClusterUID == b.TargetClusterUID && a.TargetIdentityDigest == b.TargetIdentityDigest && a.PlanDigest == b.PlanDigest && a.RuntimeBindingDigest == b.RuntimeBindingDigest && a.OperationEpoch == b.OperationEpoch && a.ExpiresAt.Equal(b.ExpiresAt) && reflect.DeepEqual(recordingIdentity(a.Recording), recordingIdentity(b.Recording))
+}
+
+// CancelRecording releases a recording reservation whose stream never
+// started, so failed admissions cannot exhaust the session's slots. The
+// reservation's UID fences the cleanup against a reused slot.
+func (service *Service) CancelRecording(ctx context.Context, reservation Record) error {
+	if reservation.Recipe != TerminalRecordingRecipe {
+		return ErrForbidden
+	}
+	return service.cancelReservation(ctx, reservation, StateRevoked)
 }
 
 func (service *Service) Recording(ctx context.Context, namespace, sessionName, artifactID string) (Record, error) {
@@ -267,30 +278,56 @@ func (r *recordingReader) Read(p []byte) (int, error) {
 func validateRecordingFrames(ctx context.Context, source io.Reader, size int64) (int64, error) {
 	var previous [32]byte
 	var frames int64
+	var version byte
+	var lastOffset uint64
 	remaining := size
 	for remaining > 0 {
 		if err := ctx.Err(); err != nil {
 			return 0, err
 		}
-		var header [42]byte
-		if _, err := io.ReadFull(source, header[:]); err != nil {
+		// Version 1: version | direction | length | prev (42 bytes).
+		// Version 2: version | direction | monotonic offset | length | prev (50 bytes).
+		var header [50]byte
+		if _, err := io.ReadFull(source, header[:1]); err != nil {
 			return 0, err
 		}
-		length := binary.BigEndian.Uint64(header[2:10])
-		if length > math.MaxInt64 || remaining < 42 {
+		if frames == 0 {
+			version = header[0]
+		}
+		headerSize, lengthAt, directions := int64(42), 2, "io"
+		if version == 2 {
+			headerSize, lengthAt, directions = 50, 10, "ior"
+		} else if version != 1 {
+			return 0, errors.New("invalid terminal recording frame version")
+		}
+		if header[0] != version || remaining < headerSize {
+			return 0, errors.New("invalid terminal recording frame")
+		}
+		if _, err := io.ReadFull(source, header[1:headerSize]); err != nil {
+			return 0, err
+		}
+		length := binary.BigEndian.Uint64(header[lengthAt : lengthAt+8])
+		if length > math.MaxInt64 {
 			return 0, errors.New("invalid terminal recording frame length")
 		}
 		payloadLength := int64(length)
-		if header[0] != 1 || (header[1] != 'i' && header[1] != 'o') || string(header[10:]) != string(previous[:]) || payloadLength > remaining-42 {
+		if version == 2 {
+			offset := binary.BigEndian.Uint64(header[2:10])
+			if offset < lastOffset {
+				return 0, errors.New("terminal recording timing is not monotonic")
+			}
+			lastOffset = offset
+		}
+		if !strings.ContainsRune(directions, rune(header[1])) || string(header[lengthAt+8:headerSize]) != string(previous[:]) || payloadLength > remaining-headerSize {
 			return 0, errors.New("invalid terminal recording frame")
 		}
 		digest := sha256.New()
-		_, _ = digest.Write(header[:])
+		_, _ = digest.Write(header[:headerSize])
 		if _, err := io.CopyN(digest, source, payloadLength); err != nil {
 			return 0, fmt.Errorf("read terminal frame: %w", err)
 		}
 		copy(previous[:], digest.Sum(nil))
-		remaining -= 42 + payloadLength
+		remaining -= headerSize + payloadLength
 		frames++
 	}
 	if frames == 0 {

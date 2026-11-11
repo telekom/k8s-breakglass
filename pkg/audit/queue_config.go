@@ -35,5 +35,8 @@ func queuedConfig(queue *breakglassv1alpha1.AuditQueueConfig) QueuedSinkConfig {
 	if queue.RetryTimeoutSeconds > 0 {
 		cfg.RetryTimeout = time.Duration(queue.RetryTimeoutSeconds) * time.Second
 	}
+	if queue.DropAfterRetryWindow != nil {
+		cfg.DropAfterRetryWindow = *queue.DropAfterRetryWindow
+	}
 	return cfg
 }

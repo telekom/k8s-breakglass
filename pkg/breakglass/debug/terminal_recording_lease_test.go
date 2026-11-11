@@ -5,13 +5,16 @@ package debug
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -64,7 +67,9 @@ func readyTerminalLeaseFixture(t *testing.T) (*ConnectionLeaseService, ctrlclien
 	require.NoError(t, err)
 	generation, err := service.StageGeneration(context.Background(), ref, 1)
 	require.NoError(t, err)
-	_, err = service.PublishReady(context.Background(), generation, func(context.Context) (types.UID, error) { return "secret-uid", nil })
+	_, err = service.PublishReady(context.Background(), generation, func(context.Context) (ConnectionCredential, error) {
+		return ConnectionCredential{UID: "secret-uid"}, nil
+	})
 	require.NoError(t, err)
 	return service, hub, binding
 }
@@ -193,5 +198,107 @@ func TestTerminalLeaseFailuresPreserveExistingGenerationAndReleaseOwnClaim(t *te
 		require.Len(t, leases.Items, 1)
 		require.Equal(t, "1", leases.Items[0].Annotations[connectionLeaseGenerationAnnotation])
 		require.Empty(t, leases.Items[0].Annotations[terminalStreamClaimAnnotation])
+	}
+}
+
+type rotatingCredential struct {
+	calls   atomic.Int32
+	current atomic.Pointer[ConnectionCredential]
+	err     error
+	// rotateOnCall replaces the identity on that call, simulating a rotation
+	// between the readiness check and the publication proof.
+	rotateOnCall int32
+}
+
+func (r *rotatingCredential) source(context.Context, TerminalRecordingConnectionBinding) (ConnectionCredential, error) {
+	call := r.calls.Add(1)
+	if r.err != nil {
+		return ConnectionCredential{}, r.err
+	}
+	if call == r.rotateOnCall {
+		r.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "rotated"})
+	}
+	return *r.current.Load(), nil
+}
+
+func TestTerminalLeasePublishesCredentialGenerationAndRotates(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, coordinationv1.AddToScheme(scheme))
+	hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+	credential := &rotatingCredential{}
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+	provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(hub).WithNamespace("execution"), credential.source)
+	binding := TerminalRecordingConnectionBinding{Namespace: "hub", SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)}
+
+	first, err := provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err, "a live credential Secret is the readiness proof for generation 1")
+	require.Equal(t, "1", first.Binding().Generation)
+	leases := &coordinationv1.LeaseList{}
+	require.NoError(t, hub.List(context.Background(), leases))
+	require.Len(t, leases.Items, 1)
+	require.Equal(t, "secret-uid", leases.Items[0].Annotations[connectionLeaseSecretUIDAnnotation])
+	require.Equal(t, "1", leases.Items[0].Annotations[connectionLeaseSecretVersionAnnotation])
+	require.NoError(t, first.Close(context.Background()))
+
+	again, err := provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	require.Equal(t, "1", again.Binding().Generation, "an unchanged credential reuses the published generation")
+
+	credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "2"})
+	_, err = provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.ErrorContains(t, err, "active stream claim", "rotation publishes a new generation but cannot borrow an active claim")
+	require.Error(t, again.Validate(context.Background()), "rotation invalidates streams bound to the previous generation")
+	require.NoError(t, again.Close(context.Background()))
+	rotated, err := provider.AcquireTerminalRecordingConnection(context.Background(), binding)
+	require.NoError(t, err)
+	require.Equal(t, "2", rotated.Binding().Generation)
+	require.NoError(t, rotated.Validate(context.Background()))
+	require.NoError(t, rotated.Close(context.Background()))
+}
+
+func TestTerminalLeaseCredentialFailuresFailClosed(t *testing.T) {
+	for name, credential := range map[string]*rotatingCredential{
+		"missing secret":            {err: fmt.Errorf("cluster config has no credential secret")},
+		"rotated during publishing": {rotateOnCall: 2},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if credential.err == nil {
+				credential.current.Store(&ConnectionCredential{UID: "secret-uid", ResourceVersion: "1"})
+			}
+			scheme := runtime.NewScheme()
+			require.NoError(t, coordinationv1.AddToScheme(scheme))
+			hub := newLeaseClient(fake.NewClientBuilder().WithScheme(scheme))
+			provider := NewTerminalRecordingConnectionProvider(NewConnectionLeaseService(hub).WithNamespace("execution"), credential.source)
+			connection, err := provider.AcquireTerminalRecordingConnection(context.Background(), TerminalRecordingConnectionBinding{SessionUID: "session", TargetPodUID: "pod", RuntimeBindingDigest: strings.Repeat("a", 64), ExpiresAt: time.Now().Add(time.Hour)})
+			require.Nil(t, connection)
+			require.ErrorContains(t, err, "terminal recording credential generation")
+			require.Equal(t, credential.err == nil, errors.Is(err, ErrTerminalRecordingGenerationConflict), "only a concurrent change is retryable")
+			leases := &coordinationv1.LeaseList{}
+			require.NoError(t, hub.List(context.Background(), leases))
+			for _, lease := range leases.Items {
+				require.NotEqual(t, "1", lease.Annotations[connectionLeaseGenerationAnnotation], "no generation may be published without a stable proof")
+			}
+		})
+	}
+}
+
+func TestGenerationPublishErrorRetriesOnlyConcurrentChanges(t *testing.T) {
+	gr := coordinationv1.Resource("leases")
+	for name, tc := range map[string]struct {
+		err       error
+		retryable bool
+	}{
+		"optimistic lock":        {apierrors.NewConflict(gr, "lease", fmt.Errorf("changed")), true},
+		"lease retired":          {apierrors.NewNotFound(gr, "lease"), true},
+		"generation raced":       {fmt.Errorf("x: %w", ErrConnectionGenerationRaced), true},
+		"credential changed":     {errCredentialChangedDuringPublication, true},
+		"lease expired or taken": {fmt.Errorf("connection lease is stale or expired"), false},
+		"credential unreadable":  {fmt.Errorf("read cluster credential secret: forbidden"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := generationPublishError("publish", tc.err)
+			require.Equal(t, tc.retryable, errors.Is(err, ErrTerminalRecordingGenerationConflict))
+			require.ErrorIs(t, err, tc.err)
+		})
 	}
 }

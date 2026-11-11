@@ -27,9 +27,16 @@ type AuditQueueConfigApplyConfiguration struct {
 	RetryInitialBackoffMillis *int `json:"retryInitialBackoffMillis,omitempty"`
 	// RetryMaxBackoffMillis caps the exponential retry delay.
 	RetryMaxBackoffMillis *int `json:"retryMaxBackoffMillis,omitempty"`
-	// RetryTimeoutSeconds bounds the complete delivery attempt, including backoff.
-	// Failed batches remain in the worker until delivered or this bound is reached.
+	// RetryTimeoutSeconds bounds the fast retry phase, including backoff.
+	// After this bound (or RetryAttempts) the worker keeps the batch and retries
+	// it every RetryMaxBackoffMillis until it is delivered or the pipeline shuts
+	// down, unless DropAfterRetryWindow is true.
 	RetryTimeoutSeconds *int `json:"retryTimeoutSeconds,omitempty"`
+	// DropAfterRetryWindow restores the earlier behaviour: a batch whose retry
+	// window is exhausted is dropped (reason "retry_exhausted") instead of
+	// being retained until the sink recovers. Transitional escape hatch; it
+	// will be removed in a future release.
+	DropAfterRetryWindow *bool `json:"dropAfterRetryWindow,omitempty"`
 }
 
 // AuditQueueConfigApplyConfiguration constructs a declarative configuration of the AuditQueueConfig type for use with
@@ -91,5 +98,13 @@ func (b *AuditQueueConfigApplyConfiguration) WithRetryMaxBackoffMillis(value int
 // If called multiple times, the RetryTimeoutSeconds field is set to the value of the last call.
 func (b *AuditQueueConfigApplyConfiguration) WithRetryTimeoutSeconds(value int) *AuditQueueConfigApplyConfiguration {
 	b.RetryTimeoutSeconds = &value
+	return b
+}
+
+// WithDropAfterRetryWindow sets the DropAfterRetryWindow field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the DropAfterRetryWindow field is set to the value of the last call.
+func (b *AuditQueueConfigApplyConfiguration) WithDropAfterRetryWindow(value bool) *AuditQueueConfigApplyConfiguration {
+	b.DropAfterRetryWindow = &value
 	return b
 }
