@@ -686,7 +686,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
 				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			record = decideCleanupAcknowledgement(live, ack, refusal)
+			record = decideCleanupAcknowledgement(live, ack, refusal, c.legacyApproverFourEyes)
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
 				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
 			}
@@ -775,10 +775,10 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			}
 			return fmt.Errorf("record cleanup acknowledgement %s completion: %w", ack.Name, err)
 		}
-		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
+		log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", identityStrings(record.Retired))
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
-				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, true, record.Retired, "")
+				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, true, identityStrings(record.Retired), "")
 				switch {
 				case transition.CleanupFailed && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)

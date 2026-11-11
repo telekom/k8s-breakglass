@@ -757,8 +757,9 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
 			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
 			reconciler.DebugSessionOptions{
-				DisableUnservedKindHandling: deps.cliConfig.DisableDebugSessionUnservedKindHandling,
-				DisableCleanupBackoff:       deps.cliConfig.DisableDebugSessionCleanupBackoff,
+				DisableUnservedKindHandling:        deps.cliConfig.DisableDebugSessionUnservedKindHandling,
+				DisableCleanupBackoff:              deps.cliConfig.DisableDebugSessionCleanupBackoff,
+				AllowLegacyApproverAcknowledgement: deps.cliConfig.AllowLegacyApproverCleanupAcknowledgement,
 			},
 			deps.escalationManager, deps.cliConfig.EnableControllers, log, deps.artifactReconciler); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)

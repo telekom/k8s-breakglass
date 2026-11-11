@@ -240,8 +240,17 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 // must use the shared live-read status writers to preserve monotonic updates.
 func cleanupAcknowledgementFrom(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) *ac.DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
 	ack := ac.DebugSessionCleanupAcknowledgementStatus().
-		WithName(a.Name).WithUID(a.UID).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
-		WithRetired(a.Retired...)
+		WithName(a.Name).WithUID(a.UID).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt)
+	for _, id := range a.Retired {
+		retired := ac.CleanupAcknowledgedIdentity().WithAPIVersion(id.APIVersion).WithKind(id.Kind).WithName(id.Name)
+		if id.Namespace != "" {
+			retired.WithNamespace(id.Namespace)
+		}
+		if id.UID != "" {
+			retired.WithUID(id.UID)
+		}
+		ack.WithRetired(retired)
+	}
 	if a.Reason != "" {
 		ack.WithReason(a.Reason)
 	}
@@ -613,6 +622,9 @@ func DebugSessionApprovalFrom(a *breakglassv1alpha1.DebugSessionApproval) *ac.De
 	}
 	if a.ApprovedByIdentityProvider != "" {
 		result.WithApprovedByIdentityProvider(a.ApprovedByIdentityProvider)
+	}
+	if len(a.ApprovedByIdentities) > 0 {
+		result.WithApprovedByIdentities(a.ApprovedByIdentities...)
 	}
 	if a.ApprovedAt != nil {
 		result.WithApprovedAt(*a.ApprovedAt)

@@ -5202,3 +5202,28 @@ func TestHandleGetTemplateClusters(t *testing.T) {
 		assert.NotContains(t, w.Body.String(), "platform-debug")
 	})
 }
+
+func TestHandleApproveDebugSession_PersistsEveryApproverIdentity(t *testing.T) {
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "pending-session", Namespace: "default", Labels: map[string]string{DebugSessionLabelKey: "pending-session"}},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "test-cluster", RequestedBy: "requester@example.com", TemplateRef: "test-template"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State:            breakglassv1alpha1.DebugSessionStatePendingApproval,
+			ResolvedTemplate: &breakglassv1alpha1.DebugSessionTemplateSpec{Approvers: &breakglassv1alpha1.DebugSessionApprovers{Users: []string{"alice"}}},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(session).WithStatusSubresource(&breakglassv1alpha1.DebugSession{}).Build()
+	router := setupAuthenticatedDebugSessionRouter(t, NewDebugSessionAPIController(zaptest.NewLogger(t).Sugar(), fakeClient, nil, nil), "alice", "alice@example.com", []string{})
+	req, _ := http.NewRequest(http.MethodPost, "/api/debugSessions/pending-session/approve?namespace=default", nil)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	stored := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(session), stored))
+	require.NotNil(t, stored.Status.Approval)
+	assert.Equal(t, "alice", stored.Status.Approval.ApprovedBy)
+	assert.Equal(t, []string{"alice", "alice@example.com"}, stored.Status.Approval.ApprovedByIdentities)
+	assert.True(t, sessionPartyMatches(stored, "oidc:alice@example.com"), "the approver's hub identity matches their email claim")
+}

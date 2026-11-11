@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"slices"
@@ -32,9 +33,13 @@ func acknowledgementProcessed(ds *breakglassv1alpha1.DebugSession, uid string) b
 
 // decideCleanupAcknowledgement evaluates one acknowledgement against a
 // snapshot of ds without changing it. Applied means every listed identity is
-// an outstanding cleanup residual; nothing else is ever retired. A non-empty
-// refusal rejects without evaluating.
-func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+// an outstanding cleanup residual; nothing else is ever retired. An
+// acknowledgement may retire any subset of the residuals; cleanup finishes
+// once every residual is retired. A non-empty refusal rejects without
+// evaluating. When legacyApprover is set, an approval recorded before
+// approvedByIdentities existed is compared by approvedBy alone instead of
+// being rejected.
+func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string, legacyApprover bool) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 	record := breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
 		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason, ProcessedAt: metav1.Now(),
 	}
@@ -47,18 +52,22 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 		return reject("%s", refusal)
 	case sessionPartyMatches(ds, ack.Spec.AcknowledgedBy):
 		return reject("four-eyes: %q is the requester, approver or a participant of this session and cannot acknowledge its cleanup", ack.Spec.AcknowledgedBy)
+	case !legacyApprover && approverIdentitiesMissing(ds):
+		return reject("four-eyes: the approval of this session predates recorded approver identities (status.approval.approvedByIdentities), " +
+			"so the acknowledging user cannot be compared with every identity of the approver")
 	case ack.Spec.SessionUID != string(ds.UID):
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
 		return reject("cleanup is not failing; acknowledgements apply only to CleanupFailed residuals")
-	case len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords:
-		return reject("the session already records %d applied acknowledgements, the maximum", len(ds.Status.CleanupAcknowledgements))
 	}
+	// Identities are compared as structured tuples: their display strings
+	// are ambiguous (a name may contain " (uid=...)").
 	outstanding := outstandingCleanupResiduals(ds)
-	var retired, unmatched []string
+	var retired []CleanupAcknowledgedIdentity
+	var unmatched []string
 	for _, id := range ack.Spec.Identities {
-		if outstanding[id.String()] {
-			retired = append(retired, id.String())
+		if outstanding[id] {
+			retired = append(retired, id)
 		} else {
 			unmatched = append(unmatched, id.String())
 		}
@@ -66,25 +75,36 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 	if len(unmatched) > 0 {
 		return reject("identities are not outstanding cleanup residuals: %s; nothing was retired", strings.Join(unmatched, ", "))
 	}
-	slices.Sort(retired)
+	slices.SortFunc(retired, compareIdentities)
 	retired = slices.Compact(retired)
-	// The last record slot is reserved for an acknowledgement that retires
-	// every outstanding residual, so a session can always be cleaned up.
-	if len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords-1 && len(retired) < len(outstanding) {
-		return reject("the session already records %d applied acknowledgements; list all %d remaining residuals in one acknowledgement",
-			len(ds.Status.CleanupAcknowledgements), len(outstanding))
-	}
+	// No record-count gate: a decision whose session record no longer fits
+	// is still completed, with its provenance on the acknowledgement object,
+	// so partial batches can never block cleanup.
 	record.Applied = true
 	record.Retired = retired
 	return record
 }
 
+func compareIdentities(a, b CleanupAcknowledgedIdentity) int {
+	return cmp.Or(strings.Compare(a.APIVersion, b.APIVersion), strings.Compare(a.Kind, b.Kind),
+		strings.Compare(a.Namespace, b.Namespace), strings.Compare(a.Name, b.Name), strings.Compare(a.UID, b.UID))
+}
+
+// identityStrings renders identities for logs and audit events.
+func identityStrings(ids []CleanupAcknowledgedIdentity) []string {
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, id.String())
+	}
+	return out
+}
+
 // outstandingCleanupResiduals returns the identities that are cleanup
 // residuals. Intentionally retained resources are excluded.
-func outstandingCleanupResiduals(ds *breakglassv1alpha1.DebugSession) map[string]bool {
-	out := map[string]bool{}
+func outstandingCleanupResiduals(ds *breakglassv1alpha1.DebugSession) map[CleanupAcknowledgedIdentity]bool {
+	out := map[CleanupAcknowledgedIdentity]bool{}
 	add := func(apiVersion, kind, namespace, name, uid string) {
-		out[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}.String()] = true
+		out[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}] = true
 	}
 	for _, ref := range ds.Status.DeployedResources {
 		if !utils.DebugSessionResourceIntentionallyRetained(ds, ref) && !utils.DebugSessionAuxiliaryResourceDeleted(ds, ref) {
@@ -144,7 +164,7 @@ func acknowledgementCompleted(ds *breakglassv1alpha1.DebugSession, record breakg
 
 // applyCleanupAcknowledgement decides and, if applied, completes in one step.
 func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-	record := decideCleanupAcknowledgement(ds, ack, refusal)
+	record := decideCleanupAcknowledgement(ds, ack, refusal, false)
 	if record.Applied {
 		completeCleanupAcknowledgement(ds, record)
 	}
@@ -152,7 +172,9 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 }
 
 // sessionPartyMatches reports whether user is the session's requester,
-// approver or a participant under any recorded identity.
+// approver or a participant under any recorded identity: username, email and
+// Kubernetes user of the requester and participants, and approvedBy plus
+// every recorded approvedByIdentities entry of the approver.
 //
 // acknowledgedBy is the hub API server username, which may carry a prefix
 // configured on the API server (for example "oidc:alice@example.com"), while
@@ -177,7 +199,7 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 	if same(ds.Spec.RequestedBy) || same(ds.Spec.RequestedByEmail) || same(ds.Spec.RequestedByKubernetesUser) {
 		return true
 	}
-	if approval := ds.Status.Approval; approval != nil && same(approval.ApprovedBy) {
+	if approval := ds.Status.Approval; approval != nil && (same(approval.ApprovedBy) || slices.ContainsFunc(approval.ApprovedByIdentities, same)) {
 		return true
 	}
 	for _, participant := range ds.Status.Participants {
@@ -186,6 +208,14 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 		}
 	}
 	return false
+}
+
+// approverIdentitiesMissing reports whether the session was approved before
+// the approver's identities were recorded, so four-eyes cannot compare the
+// acknowledging user with the approver's email or Kubernetes identity.
+func approverIdentitiesMissing(ds *breakglassv1alpha1.DebugSession) bool {
+	approval := ds.Status.Approval
+	return approval != nil && approval.ApprovedBy != "" && len(approval.ApprovedByIdentities) == 0
 }
 
 // maxCleanupAcknowledgementRecords bounds the applied records in
@@ -330,7 +360,7 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 // ponytail: deleting a completed acknowledgement drops its entry here; the
 // session record still covers it unless the list was full. A finalizer on
 // acknowledgements would close that gap.
-func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]string, error) {
+func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]CleanupAcknowledgedIdentity, error) {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
 		if isKindNotServedError(err) {
@@ -338,7 +368,7 @@ func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *b
 		}
 		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
 	}
-	var ids []string
+	var ids []CleanupAcknowledgedIdentity
 	for _, ack := range list.Items {
 		if ack.Spec.SessionName == ds.Name && ack.Spec.SessionUID == string(ds.UID) &&
 			ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied && ack.Status.CompletedAt != nil {
@@ -364,7 +394,7 @@ func appliedRecord(ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) b
 // named by an applied acknowledgement record. It is idempotent and keeps
 // acknowledged retirements monotonic across concurrent status writers.
 func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
-	var ids []string
+	var ids []CleanupAcknowledgedIdentity
 	for _, record := range ds.Status.CleanupAcknowledgements {
 		if record.Applied {
 			ids = append(ids, record.Retired...)
@@ -379,8 +409,8 @@ func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
 // apiVersion, kind, namespace and name only. A later intent with the same name
 // in the same session would also match. Sessions in cleanup create nothing, so
 // this is accepted; matching the create operation ID would close it.
-func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []string) {
-	retired := map[string]bool{}
+func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []CleanupAcknowledgedIdentity) {
+	retired := map[CleanupAcknowledgedIdentity]bool{}
 	for _, id := range ids {
 		retired[id] = true
 	}
@@ -388,7 +418,7 @@ func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []string) {
 		return
 	}
 	is := func(apiVersion, kind, namespace, name, uid string) bool {
-		return retired[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}.String()]
+		return retired[CleanupAcknowledgedIdentity{APIVersion: apiVersion, Kind: kind, Namespace: namespace, Name: name, UID: uid}]
 	}
 	status := &ds.Status
 	deployed := status.DeployedResources[:0]

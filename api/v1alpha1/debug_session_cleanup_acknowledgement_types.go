@@ -35,6 +35,8 @@ type CleanupAcknowledgedIdentity struct {
 	UID string `json:"uid,omitempty"`
 }
 
+// String renders the identity for logs, audit events and messages. It is not
+// unambiguous; compare identities as structs.
 func (i CleanupAcknowledgedIdentity) String() string {
 	s := i.APIVersion + "/" + i.Kind + "/" + i.Namespace + "/" + i.Name
 	if i.UID != "" {
@@ -129,7 +131,9 @@ type DebugSessionCleanupAcknowledgementObjectStatus struct {
 	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 	// retired lists the identities retired by an applied acknowledgement.
 	// +optional
-	Retired []string `json:"retired,omitempty"`
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=atomic
+	Retired []CleanupAcknowledgedIdentity `json:"retired,omitempty"`
 	// message explains a rejection.
 	// +optional
 	Message string `json:"message,omitempty"`
@@ -174,7 +178,9 @@ type DebugSessionCleanupAcknowledgementStatus struct {
 	Applied bool `json:"applied"`
 	// retired lists the identities retired by this acknowledgement.
 	// +optional
-	Retired []string `json:"retired,omitempty"`
+	// +kubebuilder:validation:MaxItems=256
+	// +listType=atomic
+	Retired []CleanupAcknowledgedIdentity `json:"retired,omitempty"`
 	// message explains a rejected acknowledgement.
 	// +optional
 	Message string `json:"message,omitempty"`

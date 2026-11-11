@@ -160,8 +160,38 @@ spec:
               retired:
                 description: retired lists the identities retired by an applied acknowledgement.
                 items:
-                  type: string
+                  description: |-
+                    CleanupAcknowledgedIdentity names one DebugSession cleanup residual by its
+                    full recorded identity. UID is empty only for an unresolved create intent.
+                  properties:
+                    apiVersion:
+                      description: apiVersion of the residual resource.
+                      minLength: 1
+                      type: string
+                    kind:
+                      description: kind of the residual resource.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: name of the residual resource.
+                      minLength: 1
+                      type: string
+                    namespace:
+                      description: namespace of the residual resource; empty for cluster-scoped
+                        resources.
+                      type: string
+                    uid:
+                      description: uid is the recorded UID; omit it only for an unresolved
+                        create intent.
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                maxItems: 256
                 type: array
+                x-kubernetes-list-type: atomic
               transition:
                 description: |-
                   transition records the session's cleanup state just before an Applied

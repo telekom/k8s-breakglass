@@ -52,6 +52,8 @@ type Config struct {
 	// Transitional opt-outs for DebugSession cleanup behaviour (#1663).
 	DisableDebugSessionUnservedKindHandling bool
 	DisableDebugSessionCleanupBackoff       bool
+	// Transitional opt-out: compare legacy approvals by approvedBy alone.
+	AllowLegacyApproverCleanupAcknowledgement bool
 
 	// Interval flags
 	ClusterConfigCheckInterval string
@@ -200,6 +202,9 @@ func Parse() *Config {
 	flag.BoolVar(&config.DisableDebugSessionCleanupBackoff, "disable-debug-session-cleanup-backoff",
 		getEnvBool("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", false),
 		"Transitional escape hatch: retry failed DebugSession cleanup every 5s and emit debug_session.cleanup_failed on every failed attempt")
+	flag.BoolVar(&config.AllowLegacyApproverCleanupAcknowledgement, "allow-legacy-approver-cleanup-acknowledgement",
+		getEnvBool("BREAKGLASS_ALLOW_LEGACY_APPROVER_CLEANUP_ACKNOWLEDGEMENT", false),
+		"Transitional escape hatch: accept DebugSessionCleanupAcknowledgements for sessions approved before approver identities were recorded, comparing the approver by approvedBy alone")
 
 	// Parse command-line flags and enable logging flag options
 	flag.Parse()
@@ -259,6 +264,7 @@ func (c *Config) Print(log *zap.SugaredLogger) {
 		"disable_session_rate_limit", c.DisableSessionRateLimit,
 		"disable_debug_session_unserved_kind_handling", c.DisableDebugSessionUnservedKindHandling,
 		"disable_debug_session_cleanup_backoff", c.DisableDebugSessionCleanupBackoff,
+		"allow_legacy_approver_cleanup_acknowledgement", c.AllowLegacyApproverCleanupAcknowledgement,
 		// OpenTelemetry
 		"otel_enabled", c.OTelEnabled,
 		"otel_required", c.OTelRequired,

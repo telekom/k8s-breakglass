@@ -7,6 +7,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
 	"time"
 
@@ -342,6 +344,35 @@ func TestFourEyesRejectsSessionParties(t *testing.T) {
 	}
 }
 
+func TestFourEyesComparesEveryRecordedApproverIdentity(t *testing.T) {
+	// The approver's username claim is "alice" while the hub authenticates
+	// them as "oidc:alice@example.com" (their email claim).
+	ds := failingSession(t)
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "alice", ApprovedByIdentities: []string{"alice", "alice@example.com", "oidc:alice-k8s"}}
+	for _, by := range []string{"oidc:alice@example.com", "alice@example.com", "oidc:alice-k8s", "alice-k8s"} {
+		ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+		ack.Spec.AcknowledgedBy = by
+		record := decideCleanupAcknowledgement(ds, ack, "", false)
+		assert.False(t, record.Applied, by)
+		assert.Contains(t, record.Message, "four-eyes", by)
+	}
+	assert.True(t, decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "", false).Applied, "an unrelated operator may acknowledge")
+}
+
+func TestFourEyesFailsClosedForLegacyApprovals(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "alice"}
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	record := decideCleanupAcknowledgement(ds, ack, "", false)
+	assert.False(t, record.Applied)
+	assert.Contains(t, record.Message, "approvedByIdentities")
+	assert.True(t, decideCleanupAcknowledgement(ds, ack, "", true).Applied, "the transitional opt-out compares approvedBy alone")
+	ack.Spec.AcknowledgedBy = "oidc:alice"
+	assert.False(t, decideCleanupAcknowledgement(ds, ack, "", true).Applied, "approvedBy is still compared")
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{Required: false}
+	assert.True(t, decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "", false).Applied, "a session without an approver is unaffected")
+}
+
 func TestFourEyesDoesNotRejectAnUnrelatedPrefixedUser(t *testing.T) {
 	ds := failingSession(t)
 	ds.Spec.RequestedBy = "requester@example.com"
@@ -365,10 +396,13 @@ func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
 			ds.Status.Conditions = nil
 		}},
 		"refused": {refusal: "webhook inactive"},
-		"at capacity": {mutate: func(ds *breakglassv1alpha1.DebugSession, _ *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
-			for i := range maxCleanupAcknowledgementRecords {
-				ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
-			}
+		"display-string collision": {mutate: func(_ *breakglassv1alpha1.DebugSession, a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			// "deployed (uid=deployed-uid)" without a UID renders like the
+			// residual "deployed" with UID "deployed-uid".
+			collision := acknowledgedPolicyExceptions[3]
+			collision.Name, collision.UID = collision.Name+" (uid="+collision.UID+")", ""
+			require.Equal(t, acknowledgedPolicyExceptions[3].String(), collision.String())
+			a.Spec.Identities = []CleanupAcknowledgedIdentity{collision}
 		}},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -407,19 +441,19 @@ func TestRejectedAcknowledgementIsRecordedOnTheObjectAndNotReplayed(t *testing.T
 	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1, "a final outcome is never processed or audited again")
 }
 
-func TestAppliedAcknowledgementAtCapacityIsStillRecordedAndAudited(t *testing.T) {
-	// Even when the session cannot take another applied record, the
-	// rejection is durable and audited exactly once.
+func TestAppliedAcknowledgementAtCapacityStillRetiresAndIsAuditedOnce(t *testing.T) {
+	// A full record list never blocks cleanup: the decision is Applied, the
+	// retirement happens, and the provenance stays on the acknowledgement.
 	ds := failingSession(t)
-	for i := range maxCleanupAcknowledgementRecords {
-		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
-	}
-	f := newAckFixture(t, ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...))
+	fillRecords(ds, maxCleanupAcknowledgementRecords)
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", allResidualsOfFailingSession...))
 	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
 	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
 	status := acknowledgementPhase(t, f, "a")
-	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase)
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, status.Phase)
+	assert.NotNil(t, status.CompletedAt)
 	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords, "applied provenance is never dropped")
+	assert.False(t, cleanupConditionFailed(ds))
 	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1)
 }
 
@@ -476,7 +510,7 @@ func TestDecidedButUncompletedAcknowledgementIsCompletedOnResume(t *testing.T) {
 	// deciding or auditing again.
 	ds := failingSession(t)
 	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	decision := decideCleanupAcknowledgement(ds, ack, "")
+	decision := decideCleanupAcknowledgement(ds, ack, "", false)
 	require.True(t, decision.Applied)
 	at := metav1.Now()
 	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
@@ -558,39 +592,58 @@ func TestRetainedResourcesAreNotAcknowledgeable(t *testing.T) {
 	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, retained)
 	ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: ptrBool(false)}}}
 	ids := append([]CleanupAcknowledgedIdentity{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: "kept", UID: "kept-uid"}}, acknowledgedPolicyExceptions...)
-	record := decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", ids...), "")
+	record := decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", ids...), "", false)
 	assert.False(t, record.Applied, "an intentionally retained resource is not a residual")
 	assert.Contains(t, record.Message, "kept")
 }
 
-func TestLastRecordSlotIsReservedForACompleteAcknowledgement(t *testing.T) {
+func TestPartialBatchesRetireMoreResidualsThanOneAcknowledgementCanList(t *testing.T) {
+	// 63 applied records and 257 outstanding residuals: no single
+	// acknowledgement can list them all (spec.identities maxItems=256), so
+	// batches must be accepted even once the record list fills up.
 	ds := failingSession(t)
-	for i := range maxCleanupAcknowledgementRecords - 1 {
-		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
+	fillRecords(ds, maxCleanupAcknowledgementRecords-1)
+	for i := range 257 - len(allResidualsOfFailingSession) {
+		ds.Status.DeployedResources = append(ds.Status.DeployedResources, breakglassv1alpha1.DeployedResourceRef{
+			APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: fmt.Sprintf("cm-%03d", i), UID: fmt.Sprintf("cm-uid-%03d", i), Source: "debug-extra",
+		})
 	}
-	partial := decideCleanupAcknowledgement(ds, acknowledgement(ds, "partial", acknowledgedPolicyExceptions[0]), "")
-	assert.False(t, partial.Applied)
-	assert.Contains(t, partial.Message, "list all 5 remaining residuals")
-	all := append([]CleanupAcknowledgedIdentity{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: "other", UID: "other-uid"}}, acknowledgedPolicyExceptions...)
-	complete := applyCleanupAcknowledgement(ds, acknowledgement(ds, "complete", all...), "")
-	require.True(t, complete.Applied, "a complete acknowledgement still fits")
-	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords)
 	setCleanupCondition(ds)
-	assert.False(t, cleanupConditionFailed(ds))
+	ids := slices.SortedFunc(maps.Keys(outstandingCleanupResiduals(ds)), compareIdentities)
+	require.Len(t, ids, 257)
+	first := acknowledgement(ds, "first", ids[:256]...)
+	second := acknowledgement(ds, "second", ids[256:]...)
+	second.CreationTimestamp = metav1.NewTime(time.Now().Add(time.Second))
+	f := newAckFixture(t, ds, first, second)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	for _, name := range []string{"first", "second"} {
+		status := acknowledgementPhase(t, f, name)
+		assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, status.Phase, "%s: %s", name, status.Message)
+		assert.NotNil(t, status.CompletedAt, name)
+	}
+	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords, "never exceeds the CRD bound")
+	assert.False(t, cleanupConditionFailed(ds), "cleanup completes once every residual is retired")
 }
 
 func TestInterruptedClaimOnCleanSessionRequeues(t *testing.T) {
-	ds := failingSession(t)
-	ds.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateFailed}
-	ds.Spec.TemplateRef, ds.Spec.RequestedBy = "template", "requester@example.com"
-	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	recent := metav1.NewTime(time.Now().Add(-30 * time.Second))
-	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &recent}
-	f := newAckFixture(t, ds, ack)
-	result, err := f.c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
-	require.NoError(t, err)
-	assert.Greater(t, result.RequeueAfter, time.Duration(0), "a clean session waits for the claim to expire")
-	assert.LessOrEqual(t, result.RequeueAfter, cleanupAcknowledgementClaimTimeout)
+	for _, state := range []breakglassv1alpha1.DebugSessionState{
+		breakglassv1alpha1.DebugSessionStateFailed, breakglassv1alpha1.DebugSessionStateExpired,
+		breakglassv1alpha1.DebugSessionStateTerminated, breakglassv1alpha1.DebugSessionStateRejected,
+	} {
+		t.Run(string(state), func(t *testing.T) {
+			ds := failingSession(t)
+			ds.Status = breakglassv1alpha1.DebugSessionStatus{State: state}
+			ds.Spec.TemplateRef, ds.Spec.RequestedBy = "template", "requester@example.com"
+			ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+			recent := metav1.NewTime(time.Now().Add(-30 * time.Second))
+			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &recent}
+			f := newAckFixture(t, ds, ack)
+			result, err := f.c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+			require.NoError(t, err)
+			assert.Greater(t, result.RequeueAfter, time.Duration(0), "a clean session waits for the claim to expire")
+			assert.LessOrEqual(t, result.RequeueAfter, cleanupAcknowledgementClaimTimeout)
+		})
+	}
 }
 
 func fillRecords(ds *breakglassv1alpha1.DebugSession, n int) {
@@ -608,7 +661,7 @@ func TestTwoCompleteAcknowledgementsForTheLastSlotDoNotWedge(t *testing.T) {
 	b := acknowledgement(ds, "b", allResidualsOfFailingSession...)
 	// Both were decided Applied from the same stale snapshot.
 	for _, ack := range []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement{a, b} {
-		decision := decideCleanupAcknowledgement(ds, ack, "")
+		decision := decideCleanupAcknowledgement(ds, ack, "", false)
 		require.True(t, decision.Applied)
 		at := metav1.Now()
 		ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
@@ -631,7 +684,7 @@ func TestTwoCompleteAcknowledgementsForTheLastSlotDoNotWedge(t *testing.T) {
 func TestAppliedAcknowledgementIsAuditedWhenCleanupGotThereFirst(t *testing.T) {
 	ds := failingSession(t)
 	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions[3])
-	decision := decideCleanupAcknowledgement(ds, ack, "")
+	decision := decideCleanupAcknowledgement(ds, ack, "", false)
 	require.True(t, decision.Applied)
 	at := metav1.Now()
 	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
@@ -651,7 +704,7 @@ func TestCompletedAcknowledgementWithoutRecordIsNotReplayedAfterStaleReAdd(t *te
 		d := ds.DeepCopy()
 		d.Status.CleanupAcknowledgements = nil
 		return d
-	}(), ack, "")
+	}(), ack, "", false)
 	require.True(t, decision.Applied)
 	at := metav1.Now()
 	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
@@ -676,13 +729,11 @@ func TestAcknowledgementDecidedAtCapacityRetiresWithoutRecording(t *testing.T) {
 	decided := ds.DeepCopy()
 	fillRecords(decided, maxCleanupAcknowledgementRecords-1)
 	ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
-	decision := decideCleanupAcknowledgement(decided, ack, "")
+	decision := decideCleanupAcknowledgement(decided, ack, "", false)
 	require.True(t, decision.Applied)
 	at := metav1.Now()
 	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: decision.Retired}
 	fillRecords(ds, maxCleanupAcknowledgementRecords) // the session filled up meanwhile
-	assert.Contains(t, decideCleanupAcknowledgement(ds, acknowledgement(ds, "c", allResidualsOfFailingSession...), "").Message, "maximum",
-		"no new decision is Applied at capacity")
 	f := newAckFixture(t, ds, ack)
 	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
 	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords)
@@ -715,7 +766,7 @@ func TestTransientCompletionFailureIsStillAuditedOnce(t *testing.T) {
 func TestAppliedStatusWithoutProcessedAtDoesNotPanic(t *testing.T) {
 	ds := failingSession(t)
 	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, Retired: []string{acknowledgedPolicyExceptions[0].String()}}
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, Retired: acknowledgedPolicyExceptions[:1]}
 	f := newAckFixture(t, ds, ack)
 	require.NotPanics(t, func() { require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds)) })
 }
@@ -725,7 +776,7 @@ func TestAppliedAcknowledgementOfAnEarlierSessionIsNotReplayed(t *testing.T) {
 	old := acknowledgement(ds, "a", acknowledgedPolicyExceptions[0])
 	old.Spec.SessionUID = "previous-session-uid"
 	at := metav1.Now()
-	old.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: []string{acknowledgedPolicyExceptions[0].String()}}
+	old.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, Retired: acknowledgedPolicyExceptions[:1]}
 	f := newAckFixture(t, ds, old)
 	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
 	assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted, "a recreated session with the same name is not affected")

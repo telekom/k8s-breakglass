@@ -1569,6 +1569,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: approvedBy
       type:
         scalar: string
+    - name: approvedByIdentities
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
     - name: approvedByIdentityProvider
       type:
         scalar: string
@@ -1829,7 +1835,7 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         list:
           elementType:
-            scalar: string
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
           elementRelationship: atomic
     - name: transition
       type:
@@ -1880,7 +1886,7 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         list:
           elementType:
-            scalar: string
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgedIdentity
           elementRelationship: atomic
     - name: uid
       type:

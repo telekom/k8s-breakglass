@@ -128,6 +128,9 @@ func newControllerSetupPlan(enableControllers bool) controllerSetupPlan {
 type DebugSessionOptions struct {
 	DisableUnservedKindHandling bool
 	DisableCleanupBackoff       bool
+	// AllowLegacyApproverAcknowledgement compares approvals recorded before
+	// approver identities existed by approvedBy alone.
+	AllowLegacyApproverAcknowledgement bool
 }
 
 // Setup starts the controller-runtime manager with field indices and IdentityProvider reconciler.
@@ -330,7 +333,8 @@ func Setup(
 			WithAuditService(auditService).
 			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail).
 			WithUnservedKindHandling(!debugSessionOptions.DisableUnservedKindHandling).
-			WithCleanupBackoff(!debugSessionOptions.DisableCleanupBackoff)
+			WithCleanupBackoff(!debugSessionOptions.DisableCleanupBackoff).
+			WithLegacyApproverFourEyes(debugSessionOptions.AllowLegacyApproverAcknowledgement)
 		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
 			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace)))
 		}

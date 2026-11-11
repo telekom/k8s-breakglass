@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -613,6 +614,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	approval.ApprovedBy = currentUser
 	approval.ApprovedByIdentityProvider = ctx.GetString("identity_provider_name")
+	approval.ApprovedByIdentities = c.approverIdentities(ctx, apiCtx, session, identity)
 	approval.ApprovedAt = &now
 	approval.Reason = req.Reason
 
@@ -634,6 +636,25 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 
 	// Return updated session - client expects the session object, not just a message
 	ctx.JSON(http.StatusOK, publicDebugSession(session))
+}
+
+// approverIdentities lists the approver's distinct authenticated identities,
+// so cleanup acknowledgements can enforce four-eyes against each of them. The
+// target-cluster Kubernetes user is added when it resolves; approval does not
+// depend on it.
+func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) []string {
+	ids := []string{identity.username}
+	if identity.email != "" {
+		ids = append(ids, identity.email)
+	}
+	var clusterConfig breakglassv1alpha1.ClusterConfig
+	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: session.Spec.Cluster}, &clusterConfig); err == nil {
+		if kubernetesUser, err := c.kubernetesUser(ctx, &clusterConfig); err == nil {
+			ids = append(ids, kubernetesUser)
+		}
+	}
+	slices.Sort(ids)
+	return slices.Compact(ids)
 }
 
 // handleRejectDebugSession rejects a pending debug session

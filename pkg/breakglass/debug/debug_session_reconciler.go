@@ -124,6 +124,8 @@ type DebugSessionController struct {
 	recordingConnections   TerminalRecordingConnectionProvider
 	// Transitional opt-out for #1663; see WithCleanupBackoff.
 	disableCleanupBackoff bool
+	// Transitional opt-out; see WithLegacyApproverFourEyes.
+	legacyApproverFourEyes bool
 	// cleanupNotBefore maps a session's namespaced name to its
 	// cleanupDeadline, the earliest next cleanup attempt,
 	// so watch events cannot bypass the requeue backoff.
@@ -153,6 +155,15 @@ func (c *DebugSessionController) WithUnservedKindHandling(enabled bool) *DebugSe
 // transitional escape hatch.
 func (c *DebugSessionController) WithCleanupBackoff(enabled bool) *DebugSessionController {
 	c.disableCleanupBackoff = !enabled
+	return c
+}
+
+// WithLegacyApproverFourEyes lets cleanup acknowledgements for sessions
+// approved before approver identities were recorded compare the approver by
+// approvedBy alone. Disabled by default: such acknowledgements are rejected
+// because the approver's email and Kubernetes identity cannot be compared.
+func (c *DebugSessionController) WithLegacyApproverFourEyes(enabled bool) *DebugSessionController {
+	c.legacyApproverFourEyes = enabled
 	return c
 }
 
@@ -1114,7 +1125,13 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 	releaseSessionMetricSeries(ds.Name)
 
 	log.Info("Debug session cleanup complete")
-	return ctrl.Result{}, nil
+	// Come back for an acknowledgement another replica has claimed, so an
+	// interrupted claim is finished even without further events.
+	wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: wait}, nil
 }
 
 func (c *DebugSessionController) revokeTerminalRecordingLease(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {

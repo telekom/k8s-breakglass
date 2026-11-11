@@ -448,11 +448,14 @@ func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
 func TestParse_DebugSessionCleanupOptOuts(t *testing.T) {
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING", "")
 	t.Setenv("BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF", "")
+	t.Setenv("BREAKGLASS_ALLOW_LEGACY_APPROVER_CLEANUP_ACKNOWLEDGEMENT", "")
 	cfg := parseWithArgs(t, []string{})
+	assert.False(t, cfg.AllowLegacyApproverCleanupAcknowledgement, "legacy approvals fail closed by default")
 	assert.False(t, cfg.DisableDebugSessionUnservedKindHandling, "unserved-kind handling is on by default")
 	assert.False(t, cfg.DisableDebugSessionCleanupBackoff, "cleanup backoff is on by default")
 
-	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff"})
+	cfg = parseWithArgs(t, []string{"--disable-debug-session-unserved-kind-handling", "--disable-debug-session-cleanup-backoff", "--allow-legacy-approver-cleanup-acknowledgement"})
+	assert.True(t, cfg.AllowLegacyApproverCleanupAcknowledgement)
 	assert.True(t, cfg.DisableDebugSessionUnservedKindHandling)
 	assert.True(t, cfg.DisableDebugSessionCleanupBackoff)
 

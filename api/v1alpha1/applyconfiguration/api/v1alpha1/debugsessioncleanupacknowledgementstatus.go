@@ -30,7 +30,7 @@ type DebugSessionCleanupAcknowledgementStatusApplyConfiguration struct {
 	// residual and was retired.
 	Applied *bool `json:"applied,omitempty"`
 	// retired lists the identities retired by this acknowledgement.
-	Retired []string `json:"retired,omitempty"`
+	Retired []CleanupAcknowledgedIdentityApplyConfiguration `json:"retired,omitempty"`
 	// message explains a rejected acknowledgement.
 	Message *string `json:"message,omitempty"`
 	// processedAt is when the controller processed the acknowledgement.
@@ -86,9 +86,12 @@ func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithApplied
 // WithRetired adds the given value to the Retired field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
 // If called multiple times, values provided by each call will be appended to the Retired field.
-func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithRetired(values ...string) *DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
+func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithRetired(values ...*CleanupAcknowledgedIdentityApplyConfiguration) *DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
 	for i := range values {
-		b.Retired = append(b.Retired, values[i])
+		if values[i] == nil {
+			panic("nil value passed to WithRetired")
+		}
+		b.Retired = append(b.Retired, *values[i])
 	}
 	return b
 }
