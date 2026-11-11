@@ -16,6 +16,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -341,7 +342,7 @@ var acknowledgedPolicyExceptions = []CleanupAcknowledgedIdentity{
 
 func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.T) {
 	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
-	record := applyCleanupAcknowledgement(ds)
+	record := applyCleanupAcknowledgement(ds, "")
 	require.NotNil(t, record)
 	assert.True(t, record.Applied)
 	assert.Equal(t, "operator@example.com", record.AcknowledgedBy)
@@ -355,7 +356,7 @@ func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.
 	assert.Equal(t, "other", ds.Status.DeployedResources[0].Name)
 	assert.Same(t, record, ds.Status.CleanupAcknowledgement)
 
-	assert.Nil(t, applyCleanupAcknowledgement(ds), "a processed acknowledgement is not processed again")
+	assert.Nil(t, applyCleanupAcknowledgement(ds, ""), "a processed acknowledgement is not processed again")
 }
 
 func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
@@ -377,14 +378,14 @@ func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
 			ds := acknowledgedSession(t, wrongUID...)
 			mutate(ds)
 			before := ds.Status.DeepCopy()
-			record := applyCleanupAcknowledgement(ds)
+			record := applyCleanupAcknowledgement(ds, "")
 			require.NotNil(t, record, "a never-matching acknowledgement is reported, not ignored")
 			assert.False(t, record.Applied)
 			assert.NotEmpty(t, record.Message)
 			assert.Empty(t, record.Retired)
 			before.CleanupAcknowledgement = record
 			assert.Equal(t, *before, ds.Status, "nothing is retired unless every entry matches")
-			assert.Nil(t, applyCleanupAcknowledgement(ds), "the rejection is recorded once")
+			assert.Nil(t, applyCleanupAcknowledgement(ds, ""), "the rejection is recorded once")
 		})
 	}
 }
@@ -397,6 +398,7 @@ func TestCleanupAcknowledgementIsAuditedWithTheOperatorAsActor(t *testing.T) {
 		sink := &cleanupAuditCaptureSink{}
 		manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
 		c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+		c.acknowledgementWebhookActive = webhookActive
 		_ = c.cleanupResources(context.Background(), ds)
 		// A second attempt keeps the persisted outcome and audits nothing new.
 		require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), ds))
@@ -455,10 +457,133 @@ func TestCleanupAcknowledgementPrecedesModeSpecificCleanup(t *testing.T) {
 	ds.Status.NodeMaintenance = &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "op"}
 	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	c.acknowledgementWebhookActive = webhookActive
 	require.Error(t, c.cleanupResources(context.Background(), ds), "maintenance cleanup cannot run without a cluster provider")
 	persisted := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
 	require.NotNil(t, persisted.Status.CleanupAcknowledgement)
 	assert.True(t, persisted.Status.CleanupAcknowledgement.Applied)
 	assert.True(t, persisted.Status.AuxiliaryResourceStatuses[0].Deleted, "the acknowledged auxiliary residual is retired before maintenance cleanup")
+}
+
+func webhookActive(context.Context) (bool, error) { return true, nil }
+
+func TestDebugSessionWebhookActive(t *testing.T) {
+	fail, ignore := admissionregistrationv1.Fail, admissionregistrationv1.Ignore
+	config := func(policy *admissionregistrationv1.FailurePolicyType, ops ...admissionregistrationv1.OperationType) *admissionregistrationv1.ValidatingWebhookConfiguration {
+		return &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-validating-webhook-configuration"},
+			Webhooks: []admissionregistrationv1.ValidatingWebhook{{Name: debugSessionWebhookName, FailurePolicy: policy, Rules: []admissionregistrationv1.RuleWithOperations{{
+				Operations: ops, Rule: admissionregistrationv1.Rule{APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, Resources: []string{"debugsessions"}},
+			}}}}}
+	}
+	for name, tc := range map[string]struct {
+		objects []client.Object
+		want    bool
+	}{
+		"none":          {},
+		"active":        {objects: []client.Object{config(&fail, admissionregistrationv1.Create, admissionregistrationv1.Update)}, want: true},
+		"wildcard":      {objects: []client.Object{config(&fail, admissionregistrationv1.OperationAll)}, want: true},
+		"ignore policy": {objects: []client.Object{config(&ignore, admissionregistrationv1.Update)}},
+		"create only":   {objects: []client.Object{config(&fail, admissionregistrationv1.Create)}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(tc.objects...).Build()
+			active, err := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).debugSessionWebhookActive(context.Background())
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, active)
+		})
+	}
+}
+
+func TestCleanupAcknowledgementRefusedWithoutValidatingWebhook(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+	// The fake hub has no ValidatingWebhookConfiguration: webhooks disabled.
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NoError(t, manager.Close())
+	require.NotNil(t, ds.Status.CleanupAcknowledgement)
+	assert.False(t, ds.Status.CleanupAcknowledgement.Applied)
+	assert.Contains(t, ds.Status.CleanupAcknowledgement.Message, "validating webhook")
+	assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted, "a forgeable acknowledgement retires nothing")
+	require.Len(t, sink.Events(), 1)
+	assert.Equal(t, audit.EventDebugSessionCleanupAcknowledged, sink.Events()[0].Type)
+	assert.Equal(t, false, sink.Events()[0].Details["applied"])
+}
+
+func TestRejectedAcknowledgementKeepsEarlierRetirementProvenance(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
+	require.True(t, applyCleanupAcknowledgement(ds, "").Applied)
+	setCleanupCondition(ds)
+	ds.Annotations[CleanupAcknowledgedAbsentAnnotation] = `[{"apiVersion":"v1","kind":"ConfigMap","name":"unknown"}]`
+	record := applyCleanupAcknowledgement(ds, "")
+	require.NotNil(t, record)
+	assert.False(t, record.Applied)
+	require.Len(t, ds.Status.CleanupAcknowledgementRetirements, 1, "the applied acknowledgement stays recorded")
+	setCleanupCondition(ds)
+	assert.Equal(t, "CleanupAcknowledged", ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Reason)
+}
+
+func TestRemovedAcknowledgementCanBeResubmitted(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	ds.Status.Conditions = nil
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	c.acknowledgementWebhookActive = webhookActive
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	require.False(t, ds.Status.CleanupAcknowledgement.Applied, "premature: cleanup is not failing yet")
+
+	annotations := ds.Annotations
+	ds.Annotations = nil
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	assert.Nil(t, ds.Status.CleanupAcknowledgement, "removing the annotation clears the result")
+
+	ds.Annotations = annotations
+	setCleanupCondition(ds)
+	require.True(t, cleanupConditionFailed(ds))
+	require.NoError(t, hub.Status().Update(context.Background(), ds))
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NotNil(t, ds.Status.CleanupAcknowledgement)
+	assert.True(t, ds.Status.CleanupAcknowledgement.Applied, "the same list is processed again")
+}
+
+func TestPartialAcknowledgementReportsTheRemainingResidualSet(t *testing.T) {
+	ds := acknowledgedSession(t, acknowledgedPolicyExceptions...)
+	ds.Status.Conditions = nil
+	setCleanupCondition(ds) // residuals include "other"
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	sink := &cleanupAuditCaptureSink{}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 16, WorkerCount: 1}, zap.NewNop())
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
+	c.acknowledgementWebhookActive = webhookActive
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NoError(t, manager.Close())
+	require.True(t, cleanupConditionFailed(ds))
+	var failed []*audit.Event
+	for _, event := range sink.Events() {
+		if event.Type == audit.EventDebugSessionCleanupFailed {
+			failed = append(failed, event)
+		}
+	}
+	require.Len(t, failed, 1, "the remaining residual set is reported once")
+	assert.Equal(t, []string{"breakglass-debug/v1/ConfigMap/other (uid=other-uid)"}, failed[0].Details["residuals"])
+}
+
+func TestDeletionCleanupFailurePersistsCleanupFailed(t *testing.T) {
+	now := metav1.Now()
+	ds := unresolvedPolicyExceptionSession()
+	ds.Finalizers = []string{maintenanceFinalizer}
+	ds.DeletionTimestamp = &now
+	ds.Status.NodeMaintenance = &breakglassv1alpha1.NodeMaintenanceStatus{OperationID: "op"}
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+	c.acknowledgementWebhookActive = webhookActive
+	_, err := c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.Error(t, err, "maintenance cleanup cannot run without a cluster provider")
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	assert.True(t, cleanupConditionFailed(persisted), "a failed deletion cleanup is recorded, so it can be acknowledged")
 }

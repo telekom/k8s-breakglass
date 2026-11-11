@@ -1844,6 +1844,53 @@ spec:
                 - digest
                 - processedAt
                 type: object
+              cleanupAcknowledgementRetirements:
+                description: |-
+                  cleanupAcknowledgementRetirements keeps every applied acknowledgement,
+                  so later processing results cannot erase retirement provenance.
+                items:
+                  description: |-
+                    DebugSessionCleanupAcknowledgementStatus records how the controller
+                    processed the current cleanup acknowledgement.
+                  properties:
+                    acknowledgedBy:
+                      description: acknowledgedBy is the user recorded by the admission
+                        webhook.
+                      type: string
+                    applied:
+                      description: |-
+                        applied is true when every listed identity matched an outstanding
+                        residual and was retired.
+                      type: boolean
+                    digest:
+                      description: |-
+                        digest identifies the processed acknowledgement (list and acknowledging
+                        user). A changed acknowledgement is processed again.
+                      type: string
+                    message:
+                      description: message explains a rejected acknowledgement.
+                      type: string
+                    processedAt:
+                      description: processedAt is when the controller processed the
+                        acknowledgement.
+                      format: date-time
+                      type: string
+                    reason:
+                      description: reason is the optional reason or ticket reference.
+                      type: string
+                    retired:
+                      description: retired lists the identities retired by this acknowledgement.
+                      items:
+                        type: string
+                      type: array
+                  required:
+                  - acknowledgedBy
+                  - applied
+                  - digest
+                  - processedAt
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               conditions:
                 description: conditions provide detailed status information.
                 items:

@@ -17,9 +17,12 @@ section: Behaviour changes
   SubjectAccessReview. The controller ClusterRole now includes
   `subjectaccessreviews: create`. The new ClusterRole
   `debugsession-cleanup-acknowledger` is bound to nobody; bind it to the
-  operators who may acknowledge. The new `status.cleanupAcknowledgement` field
-  requires the updated DebugSession CRD, so apply CRDs before the controller
-  (#1663).
+  operators who may acknowledge. Acknowledgements are processed only while the
+  DebugSession validating webhook is active with `failurePolicy: Fail`.
+- Upgrade order: apply the DebugSession CRD before the controller. The new
+  `status.cleanupAcknowledgement` and `status.cleanupAcknowledgementRetirements`
+  fields are pruned by an older CRD; the controller then logs an error and does
+  not audit acknowledgements until the CRD is updated (#1663).
 - Failed cleanup backs off exponentially up to 5 minutes and emits
   `debug_session.cleanup_failed` once per distinct residual set instead of on
   every attempt. To restore the previous behaviour, use the transitional

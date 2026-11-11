@@ -4,6 +4,7 @@
 package debug
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -48,7 +50,8 @@ func pendingCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) string {
 	if raw == "" {
 		return ""
 	}
-	sum := sha256.Sum256([]byte(raw + "\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation]))
+	sum := sha256.Sum256([]byte(raw + "\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation] +
+		"\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedReasonAnnotation]))
 	digest := hex.EncodeToString(sum[:8])
 	if processed := ds.Status.CleanupAcknowledgement; processed != nil && processed.Digest == digest {
 		return ""
@@ -60,8 +63,9 @@ func pendingCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) string {
 // retires residuals only if every listed identity matches an outstanding
 // residual exactly; otherwise nothing is retired and the rejection is
 // recorded. The outcome is stored in ds.Status.CleanupAcknowledgement.
-// It returns the record when an acknowledgement was processed.
-func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+// It returns the record when an acknowledgement was processed. A non-empty
+// refusal rejects the acknowledgement with that message without evaluating it.
+func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, refusal string) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 	digest := pendingCleanupAcknowledgement(ds)
 	if digest == "" {
 		return nil
@@ -76,6 +80,9 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) *breakglas
 	reject := func(format string, args ...any) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 		record.Message = fmt.Sprintf(format, args...)
 		return record
+	}
+	if refusal != "" {
+		return reject("%s", refusal)
 	}
 	if record.AcknowledgedBy == "" {
 		return reject("acknowledgement has no %s; it was not set through the admission webhook", breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)
@@ -148,10 +155,42 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) *breakglas
 	if len(unmatched) > 0 {
 		return reject("identities are not outstanding cleanup residuals: %s; nothing was retired", strings.Join(unmatched, ", "))
 	}
-	status.CleanupAcknowledgement = record
-	ds.Status = *status
 	slices.Sort(retired)
 	record.Applied = true
 	record.Retired = retired
+	status.CleanupAcknowledgement = record
+	// Applied acknowledgements are kept separately, so a later rejected one
+	// cannot erase the provenance of retired residuals.
+	status.CleanupAcknowledgementRetirements = append(status.CleanupAcknowledgementRetirements, *record.DeepCopy())
+	ds.Status = *status
 	return record
+}
+
+// debugSessionWebhookName is the webhook entry that authorizes cleanup
+// acknowledgements (config/webhook/manifests.yaml).
+const debugSessionWebhookName = "debugsession.validation.breakglass.t-caas.telekom.com"
+
+// debugSessionWebhookActive reports whether a ValidatingWebhookConfiguration
+// registers the DebugSession webhook for UPDATE with failurePolicy Fail.
+// Without it, the acknowledged-by annotation is unverified and anyone who can
+// update a session could forge an acknowledgement.
+func (c *DebugSessionController) debugSessionWebhookActive(ctx context.Context) (bool, error) {
+	var configs admissionregistrationv1.ValidatingWebhookConfigurationList
+	if err := c.approvalReader().List(ctx, &configs); err != nil {
+		return false, fmt.Errorf("list ValidatingWebhookConfigurations: %w", err)
+	}
+	for _, config := range configs.Items {
+		for _, webhook := range config.Webhooks {
+			if webhook.Name != debugSessionWebhookName || webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail {
+				continue
+			}
+			for _, rule := range webhook.Rules {
+				if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) && slices.Contains(rule.Resources, "debugsessions") &&
+					(slices.Contains(rule.Operations, admissionregistrationv1.Update) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
+					return true, nil
+				}
+			}
+		}
+	}
+	return false, nil
 }

@@ -73,6 +73,8 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 64, WorkerCount: 1}, zap.NewNop())
 		c := NewDebugSessionController(zap.NewNop().Sugar(), hub, cluster.NewClientProvider(hub, zap.NewNop().Sugar())).
 			WithLiveReader(hub).WithQuotaNamespace(ns).WithAuditManager(manager).WithUnservedKindHandling(handling)
+		// envtest runs no admission webhook; the acknowledgement test stands in for it.
+		c.acknowledgementWebhookActive = webhookActive
 		return c, manager
 	}
 	countEvents := func(sink *cleanupAuditCaptureSink, eventType audit.EventType) int {

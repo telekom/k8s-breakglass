@@ -233,6 +233,11 @@ type DebugSessionStatus struct {
 	// cleanup-acknowledged-absent annotation.
 	// +optional
 	CleanupAcknowledgement *DebugSessionCleanupAcknowledgementStatus `json:"cleanupAcknowledgement,omitempty"`
+	// cleanupAcknowledgementRetirements keeps every applied acknowledgement,
+	// so later processing results cannot erase retirement provenance.
+	// +optional
+	// +listType=atomic
+	CleanupAcknowledgementRetirements []DebugSessionCleanupAcknowledgementStatus `json:"cleanupAcknowledgementRetirements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`

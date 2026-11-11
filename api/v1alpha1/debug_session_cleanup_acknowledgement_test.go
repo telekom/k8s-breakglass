@@ -128,3 +128,24 @@ func TestCleanupAcknowledgementUpdateAuthorization(t *testing.T) {
 		assert.Empty(t, *reviews)
 	})
 }
+
+func TestCleanupAcknowledgementPartialRemovalNeedsAuthorization(t *testing.T) {
+	full := ackSession(map[string]string{
+		DebugSessionCleanupAcknowledgedAbsentAnnotation: ackList, DebugSessionCleanupAcknowledgedByAnnotation: "operator",
+		DebugSessionCleanupAcknowledgedReasonAnnotation: "CHG-1",
+	})
+	partial := full.DeepCopy()
+	delete(partial.Annotations, DebugSessionCleanupAcknowledgedByAnnotation)
+	reviews := allowSAR(t, "operator")
+	_, err := (&DebugSession{}).ValidateUpdate(asUser("requester@example.com"), full, partial)
+	require.Error(t, err, "removing only acknowledged-by would forge an actorless acknowledgement")
+
+	reasonOnly := full.DeepCopy()
+	delete(reasonOnly.Annotations, DebugSessionCleanupAcknowledgedReasonAnnotation)
+	_, err = (&DebugSession{}).ValidateUpdate(asUser("requester@example.com"), full, reasonOnly)
+	require.Error(t, err, "any partial change needs the verb")
+	assert.Empty(t, *reviews, "acknowledged-by mismatch is rejected before the SubjectAccessReview")
+
+	_, err = (&DebugSession{}).ValidateUpdate(asUser("requester@example.com"), full, ackSession(nil))
+	require.NoError(t, err, "removing the whole acknowledgement is allowed")
+}

@@ -127,6 +127,10 @@ type DebugSessionController struct {
 	// ponytail: in-memory; a restart allows one early attempt, then the
 	// persisted CleanupFailed transition restores the backoff.
 	cleanupNotBefore sync.Map
+	// acknowledgementWebhookActive reports whether the DebugSession validating
+	// webhook authorizes acknowledgements; tests replace it.
+	acknowledgementWebhookActive func(context.Context) (bool, error)
+	crdOutdatedOnce              sync.Once
 }
 
 // WithUnservedKindHandling controls the activation preflight that fails a
@@ -177,7 +181,7 @@ func (c *DebugSessionController) WithAPIReader(reader ctrlclient.Reader) *DebugS
 // NewDebugSessionController creates a new DebugSessionController
 func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client, ccProvider *cluster.ClientProvider) *DebugSessionController {
 	connectionLeases := NewConnectionLeaseService(client)
-	return &DebugSessionController{
+	c := &DebugSessionController{
 		log:                  log,
 		client:               client,
 		reader:               client,
@@ -186,6 +190,8 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
 		auxiliaryMgr:         NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
+	c.acknowledgementWebhookActive = c.debugSessionWebhookActive
+	return c
 }
 
 // WithLiveReader configures the uncached reader used for approval resolution
@@ -318,11 +324,16 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if err := c.processCleanupAcknowledgement(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := c.cleanupMaintenance(ctx, ds); err != nil {
-			return ctrl.Result{}, err
-		}
-		if err := c.cleanupHotfix(ctx, ds); err != nil {
-			return ctrl.Result{}, err
+		// Record a failed deletion cleanup as CleanupFailed, so it is visible
+		// and an operator acknowledgement can retire unprovable residuals.
+		for _, cleanup := range []func(context.Context, *breakglassv1alpha1.DebugSession) error{c.cleanupMaintenance, c.cleanupHotfix} {
+			if err := cleanup(ctx, ds); err != nil {
+				setCleanupCondition(ds)
+				if patchErr := c.patchDebugSessionCleanupStatus(ctx, ds); patchErr != nil {
+					return ctrl.Result{}, errors.Join(err, patchErr)
+				}
+				return ctrl.Result{}, err
+			}
 		}
 		// activateSession acquires the hub connection lease before the
 		// maintenance executor is deployed, so deletion must release it as the

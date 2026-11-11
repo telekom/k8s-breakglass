@@ -58,17 +58,22 @@ var subjectAccessReviewer = func(ctx context.Context, sar *authorizationv1.Subje
 
 // validateCleanupAcknowledgementUpdate authorizes adding or changing an
 // acknowledgement: the requesting user must hold the dedicated verb on this
-// session and record themselves as the acknowledging user. Removing it is
-// always allowed. The session requester and participants get no exemption.
+// session and record themselves as the acknowledging user. Any change to the
+// acknowledgement annotations, including removing only some of them, is
+// authorized this way; only removing all of them at once is free. The session
+// requester and participants get no exemption.
 func validateCleanupAcknowledgementUpdate(ctx context.Context, oldObj, newObj *DebugSession) field.ErrorList {
 	path := field.NewPath("metadata").Child("annotations")
-	changed := false
+	changed, anyLeft := false, false
 	for _, key := range DebugSessionCleanupAcknowledgementAnnotations {
-		if newValue, ok := newObj.Annotations[key]; ok && newValue != oldObj.Annotations[key] {
+		newValue, inNew := newObj.Annotations[key]
+		oldValue, inOld := oldObj.Annotations[key]
+		if inNew != inOld || newValue != oldValue {
 			changed = true
 		}
+		anyLeft = anyLeft || inNew
 	}
-	if !changed {
+	if !changed || !anyLeft {
 		return nil
 	}
 	ackPath := path.Key(DebugSessionCleanupAcknowledgedAbsentAnnotation)

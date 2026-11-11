@@ -2343,6 +2343,12 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: cleanupAcknowledgement
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementStatus
+    - name: cleanupAcknowledgementRetirements
+      type:
+        list:
+          elementType:
+            namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementStatus
+          elementRelationship: atomic
     - name: conditions
       type:
         list:

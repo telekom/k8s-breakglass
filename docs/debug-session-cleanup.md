@@ -134,6 +134,9 @@ also:
 
 - requires `breakglass.t-caas.telekom.com/cleanup-acknowledged-by` to equal
   the requesting user;
+- checks every change to the acknowledgement annotations the same way,
+  including removing only some of them. Only removing all of them at once
+  needs no verb;
 - rejects the acknowledgement annotations on create;
 - rejects them in `DebugSessionClusterBinding.spec.annotations`. They are also
   never copied from a binding to a new session.
@@ -148,6 +151,23 @@ kubectl annotate debugsession -n <ns> <session> \
   ]'
 ```
 
+**Requirements.**
+
+- **Validating webhook.** The controller processes acknowledgements only while
+  a ValidatingWebhookConfiguration registers
+  `debugsession.validation.breakglass.t-caas.telekom.com` for debugsessions
+  UPDATE with `failurePolicy: Fail`. With webhooks disabled
+  (`--enable-webhooks=false` or `ENABLE_VALIDATING_WEBHOOKS=false`), anyone
+  who can update a session could forge `cleanup-acknowledged-by`. In that case
+  every acknowledgement is rejected, recorded and audited with this reason.
+- **CRD before controller.** Apply the current DebugSession CRD before the
+  controller. An older CRD prunes `status.cleanupAcknowledgement`; the
+  controller then logs an error once and does not audit acknowledgements until
+  the CRD is updated.
+- **Status trust.** Like every other status field, the record can be forged or
+  suppressed by anyone who may write `debugsessions/status`. Grant that
+  subresource only to the controller.
+
 **How the controller processes it.** It processes each distinct
 acknowledgement once, before any mode-specific cleanup. As a result,
 node-maintenance and hotfix residuals are retired before their Leases are
@@ -158,10 +178,22 @@ released.
 - The acknowledgement is applied only while `CleanupFailed=True`, and only if
   **every** listed identity matches an outstanding residual exactly
   (apiVersion, kind, namespace, name and UID). Unlisted residuals are kept.
-- The outcome is recorded in `status.cleanupAcknowledgement` (digest,
-  `acknowledgedBy`, reason, `applied`, `retired`, `message`) and audited as
+- The outcome of the latest acknowledgement is recorded in
+  `status.cleanupAcknowledgement` (digest, `acknowledgedBy`, reason,
+  `applied`, `retired`, `message`). Every applied acknowledgement is also kept
+  in `status.cleanupAcknowledgementRetirements`, so a later rejected one cannot
+  erase the record of what was retired. The outcome is audited as
   `debug_session.cleanup_acknowledged` (severity warning) with the
   acknowledging user as actor.
+- The digest covers the list, the acknowledging user and the reason. To
+  resubmit the same acknowledgement after a rejection (for example because it
+  was premature), remove all acknowledgement annotations, which clears
+  `status.cleanupAcknowledgement`, and then set them again.
+- A partial acknowledgement that leaves other residuals reports the new
+  residual set once with `debug_session.cleanup_failed`.
+- If a node-maintenance or hotfix cleanup fails while the session is being
+  deleted, the controller records `CleanupFailed`, so the failure is visible
+  and can be acknowledged.
 - **Rejected** (no match, invalid, or cleanup not failing): nothing is
   retired, `applied` is `false` with the reason in `message`, and the cleanup
   backoff is unchanged.

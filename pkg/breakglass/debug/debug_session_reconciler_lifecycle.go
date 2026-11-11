@@ -20,6 +20,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -655,7 +656,26 @@ const (
 // recorded and audited but retires nothing and does not shorten the backoff.
 func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	baseline := ds.Status.DeepCopy()
-	record := applyCleanupAcknowledgement(ds)
+	if ds.Annotations[CleanupAcknowledgedAbsentAnnotation] == "" {
+		// A removed acknowledgement clears the latest result, so the same list
+		// can be submitted again. Applied retirements stay in their history.
+		if ds.Status.CleanupAcknowledgement == nil {
+			return nil
+		}
+		ds.Status.CleanupAcknowledgement = nil
+		return c.patchDebugSessionCleanupStatus(ctx, ds, baseline)
+	}
+	if pendingCleanupAcknowledgement(ds) == "" {
+		return nil
+	}
+	refusal := ""
+	if active, err := c.acknowledgementWebhookActive(ctx); err != nil {
+		return fmt.Errorf("verify the DebugSession admission webhook before processing a cleanup acknowledgement: %w", err)
+	} else if !active {
+		refusal = "the DebugSession validating webhook (" + debugSessionWebhookName + ") is not active with failurePolicy Fail for debugsessions UPDATE, " +
+			"so the acknowledging user cannot be verified; enable the validating webhook and submit the acknowledgement again"
+	}
+	record := applyCleanupAcknowledgement(ds, refusal)
 	if record == nil {
 		return nil
 	}
@@ -671,11 +691,25 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	if err := c.patchDebugSessionCleanupStatusWithTransition(ctx, ds, baseline, &previous); err != nil {
 		return fmt.Errorf("persist cleanup acknowledgement: %w", err)
 	}
+	if ds.Status.CleanupAcknowledgement == nil {
+		// The API server pruned the field: the DebugSession CRD predates this
+		// controller. Without the persisted digest every reconcile would
+		// process and audit the acknowledgement again.
+		c.crdOutdatedOnce.Do(func() {
+			log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgement; apply the current CRDs before the controller. Cleanup acknowledgements are not audited until then")
+		})
+		return nil
+	}
 	if c.shouldEmitAudit(ctx, ds) {
 		if auditManager := c.currentAuditManager(); auditManager != nil {
 			auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, record.AcknowledgedBy, record.Reason, record.Applied, record.Retired, record.Message)
-			if previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds) {
+			switch {
+			case previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
 				auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
+			case record.Applied && cleanupConditionFailed(ds) && residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds):
+				// A partial acknowledgement leaves a different residual set;
+				// report it once, as finishCleanup would.
+				auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))
 			}
 		}
 	}
@@ -698,11 +732,18 @@ func setCleanupCondition(ds *breakglassv1alpha1.DebugSession) {
 		condition.Status = metav1.ConditionTrue
 		condition.Reason = "CleanupFailed"
 		condition.Message = boundedCleanupConditionMessage(ds)
-	} else if ack := ds.Status.CleanupAcknowledgement; ack != nil && ack.Applied {
+	} else if retirements := ds.Status.CleanupAcknowledgementRetirements; len(retirements) > 0 {
 		// Keep the distinction between acknowledged and observed deletion.
+		retired, by := 0, make([]string, 0, len(retirements))
+		for _, ack := range retirements {
+			retired += len(ack.Retired)
+			if !slices.Contains(by, ack.AcknowledgedBy) {
+				by = append(by, ack.AcknowledgedBy)
+			}
+		}
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "CleanupAcknowledged"
-		condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources were retired by an operator acknowledgement from %s.", len(ack.Retired), ack.AcknowledgedBy)
+		condition.Message = fmt.Sprintf("Cleanup completed; %d residual resources were retired by operator acknowledgement from %s.", retired, strings.Join(by, ", "))
 	} else {
 		condition.Status = metav1.ConditionFalse
 		condition.Reason = "CleanupRecovered"
@@ -898,8 +939,11 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ct
 			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
-			if desiredStatus.CleanupAcknowledgement != nil {
+			if !equality.Semantic.DeepEqual(cleanupBaseline.CleanupAcknowledgement, desiredStatus.CleanupAcknowledgement) {
 				current.Status.CleanupAcknowledgement = desiredStatus.CleanupAcknowledgement.DeepCopy()
+			}
+			if len(desiredStatus.CleanupAcknowledgementRetirements) > len(current.Status.CleanupAcknowledgementRetirements) {
+				current.Status.CleanupAcknowledgementRetirements = append([]breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus(nil), desiredStatus.CleanupAcknowledgementRetirements...)
 			}
 			if desiredCleanupCondition(desiredStatus.Conditions) != nil {
 				// Classify the fresh merged inventory, not the operation or status-write error.

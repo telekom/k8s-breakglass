@@ -32,6 +32,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// cleanupAcknowledgement records the processing of the operator's
 	// cleanup-acknowledged-absent annotation.
 	CleanupAcknowledgement *DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgement,omitempty"`
+	// cleanupAcknowledgementRetirements keeps every applied acknowledgement,
+	// so later processing results cannot erase retirement provenance.
+	CleanupAcknowledgementRetirements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgementRetirements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
@@ -152,6 +155,19 @@ func (b *DebugSessionStatusApplyConfiguration) WithConnectionLease(value *DebugS
 // If called multiple times, the CleanupAcknowledgement field is set to the value of the last call.
 func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgement(value *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	b.CleanupAcknowledgement = value
+	return b
+}
+
+// WithCleanupAcknowledgementRetirements adds the given value to the CleanupAcknowledgementRetirements field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, values provided by each call will be appended to the CleanupAcknowledgementRetirements field.
+func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgementRetirements(values ...*DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+	for i := range values {
+		if values[i] == nil {
+			panic("nil value passed to WithCleanupAcknowledgementRetirements")
+		}
+		b.CleanupAcknowledgementRetirements = append(b.CleanupAcknowledgementRetirements, *values[i])
+	}
 	return b
 }
 

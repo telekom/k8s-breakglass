@@ -238,6 +238,19 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 // DebugSessionStatusFrom converts a DebugSessionStatus to its ApplyConfiguration.
 // Unlike BreakglassSession activity, DebugSession activity is included: callers
 // must use the shared live-read status writers to preserve monotonic updates.
+func cleanupAcknowledgementFrom(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) *ac.DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
+	ack := ac.DebugSessionCleanupAcknowledgementStatus().
+		WithDigest(a.Digest).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
+		WithRetired(a.Retired...)
+	if a.Reason != "" {
+		ack.WithReason(a.Reason)
+	}
+	if a.Message != "" {
+		ack.WithMessage(a.Message)
+	}
+	return ack
+}
+
 func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.DebugSessionStatusApplyConfiguration {
 	if status == nil {
 		return nil
@@ -264,17 +277,11 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
+	for i := range status.CleanupAcknowledgementRetirements {
+		result.WithCleanupAcknowledgementRetirements(cleanupAcknowledgementFrom(&status.CleanupAcknowledgementRetirements[i]))
+	}
 	if a := status.CleanupAcknowledgement; a != nil {
-		ack := ac.DebugSessionCleanupAcknowledgementStatus().
-			WithDigest(a.Digest).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
-			WithRetired(a.Retired...)
-		if a.Reason != "" {
-			ack.WithReason(a.Reason)
-		}
-		if a.Message != "" {
-			ack.WithMessage(a.Message)
-		}
-		result.WithCleanupAcknowledgement(ack)
+		result.WithCleanupAcknowledgement(cleanupAcknowledgementFrom(a))
 	}
 
 	if status.LastActivity != nil {

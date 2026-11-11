@@ -2844,6 +2844,13 @@ func (in *DebugSessionStatus) DeepCopyInto(out *DebugSessionStatus) {
 		*out = new(DebugSessionCleanupAcknowledgementStatus)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.CleanupAcknowledgementRetirements != nil {
+		in, out := &in.CleanupAcknowledgementRetirements, &out.CleanupAcknowledgementRetirements
+		*out = make([]DebugSessionCleanupAcknowledgementStatus, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Approval != nil {
 		in, out := &in.Approval, &out.Approval
 		*out = new(DebugSessionApproval)
