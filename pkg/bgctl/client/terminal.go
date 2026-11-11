@@ -79,6 +79,10 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 	body, bodyWriter := io.Pipe()
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Cancellation (SIGINT/SIGTERM) must end the request body: the transport
+	// waits for its body writer before Do returns, and that writer would
+	// otherwise block on the pipe until the next keystroke.
+	context.AfterFunc(streamCtx, func() { _ = bodyWriter.CloseWithError(context.Cause(streamCtx)) })
 	req, err := http.NewRequestWithContext(streamCtx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
 		return TerminalResult{}, err

@@ -114,6 +114,44 @@ recording budget instead of the 1 MiB limit for JSON requests. Any other protoco
 reserved. The response body remains raw terminal output with recording
 trailers. `bgctl debug terminal` uses `framed.v1`.
 
+### Ingress and proxies
+
+The terminal is one long-lived `POST` whose request body (input) and response
+body (output) stream at the same time. It is not a protocol upgrade: no
+`Upgrade`/`Connection` handling or WebSocket support is involved. The controller
+serves full duplex over HTTP/1.1 (chunked bodies) and HTTP/2; `bgctl` uses
+HTTP/1.1. Every proxy between `bgctl` and the controller must:
+
+- forward the request body as it arrives (no request buffering): a buffering
+  proxy waits for the end of a body that only ends when the shell exits;
+- forward output as it is written (no response buffering);
+- keep the connection open for the whole session: the controller holds the
+  stream until the session expires and sends no keepalive traffic, so idle
+  read/send timeouts end idle shells;
+- accept request bodies up to the 512 MiB recording budget;
+- pass the response trailers `X-Breakglass-Recording-ID`,
+  `X-Breakglass-Recording-SHA256` and `X-Breakglass-Recording-Status`. Without
+  them `bgctl` cannot report the result and exits non-zero; the recording is
+  still finalized and listed by `bgctl debug recordings list`.
+
+For ingress-nginx, on the Ingress that serves the API (timeouts in seconds,
+sized to the longest session):
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "512m"
+```
+
+nginx does not forward upstream response trailers by default; check whether
+your proxy can, or rely on `bgctl debug recordings list` and the
+`terminal_recording_finalized` audit event for the digest.
+
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a
 finalized artifact can be verified without placing terminal bytes or
