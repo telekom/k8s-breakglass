@@ -86,7 +86,9 @@ pipeline, which counts its own overflow. Events still in the old manager's
 ingress queue (for example with `dropOnFull: false` while a sink queue is
 full) move to the new manager, which routes them through its own sinks,
 within one write timeout for the whole handover; events that do not fit by
-then are counted as `shutdown`. A
+then are counted as `shutdown`. Each retiring sink likewise hands over all its
+batches within one write timeout; the replacement counts what it cannot take
+(`queue_full` or `enqueue_timeout`). A
 replaced pipeline that is itself already closed forwards them along the chain
 of reloads. Only events of a sink that the reload removed are dropped as
 `shutdown`. Retention is in memory: a controller restart or crash

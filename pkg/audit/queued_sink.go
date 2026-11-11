@@ -141,6 +141,10 @@ type QueuedSink struct {
 
 	// successor receives the events held at shutdown (see HandOver).
 	successor atomic.Pointer[QueuedSink]
+	// handOverDeadline bounds all hand-overs of this sink together (Unix
+	// nanoseconds, set on the first one): worker batches and retained
+	// batches share one WriteTimeout instead of one each.
+	handOverDeadline atomic.Int64
 
 	// owner identifies the AuditConfig and sink type that define the sink;
 	// sink names are unique only within one AuditConfig, and a reload may
@@ -459,7 +463,8 @@ func (qs *QueuedSink) shutdownDrop(events []*Event) {
 		return
 	}
 	if successor := qs.successor.Load(); successor != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), qs.config.WriteTimeout)
+		qs.handOverDeadline.CompareAndSwap(0, time.Now().Add(qs.config.WriteTimeout).UnixNano())
+		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, qs.handOverDeadline.Load()))
 		defer cancel()
 		// The successor counts its own losses (queue_full, enqueue_timeout).
 		_ = successor.WriteBatch(ctx, events)
@@ -917,10 +922,11 @@ func (ims *IsolatedMultiSink) drain(manager *Manager, stop <-chan struct{}) {
 
 // handOver makes each sink pass the events it holds at shutdown to the sink
 // with the same AuditConfig, sink type and sink name in next. That key is
-// unique: AuditConfig validation rejects duplicate sink names. A sink without
+// unique: AuditConfig is cluster-scoped and its validation rejects duplicate
+// sink names. A sink without
 // a successor (removed or retyped by the reload) still counts them as
 // "shutdown" drops. Each hand-over is bounded by the receiving queue's
-// enqueue rules and the manager's single handover deadline.
+// enqueue rules and one handover deadline per retiring sink and manager.
 func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
 	for _, old := range ims.sinks {
 		for _, successor := range next.sinks {

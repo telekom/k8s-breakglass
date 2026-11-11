@@ -744,3 +744,24 @@ func TestHandOverNeverCrossesSinkTypes(t *testing.T) {
 	require.Zero(t, received.Load())
 	require.Equal(t, int64(1), old.sinks[0].Health().DroppedEvents)
 }
+
+// All hand-overs of one retiring sink share a single deadline, so several
+// worker or retained batches cannot each wait a full write timeout for a
+// replacement whose queue stays full.
+func TestQueuedHandOverSharesOneDeadline(t *testing.T) {
+	cfg := outageConfig()
+	cfg.WriteTimeout = 200 * time.Millisecond
+	old := NewQueuedSink(&flakySink{}, cfg, zap.NewNop())
+	full := outageConfig()
+	full.QueueSize, full.WorkerCount, full.DropOnFull = 1, 1, false
+	full.WriteTimeout = time.Minute
+	blocked := newFuncSink("handover-full", func([]*Event) error { select {} })
+	next := NewQueuedSink(blocked, full, zap.NewNop())
+	old.HandOver(next)
+	start := time.Now()
+	for i := range 5 {
+		old.shutdownDrop([]*Event{{ID: fmt.Sprint(i), Type: EventConfigChanged}, {ID: fmt.Sprint(i, "b"), Type: EventConfigChanged}})
+	}
+	require.Less(t, time.Since(start), time.Second, "one handover budget, not one write timeout per batch")
+	require.Positive(t, next.Health().DroppedEvents, "what did not fit is counted by the replacement")
+}
