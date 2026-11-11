@@ -118,91 +118,86 @@ without Kyverno. The controller handles this as follows:
 
 Uninstalling a CRD deletes its objects, but cleanup then gets `NoMatch`
 forever. When an operator has verified that residual resources are gone, they
-list them in the session annotation
-`breakglass.t-caas.telekom.com/cleanup-acknowledged-absent` as a JSON array of
-exact identities, copied from the session status.
+create a `DebugSessionCleanupAcknowledgement` in the session's namespace that
+lists the exact identities, copied from the session status:
 
-**Authorization (four-eyes).** Setting the annotation requires the dedicated
-verb `acknowledge-cleanup` on `debugsessions` in group
-`breakglass.t-caas.telekom.com`, checked by the DebugSession admission webhook
-with a SubjectAccessReview. Update RBAC alone is not enough, and the session
-requester and participants get no exemption. The ClusterRole
-`debugsession-cleanup-acknowledger` (`config/rbac/debugsession_cleanup_acknowledger_role.yaml`)
-grants the verb and is **bound to nobody by default**. Bind it only to
-operators who are independent of the sessions they acknowledge. The webhook
-also:
-
-- requires `breakglass.t-caas.telekom.com/cleanup-acknowledged-by` to equal
-  the requesting user;
-- checks every change to the acknowledgement annotations the same way,
-  including removing only some of them. Only removing all of them at once
-  needs no verb;
-- rejects the acknowledgement annotations on create;
-- rejects them in `DebugSessionClusterBinding.spec.annotations`. They are also
-  never copied from a binding to a new session.
-
-```bash
-kubectl annotate debugsession -n <ns> <session> \
-  breakglass.t-caas.telekom.com/cleanup-acknowledged-by="$(kubectl auth whoami -o jsonpath='{.status.userInfo.username}')" \
-  breakglass.t-caas.telekom.com/cleanup-acknowledged-reason='CHG-1234: Kyverno CRDs removed' \
-  breakglass.t-caas.telekom.com/cleanup-acknowledged-absent='[
-    {"apiVersion":"policies.kyverno.io/v1","kind":"PolicyException",
-     "namespace":"breakglass-debug","name":"<name>","uid":"<uid>"}
-  ]'
+```yaml
+apiVersion: breakglass.t-caas.telekom.com/v1alpha1
+kind: DebugSessionCleanupAcknowledgement
+metadata:
+  name: <session>-ack-1
+  namespace: <session namespace>
+spec:
+  sessionName: <session>
+  sessionUID: <session metadata.uid>
+  acknowledgedBy: <your username, see kubectl auth whoami>
+  reason: "CHG-1234: Kyverno CRDs removed"
+  identities:
+  - apiVersion: policies.kyverno.io/v1
+    kind: PolicyException
+    namespace: breakglass-debug
+    name: <name>
+    uid: <uid>   # omit only for an unresolved create intent
 ```
+
+**Authorization (four-eyes).** Creating the object requires RBAC `create` on
+`debugsessioncleanupacknowledgements`, which the API server enforces itself.
+Writing a DebugSession grants nothing. The ClusterRole
+`debugsession-cleanup-acknowledger`
+(`config/rbac/debugsession_cleanup_acknowledger_role.yaml`) grants it and is
+**bound to nobody by default**. Bind it only to operators who are independent
+of the sessions they acknowledge.
+
+- The object is immutable: the CRD rejects any change to `spec`.
+- It is bound to one session instance by `sessionUID`.
+- The validating webhook
+  `debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com`
+  requires `acknowledgedBy` to equal the creating user, so the audit actor
+  cannot be forged.
 
 **Requirements.**
 
 - **Validating webhook.** The controller processes acknowledgements only while
-  a ValidatingWebhookConfiguration registers
-  `debugsession.validation.breakglass.t-caas.telekom.com` for debugsessions
-  UPDATE with `failurePolicy: Fail`. With webhooks disabled
-  (`--enable-webhooks=false` or `ENABLE_VALIDATING_WEBHOOKS=false`), anyone
-  who can update a session could forge `cleanup-acknowledged-by`. In that case
-  every acknowledgement is rejected, recorded and audited with this reason.
-- **CRD before controller.** Apply the current DebugSession CRD before the
-  controller. An older CRD prunes `status.cleanupAcknowledgement`; the
-  controller then logs an error once and does not audit acknowledgements until
-  the CRD is updated.
+  that webhook is registered for CREATE with `failurePolicy: Fail` and no
+  namespace selector, object selector or match conditions. Otherwise (for
+  example with `--enable-webhooks=false` or `ENABLE_VALIDATING_WEBHOOKS=false`)
+  `acknowledgedBy` is unverified, so every acknowledgement is rejected,
+  recorded and audited with this reason.
+- **CRD before controller.** Apply the current CRDs (including
+  `debugsessioncleanupacknowledgements` and the DebugSession status field
+  `cleanupAcknowledgements`) before the controller. An older DebugSession CRD
+  prunes the status field; the controller then logs an error once and does not
+  audit acknowledgements until the CRD is updated.
 - **Status trust.** Like every other status field, the record can be forged or
   suppressed by anyone who may write `debugsessions/status`. Grant that
   subresource only to the controller.
 
-**How the controller processes it.** It processes each distinct
-acknowledgement once, before any mode-specific cleanup. As a result,
-node-maintenance and hotfix residuals are retired before their Leases are
-released.
+**How the controller processes it.** Each acknowledgement is processed once,
+keyed by its UID, oldest first, and before any mode-specific cleanup. As a
+result, node-maintenance and hotfix residuals are retired before their Leases
+are released. A new acknowledgement triggers a reconcile of its session at
+once.
 
-- `uid` is the recorded UID; omit it only for an unresolved create intent (an
-  entry with `createOperationID` and no `uid`). The reason is optional.
-- The acknowledgement is applied only while `CleanupFailed=True`, and only if
-  **every** listed identity matches an outstanding residual exactly
-  (apiVersion, kind, namespace, name and UID). Unlisted residuals are kept.
-- The outcome of the latest acknowledgement is recorded in
-  `status.cleanupAcknowledgement` (digest, `acknowledgedBy`, reason,
-  `applied`, `retired`, `message`). Every applied acknowledgement is also kept
-  in `status.cleanupAcknowledgementRetirements`, so a later rejected one cannot
-  erase the record of what was retired. The outcome is audited as
+- It is applied only while `CleanupFailed=True`, and only if **every** listed
+  identity matches an outstanding residual exactly (apiVersion, kind,
+  namespace, name and UID). Unlisted residuals are kept.
+- Every outcome is appended to the DebugSession's
+  `status.cleanupAcknowledgements` (name, UID, `acknowledgedBy`, reason,
+  `applied`, `retired`, `message`). It is audited as
   `debug_session.cleanup_acknowledged` (severity warning) with the
   acknowledging user as actor.
-- The digest covers the list, the acknowledging user and the reason. To
-  resubmit the same acknowledgement after a rejection (for example because it
-  was premature), remove all acknowledgement annotations, which clears
-  `status.cleanupAcknowledgement`, and then set them again.
-- A partial acknowledgement that leaves other residuals reports the new
-  residual set once with `debug_session.cleanup_failed`.
-- If a node-maintenance or hotfix cleanup fails while the session is being
-  deleted, the controller records `CleanupFailed`, so the failure is visible
-  and can be acknowledged.
-- **Rejected** (no match, invalid, or cleanup not failing): nothing is
-  retired, `applied` is `false` with the reason in `message`, and the cleanup
-  backoff is unchanged.
-- **Applied:** the matching entries are marked `deleted` (pod-template and
-  deployed entries are dropped) with the reason in their `error` field. If no
-  residual remains, the condition becomes `CleanupFailed=False` with reason
-  `CleanupAcknowledged` (kept on later reconciles), followed by
-  `debug_session.cleanup_recovered`. An applied acknowledgement also lets the
-  next cleanup attempt run at once.
+- **Rejected:** nothing is retired, the cleanup backoff is unchanged, and the
+  reason is in `message`. Fix the problem and create a new acknowledgement.
+- **Applied:** matching entries are marked `deleted` (pod-template and deployed
+  entries are dropped) with the reason in their `error` field.
+  - If no residual remains, the condition becomes `CleanupFailed=False` with
+    reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
+    The reason persists even if later acknowledgements are rejected.
+  - If residuals remain, the new residual set is reported once with
+    `debug_session.cleanup_failed`.
+- If node-maintenance or hotfix cleanup fails while the session is being
+  deleted, the failure is recorded as `CleanupFailed`, so it is visible and
+  can be acknowledged.
 
 ### Transitional opt-outs
 

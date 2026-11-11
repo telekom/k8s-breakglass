@@ -29,12 +29,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
-	// cleanupAcknowledgement records the processing of the operator's
-	// cleanup-acknowledged-absent annotation.
-	CleanupAcknowledgement *DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgement,omitempty"`
-	// cleanupAcknowledgementRetirements keeps every applied acknowledgement,
-	// so later processing results cannot erase retirement provenance.
-	CleanupAcknowledgementRetirements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgementRetirements,omitempty"`
+	// cleanupAcknowledgements records every processed
+	// DebugSessionCleanupAcknowledgement for this session, applied or not.
+	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`
 	// state is the current state of the debug session.
@@ -150,23 +147,15 @@ func (b *DebugSessionStatusApplyConfiguration) WithConnectionLease(value *DebugS
 	return b
 }
 
-// WithCleanupAcknowledgement sets the CleanupAcknowledgement field in the declarative configuration to the given value
-// and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the CleanupAcknowledgement field is set to the value of the last call.
-func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgement(value *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
-	b.CleanupAcknowledgement = value
-	return b
-}
-
-// WithCleanupAcknowledgementRetirements adds the given value to the CleanupAcknowledgementRetirements field in the declarative configuration
+// WithCleanupAcknowledgements adds the given value to the CleanupAcknowledgements field in the declarative configuration
 // and returns the receiver, so that objects can be build by chaining "With" function invocations.
-// If called multiple times, values provided by each call will be appended to the CleanupAcknowledgementRetirements field.
-func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgementRetirements(values ...*DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
+// If called multiple times, values provided by each call will be appended to the CleanupAcknowledgements field.
+func (b *DebugSessionStatusApplyConfiguration) WithCleanupAcknowledgements(values ...*DebugSessionCleanupAcknowledgementStatusApplyConfiguration) *DebugSessionStatusApplyConfiguration {
 	for i := range values {
 		if values[i] == nil {
-			panic("nil value passed to WithCleanupAcknowledgementRetirements")
+			panic("nil value passed to WithCleanupAcknowledgements")
 		}
-		b.CleanupAcknowledgementRetirements = append(b.CleanupAcknowledgementRetirements, *values[i])
+		b.CleanupAcknowledgements = append(b.CleanupAcknowledgements, *values[i])
 	}
 	return b
 }

@@ -5,9 +5,6 @@ package debug
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -16,93 +13,50 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// CleanupAcknowledgedAbsentAnnotation lets an authorized operator retire
-// cleanup residuals that the controller cannot prove gone. Setting it requires
-// the acknowledge-cleanup verb, enforced by the DebugSession webhook.
-const CleanupAcknowledgedAbsentAnnotation = breakglassv1alpha1.DebugSessionCleanupAcknowledgedAbsentAnnotation
-
 // CleanupAcknowledgedIdentity names one residual by its full recorded identity.
-// UID is empty only for an unresolved create intent.
-type CleanupAcknowledgedIdentity struct {
-	APIVersion string `json:"apiVersion"`
-	Kind       string `json:"kind"`
-	Namespace  string `json:"namespace,omitempty"`
-	Name       string `json:"name"`
-	UID        string `json:"uid,omitempty"`
+type CleanupAcknowledgedIdentity = breakglassv1alpha1.CleanupAcknowledgedIdentity
+
+const acknowledgedAbsentReason = "retired by operator acknowledgement (DebugSessionCleanupAcknowledgement)"
+
+// cleanupAcknowledgementWebhookName is the webhook that verifies
+// spec.acknowledgedBy (config/webhook/manifests.yaml).
+const cleanupAcknowledgementWebhookName = "debugsessioncleanupacknowledgement.validation.breakglass.t-caas.telekom.com"
+
+func acknowledgementProcessed(ds *breakglassv1alpha1.DebugSession, uid string) bool {
+	return slices.ContainsFunc(ds.Status.CleanupAcknowledgements, func(r breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool { return r.UID == uid })
 }
 
-func (i CleanupAcknowledgedIdentity) String() string {
-	s := i.APIVersion + "/" + i.Kind + "/" + i.Namespace + "/" + i.Name
-	if i.UID != "" {
-		s += " (uid=" + i.UID + ")"
-	}
-	return s
-}
-
-const acknowledgedAbsentReason = "retired by operator acknowledgement (" + CleanupAcknowledgedAbsentAnnotation + ")"
-
-// pendingCleanupAcknowledgement returns the digest of an acknowledgement that
-// has not been processed yet, or "" when there is none.
-func pendingCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession) string {
-	raw := ds.Annotations[CleanupAcknowledgedAbsentAnnotation]
-	if raw == "" {
-		return ""
-	}
-	sum := sha256.Sum256([]byte(raw + "\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation] +
-		"\x00" + ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedReasonAnnotation]))
-	digest := hex.EncodeToString(sum[:8])
-	if processed := ds.Status.CleanupAcknowledgement; processed != nil && processed.Digest == digest {
-		return ""
-	}
-	return digest
-}
-
-// applyCleanupAcknowledgement processes a pending acknowledgement once. It
-// retires residuals only if every listed identity matches an outstanding
-// residual exactly; otherwise nothing is retired and the rejection is
-// recorded. The outcome is stored in ds.Status.CleanupAcknowledgement.
-// It returns the record when an acknowledgement was processed. A non-empty
+// applyCleanupAcknowledgement processes one acknowledgement. It retires
+// residuals only if every listed identity matches an outstanding residual
+// exactly; otherwise nothing is retired and the rejection is recorded. The
+// outcome is appended to ds.Status.CleanupAcknowledgements. A non-empty
 // refusal rejects the acknowledgement with that message without evaluating it.
-func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, refusal string) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-	digest := pendingCleanupAcknowledgement(ds)
-	if digest == "" {
-		return nil
+func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+	record := breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
+		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason, ProcessedAt: metav1.Now(),
 	}
-	record := &breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
-		Digest:         digest,
-		AcknowledgedBy: ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation],
-		Reason:         ds.Annotations[breakglassv1alpha1.DebugSessionCleanupAcknowledgedReasonAnnotation],
-		ProcessedAt:    metav1.Now(),
-	}
-	ds.Status.CleanupAcknowledgement = record
-	reject := func(format string, args ...any) *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-		record.Message = fmt.Sprintf(format, args...)
+	finish := func(status *breakglassv1alpha1.DebugSessionStatus) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+		status.CleanupAcknowledgements = append(status.CleanupAcknowledgements, record)
+		ds.Status = *status
 		return record
 	}
-	if refusal != "" {
+	reject := func(format string, args ...any) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
+		record.Message = fmt.Sprintf(format, args...)
+		return finish(ds.Status.DeepCopy())
+	}
+	switch {
+	case refusal != "":
 		return reject("%s", refusal)
-	}
-	if record.AcknowledgedBy == "" {
-		return reject("acknowledgement has no %s; it was not set through the admission webhook", breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)
-	}
-	var acknowledged []CleanupAcknowledgedIdentity
-	if err := json.Unmarshal([]byte(ds.Annotations[CleanupAcknowledgedAbsentAnnotation]), &acknowledged); err != nil {
-		return reject("invalid acknowledgement: %v", err)
-	}
-	if len(acknowledged) == 0 {
-		return reject("acknowledgement lists no identities")
-	}
-	for _, id := range acknowledged {
-		if id.APIVersion == "" || id.Kind == "" || id.Name == "" {
-			return reject("acknowledgement entry %q needs apiVersion, kind and name", id)
-		}
-	}
-	if !cleanupConditionFailed(ds) {
+	case ack.Spec.SessionUID != string(ds.UID):
+		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
+	case !cleanupConditionFailed(ds):
 		return reject("cleanup is not failing; acknowledgements apply only to CleanupFailed residuals")
 	}
 
+	acknowledged := ack.Spec.Identities
 	matched := make([]bool, len(acknowledged))
 	find := func(apiVersion, kind, namespace, name, uid string) bool {
 		for i, id := range acknowledged {
@@ -158,35 +112,54 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, refusal st
 	slices.Sort(retired)
 	record.Applied = true
 	record.Retired = retired
-	status.CleanupAcknowledgement = record
-	// Applied acknowledgements are kept separately, so a later rejected one
-	// cannot erase the provenance of retired residuals.
-	status.CleanupAcknowledgementRetirements = append(status.CleanupAcknowledgementRetirements, *record.DeepCopy())
-	ds.Status = *status
-	return record
+	return finish(status)
 }
 
-// debugSessionWebhookName is the webhook entry that authorizes cleanup
-// acknowledgements (config/webhook/manifests.yaml).
-const debugSessionWebhookName = "debugsession.validation.breakglass.t-caas.telekom.com"
+// pendingCleanupAcknowledgements lists unprocessed acknowledgements for ds,
+// oldest first.
+func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]breakglassv1alpha1.DebugSessionCleanupAcknowledgement, error) {
+	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
+	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
+		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
+	}
+	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
+	for _, ack := range list.Items {
+		if ack.Spec.SessionName == ds.Name && ack.DeletionTimestamp.IsZero() && !acknowledgementProcessed(ds, string(ack.UID)) {
+			pending = append(pending, ack)
+		}
+	}
+	slices.SortFunc(pending, func(a, b breakglassv1alpha1.DebugSessionCleanupAcknowledgement) int {
+		if c := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return pending, nil
+}
 
-// debugSessionWebhookActive reports whether a ValidatingWebhookConfiguration
-// registers the DebugSession webhook for UPDATE with failurePolicy Fail.
-// Without it, the acknowledged-by annotation is unverified and anyone who can
-// update a session could forge an acknowledgement.
-func (c *DebugSessionController) debugSessionWebhookActive(ctx context.Context) (bool, error) {
+// cleanupAcknowledgementWebhookActive reports whether a
+// ValidatingWebhookConfiguration verifies spec.acknowledgedBy on create with
+// failurePolicy Fail. Authorization itself is RBAC create on the resource and
+// does not depend on the webhook; without it only the recorded actor is
+// unverified, so acknowledgements are refused rather than misattributed.
+func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context.Context) (bool, error) {
 	var configs admissionregistrationv1.ValidatingWebhookConfigurationList
 	if err := c.approvalReader().List(ctx, &configs); err != nil {
 		return false, fmt.Errorf("list ValidatingWebhookConfigurations: %w", err)
 	}
 	for _, config := range configs.Items {
 		for _, webhook := range config.Webhooks {
-			if webhook.Name != debugSessionWebhookName || webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail {
+			if webhook.Name != cleanupAcknowledgementWebhookName || webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail ||
+				webhook.NamespaceSelector != nil && (len(webhook.NamespaceSelector.MatchLabels) > 0 || len(webhook.NamespaceSelector.MatchExpressions) > 0) ||
+				webhook.ObjectSelector != nil && (len(webhook.ObjectSelector.MatchLabels) > 0 || len(webhook.ObjectSelector.MatchExpressions) > 0) ||
+				len(webhook.MatchConditions) > 0 {
 				continue
 			}
 			for _, rule := range webhook.Rules {
-				if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) && slices.Contains(rule.Resources, "debugsessions") &&
-					(slices.Contains(rule.Operations, admissionregistrationv1.Update) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
+				if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) &&
+					(slices.Contains(rule.APIVersions, breakglassv1alpha1.GroupVersion.Version) || slices.Contains(rule.APIVersions, "*")) &&
+					slices.Contains(rule.Resources, "debugsessioncleanupacknowledgements") &&
+					(slices.Contains(rule.Operations, admissionregistrationv1.Create) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
 					return true, nil
 				}
 			}

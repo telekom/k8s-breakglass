@@ -5,7 +5,6 @@ package debug
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -19,7 +18,6 @@ import (
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -151,11 +149,20 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), ds))
 		require.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
 
-		ack := fmt.Sprintf(`[{"apiVersion":"policies.kyverno.io/v1","kind":"PolicyException","namespace":"default","name":%q,"uid":"uid-of-removed-crd-object"}]`, ds.Name)
 		// envtest runs without the admission webhook, which would otherwise
-		// authorize the operator and require acknowledged-by to name them.
-		require.NoError(t, hub.Patch(ctx, ds, client.RawPatch(types.MergePatchType, []byte(fmt.Sprintf(`{"metadata":{"annotations":{%q:%q,%q:"operator@example.com"}}}`,
-			CleanupAcknowledgedAbsentAnnotation, ack, breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation)))))
+		// require acknowledgedBy to name the creating user.
+		require.NoError(t, hub.Create(ctx, &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{
+			ObjectMeta: metav1.ObjectMeta{Name: "lab-ack-1", Namespace: ns},
+			Spec: breakglassv1alpha1.DebugSessionCleanupAcknowledgementSpec{
+				SessionName: ds.Name, SessionUID: string(ds.UID), AcknowledgedBy: "operator@example.com",
+				Identities: []breakglassv1alpha1.CleanupAcknowledgedIdentity{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "default", Name: ds.Name, UID: "uid-of-removed-crd-object"}},
+			},
+		}))
+		// The spec is immutable on the real API server.
+		created := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: ns, Name: "lab-ack-1"}, created))
+		created.Spec.Reason = "changed"
+		require.Error(t, hub.Update(ctx, created), "acknowledgement spec must be immutable")
 		result, err = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
 		require.NoError(t, err)
 		require.NoError(t, manager.Close())
@@ -167,8 +174,8 @@ func TestPlatformUnservedKindEnvtest(t *testing.T) {
 		assert.Equal(t, metav1.ConditionFalse, condition.Status)
 		assert.Equal(t, "CleanupAcknowledged", condition.Reason)
 		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupAcknowledged))
-		require.NotNil(t, ds.Status.CleanupAcknowledgement)
-		assert.Equal(t, "operator@example.com", ds.Status.CleanupAcknowledgement.AcknowledgedBy)
+		require.Len(t, ds.Status.CleanupAcknowledgements, 1)
+		assert.Equal(t, "operator@example.com", ds.Status.CleanupAcknowledgements[0].AcknowledgedBy)
 		assert.Equal(t, 1, countEvents(sink, audit.EventDebugSessionCleanupRecovered))
 	})
 

@@ -539,7 +539,6 @@ func ValidateDebugSessionClusterBinding(binding *DebugSessionClusterBinding) *Va
 	}
 	specPath := field.NewPath("spec")
 	spec := &binding.Spec
-	result.Errors = append(result.Errors, forbidCleanupAcknowledgementAnnotations(spec.Annotations, specPath.Child("annotations"))...)
 
 	// templateRef and templateSelector are mutually exclusive
 	if spec.TemplateRef != nil && spec.TemplateSelector != nil {

@@ -1803,72 +1803,28 @@ spec:
                   - name
                   type: object
                 type: array
-              cleanupAcknowledgement:
+              cleanupAcknowledgements:
                 description: |-
-                  cleanupAcknowledgement records the processing of the operator's
-                  cleanup-acknowledged-absent annotation.
-                properties:
-                  acknowledgedBy:
-                    description: acknowledgedBy is the user recorded by the admission
-                      webhook.
-                    type: string
-                  applied:
-                    description: |-
-                      applied is true when every listed identity matched an outstanding
-                      residual and was retired.
-                    type: boolean
-                  digest:
-                    description: |-
-                      digest identifies the processed acknowledgement (list and acknowledging
-                      user). A changed acknowledgement is processed again.
-                    type: string
-                  message:
-                    description: message explains a rejected acknowledgement.
-                    type: string
-                  processedAt:
-                    description: processedAt is when the controller processed the
-                      acknowledgement.
-                    format: date-time
-                    type: string
-                  reason:
-                    description: reason is the optional reason or ticket reference.
-                    type: string
-                  retired:
-                    description: retired lists the identities retired by this acknowledgement.
-                    items:
-                      type: string
-                    type: array
-                required:
-                - acknowledgedBy
-                - applied
-                - digest
-                - processedAt
-                type: object
-              cleanupAcknowledgementRetirements:
-                description: |-
-                  cleanupAcknowledgementRetirements keeps every applied acknowledgement,
-                  so later processing results cannot erase retirement provenance.
+                  cleanupAcknowledgements records every processed
+                  DebugSessionCleanupAcknowledgement for this session, applied or not.
                 items:
                   description: |-
                     DebugSessionCleanupAcknowledgementStatus records how the controller
-                    processed the current cleanup acknowledgement.
+                    processed one DebugSessionCleanupAcknowledgement.
                   properties:
                     acknowledgedBy:
-                      description: acknowledgedBy is the user recorded by the admission
-                        webhook.
+                      description: acknowledgedBy is the user recorded in the acknowledgement.
                       type: string
                     applied:
                       description: |-
                         applied is true when every listed identity matched an outstanding
                         residual and was retired.
                       type: boolean
-                    digest:
-                      description: |-
-                        digest identifies the processed acknowledgement (list and acknowledging
-                        user). A changed acknowledgement is processed again.
-                      type: string
                     message:
                       description: message explains a rejected acknowledgement.
+                      type: string
+                    name:
+                      description: name of the processed acknowledgement.
                       type: string
                     processedAt:
                       description: processedAt is when the controller processed the
@@ -1883,14 +1839,21 @@ spec:
                       items:
                         type: string
                       type: array
+                    uid:
+                      description: uid of the processed acknowledgement; each is processed
+                        once.
+                      type: string
                   required:
                   - acknowledgedBy
                   - applied
-                  - digest
+                  - name
                   - processedAt
+                  - uid
                   type: object
                 type: array
-                x-kubernetes-list-type: atomic
+                x-kubernetes-list-map-keys:
+                - uid
+                x-kubernetes-list-type: map
               conditions:
                 description: conditions provide detailed status information.
                 items:

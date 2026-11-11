@@ -5,7 +5,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -16,10 +15,10 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
@@ -202,8 +201,9 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 }
 
 // testCleanupAcknowledgementAuthorization proves through the real API server
-// and admission webhook that a user who may update DebugSessions still cannot
-// set a cleanup acknowledgement without the acknowledge-cleanup verb.
+// and admission webhook that a user who may update DebugSessions cannot
+// acknowledge cleanup without create on DebugSessionCleanupAcknowledgements,
+// and that acknowledgedBy must name the creating user.
 func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup, key client.ObjectKey) {
 	ctx := s.Ctx
 	suffix := helpers.GenerateUniqueName("ack")
@@ -212,7 +212,7 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 		APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, Resources: []string{"debugsessions"}, Verbs: []string{"get", "update", "patch"},
 	}}}
 	acknowledge := &rbacv1.ClusterRole{ObjectMeta: metav1.ObjectMeta{Name: suffix + "-ack"}, Rules: []rbacv1.PolicyRule{{
-		APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, Resources: []string{"debugsessions"}, Verbs: []string{breakglassv1alpha1.DebugSessionCleanupAcknowledgeVerb},
+		APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, Resources: []string{"debugsessioncleanupacknowledgements"}, Verbs: []string{"create"},
 	}}}
 	bind := func(name, role string, users ...string) *rbacv1.ClusterRoleBinding {
 		binding := &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: name}, RoleRef: rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role}}
@@ -224,7 +224,6 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 	for _, obj := range []client.Object{update, acknowledge, bind(suffix+"-update", update.Name, requester, operator), bind(suffix+"-ack", acknowledge.Name, operator)} {
 		require.NoError(t, s.CreateResource(obj))
 	}
-
 	as := func(user string) client.Client {
 		cfg, err := clientcmd.BuildConfigFromFlags("", helpers.GetKubeconfig())
 		require.NoError(t, err)
@@ -234,23 +233,46 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 		require.NoError(t, err)
 		return c
 	}
-	annotate := func(user string) error {
-		patch := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q,%q:%q}}}`,
-			breakglassv1alpha1.DebugSessionCleanupAcknowledgedAbsentAnnotation, `[{"apiVersion":"policies.kyverno.io/v1","kind":"PolicyException","namespace":"breakglass-debug","name":"none","uid":"none"}]`,
-			breakglassv1alpha1.DebugSessionCleanupAcknowledgedByAnnotation, user)
-		session := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
-		return as(user).Patch(ctx, session, client.RawPatch(types.MergePatchType, []byte(patch)))
+	session := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, s.Client.Get(ctx, key, session))
+	ack := func(name, by string) *breakglassv1alpha1.DebugSessionCleanupAcknowledgement {
+		return &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{
+			ObjectMeta: metav1.ObjectMeta{Name: suffix + "-" + name, Namespace: key.Namespace},
+			Spec: breakglassv1alpha1.DebugSessionCleanupAcknowledgementSpec{
+				SessionName: key.Name, SessionUID: string(session.UID), AcknowledgedBy: by,
+				Identities: []breakglassv1alpha1.CleanupAcknowledgedIdentity{{APIVersion: "policies.kyverno.io/v1", Kind: "PolicyException", Namespace: "breakglass-debug", Name: "none", UID: "none"}},
+			},
+		}
 	}
 	// RBAC propagation is eventually consistent; wait until the operator passes.
-	require.Eventually(t, func() bool { return annotate(operator) == nil }, time.Minute, 2*time.Second, "an operator holding acknowledge-cleanup may acknowledge")
-	err := annotate(requester)
-	require.Error(t, err, "update RBAC alone must not allow acknowledgement")
-	assert.Contains(t, err.Error(), "may not acknowledge-cleanup")
+	require.Eventually(t, func() bool {
+		obj := ack("operator", operator)
+		if err := as(operator).Create(ctx, obj); err != nil {
+			t.Logf("operator create: %v", err)
+			return false
+		}
+		s.Cleanup.Add(obj)
+		return true
+	}, time.Minute, 2*time.Second, "an operator with create on the resource may acknowledge")
+
+	err := as(requester).Create(ctx, ack("requester", requester))
+	require.Error(t, err, "update on debugsessions alone must not allow acknowledgement")
+	assert.True(t, apierrors.IsForbidden(err), "RBAC must deny the requester, got %v", err)
+
+	err = as(operator).Create(ctx, ack("forged", requester))
+	require.Error(t, err, "acknowledgedBy must name the creating user")
 
 	// The controller records the processed acknowledgement with the operator.
 	require.Eventually(t, func() bool {
 		current := &breakglassv1alpha1.DebugSession{}
-		return s.Client.Get(ctx, key, current) == nil && current.Status.CleanupAcknowledgement != nil &&
-			current.Status.CleanupAcknowledgement.AcknowledgedBy == operator
+		if s.Client.Get(ctx, key, current) != nil {
+			return false
+		}
+		for _, record := range current.Status.CleanupAcknowledgements {
+			if record.AcknowledgedBy == operator {
+				return true
+			}
+		}
+		return false
 	}, helpers.WaitForStateTimeout, time.Second, "the acknowledgement must be processed and attributed")
 }

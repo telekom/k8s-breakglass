@@ -1,0 +1,132 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: debugsessioncleanupacknowledgements.breakglass.t-caas.telekom.com
+spec:
+  group: breakglass.t-caas.telekom.com
+  names:
+    kind: DebugSessionCleanupAcknowledgement
+    listKind: DebugSessionCleanupAcknowledgementList
+    plural: debugsessioncleanupacknowledgements
+    shortNames:
+    - dsca
+    singular: debugsessioncleanupacknowledgement
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.sessionName
+      name: Session
+      type: string
+    - jsonPath: .spec.acknowledgedBy
+      name: By
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          DebugSessionCleanupAcknowledgement retires DebugSession cleanup residuals
+          that the controller cannot prove gone, for example objects of an
+          uninstalled CRD. Creating one requires RBAC create on this resource, which
+          the API server enforces; grant it only to independent operators.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              DebugSessionCleanupAcknowledgementSpec lists cleanup residuals of one
+              DebugSession that an operator verified are gone.
+            properties:
+              acknowledgedBy:
+                description: |-
+                  acknowledgedBy is the creating user; the admission webhook requires it to
+                  equal the requesting user.
+                minLength: 1
+                type: string
+              identities:
+                description: |-
+                  identities are the exact residuals to retire. Every entry must match an
+                  outstanding residual, otherwise nothing is retired.
+                items:
+                  description: |-
+                    CleanupAcknowledgedIdentity names one DebugSession cleanup residual by its
+                    full recorded identity. UID is empty only for an unresolved create intent.
+                  properties:
+                    apiVersion:
+                      description: apiVersion of the residual resource.
+                      minLength: 1
+                      type: string
+                    kind:
+                      description: kind of the residual resource.
+                      minLength: 1
+                      type: string
+                    name:
+                      description: name of the residual resource.
+                      minLength: 1
+                      type: string
+                    namespace:
+                      description: namespace of the residual resource; empty for cluster-scoped
+                        resources.
+                      type: string
+                    uid:
+                      description: uid is the recorded UID; omit it only for an unresolved
+                        create intent.
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                maxItems: 256
+                minItems: 1
+                type: array
+                x-kubernetes-list-type: atomic
+              reason:
+                description: reason is an optional reason or ticket reference for
+                  the audit trail.
+                maxLength: 1024
+                type: string
+              sessionName:
+                description: sessionName is the DebugSession in the same namespace.
+                minLength: 1
+                type: string
+              sessionUID:
+                description: sessionUID binds the acknowledgement to one DebugSession
+                  instance.
+                minLength: 1
+                type: string
+            required:
+            - acknowledgedBy
+            - identities
+            - sessionName
+            - sessionUID
+            type: object
+            x-kubernetes-validations:
+            - message: spec is immutable
+              rule: self == oldSelf
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources: {}

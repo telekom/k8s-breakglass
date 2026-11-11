@@ -52,6 +52,8 @@ import (
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
 const (
@@ -190,7 +192,7 @@ func NewDebugSessionController(log *zap.SugaredLogger, client ctrlclient.Client,
 		recordingConnections: NewTerminalRecordingConnectionProvider(connectionLeases),
 		auxiliaryMgr:         NewAuxiliaryResourceManager(log.Named("auxiliary"), client),
 	}
-	c.acknowledgementWebhookActive = c.debugSessionWebhookActive
+	c.acknowledgementWebhookActive = c.cleanupAcknowledgementWebhookActive
 	return c
 }
 
@@ -253,12 +255,19 @@ func (c *DebugSessionController) currentAuditManager() *audit.Manager {
 func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.DebugSession{}).
+		// A new acknowledgement reconciles its session at once.
+		Watches(&breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj ctrlclient.Object) []reconcile.Request {
+			ack, ok := obj.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
+			if !ok {
+				return nil
+			}
+			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: ack.Namespace, Name: ack.Spec.SessionName}}}
+		})).
 		Complete(c)
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete
-// The DebugSession validating webhook authorizes cleanup acknowledgements with a SubjectAccessReview.
-// +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements,verbs=get;list;watch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates,verbs=get;list;watch

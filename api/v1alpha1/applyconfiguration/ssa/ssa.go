@@ -240,7 +240,7 @@ func BreakglassSessionStatusFrom(status *breakglassv1alpha1.BreakglassSessionSta
 // must use the shared live-read status writers to preserve monotonic updates.
 func cleanupAcknowledgementFrom(a *breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) *ac.DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
 	ack := ac.DebugSessionCleanupAcknowledgementStatus().
-		WithDigest(a.Digest).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
+		WithName(a.Name).WithUID(a.UID).WithAcknowledgedBy(a.AcknowledgedBy).WithApplied(a.Applied).WithProcessedAt(a.ProcessedAt).
 		WithRetired(a.Retired...)
 	if a.Reason != "" {
 		ack.WithReason(a.Reason)
@@ -277,11 +277,8 @@ func DebugSessionStatusFrom(status *breakglassv1alpha1.DebugSessionStatus) *ac.D
 	if status.ConnectionLease != nil {
 		result.WithConnectionLease(DebugSessionConnectionLeaseFrom(status.ConnectionLease))
 	}
-	for i := range status.CleanupAcknowledgementRetirements {
-		result.WithCleanupAcknowledgementRetirements(cleanupAcknowledgementFrom(&status.CleanupAcknowledgementRetirements[i]))
-	}
-	if a := status.CleanupAcknowledgement; a != nil {
-		result.WithCleanupAcknowledgement(cleanupAcknowledgementFrom(a))
+	for i := range status.CleanupAcknowledgements {
+		result.WithCleanupAcknowledgements(cleanupAcknowledgementFrom(&status.CleanupAcknowledgements[i]))
 	}
 
 	if status.LastActivity != nil {

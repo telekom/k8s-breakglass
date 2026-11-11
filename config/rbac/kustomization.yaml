@@ -12,7 +12,7 @@ resources:
 # role above continues to serve. See impersonate_constrained_role.yaml.
 - impersonate_constrained_role.yaml
 - impersonate_constrained_role_binding.yaml
-# Cleanup acknowledgement verb (handwritten; bound to nobody by default)
+# Cleanup acknowledgement role (handwritten; bound to nobody by default)
 - debugsession_cleanup_acknowledger_role.yaml
 # Leader election role (required for HA deployments)
 - leader_election_role.yaml

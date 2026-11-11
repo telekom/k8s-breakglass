@@ -16,12 +16,13 @@ import (
 // with apply.
 //
 // DebugSessionCleanupAcknowledgementStatus records how the controller
-// processed the current cleanup acknowledgement.
+// processed one DebugSessionCleanupAcknowledgement.
 type DebugSessionCleanupAcknowledgementStatusApplyConfiguration struct {
-	// digest identifies the processed acknowledgement (list and acknowledging
-	// user). A changed acknowledgement is processed again.
-	Digest *string `json:"digest,omitempty"`
-	// acknowledgedBy is the user recorded by the admission webhook.
+	// name of the processed acknowledgement.
+	Name *string `json:"name,omitempty"`
+	// uid of the processed acknowledgement; each is processed once.
+	UID *string `json:"uid,omitempty"`
+	// acknowledgedBy is the user recorded in the acknowledgement.
 	AcknowledgedBy *string `json:"acknowledgedBy,omitempty"`
 	// reason is the optional reason or ticket reference.
 	Reason *string `json:"reason,omitempty"`
@@ -42,11 +43,19 @@ func DebugSessionCleanupAcknowledgementStatus() *DebugSessionCleanupAcknowledgem
 	return &DebugSessionCleanupAcknowledgementStatusApplyConfiguration{}
 }
 
-// WithDigest sets the Digest field in the declarative configuration to the given value
+// WithName sets the Name field in the declarative configuration to the given value
 // and returns the receiver, so that objects can be built by chaining "With" function invocations.
-// If called multiple times, the Digest field is set to the value of the last call.
-func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithDigest(value string) *DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
-	b.Digest = &value
+// If called multiple times, the Name field is set to the value of the last call.
+func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithName(value string) *DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
+	b.Name = &value
+	return b
+}
+
+// WithUID sets the UID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the UID field is set to the value of the last call.
+func (b *DebugSessionCleanupAcknowledgementStatusApplyConfiguration) WithUID(value string) *DebugSessionCleanupAcknowledgementStatusApplyConfiguration {
+	b.UID = &value
 	return b
 }
 

@@ -57,17 +57,12 @@ rules:
   - update
   - watch
 - apiGroups:
-  - authorization.k8s.io
-  resources:
-  - subjectaccessreviews
-  verbs:
-  - create
-- apiGroups:
   - breakglass.t-caas.telekom.com
   resources:
   - auditconfigs
   - breakglassescalations
   - debugpodtemplates
+  - debugsessioncleanupacknowledgements
   - debugsessionclusterbindings
   - debugsessiontemplates
   - denypolicies
