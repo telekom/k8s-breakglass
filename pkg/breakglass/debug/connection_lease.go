@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -31,6 +32,10 @@ const (
 	connectionLeaseSecretUIDAnnotation         = "breakglass.telekom.com/connection-secret-uid"
 	connectionLeaseSecretVersionAnnotation     = "breakglass.telekom.com/connection-secret-resource-version"
 )
+
+// ErrConnectionGenerationRaced reports that another writer staged or
+// published a generation concurrently. The caller may retry.
+var ErrConnectionGenerationRaced = errors.New("connection generation raced with another publisher")
 
 // ConnectionLeaseProof identifies the immutable authorization decision used to
 // acquire a connection lease. TargetUID is the live ClusterConfig UID until a
@@ -102,7 +107,7 @@ func (s *ConnectionLeaseService) StageGeneration(ctx context.Context, ref Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection generation is invalid")
 	}
 	if generation <= current {
-		return ConnectionGeneration{}, fmt.Errorf("connection generation is not monotonic")
+		return ConnectionGeneration{}, fmt.Errorf("connection generation is not monotonic: %w", ErrConnectionGenerationRaced)
 	}
 	lease = lease.DeepCopy()
 	lease.Annotations[connectionLeasePendingGenerationAnnotation] = strconv.FormatInt(generation, 10)
@@ -136,7 +141,7 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection lease changed during generation readiness: %w", err)
 	}
 	if lease.Annotations[connectionLeasePendingGenerationAnnotation] != strconv.FormatInt(staged.Generation, 10) {
-		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness")
+		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness: %w", ErrConnectionGenerationRaced)
 	}
 	lease = lease.DeepCopy()
 	lease.Annotations[connectionLeaseGenerationAnnotation] = strconv.FormatInt(staged.Generation, 10)

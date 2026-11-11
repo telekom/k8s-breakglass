@@ -367,6 +367,9 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	recordingDetails["complete"] = metadata.Complete
 	if streamErr != nil {
 		recordingDetails["streamError"] = "stream aborted"
+		// Name the fence that ended the stream without leaking credential or
+		// Secret names: the bounded reason code identifies what changed.
+		recordingDetails["abortReason"] = terminalRecordingAbortReason(streamErr)
 	}
 	if err != nil {
 		recordingDetails["stage"] = "finalize"
@@ -383,6 +386,29 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
+}
+
+// terminalRecordingAbortReason classifies why a recorded stream ended early.
+func terminalRecordingAbortReason(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "privileged input"):
+		return "credential_changed"
+	case strings.Contains(message, "ClusterConfig") && (strings.Contains(message, "replaced") || strings.Contains(message, "spec changed")):
+		return "cluster_config_changed"
+	case strings.Contains(message, "terminal target"):
+		return "target_changed"
+	case strings.Contains(message, "terminal session authority") || strings.Contains(message, "terminal profile authority"):
+		return "session_authority_changed"
+	case strings.Contains(message, "connection lease") || strings.Contains(message, "terminal stream claim"):
+		return "lease_changed"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "expired"
+	case errors.Is(err, context.Canceled):
+		return "client_disconnected"
+	default:
+		return "stream_failed"
+	}
 }
 
 // terminalRecordingAuditTimeout bounds the synchronous delivery of one

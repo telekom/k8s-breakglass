@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	coordinationv1 "k8s.io/api/coordination/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -277,6 +278,27 @@ func TestTerminalLeaseCredentialFailuresFailClosed(t *testing.T) {
 			for _, lease := range leases.Items {
 				require.NotEqual(t, "1", lease.Annotations[connectionLeaseGenerationAnnotation], "no generation may be published without a stable proof")
 			}
+		})
+	}
+}
+
+func TestGenerationPublishErrorRetriesOnlyConcurrentChanges(t *testing.T) {
+	gr := coordinationv1.Resource("leases")
+	for name, tc := range map[string]struct {
+		err       error
+		retryable bool
+	}{
+		"optimistic lock":        {apierrors.NewConflict(gr, "lease", fmt.Errorf("changed")), true},
+		"lease retired":          {apierrors.NewNotFound(gr, "lease"), true},
+		"generation raced":       {fmt.Errorf("x: %w", ErrConnectionGenerationRaced), true},
+		"credential changed":     {errCredentialChangedDuringPublication, true},
+		"lease expired or taken": {fmt.Errorf("connection lease is stale or expired"), false},
+		"credential unreadable":  {fmt.Errorf("read cluster credential secret: forbidden"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := generationPublishError("publish", tc.err)
+			require.Equal(t, tc.retryable, errors.Is(err, ErrTerminalRecordingGenerationConflict))
+			require.ErrorIs(t, err, tc.err)
 		})
 	}
 }

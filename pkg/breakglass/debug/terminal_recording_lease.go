@@ -157,6 +157,20 @@ func (p terminalRecordingLeaseProvider) AcquireTerminalRecordingConnection(ctx c
 // credential generation. The request failed closed and may be retried.
 var ErrTerminalRecordingGenerationConflict = errors.New("terminal recording credential generation changed concurrently")
 
+var errCredentialChangedDuringPublication = errors.New("credential changed during generation publication")
+
+// generationPublishError marks only concurrent changes as retryable: an
+// optimistic-lock conflict on the Lease, a Lease retired by a concurrent
+// acquirer, another publisher's staged or published generation, or a
+// credential change while publishing. Everything else (an expired or
+// foreign-held lease, an unreadable credential) stays a denial.
+func generationPublishError(stage string, err error) error {
+	if apierrors.IsConflict(err) || apierrors.IsNotFound(err) || errors.Is(err, errCredentialChangedDuringPublication) || errors.Is(err, ErrConnectionGenerationRaced) {
+		return fmt.Errorf("%s terminal recording credential generation: %w: %w", stage, ErrTerminalRecordingGenerationConflict, err)
+	}
+	return fmt.Errorf("%s terminal recording credential generation: %w", stage, err)
+}
+
 // ensureCredentialGeneration publishes a new lease generation when none is
 // ready or the target credential Secret changed since the last publication.
 // Publication uses the lease's staged/ready compare-and-swap, so concurrent
@@ -178,7 +192,7 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 	}
 	staged, err := p.service.StageGeneration(ctx, ref, current+1)
 	if err != nil {
-		return nil, fmt.Errorf("stage terminal recording credential generation: %w: %w", ErrTerminalRecordingGenerationConflict, err)
+		return nil, generationPublishError("stage", err)
 	}
 	if _, err := p.service.PublishReady(ctx, staged, func(readyCtx context.Context) (ConnectionCredential, error) {
 		// The proof is re-read after staging so a rotation in between is never published.
@@ -187,11 +201,11 @@ func (p terminalRecordingLeaseProvider) ensureCredentialGeneration(ctx context.C
 			return ConnectionCredential{}, err
 		}
 		if got != want {
-			return ConnectionCredential{}, fmt.Errorf("credential changed during generation publication")
+			return ConnectionCredential{}, errCredentialChangedDuringPublication
 		}
 		return got, nil
 	}); err != nil {
-		return nil, fmt.Errorf("publish terminal recording credential generation: %w: %w", ErrTerminalRecordingGenerationConflict, err)
+		return nil, generationPublishError("publish", err)
 	}
 	published := &coordinationv1.Lease{}
 	if err := p.service.liveReader().Get(ctx, types.NamespacedName{Namespace: ref.Namespace, Name: ref.Name}, published); err != nil {

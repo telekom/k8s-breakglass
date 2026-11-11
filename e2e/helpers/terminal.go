@@ -5,6 +5,8 @@ package helpers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -45,6 +47,9 @@ type TerminalStreamRequest struct {
 	// Interact receives the live output channel and the stdin writer. It
 	// returns once it has finished typing; stdin is closed afterwards.
 	Interact func(output <-chan string, stdin io.Writer) error
+	// CorrelationID, when set, is sent as X-Correlation-ID so the stream's
+	// audit events can be matched.
+	CorrelationID string
 }
 
 // StreamRecordedTerminal runs one full-duplex recorded exec through the
@@ -62,6 +67,9 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 	}
 	req.Header.Set("Authorization", "Bearer "+c.AuthToken)
 	req.Header.Set("Content-Type", "application/octet-stream")
+	if request.CorrelationID != "" {
+		req.Header.Set(CorrelationIDHeader, request.CorrelationID)
+	}
 	output := make(chan string, 64)
 	// Every exit ends the output stream so interaction callbacks never hang.
 	var closeOutput sync.Once
@@ -123,11 +131,19 @@ func (c *APIClient) StreamRecordedTerminal(ctx context.Context, request Terminal
 
 // GetRaw performs an authenticated GET and returns status and body.
 func (c *APIClient) GetRaw(ctx context.Context, path string) (int, []byte, error) {
+	return c.GetRawWithCID(ctx, path, "")
+}
+
+// GetRawWithCID is GetRaw with an explicit correlation ID.
+func (c *APIClient) GetRawWithCID(ctx context.Context, path, cid string) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+c.AuthToken)
+	if cid != "" {
+		req.Header.Set(CorrelationIDHeader, cid)
+	}
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return 0, nil, err
@@ -135,4 +151,44 @@ func (c *APIClient) GetRaw(ctx context.Context, path string) (int, []byte, error
 	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	return resp.StatusCode, body, err
+}
+
+// ReceivedAuditEvent is one event stored by the e2e audit webhook receiver.
+type ReceivedAuditEvent struct {
+	Type           string                `json:"type"`
+	Details        map[string]any        `json:"details"`
+	Actor          struct{ User string } `json:"actor"`
+	RequestContext *struct {
+		CorrelationID string `json:"correlationId"`
+	} `json:"requestContext"`
+}
+
+// AuditEventsByCorrelation returns the events the e2e audit webhook receiver
+// stored for one correlation ID.
+func AuditEventsByCorrelation(ctx context.Context, cid string) ([]ReceivedAuditEvent, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, GetAuditWebhookReceiverExternalURL()+"/events", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("audit receiver returned %d", resp.StatusCode)
+	}
+	var payload struct {
+		Events []ReceivedAuditEvent `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return nil, err
+	}
+	var matched []ReceivedAuditEvent
+	for _, event := range payload.Events {
+		if event.RequestContext != nil && event.RequestContext.CorrelationID == cid {
+			matched = append(matched, event)
+		}
+	}
+	return matched, nil
 }

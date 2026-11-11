@@ -36,9 +36,12 @@ either value differs, the replica stages generation `n+1` and publishes it with
 the Lease staged/ready compare-and-swap, re-reading the inputs as the readiness
 proof. No Secret name or value is stored on the Lease.
 
-Concurrent replicas cannot both publish. A request that loses the race (or sees
-the inputs change while publishing) executes nothing and gets `503` with
-`Retry-After: 1`; the client retries.
+Concurrent replicas cannot both publish. A request that loses the race (an
+optimistic-lock conflict, a generation staged or published by another replica,
+a Lease retired concurrently, or inputs changing while publishing) executes
+nothing and gets `503` with `Retry-After: 1`; the client retries. Any other
+publication failure, such as an expired or foreign-held Lease, is a denial
+(`403`).
 
 A credential change therefore fails closed in two ways: the active stream's
 target check compares the inputs captured when the stream started and aborts
@@ -75,7 +78,7 @@ share its correlation ID and never contain terminal bytes:
 | Event | When | Details |
 |---|---|---|
 | `debug_session.terminal_recording_started` | Evidence reserved, before target execution | `recordingId`, pod namespace/name/UID, container, operation, `formatVersion`, lease UID, generation, `retentionExpiresAt` |
-| `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete` |
+| `debug_session.terminal_recording_finalized` | Evidence published | the above plus `sha256`, `bytes`, `frames`, `complete`; for an aborted stream `abortReason` (`credential_changed`, `cluster_config_changed`, `target_changed`, `session_authority_changed`, `lease_changed`, `expired`, `client_disconnected`, `stream_failed`) |
 | `debug_session.terminal_recording_failed` | Reservation or publication failed | `stage` (`reserve` or `finalize`) and the identifiers known at that point |
 | `debug_session.terminal_recording_accessed` | An authorized reader listed or replayed recordings | `access` (`list` or `replay`), `recordingIds` or `recordingId`, `sha256`, `bytes`; the actor is the reader |
 
