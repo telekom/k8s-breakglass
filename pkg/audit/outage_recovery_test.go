@@ -783,21 +783,21 @@ func TestLateHandOverUsesFreeCapacity(t *testing.T) {
 	cfg := outageConfig()
 	old := NewQueuedSink(&flakySink{}, cfg, zap.NewNop())
 	nextCfg := outageConfig()
-	nextCfg.QueueSize, nextCfg.DropOnFull, nextCfg.BatchTimeout = 1000, false, time.Hour
-	nextCfg.BatchSize = 1000
+	// No worker drains during the handover and capacity exceeds the batch,
+	// so every event must be enqueued. Without the non-blocking first send,
+	// each of the 1000 events has an even chance of a timeout.
+	nextCfg.QueueSize, nextCfg.DropOnFull, nextCfg.BatchTimeout = 2000, false, time.Hour
+	nextCfg.BatchSize = 5000
 	next := NewQueuedSink(&flakySink{}, nextCfg, zap.NewNop())
 	t.Cleanup(func() { require.NoError(t, next.Close()) })
 	old.HandOver(next)
 	old.handOverDeadline.Store(time.Now().Add(-time.Second).UnixNano()) // budget already spent
-	events := make([]*Event, 200)
+	events := make([]*Event, 1000)
 	for i := range events {
 		events[i] = &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}
 	}
-	timeouts := metrics.AuditEventsDropped.WithLabelValues(next.Name(), "enqueue_timeout")
-	before := testutil.ToFloat64(timeouts)
 	old.shutdownDrop(events)
-	require.Equal(t, before, testutil.ToFloat64(timeouts), "free capacity must win over the expired context")
-	require.Zero(t, next.Health().DroppedEvents)
+	require.Zero(t, next.Health().DroppedEvents, "free capacity must win over the expired context")
 	require.Zero(t, old.Health().DroppedEvents)
 }
 
@@ -967,4 +967,105 @@ func TestHandOverFollowsASuccessorThatClosesDuringTheWait(t *testing.T) {
 	close(release)
 	<-closed
 	require.Eventually(t, func() bool { return delivered.Load() >= 1 }, time.Second, 5*time.Millisecond)
+}
+
+// A handover waiting on a full successor B that then closes follows B's
+// successor C; an event C's filters exclude is counted, not lost silently.
+func TestHandOverViaClosingSuccessorCountsFilteredEvents(t *testing.T) {
+	cfg := outageConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+	cfg.WriteTimeout = 5 * time.Second
+	release := make(chan struct{})
+	b := NewQueuedSink(newFuncSink("probe-b", func([]*Event) error { <-release; return nil }), cfg, zap.NewNop())
+	require.NoError(t, b.Write(context.Background(), &Event{ID: "busy", Type: EventSessionRequested}))
+	require.NoError(t, b.Write(context.Background(), &Event{ID: "fills-queue", Type: EventSessionRequested}))
+	var delivered atomic.Int64
+	c := NewQueuedSink(NewFilteredSink(newFuncSink("probe-c", func(events []*Event) error {
+		delivered.Add(int64(len(events)))
+		return nil
+	}), EventFilterConfig{IncludeEventTypes: []string{string(EventSessionRequested)}}), outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	b.HandOver(c)
+	filtered := metrics.AuditEventsDropped.WithLabelValues("probe-c", "handover_filtered")
+	before := testutil.ToFloat64(filtered)
+	done := make(chan error, 1)
+	go func() {
+		done <- b.writeHandedOver(context.Background(), &Event{ID: "excluded-by-c", Type: EventConfigChanged})
+	}()
+	time.Sleep(50 * time.Millisecond) // the handover waits on B's full queue
+	closed := make(chan struct{})
+	go func() { _ = b.Close(); close(closed) }()
+	require.NoError(t, <-done)
+	close(release)
+	<-closed
+	require.Equal(t, before+1, testutil.ToFloat64(filtered))
+	require.Equal(t, int64(1), c.Health().DroppedEvents)
+}
+
+// With two sinks, each old sink's pending ingress events reach only its own
+// successor: nothing crosses to the other sink's replacement.
+func TestManagerIngressHandOverNeverCrossesSinks(t *testing.T) {
+	release := make(chan struct{})
+	blocked := func(name string) Sink {
+		return newFuncSink(name, func([]*Event) error { <-release; return nil })
+	}
+	cfg := outageConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+	cfg.WriteTimeout = time.Minute
+	only := func(sink Sink, typ EventType) Sink {
+		return NewFilteredSink(sink, EventFilterConfig{IncludeEventTypes: []string{string(typ)}})
+	}
+	// Old sink A takes session events, old sink B config events.
+	oldMulti := NewIsolatedMultiSink([]Sink{only(blocked("cross-a"), EventSessionRequested), only(blocked("cross-b"), EventConfigChanged)}, cfg, zap.NewNop())
+	oldMulti.sinks[0].owner, oldMulti.sinks[1].owner = "config/kafka/a", "config/kafka/b"
+	mcfg := DefaultManagerConfig()
+	mcfg.WorkerCount, mcfg.BatchSize, mcfg.QueueSize = 1, 1, 100
+	mcfg.WriteTimeout = time.Minute
+	oldManager := NewManager(oldMulti, mcfg, zap.NewNop())
+
+	// The replacements accept everything and record what they receive.
+	var mu sync.Mutex
+	received := map[string][]EventType{}
+	recorder := func(name string) Sink {
+		return newFuncSink(name, func(events []*Event) error {
+			mu.Lock()
+			defer mu.Unlock()
+			for _, e := range events {
+				received[name] = append(received[name], e.Type)
+			}
+			return nil
+		})
+	}
+	nextMulti := NewIsolatedMultiSink([]Sink{recorder("cross-a"), recorder("cross-b")}, outageConfig(), zap.NewNop())
+	nextMulti.sinks[0].owner, nextMulti.sinks[1].owner = "config/kafka/a", "config/kafka/b"
+	nextManager := NewManager(nextMulti, DefaultManagerConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, nextManager.Close()) })
+
+	for i := range 10 {
+		typ := EventSessionRequested
+		if i%2 == 1 {
+			typ = EventConfigChanged
+		}
+		require.True(t, oldManager.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: typ}))
+	}
+	require.Eventually(t, func() bool { return len(oldManager.asyncQueue) >= 4 }, time.Second, 5*time.Millisecond)
+	oldMulti.handOver(nextMulti)
+	closed := make(chan struct{})
+	go func() { _ = oldManager.Close(); close(closed) }()
+	time.Sleep(6 * time.Second) // past the manager's drain deadline
+	close(release)
+	<-closed
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(received["cross-a"]) > 0 && len(received["cross-b"]) > 0
+	}, 2*time.Second, 10*time.Millisecond)
+	mu.Lock()
+	defer mu.Unlock()
+	for _, typ := range received["cross-a"] {
+		require.Equal(t, EventSessionRequested, typ, "sink a's replacement got sink b's event")
+	}
+	for _, typ := range received["cross-b"] {
+		require.Equal(t, EventConfigChanged, typ, "sink b's replacement got sink a's event")
+	}
 }

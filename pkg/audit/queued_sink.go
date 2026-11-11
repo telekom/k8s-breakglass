@@ -265,7 +265,9 @@ func NewQueuedSink(sink Sink, cfg QueuedSinkConfig, logger *zap.Logger) *QueuedS
 // of reloads), otherwise the event is counted as a shutdown drop.
 func (qs *QueuedSink) closedWrite(ctx context.Context, event *Event) error {
 	if successor := qs.successor.Load(); successor != nil {
-		return successor.Write(ctx, event)
+		// writeHandedOver, not Write: an event the successor's filters
+		// exclude is counted ("handover_filtered") instead of vanishing.
+		return successor.writeHandedOver(ctx, event)
 	}
 	qs.recordDrop(1, "shutdown")
 	return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
