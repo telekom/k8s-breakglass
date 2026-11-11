@@ -214,3 +214,79 @@ func TestTerminalRouteFramedProtocolRecordsResizeAndTiming(t *testing.T) {
 		return false
 	}, 5*time.Second, 20*time.Millisecond, "malformed input never yields a complete recording")
 }
+
+func TestDecoderTreatsClosedLocalStdinAsNormalEnd(t *testing.T) {
+	body, bodyWriter := io.Pipe()
+	aborted := make(chan error, 1)
+	stdin, _ := decodeFramedTerminalInput(context.Background(), body, func(err error) { aborted <- err })
+	// The executor finished without reading its stdin and the stream closed it.
+	require.NoError(t, stdin.Close())
+	go func() {
+		_ = EncodeTerminalFrame(bodyWriter, TerminalFrameStdin, []byte("never read"))
+		_ = bodyWriter.Close()
+	}()
+	select {
+	case err := <-aborted:
+		t.Fatalf("closing local stdin must not abort the stream: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+// exitingTerminalExecutor writes output and returns without reading stdin.
+type exitingTerminalExecutor struct{}
+
+func (exitingTerminalExecutor) Stream(remotecommand.StreamOptions) error { return nil }
+func (exitingTerminalExecutor) StreamWithContext(_ context.Context, options remotecommand.StreamOptions) error {
+	_, err := io.WriteString(options.Stdout, "done")
+	return err
+}
+
+func TestTerminalRouteCompletesWhenExecutorIgnoresPendingInput(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	now := metav1.Now()
+	expiresAt := metav1.NewTime(now.Add(time.Hour))
+	execAllowed := true
+	session := &breakglassv1alpha1.DebugSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "session", Namespace: "hub", UID: types.UID("session-uid")},
+		Spec:       breakglassv1alpha1.DebugSessionSpec{Cluster: "spoke", RequestedBy: "owner"},
+		Status: breakglassv1alpha1.DebugSessionStatus{
+			State: breakglassv1alpha1.DebugSessionStateActive, ExpiresAt: &expiresAt,
+			ResolvedTemplate:     &breakglassv1alpha1.DebugSessionTemplateSpec{Audit: &breakglassv1alpha1.DebugSessionAuditConfig{EnableTerminalRecording: true}},
+			Participants:         []breakglassv1alpha1.DebugSessionParticipant{{User: "alice", Role: breakglassv1alpha1.ParticipantRoleParticipant, JoinedAt: now}},
+			AllowedPods:          []breakglassv1alpha1.AllowedPodRef{{Namespace: "target", Name: "pod", UID: "pod-uid"}},
+			AllowedPodOperations: &breakglassv1alpha1.AllowedPodOperations{Exec: &execAllowed},
+		},
+	}
+	service, cli := terminalArtifactFixture(t, session)
+	controller := NewDebugSessionAPIController(zap.NewNop().Sugar(), cli, nil, nil).WithAPIReader(cli).
+		WithTerminalRecordingArtifacts(service).WithTerminalRecordingConnections(terminalRecordingRouteProvider{}).WithAuditService(NewMockAuditEmitter(true))
+	controller.terminalTargetResolver = func(context.Context, *breakglassv1alpha1.DebugSession, string, string, string) (*rest.Config, *corev1.Pod, string, error) {
+		return &rest.Config{}, &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "target", Name: "pod", UID: types.UID("pod-uid")}}, "cluster-uid", nil
+	}
+	controller.terminalExecutorFactory = func(*rest.Config, string, string, string, string, []string) (remotecommand.Executor, error) {
+		return exitingTerminalExecutor{}, nil
+	}
+	server := httptest.NewServer(debugSessionAPITestRouter(t, controller, "alice", "", nil))
+	defer server.Close()
+	input, inputWriter := io.Pipe()
+	req, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/debugSessions/session/terminal?namespace=hub&podNamespace=target&podName=pod&operation=exec&command=true", input)
+	require.NoError(t, err)
+	req.Header.Set(TerminalProtocolHeader, TerminalProtocolFramed)
+	// Input keeps arriving while the command exits without reading it.
+	go func() {
+		for i := 0; i < 50; i++ {
+			if EncodeTerminalFrame(inputWriter, TerminalFrameStdin, []byte("pending")) != nil {
+				return
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		_ = inputWriter.Close()
+	}()
+	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	require.NoError(t, err)
+	output, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	require.Equal(t, "done", string(output))
+	require.Equal(t, "completed", response.Trailer.Get("X-Breakglass-Recording-Status"), "unconsumed input does not make a finished command incomplete")
+}
