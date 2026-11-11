@@ -179,28 +179,32 @@ of the sessions they acknowledge.
   subresource only to the controller.
 
 **How the controller processes it.** Each acknowledgement is processed once,
-keyed by its UID, oldest first, and before any mode-specific cleanup. As a
-result, node-maintenance and hotfix residuals are retired before their Leases
-are released. A new acknowledgement triggers a reconcile of its session at
-once.
+oldest first, before any mode-specific cleanup. As a result, node-maintenance
+and hotfix residuals are retired before their Leases are released. A new
+acknowledgement triggers a reconcile of its session at once.
 
+- A controller replica first claims the acknowledgement (`status.phase:
+  Processing`). A claim that has not finished after 2 minutes is taken over
+  by another replica. The final outcome is recorded on the acknowledgement's
+  own status (`Applied` or `Rejected`, `retired`, `message`, `processedAt`),
+  and that record is the processing evidence. An acknowledgement with a final
+  phase is never processed again.
 - It is applied only while `CleanupFailed=True`, and only if **every** listed
   identity matches an outstanding residual exactly (apiVersion, kind,
   namespace, name and UID). Unlisted residuals are kept.
-- Every outcome is appended to the DebugSession's
-  `status.cleanupAcknowledgements` (name, UID, `acknowledgedBy`, reason,
-  `applied`, `retired`, `message`). The list holds at most 64 entries; the
-  oldest rejected records are dropped first, and acknowledgements older than
-  the oldest kept record are not processed again. It is audited as
-  `debug_session.cleanup_acknowledged` (severity warning) with the
-  acknowledging user as actor.
+- Every outcome is audited as `debug_session.cleanup_acknowledged` (severity
+  warning) with the acknowledging user as actor. If the controller stops
+  between recording the outcome and emitting the event, that event is lost.
 - **Rejected:** nothing is retired, the cleanup backoff is unchanged, and the
-  reason is in `message`. Fix the problem and create a new acknowledgement.
+  reason is in the acknowledgement's `status.message`. Fix the problem and
+  create a new acknowledgement.
 - **Applied:** matching entries are marked `deleted` (pod-template and deployed
-  entries are dropped) with the reason in their `error` field.
+  entries are dropped) with the reason in their `error` field. The DebugSession
+  also records the acknowledgement in `status.cleanupAcknowledgements` (at most
+  64 applied acknowledgements per session; beyond that, new ones are rejected,
+  so list the remaining residuals in one acknowledgement).
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
-    The reason persists even if later acknowledgements are rejected.
   - If residuals remain, the new residual set is reported once with
     `debug_session.cleanup_failed`.
 - If node-maintenance or hotfix cleanup fails while the session is being

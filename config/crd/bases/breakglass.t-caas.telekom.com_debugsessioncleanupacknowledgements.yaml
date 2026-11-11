@@ -23,6 +23,9 @@ spec:
     - jsonPath: .spec.acknowledgedBy
       name: By
       type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -124,9 +127,39 @@ spec:
             x-kubernetes-validations:
             - message: spec is immutable
               rule: self == oldSelf
+          status:
+            description: status is written only by the controller.
+            properties:
+              claimedAt:
+                description: |-
+                  claimedAt is when a controller replica claimed the acknowledgement. A
+                  stale claim is taken over by another replica.
+                format: date-time
+                type: string
+              message:
+                description: message explains a rejection.
+                type: string
+              phase:
+                description: phase is the processing phase.
+                enum:
+                - Processing
+                - Applied
+                - Rejected
+                type: string
+              processedAt:
+                description: processedAt is when the final phase was recorded.
+                format: date-time
+                type: string
+              retired:
+                description: retired lists the identities retired by an applied acknowledgement.
+                items:
+                  type: string
+                type: array
+            type: object
         required:
         - spec
         type: object
     served: true
     storage: true
-    subresources: {}
+    subresources:
+      status: {}

@@ -5,6 +5,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,17 +264,15 @@ func testCleanupAcknowledgementAuthorization(t *testing.T, s *helpers.TestSetup,
 	require.Error(t, err, "acknowledgedBy must name the creating user")
 	assert.True(t, apierrors.IsInvalid(err), "the admission policy rejects a forged actor as Invalid, got %v", err)
 
-	// The controller records the processed acknowledgement with the operator.
+	// The controller records the outcome on the acknowledgement. The session
+	// is not CleanupFailed, so the acknowledgement is rejected and retires
+	// nothing.
 	require.Eventually(t, func() bool {
-		current := &breakglassv1alpha1.DebugSession{}
-		if s.Client.Get(ctx, key, current) != nil {
+		processed := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+		if s.Client.Get(ctx, client.ObjectKey{Namespace: key.Namespace, Name: suffix + "-operator"}, processed) != nil {
 			return false
 		}
-		for _, record := range current.Status.CleanupAcknowledgements {
-			if record.AcknowledgedBy == operator {
-				return true
-			}
-		}
-		return false
-	}, helpers.WaitForStateTimeout, time.Second, "the acknowledgement must be processed and attributed")
+		return processed.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementRejected &&
+			strings.Contains(processed.Status.Message, "not failing")
+	}, helpers.WaitForStateTimeout, time.Second, "the acknowledgement must be processed")
 }

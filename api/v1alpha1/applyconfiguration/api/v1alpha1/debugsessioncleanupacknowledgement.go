@@ -28,6 +28,8 @@ type DebugSessionCleanupAcknowledgementApplyConfiguration struct {
 	v1.TypeMetaApplyConfiguration    `json:""`
 	*v1.ObjectMetaApplyConfiguration `json:"metadata,omitempty"`
 	Spec                             *DebugSessionCleanupAcknowledgementSpecApplyConfiguration `json:"spec,omitempty"`
+	// status is written only by the controller.
+	Status *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration `json:"status,omitempty"`
 }
 
 // DebugSessionCleanupAcknowledgement constructs a declarative configuration of the DebugSessionCleanupAcknowledgement type for use with
@@ -74,6 +76,12 @@ func ExtractDebugSessionCleanupAcknowledgementFrom(debugSessionCleanupAcknowledg
 // applied if another fieldManager has updated or force applied any of the previously applied fields.
 func ExtractDebugSessionCleanupAcknowledgement(debugSessionCleanupAcknowledgement *apiv1alpha1.DebugSessionCleanupAcknowledgement, fieldManager string) (*DebugSessionCleanupAcknowledgementApplyConfiguration, error) {
 	return ExtractDebugSessionCleanupAcknowledgementFrom(debugSessionCleanupAcknowledgement, fieldManager, "")
+}
+
+// ExtractDebugSessionCleanupAcknowledgementStatus extracts the applied configuration owned by fieldManager from
+// debugSessionCleanupAcknowledgement for the status subresource.
+func ExtractDebugSessionCleanupAcknowledgementStatus(debugSessionCleanupAcknowledgement *apiv1alpha1.DebugSessionCleanupAcknowledgement, fieldManager string) (*DebugSessionCleanupAcknowledgementApplyConfiguration, error) {
+	return ExtractDebugSessionCleanupAcknowledgementFrom(debugSessionCleanupAcknowledgement, fieldManager, "status")
 }
 
 func (b DebugSessionCleanupAcknowledgementApplyConfiguration) IsApplyConfiguration() {}
@@ -241,6 +249,14 @@ func (b *DebugSessionCleanupAcknowledgementApplyConfiguration) ensureObjectMetaA
 // If called multiple times, the Spec field is set to the value of the last call.
 func (b *DebugSessionCleanupAcknowledgementApplyConfiguration) WithSpec(value *DebugSessionCleanupAcknowledgementSpecApplyConfiguration) *DebugSessionCleanupAcknowledgementApplyConfiguration {
 	b.Spec = value
+	return b
+}
+
+// WithStatus sets the Status field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Status field is set to the value of the last call.
+func (b *DebugSessionCleanupAcknowledgementApplyConfiguration) WithStatus(value *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) *DebugSessionCleanupAcknowledgementApplyConfiguration {
+	b.Status = value
 	return b
 }
 

@@ -94,6 +94,7 @@ rules:
   - clusterconfigs/status
   - debugpodtemplates/status
   - debugsessionartifacts/status
+  - debugsessioncleanupacknowledgements/status
   - debugsessionclusterbindings/status
   - debugsessions/status
   - debugsessiontemplates/status

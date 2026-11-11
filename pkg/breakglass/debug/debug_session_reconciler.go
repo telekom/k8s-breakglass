@@ -269,6 +269,7 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/finalizers,verbs=update
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessiontemplates,verbs=get;list;watch

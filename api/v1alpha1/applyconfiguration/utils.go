@@ -154,6 +154,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.DebugSessionAuditConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgement"):
 		return &apiv1alpha1.DebugSessionCleanupAcknowledgementApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementObjectStatus"):
+		return &apiv1alpha1.DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementSpec"):
 		return &apiv1alpha1.DebugSessionCleanupAcknowledgementSpecApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("DebugSessionCleanupAcknowledgementStatus"):

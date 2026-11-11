@@ -1002,6 +1002,8 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: uid
       type:
         scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementPhase
+  scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterAuthType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfig
@@ -1793,6 +1795,30 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: spec
       type:
         namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementSpec
+    - name: status
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementObjectStatus
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementObjectStatus
+  map:
+    fields:
+    - name: claimedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: message
+      type:
+        scalar: string
+    - name: phase
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementPhase
+    - name: processedAt
+      type:
+        namedType: io.k8s.apimachinery.pkg.apis.meta.v1.Time
+    - name: retired
+      type:
+        list:
+          elementType:
+            scalar: string
+          elementRelationship: atomic
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementSpec
   map:
     fields:

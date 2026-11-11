@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
@@ -29,23 +30,24 @@ func acknowledgementProcessed(ds *breakglassv1alpha1.DebugSession, uid string) b
 	return slices.ContainsFunc(ds.Status.CleanupAcknowledgements, func(r breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool { return r.UID == uid })
 }
 
-// applyCleanupAcknowledgement processes one acknowledgement. It retires
-// residuals only if every listed identity matches an outstanding residual
-// exactly; otherwise nothing is retired and the rejection is recorded. The
-// outcome is appended to ds.Status.CleanupAcknowledgements. A non-empty
-// refusal rejects the acknowledgement with that message without evaluating it.
+// acknowledgementFinal reports whether an acknowledgement has a final outcome.
+func acknowledgementFinal(ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) bool {
+	return ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied || ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementRejected
+}
+
+// applyCleanupAcknowledgement evaluates one acknowledgement against ds. It
+// retires residuals only if every listed identity matches an outstanding
+// residual exactly, and then appends an applied record to
+// ds.Status.CleanupAcknowledgements. A rejection leaves ds unchanged; its
+// outcome is recorded on the acknowledgement object. A non-empty refusal
+// rejects without evaluating.
 func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, refusal string) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 	record := breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
 		Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason, ProcessedAt: metav1.Now(),
 	}
-	finish := func(status *breakglassv1alpha1.DebugSessionStatus) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-		status.CleanupAcknowledgements = boundCleanupAcknowledgementRecords(append(status.CleanupAcknowledgements, record))
-		ds.Status = *status
-		return record
-	}
 	reject := func(format string, args ...any) breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
 		record.Message = fmt.Sprintf(format, args...)
-		return finish(ds.Status.DeepCopy())
+		return record
 	}
 	switch {
 	case refusal != "":
@@ -56,6 +58,8 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
 		return reject("cleanup is not failing; acknowledgements apply only to CleanupFailed residuals")
+	case len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords:
+		return reject("the session already records %d applied acknowledgements; list the remaining residuals in one acknowledgement", maxCleanupAcknowledgementRecords)
 	}
 
 	acknowledged := ack.Spec.Identities
@@ -114,7 +118,9 @@ func applyCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *break
 	slices.Sort(retired)
 	record.Applied = true
 	record.Retired = retired
-	return finish(status)
+	status.CleanupAcknowledgements = append(status.CleanupAcknowledgements, record)
+	ds.Status = *status
+	return record
 }
 
 // sessionPartyMatches reports whether user is the session's requester,
@@ -138,34 +144,13 @@ func sessionPartyMatches(ds *breakglassv1alpha1.DebugSession, user string) bool 
 	return false
 }
 
-// maxCleanupAcknowledgementRecords bounds status.cleanupAcknowledgements; it
-// matches the CRD maxItems.
+// maxCleanupAcknowledgementRecords bounds the applied records in
+// status.cleanupAcknowledgements; it matches the CRD maxItems.
 const maxCleanupAcknowledgementRecords = 64
 
-// boundCleanupAcknowledgementRecords keeps the list within the CRD bound,
-// dropping the oldest rejected records first and only then the oldest applied
-// ones. Retired residuals are already gone from the inventory, so a dropped
-// applied record loses only its history, not a retirement.
-// pendingCleanupAcknowledgements skips objects older than the oldest kept
-// record once the list is full, so trimmed records are not processed again.
-func boundCleanupAcknowledgementRecords(records []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) []breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus {
-	for _, rejectedOnly := range []bool{true, false} {
-		excess := len(records) - maxCleanupAcknowledgementRecords
-		if excess <= 0 {
-			return records
-		}
-		kept := make([]breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus, 0, len(records))
-		for _, record := range records {
-			if excess > 0 && (!rejectedOnly || !record.Applied) {
-				excess--
-				continue
-			}
-			kept = append(kept, record)
-		}
-		records = kept
-	}
-	return records
-}
+// cleanupAcknowledgementClaimTimeout lets another replica take over an
+// acknowledgement whose claiming replica stopped before recording an outcome.
+const cleanupAcknowledgementClaimTimeout = 2 * time.Minute
 
 // pendingCleanupAcknowledgements lists unprocessed acknowledgements for ds,
 // oldest first.
@@ -182,23 +167,17 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 		}
 		return nil, fmt.Errorf("list cleanup acknowledgements: %w", err)
 	}
-	var horizon metav1.Time
-	if records := ds.Status.CleanupAcknowledgements; len(records) >= maxCleanupAcknowledgementRecords {
-		horizon = records[0].ProcessedAt
-		for _, record := range records {
-			if record.ProcessedAt.Before(&horizon) {
-				horizon = record.ProcessedAt
-			}
-		}
-	}
+	now := time.Now()
 	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
 	for _, ack := range list.Items {
-		if !horizon.IsZero() && ack.CreationTimestamp.Before(&horizon) {
-			continue // its record was trimmed; it was already processed
+		if ack.Spec.SessionName != ds.Name || !ack.DeletionTimestamp.IsZero() || acknowledgementFinal(&ack) {
+			continue
 		}
-		if ack.Spec.SessionName == ds.Name && ack.DeletionTimestamp.IsZero() && !acknowledgementProcessed(ds, string(ack.UID)) {
-			pending = append(pending, ack)
+		if ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementProcessing && ack.Status.ClaimedAt != nil &&
+			now.Sub(ack.Status.ClaimedAt.Time) < cleanupAcknowledgementClaimTimeout {
+			continue // another replica is processing it
 		}
+		pending = append(pending, ack)
 	}
 	slices.SortFunc(pending, func(a, b breakglassv1alpha1.DebugSessionCleanupAcknowledgement) int {
 		if c := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); c != 0 {

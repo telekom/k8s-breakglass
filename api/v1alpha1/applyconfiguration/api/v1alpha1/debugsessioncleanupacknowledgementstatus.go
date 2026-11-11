@@ -15,8 +15,8 @@ import (
 // DebugSessionCleanupAcknowledgementStatusApplyConfiguration represents a declarative configuration of the DebugSessionCleanupAcknowledgementStatus type for use
 // with apply.
 //
-// DebugSessionCleanupAcknowledgementStatus records how the controller
-// processed one DebugSessionCleanupAcknowledgement.
+// DebugSessionCleanupAcknowledgementStatus records one applied
+// DebugSessionCleanupAcknowledgement in the DebugSession status.
 type DebugSessionCleanupAcknowledgementStatusApplyConfiguration struct {
 	// name of the processed acknowledgement.
 	Name *string `json:"name,omitempty"`

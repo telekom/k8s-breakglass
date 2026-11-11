@@ -229,9 +229,9 @@ type DebugSessionStatus struct {
 	// It contains no Secret name or credential material.
 	// +optional
 	ConnectionLease *DebugSessionConnectionLease `json:"connectionLease,omitempty"`
-	// cleanupAcknowledgements records processed
-	// DebugSessionCleanupAcknowledgements for this session, applied or not.
-	// It keeps at most 64 entries, dropping the oldest rejected records first.
+	// cleanupAcknowledgements records the applied
+	// DebugSessionCleanupAcknowledgements that retired residuals of this
+	// session. Rejections are recorded on the acknowledgement object only.
 	// +optional
 	// +listType=map
 	// +listMapKey=uid

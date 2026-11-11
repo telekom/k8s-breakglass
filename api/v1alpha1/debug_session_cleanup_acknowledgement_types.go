@@ -74,15 +74,55 @@ type DebugSessionCleanupAcknowledgementSpec struct {
 // uninstalled CRD. Creating one requires RBAC create on this resource, which
 // the API server enforces; grant it only to independent operators.
 // +kubebuilder:object:root=true
+// +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced,shortName=dsca
 // +kubebuilder:printcolumn:name="Session",type=string,JSONPath=".spec.sessionName"
 // +kubebuilder:printcolumn:name="By",type=string,JSONPath=".spec.acknowledgedBy"
+// +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=".status.phase"
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=".metadata.creationTimestamp"
 type DebugSessionCleanupAcknowledgement struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	Spec DebugSessionCleanupAcknowledgementSpec `json:"spec"`
+	// status is written only by the controller.
+	// +optional
+	Status DebugSessionCleanupAcknowledgementObjectStatus `json:"status,omitempty"`
+}
+
+// CleanupAcknowledgementPhase is the processing phase of an acknowledgement.
+// +kubebuilder:validation:Enum=Processing;Applied;Rejected
+type CleanupAcknowledgementPhase string
+
+const (
+	// CleanupAcknowledgementProcessing means a controller replica claimed it.
+	CleanupAcknowledgementProcessing CleanupAcknowledgementPhase = "Processing"
+	// CleanupAcknowledgementApplied means the listed residuals were retired.
+	CleanupAcknowledgementApplied CleanupAcknowledgementPhase = "Applied"
+	// CleanupAcknowledgementRejected means nothing was retired; see message.
+	CleanupAcknowledgementRejected CleanupAcknowledgementPhase = "Rejected"
+)
+
+// DebugSessionCleanupAcknowledgementObjectStatus is the durable processing
+// outcome of one acknowledgement. It is the processing evidence: a final
+// phase is never processed again.
+type DebugSessionCleanupAcknowledgementObjectStatus struct {
+	// phase is the processing phase.
+	// +optional
+	Phase CleanupAcknowledgementPhase `json:"phase,omitempty"`
+	// claimedAt is when a controller replica claimed the acknowledgement. A
+	// stale claim is taken over by another replica.
+	// +optional
+	ClaimedAt *metav1.Time `json:"claimedAt,omitempty"`
+	// processedAt is when the final phase was recorded.
+	// +optional
+	ProcessedAt *metav1.Time `json:"processedAt,omitempty"`
+	// retired lists the identities retired by an applied acknowledgement.
+	// +optional
+	Retired []string `json:"retired,omitempty"`
+	// message explains a rejection.
+	// +optional
+	Message string `json:"message,omitempty"`
 }
 
 // DebugSessionCleanupAcknowledgementList contains a list of acknowledgements.
@@ -97,8 +137,8 @@ func init() {
 	SchemeBuilder.Register(&DebugSessionCleanupAcknowledgement{}, &DebugSessionCleanupAcknowledgementList{})
 }
 
-// DebugSessionCleanupAcknowledgementStatus records how the controller
-// processed one DebugSessionCleanupAcknowledgement.
+// DebugSessionCleanupAcknowledgementStatus records one applied
+// DebugSessionCleanupAcknowledgement in the DebugSession status.
 type DebugSessionCleanupAcknowledgementStatus struct {
 	// name of the processed acknowledgement.
 	Name string `json:"name"`

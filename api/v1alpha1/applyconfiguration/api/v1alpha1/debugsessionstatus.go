@@ -29,9 +29,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// connectionLease is the opaque controller-owned target lease capability.
 	// It contains no Secret name or credential material.
 	ConnectionLease *DebugSessionConnectionLeaseApplyConfiguration `json:"connectionLease,omitempty"`
-	// cleanupAcknowledgements records processed
-	// DebugSessionCleanupAcknowledgements for this session, applied or not.
-	// It keeps at most 64 entries, dropping the oldest rejected records first.
+	// cleanupAcknowledgements records the applied
+	// DebugSessionCleanupAcknowledgements that retired residuals of this
+	// session. Rejections are recorded on the acknowledgement object only.
 	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`

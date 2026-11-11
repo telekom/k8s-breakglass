@@ -79,41 +79,6 @@ func TestApplyCleanupAcknowledgementRetiresExactlyTheListedResiduals(t *testing.
 	assert.True(t, acknowledgementProcessed(ds, "uid-a"))
 }
 
-func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
-	wrongUID := append([]CleanupAcknowledgedIdentity(nil), acknowledgedPolicyExceptions...)
-	wrongUID[3].UID = "another-uid"
-	for name, tc := range map[string]struct {
-		mutate  func(*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
-		refusal string
-	}{
-		"wrong uid": {mutate: func(_ *breakglassv1alpha1.DebugSession, a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
-			a.Spec.Identities = wrongUID
-		}},
-		"other session": {mutate: func(_ *breakglassv1alpha1.DebugSession, a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
-			a.Spec.SessionUID = "recreated"
-		}},
-		"not failing": {mutate: func(ds *breakglassv1alpha1.DebugSession, _ *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
-			ds.Status.Conditions = nil
-		}},
-		"refused": {refusal: "webhook inactive"},
-	} {
-		t.Run(name, func(t *testing.T) {
-			ds := failingSession(t)
-			ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-			if tc.mutate != nil {
-				tc.mutate(ds, ack)
-			}
-			before := ds.Status.DeepCopy()
-			record := applyCleanupAcknowledgement(ds, ack, tc.refusal)
-			assert.False(t, record.Applied)
-			assert.NotEmpty(t, record.Message)
-			assert.Empty(t, record.Retired)
-			before.CleanupAcknowledgements = append(before.CleanupAcknowledgements, record)
-			assert.Equal(t, *before, ds.Status, "nothing is retired unless every entry matches")
-		})
-	}
-}
-
 type ackFixture struct {
 	ds      *breakglassv1alpha1.DebugSession
 	hub     client.Client
@@ -128,7 +93,8 @@ func newAckFixture(t *testing.T, ds *breakglassv1alpha1.DebugSession, acks ...*b
 	for _, ack := range acks {
 		objects = append(objects, ack)
 	}
-	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(objects...).WithStatusSubresource(ds).Build()
+	hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(objects...).
+		WithStatusSubresource(ds, &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}).Build()
 	sink := &cleanupAuditCaptureSink{}
 	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 32, WorkerCount: 1}, zap.NewNop())
 	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(manager)
@@ -169,62 +135,6 @@ func TestCleanupAcknowledgementIsAuditedWithTheOperatorAsActor(t *testing.T) {
 	assert.Equal(t, "CleanupAcknowledged", condition.Reason, "the reason survives the second reconcile")
 }
 
-func TestRejectedAcknowledgementKeepsEarlierRetirementProvenance(t *testing.T) {
-	ds := failingSession(t)
-	ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
-	require.True(t, applyCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "").Applied)
-	setCleanupCondition(ds)
-	rejected := applyCleanupAcknowledgement(ds, acknowledgement(ds, "b", CleanupAcknowledgedIdentity{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown"}), "")
-	assert.False(t, rejected.Applied)
-	require.Len(t, ds.Status.CleanupAcknowledgements, 2)
-	setCleanupCondition(ds)
-	assert.Equal(t, "CleanupAcknowledged", ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Reason)
-}
-
-func TestCleanupAcknowledgementsMergeAppendOnlyByUID(t *testing.T) {
-	// Two replicas process different acknowledgements from the same stale copy.
-	ds := failingSession(t)
-	a := acknowledgement(ds, "a", acknowledgedPolicyExceptions[3])
-	b := acknowledgement(ds, "b", acknowledgedPolicyExceptions[2])
-	f := newAckFixture(t, ds, a, b)
-	first := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAPIReader(fakeListOnly{f.hub, a})
-	second := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAPIReader(fakeListOnly{f.hub, b})
-	first.acknowledgementWebhookActive, second.acknowledgementWebhookActive = webhookActive, webhookActive
-	require.NoError(t, first.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
-	require.NoError(t, second.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
-	persisted := &breakglassv1alpha1.DebugSession{}
-	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
-	assert.True(t, acknowledgementProcessed(persisted, "uid-a"), "the first record survives the second write")
-	assert.True(t, acknowledgementProcessed(persisted, "uid-b"))
-	assert.Len(t, persisted.Status.CleanupAcknowledgements, 2)
-	for _, ref := range persisted.Status.DeployedResources {
-		assert.NotEqual(t, "deployed", ref.Name, "an acknowledged deployed residual stays retired")
-	}
-	for _, entry := range persisted.Status.PodTemplateResourceStatuses {
-		assert.NotEqual(t, "pod-template", entry.ResourceName, "an acknowledged pod-template residual stays retired")
-	}
-}
-
-func TestAlreadyRejectedAcknowledgementIsANoOpForAStaleReplica(t *testing.T) {
-	// Replica 1 rejects the acknowledgement (premature); replica 2 still holds a
-	// stale, failing copy on which it would apply. The live record wins.
-	ds := failingSession(t)
-	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	live := ds.DeepCopy()
-	live.Status.Conditions = nil
-	f := newAckFixture(t, live, ack)
-	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), live.DeepCopy()))
-	stale := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, ack})
-	stale.acknowledgementWebhookActive = webhookActive
-	require.NoError(t, stale.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
-	persisted := &breakglassv1alpha1.DebugSession{}
-	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
-	require.Len(t, persisted.Status.CleanupAcknowledgements, 1)
-	assert.False(t, persisted.Status.CleanupAcknowledgements[0].Applied)
-	assert.False(t, persisted.Status.AuxiliaryResourceStatuses[0].Deleted, "a rejected acknowledgement retires nothing, even for a stale replica")
-	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1)
-}
-
 func TestStaleWriterCannotRestoreAcknowledgedAuxiliaryDeletion(t *testing.T) {
 	ds := failingSession(t)
 	f := newAckFixture(t, ds)
@@ -241,22 +151,8 @@ func TestStaleWriterCannotRestoreAcknowledgedAuxiliaryDeletion(t *testing.T) {
 	assert.True(t, aux.AdditionalResources[0].Deleted, "acknowledged child deletion is monotonic")
 }
 
-func TestConcurrentProcessingOfOneAcknowledgementAuditsOnce(t *testing.T) {
-	ds := failingSession(t)
-	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	f := newAckFixture(t, ds, ack)
-	// Two replicas list the same unprocessed acknowledgement before either commits.
-	first, second := ds.DeepCopy(), ds.DeepCopy()
-	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), first))
-	other := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, ack})
-	other.acknowledgementWebhookActive = webhookActive
-	require.NoError(t, other.processCleanupAcknowledgement(context.Background(), second))
-	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
-	assert.Len(t, acks, 1, "only the replica that inserted the record audits it")
-}
-
 // fakeListOnly serves a stale acknowledgement list, as a replica would before
-// observing the other replica's status write.
+// observing another replica's writes.
 type fakeListOnly struct {
 	client.Client
 	ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement
@@ -275,9 +171,9 @@ func TestCleanupAcknowledgementRefusedWithoutValidatingWebhook(t *testing.T) {
 	f := newAckFixture(t, ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...))
 	f.c.acknowledgementWebhookActive = f.c.cleanupAcknowledgementWebhookActive // no configuration in the fake hub
 	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
-	require.Len(t, ds.Status.CleanupAcknowledgements, 1)
-	assert.False(t, ds.Status.CleanupAcknowledgements[0].Applied)
-	assert.Contains(t, ds.Status.CleanupAcknowledgements[0].Message, "validating webhook")
+	status := acknowledgementPhase(t, f, "a")
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase)
+	assert.Contains(t, status.Message, "validating webhook")
 	assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted, "an unverifiable acknowledgement retires nothing")
 	acks := f.events(t, audit.EventDebugSessionCleanupAcknowledged)
 	require.Len(t, acks, 1)
@@ -425,27 +321,137 @@ func TestFourEyesRejectsSessionParties(t *testing.T) {
 	}
 }
 
-func TestCleanupAcknowledgementRecordsAreBounded(t *testing.T) {
-	ds := failingSession(t)
-	base := time.Now().Add(-time.Hour)
-	for i := range maxCleanupAcknowledgementRecords {
-		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
-			UID: fmt.Sprintf("old-%02d", i), Applied: i == 0, ProcessedAt: metav1.NewTime(base.Add(time.Duration(i) * time.Second)),
+func TestApplyCleanupAcknowledgementRejectsWithoutRetiring(t *testing.T) {
+	wrongUID := append([]CleanupAcknowledgedIdentity(nil), acknowledgedPolicyExceptions...)
+	wrongUID[3].UID = "another-uid"
+	for name, tc := range map[string]struct {
+		mutate  func(*breakglassv1alpha1.DebugSession, *breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
+		refusal string
+	}{
+		"wrong uid": {mutate: func(_ *breakglassv1alpha1.DebugSession, a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			a.Spec.Identities = wrongUID
+		}},
+		"other session": {mutate: func(_ *breakglassv1alpha1.DebugSession, a *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			a.Spec.SessionUID = "recreated"
+		}},
+		"not failing": {mutate: func(ds *breakglassv1alpha1.DebugSession, _ *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			ds.Status.Conditions = nil
+		}},
+		"refused": {refusal: "webhook inactive"},
+		"at capacity": {mutate: func(ds *breakglassv1alpha1.DebugSession, _ *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) {
+			for i := range maxCleanupAcknowledgementRecords {
+				ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
+			}
+		}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := failingSession(t)
+			ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+			if tc.mutate != nil {
+				tc.mutate(ds, ack)
+			}
+			before := ds.Status.DeepCopy()
+			record := applyCleanupAcknowledgement(ds, ack, tc.refusal)
+			assert.False(t, record.Applied)
+			assert.NotEmpty(t, record.Message)
+			assert.Equal(t, *before, ds.Status, "a rejection leaves the session unchanged")
 		})
 	}
-	applyCleanupAcknowledgement(ds, acknowledgement(ds, "new", CleanupAcknowledgedIdentity{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown"}), "")
-	records := ds.Status.CleanupAcknowledgements
-	require.Len(t, records, maxCleanupAcknowledgementRecords)
-	assert.True(t, acknowledgementProcessed(ds, "old-00"), "applied records are kept")
-	assert.False(t, acknowledgementProcessed(ds, "old-01"), "the oldest rejected record is dropped")
-	assert.True(t, acknowledgementProcessed(ds, "uid-new"))
+}
 
-	// A trimmed acknowledgement is not processed again.
-	trimmed := acknowledgement(ds, "old-01", acknowledgedPolicyExceptions...)
-	trimmed.UID = "old-01"
-	trimmed.CreationTimestamp = metav1.NewTime(base)
-	f := newAckFixture(t, ds, trimmed)
+func acknowledgementPhase(t *testing.T, f *ackFixture, name string) breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus {
+	t.Helper()
+	ack := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKey{Namespace: f.ds.Namespace, Name: name}, ack))
+	return ack.Status
+}
+
+func TestRejectedAcknowledgementIsRecordedOnTheObjectAndNotReplayed(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.Conditions = nil // premature: cleanup is not failing
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...))
+	for range 3 {
+		require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	}
+	status := acknowledgementPhase(t, f, "a")
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase)
+	assert.Contains(t, status.Message, "not failing")
+	assert.Empty(t, ds.Status.CleanupAcknowledgements, "rejections are not recorded on the session")
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1, "a final outcome is never processed or audited again")
+}
+
+func TestAppliedAcknowledgementAtCapacityIsStillRecordedAndAudited(t *testing.T) {
+	// Even when the session cannot take another applied record, the
+	// rejection is durable and audited exactly once.
+	ds := failingSession(t)
+	for i := range maxCleanupAcknowledgementRecords {
+		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
+	}
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	status := acknowledgementPhase(t, f, "a")
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase)
+	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords, "applied provenance is never dropped")
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1)
+}
+
+func TestRejectedAcknowledgementKeepsEarlierRetirementProvenance(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.DeployedResources = ds.Status.DeployedResources[:1]
+	require.True(t, applyCleanupAcknowledgement(ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...), "").Applied)
+	setCleanupCondition(ds)
+	rejected := applyCleanupAcknowledgement(ds, acknowledgement(ds, "b", CleanupAcknowledgedIdentity{APIVersion: "v1", Kind: "ConfigMap", Name: "unknown"}), "")
+	assert.False(t, rejected.Applied)
+	require.Len(t, ds.Status.CleanupAcknowledgements, 1)
+	setCleanupCondition(ds)
+	assert.Equal(t, "CleanupAcknowledged", ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)).Reason)
+}
+
+func TestConcurrentReplicasProcessAnAcknowledgementOnce(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	f := newAckFixture(t, ds, ack)
+	// Both replicas list the same unclaimed object before either claims it.
+	stale := ack.DeepCopy()
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ack), stale))
+	first := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, stale.DeepCopy()})
+	second := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, stale.DeepCopy()})
+	first.acknowledgementWebhookActive, second.acknowledgementWebhookActive = webhookActive, webhookActive
+	require.NoError(t, first.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
+	require.NoError(t, second.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1, "the losing claim is skipped")
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	assert.Len(t, persisted.Status.CleanupAcknowledgements, 1)
+}
+
+func TestInterruptedClaimIsTakenOverAfterTimeout(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	stale := metav1.NewTime(time.Now().Add(-2 * cleanupAcknowledgementClaimTimeout))
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &stale}
+	fresh := acknowledgement(ds, "b", acknowledgedPolicyExceptions[0])
+	recent := metav1.Now()
+	fresh.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &recent}
+	f := newAckFixture(t, ds, ack, fresh)
 	pending, err := f.c.pendingCleanupAcknowledgements(context.Background(), ds)
 	require.NoError(t, err)
-	assert.Empty(t, pending)
+	require.Len(t, pending, 1, "a stale claim is taken over; a live claim is left to its replica")
+	assert.Equal(t, "a", pending[0].Name)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, acknowledgementPhase(t, f, "a").Phase)
+}
+
+func TestReplayAfterAppliedRecordIsIdempotent(t *testing.T) {
+	// A replica applied the acknowledgement to the session but stopped before
+	// recording the outcome on the object; the takeover must not apply again.
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	applied := ds.DeepCopy()
+	require.True(t, applyCleanupAcknowledgement(applied, ack, "").Applied)
+	f := newAckFixture(t, applied, ack)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), applied))
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, acknowledgementPhase(t, f, "a").Phase)
+	assert.Len(t, applied.Status.CleanupAcknowledgements, 1, "the applied record is not duplicated")
 }
