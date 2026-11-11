@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -29,7 +30,12 @@ const (
 	connectionLeaseGenerationAnnotation        = "breakglass.telekom.com/connection-generation"
 	connectionLeasePendingGenerationAnnotation = "breakglass.telekom.com/connection-pending-generation"
 	connectionLeaseSecretUIDAnnotation         = "breakglass.telekom.com/connection-secret-uid"
+	connectionLeaseSecretVersionAnnotation     = "breakglass.telekom.com/connection-secret-resource-version"
 )
+
+// ErrConnectionGenerationRaced reports that another writer staged or
+// published a generation concurrently. The caller may retry.
+var ErrConnectionGenerationRaced = errors.New("connection generation raced with another publisher")
 
 // ConnectionLeaseProof identifies the immutable authorization decision used to
 // acquire a connection lease. TargetUID is the live ClusterConfig UID until a
@@ -66,6 +72,14 @@ type ConnectionGeneration struct {
 	SecretUID  types.UID
 }
 
+// ConnectionCredential identifies, without revealing, the controller-owned
+// Secret whose readiness a generation proves. A changed UID or resourceVersion
+// requires a new generation.
+type ConnectionCredential struct {
+	UID             types.UID
+	ResourceVersion string
+}
+
 // ConnectionLeaseBackend is the narrow capability contract for connection,
 // recording, and artifact transports. Implementations must keep credential
 // material outside the capability and must not publish a generation until the
@@ -74,7 +88,7 @@ type ConnectionLeaseBackend interface {
 	Acquire(context.Context, ConnectionLeaseProof) (ConnectionLeaseRef, error)
 	Validate(context.Context, ConnectionLeaseRef, int64) error
 	StageGeneration(context.Context, ConnectionLeaseRef, int64) (ConnectionGeneration, error)
-	PublishReady(context.Context, ConnectionGeneration, func(context.Context) (types.UID, error)) (ConnectionGeneration, error)
+	PublishReady(context.Context, ConnectionGeneration, func(context.Context) (ConnectionCredential, error)) (ConnectionGeneration, error)
 	Revoke(context.Context, ConnectionLeaseRef) error
 }
 
@@ -93,7 +107,7 @@ func (s *ConnectionLeaseService) StageGeneration(ctx context.Context, ref Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection generation is invalid")
 	}
 	if generation <= current {
-		return ConnectionGeneration{}, fmt.Errorf("connection generation is not monotonic")
+		return ConnectionGeneration{}, fmt.Errorf("connection generation is not monotonic: %w", ErrConnectionGenerationRaced)
 	}
 	lease = lease.DeepCopy()
 	lease.Annotations[connectionLeasePendingGenerationAnnotation] = strconv.FormatInt(generation, 10)
@@ -105,16 +119,17 @@ func (s *ConnectionLeaseService) StageGeneration(ctx context.Context, ref Connec
 }
 
 // PublishReady atomically accepts a generation only after the transport has
-// returned the controller-created Secret UID proving readiness. The service
+// returned the controller-owned Secret identity proving readiness. The service
 // does not accept names or values, preventing credential leakage.
-func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged ConnectionGeneration, ready func(context.Context) (types.UID, error)) (ConnectionGeneration, error) {
+func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged ConnectionGeneration, ready func(context.Context) (ConnectionCredential, error)) (ConnectionGeneration, error) {
 	if ready == nil {
 		return ConnectionGeneration{}, fmt.Errorf("connection generation readiness callback is required")
 	}
 	if _, err := s.validatedLease(ctx, staged.Lease); err != nil {
 		return ConnectionGeneration{}, err
 	}
-	uid, err := ready(ctx)
+	credential, err := ready(ctx)
+	uid := credential.UID
 	if err != nil || uid == "" {
 		if err == nil {
 			err = fmt.Errorf("readiness callback returned no Secret UID")
@@ -126,12 +141,17 @@ func (s *ConnectionLeaseService) PublishReady(ctx context.Context, staged Connec
 		return ConnectionGeneration{}, fmt.Errorf("connection lease changed during generation readiness: %w", err)
 	}
 	if lease.Annotations[connectionLeasePendingGenerationAnnotation] != strconv.FormatInt(staged.Generation, 10) {
-		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness")
+		return ConnectionGeneration{}, fmt.Errorf("connection generation changed during readiness: %w", ErrConnectionGenerationRaced)
 	}
 	lease = lease.DeepCopy()
 	lease.Annotations[connectionLeaseGenerationAnnotation] = strconv.FormatInt(staged.Generation, 10)
 	delete(lease.Annotations, connectionLeasePendingGenerationAnnotation)
 	lease.Annotations[connectionLeaseSecretUIDAnnotation] = string(uid)
+	if credential.ResourceVersion != "" {
+		lease.Annotations[connectionLeaseSecretVersionAnnotation] = credential.ResourceVersion
+	} else {
+		delete(lease.Annotations, connectionLeaseSecretVersionAnnotation)
+	}
 	if err := s.client.Update(ctx, lease); err != nil {
 		return ConnectionGeneration{}, fmt.Errorf("publish connection generation: %w", err)
 	}

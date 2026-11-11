@@ -61,6 +61,16 @@ func sameRecording(a, b Record) bool {
 	return a.ArtifactUID != "" && a.ArtifactUID == b.ArtifactUID && a.ArtifactID == b.ArtifactID && a.Namespace == b.Namespace && a.SessionName == b.SessionName && a.SessionUID == b.SessionUID && a.TargetClusterUID == b.TargetClusterUID && a.TargetIdentityDigest == b.TargetIdentityDigest && a.PlanDigest == b.PlanDigest && a.RuntimeBindingDigest == b.RuntimeBindingDigest && a.OperationEpoch == b.OperationEpoch && a.ExpiresAt.Equal(b.ExpiresAt) && reflect.DeepEqual(recordingIdentity(a.Recording), recordingIdentity(b.Recording))
 }
 
+// CancelRecording releases a recording reservation whose stream never
+// started, so failed admissions cannot exhaust the session's slots. The
+// reservation's UID fences the cleanup against a reused slot.
+func (service *Service) CancelRecording(ctx context.Context, reservation Record) error {
+	if reservation.Recipe != TerminalRecordingRecipe {
+		return ErrForbidden
+	}
+	return service.cancelReservation(ctx, reservation, StateRevoked)
+}
+
 func (service *Service) Recording(ctx context.Context, namespace, sessionName, artifactID string) (Record, error) {
 	record, err := service.repository.Get(ctx, namespace, sessionName, artifactID)
 	if err != nil {

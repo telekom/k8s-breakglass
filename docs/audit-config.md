@@ -296,6 +296,7 @@ These capture access to non-API endpoints:
 - `debug_session.failed` / `debug_session.expired` / `debug_session.approval_timeout`
 - `debug_session.binding_unresolved`
 - `debug_session.command` / `debug_session.file_access`
+- `debug_session.terminal_recording_started` / `debug_session.terminal_recording_finalized` / `debug_session.terminal_recording_failed` / `debug_session.terminal_recording_accessed` (see [terminal recording](terminal-recording.md#audit-events))
 
 New lifecycle and API audit producers include the session namespace. Legacy
 `DebugSessionCreated` and `DebugSessionTerminated` manager helpers omit it;

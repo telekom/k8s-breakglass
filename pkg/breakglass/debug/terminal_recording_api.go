@@ -12,15 +12,18 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	apiresponses "github.com/telekom/k8s-breakglass/pkg/apiresponses"
 	"github.com/telekom/k8s-breakglass/pkg/artifacts/backend"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -43,6 +46,7 @@ const maximumConcurrentTerminalRecordings = 2
 // supplied by the connection-lease service for one target stream.
 type TerminalRecordingConnectionBinding struct {
 	Namespace            string
+	ClusterName          string
 	SessionUID           string
 	TargetPodUID         string
 	TargetClusterUID     string
@@ -82,8 +86,18 @@ func (c *DebugSessionAPIController) WithTerminalRecordingConnections(provider Te
 }
 
 func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
+	// Early error responses must not wait for an interactive client to end its
+	// request body: without full duplex the HTTP/1.1 server drains the body
+	// before it writes any response. Streaming below re-checks support.
+	_ = http.NewResponseController(ctx.Writer).EnableFullDuplex()
 	if c.recordingArtifacts == nil || c.recordingConnections == nil || (c.ccProvider == nil && c.terminalTargetResolver == nil) {
 		apiresponses.RespondServiceUnavailable(ctx, "terminal recording transport is not configured")
+		return
+	}
+	// Recording lifecycle events are the index to retained evidence. Without a
+	// running audit pipeline no stream may start.
+	if _, ok := c.auditService.(syncAuditEmitter); c.auditService == nil || !ok || !c.auditService.IsEnabled() {
+		apiresponses.RespondServiceUnavailable(ctx, "terminal recording requires an enabled audit configuration")
 		return
 	}
 	if c.recordingStreams.Add(1) > maximumConcurrentTerminalRecordings {
@@ -192,9 +206,15 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to resolve terminal recording profile")
 		return
 	}
-	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
+	binding := TerminalRecordingConnectionBinding{Namespace: session.Namespace, ClusterName: session.Spec.Cluster, SessionUID: string(session.UID), TargetPodUID: targetUID, TargetClusterUID: targetClusterUID, RuntimeBindingDigest: strings.TrimPrefix(profileDigest, "sha256:"), ExpiresAt: session.Status.ExpiresAt.Time}
 	connection, err := c.recordingConnections.AcquireTerminalRecordingConnection(apiCtx, binding)
 	if err != nil {
+		if errors.Is(err, ErrTerminalRecordingGenerationConflict) {
+			// Another replica is publishing the same generation; nothing ran.
+			ctx.Header("Retry-After", "1")
+			apiresponses.RespondServiceUnavailable(ctx, "terminal recording credential generation is being published; retry")
+			return
+		}
 		apiresponses.RespondForbidden(ctx, "terminal recording connection is not available")
 		return
 	}
@@ -262,10 +282,34 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		ExpiresAt: binding.ExpiresAt.Add(retention), Recording: &metadata,
 	}, connection.Validate)
 	if err != nil {
+		_ = c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFailed, session, identity, map[string]interface{}{"stage": "reserve", "podNamespace": namespace, "podName": podName, "operation": operation})
 		apiresponses.RespondServiceUnavailable(ctx, "failed to reserve terminal evidence")
 		return
 	}
 	metadata = *reservation.Recording
+	recordingDetails := map[string]interface{}{
+		"recordingId": reservation.ArtifactID, "podNamespace": namespace, "podName": podName, "podUID": targetUID,
+		"container": ctx.Query("container"), "operation": operation, "formatVersion": metadata.FormatVersion,
+		"leaseUID": binding.LeaseUID, "generation": binding.Generation, "retentionExpiresAt": reservation.ExpiresAt.UTC().Format(time.RFC3339),
+	}
+	releaseReservation := func() {
+		// Nothing executed: release the slot instead of retaining an empty reservation.
+		if cancelErr := c.recordingArtifacts.CancelRecording(context.WithoutCancel(ctx.Request.Context()), reservation); cancelErr != nil {
+			c.log.Warnw("Failed to release unused terminal recording reservation", "session", session.Name, "recordingId", reservation.ArtifactID, "error", cancelErr)
+		}
+	}
+	if err := c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingStarted, session, identity, recordingDetails); err != nil {
+		releaseReservation()
+		apiresponses.RespondServiceUnavailable(ctx, "terminal recording audit event could not be delivered")
+		return
+	}
+	// Audit delivery may take seconds; authority must still hold before the
+	// target runs, not only at the first periodic check.
+	if err := connection.Validate(apiCtx); err != nil {
+		releaseReservation()
+		apiresponses.RespondForbidden(ctx, "terminal recording connection is no longer authorized")
+		return
+	}
 	recorder := NewTerminalRecorder(reservation.MaxBytes)
 	ctx.Header("Content-Type", "application/octet-stream")
 	ctx.Header("X-Content-Type-Options", "nosniff")
@@ -305,16 +349,107 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		}
 	}
 	ctx.Header("X-Breakglass-Recording-ID", reservation.ArtifactID)
+	recordingDetails["frames"] = metadata.Frames
+	recordingDetails["bytes"] = len(recording.Bytes)
+	recordingDetails["complete"] = metadata.Complete
+	if streamErr != nil {
+		recordingDetails["streamError"] = "stream aborted"
+		// Name the fence that ended the stream without leaking credential or
+		// Secret names: the bounded reason code identifies what changed.
+		recordingDetails["abortReason"] = terminalRecordingAbortReason(streamErr)
+	}
 	if err != nil {
+		recordingDetails["stage"] = "finalize"
+		_ = c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFailed, session, identity, recordingDetails)
 		ctx.Header("X-Breakglass-Recording-Status", "finalization-pending")
 		return
 	}
+	recordingDetails["sha256"] = published.SHA256
+	// The stream already ran; a delivery failure is logged and cannot be undone.
+	_ = c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingFinalized, session, identity, recordingDetails)
 	ctx.Header("X-Breakglass-Recording-SHA256", published.SHA256)
 	if !metadata.Complete {
 		ctx.Header("X-Breakglass-Recording-Status", "incomplete")
 		return
 	}
 	ctx.Header("X-Breakglass-Recording-Status", "completed")
+}
+
+// errTerminalStreamExpired reports that the stream reached its binding expiry.
+var errTerminalStreamExpired = fmt.Errorf("terminal stream reached its expiry: %w", context.DeadlineExceeded)
+
+// terminalRecordingAbortReason classifies why a recorded stream ended early.
+func terminalRecordingAbortReason(err error) string {
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "privileged input"):
+		return "credential_changed"
+	case strings.Contains(message, "ClusterConfig") && (strings.Contains(message, "replaced") || strings.Contains(message, "spec changed")):
+		return "cluster_config_changed"
+	case strings.Contains(message, "terminal target"):
+		return "target_changed"
+	case strings.Contains(message, "terminal session authority") || strings.Contains(message, "terminal profile authority"):
+		return "session_authority_changed"
+	case strings.Contains(message, "connection lease") || strings.Contains(message, "terminal stream claim"):
+		return "lease_changed"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "expired"
+	case errors.Is(err, context.Canceled):
+		return "client_disconnected"
+	default:
+		return "stream_failed"
+	}
+}
+
+// terminalRecordingAuditTimeout bounds the synchronous delivery of one
+// recording audit event.
+const terminalRecordingAuditTimeout = 10 * time.Second
+
+// syncAuditEmitter is implemented by audit.Service: delivery to every sink is
+// confirmed, or an error is returned (disabled, filtered out, sink failure).
+type syncAuditEmitter interface {
+	EmitSync(context.Context, *audit.Event) error
+}
+
+// emitTerminalRecordingAudit synchronously records recording lifecycle and
+// access metadata with the request correlation ID. Terminal bytes are never
+// included. Recording events ignore the template's audit.enabled switch
+// because they are the index to the retained evidence. Callers refuse to
+// execute or to serve recordings when a required event cannot be delivered.
+func (c *DebugSessionAPIController) emitTerminalRecordingAudit(ctx *gin.Context, eventType audit.EventType, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity, details map[string]interface{}) error {
+	emitter, ok := c.auditService.(syncAuditEmitter)
+	if c.auditService == nil || !ok || !c.auditService.IsEnabled() {
+		return fmt.Errorf("terminal recording audit is not available")
+	}
+	// Detach from the request so a disconnected client cannot suppress the event.
+	emitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingAuditTimeout)
+	defer cancel()
+	user := identity.email
+	if user == "" {
+		user = identity.username
+	}
+	event := &audit.Event{
+		Type:      eventType,
+		Timestamp: time.Now(),
+		Actor:     audit.Actor{User: user, Groups: identity.groups, IdentityProvider: identity.provider, SourceIP: ctx.ClientIP()},
+		Target: audit.Target{
+			UID: string(session.UID), Kind: "DebugSession", Name: session.Name, Namespace: session.Namespace, Cluster: session.Spec.Cluster,
+		},
+		RequestContext: audit.SessionRequestContext(session),
+		Details:        maps.Clone(details),
+	}
+	cid := ctx.GetString(apiresponses.CIDKey)
+	if cid == "" {
+		// Keep all events of one stream correlated even without the API middleware.
+		cid = uuid.NewString()
+		ctx.Set(apiresponses.CIDKey, cid)
+	}
+	event.RequestContext.CorrelationID = cid
+	if err := emitter.EmitSync(emitCtx, event); err != nil {
+		c.log.Errorw("Terminal recording audit event was not delivered", "event", eventType, "session", session.Name, "correlationID", cid, "error", err)
+		return fmt.Errorf("deliver %s audit event: %w", eventType, err)
+	}
+	return nil
 }
 
 // terminalRecordingFlushWriter keeps interactive exec/attach output flowing
@@ -371,11 +506,19 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 		stopClose := context.AfterFunc(streamCtx, func() { _ = closer.Close() })
 		defer stopClose()
 	}
+	validationErr := make(chan error, 1)
 	if !expiresAt.IsZero() {
-		timer := time.AfterFunc(time.Until(expiresAt), cancel)
+		// The session's hard expiry ends the stream; report it as such rather
+		// than as a plain cancellation.
+		timer := time.AfterFunc(time.Until(expiresAt), func() {
+			select {
+			case validationErr <- errTerminalStreamExpired:
+			default:
+			}
+			cancel()
+		})
 		defer timer.Stop()
 	}
-	validationErr := make(chan error, 1)
 	watchDone := make(chan struct{})
 	go func() {
 		defer close(watchDone)
@@ -458,6 +601,19 @@ func (c *DebugSessionAPIController) handleListTerminalRecordings(ctx *gin.Contex
 		apiresponses.RespondForbidden(ctx, "recordings are not available to this user")
 		return
 	}
+	ids := make([]string, 0, len(records))
+	for _, record := range records {
+		ids = append(ids, record.ArtifactID)
+	}
+	if err := c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingAccessed, session, identity, map[string]interface{}{"access": "list", "recordingIds": ids}); err != nil {
+		apiresponses.RespondServiceUnavailable(ctx, "recording access could not be audited")
+		return
+	}
+	// Audit delivery may take seconds; recheck the reader before returning data.
+	if err := c.recordingReplayAuthority(session, identity)(ctx.Request.Context()); err != nil {
+		apiresponses.RespondForbidden(ctx, "recordings are not available to this user")
+		return
+	}
 	ctx.JSON(http.StatusOK, records)
 }
 
@@ -498,6 +654,16 @@ func (c *DebugSessionAPIController) handleReplayTerminalRecording(ctx *gin.Conte
 		return
 	}
 	defer func() { _ = reader.Close() }()
+	if err := c.emitTerminalRecordingAudit(ctx, audit.EventDebugSessionTerminalRecordingAccessed, session, identity, map[string]interface{}{
+		"access": "replay", "recordingId": reservation.ArtifactID, "sha256": record.SHA256, "bytes": record.Size,
+	}); err != nil {
+		apiresponses.RespondServiceUnavailable(ctx, "recording access could not be audited")
+		return
+	}
+	if err := authorize(ctx.Request.Context()); err != nil {
+		apiresponses.RespondForbidden(ctx, "recording access denied")
+		return
+	}
 	stopClose := context.AfterFunc(replayCtx, func() { _ = reader.Close() })
 	defer stopClose()
 	ctx.Header("Content-Type", "application/octet-stream")
