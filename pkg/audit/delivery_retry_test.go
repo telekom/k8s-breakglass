@@ -62,6 +62,9 @@ func retryTestConfig() QueuedSinkConfig {
 	cfg.RetryInitialBackoff = 5 * time.Millisecond
 	cfg.RetryMaxBackoff = 20 * time.Millisecond
 	cfg.RetryTimeout = time.Second
+	// These tests cover the bounded retry window and its loss accounting;
+	// retention past the window is covered in outage_recovery_test.go.
+	cfg.DropAfterRetryWindow = true
 	return cfg
 }
 
@@ -121,7 +124,7 @@ func TestQueuedSinkPanicsRetainIdentityAndAccountLoss(t *testing.T) {
 				if batchSize == 2 {
 					events = append(events, &Event{ID: "two"})
 				}
-				before := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "retry_exhausted"))
+				before := testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "panic"))
 				require.NoError(t, qs.WriteBatch(context.Background(), events))
 				count := int64(len(events))
 				if failures < cfg.RetryAttempts {
@@ -129,18 +132,27 @@ func TestQueuedSinkPanicsRetainIdentityAndAccountLoss(t *testing.T) {
 					require.Zero(t, qs.Health().DroppedEvents)
 					require.Equal(t, int64(failures)*count, qs.Health().FailedEvents)
 				} else {
+					// A panic that outlasts the retry window is permanent: the
+					// batch is split and each event dropped with reason "panic".
 					require.Eventually(t, func() bool { return qs.Health().DroppedEvents == count }, time.Second, time.Millisecond)
-					require.Equal(t, before+float64(count), testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "retry_exhausted")))
-					require.Equal(t, int64(cfg.RetryAttempts)*count, qs.Health().FailedEvents)
+					require.Equal(t, before+float64(count), testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "panic")))
+					split := int64(0)
+					if count > 1 {
+						split = count // one more attempt per half
+					}
+					require.Equal(t, int64(cfg.RetryAttempts)*count+split, qs.Health().FailedEvents)
 				}
 				sink.mu.Lock()
 				defer sink.mu.Unlock()
 				for _, ids := range sink.calls {
-					require.Equal(t, len(events), len(ids))
-					require.Equal(t, "one", ids[0])
-					if len(events) == 2 {
-						require.Equal(t, "two", ids[1])
+					if len(ids) == len(events) {
+						require.Equal(t, "one", ids[0])
+						if len(events) == 2 {
+							require.Equal(t, "two", ids[1])
+						}
+						continue
 					}
+					require.Len(t, ids, 1, "only split halves are shorter than the batch")
 				}
 			})
 		}
@@ -325,16 +337,24 @@ func TestQueuedSerializationFailureDoesNotRetryOrTripCircuitBreakers(t *testing.
 			cbCfg := DefaultCircuitBreakerConfig()
 			cbCfg.FailureThreshold = 1
 			cb := NewCircuitBreakerSink(sink, cbCfg, zap.NewNop())
+			invalid := &Event{ID: "invalid", Details: map[string]interface{}{"unsupported": make(chan int)}}
+			// The webhook batch also carries a valid event: the batch is split
+			// and only the invalid event is lost. The Kafka broker is
+			// unreachable, so its batch holds only the invalid event.
+			batch, failed := []*Event{invalid}, int64(1)
+			if sink == webhook {
+				batch, failed = []*Event{{ID: "valid"}, invalid}, 3
+			}
 			cfg := retryTestConfig()
 			cfg.CircuitBreakerThreshold = 1
+			cfg.BatchSize = len(batch)
 			qs := NewQueuedSink(cb, cfg, zap.NewNop())
 			t.Cleanup(func() { require.NoError(t, qs.Close()) })
 			before := testutil.ToFloat64(metrics.AuditSinkErrors.WithLabelValues(sink.Name(), "retry"))
-			require.NoError(t, qs.WriteBatch(context.Background(), []*Event{
-				{ID: "valid"}, {ID: "invalid", Details: map[string]interface{}{"unsupported": make(chan int)}},
-			}))
-			require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 2 }, time.Second, time.Millisecond)
-			require.Equal(t, int64(2), qs.Health().FailedEvents, "serialization is attempted only once")
+			require.NoError(t, qs.WriteBatch(context.Background(), batch))
+			require.Eventually(t, func() bool { return qs.Health().DroppedEvents == 1 }, time.Second, time.Millisecond)
+			require.Equal(t, int64(len(batch)-1), qs.Health().ProcessedEvents)
+			require.Equal(t, failed, qs.Health().FailedEvents, "serialization is attempted only once per split")
 			require.False(t, qs.circuitOpen.Load())
 			require.Zero(t, qs.consecutiveFails.Load())
 			require.Equal(t, CircuitClosed, cb.Stats().State)
@@ -350,7 +370,7 @@ func TestQueuedSerializationFailureDoesNotRetryOrTripCircuitBreakers(t *testing.
 			require.Equal(t, fallbackBefore, testutil.ToFloat64(metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "sync_fallback")))
 			if sink == webhook {
 				require.NoError(t, qs.WriteBatch(context.Background(), []*Event{{ID: "next"}, {ID: "healthy"}}))
-				require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 2 }, time.Second, time.Millisecond)
+				require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 3 }, time.Second, time.Millisecond)
 			}
 		})
 	}
@@ -365,7 +385,7 @@ func TestKafkaAsyncFailuresAreObservable(t *testing.T) {
 	qs := NewQueuedSink(NewFilteredSink(NewCircuitBreakerSink(sink, DefaultCircuitBreakerConfig(), zap.NewNop()), EventFilterConfig{}),
 		retryTestConfig(), zap.NewNop())
 	t.Cleanup(func() { require.NoError(t, qs.Close()) })
-	qs.deliver(2, "batch_write", func(context.Context) error { return nil })
+	qs.deliver([]*Event{{ID: "first"}, {ID: "second"}}, "batch_write", func(context.Context, []*Event) error { return nil }, false, false)
 	require.Zero(t, qs.Health().ProcessedEvents, "asynchronous submission is not successful delivery")
 	require.Equal(t, processedBefore, testutil.ToFloat64(metrics.AuditEventsProcessed.WithLabelValues(sink.Name())))
 	sink.writer.Completion([]kafka.Message{{Key: []byte("first")}, {Key: []byte("second")}}, errors.New("delivery failed"))
@@ -540,9 +560,12 @@ func TestExpiredShutdownDoesNotInvokeSinkForBacklog(t *testing.T) {
 	}
 	close(qs.queue)
 	qs.shutdownDeadline.Store(time.Now().Add(-time.Second).UnixNano())
-	require.True(t, qs.dropShutdownBacklog(0))
+	require.True(t, qs.dropShutdownBacklog(nil))
 	require.Equal(t, int64(100), qs.droppedEvents.Load())
-	qs.deliver(1, "write", func(context.Context) error { t.Error("expired shutdown must not call sink"); return nil })
+	qs.deliver([]*Event{{ID: "late"}}, "write", func(context.Context, []*Event) error {
+		t.Error("expired shutdown must not call sink")
+		return nil
+	}, false, false)
 	require.Zero(t, sink.writeCount.Load())
 	require.Equal(t, int64(101), qs.droppedEvents.Load())
 }

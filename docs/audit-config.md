@@ -455,10 +455,15 @@ spec:
     retryInitialBackoffMillis: 1000
     retryMaxBackoffMillis: 10000
     retryTimeoutSeconds: 60
+    dropAfterRetryWindow: false  # transitional opt-out, see below
 ```
 
-Failed writes retain the same batch and event IDs while retrying. Exhaustion
-counts every lost event and logs an error. `dropOnFull: false` blocks enqueue up
+Failed writes retain the same batch and event IDs while retrying. After the
+retry window the worker keeps the batch and retries it every
+`retryMaxBackoffMillis` until the sink recovers, so an outage longer than the
+window only loses events that no longer fit in the queue (counted as
+`queue_full`/`enqueue_timeout`). `dropAfterRetryWindow: true` is a transitional
+opt-out that restores dropping the batch with reason `retry_exhausted`. `dropOnFull: false` blocks enqueue up
 to the caller deadline or five seconds. Each config's settings apply to its own
 sinks; the manager's shared ingress settings still come from the first
 enabled config by name.
@@ -528,8 +533,12 @@ resets sink clients, circuit breakers or queues. A rotated Secret is picked
 up by the next resync. When a reload replaces the pipeline with a new one, new
 events go to the new pipeline at once, and the old pipeline first finishes
 the events it still holds, including events in retry, for up to its longest
-`queue.retryTimeoutSeconds`, and then closes. A sink that was removed by that
-change can therefore still receive events that were emitted before it. When
+`queue.retryTimeoutSeconds`, and then closes. Events it still holds then
+(for example retained during a broker outage) are handed to the sink with the
+same AuditConfig, sink type, sink name and destination in the new pipeline (or a later one, if several
+reloads follow each other); only a sink removed by the change drops them
+with reason `shutdown`. A sink that was removed by that change can therefore
+still receive events that were emitted before it. When
 auditing stops (all AuditConfigs disabled or deleted, or a changed
 AuditConfig that cannot be built), the old pipeline closes at once with the
 regular five-second shutdown drain. Controller shutdown ends the wait.

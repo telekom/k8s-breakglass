@@ -24,6 +24,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -134,6 +135,43 @@ type KafkaSink struct {
 	connected       atomic.Bool
 	lastError       atomic.Value // stores kafkaSinkError
 	lastSuccessTime atomic.Value // stores time.Time
+
+	// slot admits one synchronous write at a time. A write cancelled by its
+	// context leaves its records inside kafka-go until the writer's own
+	// produce attempt ends; the slot stays taken until then (pending reaches
+	// zero), so retries during an outage cannot pile up copies in the writer.
+	slot    chan struct{}
+	pending atomic.Int64
+}
+
+// writeToken marks the records of one synchronous write so that
+// countingBalancer can tell whether kafka-go submitted them.
+type writeToken struct{ balanced atomic.Int64 }
+
+// countingBalancer counts the records kafka-go assigned to a partition.
+// WriteMessages submits the records right after balancing the last one, so
+// a write whose records were not all balanced submitted none of them.
+type countingBalancer struct{ kafka.Balancer }
+
+func (b countingBalancer) Balance(msg kafka.Message, partitions ...int) int {
+	partition := b.Balancer.Balance(msg, partitions...)
+	if token, ok := msg.WriterData.(*writeToken); ok {
+		token.balanced.Add(1)
+	}
+	return partition
+}
+
+// errKafkaWriterBusy reports that the caller's context ended while an
+// earlier write, or records it left inside kafka-go, still held the writer.
+// It is an ordinary, retryable error.
+var errKafkaWriterBusy = errors.New("kafka writer still holds records from an earlier write")
+
+// releasePending marks n records of the current write as completed and frees
+// the write slot once none are left.
+func (s *KafkaSink) releasePending(n int64) {
+	if s.pending.Add(-n) == 0 {
+		<-s.slot
+	}
 }
 
 type kafkaSinkError struct {
@@ -189,6 +227,14 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	if batchTimeout <= 0 {
 		batchTimeout = time.Second
 	}
+	if !cfg.Async {
+		// Synchronous writes are admitted one at a time (see slot), so no
+		// other write can join a partial kafka-go batch while it waits.
+		// Waiting for BatchTimeout would only delay the receipt past the
+		// queue's write deadline; the queued sink already batches. Flush at
+		// once instead.
+		batchTimeout = time.Millisecond
+	}
 
 	writeTimeout := cfg.WriteTimeout
 	if writeTimeout <= 0 {
@@ -220,7 +266,7 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 	writer := &kafka.Writer{
 		Addr:                   kafka.TCP(cfg.Brokers...),
 		Topic:                  cfg.Topic,
-		Balancer:               &kafka.LeastBytes{},
+		Balancer:               countingBalancer{&kafka.LeastBytes{}},
 		BatchSize:              batchSize,
 		BatchTimeout:           batchTimeout,
 		WriteTimeout:           writeTimeout,
@@ -240,8 +286,14 @@ func NewKafkaSink(cfg KafkaSinkConfig, logger *zap.Logger) (*KafkaSink, error) {
 		name:   sinkName,
 		writer: writer,
 		logger: logger.Named("kafka-audit"),
+		slot:   make(chan struct{}, 1),
 	}
 	sink.connected.Store(!cfg.Async)
+	if !cfg.Async {
+		writer.Completion = func(messages []kafka.Message, _ error) {
+			sink.releasePending(int64(len(messages)))
+		}
+	}
 	if cfg.Async {
 		writer.Completion = func(messages []kafka.Message, err error) {
 			if err == nil {
@@ -385,12 +437,14 @@ func (s *KafkaSink) Write(ctx context.Context, event *Event) error {
 	metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Inc()
 	defer metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Dec()
 
-	if err := s.writer.WriteMessages(ctx, msg); err != nil {
+	if err := s.writeMessages(ctx, msg); err != nil {
 		duration := time.Since(start)
 		errorType := classifyKafkaError(err)
 
 		// Update metrics
-		metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		if !isRetainedAttempt(ctx) {
+			metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		}
 		metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
 		s.messagesFailed.Add(1)
 
@@ -580,12 +634,14 @@ func (s *KafkaSink) WriteBatch(ctx context.Context, events []*Event) error {
 	metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Add(float64(len(messages)))
 	defer metrics.AuditKafkaMessagesInFlight.WithLabelValues(s.name).Sub(float64(len(messages)))
 
-	if err := s.writer.WriteMessages(ctx, messages...); err != nil {
+	if err := s.writeMessages(ctx, messages...); err != nil {
 		duration := time.Since(start)
 		errorType := classifyKafkaError(err)
 
 		// Update metrics
-		metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		if !isRetainedAttempt(ctx) {
+			metrics.AuditSinkErrors.WithLabelValues(s.name, errorType).Inc()
+		}
 		metrics.AuditSinkLatency.WithLabelValues(s.name).Observe(duration.Seconds())
 		s.messagesFailed.Add(int64(len(messages)))
 
@@ -669,4 +725,72 @@ func (s *KafkaSink) HealthCheck() error {
 	}
 
 	return nil
+}
+
+// writeMessages turns a kafka-go writer panic into an error. kafka-go's
+// balancers index the partition list without a length check, so a metadata
+// response that lists the topic without partitions panics in the caller's
+// goroutine.
+func (s *KafkaSink) writeMessages(ctx context.Context, messages ...kafka.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			// Retryable: the balancer panic depends on transient metadata.
+			s.logger.Error("kafka writer panicked",
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
+			err = fmt.Errorf("kafka writer panic: %v", r)
+		}
+	}()
+	if !s.writer.Async && len(messages) > 0 {
+		// ponytail: one synchronous write in flight per sink. A healthy write
+		// holds the slot only while it runs, so other writers wait for it
+		// within their own deadline; per-partition slots if throughput needs
+		// concurrent writers.
+		select {
+		case s.slot <- struct{}{}:
+		case <-ctx.Done():
+			return fmt.Errorf("%w: %w", errKafkaWriterBusy, ctx.Err())
+		}
+		token := &writeToken{}
+		for i := range messages {
+			messages[i].WriterData = token
+		}
+		s.pending.Store(int64(len(messages)))
+		defer func() {
+			// kafka-go submits the records only after it balanced all of
+			// them; otherwise no completion callback will release them.
+			if token.balanced.Load() < int64(len(messages)) {
+				s.releasePending(int64(len(messages)))
+			}
+		}()
+	}
+	err = s.writer.WriteMessages(ctx, messages...)
+	if kafkaRejected(err) {
+		err = fmt.Errorf("%w: %w", ErrRejected, err)
+	}
+	return err
+}
+
+// kafkaRejected reports whether the broker or writer refused the records
+// themselves: every failed record is too large or invalid. InvalidMessage
+// (a CRC mismatch) is temporary in kafka-go and stays retryable.
+// ponytail: a batch with some rejected and some delivered records counts the
+// whole batch as dropped; per-record accounting if this ever matters.
+func kafkaRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	rejected := func(err error) bool {
+		return errors.Is(err, kafka.MessageSizeTooLarge) || errors.Is(err, kafka.RecordListTooLarge) ||
+			errors.Is(err, kafka.InvalidRecord)
+	}
+	var writeErrors kafka.WriteErrors
+	if !errors.As(err, &writeErrors) {
+		return rejected(err)
+	}
+	for _, e := range writeErrors {
+		if e != nil && !rejected(e) {
+			return false
+		}
+	}
+	return writeErrors.Count() > 0
 }

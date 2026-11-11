@@ -437,6 +437,10 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.AuditQueueConfig
   map:
     fields:
+    - name: dropAfterRetryWindow
+      type:
+        scalar: boolean
+      default: false
     - name: dropOnFull
       type:
         scalar: boolean
