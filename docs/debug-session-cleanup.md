@@ -172,11 +172,13 @@ of the sessions they acknowledge.
 - **CRD before controller.** Apply the current CRDs (including
   `debugsessioncleanupacknowledgements` and the DebugSession status field
   `cleanupAcknowledgements`) before the controller. An older DebugSession CRD
-  prunes the status field; the controller then logs an error once and does not
-  audit acknowledgements until the CRD is updated.
-- **Status trust.** Like every other status field, the record can be forged or
-  suppressed by anyone who may write `debugsessions/status`. Grant that
-  subresource only to the controller.
+  prunes the status field; the controller then logs an error once. The
+  retirement itself still persists and is audited, but the session keeps no
+  provenance record and no `CleanupAcknowledged` reason.
+- **Status trust.** Like every other status field, the records can be forged
+  or suppressed by anyone who may write `debugsessions/status` or
+  `debugsessioncleanupacknowledgements/status`. Grant these subresources only
+  to the controller.
 
 **How the controller processes it.** Each acknowledgement is processed once,
 oldest first, before any mode-specific cleanup. As a result, node-maintenance

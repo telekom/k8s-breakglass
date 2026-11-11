@@ -23,8 +23,8 @@ section: Behaviour changes
 - Upgrade order: apply the CRDs (the new
   `debugsessioncleanupacknowledgements` CRD and the DebugSession status field
   `cleanupAcknowledgements`) before the controller. An older DebugSession CRD
-  prunes the field; the controller then logs an error and does not audit
-  acknowledgements until the CRD is updated (#1663).
+  prunes the field; the controller then logs an error and keeps no
+  provenance record on the session until the CRD is updated (#1663).
 - Failed cleanup backs off exponentially up to 5 minutes and emits
   `debug_session.cleanup_failed` once per distinct residual set instead of on
   every attempt. To restore the previous behaviour, use the transitional
