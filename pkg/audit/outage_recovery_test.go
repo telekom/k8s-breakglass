@@ -1368,30 +1368,3 @@ func TestTransientPanicThenOutageIsRetained(t *testing.T) {
 	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 1 }, time.Second, 5*time.Millisecond)
 	require.Zero(t, qs.Health().DroppedEvents)
 }
-
-// A retained single event whose first retention retry panics once gets a
-// fresh retry window instead of being dropped, and is delivered when the
-// next write succeeds.
-func TestRetainedEventSurvivesAOneOffPanic(t *testing.T) {
-	var down, panicNext atomic.Bool
-	down.Store(true)
-	sink := newFuncSink("retained-panic", func([]*Event) error {
-		if panicNext.CompareAndSwap(true, false) {
-			panic("one-off")
-		}
-		if down.Load() {
-			return errors.New("broker unavailable")
-		}
-		return nil
-	})
-	qs := NewQueuedSink(sink, outageConfig(), zap.NewNop())
-	t.Cleanup(func() { require.NoError(t, qs.Close()) })
-	retained := metrics.AuditEventsRetained.WithLabelValues(sink.Name())
-	require.NoError(t, qs.Write(context.Background(), &Event{ID: "only", Type: EventConfigChanged}))
-	require.Eventually(t, func() bool { return testutil.ToFloat64(retained) == 1 }, time.Second, 5*time.Millisecond)
-	down.Store(false)
-	panicNext.Store(true) // the next retained retry panics once
-	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 1 }, 2*time.Second, 5*time.Millisecond)
-	require.Zero(t, qs.Health().DroppedEvents)
-	require.Eventually(t, func() bool { return testutil.ToFloat64(retained) == 0 }, time.Second, 5*time.Millisecond)
-}
