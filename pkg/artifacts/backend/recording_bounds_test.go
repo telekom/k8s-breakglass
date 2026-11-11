@@ -64,8 +64,21 @@ func TestRecordingFramesVersionTwo(t *testing.T) {
 	_, err = validateRecordingFrames(context.Background(), bytes.NewReader(unknown), int64(len(unknown)))
 	require.Error(t, err)
 
-	mixed := append(v2Frames([]uint64{0}, "o"), make([]byte, 42)...)
-	mixed[50] = 1
+	// A valid, correctly chained v1 frame after a v2 frame: only the version
+	// switch makes this artifact invalid.
+	first := v2Frames([]uint64{0}, "o")
+	previous := sha256.Sum256(first)
+	v1 := make([]byte, 42, 43)
+	v1[0], v1[1] = 1, 'o'
+	binary.BigEndian.PutUint64(v1[2:10], 1)
+	copy(v1[10:], previous[:])
+	v1 = append(v1, 'x')
+	mixed := append(append([]byte(nil), first...), v1...)
 	_, err = validateRecordingFrames(context.Background(), bytes.NewReader(mixed), int64(len(mixed)))
-	require.Error(t, err, "versions cannot be mixed within one artifact")
+	require.ErrorContains(t, err, "invalid terminal recording frame", "versions cannot be mixed within one artifact")
+	v1Only := append([]byte(nil), v1...)
+	copy(v1Only[10:42], make([]byte, 32))
+	frames, err = validateRecordingFrames(context.Background(), bytes.NewReader(v1Only), int64(len(v1Only)))
+	require.NoError(t, err, "the same v1 frame alone is valid")
+	require.EqualValues(t, 1, frames)
 }
