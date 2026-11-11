@@ -717,16 +717,31 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		// resourceVersion. Only the replica that wins that write audits the
 		// Applied outcome, so it is audited exactly once even if the
 		// residuals were already gone or a completion was retried.
-		var previous metav1.Condition
+		// First persist the session's cleanup state before completion on the
+		// acknowledgement, so a completion retried after a transient failure
+		// still audits the transition it caused.
+		if ack.Status.Transition == nil {
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			ack.Status.Transition = &breakglassv1alpha1.CleanupAcknowledgementTransition{CleanupFailed: cleanupConditionFailed(live)}
+			if condition := live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+				ack.Status.Transition.ResidualSetDigest = residualSetDigestFromMessage(condition.Message)
+			}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue // another replica is completing it
+				}
+				return fmt.Errorf("record cleanup acknowledgement %s transition: %w", ack.Name, err)
+			}
+		}
+		transition := *ack.Status.Transition
 		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
 				if ds.UID != "" && current.UID != ds.UID {
 					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
-				}
-				previous = metav1.Condition{}
-				if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
-					previous = *condition
 				}
 				if !completeCleanupAcknowledgement(current, record) {
 					return false, nil
@@ -765,9 +780,9 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, true, record.Retired, "")
 				switch {
-				case previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
+				case transition.CleanupFailed && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
-				case cleanupConditionFailed(ds) && residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds):
+				case cleanupConditionFailed(ds) && transition.ResidualSetDigest != cleanupResidualSetDigest(ds):
 					// A partial acknowledgement leaves a different residual
 					// set; report it once, as finishCleanup would.
 					auditManager.DebugSessionCleanupFailed(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, cleanupResidualIdentities(ds))

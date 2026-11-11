@@ -94,6 +94,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &apiv1alpha1.BreakglassSessionStatusApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("CleanupAcknowledgedIdentity"):
 		return &apiv1alpha1.CleanupAcknowledgedIdentityApplyConfiguration{}
+	case v1alpha1.SchemeGroupVersion.WithKind("CleanupAcknowledgementTransition"):
+		return &apiv1alpha1.CleanupAcknowledgementTransitionApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfig"):
 		return &apiv1alpha1.ClusterConfigApplyConfiguration{}
 	case v1alpha1.SchemeGroupVersion.WithKind("ClusterConfigSpec"):

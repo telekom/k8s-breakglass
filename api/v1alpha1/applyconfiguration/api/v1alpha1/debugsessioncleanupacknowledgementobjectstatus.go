@@ -27,6 +27,10 @@ type DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration struct {
 	ClaimedAt *v1.Time `json:"claimedAt,omitempty"`
 	// processedAt is when the final phase was recorded.
 	ProcessedAt *v1.Time `json:"processedAt,omitempty"`
+	// transition records the session's cleanup state just before an Applied
+	// decision was completed, so the resulting transition is audited even if
+	// the completion is retried.
+	Transition *CleanupAcknowledgementTransitionApplyConfiguration `json:"transition,omitempty"`
 	// completedAt is when an Applied decision was completed on the session
 	// and audited. A completed acknowledgement is never processed again, and
 	// its retired identities stay retired.
@@ -64,6 +68,14 @@ func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithC
 // If called multiple times, the ProcessedAt field is set to the value of the last call.
 func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithProcessedAt(value v1.Time) *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration {
 	b.ProcessedAt = &value
+	return b
+}
+
+// WithTransition sets the Transition field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the Transition field is set to the value of the last call.
+func (b *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration) WithTransition(value *CleanupAcknowledgementTransitionApplyConfiguration) *DebugSessionCleanupAcknowledgementObjectStatusApplyConfiguration {
+	b.Transition = value
 	return b
 }
 

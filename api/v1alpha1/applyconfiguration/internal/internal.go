@@ -1004,6 +1004,15 @@ var schemaYAML = typed.YAMLObject(`types:
         scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementPhase
   scalar: string
+- name: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementTransition
+  map:
+    fields:
+    - name: cleanupFailed
+      type:
+        scalar: boolean
+    - name: residualSetDigest
+      type:
+        scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterAuthType
   scalar: string
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.ClusterConfig
@@ -1822,6 +1831,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             scalar: string
           elementRelationship: atomic
+    - name: transition
+      type:
+        namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.CleanupAcknowledgementTransition
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionCleanupAcknowledgementSpec
   map:
     fields:

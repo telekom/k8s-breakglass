@@ -162,6 +162,23 @@ spec:
                 items:
                   type: string
                 type: array
+              transition:
+                description: |-
+                  transition records the session's cleanup state just before an Applied
+                  decision was completed, so the resulting transition is audited even if
+                  the completion is retried.
+                properties:
+                  cleanupFailed:
+                    description: cleanupFailed is whether CleanupFailed was True before
+                      completion.
+                    type: boolean
+                  residualSetDigest:
+                    description: residualSetDigest identifies the residual set before
+                      completion.
+                    type: string
+                required:
+                - cleanupFailed
+                type: object
             type: object
         required:
         - spec

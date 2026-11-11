@@ -117,6 +117,11 @@ type DebugSessionCleanupAcknowledgementObjectStatus struct {
 	// processedAt is when the final phase was recorded.
 	// +optional
 	ProcessedAt *metav1.Time `json:"processedAt,omitempty"`
+	// transition records the session's cleanup state just before an Applied
+	// decision was completed, so the resulting transition is audited even if
+	// the completion is retried.
+	// +optional
+	Transition *CleanupAcknowledgementTransition `json:"transition,omitempty"`
 	// completedAt is when an Applied decision was completed on the session
 	// and audited. A completed acknowledgement is never processed again, and
 	// its retired identities stay retired.
@@ -140,6 +145,16 @@ type DebugSessionCleanupAcknowledgementList struct {
 
 func init() {
 	SchemeBuilder.Register(&DebugSessionCleanupAcknowledgement{}, &DebugSessionCleanupAcknowledgementList{})
+}
+
+// CleanupAcknowledgementTransition is the session's cleanup state before an
+// acknowledgement was completed.
+type CleanupAcknowledgementTransition struct {
+	// cleanupFailed is whether CleanupFailed was True before completion.
+	CleanupFailed bool `json:"cleanupFailed"`
+	// residualSetDigest identifies the residual set before completion.
+	// +optional
+	ResidualSetDigest string `json:"residualSetDigest,omitempty"`
 }
 
 // DebugSessionCleanupAcknowledgementStatus records one applied

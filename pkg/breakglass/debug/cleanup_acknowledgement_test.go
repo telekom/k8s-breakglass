@@ -706,3 +706,52 @@ func TestAppliedAcknowledgementOfAnEarlierSessionIsNotReplayed(t *testing.T) {
 	assert.False(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted, "a recreated session with the same name is not affected")
 	assert.Empty(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged))
 }
+
+func TestTransitionIsAuditedWhenCompletionWriteFailsOnce(t *testing.T) {
+	// The session patch succeeds, the acknowledgement's completion write
+	// fails once; the retry must still audit cleanup_recovered.
+	ds := failingSession(t)
+	ds.Status.DeployedResources = ds.Status.DeployedResources[:1] // all residuals acknowledgeable
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	base := newAckFixture(t, ds, ack)
+	failed := false
+	hub := interceptor.NewClient(base.hub.(client.WithWatch), interceptor.Funcs{
+		SubResourceUpdate: func(ctx context.Context, cl client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+			if a, ok := obj.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement); ok && a.Status.CompletedAt != nil && !failed {
+				failed = true
+				return errors.New("apiserver unavailable")
+			}
+			return cl.Status().Update(ctx, obj, opts...)
+		},
+	})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(base.manager)
+	c.acknowledgementWebhookActive = webhookActive
+	require.Error(t, c.processCleanupAcknowledgement(context.Background(), ds))
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, base.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), live))
+	require.False(t, cleanupConditionFailed(live), "the session patch succeeded")
+	require.NoError(t, c.processCleanupAcknowledgement(context.Background(), live))
+	assert.Len(t, base.events(t, audit.EventDebugSessionCleanupRecovered), 1, "the recovery caused by the acknowledgement is audited")
+}
+
+func TestDeletionWaitsForAppliedButUncompletedAcknowledgement(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at}
+	other := acknowledgement(ds, "other-session", acknowledgedPolicyExceptions...)
+	other.Spec.SessionUID = "previous"
+	other.Status = ack.Status
+	f := newAckFixture(t, ds, ack, other)
+	wait, err := f.c.unfinishedAcknowledgementRequeue(context.Background(), ds)
+	require.NoError(t, err)
+	assert.Greater(t, wait, time.Duration(0), "an Applied decision not yet completed keeps the session")
+
+	completed := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ack), completed))
+	completed.Status.CompletedAt = &at
+	require.NoError(t, f.hub.Status().Update(context.Background(), completed))
+	wait, err = f.c.unfinishedAcknowledgementRequeue(context.Background(), ds)
+	require.NoError(t, err)
+	assert.Zero(t, wait, "an acknowledgement of another session instance is ignored")
+}

@@ -195,7 +195,9 @@ func claimLive(claimedAt *metav1.Time, now time.Time) bool {
 }
 
 // unfinishedAcknowledgementRequeue returns when to look again at
-// acknowledgements for ds that another replica is still processing, or 0.
+// acknowledgements for this session instance that are not finished: a live
+// claim (until it expires), or an Applied decision not yet completed. It
+// returns 0 when nothing is unfinished.
 func (c *DebugSessionController) unfinishedAcknowledgementRequeue(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (time.Duration, error) {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
@@ -207,11 +209,19 @@ func (c *DebugSessionController) unfinishedAcknowledgementRequeue(ctx context.Co
 	now := time.Now()
 	var wait time.Duration
 	for _, ack := range list.Items {
-		if ack.Spec.SessionName != ds.Name || !ack.DeletionTimestamp.IsZero() || ack.Status.Phase != breakglassv1alpha1.CleanupAcknowledgementProcessing ||
-			!claimLive(ack.Status.ClaimedAt, now) {
+		if ack.Spec.SessionName != ds.Name || ack.Spec.SessionUID != string(ds.UID) || !ack.DeletionTimestamp.IsZero() {
 			continue
 		}
-		remaining := max(ack.Status.ClaimedAt.Add(cleanupAcknowledgementClaimTimeout).Sub(now), time.Second)
+		var remaining time.Duration
+		switch {
+		case ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied && ack.Status.CompletedAt == nil,
+			ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementProcessing && !claimLive(ack.Status.ClaimedAt, now):
+			remaining = time.Second // can be finished now
+		case ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementProcessing:
+			remaining = max(ack.Status.ClaimedAt.Add(cleanupAcknowledgementClaimTimeout).Sub(now), time.Second)
+		default:
+			continue
+		}
 		if wait == 0 || remaining < wait {
 			wait = remaining
 		}
@@ -301,6 +311,9 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 // completedRetirements lists the identities retired by completed
 // acknowledgements of ds. Cleanup status merges keep them retired, also for
 // acknowledgements that retired without a session record (record list full).
+// ponytail: deleting a completed acknowledgement drops its entry here; the
+// session record still covers it unless the list was full. A finalizer on
+// acknowledgements would close that gap.
 func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]string, error) {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {
@@ -345,6 +358,11 @@ func retireAcknowledgedResiduals(ds *breakglassv1alpha1.DebugSession) {
 }
 
 // retireIdentities removes or marks deleted every inventory entry named in ids.
+//
+// ponytail: identities without a UID (unresolved create intents) match by
+// apiVersion, kind, namespace and name only. A later intent with the same name
+// in the same session would also match. Sessions in cleanup create nothing, so
+// this is accepted; matching the create operation ID would close it.
 func retireIdentities(ds *breakglassv1alpha1.DebugSession, ids []string) {
 	retired := map[string]bool{}
 	for _, id := range ids {
