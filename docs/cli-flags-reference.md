@@ -822,6 +822,18 @@ Transitional escape hatch. Restores fixed 5-second retries of failed DebugSessio
 
 ---
 
+#### `--allow-legacy-approver-cleanup-acknowledgement`
+
+Transitional escape hatch. A DebugSessionCleanupAcknowledgement for a session approved before the hub recorded `status.approval.approvedByIdentities` is rejected by default, because four-eyes cannot compare the acknowledging user with the approver's email or Kubernetes identity. This flag compares such approvals by `approvedBy` alone. See [DebugSession cleanup recovery](debug-session-cleanup.md).
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` |
+| **Environment** | `BREAKGLASS_ALLOW_LEGACY_APPROVER_CLEANUP_ACKNOWLEDGEMENT` |
+
+---
+
 #### `--otel-required`
 
 Treat OpenTelemetry initialization failure as fatal. When enabled, the controller exits with an error if the OTel exporter cannot be initialized. When disabled (default), tracing is disabled with a warning on failure.

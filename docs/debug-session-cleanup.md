@@ -167,6 +167,14 @@ of the sessions they acknowledge.
   server may prefix usernames (for example `oidc:alice@example.com`) while
   session identities are stored unprefixed or with a spoke prefix. Group
   membership is not compared: four-eyes concerns the acting person.
+  The requester and participants are compared by username, email and
+  Kubernetes user. The approver is compared by `approvedBy` and every entry
+  of `status.approval.approvedByIdentities` (username, email and, when it
+  resolved, the target-cluster Kubernetes user), which the hub records at
+  approval. A session approved before that field existed cannot be fully
+  compared, so its acknowledgements are rejected (fail closed) unless the
+  controller runs with `--allow-legacy-approver-cleanup-acknowledgement`,
+  which compares `approvedBy` alone.
 
 **Requirements.**
 
@@ -208,9 +216,12 @@ acknowledgement triggers a reconcile of its session at once.
   While a claim is in progress, the session is reconciled again when the
   claim expires, and a deleted session keeps its finalizer until then.
 - It is applied only while `CleanupFailed=True`, and only if **every** listed
-  identity is an outstanding cleanup residual (apiVersion, kind, namespace,
-  name and UID). Intentionally retained resources (`deleteAfter: false`) are
-  not residuals. Unlisted residuals are kept.
+  identity is an outstanding cleanup residual, compared field by field
+  (apiVersion, kind, namespace, name and UID). Intentionally retained
+  resources (`deleteAfter: false`) are not residuals. Unlisted residuals are
+  kept. An acknowledgement may list any subset (at most 256 identities);
+  more residuals are retired with further acknowledgements, and cleanup
+  completes once every residual is retired.
 - Every outcome is audited as `debug_session.cleanup_acknowledged` (severity
   warning) with the acknowledging user as actor. If the controller stops
   between recording the outcome and emitting the event, that event is lost.
@@ -220,10 +231,9 @@ acknowledgement triggers a reconcile of its session at once.
 - **Applied:** matching entries are marked `deleted` (pod-template and deployed
   entries are dropped) with the reason in their `error` field. The DebugSession
   also records the acknowledgement in `status.cleanupAcknowledgements` (at most
-  64 per session). The last slot is reserved for an acknowledgement that
-  retires **all** remaining residuals. An Applied decision whose record no
-  longer fits is still carried out, with its provenance kept on the
-  acknowledgement object, so the record limit can never block cleanup. An
+  64 per session). An Applied decision whose record no longer fits is still
+  carried out, with its provenance kept on the acknowledgement object, so the
+  record limit can never block cleanup. An
   Applied acknowledgement is only ever applied to the session instance named
   by its `sessionUID`.
 - After completing an Applied decision on the session, the replica marks the
@@ -245,7 +255,7 @@ acknowledgement triggers a reconcile of its session at once.
 
 ### Transitional opt-outs
 
-Both behaviours are on by default. Each can be turned off with a flag on the
+These behaviours are on by default. Each can be turned off with a flag on the
 controller. The flags are escape hatches and may be removed in a later
 release:
 
@@ -253,6 +263,7 @@ release:
 |------|-------------|----------|
 | `--disable-debug-session-unserved-kind-handling` | `BREAKGLASS_DISABLE_DEBUG_SESSION_UNSERVED_KIND_HANDLING` | No activation preflight; the session fails at the first create instead. |
 | `--disable-debug-session-cleanup-backoff` | `BREAKGLASS_DISABLE_DEBUG_SESSION_CLEANUP_BACKOFF` | Fixed 5-second cleanup retries and one `debug_session.cleanup_failed` event per failed attempt. |
+| `--allow-legacy-approver-cleanup-acknowledgement` | `BREAKGLASS_ALLOW_LEGACY_APPROVER_CLEANUP_ACKNOWLEDGEMENT` | Acknowledgements for sessions approved before `approvedByIdentities` was recorded compare the approver by `approvedBy` alone instead of being rejected. |
 
 The `NoMatch` create classification is not gated: it only records that a
 request which never left the client created nothing.
