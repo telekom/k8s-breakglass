@@ -661,7 +661,7 @@ func (m *Manager) shutdownDrop(events []*Event) {
 		return
 	}
 	m.handOverDeadline.CompareAndSwap(0, time.Now().Add(m.config.WriteTimeout).UnixNano())
-	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, m.handOverDeadline.Load()))
+	ctx, cancel := withHandOverDeadline(context.Background(), time.Unix(0, m.handOverDeadline.Load()))
 	defer cancel()
 	for _, event := range events {
 		multi.handOverIngress(ctx, event)

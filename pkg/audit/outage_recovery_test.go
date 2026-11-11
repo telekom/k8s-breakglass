@@ -1183,3 +1183,32 @@ func TestReloadHandsOverABatchWaitingOnAFullQueue(t *testing.T) {
 	}
 	require.Equal(t, before, testutil.ToFloat64(timeouts), "no event counted as enqueue_timeout")
 }
+
+// A handover that reaches a full, still-open replacement which itself has a
+// successor keeps its original deadline: an intermediate hop must not start
+// a fresh write timeout.
+func TestHandOverKeepsItsDeadlineAcrossFullOpenHops(t *testing.T) {
+	full := func(name string) *QueuedSink {
+		cfg := outageConfig()
+		cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+		cfg.WriteTimeout = 2 * time.Second
+		block := make(chan struct{})
+		t.Cleanup(func() { close(block) })
+		qs := NewQueuedSink(newFuncSink(name, func([]*Event) error { <-block; return nil }), cfg, zap.NewNop())
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: name + "-busy", Type: EventConfigChanged}))
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: name + "-queued", Type: EventConfigChanged}))
+		return qs
+	}
+	// B and C are full and still open, D is the end of the chain and full too.
+	b, c, d := full("hop-b"), full("hop-c"), full("hop-d")
+	b.HandOver(c)
+	c.HandOver(d)
+	a := NewQueuedSink(&flakySink{}, outageConfig(), zap.NewNop())
+	a.config.WriteTimeout = 300 * time.Millisecond
+	a.HandOver(b)
+	start := time.Now()
+	a.shutdownDrop([]*Event{{ID: "late", Type: EventConfigChanged}})
+	// One budget (300 ms) for the whole chain, not one write timeout (2 s)
+	// per hop.
+	require.Less(t, time.Since(start), time.Second)
+}

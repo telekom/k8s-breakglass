@@ -306,10 +306,11 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 	if !qs.config.DropOnFull {
 		enqueued, closed, err := qs.blockingEnqueue(ctx, event)
 		if errors.Is(err, errHandOverPending) {
-			// The caller (a retiring manager) gave up while this sink is
-			// being replaced: the matching successor takes the event within
-			// the shared handover deadline.
-			qs.shutdownDrop([]*Event{event})
+			// The caller gave up while this sink is being replaced: the
+			// matching successor takes the event. A cancelled manager write
+			// starts this sink's handover budget; a handover passing through
+			// keeps its own deadline.
+			qs.handOverWithin(ctx, []*Event{event})
 			return nil
 		}
 		if closed {
@@ -526,13 +527,36 @@ func (qs *QueuedSink) HandOver(successor *QueuedSink) {
 
 // shutdownDrop hands events to the successor sink, or counts them as lost.
 func (qs *QueuedSink) shutdownDrop(events []*Event) {
+	qs.handOverWithin(context.Background(), events)
+}
+
+type handOverContextKey struct{}
+
+// withHandOverDeadline marks ctx as a handover context whose deadline later
+// hops must keep.
+func withHandOverDeadline(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(context.WithValue(parent, handOverContextKey{}, true), deadline)
+}
+
+// handOverWithin hands events to the successor, or counts them lost. A
+// handover started here gets this sink's shared deadline; a handover that
+// already carries one (it is passing through this sink along a chain of
+// reloads) keeps the originating, possibly earlier deadline, so each hop
+// cannot add a fresh write timeout.
+func (qs *QueuedSink) handOverWithin(parent context.Context, events []*Event) {
 	if len(events) == 0 {
 		return
 	}
 	if successor := qs.successor.Load(); successor != nil {
 		qs.handOverDeadline.CompareAndSwap(0, time.Now().Add(qs.config.WriteTimeout).UnixNano())
-		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, qs.handOverDeadline.Load()))
-		defer cancel()
+		deadline := time.Unix(0, qs.handOverDeadline.Load())
+		ctx := parent
+		if parent.Value(handOverContextKey{}) == nil {
+			// A handover starts here: this sink's budget applies.
+			var cancel context.CancelFunc
+			ctx, cancel = withHandOverDeadline(parent, deadline)
+			defer cancel()
+		}
 		// The successor counts its own losses (queue_full, enqueue_timeout).
 		for _, event := range events {
 			// The receiving sink, which may sit further along a chain of
