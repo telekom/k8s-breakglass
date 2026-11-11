@@ -59,7 +59,9 @@ is halved and each half delivered again, down to single events; only a single
 event is dropped, with reason `serialization`, `rejected` or `panic`. Other
 events of the batch are delivered and cannot be blocked by it. Webhook HTTP
 400 stays retryable, because gateways also return it for configuration
-errors. Panics are logged with their stack. The kafka-go balancer panic on a
+errors. Panics are logged with their stack and, like other permanent
+failures, do not count toward the circuit breaker, so one panicking event
+cannot open it for the valid events of its batch. The kafka-go balancer panic on a
 metadata response without partitions is returned as an ordinary, retryable
 error.
 

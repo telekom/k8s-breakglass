@@ -149,7 +149,11 @@ func (cb *CircuitBreaker) newBreaker(generation int64) *gobreaker.TwoStepCircuit
 			cb.transitionState(generation, mapGobreakerState(from), mapGobreakerState(to))
 		},
 		IsExcluded: func(err error) bool {
-			return errors.Is(err, errHalfOpenProbeLimit) || permanentDeliveryError(err)
+			// A panic is a bug triggered by the payload, not a sign of sink
+			// health (the known kafka-go balancer panic is returned as an
+			// ordinary error by KafkaSink): like a permanent delivery error
+			// it must not open the breaker for the sink's other events.
+			return errors.Is(err, errHalfOpenProbeLimit) || permanentDeliveryError(err) || errors.Is(err, errSinkPanic)
 		},
 	})
 }
@@ -215,14 +219,16 @@ func (cb *CircuitBreaker) Execute(ctx context.Context, fn func(context.Context) 
 			cb.finishHalfOpenProbe(halfOpenGeneration)
 		}
 		r := recover()
-		cb.totalFailures.Add(1)
-		cb.lastFailureTime.Store(time.Now())
 		if r == nil {
 			// runtime.Goexit (for example t.FailNow): nothing to re-panic.
+			cb.totalFailures.Add(1)
+			cb.lastFailureTime.Store(time.Now())
 			done(errors.New("audit sink write exited without returning"))
 			return
 		}
-		done(fmt.Errorf("audit sink panic: %v", r))
+		// Excluded from the breaker's counts (see IsExcluded); done still
+		// releases the request and the half-open probe slot.
+		done(fmt.Errorf("%w: %v", errSinkPanic, r))
 		panic(r)
 	}()
 	err = fn(ctx)

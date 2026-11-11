@@ -628,6 +628,10 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		Steps: qs.config.RetryAttempts, Cap: qs.config.RetryMaxBackoff,
 	}
 	var err error
+	// panicked remembers a panic in any attempt: a later attempt can fail
+	// differently (for example circuit open because of other failures),
+	// which must not hide that the batch carries a panicking event.
+	panicked := false
 	for attempt := 0; attempt < qs.config.RetryAttempts; attempt++ {
 		if retryCtx.Err() != nil {
 			if qs.shutdownDeadline.Load() != 0 {
@@ -638,6 +642,7 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		}
 		writeCtx, writeCancel := context.WithTimeout(retryCtx, qs.config.WriteTimeout)
 		err = qs.invokeWrite(writeCtx, writeEvents)
+		panicked = panicked || errors.Is(err, errSinkPanic)
 		writeCancel()
 		if err == nil {
 			qs.recordDelivered(count)
@@ -668,7 +673,10 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		qs.shutdownDrop(events)
 		return
 	}
-	if errors.Is(err, errSinkPanic) {
+	if panicked {
+		if !errors.Is(err, errSinkPanic) {
+			err = fmt.Errorf("%w (an earlier attempt panicked): %w", errSinkPanic, err)
+		}
 		handedToHalves = qs.splitOrDrop(events, operation, write, err, held)
 		return
 	}

@@ -43,8 +43,9 @@ func TestCircuitBreakerRecoversAfterPanickingHalfOpenProbe(t *testing.T) {
 	require.PanicsWithValue(t, "kafka-go", func() {
 		_ = cb.Execute(context.Background(), func(context.Context) error { panic("kafka-go") })
 	})
-	// The panic counts as a failed probe and reopens the breaker.
-	require.Equal(t, CircuitOpen, cb.State())
+	// A panic is excluded from the breaker's counts: it neither closes nor
+	// reopens the breaker, and the probe slot is free for the next write.
+	require.Equal(t, CircuitHalfOpen, cb.State())
 	require.Eventually(t, func() bool {
 		return cb.Execute(context.Background(), func(context.Context) error { return nil }) == nil &&
 			cb.State() == CircuitClosed
@@ -1239,4 +1240,25 @@ func TestUnmarkedHandOverIgnoresTheCallersCancellation(t *testing.T) {
 	old.handOverWithin(cancelled, []*Event{{ID: "handed-over", Type: EventConfigChanged}})
 	require.Equal(t, before, testutil.ToFloat64(timeouts), "the event waited for capacity")
 	require.Zero(t, next.Health().DroppedEvents)
+}
+
+// One panicking event behind the real circuit breaker: the panics do not
+// open the breaker, so the batch is split and every valid event delivered;
+// only the panicking event is dropped.
+func TestPanickingEventDoesNotTripTheBreakerForItsBatch(t *testing.T) {
+	sink := &batchLimitSink{limit: 100}
+	cb := NewCircuitBreakerSink(sink, CircuitBreakerConfig{
+		FailureThreshold: 2, SuccessThreshold: 1, OpenTimeout: time.Hour, HalfOpenMaxRequests: 1,
+	}, zap.NewNop())
+	cfg := splitConfig(4)
+	cfg.RetryAttempts = 4
+	qs := NewQueuedSink(cb, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	for _, id := range []string{"a", "boom", "b", "c"} {
+		require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	}
+	require.Eventually(t, func() bool { return len(sink.ids()) == 3 && qs.Health().DroppedEvents == 1 },
+		2*time.Second, 5*time.Millisecond)
+	require.ElementsMatch(t, []string{"a", "b", "c"}, sink.ids())
+	require.Equal(t, CircuitClosed, cb.Stats().State)
 }
