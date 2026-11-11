@@ -384,6 +384,11 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 				return ctrl.Result{}, err
 			}
 		}
+		// Keep the finalizer until claimed acknowledgements are finished, so
+		// their outcome and audit are not lost with the session.
+		if wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds); err != nil || wait > 0 {
+			return ctrl.Result{RequeueAfter: wait}, err
+		}
 		return ctrl.Result{}, c.removeMaintenanceFinalizer(ctx, ds)
 	}
 
@@ -877,7 +882,13 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{}, err
 		}
 		releaseSessionMetricSeries(ds.Name)
-		return ctrl.Result{}, nil // Nothing left on the spoke: genuinely terminal.
+		// Come back for an acknowledgement another replica has claimed, so an
+		// interrupted claim is finished even without further events.
+		wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: wait}, nil // Nothing left on the spoke: genuinely terminal.
 	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace, "cluster", ds.Spec.Cluster)
 

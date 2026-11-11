@@ -186,14 +186,21 @@ and hotfix residuals are retired before their Leases are released. A new
 acknowledgement triggers a reconcile of its session at once.
 
 - A controller replica first claims the acknowledgement (`status.phase:
-  Processing`). A claim that has not finished after 2 minutes is taken over
-  by another replica. The final outcome is recorded on the acknowledgement's
-  own status (`Applied` or `Rejected`, `retired`, `message`, `processedAt`),
-  and that record is the processing evidence. An acknowledgement with a final
-  phase is never processed again.
+  Processing`). A claim older than 2 minutes, or dated more than 30 seconds
+  in the future, is taken over by another replica.
+- The replica decides against the live session and records the decision
+  (`Applied` or `Rejected`, `retired`, `message`, `processedAt`) on the
+  acknowledgement **before** it changes the session. A replica whose claim was
+  taken over cannot record a decision and changes nothing.
+- An `Applied` decision is then completed on the session. Completion is
+  idempotent, so a replica that stopped in between finishes it on the next
+  reconcile. An acknowledgement with a final phase is never decided again.
+  While a claim is in progress, the session is reconciled again when the
+  claim expires, and a deleted session keeps its finalizer until then.
 - It is applied only while `CleanupFailed=True`, and only if **every** listed
-  identity matches an outstanding residual exactly (apiVersion, kind,
-  namespace, name and UID). Unlisted residuals are kept.
+  identity is an outstanding cleanup residual (apiVersion, kind, namespace,
+  name and UID). Intentionally retained resources (`deleteAfter: false`) are
+  not residuals. Unlisted residuals are kept.
 - Every outcome is audited as `debug_session.cleanup_acknowledged` (severity
   warning) with the acknowledging user as actor. If the controller stops
   between recording the outcome and emitting the event, that event is lost.
@@ -203,8 +210,8 @@ acknowledgement triggers a reconcile of its session at once.
 - **Applied:** matching entries are marked `deleted` (pod-template and deployed
   entries are dropped) with the reason in their `error` field. The DebugSession
   also records the acknowledgement in `status.cleanupAcknowledgements` (at most
-  64 applied acknowledgements per session; beyond that, new ones are rejected,
-  so list the remaining residuals in one acknowledgement).
+  64 per session). The last slot is reserved for an acknowledgement that
+  retires **all** remaining residuals, so a session can always be cleaned up.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
   - If residuals remain, the new residual set is reported once with

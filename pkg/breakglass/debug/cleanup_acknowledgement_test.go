@@ -17,9 +17,11 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -443,15 +445,109 @@ func TestInterruptedClaimIsTakenOverAfterTimeout(t *testing.T) {
 	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, acknowledgementPhase(t, f, "a").Phase)
 }
 
-func TestReplayAfterAppliedRecordIsIdempotent(t *testing.T) {
-	// A replica applied the acknowledgement to the session but stopped before
-	// recording the outcome on the object; the takeover must not apply again.
+func TestDecidedButUncompletedAcknowledgementIsCompletedOnResume(t *testing.T) {
+	// A replica recorded Applied on the acknowledgement and stopped before
+	// completing it on the session. The next reconcile completes it without
+	// deciding or auditing again.
 	ds := failingSession(t)
 	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
-	applied := ds.DeepCopy()
-	require.True(t, applyCleanupAcknowledgement(applied, ack, "").Applied)
-	f := newAckFixture(t, applied, ack)
-	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), applied))
-	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementApplied, acknowledgementPhase(t, f, "a").Phase)
-	assert.Len(t, applied.Status.CleanupAcknowledgements, 1, "the applied record is not duplicated")
+	decision := decideCleanupAcknowledgement(ds, ack, "")
+	require.True(t, decision.Applied)
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
+		Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ClaimedAt: &at, ProcessedAt: &at, Retired: decision.Retired,
+	}
+	f := newAckFixture(t, ds, ack)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	assert.Len(t, ds.Status.CleanupAcknowledgements, 1, "completion is idempotent")
+	assert.True(t, ds.Status.AuxiliaryResourceStatuses[0].Deleted)
+	assert.Empty(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), "the deciding replica audits; resumption does not")
+}
+
+func TestStalledClaimantCannotChangeTheSessionAfterTakeover(t *testing.T) {
+	// Replica 1 claims, then stalls. Replica 2 takes over after the timeout
+	// and rejects. Replica 1 resumes: its decision write must fail on the
+	// claim's resourceVersion, so it never retires anything.
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	f := newAckFixture(t, ds, ack)
+	claimed := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ack), claimed))
+	old := metav1.NewTime(time.Now().Add(-2 * cleanupAcknowledgementClaimTimeout))
+	claimed.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &old}
+	require.NoError(t, f.hub.Status().Update(context.Background(), claimed)) // replica 1's claim
+	stalled := claimed.DeepCopy()
+
+	f.c.acknowledgementWebhookActive = func(context.Context) (bool, error) { return false, nil } // replica 2 rejects
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	require.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, acknowledgementPhase(t, f, "a").Phase)
+
+	// Replica 1 resumes with its stale claim and an Applied decision.
+	decision := decideCleanupAcknowledgement(ds, ack, "")
+	require.True(t, decision.Applied)
+	stalled.Status.Phase, stalled.Status.Retired = breakglassv1alpha1.CleanupAcknowledgementApplied, decision.Retired
+	err := f.hub.Status().Update(context.Background(), stalled)
+	require.True(t, apierrors.IsConflict(err), "the stalled claimant's decision write must conflict, got %v", err)
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	assert.False(t, persisted.Status.AuxiliaryResourceStatuses[0].Deleted, "nothing was retired")
+	assert.Empty(t, persisted.Status.CleanupAcknowledgements)
+}
+
+func TestFutureClaimIsTreatedAsStale(t *testing.T) {
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	future := metav1.NewTime(time.Now().Add(24 * time.Hour))
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &future}
+	f := newAckFixture(t, ds, ack)
+	pending, err := f.c.pendingCleanupAcknowledgements(context.Background(), ds)
+	require.NoError(t, err)
+	assert.Len(t, pending, 1, "a forged future claim cannot block the acknowledgement")
+	assert.False(t, claimLive(&future, time.Now()))
+	skewed := metav1.NewTime(time.Now().Add(10 * time.Second))
+	assert.True(t, claimLive(&skewed, time.Now()), "small clock skew is tolerated")
+}
+
+func TestRetainedResourcesAreNotAcknowledgeable(t *testing.T) {
+	ds := failingSession(t)
+	retained := breakglassv1alpha1.AuxiliaryResourceStatus{
+		Name: "kept", Category: "kept", APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", ResourceName: "kept", Created: true, UID: "kept-uid",
+	}
+	ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, retained)
+	ds.Status.ResolvedTemplate = &breakglassv1alpha1.DebugSessionTemplateSpec{AuxiliaryResources: []breakglassv1alpha1.AuxiliaryResource{{Name: "kept", DeleteAfter: ptrBool(false)}}}
+	ids := append([]CleanupAcknowledgedIdentity{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: "kept", UID: "kept-uid"}}, acknowledgedPolicyExceptions...)
+	record := decideCleanupAcknowledgement(ds, acknowledgement(ds, "a", ids...), "")
+	assert.False(t, record.Applied, "an intentionally retained resource is not a residual")
+	assert.Contains(t, record.Message, "kept")
+}
+
+func TestLastRecordSlotIsReservedForACompleteAcknowledgement(t *testing.T) {
+	ds := failingSession(t)
+	for i := range maxCleanupAcknowledgementRecords - 1 {
+		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{UID: fmt.Sprintf("old-%d", i), Applied: true})
+	}
+	partial := decideCleanupAcknowledgement(ds, acknowledgement(ds, "partial", acknowledgedPolicyExceptions[0]), "")
+	assert.False(t, partial.Applied)
+	assert.Contains(t, partial.Message, "list all 5 remaining residuals")
+	all := append([]CleanupAcknowledgedIdentity{{APIVersion: "v1", Kind: "ConfigMap", Namespace: "breakglass-debug", Name: "other", UID: "other-uid"}}, acknowledgedPolicyExceptions...)
+	complete := applyCleanupAcknowledgement(ds, acknowledgement(ds, "complete", all...), "")
+	require.True(t, complete.Applied, "a complete acknowledgement still fits")
+	assert.Len(t, ds.Status.CleanupAcknowledgements, maxCleanupAcknowledgementRecords)
+	setCleanupCondition(ds)
+	assert.False(t, cleanupConditionFailed(ds))
+}
+
+func TestInterruptedClaimOnCleanSessionRequeues(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status = breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateFailed}
+	ds.Spec.TemplateRef, ds.Spec.RequestedBy = "template", "requester@example.com"
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	recent := metav1.NewTime(time.Now().Add(-30 * time.Second))
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &recent}
+	f := newAckFixture(t, ds, ack)
+	result, err := f.c.Reconcile(context.Background(), ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.NoError(t, err)
+	assert.Greater(t, result.RequeueAfter, time.Duration(0), "a clean session waits for the claim to expire")
+	assert.LessOrEqual(t, result.RequeueAfter, cleanupAcknowledgementClaimTimeout)
 }

@@ -633,13 +633,21 @@ const (
 )
 
 // processCleanupAcknowledgement applies pending DebugSessionCleanupAcknowledgements
-// for ds and audits each with the acknowledging user as actor. The outcome is
-// recorded on the acknowledgement's own status, which is the durable
-// processing evidence: an acknowledgement with a final phase is never
-// processed again. One replica claims an acknowledgement with an optimistic
-// status write before evaluating it, so each outcome is audited once.
-// ponytail: a replica that stops between recording the outcome and emitting
-// the audit event loses that event (at-most-once); add an outbox if needed.
+// for ds and audits each with the acknowledging user as actor.
+//
+// The decision is made durable on the acknowledgement before the session is
+// changed:
+//  1. A replica claims the acknowledgement with an optimistic status write.
+//  2. It decides against the live session and records Applied or Rejected on
+//     the acknowledgement, guarded by the claim's resourceVersion. A replica
+//     whose claim was taken over loses this write and changes nothing.
+//  3. Only a recorded Applied decision is completed on the session. Completion
+//     is idempotent by UID, so a replica that resumes after a crash finishes
+//     it instead of deciding again.
+//
+// Each outcome is audited by the replica that recorded the decision.
+// ponytail: a replica that stops after recording the decision but before
+// emitting the audit event loses that event (at-most-once).
 func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
 	pending, err := c.pendingCleanupAcknowledgements(ctx, ds)
 	if err != nil || len(pending) == 0 {
@@ -655,79 +663,84 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 	for i := range pending {
 		ack := &pending[i]
-		// Claim it; a concurrent claim fails with a conflict and is skipped.
-		claimedAt := metav1.Now()
-		ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &claimedAt}
-		if err := c.client.Status().Update(ctx, ack); err != nil {
-			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
-				continue
+		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
+		decidedHere := false
+		if ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementApplied {
+			// Decided earlier; only the session completion is outstanding.
+			record = breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus{
+				Name: ack.Name, UID: string(ack.UID), AcknowledgedBy: ack.Spec.AcknowledgedBy, Reason: ack.Spec.Reason,
+				Applied: true, Retired: ack.Status.Retired, ProcessedAt: *ack.Status.ProcessedAt,
 			}
-			return fmt.Errorf("claim cleanup acknowledgement %s: %w", ack.Name, err)
+		} else {
+			claimedAt := metav1.Now()
+			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementProcessing, ClaimedAt: &claimedAt}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue
+				}
+				return fmt.Errorf("claim cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			live := &breakglassv1alpha1.DebugSession{}
+			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
+				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
+			}
+			record = decideCleanupAcknowledgement(live, ack, refusal)
+			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
+				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
+			}
+			if record.Applied {
+				ack.Status.Phase, ack.Status.Retired = breakglassv1alpha1.CleanupAcknowledgementApplied, record.Retired
+			}
+			if err := c.client.Status().Update(ctx, ack); err != nil {
+				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+					continue // taken over: this replica changes nothing
+				}
+				return fmt.Errorf("record cleanup acknowledgement %s decision: %w", ack.Name, err)
+			}
+			decidedHere = true
 		}
 
-		// Evaluate against the fresh live session status. A record already
-		// present means an earlier claimant applied it before stopping.
-		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
 		var previous metav1.Condition
-		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
-			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
-			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
-				if ds.UID != "" && current.UID != ds.UID {
-					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
-				}
-				previous = metav1.Condition{}
-				if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
-					previous = *condition
-				}
-				for _, existing := range current.Status.CleanupAcknowledgements {
-					if existing.UID == string(ack.UID) {
-						record = existing
+		if record.Applied {
+			patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+				func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+				func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+					if ds.UID != "" && current.UID != ds.UID {
+						return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
+					}
+					previous = metav1.Condition{}
+					if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+						previous = *condition
+					}
+					if !completeCleanupAcknowledgement(current, record) {
 						return false, nil
 					}
-				}
-				record = applyCleanupAcknowledgement(current, ack, refusal)
-				if !record.Applied {
-					return false, nil
-				}
-				setCleanupCondition(current)
-				if current.Generation > 0 {
-					current.Status.ObservedGeneration = current.Generation
-				}
-				return true, nil
-			})
-		if err != nil {
-			return fmt.Errorf("persist cleanup acknowledgement %s: %w", ack.Name, err)
-		}
-		ds.Status = patched.Status
-		ds.ResourceVersion = patched.ResourceVersion
-		if record.Applied && !acknowledgementProcessed(ds, record.UID) {
-			// The API server pruned the field: the DebugSession CRD predates
-			// this controller. The inventory change persisted; only the
-			// provenance record and the CleanupAcknowledged reason are lost.
-			c.crdOutdatedOnce.Do(func() {
-				log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
-			})
-		}
-
-		// Record the final outcome on the acknowledgement. The claim's
-		// resourceVersion makes this write fail if another replica took over.
-		processedAt := metav1.Now()
-		ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
-			Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &processedAt, Message: record.Message,
-		}
-		if record.Applied {
-			ack.Status.Phase, ack.Status.Retired = breakglassv1alpha1.CleanupAcknowledgementApplied, record.Retired
-		}
-		if err := c.client.Status().Update(ctx, ack); err != nil {
-			if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
-				continue
+					setCleanupCondition(current)
+					if current.Generation > 0 {
+						current.Status.ObservedGeneration = current.Generation
+					}
+					return true, nil
+				})
+			if err != nil {
+				return fmt.Errorf("apply cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			return fmt.Errorf("record cleanup acknowledgement %s outcome: %w", ack.Name, err)
+			ds.Status = patched.Status
+			ds.ResourceVersion = patched.ResourceVersion
+			c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+			if !acknowledgementProcessed(ds, record.UID) {
+				// The API server pruned the field: the DebugSession CRD predates
+				// this controller. The retirement persisted; only the provenance
+				// record and the CleanupAcknowledged reason are lost.
+				c.crdOutdatedOnce.Do(func() {
+					log.Errorw("DebugSession CRD lacks status.cleanupAcknowledgements; apply the current CRDs before the controller")
+				})
+			}
 		}
-
+		if !decidedHere {
+			continue // the deciding replica audited it
+		}
 		if record.Applied {
 			log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
-			c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
 		} else {
 			log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", ack.Spec.AcknowledgedBy, "reason", record.Message)
 		}
@@ -735,7 +748,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if auditManager := c.currentAuditManager(); auditManager != nil {
 				auditManager.DebugSessionCleanupAcknowledged(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster, ack.Name, ack.Spec.AcknowledgedBy, ack.Spec.Reason, record.Applied, record.Retired, record.Message)
 				switch {
-				case previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
+				case record.Applied && previous.Status == metav1.ConditionTrue && !cleanupConditionFailed(ds):
 					auditManager.DebugSessionCleanupRecovered(ctx, ds.Name, ds.Namespace, ds.Spec.Cluster)
 				case record.Applied && cleanupConditionFailed(ds) && residualSetDigestFromMessage(previous.Message) != cleanupResidualSetDigest(ds):
 					// A partial acknowledgement leaves a different residual

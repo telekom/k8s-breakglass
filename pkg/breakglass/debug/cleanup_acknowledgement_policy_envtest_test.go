@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -76,4 +77,28 @@ func TestPlatformCleanupAcknowledgementActorPolicyEnvtest(t *testing.T) {
 		return apierrors.IsInvalid(err)
 	}, 30*time.Second, 200*time.Millisecond, "a forged acknowledgedBy must be rejected by the API server")
 	assert.NoError(t, asOperator.Create(ctx, ack("genuine", operator)))
+
+	// An acknowledger holding only the shipped ClusterRole cannot write the
+	// acknowledgement status, so it can neither forge an outcome nor block
+	// processing with a claim.
+	roleRaw, err := os.ReadFile(filepath.Join("..", "..", "..", "config", "rbac", "debugsession_cleanup_acknowledger_role.yaml"))
+	require.NoError(t, err)
+	role := &rbacv1.ClusterRole{}
+	require.NoError(t, utilyaml.NewYAMLOrJSONDecoder(bytes.NewReader(roleRaw), 4096).Decode(role))
+	require.NoError(t, admin.Create(ctx, role))
+	const acknowledger = "acknowledger@example.com"
+	require.NoError(t, admin.Create(ctx, &rbacv1.ClusterRoleBinding{ObjectMeta: metav1.ObjectMeta{Name: "acknowledger"},
+		RoleRef:  rbacv1.RoleRef{APIGroup: rbacv1.GroupName, Kind: "ClusterRole", Name: role.Name},
+		Subjects: []rbacv1.Subject{{APIGroup: rbacv1.GroupName, Kind: rbacv1.UserKind, Name: acknowledger}}}))
+	limited := *cfg
+	limited.Impersonate.UserName = acknowledger
+	limited.Impersonate.Groups = []string{"system:authenticated"}
+	asAcknowledger, err := client.New(&limited, client.Options{Scheme: scheme.Scheme})
+	require.NoError(t, err)
+	own := ack("own", acknowledger)
+	require.Eventually(t, func() bool { return asAcknowledger.Create(ctx, own) == nil }, 30*time.Second, 200*time.Millisecond, "the role grants create")
+	now := metav1.Now()
+	own.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &now}
+	err = asAcknowledger.Status().Update(ctx, own)
+	require.True(t, apierrors.IsForbidden(err), "acknowledgers must not write the acknowledgement status, got %v", err)
 }
