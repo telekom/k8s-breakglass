@@ -223,9 +223,7 @@ func (s *Service) ReloadMultipleWithAvailability(ctx context.Context, configs []
 		allSinks = append(allSinks, sinks...)
 		for i := range sinks {
 			sinkQueues = append(sinkQueues, queuedConfig(config.Spec.Queue))
-			// A handover must never cross AuditConfigs or sink types (for
-			// example a Kafka backlog into a log sink of the same name).
-			sinkOwners = append(sinkOwners, config.Name+"/"+string(config.Spec.Sinks[i].Type))
+			sinkOwners = append(sinkOwners, handOverKey(config.Name, config.Spec.Sinks[i]))
 		}
 		configNames = append(configNames, config.Name)
 	}
@@ -737,6 +735,40 @@ func (s *Service) closePipeline(manager *Manager, sinks []Sink) error {
 		}
 	}
 	return closeErr
+}
+
+// handOverKey identifies where a sink delivers, for handing its backlog to
+// the sink that replaces it on a reload. It never crosses AuditConfigs, sink
+// types or destinations: a Kafka sink retargeted to other brokers or another
+// topic, or a webhook sink to another URL, gets a new key and its old backlog
+// is dropped as "shutdown". Secret references count by name only, so a
+// rotated Secret (new resourceVersion) still hands over.
+func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string {
+	ref := func(ref *breakglassv1alpha1.SecretKeySelector) string {
+		if ref == nil {
+			return ""
+		}
+		return ref.Namespace + "/" + ref.Name
+	}
+	parts := []string{config, string(sink.Type), sink.Name}
+	switch {
+	case sink.Kafka != nil:
+		brokers := slices.Clone(sink.Kafka.Brokers)
+		slices.Sort(brokers)
+		parts = append(parts, strings.Join(brokers, ","), sink.Kafka.Topic)
+		if tls := sink.Kafka.TLS; tls != nil {
+			parts = append(parts, ref(tls.CASecretRef), ref(tls.ClientCertSecretRef))
+		}
+		if sasl := sink.Kafka.SASL; sasl != nil {
+			parts = append(parts, ref(&sasl.CredentialsSecretRef))
+		}
+	case sink.Webhook != nil:
+		parts = append(parts, sink.Webhook.URL, sink.Webhook.BatchURL, ref(sink.Webhook.AuthSecretRef))
+		if tls := sink.Webhook.TLS; tls != nil {
+			parts = append(parts, ref(tls.CASecretRef))
+		}
+	}
+	return strings.Join(parts, "\x00")
 }
 
 // buildSinks creates sinks based on AuditConfig.

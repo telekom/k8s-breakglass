@@ -765,3 +765,145 @@ func TestQueuedHandOverSharesOneDeadline(t *testing.T) {
 	require.Less(t, time.Since(start), time.Second, "one handover budget, not one write timeout per batch")
 	require.Positive(t, next.Health().DroppedEvents, "what did not fit is counted by the replacement")
 }
+
+func kafkaSinkConfig(brokers []string, topic, secret string) breakglassv1alpha1.AuditSinkConfig {
+	return breakglassv1alpha1.AuditSinkConfig{Name: "events", Type: breakglassv1alpha1.AuditSinkTypeKafka,
+		Kafka: &breakglassv1alpha1.KafkaSinkSpec{Brokers: brokers, Topic: topic,
+			TLS: &breakglassv1alpha1.KafkaTLSSpec{Enabled: true,
+				CASecretRef: &breakglassv1alpha1.SecretKeySelector{Name: secret, Namespace: "breakglass-system"}}}}
+}
+
+// The handover key includes the destination: a retargeted sink gets a new
+// key, while a rotated Secret (same reference) or reordered brokers keep it.
+func TestHandOverKeyFollowsTheDestination(t *testing.T) {
+	base := handOverKey("config", kafkaSinkConfig([]string{"a:9093", "b:9093"}, "audit", "kafka-ca"))
+	require.Equal(t, base, handOverKey("config", kafkaSinkConfig([]string{"b:9093", "a:9093"}, "audit", "kafka-ca")))
+	for name, other := range map[string]string{
+		"brokers": handOverKey("config", kafkaSinkConfig([]string{"c:9093"}, "audit", "kafka-ca")),
+		"topic":   handOverKey("config", kafkaSinkConfig([]string{"a:9093", "b:9093"}, "audit-v2", "kafka-ca")),
+		"secret":  handOverKey("config", kafkaSinkConfig([]string{"a:9093", "b:9093"}, "audit", "other-ca")),
+		"config":  handOverKey("other", kafkaSinkConfig([]string{"a:9093", "b:9093"}, "audit", "kafka-ca")),
+	} {
+		require.NotEqual(t, base, other, name)
+	}
+	webhook := func(url, batchURL string) string {
+		return handOverKey("config", breakglassv1alpha1.AuditSinkConfig{Name: "events", Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: url, BatchURL: batchURL}})
+	}
+	require.Equal(t, webhook("https://a/events", ""), webhook("https://a/events", ""))
+	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://b/events", ""))
+	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://a/events", "https://a/batch"))
+}
+
+// End to end through the service: a reload that only rotates a sink Secret
+// hands the backlog over; a reload that retargets the sink drops it as
+// "shutdown" instead of delivering it to the new destination.
+func TestReloadHandsOverOnRotationButNotOnRetarget(t *testing.T) {
+	for name, tc := range map[string]struct {
+		next     breakglassv1alpha1.AuditSinkConfig
+		handOver bool
+	}{
+		"rotated-secret": {kafkaSinkConfig([]string{"a:9093"}, "audit", "kafka-ca"), true},
+		"retargeted":     {kafkaSinkConfig([]string{"a:9093"}, "audit-elsewhere", "kafka-ca"), false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			held := &flakySink{}
+			held.down.Store(true)
+			old := NewIsolatedMultiSink([]Sink{held}, outageConfig(), zap.NewNop())
+			old.sinks[0].owner = handOverKey("config", kafkaSinkConfig([]string{"a:9093"}, "audit", "kafka-ca"))
+			require.NoError(t, old.Write(context.Background(), &Event{ID: "held", Type: EventConfigChanged}))
+			require.Eventually(t, func() bool { return old.sinks[0].Health().FailedEvents > 0 }, time.Second, 5*time.Millisecond)
+			up := &flakySink{}
+			next := NewIsolatedMultiSink([]Sink{up}, outageConfig(), zap.NewNop())
+			next.sinks[0].owner = handOverKey("config", tc.next)
+			t.Cleanup(func() { require.NoError(t, next.Close()) })
+			old.handOver(next)
+			require.NoError(t, old.Close())
+			if tc.handOver {
+				require.Eventually(t, func() bool { return up.delivered.Load() == 1 }, time.Second, 5*time.Millisecond)
+				require.Zero(t, old.sinks[0].Health().DroppedEvents)
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+			require.Zero(t, up.delivered.Load())
+			require.Equal(t, int64(1), old.sinks[0].Health().DroppedEvents)
+		})
+	}
+}
+
+// A late handover whose shared deadline has already passed still enqueues
+// into free capacity of a blocking (dropOnFull: false) replacement.
+func TestLateHandOverUsesFreeCapacity(t *testing.T) {
+	cfg := outageConfig()
+	old := NewQueuedSink(&flakySink{}, cfg, zap.NewNop())
+	nextCfg := outageConfig()
+	nextCfg.QueueSize, nextCfg.DropOnFull, nextCfg.BatchTimeout = 1000, false, time.Hour
+	nextCfg.BatchSize = 1000
+	next := NewQueuedSink(&flakySink{}, nextCfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	old.HandOver(next)
+	old.handOverDeadline.Store(time.Now().Add(-time.Second).UnixNano()) // budget already spent
+	events := make([]*Event, 200)
+	for i := range events {
+		events[i] = &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}
+	}
+	timeouts := metrics.AuditEventsDropped.WithLabelValues(next.Name(), "enqueue_timeout")
+	before := testutil.ToFloat64(timeouts)
+	old.shutdownDrop(events)
+	require.Equal(t, before, testutil.ToFloat64(timeouts), "free capacity must win over the expired context")
+	require.Zero(t, next.Health().DroppedEvents)
+	require.Zero(t, old.Health().DroppedEvents)
+}
+
+// Handed-over events that the replacement's filters exclude are counted.
+func TestHandOverCountsEventsTheNewFiltersExclude(t *testing.T) {
+	old := NewQueuedSink(&flakySink{}, outageConfig(), zap.NewNop())
+	next := NewQueuedSink(NewFilteredSink(&flakySink{}, EventFilterConfig{
+		IncludeEventTypes: []string{string(EventSessionRequested)},
+	}), outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, next.Close()) })
+	old.HandOver(next)
+	filtered := metrics.AuditEventsDropped.WithLabelValues(old.Name(), "handover_filtered")
+	before := testutil.ToFloat64(filtered)
+	old.shutdownDrop([]*Event{{ID: "kept", Type: EventSessionRequested}, {ID: "excluded", Type: EventConfigChanged}})
+	require.Equal(t, before+1, testutil.ToFloat64(filtered))
+}
+
+// namePanicSink panics once in Name() after a successful write, i.e. in the
+// worker's bookkeeping outside the guarded sink write.
+type namePanicSink struct{ armed atomic.Bool }
+
+func (s *namePanicSink) Name() string {
+	if s.armed.CompareAndSwap(true, false) {
+		panic("bookkeeping bug")
+	}
+	return "worker-panic"
+}
+func (s *namePanicSink) Close() error { return nil }
+func (s *namePanicSink) Write(ctx context.Context, e *Event) error {
+	return s.WriteBatch(ctx, []*Event{e})
+}
+func (s *namePanicSink) WriteBatch(context.Context, []*Event) error {
+	s.armed.Store(true)
+	return nil
+}
+
+// A worker panic outside the guarded write counts the held events as a
+// "panic" drop and releases them from inFlight, so drain does not wait.
+func TestWorkerPanicReleasesItsBatch(t *testing.T) {
+	sink := &namePanicSink{}
+	cfg := splitConfig(2)
+	qs := NewQueuedSink(sink, cfg, zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	panics := metrics.AuditEventsDropped.WithLabelValues("worker-panic", "panic")
+	before := testutil.ToFloat64(panics)
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "a", Type: EventConfigChanged}))
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "b", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return testutil.ToFloat64(panics) == before+2 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, qs.idle, time.Second, 5*time.Millisecond)
+	// The restarted worker takes the next batch (which panics the same way).
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "c", Type: EventConfigChanged}))
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "d", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool { return testutil.ToFloat64(panics) == before+4 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, qs.idle, time.Second, 5*time.Millisecond)
+}

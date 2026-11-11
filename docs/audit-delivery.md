@@ -81,7 +81,7 @@ shutdown (reason `shutdown`) and the permanent failures above. A reload that
 replaces the pipeline (for example a changed AuditConfig or a rotated Secret
 during an outage) does not lose the events the old pipeline holds: after up to
 `retryTimeoutSeconds` the old sink hands its queued, retrying and retained
-events to the sink with the same AuditConfig, sink type and sink name in the new
+events to the sink with the same AuditConfig, sink type, sink name and destination in the new
 pipeline, which counts its own overflow. Events still in the old manager's
 ingress queue (for example with `dropOnFull: false` while a sink queue is
 full) move to the new manager, which routes them through its own sinks,
@@ -90,8 +90,15 @@ then are counted as `shutdown`. Each retiring sink likewise hands over all its
 batches within one write timeout; the replacement counts what it cannot take
 (`queue_full` or `enqueue_timeout`). A
 replaced pipeline that is itself already closed forwards them along the chain
-of reloads. Only events of a sink that the reload removed are dropped as
-`shutdown`. Retention is in memory: a controller restart or crash
+of reloads. The destination is the Kafka brokers and topic or the webhook URL
+and batch URL, plus the names of the referenced Secrets: a rotated Secret
+still hands over, while a sink retargeted to other brokers, another topic or
+another URL drops its old backlog as `shutdown` instead of delivering it to
+the new destination. Only events of a sink that the reload removed or
+retargeted are dropped as `shutdown`. Handed-over events that the new sink's
+filters exclude are counted with reason `handover_filtered`. A worker that
+panics outside the guarded sink write counts the events it held with reason
+`panic`. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.
 
 Because the worker keeps retrying, the network circuit breaker keeps probing:

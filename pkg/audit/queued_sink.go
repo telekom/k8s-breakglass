@@ -289,6 +289,15 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		if qs.closed.Load() {
 			return qs.closedWrite(ctx, event)
 		}
+		// Free capacity always wins, even with an expired context (for
+		// example a late handover sharing an already spent deadline); a
+		// select below would otherwise pick at random between the send and
+		// Done.
+		select {
+		case qs.queue <- event:
+			return nil
+		default:
+		}
 		select {
 		case qs.queue <- event:
 			return nil
@@ -401,12 +410,14 @@ func (qs *QueuedSink) syncFallback(ctx context.Context, event *Event) error {
 // processQueue is the worker goroutine that processes events from the queue.
 func (qs *QueuedSink) processQueue(workerID int) {
 	defer qs.wg.Done()
+	var held int64 // events this worker took from the queue and still holds
 	defer func() {
 		if r := recover(); r != nil {
 			qs.logger.Error("panic in audit queue worker recovered",
 				zap.Int("worker", workerID),
-				zap.Any("panic", r))
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			qs.releasePanickedBatch(held)
 			// Restart the worker to maintain processing capacity
 			qs.wg.Add(1)
 			go qs.processQueue(workerID)
@@ -418,7 +429,9 @@ func (qs *QueuedSink) processQueue(workerID int) {
 			return
 		}
 		qs.inFlight.Add(1)
+		held = 1
 		qs.deliver([]*Event{event}, "write", qs.writeSingle, false, false)
+		held = 0
 		qs.inFlight.Add(-1)
 	}
 }
@@ -467,8 +480,21 @@ func (qs *QueuedSink) shutdownDrop(events []*Event) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, qs.handOverDeadline.Load()))
 		defer cancel()
 		// The successor counts its own losses (queue_full, enqueue_timeout).
+		// Events its filters now exclude are intentionally not delivered;
+		// they are counted here so the handover stays observable.
+		excluded := 0
+		for _, event := range events {
+			if !queuedEventAllowed(successor.sink, event) {
+				excluded++
+			}
+		}
+		if excluded > 0 {
+			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "handover_filtered").Add(float64(excluded))
+			qs.logger.Debug("handed-over audit events excluded by the replacement's filters", zap.Int("count", excluded))
+		}
 		_ = successor.WriteBatch(ctx, events)
-		qs.logger.Info("audit events handed over to the replacement pipeline", zap.Int("count", len(events)))
+		qs.logger.Info("audit events handed over to the replacement pipeline",
+			zap.Int("count", len(events)), zap.Int("filtered", excluded))
 		return
 	}
 	qs.recordDrop(len(events), "shutdown")
@@ -612,6 +638,17 @@ func (qs *QueuedSink) splitOrDrop(events []*Event, operation string, write func(
 		zap.String("event_id", events[0].ID), zap.String("event_type", string(events[0].Type)),
 		zap.String("operation", operation), zap.Error(err))
 	return false
+}
+
+// releasePanickedBatch accounts for the events a worker held when it panicked
+// outside the guarded sink write: they are lost, so they count as a "panic"
+// drop and no longer as in flight (drain would otherwise wait for them).
+func (qs *QueuedSink) releasePanickedBatch(count int64) {
+	if count == 0 {
+		return
+	}
+	qs.inFlight.Add(-count)
+	qs.recordDrop(int(count), "panic")
 }
 
 // recordDelivered records a successful write of count events.
@@ -951,18 +988,19 @@ func (ims *IsolatedMultiSink) IsHealthy() bool {
 // processBatchQueue handles events from the async queue using batch writes.
 func (qs *QueuedSink) processBatchQueue(workerID int, batchSink BatchSink) {
 	defer qs.wg.Done()
+	batch := make([]*Event, 0, qs.config.BatchSize)
 	defer func() {
 		if r := recover(); r != nil {
 			qs.logger.Error("panic in audit batch queue worker recovered",
 				zap.Int("worker", workerID),
-				zap.Any("panic", r))
+				zap.Any("panic", r), zap.ByteString("stack", debug.Stack()))
 			metrics.AuditSinkErrors.WithLabelValues(qs.sink.Name(), "panic").Inc()
+			qs.releasePanickedBatch(int64(len(batch)))
 			qs.wg.Add(1)
 			go qs.processBatchQueue(workerID, batchSink)
 		}
 	}()
 
-	batch := make([]*Event, 0, qs.config.BatchSize)
 	ticker := time.NewTicker(qs.config.BatchTimeout)
 	defer ticker.Stop()
 
