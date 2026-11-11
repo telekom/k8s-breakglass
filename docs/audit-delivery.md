@@ -95,8 +95,9 @@ and batch URL, plus the names of the referenced Secrets: a rotated Secret
 still hands over, while a sink retargeted to other brokers, another topic or
 another URL drops its old backlog as `shutdown` instead of delivering it to
 the new destination. Only events of a sink that the reload removed or
-retargeted are dropped as `shutdown`. Handed-over events that the new sink's
-filters exclude are counted with reason `handover_filtered`. A worker that
+retargeted are dropped as `shutdown`. Only the configuration block of the
+sink's own type counts. Handed-over events that the receiving sink's filters
+exclude are counted by that sink with reason `handover_filtered`. A worker that
 panics outside the guarded sink write counts the events it held with reason
 `panic`. Retention is in memory: a controller restart or crash
 still loses the retained and queued events.

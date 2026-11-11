@@ -271,6 +271,25 @@ func (qs *QueuedSink) closedWrite(ctx context.Context, event *Event) error {
 	return fmt.Errorf("queued sink %s is closed", qs.sink.Name())
 }
 
+// writeHandedOver accepts an event handed over by the sink this one
+// replaced. A closed sink forwards it along the chain of reloads; the sink
+// that finally receives it counts it as "handover_filtered" when its filters
+// exclude it, since such an event is not delivered anywhere.
+func (qs *QueuedSink) writeHandedOver(ctx context.Context, event *Event) error {
+	if qs.closed.Load() {
+		if successor := qs.successor.Load(); successor != nil {
+			return successor.writeHandedOver(ctx, event)
+		}
+	}
+	if !qs.closed.Load() && !queuedEventAllowed(qs.sink, event) {
+		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "handover_filtered").Inc()
+		qs.logger.Debug("handed-over audit event excluded by this sink's filters",
+			zap.String("event_id", event.ID), zap.String("event_type", string(event.Type)))
+		return nil
+	}
+	return qs.Write(ctx, event)
+}
+
 // Write enqueues an event for async processing. A sensitive event may
 // synchronously fall back to the underlying sink when a queue is full or its
 // circuit is open.
@@ -480,21 +499,12 @@ func (qs *QueuedSink) shutdownDrop(events []*Event) {
 		ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, qs.handOverDeadline.Load()))
 		defer cancel()
 		// The successor counts its own losses (queue_full, enqueue_timeout).
-		// Events its filters now exclude are intentionally not delivered;
-		// they are counted here so the handover stays observable.
-		excluded := 0
 		for _, event := range events {
-			if !queuedEventAllowed(successor.sink, event) {
-				excluded++
-			}
+			// The receiving sink, which may sit further along a chain of
+			// reloads, counts events its filters exclude.
+			_ = successor.writeHandedOver(ctx, event)
 		}
-		if excluded > 0 {
-			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "handover_filtered").Add(float64(excluded))
-			qs.logger.Debug("handed-over audit events excluded by the replacement's filters", zap.Int("count", excluded))
-		}
-		_ = successor.WriteBatch(ctx, events)
-		qs.logger.Info("audit events handed over to the replacement pipeline",
-			zap.Int("count", len(events)), zap.Int("filtered", excluded))
+		qs.logger.Info("audit events handed over to the replacement pipeline", zap.Int("count", len(events)))
 		return
 	}
 	qs.recordDrop(len(events), "shutdown")

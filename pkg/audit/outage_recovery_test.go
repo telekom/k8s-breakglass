@@ -786,6 +786,13 @@ func TestHandOverKeyFollowsTheDestination(t *testing.T) {
 	} {
 		require.NotEqual(t, base, other, name)
 	}
+	// An unused block of another type does not decide the destination.
+	withUnusedKafka := func(url string) string {
+		return handOverKey("config", breakglassv1alpha1.AuditSinkConfig{Name: "events", Type: breakglassv1alpha1.AuditSinkTypeWebhook,
+			Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: url},
+			Kafka:   &breakglassv1alpha1.KafkaSinkSpec{Brokers: []string{"a:9093"}, Topic: "audit"}})
+	}
+	require.NotEqual(t, withUnusedKafka("https://a/events"), withUnusedKafka("https://b/events"))
 	webhook := func(url, batchURL string) string {
 		return handOverKey("config", breakglassv1alpha1.AuditSinkConfig{Name: "events", Type: breakglassv1alpha1.AuditSinkTypeWebhook,
 			Webhook: &breakglassv1alpha1.WebhookSinkSpec{URL: url, BatchURL: batchURL}})
@@ -855,18 +862,37 @@ func TestLateHandOverUsesFreeCapacity(t *testing.T) {
 	require.Zero(t, old.Health().DroppedEvents)
 }
 
-// Handed-over events that the replacement's filters exclude are counted.
-func TestHandOverCountsEventsTheNewFiltersExclude(t *testing.T) {
-	old := NewQueuedSink(&flakySink{}, outageConfig(), zap.NewNop())
-	next := NewQueuedSink(NewFilteredSink(&flakySink{}, EventFilterConfig{
-		IncludeEventTypes: []string{string(EventSessionRequested)},
-	}), outageConfig(), zap.NewNop())
-	t.Cleanup(func() { require.NoError(t, next.Close()) })
-	old.HandOver(next)
-	filtered := metrics.AuditEventsDropped.WithLabelValues(old.Name(), "handover_filtered")
-	before := testutil.ToFloat64(filtered)
-	old.shutdownDrop([]*Event{{ID: "kept", Type: EventSessionRequested}, {ID: "excluded", Type: EventConfigChanged}})
-	require.Equal(t, before+1, testutil.ToFloat64(filtered))
+// Handed-over events are filtered and counted by the sink that finally
+// receives them, also when the hand-over passes a closed replacement.
+func TestHandOverCountsFilteringAtTheReceivingSink(t *testing.T) {
+	include := func(types ...EventType) EventFilterConfig {
+		names := make([]string, len(types))
+		for i, typ := range types {
+			names[i] = string(typ)
+		}
+		return EventFilterConfig{IncludeEventTypes: names}
+	}
+	a := NewQueuedSink(newFuncSink("chain-a", func([]*Event) error { return nil }), outageConfig(), zap.NewNop())
+	// B would allow config.changed; C, the sink that receives the events,
+	// allows only session.requested.
+	b := NewQueuedSink(NewFilteredSink(newFuncSink("chain-b", func([]*Event) error { return nil }),
+		include(EventConfigChanged)), outageConfig(), zap.NewNop())
+	var delivered atomic.Int64
+	c := NewQueuedSink(NewFilteredSink(newFuncSink("chain-c", func(events []*Event) error {
+		delivered.Add(int64(len(events)))
+		return nil
+	}), include(EventSessionRequested)), outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	a.HandOver(b)
+	b.HandOver(c)
+	require.NoError(t, b.Close())
+	filteredB := metrics.AuditEventsDropped.WithLabelValues("chain-b", "handover_filtered")
+	filteredC := metrics.AuditEventsDropped.WithLabelValues("chain-c", "handover_filtered")
+	beforeB, beforeC := testutil.ToFloat64(filteredB), testutil.ToFloat64(filteredC)
+	a.shutdownDrop([]*Event{{ID: "session", Type: EventSessionRequested}, {ID: "config", Type: EventConfigChanged}})
+	require.Eventually(t, func() bool { return delivered.Load() == 1 }, time.Second, 5*time.Millisecond)
+	require.Equal(t, beforeC+1, testutil.ToFloat64(filteredC), "C excludes config.changed")
+	require.Equal(t, beforeB, testutil.ToFloat64(filteredB), "B's filters do not apply")
 }
 
 // namePanicSink panics once in Name() after a successful write, i.e. in the

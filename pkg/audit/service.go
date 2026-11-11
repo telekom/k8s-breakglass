@@ -751,8 +751,10 @@ func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string 
 		return ref.Namespace + "/" + ref.Name
 	}
 	parts := []string{config, string(sink.Type), sink.Name}
+	// Only the block of the active type counts: validation allows an unused
+	// block of another type, and buildSink ignores it too.
 	switch {
-	case sink.Kafka != nil:
+	case sink.Type == breakglassv1alpha1.AuditSinkTypeKafka && sink.Kafka != nil:
 		brokers := slices.Clone(sink.Kafka.Brokers)
 		slices.Sort(brokers)
 		parts = append(parts, strings.Join(brokers, ","), sink.Kafka.Topic)
@@ -762,7 +764,7 @@ func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string 
 		if sasl := sink.Kafka.SASL; sasl != nil {
 			parts = append(parts, ref(&sasl.CredentialsSecretRef))
 		}
-	case sink.Webhook != nil:
+	case sink.Type == breakglassv1alpha1.AuditSinkTypeWebhook && sink.Webhook != nil:
 		parts = append(parts, sink.Webhook.URL, sink.Webhook.BatchURL, ref(sink.Webhook.AuthSecretRef))
 		if tls := sink.Webhook.TLS; tls != nil {
 			parts = append(parts, ref(tls.CASecretRef))
