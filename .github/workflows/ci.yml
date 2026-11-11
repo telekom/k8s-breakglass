@@ -126,7 +126,7 @@ jobs:
           go-version-file: go.mod
           cache: true
       - name: Verify native Windows token-file ACLs
-        run: go test ./pkg/bgctl/internal/privatefile -run '^(TestCreateTempPrivateUsesProtectedOwnerACL|TestPrivateWriteAndReplacement)$' -count=1 -v
+        run: go test ./pkg/bgctl/internal/privatefile -run '^(TestCreateTempPrivateUsesProtectedOwnerACL|TestPrivateWriteAndReplacement|TestCreateNewUsesProtectedOwnerACLAndNeverReplaces|TestCreateNewIsExclusive)$' -count=1 -v
 
   crd-validation:
     name: CRD Schema & API Server Validation

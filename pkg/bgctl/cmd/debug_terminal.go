@@ -19,6 +19,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/privatefile"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/internal/terminal"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/recording"
@@ -313,8 +314,9 @@ func writeRecordingOutput(rt *runtimeState, file string, data []byte) error {
 		_, err := io.Copy(rt.Writer(), bytes.NewReader(data))
 		return err
 	}
-	// Recordings can contain secrets typed into the terminal: owner-only, no overwrite.
-	f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	// Recordings can contain secrets typed into the terminal: owner-only
+	// (protected DACL on Windows) from creation, never overwriting.
+	f, err := privatefile.CreateNew(file)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", file, err)
 	}

@@ -229,8 +229,8 @@ the same response, so for independent verification pass the digest from the
 `debug_session.terminal_recording_finalized` audit event with
 `--expect-sha256` (accepted by `get`, `verify` and `export`). `export --format raw`
 writes the verified frames; `--include-input` adds typed input as asciicast
-`"i"` events (it may contain secrets). Files are created with mode `0600` and
-never overwrite existing files. See [terminal recording](terminal-recording.md).
+`"i"` events (it may contain secrets). Files are created owner-only (mode `0600`, or a protected current-user
+DACL on Windows) before any byte is written, and never overwrite existing files. See [terminal recording](terminal-recording.md).
 
 ## Watch Mode
 

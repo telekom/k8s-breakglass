@@ -10,3 +10,7 @@ import "os"
 func secureFile(_ *os.File) error { return nil }
 
 func createTempPrivate(dir, pattern string) (*os.File, error) { return os.CreateTemp(dir, pattern+"*") }
+
+func createPrivateNew(path string) (*os.File, error) {
+	return os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+}
