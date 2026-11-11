@@ -2,7 +2,6 @@ package utils
 
 import (
 	"errors"
-	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"path"
 	"testing"
 	"time"
