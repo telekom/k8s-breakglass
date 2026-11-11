@@ -2,6 +2,7 @@ package utils
 
 import (
 	"errors"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	"path"
 	"testing"
 	"time"
@@ -9,7 +10,9 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 )
 
 func TestSetupLoggerLevels(t *testing.T) {
@@ -210,5 +213,22 @@ func TestGlobMatchBoundaries(t *testing.T) {
 func TestGlobMatchGroupsSkipsInvalidPatterns(t *testing.T) {
 	if !GlobMatchGroups([]string{"[", "ops-*"}, []string{"dev", "ops-admin"}) {
 		t.Fatal("group matching must skip invalid patterns and find a later match")
+	}
+}
+
+// TestCreateSchemeRegistersTypesTheControllerReads guards against client
+// calls failing at runtime with "no kind is registered" (#1663).
+func TestCreateSchemeRegistersTypesTheControllerReads(t *testing.T) {
+	scheme, err := CreateScheme()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, obj := range []runtime.Object{
+		&admissionregistrationv1.ValidatingWebhookConfigurationList{},
+		&breakglassv1alpha1.DebugSessionCleanupAcknowledgementList{},
+	} {
+		if _, _, err := scheme.ObjectKinds(obj); err != nil {
+			t.Errorf("%T: %v", obj, err)
+		}
 	}
 }

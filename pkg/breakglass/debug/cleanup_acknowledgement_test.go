@@ -181,27 +181,47 @@ func TestRejectedAcknowledgementKeepsEarlierRetirementProvenance(t *testing.T) {
 }
 
 func TestCleanupAcknowledgementsMergeAppendOnlyByUID(t *testing.T) {
-	// Two reconciles process different acknowledgements from the same baseline.
+	// Two replicas process different acknowledgements from the same stale copy.
 	ds := failingSession(t)
-	f := newAckFixture(t, ds)
-	first, second := ds.DeepCopy(), ds.DeepCopy()
-	baseline := ds.Status.DeepCopy()
-	applyCleanupAcknowledgement(first, acknowledgement(ds, "a", acknowledgedPolicyExceptions[3]), "")
-	applyCleanupAcknowledgement(second, acknowledgement(ds, "b", acknowledgedPolicyExceptions[2]), "")
-	require.NoError(t, f.c.patchDebugSessionCleanupStatus(context.Background(), first, baseline))
-	require.NoError(t, f.c.patchDebugSessionCleanupStatus(context.Background(), second, baseline))
+	a := acknowledgement(ds, "a", acknowledgedPolicyExceptions[3])
+	b := acknowledgement(ds, "b", acknowledgedPolicyExceptions[2])
+	f := newAckFixture(t, ds, a, b)
+	first := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAPIReader(fakeListOnly{f.hub, a})
+	second := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAPIReader(fakeListOnly{f.hub, b})
+	first.acknowledgementWebhookActive, second.acknowledgementWebhookActive = webhookActive, webhookActive
+	require.NoError(t, first.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
+	require.NoError(t, second.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
 	persisted := &breakglassv1alpha1.DebugSession{}
 	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
 	assert.True(t, acknowledgementProcessed(persisted, "uid-a"), "the first record survives the second write")
 	assert.True(t, acknowledgementProcessed(persisted, "uid-b"))
 	assert.Len(t, persisted.Status.CleanupAcknowledgements, 2)
-	// The second, stale writer must not restore the residual the first retired.
 	for _, ref := range persisted.Status.DeployedResources {
 		assert.NotEqual(t, "deployed", ref.Name, "an acknowledged deployed residual stays retired")
 	}
 	for _, entry := range persisted.Status.PodTemplateResourceStatuses {
 		assert.NotEqual(t, "pod-template", entry.ResourceName, "an acknowledged pod-template residual stays retired")
 	}
+}
+
+func TestAlreadyRejectedAcknowledgementIsANoOpForAStaleReplica(t *testing.T) {
+	// Replica 1 rejects the acknowledgement (premature); replica 2 still holds a
+	// stale, failing copy on which it would apply. The live record wins.
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", acknowledgedPolicyExceptions...)
+	live := ds.DeepCopy()
+	live.Status.Conditions = nil
+	f := newAckFixture(t, live, ack)
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), live.DeepCopy()))
+	stale := NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAuditManager(f.manager).WithAPIReader(fakeListOnly{f.hub, ack})
+	stale.acknowledgementWebhookActive = webhookActive
+	require.NoError(t, stale.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
+	persisted := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKeyFromObject(ds), persisted))
+	require.Len(t, persisted.Status.CleanupAcknowledgements, 1)
+	assert.False(t, persisted.Status.CleanupAcknowledgements[0].Applied)
+	assert.False(t, persisted.Status.AuxiliaryResourceStatuses[0].Deleted, "a rejected acknowledgement retires nothing, even for a stale replica")
+	assert.Len(t, f.events(t, audit.EventDebugSessionCleanupAcknowledged), 1)
 }
 
 func TestStaleWriterCannotRestoreAcknowledgedAuxiliaryDeletion(t *testing.T) {

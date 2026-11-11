@@ -668,19 +668,42 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 	for i := range pending {
 		ack := &pending[i]
-		baseline := ds.Status.DeepCopy()
-		record := applyCleanupAcknowledgement(ds, ack, refusal)
-		if record.Applied {
-			log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
-			c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
-		} else {
-			log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "reason", record.Message)
-		}
-		setCleanupCondition(ds)
+		// Evaluate against the fresh live status inside the transaction: an
+		// acknowledgement another writer already processed is a no-op for
+		// both its record and the inventory.
+		var record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus
 		var previous metav1.Condition
-		inserted, err := c.patchDebugSessionCleanupStatusReportingInserts(ctx, ds, baseline, &previous)
+		inserted := false
+		patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+			func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+			func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+				if ds.UID != "" && current.UID != ds.UID {
+					return false, fmt.Errorf("debug session UID changed while processing cleanup acknowledgement: expected %q, got %q", ds.UID, current.UID)
+				}
+				inserted = false
+				previous = metav1.Condition{}
+				if condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed)); condition != nil {
+					previous = *condition
+				}
+				if acknowledgementProcessed(current, string(ack.UID)) {
+					return false, nil
+				}
+				record = applyCleanupAcknowledgement(current, ack, refusal)
+				setCleanupCondition(current)
+				if current.Generation > 0 {
+					current.Status.ObservedGeneration = current.Generation
+				}
+				inserted = true
+				return true, nil
+			})
 		if err != nil {
 			return fmt.Errorf("persist cleanup acknowledgement %s: %w", ack.Name, err)
+		}
+		ds.Status = patched.Status
+		ds.ResourceVersion = patched.ResourceVersion
+		if !inserted {
+			// Another replica processed this acknowledgement first and audits it.
+			continue
 		}
 		if !acknowledgementProcessed(ds, record.UID) {
 			// The API server pruned the field: the DebugSession CRD predates
@@ -690,9 +713,11 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			})
 			return nil
 		}
-		if !inserted[record.UID] {
-			// Another replica processed this acknowledgement first and audits it.
-			continue
+		if record.Applied {
+			log.Infow("Retired cleanup residuals acknowledged absent by an operator", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "identities", record.Retired)
+			c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
+		} else {
+			log.Warnw("Rejected cleanup acknowledgement", "acknowledgement", ack.Name, "acknowledgedBy", record.AcknowledgedBy, "reason", record.Message)
 		}
 		if c.shouldEmitAudit(ctx, ds) {
 			if auditManager := c.currentAuditManager(); auditManager != nil {
@@ -909,21 +934,12 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatus(
 // non-nil) the live CleanupFailed condition observed before the patch, or the
 // zero condition when none existed.
 func (c *DebugSessionController) patchDebugSessionCleanupStatusWithTransition(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) error {
-	_, err := c.patchDebugSessionCleanupStatusReportingInserts(ctx, ds, baseline, previous)
-	return err
-}
-
-// patchDebugSessionCleanupStatusReportingInserts also returns the UIDs of
-// acknowledgement records that this write inserted. A concurrent writer that
-// committed the same UID first wins; only the inserting writer audits it.
-func (c *DebugSessionController) patchDebugSessionCleanupStatusReportingInserts(ctx context.Context, ds *breakglassv1alpha1.DebugSession, baseline *breakglassv1alpha1.DebugSessionStatus, previous *metav1.Condition) (map[string]bool, error) {
 	desiredStatus := ds.Status
 	cleanupBaseline := desiredStatus
 	if baseline != nil {
 		cleanupBaseline = *baseline
 	}
 	var previousCondition metav1.Condition
-	var inserted map[string]bool
 	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
 		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
 		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
@@ -953,14 +969,9 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusReportingInserts(
 			current.Status.KubectlDebugStatus = mergeKubectlDebugStatus(
 				cleanupBaseline.KubectlDebugStatus, desiredStatus.KubectlDebugStatus, current.Status.KubectlDebugStatus,
 			)
-			// Append-only by UID: keep every live record and add new ones.
-			inserted = map[string]bool{}
-			for _, record := range desiredStatus.CleanupAcknowledgements {
-				if !acknowledgementProcessed(current, record.UID) {
-					current.Status.CleanupAcknowledgements = append(current.Status.CleanupAcknowledgements, record)
-					inserted[record.UID] = true
-				}
-			}
+			// Acknowledgement records are written only by
+			// processCleanupAcknowledgement against the live status; other
+			// cleanup writers keep the live records as they are.
 			// Residuals retired by an applied acknowledgement stay retired even
 			// when a stale concurrent writer still lists them.
 			retireAcknowledgedResiduals(current)
@@ -976,7 +987,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusReportingInserts(
 			return true, nil
 		})
 	if err != nil {
-		return nil, fmt.Errorf("patch debug session cleanup status: %w", err)
+		return fmt.Errorf("patch debug session cleanup status: %w", err)
 	}
 
 	if previous != nil {
@@ -984,7 +995,7 @@ func (c *DebugSessionController) patchDebugSessionCleanupStatusReportingInserts(
 	}
 	ds.Status = patched.Status
 	ds.ResourceVersion = patched.ResourceVersion
-	return inserted, nil
+	return nil
 }
 
 func cleanupStatusHasResiduals(session *breakglassv1alpha1.DebugSession) bool {
