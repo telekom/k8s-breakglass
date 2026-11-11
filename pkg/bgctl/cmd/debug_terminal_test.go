@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass/debug"
 )
 
@@ -147,4 +148,14 @@ func TestDebugRecordingsCommands(t *testing.T) {
 	require.ErrorContains(t, err, "failed verification")
 	_, _, err = runDebug(t, server.URL, nil, "debug", "recordings", "export", "s1", "rec-1", "--format", "html")
 	require.ErrorContains(t, err, "unsupported format")
+}
+
+func TestLatestSizeKeepsFinalSize(t *testing.T) {
+	queue := make(chan client.TerminalSize, 2)
+	for width := uint16(1); width <= 10; width++ {
+		latestSize(queue, client.TerminalSize{Width: width, Height: 1})
+	}
+	require.Len(t, queue, 2)
+	<-queue
+	require.Equal(t, uint16(10), (<-queue).Width, "the latest size survives a full queue")
 }

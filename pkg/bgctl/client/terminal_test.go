@@ -142,3 +142,46 @@ func TestTerminalStopsIdleStdinReaderOnReturn(t *testing.T) {
 	_, err = typist.Write([]byte("next session"))
 	require.Error(t, err, "no leaked reader may consume input meant for a later session")
 }
+
+// failingReader fails once the server is streaming, like a TTY that goes away.
+type failingReader struct {
+	err   error
+	after chan struct{}
+}
+
+func (r failingReader) Read([]byte) (int, error) {
+	<-r.after
+	return 0, r.err
+}
+
+func TestTerminalFailedInputIsNotCleanEOF(t *testing.T) {
+	sawBodyError := make(chan bool, 1)
+	streaming := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.NoError(t, http.NewResponseController(w).EnableFullDuplex())
+		w.Header().Set("Trailer", "X-Breakglass-Recording-Status")
+		_, _ = w.Write([]byte("prompt"))
+		w.(http.Flusher).Flush()
+		if r.URL.Query().Get("podName") == "fail" {
+			close(streaming)
+		}
+		_, err := io.Copy(io.Discard, r.Body)
+		sawBodyError <- err != nil
+		w.Header().Set("X-Breakglass-Recording-Status", "completed")
+	}))
+	defer server.Close()
+	c, err := New(WithServer(server.URL))
+	require.NoError(t, err)
+	_, err = c.Terminal(context.Background(), TerminalRequest{Session: "s1", PodNamespace: "n", PodName: "fail", Command: []string{"sh"}, Stdin: failingReader{err: errors.New("tty gone"), after: streaming}})
+	require.ErrorContains(t, err, "tty gone", "a failed stdin is reported, not a clean exit")
+	select {
+	case failed := <-sawBodyError:
+		require.True(t, failed, "the server must see a broken body, never a clean end of input")
+	case <-time.After(5 * time.Second):
+		t.Fatal("server body read did not end")
+	}
+
+	_, err = c.Terminal(context.Background(), TerminalRequest{Session: "s1", PodNamespace: "n", PodName: "p", Command: []string{"sh"}, Stdin: strings.NewReader("ok")})
+	require.NoError(t, err, "a normal EOF still ends cleanly")
+	require.False(t, <-sawBodyError, "a normal EOF is a clean end of input")
+}

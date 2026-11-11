@@ -106,7 +106,8 @@ Without a protocol header the request body is raw stdin (no resize). Clients
 that send `X-Breakglass-Terminal-Protocol: framed.v1` frame the body as
 `type (1) | length (4, big endian) | payload`: type `0` is stdin, type `1` a
 JSON terminal size. Frames are limited to 64 KiB; a malformed frame ends the
-stream. Any other protocol value is rejected with `400` before evidence is
+stream. The request body of a terminal stream is bounded by the 512 MiB
+recording budget instead of the 1 MiB limit for JSON requests. Any other protocol value is rejected with `400` before evidence is
 reserved. The response body remains raw terminal output with recording
 trailers. `bgctl debug terminal` uses `framed.v1`.
 

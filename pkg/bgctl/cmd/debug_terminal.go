@@ -74,10 +74,7 @@ sessions. The command defaults to "sh".`,
 				defer func() { _ = term.Restore(fd, state) }()
 				sendSize := func() {
 					if width, height, err := term.GetSize(fd); err == nil && width > 0 && height > 0 {
-						select {
-						case resize <- client.TerminalSize{Width: uint16(width), Height: uint16(height)}: // #nosec G115 -- terminal sizes fit uint16
-						default:
-						}
+						latestSize(resize, client.TerminalSize{Width: uint16(width), Height: uint16(height)}) // #nosec G115 -- terminal sizes fit uint16
 					}
 				}
 				sendSize()
@@ -104,6 +101,23 @@ sessions. The command defaults to "sh".`,
 	cmd.Flags().StringVar(&container, "container", "", "Target container")
 	_ = cmd.MarkFlagRequired("pod")
 	return cmd
+}
+
+// latestSize queues size without blocking. When the queue is full it drops the
+// oldest queued size, so the final size after a burst of resizes is always
+// delivered. Only the resize watcher sends, so the retry cannot spin.
+func latestSize(queue chan client.TerminalSize, size client.TerminalSize) {
+	for {
+		select {
+		case queue <- size:
+			return
+		default:
+		}
+		select {
+		case <-queue:
+		default:
+		}
+	}
 }
 
 // watchTerminalResize calls onResize for every SIGWINCH until the returned

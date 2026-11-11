@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"path"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -103,6 +104,13 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 		return writeFrame(terminalFrameResize, payload)
 	}
 	inputDone := make(chan struct{})
+	var inputErr atomic.Pointer[error]
+	failedInput := func(err error) error {
+		if stored := inputErr.Load(); stored != nil {
+			return fmt.Errorf("read terminal input: %w", *stored)
+		}
+		return err
+	}
 	defer func() {
 		cancel()
 		if deadliner, ok := request.Stdin.(interface{ SetReadDeadline(time.Time) error }); ok && deadliner.SetReadDeadline(time.Now()) == nil {
@@ -149,8 +157,16 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 					return
 				}
 				if readErr != nil {
-					// Ending stdin ends the request body and therefore the remote stdin.
-					_ = bodyWriter.Close()
+					if errors.Is(readErr, io.EOF) {
+						// Ending stdin ends the request body and therefore the remote stdin.
+						_ = bodyWriter.Close()
+						return
+					}
+					// Lost input must not look like a clean end of input: abort
+					// the request so the server records the stream incomplete.
+					inputErr.Store(&readErr)
+					_ = bodyWriter.CloseWithError(readErr)
+					cancel()
 					return
 				}
 			}
@@ -174,7 +190,7 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 	// The stream lasts as long as the remote command: no client timeout.
 	resp, err := (&http.Client{Transport: c.http.Transport}).Do(req)
 	if err != nil {
-		return TerminalResult{}, err
+		return TerminalResult{}, failedInput(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
@@ -185,7 +201,10 @@ func (c *Client) Terminal(ctx context.Context, request TerminalRequest) (Termina
 		stdout = io.Discard
 	}
 	if _, err := io.Copy(stdout, resp.Body); err != nil {
-		return TerminalResult{}, fmt.Errorf("terminal stream ended without a published recording: %w", err)
+		return TerminalResult{}, failedInput(fmt.Errorf("terminal stream ended without a published recording: %w", err))
+	}
+	if err := failedInput(nil); err != nil {
+		return TerminalResult{}, err
 	}
 	return TerminalResult{
 		RecordingID: resp.Trailer.Get("X-Breakglass-Recording-ID"),
