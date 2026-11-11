@@ -762,7 +762,13 @@ func handOverKey(config string, sink breakglassv1alpha1.AuditSinkConfig) string 
 			parts = append(parts, ref(&sasl.CredentialsSecretRef))
 		}
 	case sink.Type == breakglassv1alpha1.AuditSinkTypeWebhook && sink.Webhook != nil:
-		parts = append(parts, sink.Webhook.URL, sink.Webhook.BatchURL, ref(sink.Webhook.AuthSecretRef))
+		// The webhook sink sends batches to URL when BatchURL is empty, so
+		// both spellings name the same destination.
+		batchURL := sink.Webhook.BatchURL
+		if batchURL == "" {
+			batchURL = sink.Webhook.URL
+		}
+		parts = append(parts, sink.Webhook.URL, batchURL, ref(sink.Webhook.AuthSecretRef))
 		if tls := sink.Webhook.TLS; tls != nil {
 			parts = append(parts, ref(tls.CASecretRef))
 		}

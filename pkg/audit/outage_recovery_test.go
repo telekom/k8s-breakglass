@@ -739,6 +739,9 @@ func TestHandOverKeyFollowsTheDestination(t *testing.T) {
 	require.Equal(t, webhook("https://a/events", ""), webhook("https://a/events", ""))
 	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://b/events", ""))
 	require.NotEqual(t, webhook("https://a/events", ""), webhook("https://a/events", "https://a/batch"))
+	// An empty batch URL means "use the URL": equivalent configurations
+	// keep the handover.
+	require.Equal(t, webhook("https://a/events", ""), webhook("https://a/events", "https://a/events"))
 }
 
 // End to end through the service: a reload that only rotates a sink Secret
