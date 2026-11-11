@@ -22,6 +22,8 @@ func NewDebugCommand() *cobra.Command {
 		newDebugTemplateCommand(),
 		newDebugPodTemplateCommand(),
 		newDebugKubectlCommand(),
+		newDebugTerminalCommand(),
+		newDebugRecordingsCommand(),
 	)
 	return cmd
 }

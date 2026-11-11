@@ -126,6 +126,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// retains the default limit.
 	const maxBodySize = 1 << 20 // 1 MiB
 	const artifactUploadPath = "/api/debugSessionArtifactUploads/"
+	const terminalStreamBodySize = 512 << 20
 	artifactBodySize := cfg.Artifacts.UploadMaxBytes
 	if artifactBodySize < 1 || artifactBodySize > 512<<20 {
 		artifactBodySize = maxBodySize
@@ -135,6 +136,15 @@ func NewServer(log *zap.Logger, cfg config.Config,
 			limit := int64(maxBodySize)
 			if c.Request.Method == http.MethodPut && strings.HasPrefix(c.Request.URL.Path, artifactUploadPath) {
 				limit = artifactBodySize
+			}
+			if isTerminalStreamRequest(c.Request) {
+				// A terminal body is a long-lived input stream, bounded by the
+				// recording budget (512 MiB per stream), not a JSON document.
+				limit = terminalStreamBodySize
+				// Rejections by later middleware (auth, rate limits) must reach a
+				// client whose input stays open: without full duplex the HTTP/1.1
+				// server drains the body before writing any response.
+				_ = http.NewResponseController(c.Writer).EnableFullDuplex()
 			}
 			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}
@@ -1483,4 +1493,17 @@ func assetCacheControlMiddleware() gin.HandlerFunc {
 		}
 		c.Next()
 	}
+}
+
+// isTerminalStreamRequest matches POST /api/debugSessions/:name/terminal.
+func isTerminalStreamRequest(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/api/debugSessions/")
+	if !ok {
+		return false
+	}
+	name, suffix, ok := strings.Cut(rest, "/")
+	return ok && name != "" && suffix == "terminal"
 }

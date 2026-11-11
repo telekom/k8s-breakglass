@@ -116,6 +116,10 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondBadRequest(ctx, err.Error())
 		return
 	}
+	if protocol := ctx.GetHeader(TerminalProtocolHeader); protocol != "" && protocol != TerminalProtocolFramed {
+		apiresponses.RespondBadRequest(ctx, "unsupported terminal protocol")
+		return
+	}
 	apiCtx, cancel := context.WithCancel(ctx.Request.Context())
 	defer cancel()
 	session, err := c.getDebugSessionByName(apiCtx, ctx.Param("name"), ctx.Query("namespace"))
@@ -268,7 +272,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to bind recording operation")
 		return
 	}
-	metadata := backend.RecordingMetadata{FormatVersion: 1, StartedAt: time.Now().UTC(), StreamExpiresAt: binding.ExpiresAt, PodNamespace: namespace, PodName: podName, PodUID: targetUID, ContainerName: ctx.Query("container"), Operation: operation, LeaseUID: binding.LeaseUID, LeaseEpoch: binding.Epoch, Generation: binding.Generation}
+	metadata := backend.RecordingMetadata{FormatVersion: TerminalRecordingFormatVersion, StartedAt: time.Now().UTC(), StreamExpiresAt: binding.ExpiresAt, PodNamespace: namespace, PodName: podName, PodUID: targetUID, ContainerName: ctx.Query("container"), Operation: operation, LeaseUID: binding.LeaseUID, LeaseEpoch: binding.Epoch, Generation: binding.Generation}
 	maxBytes := c.recordingMaxBytes
 	if maxBytes < 1 {
 		maxBytes = defaultTerminalRecordingMaxBytes
@@ -315,7 +319,16 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 	ctx.Header("X-Content-Type-Options", "nosniff")
 	ctx.Header("Trailer", "X-Breakglass-Recording-ID, X-Breakglass-Recording-SHA256, X-Breakglass-Recording-Status")
 	streamWriter := &terminalRecordingFlushWriter{writer: ctx.Writer}
-	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: ctx.Request.Body, authorize: connection.Validate}
+	var input io.Reader = ctx.Request.Body
+	var sizes remotecommand.TerminalSizeQueue
+	if ctx.GetHeader(TerminalProtocolHeader) == TerminalProtocolFramed {
+		// Cancelling the request context stops the executor and marks the
+		// recording incomplete.
+		decoded, queue := decodeFramedTerminalInput(apiCtx, ctx.Request.Body, func(error) { cancel() })
+		defer func() { _ = decoded.Close() }()
+		input, sizes = decoded, queue
+	}
+	guardedInput := authorizedRecordingReader{ctx: apiCtx, reader: input, authorize: connection.Validate}
 	guardedOutput := authorizedRecordingWriter{ctx: apiCtx, writer: streamWriter, authorize: connection.Validate}
 	responseControl := http.NewResponseController(ctx.Writer)
 	_ = responseControl.SetReadDeadline(binding.ExpiresAt)
@@ -328,7 +341,7 @@ func (c *DebugSessionAPIController) handleTerminalRecording(ctx *gin.Context) {
 		_ = responseControl.SetReadDeadline(time.Now())
 		_ = requestBody.Close()
 	}
-	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, recorder, abortTransport)
+	recording, streamErr := streamTerminalWithLease(apiCtx, connection, binding.ExpiresAt, executor, guardedInput, guardedOutput, guardedOutput, sizes, recorder, abortTransport)
 	finalizeCtx, finalizeCancel := context.WithTimeout(context.WithoutCancel(ctx.Request.Context()), terminalRecordingFinalizeTimeout)
 	defer finalizeCancel()
 	metadata.FinishedAt = time.Now().UTC()
@@ -477,7 +490,7 @@ func (w *terminalRecordingFlushWriter) WriteHeader(statusCode int) {
 	w.writer.WriteHeader(statusCode)
 }
 
-func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, recorder *TerminalRecorder, abortTransport func()) (TerminalRecording, error) {
+func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingConnection, expiresAt time.Time, executor remotecommand.Executor, stdin io.Reader, stdout, stderr io.Writer, sizes remotecommand.TerminalSizeQueue, recorder *TerminalRecorder, abortTransport func()) (TerminalRecording, error) {
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stopAbort := func() {}
@@ -543,7 +556,7 @@ func streamTerminalWithLease(ctx context.Context, connection TerminalRecordingCo
 			}
 		}
 	}()
-	recording, streamErr := StreamTerminal(streamCtx, executor, stdin, stdout, stderr, recorder)
+	recording, streamErr := StreamTerminalWithResize(streamCtx, executor, stdin, stdout, stderr, sizes, recorder)
 	stopAbort()
 	cancel()
 	<-watchDone

@@ -6,6 +6,7 @@
 package privatefile
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -82,5 +83,24 @@ func assertProtectedOwnerACL(t *testing.T, sd *windows.SECURITY_DESCRIPTOR) {
 	sid := (*windows.SID)(unsafe.Pointer(&ace.SidStart))
 	if !sid.Equals(user.User.Sid) {
 		t.Fatalf("ACL grants access to %s instead of process user %s", sid.String(), user.User.Sid.String())
+	}
+}
+
+func TestCreateNewUsesProtectedOwnerACLAndNeverReplaces(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "recording.raw")
+	f, err := CreateNew(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.GetSecurityInfo(windows.Handle(f.Fd()), windows.SE_FILE_OBJECT, windows.DACL_SECURITY_INFORMATION)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertProtectedOwnerACL(t, sd)
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CreateNew(path); !errors.Is(err, os.ErrExist) {
+		t.Fatalf("existing file must not be replaced: %v", err)
 	}
 }

@@ -4,10 +4,7 @@
 package helpers
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,39 +14,6 @@ import (
 	"sync"
 	"time"
 )
-
-// TerminalRecordingFrame is one decoded frame of a terminal-recording.v1 artifact.
-type TerminalRecordingFrame struct {
-	Direction byte
-	Payload   []byte
-}
-
-// ParseTerminalRecording decodes a recording and verifies its SHA-256 hash chain.
-func ParseTerminalRecording(data []byte) ([]TerminalRecordingFrame, error) {
-	const header = 1 + 1 + 8 + sha256.Size
-	var frames []TerminalRecordingFrame
-	var previous [sha256.Size]byte
-	for offset := 0; offset < len(data); {
-		if len(data)-offset < header {
-			return nil, fmt.Errorf("truncated frame header at %d", offset)
-		}
-		if data[offset] != 1 {
-			return nil, fmt.Errorf("unsupported frame version %d at %d", data[offset], offset)
-		}
-		length := binary.BigEndian.Uint64(data[offset+2 : offset+10])
-		if length > uint64(len(data)-offset-header) {
-			return nil, fmt.Errorf("truncated frame payload at %d", offset)
-		}
-		if !bytes.Equal(data[offset+10:offset+header], previous[:]) {
-			return nil, fmt.Errorf("hash chain broken at frame %d", len(frames))
-		}
-		end := offset + header + int(length)
-		previous = sha256.Sum256(data[offset:end])
-		frames = append(frames, TerminalRecordingFrame{Direction: data[offset+1], Payload: data[offset+header : end]})
-		offset = end
-	}
-	return frames, nil
-}
 
 // TerminalStreamResult is the client-visible outcome of one recorded stream.
 type TerminalStreamResult struct {

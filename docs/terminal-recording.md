@@ -90,6 +90,30 @@ Terminal stream and replay responses use `application/octet-stream` and
 control sequences, remain unchanged; they are never HTML-escaped. Frame sizes
 are checked against the native allocation limit before arithmetic or allocation.
 
+### Framing and timing
+
+New recordings use framing version 2:
+`version (2) | direction | monotonic offset ns (8) | length (8) | previous SHA-256 | payload`.
+Directions are `i` (input), `o` (output) and `r` (resize, JSON
+`{"width":W,"height":H}`). Offsets come from the monotonic clock relative to the
+stream start and never decrease; the artifact backend rejects non-monotonic
+artifacts. Version 1 artifacts (`version | direction | length | previous SHA-256`,
+no timing) remain verifiable. `formatVersion` in the recording metadata names
+the framing. The last frame is covered by the published artifact SHA-256, not
+by the chain, so verification always compares the published digest.
+`bgctl debug recordings export` converts recordings to asciicast v2.
+
+### Terminal protocol
+
+Without a protocol header the request body is raw stdin (no resize). Clients
+that send `X-Breakglass-Terminal-Protocol: framed.v1` frame the body as
+`type (1) | length (4, big endian) | payload`: type `0` is stdin, type `1` a
+JSON terminal size. Frames are limited to 64 KiB; a malformed frame ends the
+stream. The request body of a terminal stream is bounded by the 512 MiB
+recording budget instead of the 1 MiB limit for JSON requests. Any other protocol value is rejected with `400` before evidence is
+reserved. The response body remains raw terminal output with recording
+trailers. `bgctl debug terminal` uses `framed.v1`.
+
 The recorder uses a bounded framed stream with separate input and output
 directions. Each frame carries the previous frame's SHA-256 digest, so a
 finalized artifact can be verified without placing terminal bytes or
@@ -143,9 +167,10 @@ a positive duration at admission. The controller does not copy template
 webhook headers, bearer tokens, Secret values, or recording bytes into status,
 audit details, or failure messages.
 
-The server assigns the `terminal-recording.v1` metadata policy and version 1 to
-recording reservations. This identifies framing and metadata; it does not redact
-or alter the authorized terminal stream bytes.
+The server assigns the `terminal-recording.v1` metadata policy to recording
+reservations and records the framing in `formatVersion` (2 for new recordings,
+1 for recordings made before timing was added). This identifies framing and
+metadata; it does not redact or alter the authorized terminal stream bytes.
 
 ### Revocation and in-flight output
 

@@ -7,8 +7,9 @@ import metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 // ArtifactRecordingMetadata binds terminal evidence to its original target and capability.
 type ArtifactRecordingMetadata struct {
-	// formatVersion is controller-supplied recording metadata.
-	// +kubebuilder:validation:Enum=1
+	// formatVersion is controller-supplied recording metadata: 1 (untimed
+	// frames) or 2 (frames with monotonic time offsets and resize events).
+	// +kubebuilder:validation:Enum=1;2
 	// +required
 	FormatVersion int32 `json:"formatVersion,omitempty"`
 	// startedAt is controller-supplied recording metadata.

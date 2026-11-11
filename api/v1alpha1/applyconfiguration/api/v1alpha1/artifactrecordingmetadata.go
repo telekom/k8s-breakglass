@@ -17,7 +17,8 @@ import (
 //
 // ArtifactRecordingMetadata binds terminal evidence to its original target and capability.
 type ArtifactRecordingMetadataApplyConfiguration struct {
-	// formatVersion is controller-supplied recording metadata.
+	// formatVersion is controller-supplied recording metadata: 1 (untimed
+	// frames) or 2 (frames with monotonic time offsets and resize events).
 	FormatVersion *int32 `json:"formatVersion,omitempty"`
 	// startedAt is controller-supplied recording metadata.
 	StartedAt *v1.Time `json:"startedAt,omitempty"`
