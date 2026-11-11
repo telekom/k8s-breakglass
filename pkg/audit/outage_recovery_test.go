@@ -1242,23 +1242,34 @@ func TestUnmarkedHandOverIgnoresTheCallersCancellation(t *testing.T) {
 	require.Zero(t, next.Health().DroppedEvents)
 }
 
-// One panicking event behind the real circuit breaker: the panics do not
-// open the breaker, so the batch is split and every valid event delivered;
-// only the panicking event is dropped.
+// One panicking event behind a real circuit breaker (threshold 2), with
+// and without retention past the window: the panics neither open the
+// breaker nor make later attempts fail as "circuit open", so the batch is
+// split, a and b are delivered and only boom is dropped as "panic". The
+// breaker stays closed, so other batches are not rejected.
 func TestPanickingEventDoesNotTripTheBreakerForItsBatch(t *testing.T) {
-	sink := &batchLimitSink{limit: 100}
-	cb := NewCircuitBreakerSink(sink, CircuitBreakerConfig{
-		FailureThreshold: 2, SuccessThreshold: 1, OpenTimeout: time.Hour, HalfOpenMaxRequests: 1,
-	}, zap.NewNop())
-	cfg := splitConfig(4)
-	cfg.RetryAttempts = 4
-	qs := NewQueuedSink(cb, cfg, zap.NewNop())
-	t.Cleanup(func() { require.NoError(t, qs.Close()) })
-	for _, id := range []string{"a", "boom", "b", "c"} {
-		require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+	for _, dropAfterWindow := range []bool{false, true} {
+		t.Run(fmt.Sprintf("dropAfterRetryWindow=%t", dropAfterWindow), func(t *testing.T) {
+			sink := &batchLimitSink{limit: 100}
+			cb := NewCircuitBreakerSink(sink, CircuitBreakerConfig{
+				FailureThreshold: 2, SuccessThreshold: 1, OpenTimeout: time.Hour, HalfOpenMaxRequests: 1,
+			}, zap.NewNop())
+			cfg := splitConfig(3)
+			cfg.RetryAttempts = 4
+			cfg.DropAfterRetryWindow = dropAfterWindow
+			qs := NewQueuedSink(cb, cfg, zap.NewNop())
+			t.Cleanup(func() { require.NoError(t, qs.Close()) })
+			panics := metrics.AuditEventsDropped.WithLabelValues(sink.Name(), "panic")
+			before := testutil.ToFloat64(panics)
+			for _, id := range []string{"a", "boom", "b"} {
+				require.NoError(t, qs.Write(context.Background(), &Event{ID: id, Type: EventConfigChanged}))
+			}
+			require.Eventually(t, func() bool { return len(sink.ids()) == 2 && qs.Health().DroppedEvents == 1 },
+				2*time.Second, 5*time.Millisecond)
+			require.ElementsMatch(t, []string{"a", "b"}, sink.ids())
+			require.Equal(t, before+1, testutil.ToFloat64(panics), "only boom is dropped, as panic")
+			require.Equal(t, CircuitClosed, cb.Stats().State, "a poison event must not open the breaker")
+			require.Zero(t, testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(sink.Name())))
+		})
 	}
-	require.Eventually(t, func() bool { return len(sink.ids()) == 3 && qs.Health().DroppedEvents == 1 },
-		2*time.Second, 5*time.Millisecond)
-	require.ElementsMatch(t, []string{"a", "b", "c"}, sink.ids())
-	require.Equal(t, CircuitClosed, cb.Stats().State)
 }
