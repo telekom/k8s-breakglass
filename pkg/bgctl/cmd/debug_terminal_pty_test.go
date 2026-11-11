@@ -10,8 +10,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/creack/pty"
 	"github.com/stretchr/testify/require"
@@ -38,7 +40,9 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ptmx, tty, err := pty.Open()
-			require.NoError(t, err)
+			if err != nil {
+				t.Skipf("no pseudo-terminal available: %v", err)
+			}
 			require.NoError(t, pty.Setsize(tty, &pty.Winsize{Rows: 24, Cols: 80}))
 			// Like os.Stdin: a blocking, non-pollable file, so the client's
 			// read deadline cannot interrupt a pending read.
@@ -46,10 +50,11 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			require.NoError(t, err)
 			stdin := os.NewFile(uintptr(fd), "stdin")
 			t.Cleanup(func() {
-				_, _ = ptmx.Write([]byte("x")) // release the pending stdin read
+				// Closing the master ends the client's still pending stdin read
+				// (with EOF or EIO) so its goroutine does not outlive the test.
+				_ = ptmx.Close()
 				_ = stdin.Close()
 				_ = tty.Close()
-				_ = ptmx.Close()
 			})
 			before, err := term.GetState(fd)
 			require.NoError(t, err)
@@ -58,6 +63,8 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 			// waits for release so the panic case cannot restore the terminal
 			// before raw mode is asserted.
 			streaming, release, wrote := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var releaseOnce sync.Once
+			unblock := func() { releaseOnce.Do(func() { close(release) }) }
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_ = http.NewResponseController(w).EnableFullDuplex()
 				var header [5]byte
@@ -71,7 +78,11 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 				close(wrote)
 				_, _ = io.Copy(io.Discard, r.Body) // until the client ends the stream
 			}))
+			// On failure, unblock the handler and drop the connection so
+			// server.Close cannot hang.
 			defer server.Close()
+			defer server.CloseClientConnections()
+			defer unblock()
 
 			root := NewRootCommand(Config{ConfigPath: writeTestConfigForDebug(t, server.URL), OutputWriter: tc.stdout})
 			root.SetIn(stdin)
@@ -82,21 +93,34 @@ func TestDebugTerminalRestoresTTY(t *testing.T) {
 				defer func() { done <- recover() }()
 				_ = root.Execute()
 			}()
-			<-streaming
+			receive(t, streaming, "the stream to start")
 			raw, err := term.GetState(fd)
 			require.NoError(t, err)
 			require.NotEqual(t, before, raw, "raw mode must be active while streaming")
-			close(release)
-			<-wrote
+			unblock()
+			receive(t, wrote, "the server to write output")
 			if tc.interrupt {
 				require.NoError(t, syscall.Kill(syscall.Getpid(), syscall.SIGTERM))
-				require.Nil(t, <-done)
+				require.Nil(t, receive(t, done, "bgctl to exit after SIGTERM"))
 			} else {
-				require.Equal(t, "stdout failed", <-done)
+				require.Equal(t, "stdout failed", receive(t, done, "bgctl to panic"))
 			}
 			after, err := term.GetState(fd)
 			require.NoError(t, err)
 			require.Equal(t, before, after, "termios must be restored")
 		})
+	}
+}
+
+// receive fails the test instead of hanging until the go test timeout when a
+// regression leaves the command blocked.
+func receive[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+	select {
+	case v := <-ch:
+		return v
+	case <-time.After(10 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+		panic("unreachable")
 	}
 }
