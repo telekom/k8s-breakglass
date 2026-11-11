@@ -18,8 +18,10 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	authenticationv1 "k8s.io/api/authentication/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -777,4 +779,29 @@ func TestDeletionWaitsForAppliedButUncompletedAcknowledgement(t *testing.T) {
 	wait, err = f.c.unfinishedAcknowledgementRequeue(context.Background(), ds)
 	require.NoError(t, err)
 	assert.Zero(t, wait, "an acknowledgement of another session instance is ignored")
+}
+
+type erroringMapper struct {
+	meta.RESTMapper
+	err error
+}
+
+func (m erroringMapper) RESTMapping(schema.GroupKind, ...string) (*meta.RESTMapping, error) {
+	return nil, m.err
+}
+
+func TestAcknowledgementCRDServedDisablesTheWatchOnlyOnNoMatch(t *testing.T) {
+	gk := breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind()
+	served := meta.NewDefaultRESTMapper([]schema.GroupVersion{breakglassv1alpha1.GroupVersion})
+	served.Add(breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement"), meta.RESTScopeNamespace)
+	ok, err := acknowledgementCRDServed(served)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	ok, err = acknowledgementCRDServed(erroringMapper{err: &meta.NoKindMatchError{GroupKind: gk}})
+	require.NoError(t, err)
+	assert.False(t, ok, "a CRD that is not served disables the watch")
+
+	_, err = acknowledgementCRDServed(erroringMapper{err: apierrors.NewServiceUnavailable("discovery unavailable")})
+	require.Error(t, err, "a temporary discovery failure fails setup instead of silently disabling the watch")
 }

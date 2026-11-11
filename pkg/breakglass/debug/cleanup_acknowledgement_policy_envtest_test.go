@@ -25,8 +25,10 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	ctrlconfig "sigs.k8s.io/controller-runtime/pkg/config"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 )
@@ -130,14 +132,25 @@ func TestPlatformControllerStartsWithoutAcknowledgementCRDEnvtest(t *testing.T) 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, env.Stop()) })
 	require.NoError(t, breakglassv1alpha1.AddToScheme(scheme.Scheme))
-	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme, Metrics: metricsserver.Options{BindAddress: "0"}})
+	// A short CacheSyncTimeout makes a watch on the missing kind fail the
+	// controller start quickly instead of hanging until the default timeout.
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{Scheme: scheme.Scheme, Metrics: metricsserver.Options{BindAddress: "0"},
+		Controller: ctrlconfig.Controller{CacheSyncTimeout: 5 * time.Second, SkipNameValidation: ptr.To(true)}})
 	require.NoError(t, err)
 	controller := NewDebugSessionController(zap.NewNop().Sugar(), mgr.GetClient(), nil)
 	require.NoError(t, controller.SetupWithManager(mgr), "setup must not depend on the optional CRD")
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- mgr.Start(ctx) }()
-	require.Eventually(t, func() bool { return mgr.GetCache().WaitForCacheSync(ctx) }, 30*time.Second, 200*time.Millisecond, "the manager starts and syncs")
+	// Wait well past the cache sync timeout: a controller whose sources
+	// could not start makes mgr.Start return an error.
+	select {
+	case err := <-done:
+		require.NoError(t, err, "the controller must start without the optional CRD")
+		t.Fatal("the manager stopped unexpectedly")
+	case <-time.After(15 * time.Second):
+	}
 	cancel()
 	require.NoError(t, <-done)
 }

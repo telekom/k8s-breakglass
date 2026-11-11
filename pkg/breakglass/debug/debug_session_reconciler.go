@@ -46,6 +46,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -258,8 +259,11 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 	// A new acknowledgement reconciles its session at once. Watch it only when
 	// its CRD is served, so the controller still starts on a hub where the
 	// optional CRD is not installed; acknowledgements are then unavailable.
-	if _, err := mgr.GetRESTMapper().RESTMapping(breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind(),
-		breakglassv1alpha1.GroupVersion.Version); err == nil {
+	served, err := acknowledgementCRDServed(mgr.GetRESTMapper())
+	if err != nil {
+		return err
+	}
+	if served {
 		builder = builder.Watches(&breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, obj ctrlclient.Object) []reconcile.Request {
 			ack, ok := obj.(*breakglassv1alpha1.DebugSessionCleanupAcknowledgement)
 			if !ok {
@@ -268,9 +272,26 @@ func (c *DebugSessionController) SetupWithManager(mgr ctrl.Manager) error {
 			return []reconcile.Request{{NamespacedName: types.NamespacedName{Namespace: ack.Namespace, Name: ack.Spec.SessionName}}}
 		}))
 	} else if c.log != nil {
-		c.log.Warnw("DebugSessionCleanupAcknowledgement CRD is not served; cleanup acknowledgements are unavailable until it is applied and the controller restarts", "error", err)
+		c.log.Warnw("DebugSessionCleanupAcknowledgement CRD is not served; cleanup acknowledgements are unavailable until it is applied and the controller restarts")
 	}
 	return builder.Complete(c)
+}
+
+// acknowledgementCRDServed reports whether the optional
+// DebugSessionCleanupAcknowledgement CRD is served. Only proof of absence
+// (NoMatch) disables the watch; other errors, such as a temporary discovery
+// failure, are returned so setup fails and is retried instead of silently
+// running without acknowledgements.
+func acknowledgementCRDServed(mapper meta.RESTMapper) (bool, error) {
+	_, err := mapper.RESTMapping(breakglassv1alpha1.GroupVersion.WithKind("DebugSessionCleanupAcknowledgement").GroupKind(), breakglassv1alpha1.GroupVersion.Version)
+	switch {
+	case err == nil:
+		return true, nil
+	case isKindNotServedError(err):
+		return false, nil
+	default:
+		return false, fmt.Errorf("discover DebugSessionCleanupAcknowledgement: %w", err)
+	}
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete

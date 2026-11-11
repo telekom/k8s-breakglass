@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Ships with the DebugSessionCleanupAcknowledgement CRD so that, from the
-# moment the resource exists, the API server itself requires
+# Optional component: when deployed alongside the
+# DebugSessionCleanupAcknowledgement CRD, the API server itself requires
 # spec.acknowledgedBy to equal the creating user. This does not depend on the
 # breakglass webhook being deployed or reachable (for example while CRDs are
-# applied before the controller during an upgrade).
+# applied before the controller during an upgrade). Without it, the webhook
+# enforces the same rule.
 #
 # Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
 apiVersion: admissionregistration.k8s.io/v1
