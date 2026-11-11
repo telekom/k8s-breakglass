@@ -84,9 +84,12 @@ during an outage) does not lose the events the old pipeline holds: after up to
 events to the sink with the same AuditConfig, sink type, sink name and destination in the new
 pipeline, which counts its own overflow. Events still in the old manager's
 ingress queue (for example with `dropOnFull: false` while a sink queue is
-full) move to the new manager, which routes them through its own sinks,
-within one write timeout for the whole handover; events that do not fit by
-then are counted as `shutdown`. Each retiring sink likewise hands over all its
+full) follow the same per-sink handover: each old sink that would have taken
+an event passes it to its matching successor, within one write timeout for
+the whole handover, so they never reach a retargeted destination; events that
+do not fit by then, or whose sink has no matching successor, are counted as
+`shutdown`. A handover waiting on a full replacement that closes in turn
+follows that replacement's successor at once. Each retiring sink likewise hands over all its
 batches within one write timeout; the replacement counts what it cannot take
 (`queue_full` or `enqueue_timeout`). A
 replaced pipeline that is itself already closed forwards them along the chain

@@ -59,21 +59,11 @@ type Manager struct {
 	// Batch processing for high-throughput
 	batchSink BatchSink
 
-	// successor receives ingress events still pending at shutdown (see
-	// HandOver) instead of dropping them with reason "shutdown".
-	successor atomic.Pointer[Manager]
-	// handOverDeadline bounds the whole handover of this manager (Unix
-	// nanoseconds, set once on the first handed-over event), so a full
-	// replacement cannot keep a retiring manager alive for one write
-	// timeout per event.
+	// handOverDeadline bounds the handover of ingress events still pending
+	// at shutdown (Unix nanoseconds, set on the first one), shared by all
+	// workers, so a full replacement cannot keep a retiring manager alive
+	// for one write timeout per event.
 	handOverDeadline atomic.Int64
-}
-
-// HandOver makes the manager pass ingress events it still holds at shutdown
-// to successor, the manager of the pipeline that replaces it. The successor
-// routes them through its own sinks and counts its own losses.
-func (m *Manager) HandOver(successor *Manager) {
-	m.successor.Store(successor)
 }
 
 // BatchSink is an optional interface for sinks that support batch writes.
@@ -659,55 +649,22 @@ func (m *Manager) recordShutdownDrops(count int) {
 	metrics.AuditEventsDropped.WithLabelValues(m.sink.Name(), "shutdown").Add(float64(count))
 }
 
-// shutdownDrop hands events to the successor manager, or counts them lost.
+// shutdownDrop handles ingress events still pending at shutdown. When the
+// pipeline is being replaced, each of its sinks hands them to its matching
+// successor (same AuditConfig, type, name and destination), which applies
+// its own filters; a sink without one counts them as "shutdown". Otherwise
+// the events are counted as "shutdown" here.
 func (m *Manager) shutdownDrop(events []*Event) {
-	successor := m.successor.Load()
-	if successor == nil {
+	multi, ok := m.sink.(*IsolatedMultiSink)
+	if !ok || !multi.handingOver() {
 		m.recordShutdownDrops(len(events))
 		return
 	}
 	m.handOverDeadline.CompareAndSwap(0, time.Now().Add(m.config.WriteTimeout).UnixNano())
-	deadline := time.Unix(0, m.handOverDeadline.Load())
-	for i, event := range events {
-		if !successor.enqueueHandedOver(event, deadline) {
-			// The budget is spent or the chain ended: count the rest.
-			m.recordShutdownDrops(len(events) - i)
-			return
-		}
-	}
-}
-
-// enqueueHandedOver accepts an event handed over by a replaced manager. The
-// event already passed filtering, sampling and enrichment there. It waits
-// for capacity until deadline (shared by the whole handover, also along a
-// chain of reloads) and reports whether it accepted the event.
-func (m *Manager) enqueueHandedOver(event *Event, deadline time.Time) bool {
-	m.closeMu.RLock()
-	defer m.closeMu.RUnlock()
-	if m.closed.Load() {
-		if successor := m.successor.Load(); successor != nil {
-			return successor.enqueueHandedOver(event, deadline)
-		}
-		return false
-	}
-	wait := time.Until(deadline)
-	if wait <= 0 {
-		select {
-		case m.asyncQueue <- event:
-			m.queuedEvents.Add(1)
-			return true
-		default:
-			return false
-		}
-	}
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
-	select {
-	case m.asyncQueue <- event:
-		m.queuedEvents.Add(1)
-		return true
-	case <-timer.C:
-		return false
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, m.handOverDeadline.Load()))
+	defer cancel()
+	for _, event := range events {
+		multi.handOverIngress(ctx, event)
 	}
 }
 

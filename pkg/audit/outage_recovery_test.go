@@ -662,67 +662,6 @@ func TestRetainedKafkaRetriesCountOnlyAsRetry(t *testing.T) {
 	require.Equal(t, classifiedBefore, classified())
 }
 
-// A reload hands ingress events that the old manager has not yet passed to
-// its sinks to the new manager instead of dropping them as "shutdown".
-func TestManagerHandsPendingIngressToTheReplacement(t *testing.T) {
-	// The old pipeline's sink blocks until the caller's context ends, like a
-	// QueuedSink with dropOnFull: false whose queue is full during an outage.
-	oldCfg := DefaultManagerConfig()
-	oldCfg.WorkerCount, oldCfg.BatchSize, oldCfg.QueueSize = 1, 1, 100
-	oldCfg.WriteTimeout = time.Minute // only the shutdown drain ends the blocked write
-	old := NewManager(contextBlockedSink{}, oldCfg, zap.NewNop())
-
-	var delivered atomic.Int64
-	next := NewManager(newFuncSink("ingress-new", func(events []*Event) error {
-		delivered.Add(int64(len(events)))
-		return nil
-	}), DefaultManagerConfig(), zap.NewNop())
-	t.Cleanup(func() { require.NoError(t, next.Close()) })
-
-	for i := range 5 {
-		require.True(t, old.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}))
-	}
-	require.Eventually(t, func() bool { return len(old.asyncQueue) == 4 }, time.Second, 5*time.Millisecond)
-	shutdown := metrics.AuditEventsDropped.WithLabelValues(contextBlockedSink{}.Name(), "shutdown")
-	before := testutil.ToFloat64(shutdown)
-	old.HandOver(next)
-	require.NoError(t, old.Close())
-	// The batch in the blocked write ends with the drain deadline; the four
-	// events still in ingress reach the replacement.
-	require.Eventually(t, func() bool { return delivered.Load() == 4 }, 2*time.Second, 10*time.Millisecond)
-	require.Equal(t, before, testutil.ToFloat64(shutdown))
-}
-
-// The handover of a retiring manager shares one deadline: when the
-// replacement's ingress stays full, the rest is counted as "shutdown" once
-// the budget is spent instead of waiting one write timeout per event.
-func TestManagerHandOverSharesOneDeadline(t *testing.T) {
-	oldCfg := DefaultManagerConfig()
-	oldCfg.WriteTimeout = 200 * time.Millisecond
-	old := NewManager(contextBlockedSink{}, oldCfg, zap.NewNop())
-	t.Cleanup(func() { _ = old.Close() })
-	// The replacement's ingress holds one event and its worker is blocked.
-	nextCfg := DefaultManagerConfig()
-	nextCfg.WorkerCount, nextCfg.QueueSize, nextCfg.BatchSize = 1, 1, 1
-	nextCfg.WriteTimeout = time.Minute
-	next := NewManager(contextBlockedSink{}, nextCfg, zap.NewNop())
-	t.Cleanup(func() { _ = next.Close() })
-	old.HandOver(next)
-	events := make([]*Event, 20)
-	for i := range events {
-		events[i] = &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}
-	}
-	shutdown := metrics.AuditEventsDropped.WithLabelValues(contextBlockedSink{}.Name(), "shutdown")
-	before := testutil.ToFloat64(shutdown)
-	start := time.Now()
-	old.shutdownDrop(events[:10])
-	old.shutdownDrop(events[10:]) // a second worker batch shares the budget
-	require.Less(t, time.Since(start), time.Second, "one handover budget, not one write timeout per event")
-	accepted := 20 - int(testutil.ToFloat64(shutdown)-before)
-	require.LessOrEqual(t, accepted, 2, "only the replacement's capacity is handed over")
-	require.Positive(t, accepted)
-}
-
 // A reload that keeps a sink's name but changes its type (Kafka to log)
 // must not move the Kafka backlog into the log sink.
 func TestHandOverNeverCrossesSinkTypes(t *testing.T) {
@@ -892,6 +831,7 @@ func TestHandOverCountsFilteringAtTheReceivingSink(t *testing.T) {
 	a.shutdownDrop([]*Event{{ID: "session", Type: EventSessionRequested}, {ID: "config", Type: EventConfigChanged}})
 	require.Eventually(t, func() bool { return delivered.Load() == 1 }, time.Second, 5*time.Millisecond)
 	require.Equal(t, beforeC+1, testutil.ToFloat64(filteredC), "C excludes config.changed")
+	require.Equal(t, int64(1), c.Health().DroppedEvents, "the in-memory counter matches")
 	require.Equal(t, beforeB, testutil.ToFloat64(filteredB), "B's filters do not apply")
 }
 
@@ -932,4 +872,99 @@ func TestWorkerPanicReleasesItsBatch(t *testing.T) {
 	require.NoError(t, qs.Write(context.Background(), &Event{ID: "d", Type: EventConfigChanged}))
 	require.Eventually(t, func() bool { return testutil.ToFloat64(panics) == before+4 }, time.Second, 5*time.Millisecond)
 	require.Eventually(t, qs.idle, time.Second, 5*time.Millisecond)
+}
+
+// ingressPipeline is a manager in front of one queued sink, as the service
+// builds it, with the given handover key.
+func ingressPipeline(t *testing.T, sink Sink, key string, cfg QueuedSinkConfig, mcfg ManagerConfig) (*Manager, *IsolatedMultiSink) {
+	t.Helper()
+	multi := NewIsolatedMultiSink([]Sink{sink}, cfg, zap.NewNop())
+	multi.sinks[0].owner = key
+	return NewManager(multi, mcfg, zap.NewNop()), multi
+}
+
+// Ingress events the old manager has not routed yet follow the per-sink
+// handover: they reach a matching successor, but a retargeted sink counts
+// them as "shutdown" instead of sending them to the new destination.
+func TestManagerIngressFollowsThePerSinkHandover(t *testing.T) {
+	for name, retarget := range map[string]bool{"matching": false, "retargeted": true} {
+		t.Run(name, func(t *testing.T) {
+			// The old sink's queue is full and its worker blocked, so the
+			// manager's ingress backs up (dropOnFull: false).
+			release := make(chan struct{})
+			blocked := newFuncSink("ingress-"+name, func([]*Event) error { <-release; return nil })
+			cfg := outageConfig()
+			cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+			cfg.WriteTimeout = time.Minute
+			mcfg := DefaultManagerConfig()
+			mcfg.WorkerCount, mcfg.BatchSize, mcfg.QueueSize = 1, 1, 100
+			// Only the manager's five-second drain deadline ends the blocked
+			// write, so the ingress queue stays populated until then.
+			mcfg.WriteTimeout = time.Minute
+			key := handOverKey("config", kafkaSinkConfig([]string{"a:9093"}, "audit", "ca"))
+			oldManager, oldMulti := ingressPipeline(t, blocked, key, cfg, mcfg)
+
+			var delivered atomic.Int64
+			nextKey := key
+			if retarget {
+				nextKey = handOverKey("config", kafkaSinkConfig([]string{"a:9093"}, "elsewhere", "ca"))
+			}
+			nextManager, nextMulti := ingressPipeline(t, newFuncSink("ingress-"+name, func(events []*Event) error {
+				delivered.Add(int64(len(events)))
+				return nil
+			}), nextKey, outageConfig(), DefaultManagerConfig())
+			t.Cleanup(func() { require.NoError(t, nextManager.Close()) })
+
+			for i := range 10 {
+				require.True(t, oldManager.Emit(context.Background(), &Event{ID: fmt.Sprint(i), Type: EventConfigChanged}))
+			}
+			require.Eventually(t, func() bool { return len(oldManager.asyncQueue) >= 5 }, time.Second, 5*time.Millisecond)
+			oldMulti.handOver(nextMulti)
+			closed := make(chan struct{})
+			go func() { _ = oldManager.Close(); close(closed) }()
+			time.Sleep(6 * time.Second) // past the manager's drain deadline
+			close(release)
+			<-closed
+			if retarget {
+				time.Sleep(100 * time.Millisecond)
+				require.Zero(t, delivered.Load(), "nothing reaches the retargeted destination")
+				require.GreaterOrEqual(t, oldManager.Stats().DroppedEvents, int64(5), "counted as shutdown")
+				return
+			}
+			require.Eventually(t, func() bool { return delivered.Load() >= 5 }, 2*time.Second, 10*time.Millisecond)
+			require.Zero(t, oldManager.Stats().DroppedEvents)
+		})
+	}
+}
+
+// A handover that waits on a full successor B follows B's own successor C
+// as soon as B closes, instead of timing out and dropping.
+func TestHandOverFollowsASuccessorThatClosesDuringTheWait(t *testing.T) {
+	cfg := outageConfig()
+	cfg.QueueSize, cfg.WorkerCount, cfg.DropOnFull = 1, 1, false
+	cfg.WriteTimeout = 5 * time.Second
+	release := make(chan struct{})
+	b := NewQueuedSink(newFuncSink("wait-b", func([]*Event) error { <-release; return nil }), cfg, zap.NewNop())
+	require.NoError(t, b.Write(context.Background(), &Event{ID: "busy", Type: EventConfigChanged}))
+	require.NoError(t, b.Write(context.Background(), &Event{ID: "fills-queue", Type: EventConfigChanged}))
+	var delivered atomic.Int64
+	c := NewQueuedSink(newFuncSink("wait-c", func(events []*Event) error {
+		delivered.Add(int64(len(events)))
+		return nil
+	}), outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, c.Close()) })
+	b.HandOver(c)
+	done := make(chan error, 1)
+	start := time.Now()
+	go func() {
+		done <- b.writeHandedOver(context.Background(), &Event{ID: "from-a", Type: EventConfigChanged})
+	}()
+	time.Sleep(50 * time.Millisecond)
+	closed := make(chan struct{})
+	go func() { _ = b.Close(); close(closed) }()
+	require.NoError(t, <-done)
+	require.Less(t, time.Since(start), 2*time.Second, "the wait ends when B closes")
+	close(release)
+	<-closed
+	require.Eventually(t, func() bool { return delivered.Load() >= 1 }, time.Second, 5*time.Millisecond)
 }

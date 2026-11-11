@@ -283,6 +283,7 @@ func (qs *QueuedSink) writeHandedOver(ctx context.Context, event *Event) error {
 	}
 	if !qs.closed.Load() && !queuedEventAllowed(qs.sink, event) {
 		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "handover_filtered").Inc()
+		qs.droppedEvents.Add(1)
 		qs.logger.Debug("handed-over audit event excluded by this sink's filters",
 			zap.String("event_id", event.ID), zap.String("event_type", string(event.Type)))
 		return nil
@@ -301,37 +302,55 @@ func (qs *QueuedSink) Write(ctx context.Context, event *Event) error {
 		return nil
 	}
 	if !qs.config.DropOnFull {
-		writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
-		defer cancel()
-		qs.sendMu.RLock()
-		defer qs.sendMu.RUnlock()
-		if qs.closed.Load() {
+		enqueued, closed, err := qs.blockingEnqueue(ctx, event)
+		if closed {
+			// Follow the successor without holding sendMu, so Close of this
+			// sink is not delayed by a forward into a full replacement.
 			return qs.closedWrite(ctx, event)
 		}
-		// Free capacity always wins, even with an expired context (for
-		// example a late handover sharing an already spent deadline); a
-		// select below would otherwise pick at random between the send and
-		// Done.
-		select {
-		case qs.queue <- event:
+		if enqueued {
 			return nil
-		default:
 		}
-		select {
-		case qs.queue <- event:
-			return nil
-		case <-qs.stop:
-			return qs.closedWrite(ctx, event)
-		case <-writeCtx.Done():
-			// Count every drop, but rate-limit the warning: with a full
-			// queue this path runs once per emitted event.
-			metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "enqueue_timeout").Inc()
-			qs.droppedEvents.Add(1)
-			qs.logDropThrottled("enqueue_timeout")
-			return fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
-		}
+		return err
 	}
+	return qs.writeNonBlocking(ctx, event)
+}
 
+// blockingEnqueue waits for queue capacity up to WriteTimeout or ctx. It
+// reports closed when the sink closed before or during the wait.
+func (qs *QueuedSink) blockingEnqueue(ctx context.Context, event *Event) (enqueued, closed bool, err error) {
+	writeCtx, cancel := context.WithTimeout(ctx, qs.config.WriteTimeout)
+	defer cancel()
+	qs.sendMu.RLock()
+	defer qs.sendMu.RUnlock()
+	if qs.closed.Load() {
+		return false, true, nil
+	}
+	// Free capacity always wins, even with an expired context (for example a
+	// late handover sharing an already spent deadline); the select below
+	// would otherwise pick at random between the send and Done.
+	select {
+	case qs.queue <- event:
+		return true, false, nil
+	default:
+	}
+	select {
+	case qs.queue <- event:
+		return true, false, nil
+	case <-qs.stop:
+		return false, true, nil
+	case <-writeCtx.Done():
+		// Count every drop, but rate-limit the warning: with a full queue
+		// this path runs once per emitted event.
+		metrics.AuditEventsDropped.WithLabelValues(qs.sink.Name(), "enqueue_timeout").Inc()
+		qs.droppedEvents.Add(1)
+		qs.logDropThrottled("enqueue_timeout")
+		return false, false, fmt.Errorf("enqueue audit event: %w", writeCtx.Err())
+	}
+}
+
+// writeNonBlocking enqueues with dropOnFull: true semantics.
+func (qs *QueuedSink) writeNonBlocking(ctx context.Context, event *Event) error {
 	// Check circuit breaker
 	if qs.circuitOpen.Load() {
 		// Try to reset circuit if enough time has passed
@@ -982,6 +1001,34 @@ func (ims *IsolatedMultiSink) handOver(next *IsolatedMultiSink) {
 				break
 			}
 		}
+	}
+}
+
+// handingOver reports whether a reload set successors for this pipeline.
+func (ims *IsolatedMultiSink) handingOver() bool {
+	for _, qs := range ims.sinks {
+		if qs.successor.Load() != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// handOverIngress passes an event the manager accepted but did not yet route
+// to every sink of this retiring pipeline that would have taken it. Each
+// sink forwards it only to its own matching successor, so a retargeted or
+// removed sink counts it as "shutdown" instead of sending it elsewhere.
+func (ims *IsolatedMultiSink) handOverIngress(ctx context.Context, event *Event) {
+	for _, qs := range ims.sinks {
+		if !queuedEventAllowed(qs.sink, event) {
+			continue
+		}
+		successor := qs.successor.Load()
+		if successor == nil {
+			qs.recordDrop(1, "shutdown")
+			continue
+		}
+		_ = successor.writeHandedOver(ctx, event)
 	}
 }
 
