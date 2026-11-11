@@ -678,7 +678,11 @@ func (qs *QueuedSink) deliver(events []*Event, operation string, write func(cont
 		qs.shutdownDrop(events)
 		return
 	}
-	if panicked {
+	// A panic in any attempt marks the batch as possibly poisoned: split it
+	// so the halves retry independently (a half panics as permanent at
+	// once). A single event is dropped only if its last attempt panicked;
+	// if it last failed transiently it is retained like any other event.
+	if panicked && (len(events) > 1 || errors.Is(err, errSinkPanic)) {
 		if !errors.Is(err, errSinkPanic) {
 			err = fmt.Errorf("%w (an earlier attempt panicked): %w", errSinkPanic, err)
 		}

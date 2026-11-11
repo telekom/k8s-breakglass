@@ -1340,3 +1340,31 @@ func (contextBlockedNamed) WriteBatch(ctx context.Context, _ []*Event) error {
 	<-ctx.Done()
 	return ctx.Err()
 }
+
+// A single event whose write panicked once and then failed transiently (the
+// broker went away) is retained like any other event, not dropped as panic,
+// and is delivered once the sink recovers.
+func TestTransientPanicThenOutageIsRetained(t *testing.T) {
+	var calls atomic.Int64
+	var down atomic.Bool
+	down.Store(true)
+	sink := newFuncSink("transient-panic", func([]*Event) error {
+		if calls.Add(1) == 1 {
+			panic("transient")
+		}
+		if down.Load() {
+			return errors.New("broker unavailable")
+		}
+		return nil
+	})
+	qs := NewQueuedSink(sink, outageConfig(), zap.NewNop())
+	t.Cleanup(func() { require.NoError(t, qs.Close()) })
+	require.NoError(t, qs.Write(context.Background(), &Event{ID: "only", Type: EventConfigChanged}))
+	require.Eventually(t, func() bool {
+		return testutil.ToFloat64(metrics.AuditEventsRetained.WithLabelValues(sink.Name())) == 1
+	}, time.Second, 5*time.Millisecond)
+	require.Zero(t, qs.Health().DroppedEvents)
+	down.Store(false)
+	require.Eventually(t, func() bool { return qs.Health().ProcessedEvents == 1 }, time.Second, 5*time.Millisecond)
+	require.Zero(t, qs.Health().DroppedEvents)
+}
