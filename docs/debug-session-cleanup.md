@@ -184,6 +184,12 @@ of the sessions they acknowledge.
   example with `--enable-webhooks=false` or `ENABLE_VALIDATING_WEBHOOKS=false`)
   `acknowledgedBy` is unverified, so every acknowledgement is rejected,
   recorded and audited with this reason.
+  The controller also requires the API server to have created the
+  acknowledgement after that webhook configuration was last created or
+  changed (its `creationTimestamp` and `managedFields` times) plus a 30-second
+  propagation margin. An acknowledgement created earlier, for example before
+  the webhook was installed or while it was reconfigured, has an unverified
+  `acknowledgedBy` and is rejected; create it again.
 - **CRD before controller.** Apply the current CRDs (including
   `debugsessioncleanupacknowledgements` and the DebugSession status field
   `cleanupAcknowledgements`) before the controller. Without the
@@ -246,8 +252,10 @@ acknowledgement triggers a reconcile of its session at once.
   again, and the residuals it retired stay retired even when no session
   record could be kept. An Applied acknowledgement carries the finalizer
   `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention`, which
-  the controller removes once its session instance is gone, so deleting the
-  acknowledgement cannot drop that evidence. Rejected acknowledgements carry
+  the controller removes once its session instance is gone (confirmed with an
+  uncached read, so a lagging cache or a recreated session of the same name
+  cannot release it), so deleting the acknowledgement cannot drop that
+  evidence. Rejected acknowledgements carry
   no finalizer. The replica that records a rejection audits it.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.

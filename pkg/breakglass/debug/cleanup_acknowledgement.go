@@ -59,8 +59,41 @@ func (c *DebugSessionController) releaseAcknowledgement(ctx context.Context, ack
 	return nil
 }
 
-// releaseAcknowledgementsOfDeletedSession releases every acknowledgement of a
-// session that no longer exists.
+// releaseStaleAcknowledgements releases the acknowledgements in acks (all
+// naming session key.Name) whose session instance is no longer live. The
+// session is read uncached: a lagging cache may still show an old instance,
+// or not yet show a recreated one, and releasing on that view would drop the
+// retirement evidence of a live session.
+func (c *DebugSessionController) releaseStaleAcknowledgements(ctx context.Context, key ctrlclient.ObjectKey, acks []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement) error {
+	var candidates []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement
+	for _, ack := range acks {
+		if controllerutil.ContainsFinalizer(ack, cleanupAcknowledgementFinalizer) {
+			candidates = append(candidates, ack)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	liveUID := ""
+	live := &breakglassv1alpha1.DebugSession{}
+	if err := c.approvalReader().Get(ctx, key, live); err == nil {
+		liveUID = string(live.UID)
+	} else if !apierrors.IsNotFound(err) {
+		return fmt.Errorf("read debug session %s before releasing cleanup acknowledgements: %w", key, err)
+	}
+	for _, ack := range candidates {
+		if acknowledgementReleasable(ack, liveUID) {
+			if err := c.releaseAcknowledgement(ctx, ack); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// releaseAcknowledgementsOfDeletedSession lists the acknowledgements of a
+// session the cache reports deleted and releases those whose session
+// instance is really gone.
 func (c *DebugSessionController) releaseAcknowledgementsOfDeletedSession(ctx context.Context, key ctrlclient.ObjectKey) error {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(key.Namespace)); err != nil {
@@ -69,14 +102,13 @@ func (c *DebugSessionController) releaseAcknowledgementsOfDeletedSession(ctx con
 		}
 		return fmt.Errorf("list cleanup acknowledgements: %w", err)
 	}
+	var acks []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement
 	for i := range list.Items {
 		if list.Items[i].Spec.SessionName == key.Name {
-			if err := c.releaseAcknowledgement(ctx, &list.Items[i]); err != nil {
-				return err
-			}
+			acks = append(acks, &list.Items[i])
 		}
 	}
-	return nil
+	return c.releaseStaleAcknowledgements(ctx, key, acks)
 }
 
 // CleanupAcknowledgedIdentity names one residual by its full recorded identity.
@@ -354,15 +386,14 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 	}
 	now := time.Now()
 	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
+	var releasable []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement
 	for i := range list.Items {
 		ack := &list.Items[i]
 		if ack.Spec.SessionName != ds.Name {
 			continue
 		}
 		if acknowledgementReleasable(ack, string(ds.UID)) {
-			if err := c.releaseAcknowledgement(ctx, ack); err != nil {
-				return nil, err
-			}
+			releasable = append(releasable, ack)
 		}
 		// A deleted acknowledgement is not decided; an Applied one that is
 		// held by the retention finalizer is still completed.
@@ -386,6 +417,9 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 		}
 		pending = append(pending, *ack)
 	}
+	if err := c.releaseStaleAcknowledgements(ctx, ctrlclient.ObjectKeyFromObject(ds), releasable); err != nil {
+		return nil, err
+	}
 	slices.SortFunc(pending, func(a, b breakglassv1alpha1.DebugSessionCleanupAcknowledgement) int {
 		if c := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); c != 0 {
 			return c
@@ -395,36 +429,80 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 	return pending, nil
 }
 
+// webhookPropagationMargin covers the delay until the API server enforces a
+// newly created or changed webhook configuration.
+const webhookPropagationMargin = 30 * time.Second
+
 // cleanupAcknowledgementWebhookActive reports whether a
 // ValidatingWebhookConfiguration verifies spec.acknowledgedBy on create with
-// failurePolicy Fail. Authorization itself is RBAC create on the resource and
-// does not depend on the webhook; without it only the recorded actor is
-// unverified, so acknowledgements are refused rather than misattributed.
-func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context.Context) (bool, error) {
+// failurePolicy Fail, and since when it has been unchanged: the latest of its
+// server-set creationTimestamp and managedFields times. Authorization itself
+// is RBAC create on the resource and does not depend on the webhook; without
+// it only the recorded actor is unverified, so acknowledgements are refused
+// rather than misattributed.
+func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context.Context) (bool, time.Time, error) {
 	var configs admissionregistrationv1.ValidatingWebhookConfigurationList
 	if err := c.approvalReader().List(ctx, &configs); err != nil {
-		return false, fmt.Errorf("list ValidatingWebhookConfigurations: %w", err)
+		return false, time.Time{}, fmt.Errorf("list ValidatingWebhookConfigurations: %w", err)
 	}
+	active, since := false, time.Time{}
 	for _, config := range configs.Items {
-		for _, webhook := range config.Webhooks {
-			if webhook.Name != cleanupAcknowledgementWebhookName || webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail ||
-				webhook.NamespaceSelector != nil && (len(webhook.NamespaceSelector.MatchLabels) > 0 || len(webhook.NamespaceSelector.MatchExpressions) > 0) ||
-				webhook.ObjectSelector != nil && (len(webhook.ObjectSelector.MatchLabels) > 0 || len(webhook.ObjectSelector.MatchExpressions) > 0) ||
-				len(webhook.MatchConditions) > 0 {
-				continue
+		if config.CreationTimestamp.IsZero() {
+			continue // no server-set evidence of when it took effect
+		}
+		changed := config.CreationTimestamp.Time
+		for _, entry := range config.ManagedFields {
+			if entry.Time != nil && entry.Time.After(changed) {
+				changed = entry.Time.Time
 			}
-			for _, rule := range webhook.Rules {
-				if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) &&
-					(slices.Contains(rule.APIVersions, breakglassv1alpha1.GroupVersion.Version) || slices.Contains(rule.APIVersions, "*")) &&
-					slices.Contains(rule.Resources, "debugsessioncleanupacknowledgements") &&
-					(rule.Scope == nil || *rule.Scope == admissionregistrationv1.NamespacedScope || *rule.Scope == admissionregistrationv1.AllScopes) &&
-					(slices.Contains(rule.Operations, admissionregistrationv1.Create) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
-					return true, nil
-				}
+		}
+		if !webhookVerifiesAcknowledgements(config) {
+			continue
+		}
+		if !active || changed.Before(since) {
+			active, since = true, changed
+		}
+	}
+	return active, since, nil
+}
+
+func webhookVerifiesAcknowledgements(config admissionregistrationv1.ValidatingWebhookConfiguration) bool {
+	for _, webhook := range config.Webhooks {
+		if webhook.Name != cleanupAcknowledgementWebhookName || webhook.FailurePolicy == nil || *webhook.FailurePolicy != admissionregistrationv1.Fail ||
+			webhook.NamespaceSelector != nil && (len(webhook.NamespaceSelector.MatchLabels) > 0 || len(webhook.NamespaceSelector.MatchExpressions) > 0) ||
+			webhook.ObjectSelector != nil && (len(webhook.ObjectSelector.MatchLabels) > 0 || len(webhook.ObjectSelector.MatchExpressions) > 0) ||
+			len(webhook.MatchConditions) > 0 {
+			continue
+		}
+		for _, rule := range webhook.Rules {
+			if slices.Contains(rule.APIGroups, breakglassv1alpha1.GroupVersion.Group) &&
+				(slices.Contains(rule.APIVersions, breakglassv1alpha1.GroupVersion.Version) || slices.Contains(rule.APIVersions, "*")) &&
+				slices.Contains(rule.Resources, "debugsessioncleanupacknowledgements") &&
+				(rule.Scope == nil || *rule.Scope == admissionregistrationv1.NamespacedScope || *rule.Scope == admissionregistrationv1.AllScopes) &&
+				(slices.Contains(rule.Operations, admissionregistrationv1.Create) || slices.Contains(rule.Operations, admissionregistrationv1.OperationAll)) {
+				return true
 			}
 		}
 	}
-	return false, nil
+	return false
+}
+
+// acknowledgementActorRefusal returns why ack's acknowledgedBy is unverified,
+// or "". It is verified only if the webhook was active and unchanged, past
+// the propagation margin, when the API server created the object; an object
+// created before (for example before the webhook was installed) is refused.
+// A zero since (test doubles only) skips the age check.
+func acknowledgementActorRefusal(ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, active bool, since time.Time) string {
+	switch {
+	case !active:
+		return "the validating webhook " + cleanupAcknowledgementWebhookName + " is not active with failurePolicy Fail and no selectors, " +
+			"so the acknowledging user cannot be verified; enable the validating webhook and create the acknowledgement again"
+	case !since.IsZero() && !ack.CreationTimestamp.After(since.Add(webhookPropagationMargin)):
+		return fmt.Sprintf("the acknowledgement was created at %s, before the validating webhook %s was verifiably enforced (unchanged since %s plus %s), "+
+			"so its acknowledgedBy is unverified; create the acknowledgement again",
+			ack.CreationTimestamp.UTC().Format(time.RFC3339), cleanupAcknowledgementWebhookName, since.UTC().Format(time.RFC3339), webhookPropagationMargin)
+	}
+	return ""
 }
 
 // completedRetirements lists the identities retired by completed

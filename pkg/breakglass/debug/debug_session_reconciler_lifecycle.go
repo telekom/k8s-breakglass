@@ -659,12 +659,9 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 	if err != nil || len(pending) == 0 {
 		return err
 	}
-	refusal := ""
-	if active, err := c.acknowledgementWebhookActive(ctx); err != nil {
+	webhookActive, webhookSince, err := c.acknowledgementWebhookActive(ctx)
+	if err != nil {
 		return fmt.Errorf("verify the cleanup acknowledgement admission webhook: %w", err)
-	} else if !active {
-		refusal = "the validating webhook " + cleanupAcknowledgementWebhookName + " is not active with failurePolicy Fail and no selectors, " +
-			"so the acknowledging user cannot be verified; enable the validating webhook and create the acknowledgement again"
 	}
 	log := c.log.With("debugSession", ds.Name, "namespace", ds.Namespace)
 	for i := range pending {
@@ -686,7 +683,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			if err := c.client.Get(ctx, ctrlclient.ObjectKeyFromObject(ds), live); err != nil {
 				return fmt.Errorf("read debug session for cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			record = decideCleanupAcknowledgement(live, ack, refusal, c.legacyApproverFourEyes)
+			record = decideCleanupAcknowledgement(live, ack, acknowledgementActorRefusal(ack, webhookActive, webhookSince), c.legacyApproverFourEyes)
 			ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{
 				Phase: breakglassv1alpha1.CleanupAcknowledgementRejected, ClaimedAt: &claimedAt, ProcessedAt: &record.ProcessedAt, Message: record.Message,
 			}

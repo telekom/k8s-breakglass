@@ -134,7 +134,7 @@ type DebugSessionController struct {
 	cleanupNotBefore sync.Map
 	// acknowledgementWebhookActive reports whether the DebugSession validating
 	// webhook authorizes acknowledgements; tests replace it.
-	acknowledgementWebhookActive func(context.Context) (bool, error)
+	acknowledgementWebhookActive func(context.Context) (bool, time.Time, error)
 	crdOutdatedOnce              sync.Once
 	ackCRDMissingOnce            sync.Once
 }

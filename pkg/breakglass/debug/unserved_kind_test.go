@@ -306,7 +306,7 @@ func TestCleanupNeverRetiresResidualsOnDiscoveryAbsence(t *testing.T) {
 	}
 }
 
-func webhookActive(context.Context) (bool, error) { return true, nil }
+func webhookActive(context.Context) (bool, time.Time, error) { return true, time.Time{}, nil }
 
 func TestDeletionCleanupFailurePersistsCleanupFailed(t *testing.T) {
 	now := metav1.Now()

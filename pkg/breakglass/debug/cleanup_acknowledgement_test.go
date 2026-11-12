@@ -25,6 +25,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -187,6 +188,7 @@ func TestCleanupAcknowledgementRefusedWithoutValidatingWebhook(t *testing.T) {
 }
 
 func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
+	installed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	fail, ignore := admissionregistrationv1.Fail, admissionregistrationv1.Ignore
 	config := func(mutate func(*admissionregistrationv1.ValidatingWebhook)) *admissionregistrationv1.ValidatingWebhookConfiguration {
 		webhook := admissionregistrationv1.ValidatingWebhook{Name: cleanupAcknowledgementWebhookName, FailurePolicy: &fail, Rules: []admissionregistrationv1.RuleWithOperations{{
@@ -197,7 +199,7 @@ func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
 		if mutate != nil {
 			mutate(&webhook)
 		}
-		return &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-validating-webhook-configuration"},
+		return &admissionregistrationv1.ValidatingWebhookConfiguration{ObjectMeta: metav1.ObjectMeta{Name: "breakglass-validating-webhook-configuration", CreationTimestamp: metav1.NewTime(installed)},
 			Webhooks: []admissionregistrationv1.ValidatingWebhook{webhook}}
 	}
 	for name, tc := range map[string]struct {
@@ -231,15 +233,23 @@ func TestCleanupAcknowledgementWebhookActive(t *testing.T) {
 			c.Name = "second"
 			return c
 		}()}},
+		"no server-set creation time": {objects: []client.Object{func() client.Object {
+			c := config(nil)
+			c.CreationTimestamp = metav1.Time{}
+			return c
+		}()}},
 		"match condition": {objects: []client.Object{config(func(w *admissionregistrationv1.ValidatingWebhook) {
 			w.MatchConditions = []admissionregistrationv1.MatchCondition{{Name: "skip", Expression: "false"}}
 		})}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(tc.objects...).Build()
-			active, err := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).cleanupAcknowledgementWebhookActive(context.Background())
+			active, since, err := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).cleanupAcknowledgementWebhookActive(context.Background())
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, active)
+			if active {
+				assert.Equal(t, installed, since.UTC())
+			}
 		})
 	}
 }
@@ -557,7 +567,7 @@ func TestStalledClaimantCannotChangeTheSessionAfterTakeover(t *testing.T) {
 	replica1 := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(base.manager)
 	replica1.acknowledgementWebhookActive = webhookActive
 	replica2 = NewDebugSessionController(zap.NewNop().Sugar(), hub, nil).WithAuditManager(base.manager)
-	replica2.acknowledgementWebhookActive = func(context.Context) (bool, error) { return false, nil } // rejects
+	replica2.acknowledgementWebhookActive = func(context.Context) (bool, time.Time, error) { return false, time.Time{}, nil } // rejects
 	require.NoError(t, replica1.processCleanupAcknowledgement(context.Background(), ds.DeepCopy()))
 
 	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, acknowledgementPhase(t, base, "a").Phase)
@@ -900,4 +910,90 @@ func TestRejectedAcknowledgementIsNotRetained(t *testing.T) {
 	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKey{Namespace: ds.Namespace, Name: "a"}, ack))
 	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, ack.Status.Phase)
 	assert.NotContains(t, ack.Finalizers, cleanupAcknowledgementFinalizer)
+}
+
+func TestAcknowledgementCreatedBeforeTheWebhookIsRefused(t *testing.T) {
+	installed := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	changed := installed.Add(time.Hour)
+	fail := admissionregistrationv1.Fail
+	webhookConfig := &admissionregistrationv1.ValidatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{Name: "breakglass", CreationTimestamp: metav1.NewTime(installed),
+			ManagedFields: []metav1.ManagedFieldsEntry{{Manager: "kubectl", Time: ptr.To(metav1.NewTime(changed))}}},
+		Webhooks: []admissionregistrationv1.ValidatingWebhook{{Name: cleanupAcknowledgementWebhookName, FailurePolicy: &fail, Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{admissionregistrationv1.Create},
+			Rule:       admissionregistrationv1.Rule{APIGroups: []string{breakglassv1alpha1.GroupVersion.Group}, APIVersions: []string{"*"}, Resources: []string{"debugsessioncleanupacknowledgements"}},
+		}}}},
+	}
+	ds := failingSession(t)
+	forged := acknowledgement(ds, "forged", allResidualsOfFailingSession...)
+	forged.CreationTimestamp = metav1.NewTime(installed.Add(-time.Hour)) // before the webhook existed
+	duringChange := acknowledgement(ds, "during-change", allResidualsOfFailingSession...)
+	duringChange.CreationTimestamp = metav1.NewTime(changed.Add(webhookPropagationMargin / 2))
+	f := newAckFixture(t, ds, forged, duringChange)
+	// The fake client rewrites managedFields; serve the configuration as the
+	// API server stores it.
+	configs := interceptor.NewClient(fake.NewClientBuilder().WithScheme(Scheme).Build(), interceptor.Funcs{
+		List: func(_ context.Context, _ client.WithWatch, list client.ObjectList, _ ...client.ListOption) error {
+			list.(*admissionregistrationv1.ValidatingWebhookConfigurationList).Items = []admissionregistrationv1.ValidatingWebhookConfiguration{*webhookConfig}
+			return nil
+		},
+	})
+	f.c.acknowledgementWebhookActive = NewDebugSessionController(zap.NewNop().Sugar(), configs, nil).cleanupAcknowledgementWebhookActive
+	_, since, err := f.c.acknowledgementWebhookActive(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, changed, since.UTC(), "the latest managedFields time counts as the last change")
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	for _, name := range []string{"forged", "during-change"} {
+		status := acknowledgementPhase(t, f, name)
+		assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, status.Phase, name)
+		assert.Contains(t, status.Message, "acknowledgedBy is unverified", name)
+	}
+	assert.True(t, cleanupConditionFailed(ds), "nothing was retired")
+
+	verified := acknowledgement(ds, "verified", allResidualsOfFailingSession...)
+	verified.CreationTimestamp = metav1.NewTime(changed.Add(2 * webhookPropagationMargin))
+	assert.Empty(t, acknowledgementActorRefusal(verified, true, changed), "created after the webhook took effect")
+}
+
+func TestLaggingCacheDoesNotReleaseTheEvidenceOfARecreatedSession(t *testing.T) {
+	ctx := context.Background()
+	old := failingSession(t)
+	recreated := old.DeepCopy()
+	recreated.UID = "recreated-uid"
+	ack := acknowledgement(recreated, "a", allResidualsOfFailingSession...)
+	ack.Finalizers = []string{cleanupAcknowledgementFinalizer}
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, CompletedAt: &at,
+		Retired: allResidualsOfFailingSession}
+	live := newAckFixture(t, recreated, ack)
+	retained := func() bool {
+		got := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+		require.NoError(t, live.hub.Get(ctx, client.ObjectKeyFromObject(ack), got))
+		return slices.Contains(got.Finalizers, cleanupAcknowledgementFinalizer)
+	}
+
+	// The cache has not seen the recreated session yet: NotFound.
+	notYetCached := interceptor.NewClient(live.hub.(client.WithWatch), interceptor.Funcs{
+		Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok {
+				return apierrors.NewNotFound(breakglassv1alpha1.GroupVersion.WithResource("debugsessions").GroupResource(), key.Name)
+			}
+			return cl.Get(ctx, key, obj, opts...)
+		},
+	})
+	c := NewDebugSessionController(zap.NewNop().Sugar(), notYetCached, nil).WithAPIReader(live.hub)
+	_, err := c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(old)})
+	require.NoError(t, err)
+	assert.True(t, retained(), "a cached NotFound does not release a live session's evidence")
+
+	// The cache still shows the old instance of the reused name.
+	_, err = c.pendingCleanupAcknowledgements(ctx, old)
+	require.NoError(t, err)
+	assert.True(t, retained(), "a stale instance in the cache does not release the new instance's evidence")
+
+	// Once the live session is gone, the acknowledgement is released.
+	require.NoError(t, live.hub.Delete(ctx, recreated))
+	_, err = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(old)})
+	require.NoError(t, err)
+	assert.False(t, retained())
 }
