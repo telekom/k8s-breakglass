@@ -53,7 +53,7 @@ require (
 	github.com/jpillora/backoff v1.1.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/kanisterio/errkit v0.0.3 // indirect
-	github.com/kanisterio/kanister v0.0.0-20250106180853-0abc731c8242 // indirect
+	github.com/kanisterio/kanister v0.113.0-alpha.1 // indirect
 	github.com/kastenhq/kubestr v0.4.49 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
