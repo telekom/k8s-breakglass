@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.9
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/creack/pty v1.1.24
-	github.com/gin-contrib/cors v1.7.10
-	github.com/gin-contrib/static v1.1.9
-	github.com/gin-contrib/zap v1.1.10
+	github.com/gin-contrib/cors v1.7.11
+	github.com/gin-contrib/static v1.1.10
+	github.com/gin-contrib/zap v1.1.11
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/go-logr/logr v1.4.4
