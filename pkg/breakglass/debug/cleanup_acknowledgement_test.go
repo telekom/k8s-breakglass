@@ -856,3 +856,48 @@ func TestAcknowledgementCRDServedDisablesTheWatchOnlyOnNoMatch(t *testing.T) {
 	_, err = acknowledgementCRDServed(erroringMapper{err: apierrors.NewServiceUnavailable("discovery unavailable")})
 	require.Error(t, err, "a temporary discovery failure fails setup instead of silently disabling the watch")
 }
+
+func TestAppliedAcknowledgementIsRetainedUntilItsSessionIsGone(t *testing.T) {
+	ctx := context.Background()
+	ds := failingSession(t)
+	fillRecords(ds, maxCleanupAcknowledgementRecords) // retired without a session record
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", allResidualsOfFailingSession...))
+	require.NoError(t, f.c.processCleanupAcknowledgement(ctx, ds))
+	require.False(t, cleanupConditionFailed(ds))
+
+	ack := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+	key := client.ObjectKey{Namespace: ds.Namespace, Name: "a"}
+	require.NoError(t, f.hub.Get(ctx, key, ack))
+	require.Contains(t, ack.Finalizers, cleanupAcknowledgementFinalizer)
+
+	// Deleting the evidence while the session exists keeps it retired
+	// against a stale writer that still lists the residuals.
+	require.NoError(t, f.hub.Delete(ctx, ack))
+	require.NoError(t, f.hub.Get(ctx, key, ack), "the finalizer holds the object")
+	stale := failingSession(t)
+	fillRecords(stale, maxCleanupAcknowledgementRecords)
+	baseline := stale.Status.DeepCopy()
+	stale.ResourceVersion = ds.ResourceVersion
+	require.NoError(t, f.c.recordCleanupOutcome(ctx, stale, baseline))
+	assert.False(t, cleanupConditionFailed(stale), "a stale writer cannot restore retired residuals")
+	_, err := f.c.pendingCleanupAcknowledgements(ctx, ds)
+	require.NoError(t, err)
+	require.NoError(t, f.hub.Get(ctx, key, ack), "still retained while the session exists")
+
+	// Once the session is gone the acknowledgement is released.
+	require.NoError(t, f.hub.Delete(ctx, ds))
+	_, err = f.c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(ds)})
+	require.NoError(t, err)
+	assert.True(t, apierrors.IsNotFound(f.hub.Get(ctx, key, ack)), "released and deleted with its session")
+}
+
+func TestRejectedAcknowledgementIsNotRetained(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.Conditions = nil
+	f := newAckFixture(t, ds, acknowledgement(ds, "a", acknowledgedPolicyExceptions...))
+	require.NoError(t, f.c.processCleanupAcknowledgement(context.Background(), ds))
+	ack := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+	require.NoError(t, f.hub.Get(context.Background(), client.ObjectKey{Namespace: ds.Namespace, Name: "a"}, ack))
+	assert.Equal(t, breakglassv1alpha1.CleanupAcknowledgementRejected, ack.Status.Phase)
+	assert.NotContains(t, ack.Finalizers, cleanupAcknowledgementFinalizer)
+}

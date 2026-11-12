@@ -692,6 +692,16 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 			}
 			if record.Applied {
 				ack.Status.Phase, ack.Status.Retired = breakglassv1alpha1.CleanupAcknowledgementApplied, record.Retired
+				// Retain the acknowledgement before its decision is durable;
+				// it stays the retirement evidence until the session is gone.
+				status := ack.Status
+				if err := c.retainAcknowledgement(ctx, ack); err != nil {
+					if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {
+						continue // taken over or deleted: change nothing
+					}
+					return fmt.Errorf("retain cleanup acknowledgement %s: %w", ack.Name, err)
+				}
+				ack.Status = status
 			}
 			if err := c.client.Status().Update(ctx, ack); err != nil {
 				if apierrors.IsConflict(err) || apierrors.IsNotFound(err) {

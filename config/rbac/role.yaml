@@ -62,7 +62,6 @@ rules:
   - auditconfigs
   - breakglassescalations
   - debugpodtemplates
-  - debugsessioncleanupacknowledgements
   - debugsessionclusterbindings
   - debugsessiontemplates
   - denypolicies
@@ -124,6 +123,7 @@ rules:
   - breakglass.t-caas.telekom.com
   resources:
   - clusterconfigs
+  - debugsessioncleanupacknowledgements
   verbs:
   - get
   - list

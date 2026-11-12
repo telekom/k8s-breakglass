@@ -306,7 +306,7 @@ func acknowledgementCRDServed(mapper meta.RESTMapper) (bool, error) {
 }
 
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements,verbs=get;list;watch
+// +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessioncleanupacknowledgements/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=breakglass.t-caas.telekom.com,resources=debugsessions/finalizers,verbs=update
@@ -328,6 +328,9 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if apierrors.IsNotFound(err) {
 			log.Debug("DebugSession not found, ignoring")
 			c.cleanupNotBefore.Delete(req.NamespacedName)
+			if err := c.releaseAcknowledgementsOfDeletedSession(ctx, req.NamespacedName); err != nil {
+				return ctrl.Result{}, err
+			}
 
 			releaseSessionMetricSeries(req.Name)
 

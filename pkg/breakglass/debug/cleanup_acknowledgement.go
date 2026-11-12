@@ -14,9 +14,70 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/utils"
 	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
+
+// cleanupAcknowledgementFinalizer keeps an Applied acknowledgement, the
+// durable evidence of its retirement, until its session instance is gone.
+// Without it, deleting the object would let a stale cleanup writer restore
+// residuals retired without a session record.
+const cleanupAcknowledgementFinalizer = "breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention"
+
+// retainAcknowledgement adds the retention finalizer with a write guarded by
+// the acknowledgement's resourceVersion.
+func (c *DebugSessionController) retainAcknowledgement(ctx context.Context, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) error {
+	if controllerutil.ContainsFinalizer(ack, cleanupAcknowledgementFinalizer) {
+		return nil
+	}
+	base := ack.DeepCopy()
+	controllerutil.AddFinalizer(ack, cleanupAcknowledgementFinalizer)
+	return c.client.Patch(ctx, ack, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{}))
+}
+
+// acknowledgementReleasable reports whether ack no longer needs its retention
+// finalizer: its session instance is gone (sessionUID is empty or differs),
+// it was rejected, or it is being deleted without an Applied decision.
+func acknowledgementReleasable(ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement, sessionUID string) bool {
+	return sessionUID == "" || ack.Spec.SessionUID != sessionUID ||
+		ack.Status.Phase == breakglassv1alpha1.CleanupAcknowledgementRejected ||
+		!ack.DeletionTimestamp.IsZero() && ack.Status.Phase != breakglassv1alpha1.CleanupAcknowledgementApplied
+}
+
+// releaseAcknowledgement removes the retention finalizer from ack.
+func (c *DebugSessionController) releaseAcknowledgement(ctx context.Context, ack *breakglassv1alpha1.DebugSessionCleanupAcknowledgement) error {
+	if !controllerutil.ContainsFinalizer(ack, cleanupAcknowledgementFinalizer) {
+		return nil
+	}
+	base := ack.DeepCopy()
+	controllerutil.RemoveFinalizer(ack, cleanupAcknowledgementFinalizer)
+	if err := c.client.Patch(ctx, ack, ctrlclient.MergeFromWithOptions(base, ctrlclient.MergeFromWithOptimisticLock{})); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("release cleanup acknowledgement %s: %w", ack.Name, err)
+	}
+	return nil
+}
+
+// releaseAcknowledgementsOfDeletedSession releases every acknowledgement of a
+// session that no longer exists.
+func (c *DebugSessionController) releaseAcknowledgementsOfDeletedSession(ctx context.Context, key ctrlclient.ObjectKey) error {
+	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
+	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(key.Namespace)); err != nil {
+		if isKindNotServedError(err) {
+			return nil
+		}
+		return fmt.Errorf("list cleanup acknowledgements: %w", err)
+	}
+	for i := range list.Items {
+		if list.Items[i].Spec.SessionName == key.Name {
+			if err := c.releaseAcknowledgement(ctx, &list.Items[i]); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
 
 // CleanupAcknowledgedIdentity names one residual by its full recorded identity.
 type CleanupAcknowledgedIdentity = breakglassv1alpha1.CleanupAcknowledgedIdentity
@@ -255,7 +316,8 @@ func (c *DebugSessionController) unfinishedAcknowledgementRequeue(ctx context.Co
 	now := time.Now()
 	var wait time.Duration
 	for _, ack := range list.Items {
-		if ack.Spec.SessionName != ds.Name || ack.Spec.SessionUID != string(ds.UID) || !ack.DeletionTimestamp.IsZero() {
+		if ack.Spec.SessionName != ds.Name || ack.Spec.SessionUID != string(ds.UID) ||
+			!ack.DeletionTimestamp.IsZero() && ack.Status.Phase != breakglassv1alpha1.CleanupAcknowledgementApplied {
 			continue
 		}
 		var remaining time.Duration
@@ -292,8 +354,19 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 	}
 	now := time.Now()
 	var pending []breakglassv1alpha1.DebugSessionCleanupAcknowledgement
-	for _, ack := range list.Items {
-		if ack.Spec.SessionName != ds.Name || !ack.DeletionTimestamp.IsZero() {
+	for i := range list.Items {
+		ack := &list.Items[i]
+		if ack.Spec.SessionName != ds.Name {
+			continue
+		}
+		if acknowledgementReleasable(ack, string(ds.UID)) {
+			if err := c.releaseAcknowledgement(ctx, ack); err != nil {
+				return nil, err
+			}
+		}
+		// A deleted acknowledgement is not decided; an Applied one that is
+		// held by the retention finalizer is still completed.
+		if !ack.DeletionTimestamp.IsZero() && ack.Status.Phase != breakglassv1alpha1.CleanupAcknowledgementApplied {
 			continue
 		}
 		switch ack.Status.Phase {
@@ -311,7 +384,7 @@ func (c *DebugSessionController) pendingCleanupAcknowledgements(ctx context.Cont
 				continue // another replica is processing it
 			}
 		}
-		pending = append(pending, ack)
+		pending = append(pending, *ack)
 	}
 	slices.SortFunc(pending, func(a, b breakglassv1alpha1.DebugSessionCleanupAcknowledgement) int {
 		if c := a.CreationTimestamp.Compare(b.CreationTimestamp.Time); c != 0 {
@@ -357,9 +430,11 @@ func (c *DebugSessionController) cleanupAcknowledgementWebhookActive(ctx context
 // completedRetirements lists the identities retired by completed
 // acknowledgements of ds. Cleanup status merges keep them retired, also for
 // acknowledgements that retired without a session record (record list full).
-// ponytail: deleting a completed acknowledgement drops its entry here; the
-// session record still covers it unless the list was full. A finalizer on
-// acknowledgements would close that gap.
+// Applied acknowledgements carry a retention finalizer until their session
+// instance is gone, so deleting one cannot drop its entry here.
+// ponytail: an old acknowledgement whose session was replaced by a new one of
+// the same name is released when the new session reaches cleanup or is
+// deleted, not at once; a per-reconcile sweep would release it earlier.
 func (c *DebugSessionController) completedRetirements(ctx context.Context, ds *breakglassv1alpha1.DebugSession) ([]CleanupAcknowledgedIdentity, error) {
 	var list breakglassv1alpha1.DebugSessionCleanupAcknowledgementList
 	if err := c.approvalReader().List(ctx, &list, ctrlclient.InNamespace(ds.Namespace)); err != nil {

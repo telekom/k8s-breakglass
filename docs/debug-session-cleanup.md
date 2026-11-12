@@ -244,7 +244,11 @@ acknowledgement triggers a reconcile of its session at once.
   before it emits the event, the event is lost (the outcome stays recorded on
   the acknowledgement). A completed acknowledgement is never processed
   again, and the residuals it retired stay retired even when no session
-  record could be kept. The replica that records a rejection audits it.
+  record could be kept. An Applied acknowledgement carries the finalizer
+  `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention`, which
+  the controller removes once its session instance is gone, so deleting the
+  acknowledgement cannot drop that evidence. Rejected acknowledgements carry
+  no finalizer. The replica that records a rejection audits it.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
   - If residuals remain, the new residual set is reported once with
