@@ -452,6 +452,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y python3-yaml
           bash charts/escalation-config/ci/test-debug-target-namespaces.sh
+      - name: Validate runtime label reservation policy rendering
+        run: bash charts/escalation-config/ci/test-runtime-label-reservation.sh
       - name: Validate MOTD rendering
         run: bash charts/escalation-config/ci/test-motd.sh
       - name: Validate default-off typed node-maintenance template rendering
@@ -463,6 +465,11 @@ jobs:
         run: |
           kind create cluster --name vap-validation --image "${KIND_NODE_IMAGE}" --wait 120s
           kubectl apply --dry-run=server -f /tmp/escalation-config-vap.yaml
+          helm template test-release charts/escalation-config \
+            --show-only templates/runtime-label-reservation.yaml \
+            --values charts/escalation-config/ci/test-values.yaml \
+            --set runtimeLabelReservation.enabled=true \
+            --kube-version 1.30.0 | kubectl apply --dry-run=server -f -
 
   utility-image-tests:
     name: Utility image checks (${{ matrix.name }})

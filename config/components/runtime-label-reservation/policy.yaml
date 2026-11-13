@@ -1,0 +1,115 @@
+# SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Reserves the debug-session pod labels and annotations for the breakglass
+# controller. Runtime-security tools (Falco exceptions, Tetragon policies,
+# session recording) key on these keys, so a pod that could set them itself
+# would pass as a debug session.
+#
+# A request is denied when it adds, changes or removes a label or annotation
+# whose key starts with `breakglass.telekom.com/debug-session` or
+# `breakglass.telekom.com/ephemeral.` on
+#   - a Pod (create, update, status and ephemeral-container updates), or
+#   - the pod template of a workload that the kube-controller-manager turns
+#     into Pods (Deployment, ReplicaSet, StatefulSet, DaemonSet, Job, CronJob,
+#     ReplicationController),
+# unless the requesting user is listed in `controllerUsers` (the identity the
+# breakglass controller uses on this cluster) or `workloadControllerUsers`
+# (the kube-controller-manager identities that copy a template into Pods).
+# Exempting the kube-controller-manager is safe only because the templates
+# it copies are reserved as well.
+#
+# Requests that leave the reserved keys unchanged are always allowed, so
+# kubelet status updates, scaling and unrelated label edits keep working.
+#
+# Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-runtime-label-reservation
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "replicationcontrollers"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    - apiGroups: ["batch"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["jobs", "cronjobs"]
+  variables:
+  # Keep controllerUsers at index 0: overlays replace it by index. The user
+  # lists are JSON arrays, which are also valid CEL list literals.
+  - name: controllerUsers
+    expression: '["system:serviceaccount:breakglass-system:breakglass-manager"]'
+  - name: workloadControllerUsers
+    expression: >-
+      ["system:kube-controller-manager",
+       "system:serviceaccount:kube-system:deployment-controller",
+       "system:serviceaccount:kube-system:replicaset-controller",
+       "system:serviceaccount:kube-system:replication-controller",
+       "system:serviceaccount:kube-system:statefulset-controller",
+       "system:serviceaccount:kube-system:daemon-set-controller",
+       "system:serviceaccount:kube-system:job-controller",
+       "system:serviceaccount:kube-system:cronjob-controller"]
+  # Metadata of the Pod, or of the pod template a workload creates Pods from.
+  - name: newMeta
+    expression: >-
+      object.kind == 'Pod' ? object.metadata :
+      object.kind == 'CronJob' ? (has(object.spec.jobTemplate.spec.template.metadata) ? object.spec.jobTemplate.spec.template.metadata : {}) :
+      (has(object.spec.template) && has(object.spec.template.metadata) ? object.spec.template.metadata : {})
+  - name: oldMeta
+    expression: >-
+      oldObject == null ? {} :
+      oldObject.kind == 'Pod' ? oldObject.metadata :
+      oldObject.kind == 'CronJob' ? (has(oldObject.spec.jobTemplate.spec.template.metadata) ? oldObject.spec.jobTemplate.spec.template.metadata : {}) :
+      (has(oldObject.spec.template) && has(oldObject.spec.template.metadata) ? oldObject.spec.template.metadata : {})
+  # Reserved entries as "label key=value" / "annotation key=value". Keys
+  # cannot contain '=', so the strings are unambiguous.
+  - name: newReserved
+    expression: >-
+      (has(variables.newMeta.labels) ? variables.newMeta.labels.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'label ' + k + '=' + variables.newMeta.labels[k]) : []) +
+      (has(variables.newMeta.annotations) ? variables.newMeta.annotations.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'annotation ' + k + '=' + variables.newMeta.annotations[k]) : [])
+  - name: oldReserved
+    expression: >-
+      (has(variables.oldMeta.labels) ? variables.oldMeta.labels.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'label ' + k + '=' + variables.oldMeta.labels[k]) : []) +
+      (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
+  validations:
+  - expression: >-
+      request.userInfo.username in variables.controllerUsers ||
+      request.userInfo.username in variables.workloadControllerUsers ||
+      (variables.newReserved.all(e, e in variables.oldReserved) &&
+       variables.oldReserved.all(e, e in variables.newReserved))
+    messageExpression: >-
+      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral. are reserved for the breakglass controller; '
+      + request.userInfo.username + ' may not set, change or remove them'
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-runtime-label-reservation
+  labels:
+    app.kubernetes.io/name: breakglass
+    app.kubernetes.io/component: admission
+spec:
+  policyName: breakglass-runtime-label-reservation
+  validationActions: [Deny]

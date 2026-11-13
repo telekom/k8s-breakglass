@@ -533,6 +533,73 @@ Every lookup failure is observable, so the fallback is never silent:
 3. **Review the `session.approval_unverified_groups` audit trail** after any spoke outage.
 4. **Keep spoke credentials healthy** — the fallback is a safety net for incidents, not a supported steady state.
 
+## Reserved debug-session labels
+
+Debug pods carry labels and annotations with the prefixes
+`breakglass.telekom.com/debug-session` (for example `debug-session` and
+`debug-session-uid`) and `breakglass.telekom.com/ephemeral.`. Runtime-security
+integrations key on them: Falco exceptions and Tetragon policies relax their
+rules for debug sessions, and session recording attributes activity to the
+session named there. Kubernetes does not protect label keys, so without an
+extra policy anyone who may create or edit a pod can set these keys on their
+own pod. That pod then passes as a debug session: it gets the relaxed
+runtime rules and its activity is attributed to a session that never
+approved it. Removing the label from a real debug pod would hide it from the
+same tools.
+
+The optional component `config/components/runtime-label-reservation` closes
+this. Its ValidatingAdmissionPolicy denies every create or update that adds,
+changes or removes a reserved key, unless the request comes from the
+breakglass controller. It covers:
+
+- Pods, including the `pods/status` and `pods/ephemeralcontainers`
+  subresources;
+- the pod templates of Deployments, ReplicaSets, StatefulSets, DaemonSets,
+  Jobs, CronJobs and ReplicationControllers.
+
+Debug workloads are Deployments or DaemonSets, so their Pods are created by
+the kube-controller-manager, not by the controller. The policy therefore also
+exempts the kube-controller-manager users that copy a template into Pods
+(`system:kube-controller-manager` and the `kube-system` controller
+ServiceAccounts). This is safe only because the templates themselves are
+reserved: nobody but the controller can put a reserved key into a template
+that the kube-controller-manager would copy. Other operators that create Pods
+from their own custom resources are not exempt, so they cannot be used to
+launder the keys. Requests that leave the reserved keys unchanged are always
+allowed, so scaling, kubelet status updates and other label edits keep
+working.
+
+Deploy the component on every cluster where debug pods run, and list the
+user the hub authenticates as on that cluster (the user of the
+ClusterConfig credentials, shown by `kubectl auth whoami` with them):
+
+```yaml
+components:
+  - ../../components/runtime-label-reservation
+patches:
+  - target:
+      kind: ValidatingAdmissionPolicy
+      name: breakglass-runtime-label-reservation
+    patch: |
+      - op: replace
+        path: /spec/variables/0/expression
+        value: '["system:serviceaccount:breakglass-system:breakglass-manager", "breakglass-hub"]'
+```
+
+With Helm, set `runtimeLabelReservation.enabled=true` and
+`runtimeLabelReservation.controllerUsers` in the `escalation-config` chart.
+If the kube-controller-manager runs without
+`--use-service-account-credentials`, `system:kube-controller-manager` already
+covers it; adjust `workloadControllerUsers` only for distributions that use
+other identities.
+
+The component needs Kubernetes 1.30 or newer (ValidatingAdmissionPolicy GA).
+It is not part of `config/base`, so clusters from Kubernetes 1.24 keep working
+without it; on those clusters, runtime-security rules must not trust the
+labels alone. Treat the keys as trustworthy only on clusters with the policy
+in place, and keep RBAC that lets users write to the controller's identity or
+impersonate the exempt users as tightly held as cluster-admin.
+
 ## Cross-Site Request Forgery (CSRF) Protection
 
 The breakglass frontend is **not vulnerable to CSRF** because it uses **OIDC Bearer token authentication** rather than cookie-based sessions:

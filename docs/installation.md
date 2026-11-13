@@ -6,6 +6,7 @@ Complete step-by-step installation instructions for breakglass.
 
 - Kubernetes 1.24+ hub cluster for breakglass deployment
 - Kubernetes 1.24+ tenant clusters (for breakglass authorization)
+- Kubernetes 1.30+ only for the optional ValidatingAdmissionPolicy components (`config/components/vap`, `config/components/runtime-label-reservation`); everything else works from 1.24
 - kubectl configured with hub cluster access
 - OIDC provider (Keycloak, Azure AD, Okta, etc.)
 - Container registry access (Docker, Container Registry, etc.)

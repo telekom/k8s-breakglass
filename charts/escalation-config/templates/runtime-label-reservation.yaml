@@ -1,0 +1,95 @@
+{{/*
+SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
+
+SPDX-License-Identifier: Apache-2.0
+*/}}
+{{- /*
+Mirrors config/components/runtime-label-reservation/policy.yaml; keep both in
+sync (charts/escalation-config/ci/test-runtime-label-reservation.sh compares them).
+*/ -}}
+{{- $r := .Values.runtimeLabelReservation | default dict -}}
+{{- if $r.enabled }}
+{{- if not (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
+{{- fail "runtimeLabelReservation.enabled requires Kubernetes 1.30 or newer" }}
+{{- end }}
+{{- if not $r.controllerUsers }}
+{{- fail "runtimeLabelReservation.controllerUsers must name the identity the breakglass controller uses on this cluster" }}
+{{- end }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: breakglass-runtime-label-reservation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "replicationcontrollers"]
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+    - apiGroups: ["batch"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["jobs", "cronjobs"]
+  variables:
+  - name: controllerUsers
+    expression: {{ $r.controllerUsers | toJson | quote }}
+  - name: workloadControllerUsers
+    expression: {{ $r.workloadControllerUsers | default list | toJson | quote }}
+  - name: newMeta
+    expression: >-
+      object.kind == 'Pod' ? object.metadata :
+      object.kind == 'CronJob' ? (has(object.spec.jobTemplate.spec.template.metadata) ? object.spec.jobTemplate.spec.template.metadata : {}) :
+      (has(object.spec.template) && has(object.spec.template.metadata) ? object.spec.template.metadata : {})
+  - name: oldMeta
+    expression: >-
+      oldObject == null ? {} :
+      oldObject.kind == 'Pod' ? oldObject.metadata :
+      oldObject.kind == 'CronJob' ? (has(oldObject.spec.jobTemplate.spec.template.metadata) ? oldObject.spec.jobTemplate.spec.template.metadata : {}) :
+      (has(oldObject.spec.template) && has(oldObject.spec.template.metadata) ? oldObject.spec.template.metadata : {})
+  - name: newReserved
+    expression: >-
+      (has(variables.newMeta.labels) ? variables.newMeta.labels.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'label ' + k + '=' + variables.newMeta.labels[k]) : []) +
+      (has(variables.newMeta.annotations) ? variables.newMeta.annotations.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'annotation ' + k + '=' + variables.newMeta.annotations[k]) : [])
+  - name: oldReserved
+    expression: >-
+      (has(variables.oldMeta.labels) ? variables.oldMeta.labels.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'label ' + k + '=' + variables.oldMeta.labels[k]) : []) +
+      (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
+        k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
+        'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
+  validations:
+  - expression: >-
+      request.userInfo.username in variables.controllerUsers ||
+      request.userInfo.username in variables.workloadControllerUsers ||
+      (variables.newReserved.all(e, e in variables.oldReserved) &&
+       variables.oldReserved.all(e, e in variables.newReserved))
+    messageExpression: >-
+      'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral. are reserved for the breakglass controller; '
+      + request.userInfo.username + ' may not set, change or remove them'
+    reason: Forbidden
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: breakglass-runtime-label-reservation
+  labels:
+    {{- include "escalation-config.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admission
+spec:
+  policyName: breakglass-runtime-label-reservation
+  validationActions: [Deny]
+{{- end }}
