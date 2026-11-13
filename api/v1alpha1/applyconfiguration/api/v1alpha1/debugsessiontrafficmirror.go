@@ -12,7 +12,7 @@ package v1alpha1
 // with apply.
 //
 // DebugSessionTrafficMirror is a controller-executed, session-scoped traffic
-// mirror. The controller attaches a tc clsact match-all u32 filter with a mirred
+// mirror. The controller attaches a tc clsact match-all basic filter with a mirred
 // mirror action to one allowlisted interface of one Pod or Node and copies the
 // traffic over a veth pair into a capture container of the session. Requesters
 // select only the source; image, filter and bounds are fixed by the template.
