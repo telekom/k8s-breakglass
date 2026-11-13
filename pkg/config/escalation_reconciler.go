@@ -58,6 +58,12 @@ type EscalationReconciler struct {
 	// audited holds the last audited generation per escalation UID.
 	auditedMu sync.Mutex
 	audited   map[types.UID]int64
+	// pendingDeletes holds escalation.deleted events observed before the
+	// audit pipeline was configured; deleteRetry is set while a retry loop runs.
+	pendingDeletes map[types.UID]*audit.Event
+	deleteRetry    bool
+	// auditRetry is the retry interval while the pipeline is unavailable.
+	auditRetry time.Duration
 }
 
 // escalationAuditRetry is how long an escalation change waits for the audit
@@ -74,6 +80,7 @@ type EscalationAuditEmitter interface {
 // escalation.deleted audit events for observed BreakglassEscalation changes.
 func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) *EscalationReconciler {
 	r.auditEmitter = emitter
+	r.auditRetry = escalationAuditRetry
 	return r
 }
 
@@ -115,16 +122,59 @@ func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakgl
 	return false
 }
 
-// auditDeletion emits escalation.deleted for an observed delete event.
+// auditDeletion emits escalation.deleted for an observed delete event. The
+// object is gone afterwards, so a delete observed before the audit pipeline
+// is configured keeps its event and retries it until the pipeline is ready
+// (or intentionally disabled).
 func (r *EscalationReconciler) auditDeletion(obj client.Object) {
 	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
 	if r.auditEmitter == nil || !ok {
 		return
 	}
+	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
 	r.auditedMu.Lock()
 	delete(r.audited, esc.UID)
+	if r.pendingDeletes == nil {
+		r.pendingDeletes = map[types.UID]*audit.Event{}
+	}
+	r.pendingDeletes[esc.UID] = event
+	startRetry := !r.deleteRetry
+	r.deleteRetry = true
 	r.auditedMu.Unlock()
-	r.auditEmitter.Emit(context.Background(), audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation))
+	if r.flushPendingDeletes() || !startRetry {
+		return
+	}
+	go func() {
+		ticker := time.NewTicker(r.auditRetry)
+		defer ticker.Stop()
+		for range ticker.C {
+			if r.flushPendingDeletes() {
+				return
+			}
+		}
+	}()
+}
+
+// flushPendingDeletes emits the retained deletion events once the audit
+// pipeline is ready, or drops them when auditing is disabled. It reports
+// whether nothing is pending any more.
+func (r *EscalationReconciler) flushPendingDeletes() bool {
+	r.auditedMu.Lock()
+	defer r.auditedMu.Unlock()
+	switch r.auditEmitter.ConfigurationState() {
+	case audit.ConfigurationUnavailable:
+		if len(r.pendingDeletes) > 0 {
+			return false
+		}
+	case audit.ConfigurationReady:
+		for uid, event := range r.pendingDeletes {
+			r.auditEmitter.Emit(context.Background(), event)
+			delete(r.pendingDeletes, uid)
+		}
+	}
+	clear(r.pendingDeletes)
+	r.deleteRetry = false
+	return true
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
@@ -214,7 +264,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 	if r.auditSpecChange(ctx, escalation) {
 		defer func() {
 			if err == nil && result.IsZero() {
-				result.RequeueAfter = escalationAuditRetry
+				result.RequeueAfter = r.auditRetry
 			}
 		}()
 	}

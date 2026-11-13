@@ -7,6 +7,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -148,7 +149,7 @@ func TestEscalationReconcilerWaitsForAuditPipeline(t *testing.T) {
 	h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
 
 	result := h.reconcile()
-	require.Equal(t, escalationAuditRetry, result.RequeueAfter, "retry until the audit pipeline is configured")
+	require.Equal(t, h.r.auditRetry, result.RequeueAfter, "retry until the audit pipeline is configured")
 	require.Empty(t, capture.take())
 	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter)
 
@@ -174,6 +175,27 @@ func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	require.Equal(t, "escalation/esc-uid/deleted", events[0].ID)
 	require.Equal(t, audit.SeverityWarning, audit.SeverityForEventType(events[0].Type))
 	require.NoError(t, audittest.Check(events[0]))
+
+	// A delete observed before the audit pipeline is configured is retained
+	// and delivered once it is ready.
+	pending := newEscalationAuditCapture()
+	pending.setState(audit.ConfigurationUnavailable)
+	waiting := NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(pending)
+	waiting.auditRetry = 10 * time.Millisecond
+	waiting.auditDeletion(auditedEscalation(5))
+	time.Sleep(50 * time.Millisecond)
+	require.Empty(t, pending.take(), "nothing is emitted while the pipeline is unavailable")
+	pending.setState(audit.ConfigurationReady)
+	require.Eventually(t, func() bool {
+		events := pending.take()
+		return len(events) == 1 && events[0].ID == "escalation/esc-uid/deleted"
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Intentionally disabled auditing drops it.
+	disabled := newEscalationAuditCapture()
+	disabled.setState(audit.ConfigurationDisabled)
+	NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(disabled).auditDeletion(auditedEscalation(5))
+	require.Empty(t, disabled.take())
 
 	// Without an emitter nothing happens.
 	NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).auditDeletion(auditedEscalation(1))

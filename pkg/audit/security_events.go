@@ -57,8 +57,8 @@ func EscalationChangeEvent(eventType EventType, esc *breakglassv1alpha1.Breakgla
 	return &Event{
 		ID:   id,
 		Type: eventType,
-		// The controller observes the change; the authenticated requester is
-		// recorded by the Kubernetes API server audit log for resourceVersion.
+		// The controller observes the change and cannot name the requester; the
+		// Kubernetes API server audit log does (by object UID and generation).
 		Actor:          Actor{User: "system"},
 		Target:         Target{UID: string(esc.UID), Kind: "BreakglassEscalation", Name: esc.Name, Namespace: esc.Namespace, APIGroup: breakglassv1alpha1.GroupVersion.Group},
 		RequestContext: &RequestContext{EscalationName: esc.Name, EscalationUID: string(esc.UID)},

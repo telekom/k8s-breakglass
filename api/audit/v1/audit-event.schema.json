@@ -1879,7 +1879,7 @@
     },
     "escalationChange": {
       "title": "Escalation change",
-      "description": "The controller observed a BreakglassEscalation create, spec update or delete. The actor is system; the authenticated requester is in the Kubernetes API server audit log for the same object UID and resourceVersion. The event id is escalation/<uid>/<generation> or escalation/<uid>/deleted.",
+      "description": "The controller observed a BreakglassEscalation create, spec update or delete. The actor is system: the event does not identify who changed the spec; find the request that produced this generation in the Kubernetes API server audit log by object UID. The event id is escalation/<uid>/<generation> or escalation/<uid>/deleted.",
       "type": "object",
       "properties": {
         "generation": {
@@ -1903,7 +1903,7 @@
         },
         "resourceVersion": {
           "type": "string",
-          "description": "Observed metadata.resourceVersion."
+          "description": "metadata.resourceVersion that the controller observed; it can belong to a later status or metadata write than the spec change."
         },
         "fieldManager": {
           "type": "string",

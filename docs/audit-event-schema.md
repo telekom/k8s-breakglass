@@ -268,9 +268,12 @@ controller restart or leader change the current generation of every
 escalation is emitted again with the same ID (without `previousGeneration`);
 deduplicate on `id`. Escalations reconciled before the audit pipeline has
 loaded its AuditConfig are retried until it is ready, so they are not lost at
-startup. The actor is `system`: the authenticated requester is in the
-Kubernetes API server audit log for the same object UID and
-`resourceVersion`. A delete that happens while no controller replica is
+startup. The actor is `system`; the event does not identify who changed the spec.
+`resourceVersion` is the version that the controller observed, which can
+belong to a later status or metadata write. To attribute a change, search the
+Kubernetes API server audit log for create, update, patch and delete requests
+on the object UID and take the request that produced this generation (compare
+the request body with `specSHA256` or the spec it implies). A delete that happens while no controller replica is
 leading is not observed.
 
 | Field | Type | Description |
@@ -279,7 +282,7 @@ leading is not observed.
 | `previousGeneration` | integer | Previously audited generation (`escalation.updated`), when known. |
 | `escalatedGroup` | string | Granted group. |
 | `specSHA256`* | 64 hex digits | SHA-256 of the JSON-encoded spec; compare it across events to detect changes. |
-| `resourceVersion` | string | Observed resource version; join key to the API server audit log. |
+| `resourceVersion` | string | Resource version that the controller observed; not necessarily the version written by the spec change. |
 | `fieldManager` | string | Field manager of the latest change (the client tool, not the user). |
 
 ### Debug session attach (`debugSessionAttach`)
