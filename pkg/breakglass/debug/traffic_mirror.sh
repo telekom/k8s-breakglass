@@ -22,6 +22,13 @@ mode=${1:-}
 peer=bgmirror0
 # The agent writes its readiness marker here after a complete attach.
 run_dir=${MIRROR_RUN_DIR:-/run/mirror}
+# The host process tree (hostPID); tests substitute a fake one.
+proc=${MIRROR_PROC_ROOT:-/proc}
+
+# ns_id prints the identity (device and inode) of a namespace reference.
+ns_id() {
+	stat -L -c '%d:%i' "$1"
+}
 
 log() {
 	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "${2:-}"
@@ -46,13 +53,13 @@ pod_pid() {
 	ip=$2
 	alt=$(printf '%s' "$uid" | tr - _)
 	found=""
-	for cgroup in /proc/[0-9]*/cgroup; do
+	for cgroup in "$proc"/[0-9]*/cgroup; do
 		grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null || continue
-		pid=${cgroup#/proc/}
+		pid=${cgroup#"$proc"/}
 		pid=${pid%/cgroup}
-		if ! addrs=$(nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>&1); then
+		if ! addrs=$(nsenter --net="$proc/$pid/ns/net" -- ip -o addr show 2>&1); then
 			# The process may have exited since the scan; otherwise fail closed.
-			[ ! -e "/proc/$pid" ] && continue
+			[ ! -e "$proc/$pid" ] && continue
 			fail inspect-failed "cannot inspect the network namespace of PID $pid: $addrs"
 		fi
 		found=1
@@ -69,8 +76,8 @@ pod_pid() {
 # Our own cgroup reads as "/" in a private cgroup namespace, so we look for
 # any kubepods cgroup instead of our own Pod UID.
 check_scan() {
-	readlink /proc/1/ns/net >/dev/null 2>&1 || fail scan-failed "cannot enter PID 1; hostPID and SYS_PTRACE are required"
-	grep -q -s kubepods /proc/[0-9]*/cgroup || fail scan-failed "cannot see Pod cgroups in /proc; hostPID is required"
+	ns_id "$proc/1/ns/net" >/dev/null 2>&1 || fail scan-failed "cannot enter PID 1; hostPID and SYS_PTRACE are required"
+	grep -q -s kubepods "$proc"/[0-9]*/cgroup || fail scan-failed "cannot see Pod cgroups in /proc; hostPID is required"
 }
 
 # target_pid prints the target network namespace owner: PID 1 for a Node.
@@ -87,7 +94,20 @@ target_pid() {
 # enters it through descriptor 3, so a reused PID can never redirect the
 # helper into another namespace after the identity checks.
 pin_target() {
-	exec 3<"/proc/$tpid/ns/net" || fail inspect-failed "cannot open the target network namespace"
+	exec 3<"$proc/$tpid/ns/net" || fail inspect-failed "cannot open the target network namespace"
+	confirm_pinned 3 "$tpid" "${MIRROR_POD_UID:-}"
+}
+
+# confirm_pinned FD PID [UID] rejects a PID that was reused between the scan
+# and the open: the descriptor must still be that PID's namespace, and the
+# PID must still belong to the Pod.
+confirm_pinned() {
+	[ "$(ns_id "/proc/self/fd/$1")" = "$(ns_id "$proc/$2/ns/net" 2>/dev/null)" ] ||
+		fail target-mismatch "PID $2 changed its network namespace while it was pinned"
+	if [ -n "${3:-}" ]; then
+		alt=$(printf '%s' "$3" | tr - _)
+		grep -q -e "pod$3" -e "pod$alt" "$proc/$2/cgroup" 2>/dev/null || fail target-mismatch "PID $2 no longer belongs to Pod $3"
+	fi
 }
 
 in_target() {
@@ -104,14 +124,14 @@ in_capture() {
 verify_pinned_target() {
 	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	if [ -n "${MIRROR_POD_UID:-}" ]; then
-		[ "$(readlink /proc/self/fd/3)" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
+		[ "$(ns_id /proc/self/fd/3)" != "$(ns_id "$proc/1/ns/net")" ] || fail target-mismatch "the target Pod uses the host network"
 		in_target ip -o addr show | grep -F -q " ${MIRROR_POD_IP:?}/" || fail target-mismatch "the target network namespace does not own the Pod IP"
 	fi
 }
 
 # Nodes booted with ipv6.disable=1 reject addrgenmode.
 addrgen() {
-	if [ -d /proc/sys/net/ipv6 ]; then
+	if [ -d "$proc/sys/net/ipv6" ]; then
 		printf 'addrgenmode none\n'
 	fi
 }
@@ -210,9 +230,10 @@ attach() {
 	case "$cpid" in
 	"" | recreated) fail capture-missing "the capture Pod is not running with its approved IP on this Node" ;;
 	esac
-	exec 4<"/proc/$cpid/ns/net" || fail inspect-failed "cannot open the capture network namespace"
-	[ "$(readlink /proc/self/fd/4)" != "$(readlink /proc/1/ns/net)" ] || fail capture-missing "the capture Pod uses the host network"
-	[ "$(readlink /proc/self/fd/4)" != "$(readlink /proc/self/fd/3)" ] || fail capture-missing "the capture Pod shares the target network namespace"
+	exec 4<"$proc/$cpid/ns/net" || fail inspect-failed "cannot open the capture network namespace"
+	confirm_pinned 4 "$cpid" "$MIRROR_CAPTURE_POD_UID"
+	[ "$(ns_id /proc/self/fd/4)" != "$(ns_id "$proc/1/ns/net")" ] || fail capture-missing "the capture Pod uses the host network"
+	[ "$(ns_id /proc/self/fd/4)" != "$(ns_id /proc/self/fd/3)" ] || fail capture-missing "the capture Pod shares the target network namespace"
 	in_capture ip -o addr show | grep -F -q " $MIRROR_CAPTURE_POD_IP/" || fail capture-missing "the capture network namespace does not own the capture Pod IP"
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
 	detach

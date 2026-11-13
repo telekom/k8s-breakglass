@@ -590,6 +590,19 @@ else echo "9: bgmirror0@if8: <BROADCAST,MULTICAST,NOARP> mtu 1500"; fi`,
 	require.Contains(t, string(arguments), "-- tcp port 8080")
 }
 
+func TestTrafficMirrorCleanupResidualsNameCapturePod(t *testing.T) {
+	ds := &breakglassv1alpha1.DebugSession{Status: breakglassv1alpha1.DebugSessionStatus{TrafficMirror: &breakglassv1alpha1.TrafficMirrorStatus{
+		OperationID: "traffic-mirror-op", CapturePodUID: "capture-uid"}}}
+	identities := cleanupResidualIdentities(ds)
+	require.Len(t, identities, 1, "the capture Pod is a residual before the agent's create marker")
+	require.Contains(t, identities[0], "traffic-mirror-op-capture")
+	require.Contains(t, identities[0], "capture-uid")
+	ds.Status.TrafficMirror.CreateAttempted, ds.Status.TrafficMirror.PodUID = true, "agent-uid"
+	require.Len(t, cleanupResidualIdentities(ds), 2, "agent and capture Pods")
+	ds.Status.TrafficMirror.Released = true
+	require.Empty(t, cleanupResidualIdentities(ds))
+}
+
 func TestTrafficMirrorTuple(t *testing.T) {
 	cookie, pref, veth := trafficMirrorTuple(breakglassv1alpha1.TrafficMirrorOperationID("uid"))
 	require.Regexp(t, `^[a-f0-9]{32}$`, cookie)

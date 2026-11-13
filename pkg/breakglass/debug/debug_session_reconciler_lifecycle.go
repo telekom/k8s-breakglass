@@ -714,8 +714,14 @@ func cleanupResidualIdentities(ds *breakglassv1alpha1.DebugSession) []string {
 			}
 		}
 	}
-	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released && mirror.CreateAttempted {
-		add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID, mirror.PodUID)
+	if mirror := ds.Status.TrafficMirror; mirror != nil && !mirror.Released {
+		if mirror.CreateAttempted {
+			add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID, mirror.PodUID)
+		}
+		// The capture Pod exists before the agent's create marker.
+		if mirror.CapturePodUID != "" {
+			add("v1", "Pod", breakglassv1alpha1.NodeMaintenanceNamespace, mirror.OperationID+trafficMirrorCaptureSuffix, mirror.CapturePodUID)
+		}
 	}
 	for _, status := range ds.Status.AuxiliaryResourceStatuses {
 		if auxiliaryStatusHasCleanupResidual(ds, status) {
