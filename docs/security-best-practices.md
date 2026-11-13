@@ -615,26 +615,51 @@ identity other than the controller and the session's participants holds
 there regularly. Ask the API server's authorizer instead of reading role
 names: that resolves aggregated roles such as `edit` and `admin`, wildcard
 verbs and resources, and bindings in the namespace and cluster-wide. The
-following lists every bound user, group and ServiceAccount that may exec,
-attach or port-forward there (run it with a user allowed to impersonate):
+following script lists every bound user, group and ServiceAccount that may
+exec, attach or port-forward there. It asks the authorizers with
+SubjectAccessReviews, so run it as a user allowed to create them (for example
+a cluster administrator); it stops with an error instead of printing an
+empty, clean-looking result whenever a check cannot be made:
 
 ```bash
-ns=breakglass-debug
-{ kubectl get rolebindings -n "$ns" -o json; kubectl get clusterrolebindings -o json; } |
-  jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | @tsv' | sort -u |
-while IFS=$'\t' read -r kind name subject_ns; do
+#!/usr/bin/env bash
+# Lists every bound user, group and ServiceAccount that may exec, attach or
+# port-forward in the debug namespace, as decided by the API server's
+# authorizers (aggregated roles, wildcards and cluster-wide bindings included).
+set -euo pipefail
+ns=${1:-breakglass-debug}
+err=$(mktemp)
+trap 'rm -f "$err"' EXIT
+if [ "$(kubectl auth can-i create subjectaccessreviews.authorization.k8s.io 2>"$err" || true)" != yes ]; then
+  echo "error: this audit needs permission to create subjectaccessreviews $(cat "$err")" >&2
+  exit 1
+fi
+# One subject per line, fields separated by U+001F (names may contain \ or tabs).
+subjects=$({ kubectl get rolebindings -n "$ns" -o json; kubectl get clusterrolebindings -o json; } |
+  jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | join("\u001f")' | sort -u)
+while IFS=$'\x1f' read -r kind name subject_ns; do
   case "$kind" in
-    User) as=(--as="$name") ;;
-    Group) as=(--as=breakglass-exec-audit --as-group="$name") ;;
-    ServiceAccount) as=(--as="system:serviceaccount:${subject_ns:-$ns}:$name") ;;
+    User) who=$(jq -n --arg u "$name" '{user: $u}') ;;
+    Group) who=$(jq -n --arg g "$name" '{user: "breakglass-exec-audit", groups: [$g]}') ;;
+    ServiceAccount)
+      sa_ns=${subject_ns:-$ns}
+      who=$(jq -n --arg u "system:serviceaccount:$sa_ns:$name" --arg n "system:serviceaccounts:$sa_ns" \
+        '{user: $u, groups: ["system:serviceaccounts", $n, "system:authenticated"]}') ;;
+    *) continue ;;
   esac
   # get pods/exec: before Kubernetes 1.31, WebSocket exec is authorized as get.
   for check in create:exec get:exec create:attach create:portforward; do
-    if kubectl auth can-i "${check%%:*}" pods --subresource="${check#*:}" -n "$ns" "${as[@]}" >/dev/null 2>&1; then
-      echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns"
-    fi
+    review=$(jq -n --argjson who "$who" --arg ns "$ns" --arg verb "${check%%:*}" --arg sub "${check#*:}" \
+      '{apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
+        spec: ($who + {resourceAttributes: {namespace: $ns, verb: $verb, resource: "pods", subresource: $sub}})}')
+    allowed=$(kubectl create -f - -o jsonpath='{.status.allowed}' <<<"$review" 2>"$err") || true
+    case "$allowed" in
+      true) echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns" ;;
+      false) ;;
+      *) echo "error: checking $kind $name: $(cat "$err")" >&2; exit 1 ;;
+    esac
   done
-done
+done <<<"$subjects"
 ```
 
 Only the controller's identity and the identities of session participants
