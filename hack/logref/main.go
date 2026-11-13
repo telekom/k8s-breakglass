@@ -28,7 +28,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -45,8 +44,10 @@ var (
 	methodRe = regexp.MustCompile(`^(Debug|Info|Warn|Error|DPanic|Fatal)(w|f)?$`)
 	vLevelRe = regexp.MustCompile(`\.V\((\d+)\)`)
 	// piiKeyRe matches field keys whose values identify people, hosts or commands.
-	piiKeyRe = regexp.MustCompile(`(?i)(user|requester|requestedby|approver|approvedby|email|recipient|subject|identity|group|clientip|remoteaddr|remote_addr|^ip$|sourceip|command|^cmd$|^args$|^sub$)`)
-	levels   = []string{"debug", "info", "warn", "error", "dpanic", "fatal"}
+	piiKeyRe = regexp.MustCompile(`(?i)(user|requester|requestor|requestedby|approver|approvedby|rejector|member|email|recipient|subject|identity|identifier|group|clientip|remoteaddr|remote_addr|^remote$|^ip$|sourceip|command|^cmd$|^args$|^sub$|^to$)`)
+	// notPIIKeyRe excludes counts, flags and descriptors of such values.
+	notPIIKeyRe = regexp.MustCompile(`(?i)(count|counts|len|length|size|nil|limit|source|hint)$|^(is|has|can)[A-Z]`)
+	levels      = []string{"debug", "info", "warn", "error", "dpanic", "fatal"}
 )
 
 // entry is one distinct message of one component at one level.
@@ -117,11 +118,15 @@ var (
 	backtickRe = regexp.MustCompile("`([^`]+)`")
 	// A level word not joined to other words ("debug-session" is not one).
 	levelWordRe = regexp.MustCompile(`(?:^|[^\w-])(debug|info|warn|error)(?:[^\w-]|$)`)
+	// statedLevelRe matches the level stated right after a backticked name:
+	// "`msg` (warn)", "`msg` at info", "`msg` lines are at info".
+	statedLevelRe = regexp.MustCompile("`([^`]+)`(?:\\s+lines?)?(?:\\s+are)?\\s+(?:\\(|at\\s+)`?(debug|info|warn|error)\\b")
 )
 
-// checkProseLevels fails when a line of the hand-written part names a
-// catalogued message in backticks together with levels, and none of those
-// levels is a level the code logs that message at.
+// checkProseLevels fails when the hand-written part states a level for a
+// catalogued message that the code does not log it at. A level is stated
+// right after the message ("`msg` (warn)", "`msg` at warn"), or, in a table
+// with a Level column, by the first level in that column of the row.
 func checkProseLevels(doc string, entries map[string]*entry) error {
 	levelsOf := map[string]map[string]bool{}
 	for _, e := range entries {
@@ -133,34 +138,44 @@ func checkProseLevels(doc string, entries map[string]*entry) error {
 		}
 		levelsOf[e.message][strings.Fields(e.level)[0]] = true
 	}
-	prose, _, _ := strings.Cut(doc, beginMark)
 	var bad []string
+	check := func(msg, level string) {
+		if want, ok := levelsOf[msg]; ok && !want[level] {
+			bad = append(bad, fmt.Sprintf("%q is logged at %s, but the reference says %s", msg, strings.Join(sortedKeys(want), "/"), level))
+		}
+	}
+	prose, _, _ := strings.Cut(doc, beginMark)
+	levelCol := -1
 	for _, line := range strings.Split(prose, "\n") {
-		// Backticked text counts only when it is exactly a level.
-		var words []string
-		for _, m := range levelWordRe.FindAllStringSubmatch(backtickRe.ReplaceAllString(line, " "), -1) {
-			words = append(words, m[1])
+		for _, m := range statedLevelRe.FindAllStringSubmatch(line, -1) {
+			check(m[1], m[2])
 		}
-		for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
-			if slices.Contains(levels[:4], m[1]) {
-				words = append(words, m[1])
-			}
-		}
-		if len(words) == 0 {
+		if !strings.HasPrefix(line, "|") {
+			levelCol = -1
 			continue
 		}
-		for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
-			want, ok := levelsOf[m[1]]
-			if !ok {
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		if levelCol < 0 {
+			for i, c := range cells {
+				if strings.EqualFold(strings.TrimSpace(c), "level") {
+					levelCol = i
+				}
+			}
+			continue
+		}
+		if levelCol >= len(cells) {
+			continue
+		}
+		words := levelWordRe.FindStringSubmatch(strings.ReplaceAll(cells[levelCol], "`", " "))
+		if words == nil {
+			continue
+		}
+		for i, c := range cells {
+			if i == levelCol {
 				continue
 			}
-			found := false
-			for _, w := range words {
-				found = found || want[w]
-			}
-			if !found {
-				bad = append(bad, fmt.Sprintf("%q is logged at %s, but the line says %s",
-					m[1], strings.Join(sortedKeys(want), "/"), strings.Join(words, "/")))
+			for _, m := range backtickRe.FindAllStringSubmatch(c, -1) {
+				check(m[1], words[1])
 			}
 		}
 	}
@@ -500,7 +515,7 @@ func fieldList(fields map[string]bool) string {
 	keys := sortedKeys(fields)
 	for i, k := range keys {
 		keys[i] = cell(k)
-		if piiKeyRe.MatchString(k) {
+		if piiKeyRe.MatchString(k) && !notPIIKeyRe.MatchString(k) {
 			keys[i] += "†"
 		}
 	}

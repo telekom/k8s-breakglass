@@ -18,6 +18,7 @@ import (
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"google.golang.org/grpc/grpclog"
 )
 
 // captureStderr runs fn with os.Stderr redirected to a file and returns what
@@ -280,5 +281,30 @@ func TestRouteLibraryLogsTLSHandshakeError(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("no TLS handshake error line in %q", out)
+	}
+}
+
+// TestRouteLibraryLogsGRPC proves that gRPC errors, such as those of the OTLP
+// gRPC exporter, are JSON lines, and that gRPC info messages are dropped.
+func TestRouteLibraryLogsGRPC(t *testing.T) {
+	out := captureStderr(t, func() {
+		logger, err := New("info", FormatJSON)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer RouteLibraryLogs(logger)()
+		grpclog.Info("grpc chatter")
+		grpclog.Errorf("export failed: %s", "connection refused")
+		_ = logger.Sync()
+	})
+	if strings.Contains(out, "grpc chatter") {
+		t.Fatalf("gRPC info logged: %q", out)
+	}
+	var e map[string]any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &e); err != nil {
+		t.Fatalf("not one JSON line: %q", out)
+	}
+	if e["level"] != "error" || e["logger"] != "grpc" || e["msg"] != "export failed: connection refused" {
+		t.Fatalf("fields: %v", e)
 	}
 }

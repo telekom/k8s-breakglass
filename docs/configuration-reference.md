@@ -232,7 +232,9 @@ other field of the client certificate: any certificate that chains to
 `clientCAFile` is admitted, and it grants no identity, groups or permissions.
 OIDC authentication and authorization are unchanged. Use a dedicated client
 CA that signs only the intended clients, not a cluster CA that also signs
-kubelet or user certificates.
+kubelet or user certificates. The dedicated webhook listener
+([`webhook`](#webhook-optional)) has its own `clientAuth` and does check the
+client certificate against the cluster name.
 
 #### `clientCAFile` (Optional)
 
@@ -301,6 +303,65 @@ server:
   tlsKeyFile: /etc/breakglass/tls.key
   tlsReloadDisabled: true # transitional: read the files once at startup
 ```
+
+#### `webhook` (Optional)
+
+A dedicated HTTPS listener for the SubjectAccessReview authorization webhook,
+with its own client-certificate policy and a per-cluster identity check.
+Unset (empty `listenAddress`) keeps today's behaviour: the webhook is served
+only on `listenAddress`. See
+[Dedicated mTLS listener](webhook-setup.md#dedicated-mtls-listener) for the
+kube-apiserver side.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `listenAddress` | `string` | `` (off) | Address of the webhook listener, for example `:8443`. Needs `tlsCertFile`/`tlsKeyFile` (the listener serves the same certificate, reloaded like the main listener) and must differ from `server.listenAddress`. |
+| `clientAuth` | `string` | `none` | Client-certificate policy of this listener, with the values of [`clientAuth`](#clientauth-optional). Independent of `server.clientAuth`. |
+| `clientCAFile` | `string` | `` | PEM bundle of the CAs that sign kube-apiserver client certificates. Required for `verifyIfGiven` and `require`; reloaded like [`clientCAFile`](#clientcafile-optional). |
+| `requireCommonNameMatch` | `bool` | `true` when `clientAuth: require`, else `false` | Reject (HTTP 403) a verified client certificate that does not name the cluster in the request path. Needs `clientAuth: verifyIfGiven` or `require`. `false` is a transitional escape and will be removed in a future release. |
+| `disableOnMainListener` | `bool` | `false` | Remove the webhook routes from `server.listenAddress`; they answer 404 there. |
+
+The listener serves only `/api/breakglass/webhook/authorize/{cluster-name}` and
+the legacy `/breakglass/webhook/authorize/{cluster-name}`, with the SAR rate
+limiter but without the frontend, the REST API, CORS or the OIDC proxy.
+
+**Cluster identity.** With `requireCommonNameMatch` in effect, a verified
+client certificate must name `{cluster-name}`:
+
+- if the certificate has DNS subject alternative names, one of them must equal
+  `{cluster-name}` exactly; the common name is ignored;
+- if it has no DNS SANs but other SANs of any type (IP, URI, email, or types
+  such as `otherName` or `registeredID`), it never matches; the common name
+  is ignored;
+- only a certificate without a subjectAltName extension is matched by its
+  subject common name, which must equal `{cluster-name}` exactly.
+
+Matching is an exact, case-sensitive string comparison, without wildcards.
+Because the common name counts only when there are no SANs at all, a
+certificate cannot claim a second cluster through its CN. Issue each
+kube-apiserver a certificate whose DNS SAN is its `ClusterConfig` name (or,
+for a certificate without SANs, whose CN is). Under `verifyIfGiven`, a request
+without a client certificate is not checked; use `require` to make the
+identity mandatory.
+
+```yaml
+server:
+  listenAddress: :8080
+  tlsCertFile: /etc/breakglass/tls.crt
+  tlsKeyFile: /etc/breakglass/tls.key
+  webhook:
+    listenAddress: :8443
+    clientAuth: require
+    clientCAFile: /etc/breakglass/apiserver-ca/ca.crt
+    # requireCommonNameMatch: true # default under require
+    disableOnMainListener: true
+```
+
+The controller validates `server.webhook` at startup together with
+`clientAuth`, and refuses to start on an invalid combination. The listener
+uses [`timeouts`](#timeouts-optional). If either listener cannot bind its
+address, the controller shuts down instead of running without it, and on
+shutdown both listeners drain concurrently within `shutdownTimeout`.
 
 ---
 

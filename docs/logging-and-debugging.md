@@ -209,7 +209,8 @@ output, or `--log-level=debug` for JSON.
 
 Every line the controller logger writes in the `json` format is a JSON object
 with the fields below. The controller routes controller-runtime, client-go
-(klog), the OpenTelemetry SDK and the Go standard `log` package (for example
+(klog), the OpenTelemetry SDK, gRPC (OTLP gRPC exporter) and the Go standard
+`log` package (for example
 the `http: TLS handshake error` lines of `net/http` servers) through this
 logger, so their lines use the same format. Exceptions,
 which a log collector must tolerate:

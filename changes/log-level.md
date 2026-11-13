@@ -29,3 +29,9 @@ section: Upgrade notes
   dropped repeated authorization decisions and `audit_event` lines. Lines of
   the Go standard `log` package (for example `http: TLS handshake error`) are
   now JSON lines at `warn` with the logger name `stdlog`.
+- The HTTP access log is now the controller's `http_request` line only, with
+  `ip` and `user_agent` added. The `gin-contrib/zap` line, which logged the raw
+  query string (OIDC `code`/`state`, approval-link `token`), is gone, and an
+  `http_request` line is also written when a handler panics. The request mail
+  subject (requester and group) is logged only as `subjectLength`. gRPC
+  warnings and errors go through the controller logger.
