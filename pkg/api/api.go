@@ -920,21 +920,28 @@ func reloadingTLSConfig(ctx context.Context, cfg config.Server, log *zap.Sugared
 }
 
 // parseCABundle parses every certificate of a PEM bundle. Unlike
-// x509.CertPool.AppendCertsFromPEM it fails on a truncated or unparsable
-// certificate, so a bundle caught mid-write is not published with only its
-// first CAs.
+// x509.CertPool.AppendCertsFromPEM it fails on a truncated, malformed or
+// unparsable certificate anywhere in the bundle, so a bundle caught
+// mid-write is not published with only some of its CAs.
 func parseCABundle(data []byte) (*x509.CertPool, error) {
 	pool := x509.NewCertPool()
 	count := 0
+	begin := []byte("-----BEGIN")
 	for rest := data; ; {
-		var block *pem.Block
-		block, rest = pem.Decode(rest)
+		block, next := pem.Decode(rest)
 		if block == nil {
-			if bytes.Contains(rest, []byte("-----BEGIN")) {
+			if bytes.Contains(rest, begin) {
 				return nil, fmt.Errorf("malformed PEM block after %d certificates", count)
 			}
 			break
 		}
+		// pem.Decode skips a malformed block and returns the next valid
+		// one; more than one BEGIN marker in the consumed text means a
+		// block was skipped.
+		if bytes.Count(rest[:len(rest)-len(next)], begin) != 1 {
+			return nil, fmt.Errorf("malformed PEM block after %d certificates", count)
+		}
+		rest = next
 		if block.Type != "CERTIFICATE" {
 			continue
 		}

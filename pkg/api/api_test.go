@@ -1648,6 +1648,8 @@ func TestParseCABundle(t *testing.T) {
 		"empty":               {data: nil, wantErr: "no PEM certificates"},
 		"not PEM":             {data: []byte("garbage"), wantErr: "no PEM certificates"},
 		"truncated second":    {data: append(append([]byte{}, a.pem...), b.pem[:len(b.pem)/2]...), wantErr: "malformed PEM block after 1 certificates"},
+		"malformed first":     {data: append([]byte("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n"), both...), wantErr: "malformed PEM block after 0 certificates"},
+		"malformed middle":    {data: append(append(append([]byte{}, a.pem...), []byte("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n")...), b.pem...), wantErr: "malformed PEM block after 1 certificates"},
 		"unparsable":          {data: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("nope")}), wantErr: "certificate 1"},
 		"other block skipped": {data: append(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: []byte("x")}), a.pem...)},
 	}
