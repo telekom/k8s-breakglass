@@ -229,24 +229,36 @@ func TestRouteLibraryLogsTLSHandshakeError(t *testing.T) {
 // TestRouteLibraryLogsGRPC proves that gRPC errors, such as those of the OTLP
 // gRPC exporter, are JSON lines, and that gRPC info messages are dropped.
 func TestRouteLibraryLogsGRPC(t *testing.T) {
+	for _, level := range []string{"debug", "info", "warn", "error"} {
+		t.Run(level, func(t *testing.T) { testRouteLibraryLogsGRPC(t, level) })
+	}
+}
+
+func testRouteLibraryLogsGRPC(t *testing.T, level string) {
 	out := captureStderr(t, func() {
-		logger, err := New("info", FormatJSON)
+		logger, err := New(level, FormatJSON)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer RouteLibraryLogs(logger)()
 		grpclog.Info("grpc chatter")
+		grpclog.Warning("grpc warning")
 		grpclog.Errorf("export failed: %s", "connection refused")
 		_ = logger.Sync()
 	})
 	if strings.Contains(out, "grpc chatter") {
 		t.Fatalf("gRPC info logged: %q", out)
 	}
-	var e map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &e); err != nil {
-		t.Fatalf("not one JSON line: %q", out)
+	if got := strings.Contains(out, "grpc warning"); got != (level != "error") {
+		t.Fatalf("gRPC warning logged = %t at level %s: %q", got, level, out)
 	}
-	if e["level"] != "error" || e["logger"] != "grpc" || e["msg"] != "export failed: connection refused" {
-		t.Fatalf("fields: %v", e)
+	var last map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if err := json.Unmarshal([]byte(line), &last); err != nil {
+			t.Fatalf("not JSON (a zap diagnostic?): %q", line)
+		}
+	}
+	if last["level"] != "error" || last["logger"] != "grpc" || last["msg"] != "export failed: connection refused" {
+		t.Fatalf("fields: %v", last)
 	}
 }

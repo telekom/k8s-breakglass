@@ -61,7 +61,14 @@ func RouteLibraryLogs(logger *zap.Logger) func() {
 	l := zapr.NewLogger(logger)
 	klog.SetLogger(l)
 	otel.SetLogger(l)
-	grpclog.SetLoggerV2(zapgrpc.NewLogger(logger.Named("grpc").WithOptions(zap.IncreaseLevel(zapcore.WarnLevel))))
+	grpcLogger := logger.Named("grpc")
+	// Drop gRPC info messages. zap rejects IncreaseLevel to a level below the
+	// logger's own (with a plain-text diagnostic), so only raise to warn when
+	// warn is still enabled; at error the logger already drops more.
+	if grpcLogger.Core().Enabled(zapcore.WarnLevel) {
+		grpcLogger = grpcLogger.WithOptions(zap.IncreaseLevel(zapcore.WarnLevel))
+	}
+	grpclog.SetLoggerV2(zapgrpc.NewLogger(grpcLogger))
 	// RedirectStdLogAt fails only for a level above Fatal.
 	undo, _ := zap.RedirectStdLogAt(logger.Named("stdlog"), zapcore.WarnLevel)
 	return undo
