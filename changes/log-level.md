@@ -35,3 +35,7 @@ section: Upgrade notes
   `http_request` line is also written when a handler panics. The request mail
   subject (requester and group) is logged only as `subjectLength`. gRPC
   warnings and errors go through the controller logger.
+- The node-maintenance `kexec-action`, `network-action` and `service-action`
+  and the artifact collector `copier` and `uploader` read `LOG_LEVEL` and
+  `LOG_FORMAT`. `LOG_FORMAT=json` writes their error line as JSON; the default
+  output is unchanged.
