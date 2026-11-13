@@ -1665,3 +1665,46 @@ func TestParseCABundle(t *testing.T) {
 		})
 	}
 }
+
+// limitedStubWebhook is stubWebhook behind a limiter that admits limit
+// requests and answers 429 after that.
+type limitedStubWebhook struct {
+	stubWebhook
+	limit *int
+}
+
+func (l limitedStubWebhook) Handlers() []gin.HandlerFunc {
+	return []gin.HandlerFunc{func(c *gin.Context) {
+		if *l.limit <= 0 {
+			c.AbortWithStatus(http.StatusTooManyRequests)
+			return
+		}
+		*l.limit--
+		c.Next()
+	}}
+}
+
+// TestWebhookListenerRateLimitsRejectedIdentity: a request whose client
+// certificate names another cluster is rejected only after the SAR rate
+// limiter has counted it, so cross-cluster probing stays rate limited.
+func TestWebhookListenerRateLimitsRejectedIdentity(t *testing.T) {
+	limit := 2
+	s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{
+		ListenAddress:  ":8080",
+		AllowedOrigins: []string{"https://breakglass.example.com"},
+		Webhook:        config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire},
+	}}, false, &AuthHandler{})
+	t.Cleanup(s.Close)
+	require.NoError(t, s.RegisterAll([]APIController{limitedStubWebhook{limit: &limit}}))
+
+	leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "prod-us"}, DNSNames: []string{"prod-us"}}
+	var codes []int
+	for range 3 {
+		req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/prod-eu", strings.NewReader("{}"))
+		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+		w := httptest.NewRecorder()
+		s.webhookServer.Handler.ServeHTTP(w, req)
+		codes = append(codes, w.Code)
+	}
+	assert.Equal(t, []int{http.StatusForbidden, http.StatusForbidden, http.StatusTooManyRequests}, codes)
+}

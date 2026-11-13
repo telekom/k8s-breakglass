@@ -720,9 +720,11 @@ func (s *Server) registerWebhookListener(c APIController) error {
 		ginzap.RecoveryWithZap(s.log, false),
 		requestLogger(s.log),
 	)
+	// The controller's SAR rate limiter runs first, so requests rejected by
+	// the identity check still consume the per-IP budget.
 	handlers := c.Handlers()
 	if w.IdentityRequired() {
-		handlers = append([]gin.HandlerFunc{webhook.RequireClusterIdentity(s.log.Sugar())}, handlers...)
+		handlers = append(handlers, webhook.RequireClusterIdentity(s.log.Sugar()))
 	}
 	for _, prefix := range []string{"/api/", "/"} {
 		if err := c.Register(engine.Group(prefix+c.BasePath(), handlers...)); err != nil {
