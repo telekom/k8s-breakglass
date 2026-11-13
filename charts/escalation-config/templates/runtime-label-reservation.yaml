@@ -41,6 +41,11 @@ spec:
       operations: ["CREATE", "UPDATE", "DELETE"]
       resources: ["deployments", "deployments/status", "replicasets", "replicasets/status",
                   "statefulsets", "statefulsets/status", "daemonsets", "daemonsets/status"]
+    # StatefulSets create Pods from the template stored in a ControllerRevision.
+    - apiGroups: ["apps"]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE"]
+      resources: ["controllerrevisions"]
     - apiGroups: ["batch"]
       apiVersions: ["v1"]
       operations: ["CREATE", "UPDATE", "DELETE"]
@@ -56,12 +61,16 @@ spec:
     expression: >-
       object.kind in ['Pod', 'Binding'] ? object.metadata :
       object.kind == 'CronJob' ? (has(object.spec.jobTemplate.spec.template.metadata) ? object.spec.jobTemplate.spec.template.metadata : {}) :
+      object.kind == 'ControllerRevision' ? (has(object.data) && has(object.data.spec) && has(object.data.spec.template) &&
+        has(object.data.spec.template.metadata) ? object.data.spec.template.metadata : {}) :
       (has(object.spec.template) && has(object.spec.template.metadata) ? object.spec.template.metadata : {})
   - name: oldMeta
     expression: >-
       oldObject == null ? {} :
       oldObject.kind in ['Pod', 'Binding'] ? oldObject.metadata :
       oldObject.kind == 'CronJob' ? (has(oldObject.spec.jobTemplate.spec.template.metadata) ? oldObject.spec.jobTemplate.spec.template.metadata : {}) :
+      oldObject.kind == 'ControllerRevision' ? (has(oldObject.data) && has(oldObject.data.spec) && has(oldObject.data.spec.template) &&
+        has(oldObject.data.spec.template.metadata) ? oldObject.data.spec.template.metadata : {}) :
       (has(oldObject.spec.template) && has(oldObject.spec.template.metadata) ? oldObject.spec.template.metadata : {})
   # What runs: the Pod spec, or the pod template spec of a workload.
   - name: newSpec
@@ -69,12 +78,16 @@ spec:
       object.kind == 'Binding' ? null :
       object.kind == 'Pod' ? object.spec :
       object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec :
+      object.kind == 'ControllerRevision' ? (has(object.data) && has(object.data.spec) && has(object.data.spec.template) &&
+        has(object.data.spec.template.spec) ? object.data.spec.template.spec : null) :
       (has(object.spec.template) && has(object.spec.template.spec) ? object.spec.template.spec : null)
   - name: oldSpec
     expression: >-
       oldObject == null || oldObject.kind == 'Binding' ? null :
       oldObject.kind == 'Pod' ? oldObject.spec :
       oldObject.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.spec :
+      oldObject.kind == 'ControllerRevision' ? (has(oldObject.data) && has(oldObject.data.spec) && has(oldObject.data.spec.template) &&
+        has(oldObject.data.spec.template.spec) ? oldObject.data.spec.template.spec : null) :
       (has(oldObject.spec.template) && has(oldObject.spec.template.spec) ? oldObject.spec.template.spec : null)
   - name: newReserved
     expression: >-
@@ -105,9 +118,9 @@ spec:
   - name: oldLabels
     expression: "oldObject == null || !has(oldObject.metadata.labels) ? {} : oldObject.metadata.labels"
   - name: newSelector
-    expression: "object.kind in ['Pod', 'Binding'] || !has(object.spec.selector) ? null : object.spec.selector"
+    expression: "object.kind in ['Pod', 'Binding', 'ControllerRevision'] || !has(object.spec.selector) ? null : object.spec.selector"
   - name: oldSelector
-    expression: "oldObject == null || oldObject.kind in ['Pod', 'Binding'] || !has(oldObject.spec.selector) ? null : oldObject.spec.selector"
+    expression: "oldObject == null || oldObject.kind in ['Pod', 'Binding', 'ControllerRevision'] || !has(oldObject.spec.selector) ? null : oldObject.spec.selector"
   - name: newFinalizers
     expression: "has(object.metadata.finalizers) ? object.metadata.finalizers : []"
   - name: oldFinalizers

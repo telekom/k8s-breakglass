@@ -556,7 +556,10 @@ breakglass controller. It covers:
   subresources, and Pod bindings (`pods/binding`, `bindings`), whose
   annotations the API server copies onto the Pod;
 - the pod templates of Deployments, ReplicaSets, StatefulSets, DaemonSets,
-  Jobs, CronJobs and ReplicationControllers.
+  Jobs, CronJobs and ReplicationControllers, and the templates that
+  ControllerRevisions store for StatefulSets and DaemonSets (a StatefulSet
+  creates Pods from its current revision, so a forged revision would
+  otherwise launder the keys through the exempt StatefulSet controller).
 
 Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
 created by the kube-controller-manager, not by the controller. The policy therefore also

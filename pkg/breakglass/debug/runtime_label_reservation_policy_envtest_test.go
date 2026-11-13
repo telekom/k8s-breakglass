@@ -6,6 +6,7 @@ package debug
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -22,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
@@ -184,6 +186,21 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 				assert.NoError(t, controller.Create(ctx, obj.DeepCopyObject().(client.Object), client.DryRunAll))
 			})
 		}
+		// A StatefulSet creates Pods from the template in its current
+		// ControllerRevision, so a forged revision must not carry the keys.
+		revision := func(name string, labels map[string]string) *appsv1.ControllerRevision {
+			data, err := json.Marshal(map[string]any{"spec": map[string]any{"template": map[string]any{
+				"$patch": "replace", "metadata": map[string]any{"labels": labels},
+				"spec": map[string]any{"containers": []any{map[string]any{"name": "c", "image": "attacker/image"}}}}}})
+			require.NoError(t, err)
+			return &appsv1.ControllerRevision{ObjectMeta: meta(name), Revision: 1, Data: runtime.RawExtension{Raw: data}}
+		}
+		denied(t, forger.Create(ctx, revision("forged-rev", selected), client.DryRunAll))
+		assert.NoError(t, forger.Create(ctx, revision("plain-rev", map[string]string{"app": "w"}), client.DryRunAll))
+		statefulSetController, _ := as("system:serviceaccount:kube-system:statefulset-controller")
+		assert.NoError(t, statefulSetController.Create(ctx, revision("genuine-rev", selected), client.DryRunAll),
+			"the StatefulSet controller records revisions of reserved templates")
+
 		plain := &appsv1.Deployment{ObjectMeta: meta("plain"), Spec: appsv1.DeploymentSpec{Selector: selector, Replicas: ptr.To[int32](0),
 			Template: func() corev1.PodTemplateSpec {
 				p := template(map[string]string{"app": "w"})
