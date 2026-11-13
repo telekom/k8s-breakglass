@@ -80,6 +80,10 @@ const (
 	DebugSessionConditionResourcesDeployed DebugSessionConditionType = "ResourcesDeployed"
 	// DebugSessionConditionCleanupFailed indicates cleanup is blocked by residual resources.
 	DebugSessionConditionCleanupFailed DebugSessionConditionType = "CleanupFailed"
+	// DebugSessionConditionCleanupComplete is set to True once a terminal
+	// session has no tracked spoke resources left and cleanup is not failing;
+	// only then can the session object be deleted without orphaning resources.
+	DebugSessionConditionCleanupComplete DebugSessionConditionType = "CleanupComplete"
 )
 
 // DebugSessionSpec defines the desired state of DebugSession.

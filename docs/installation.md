@@ -586,20 +586,20 @@ API first and delete the objects only after their cleanup has finished:
 bgctl debug session list
 bgctl debug session terminate <session>
 
-# 2. Wait until no session is still running or has cleanup left: every
-#    session is Expired, Terminated, Failed or Rejected, has no
-#    CleanupFailed=True condition and no deployed resources left.
-#    No output means all sessions are cleaned up.
-kubectl get debugsessions -A -o json | jq -r '.items[] | select(
-    (.status.state | IN("Expired","Terminated","Failed","Rejected") | not)
-    or any(.status.conditions[]?; .type == "CleanupFailed" and .status == "True")
-    or ((.status.deployedResources // []) | length > 0)
-  ) | "\(.metadata.namespace)/\(.metadata.name) \(.status.state)"'
-# For a session with CleanupFailed=True, verify its residual resources are
+# 2. Wait until every session reports CleanupComplete=True. The controller
+#    sets it only on a terminal session (Expired, Terminated, Failed or
+#    Rejected) whose tracked spoke resources (deployed, auxiliary and
+#    pod-template resources, kubectl-debug operations and copied pods, node
+#    maintenance, hotfix and admission-recipe state) are all gone and whose
+#    cleanup is not failing.
+kubectl wait --for=condition=CleanupComplete debugsessions --all -A --timeout=30m
+# If the wait times out, list the sessions that are not done yet:
+kubectl get debugsessions -A -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,STATE:.status.state,CLEANUP_COMPLETE:.status.conditions[?(@.type=="CleanupComplete")].status,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
+# For a session with CLEANUP_FAILED=True, verify its residual resources are
 # gone, retire them with a DebugSessionCleanupAcknowledgement
 # (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone)
-# and run the check again. Resources a template keeps on purpose
-# (deleteAfter: false) are not removed by any step.
+# and wait again. Resources a template keeps on purpose (deleteAfter: false)
+# are not removed by any step.
 
 # 3. Delete the session objects and wait until they are gone.
 kubectl delete debugsessions --all -A --wait=false

@@ -1082,3 +1082,33 @@ func TestUnresolvedApproverKubernetesUserFailsClosed(t *testing.T) {
 	assert.Contains(t, record.Message, "approvedByKubernetesUserUnresolved")
 	assert.True(t, decideCleanupAcknowledgement(ds, ack, "", true).Applied, "the legacy approver opt-out compares the recorded identities only")
 }
+
+func TestCleanupCompleteIsMarkedOnlyWithoutTrackedResources(t *testing.T) {
+	ctx := context.Background()
+	for name, tc := range map[string]struct {
+		mutate func(*breakglassv1alpha1.DebugSession)
+		want   bool
+	}{
+		"terminal and clean": {mutate: func(*breakglassv1alpha1.DebugSession) {}, want: true},
+		"active session": {mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.State = breakglassv1alpha1.DebugSessionStateActive
+		}},
+		"auxiliary resource tracked": {mutate: func(ds *breakglassv1alpha1.DebugSession) { *ds = *failingSession(t) }},
+		"copied pod tracked": {mutate: func(ds *breakglassv1alpha1.DebugSession) {
+			ds.Status.KubectlDebugStatus = &breakglassv1alpha1.KubectlDebugStatus{CopiedPods: []breakglassv1alpha1.CopiedPodRef{{CopyName: "copy"}}}
+		}},
+		"cleanup failing, no records": {mutate: func(ds *breakglassv1alpha1.DebugSession) { ds.Status.Conditions = failingSession(t).Status.Conditions }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "s", Namespace: "ns", UID: "uid"}, Status: breakglassv1alpha1.DebugSessionStatus{State: breakglassv1alpha1.DebugSessionStateTerminated}}
+			tc.mutate(ds)
+			hub := fake.NewClientBuilder().WithScheme(Scheme).WithObjects(ds).WithStatusSubresource(ds).Build()
+			require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), ds))
+			c := NewDebugSessionController(zap.NewNop().Sugar(), hub, nil)
+			require.NoError(t, c.markCleanupComplete(ctx, ds))
+			stored := &breakglassv1alpha1.DebugSession{}
+			require.NoError(t, hub.Get(ctx, client.ObjectKeyFromObject(ds), stored))
+			assert.Equal(t, tc.want, cleanupCompleteRecorded(stored))
+		})
+	}
+}

@@ -311,6 +311,16 @@ data:
 	require.NoError(t, s.Client.Get(ctx, ackKey, held), "the finalizer keeps a deleted acknowledgement while its session lives")
 	assert.NotNil(t, held.DeletionTimestamp)
 
+	// The retired residual leaves nothing tracked: cleanup is marked complete.
+	require.Eventually(t, func() bool {
+		live := &breakglassv1alpha1.DebugSession{}
+		if s.Client.Get(ctx, sessionKey, live) != nil {
+			return false
+		}
+		condition := live.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupComplete))
+		return condition != nil && condition.Status == metav1.ConditionTrue
+	}, 2*time.Minute, 2*time.Second, "CleanupComplete must be set once the residual is retired")
+
 	// Once the session is gone, the finalizer is released.
 	releaseResidual(ctx, s.Client, residual)
 	require.NoError(t, s.Client.Delete(ctx, current))

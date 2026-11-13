@@ -104,8 +104,9 @@ spec:
 				}
 			}
 			condition := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupFailed))
-			return condition == nil || condition.Status != metav1.ConditionTrue
-		}, helpers.WaitForStateTimeout, time.Second, "cleanup must complete")
+			complete := current.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupComplete))
+			return (condition == nil || condition.Status != metav1.ConditionTrue) && complete != nil && complete.Status == metav1.ConditionTrue
+		}, helpers.WaitForStateTimeout, time.Second, "cleanup must complete and be marked CleanupComplete")
 
 		// No retry loop: the terminal session stays untouched. Each retry used
 		// to patch status and emit debug_session.cleanup_failed every ~5s.

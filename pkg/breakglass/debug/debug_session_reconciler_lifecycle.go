@@ -2092,3 +2092,38 @@ func auxiliaryResourceCoordinatesKnown(ds *breakglassv1alpha1.DebugSession, ref 
 	}
 	return false
 }
+
+// markCleanupComplete sets CleanupComplete=True once the live session is
+// terminal, tracks no spoke resources and is not failing cleanup, so
+// operators can wait on an explicit marker before deleting the object.
+func (c *DebugSessionController) markCleanupComplete(ctx context.Context, ds *breakglassv1alpha1.DebugSession) error {
+	if cleanupCompleteRecorded(ds) {
+		return nil
+	}
+	patched, err := sharedpatch.Status(ctx, c.client, nil, retry.DefaultRetry, ctrlclient.ObjectKeyFromObject(ds),
+		func() *breakglassv1alpha1.DebugSession { return &breakglassv1alpha1.DebugSession{} },
+		func(current *breakglassv1alpha1.DebugSession) (bool, error) {
+			if (ds.UID != "" && current.UID != ds.UID) || !debugSessionTerminal(current) || hasTrackedSpokeResources(current) ||
+				cleanupConditionFailed(current) || cleanupCompleteRecorded(current) {
+				return false, nil
+			}
+			current.SetCondition(metav1.Condition{
+				Type: string(breakglassv1alpha1.DebugSessionConditionCleanupComplete), Status: metav1.ConditionTrue,
+				Reason: "NoTrackedResources", Message: "No tracked spoke resources remain; the session object can be deleted.",
+				ObservedGeneration: current.Generation, LastTransitionTime: metav1.Now(),
+			})
+			return true, nil
+		})
+	if err != nil {
+		return fmt.Errorf("record cleanup completion: %w", err)
+	}
+	if patched != nil {
+		ds.Status, ds.ResourceVersion = patched.Status, patched.ResourceVersion
+	}
+	return nil
+}
+
+func cleanupCompleteRecorded(ds *breakglassv1alpha1.DebugSession) bool {
+	condition := ds.GetCondition(string(breakglassv1alpha1.DebugSessionConditionCleanupComplete))
+	return condition != nil && condition.Status == metav1.ConditionTrue
+}

@@ -923,6 +923,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 			return ctrl.Result{}, err
 		}
 		releaseSessionMetricSeries(ds.Name)
+		if err := c.markCleanupComplete(ctx, ds); err != nil {
+			return ctrl.Result{}, err
+		}
 		// Come back for an acknowledgement another replica has claimed, so an
 		// interrupted claim is finished even without further events.
 		wait, err := c.unfinishedAcknowledgementRequeue(ctx, ds)
@@ -972,6 +975,9 @@ func (c *DebugSessionController) handleFailedCleanup(ctx context.Context, ds *br
 		return ctrl.Result{}, err
 	}
 	releaseSessionMetricSeries(ds.Name)
+	if err := c.markCleanupComplete(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	return ctrl.Result{}, nil
 }
 
@@ -1127,6 +1133,9 @@ func (c *DebugSessionController) handleCleanup(ctx context.Context, ds *breakgla
 	// watch event, restart, or a session that is never deleted at all).
 	releaseSessionMetricSeries(ds.Name)
 
+	if err := c.markCleanupComplete(ctx, ds); err != nil {
+		return ctrl.Result{}, err
+	}
 	log.Info("Debug session cleanup complete")
 	// Come back for an acknowledgement another replica has claimed, so an
 	// interrupted claim is finished even without further events.

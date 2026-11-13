@@ -55,7 +55,11 @@ status error for retry without emitting a cleanup-failure audit event. That
 event is reserved for an operation that could not be completed or verified.
 
 When no spoke resources remain, cleanup removes the session's completed pod
-authorization references. References added concurrently after cleanup started
+authorization references. Once a terminal session tracks no spoke resources
+and cleanup is not failing, the controller sets the condition
+`CleanupComplete=True`; only then can the DebugSession object be deleted
+without orphaning spoke resources (see the uninstall steps in
+[Installation](installation.md#uninstalling-breakglass)). References added concurrently after cleanup started
 are retained by the baseline-aware status merge.
 
 Cleanup preserves UID-less create-operation intents even when `Created` was already
