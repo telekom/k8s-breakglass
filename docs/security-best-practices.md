@@ -612,9 +612,9 @@ instead of trying to vouch for existing objects:
    all objects listed by:
 
    ```bash
-   kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers \
+   kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers,controllerrevisions \
      -A -o json | jq -r '.items[]
-       | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata)
+       | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata, .data.spec.template.metadata)
            | (.labels // {}), (.annotations // {}) | keys[]
            | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral."))]
          | length > 0)
