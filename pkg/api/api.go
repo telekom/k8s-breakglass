@@ -751,10 +751,12 @@ func correlationID(c *gin.Context) {
 func accessLog(log *zap.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+		// Read before the handlers run: the SPA fallback rewrites the URL path.
+		rawPath := c.Request.URL.Path
 		c.Next()
 		path := c.FullPath()
 		if path == "" {
-			path = c.Request.URL.Path
+			path = rawPath
 		}
 		cid, _ := c.Get(apiresponses.CIDKey)
 		log.Info("http_request",
