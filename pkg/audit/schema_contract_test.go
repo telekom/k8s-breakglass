@@ -471,3 +471,23 @@ func TestAuditSchemaEmittedTypesDocumented(t *testing.T) {
 	}
 	require.Equal(t, updated, content, "emitted event types are stale: run UPDATE_AUDIT_SCHEMA_DOCS=1 go test ./pkg/audit -run TestAuditSchemaEmittedTypesDocumented")
 }
+
+// ObserveEmitted sees the event with every Manager default applied, for both
+// Emit and EmitSync.
+func TestObserveEmittedSeesDefaults(t *testing.T) {
+	var seen []Event
+	ObserveEmitted(func(event *Event) { seen = append(seen, *event) })
+	t.Cleanup(func() { ObserveEmitted(nil) })
+	sink := &testSink{name: "observe"}
+	m := NewManager(sink, ManagerConfig{QueueSize: 8, WorkerCount: 1}, zap.NewNop())
+	m.Emit(context.Background(), &Event{Type: EventSessionRevoked, Actor: Actor{User: "a"}})
+	require.NoError(t, m.EmitSync(context.Background(), &Event{Type: EventAccessDenied, Actor: Actor{User: "a"}}))
+	require.NoError(t, m.Close())
+	require.Len(t, seen, 2)
+	for _, event := range seen {
+		require.NotEmpty(t, event.ID)
+		require.False(t, event.Timestamp.IsZero())
+		require.Equal(t, SchemaVersion, event.SchemaVersion)
+		require.Equal(t, SeverityForEventType(event.Type), event.Severity, "%s", event.Type)
+	}
+}
