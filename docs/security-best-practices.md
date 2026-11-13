@@ -575,12 +575,23 @@ remove a marked ReplicaSet's owner reference, or change its labels so the
 Deployment does not adopt it again; cleanup deletes the Deployment and the
 detached ReplicaSet keeps creating marked Pods. On every Pod and workload
 whose Pod or pod template carries a reserved key, the policy therefore also
-freezes the pod spec, the owner references, the labels and the selector for
-everyone except the exempt users. Scaling, kubelet status updates and
-annotation edits stay allowed. `kubectl rollout restart` and `kubectl debug`
-against debug workloads are denied, and `kubectl delete --cascade=orphan`
-stalls because the garbage collector may not strip the owner references;
-delete debug workloads with the default cascading deletion.
+freezes the pod spec, the owner references, the labels, the selector and the
+`orphan` finalizer for everyone except the exempt users, through the main
+resource and its `status` subresource. Orphaning deletes
+(`kubectl delete --cascade=orphan`) of such workloads are denied too; this
+matters where the kube-controller-manager runs without
+`--use-service-account-credentials`, because its garbage collector then shares
+the exempt `system:kube-controller-manager` identity. Scaling, kubelet status
+updates, annotation edits and cascading deletes stay allowed;
+`kubectl rollout restart` and `kubectl debug` against debug workloads are
+denied. The `scale` subresource carries only a replica count, so scaling a
+debug workload stays allowed and cannot change what its Pods run or how they
+are marked.
+
+Session cleanup deletes the resources the controller recorded, not everything
+that carries the session label. A label-based sweep would turn label forgery
+into a way to make the controller delete other workloads on clusters without
+this policy, so the policy prevents detachment at admission instead.
 
 Admission is not retroactive, and a label value proves nothing about who set
 it: before the policy was installed, anyone could have labelled an unrelated

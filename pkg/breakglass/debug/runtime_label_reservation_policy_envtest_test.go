@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -235,6 +236,34 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 			rs.OwnerReferences = []metav1.OwnerReference{owner}
 			rs.Labels = map[string]string{"app": "w", "team": "a"}
 		}), "the breakglass controller still manages ownership and labels")
+		rs := &appsv1.ReplicaSet{}
+		require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(owned), rs))
+		rs.Labels = map[string]string{"app": "detached"}
+		denied(t, forger.Status().Update(ctx, rs), "the status subresource must not detach it either")
+
+		// The scale subresource carries only a replica count: it cannot change
+		// labels, selector, ownership or the template, so it stays allowed.
+		scale := &autoscalingv1.Scale{}
+		require.NoError(t, forger.SubResource("scale").Get(ctx, debugDeployment.DeepCopy(), scale))
+		scale.Spec.Replicas = 3
+		require.NoError(t, forger.SubResource("scale").Update(ctx, debugDeployment.DeepCopy(), client.WithSubResourceBody(scale)))
+		scaled := &appsv1.Deployment{}
+		require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(debugDeployment), scaled))
+		assert.Equal(t, int32(3), *scaled.Spec.Replicas)
+		assert.Equal(t, always.Spec.Containers[0].Image, scaled.Spec.Template.Spec.Containers[0].Image)
+		assert.Equal(t, selected, scaled.Spec.Template.Labels)
+
+		// Orphaning deletes would leave marked children behind; this also
+		// covers clusters where the garbage collector shares the exempt
+		// kube-controller-manager identity.
+		orphan := client.PropagationPolicy(metav1.DeletePropagationOrphan)
+		err := forger.Delete(ctx, debugDeployment.DeepCopy(), orphan)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "may only be deleted with cascading deletion")
+		denied(t, edit(func(d *appsv1.Deployment) { d.Finalizers = append(d.Finalizers, "orphan") }), "the orphan finalizer")
+		assert.NoError(t, forger.Delete(ctx, plain.DeepCopy(), orphan), "unmarked workloads may be orphaned")
+		assert.NoError(t, forger.Delete(ctx, debugDeployment.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationBackground)),
+			"cascading deletes stay allowed")
 	})
 	// On a spoke reached over OIDC the controller writes as the mapped OIDC
 	// username, or is recognised by an OIDC group; both lists are configurable.

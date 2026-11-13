@@ -23,10 +23,11 @@
 #
 # On a Pod or workload that carries reserved keys, the same users may also not
 # change the pod spec (image, command, containers, ephemeral containers), the
-# owner references, the labels or the selector, so nobody can run their own
+# owner references, the labels, the selector or the orphan finalizer, nor
+# delete the workload with orphaning propagation, so nobody can run their own
 # code under genuine session markers or detach a marked ReplicaSet or Pod so
 # that it outlives the session. Other requests are allowed, so kubelet status
-# updates, scaling and annotation edits keep working.
+# updates, scaling, annotation edits and cascading deletes keep working.
 #
 # Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
 apiVersion: admissionregistration.k8s.io/v1
@@ -43,15 +44,21 @@ spec:
     - apiGroups: [""]
       apiVersions: ["v1"]
       operations: ["CREATE", "UPDATE"]
-      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "pods/binding", "bindings", "replicationcontrollers"]
+      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "pods/binding", "bindings"]
+    # DELETE: an orphaning delete would detach the workload's marked children.
+    - apiGroups: [""]
+      apiVersions: ["v1"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["replicationcontrollers", "replicationcontrollers/status"]
     - apiGroups: ["apps"]
       apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
-      resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["deployments", "deployments/status", "replicasets", "replicasets/status",
+                  "statefulsets", "statefulsets/status", "daemonsets", "daemonsets/status"]
     - apiGroups: ["batch"]
       apiVersions: ["v1"]
-      operations: ["CREATE", "UPDATE"]
-      resources: ["jobs", "cronjobs"]
+      operations: ["CREATE", "UPDATE", "DELETE"]
+      resources: ["jobs", "jobs/status", "cronjobs", "cronjobs/status"]
   variables:
   # Keep controllerUsers at index 0 and controllerGroups at index 1: overlays
   # replace them by index. The lists are JSON arrays, which are also valid CEL
@@ -133,14 +140,19 @@ spec:
     expression: "object.kind in ['Pod', 'Binding'] || !has(object.spec.selector) ? null : object.spec.selector"
   - name: oldSelector
     expression: "oldObject == null || oldObject.kind in ['Pod', 'Binding'] || !has(oldObject.spec.selector) ? null : oldObject.spec.selector"
+  - name: newFinalizers
+    expression: "has(object.metadata.finalizers) ? object.metadata.finalizers : []"
+  - name: oldFinalizers
+    expression: "oldObject == null || !has(oldObject.metadata.finalizers) ? [] : oldObject.metadata.finalizers"
   - name: exempt
     expression: >-
       request.userInfo.username in variables.controllerUsers ||
       (has(request.userInfo.groups) && request.userInfo.groups.exists(g, g in variables.controllerGroups)) ||
       request.userInfo.username in variables.workloadControllerUsers
   validations:
+  # On DELETE there is no new object; only the last validation applies.
   - expression: >-
-      variables.exempt ||
+      request.operation == 'DELETE' || variables.exempt ||
       (variables.newReserved.all(e, e in variables.oldReserved) &&
        variables.oldReserved.all(e, e in variables.newReserved))
     messageExpression: >-
@@ -152,18 +164,31 @@ spec:
   # code under the genuine session markers. Scaling and metadata edits stay
   # allowed.
   - expression: >-
-      variables.exempt || variables.oldReserved.size() == 0 || variables.newSpec == variables.oldSpec
+      request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      variables.newSpec == variables.oldSpec
     messageExpression: >-
       'the pod spec of a breakglass debug pod or debug workload template is reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change it'
     reason: Forbidden
   - expression: >-
-      variables.exempt || variables.oldReserved.size() == 0 ||
+      request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
-       variables.newSelector == variables.oldSelector)
+       variables.newSelector == variables.oldSelector &&
+       (!('orphan' in variables.newFinalizers) || 'orphan' in variables.oldFinalizers))
     messageExpression: >-
-      'the owner references, labels and selector of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
+      'the owner references, labels, selector and orphan finalizer of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'
+    reason: Forbidden
+  # Orphaning deletes leave the marked children running after cleanup. Where
+  # the kube-controller-manager shares one identity, its garbage collector is
+  # exempt, so this must be refused at the delete itself.
+  - expression: >-
+      request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      !(request.options != null &&
+        ((has(request.options.propagationPolicy) && request.options.propagationPolicy == 'Orphan') ||
+         (has(request.options.orphanDependents) && request.options.orphanDependents == true)))
+    messageExpression: >-
+      'breakglass debug workloads may only be deleted with cascading deletion; ' + request.userInfo.username + ' may not orphan their Pods'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1
