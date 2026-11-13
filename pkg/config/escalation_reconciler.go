@@ -64,6 +64,14 @@ type EscalationReconciler struct {
 	deleteRetry    bool
 	// auditRetry is the retry interval while the pipeline is unavailable.
 	auditRetry time.Duration
+	// firstSeen records when a not yet audited generation was first observed,
+	// so a delayed event keeps its observation time.
+	firstSeen map[types.UID]observedGeneration
+}
+
+type observedGeneration struct {
+	generation int64
+	at         time.Time
 }
 
 // escalationAuditRetry is how long an escalation change waits for the audit
@@ -97,13 +105,22 @@ func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakgl
 		return false
 	}
 	r.auditedMu.Lock()
+	defer r.auditedMu.Unlock()
 	previous, seen := r.audited[esc.UID]
-	r.auditedMu.Unlock()
 	if seen && previous == esc.Generation {
 		return false
 	}
+	if r.firstSeen == nil {
+		r.firstSeen = map[types.UID]observedGeneration{}
+	}
+	first, ok := r.firstSeen[esc.UID]
+	if !ok || first.generation != esc.Generation {
+		first = observedGeneration{generation: esc.Generation, at: time.Now().UTC()}
+		r.firstSeen[esc.UID] = first
+	}
 	switch r.auditEmitter.ConfigurationState() {
 	case audit.ConfigurationDisabled:
+		delete(r.firstSeen, esc.UID)
 		return false
 	case audit.ConfigurationUnavailable:
 		return true
@@ -112,13 +129,14 @@ func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakgl
 	if esc.Generation <= 1 {
 		eventType = audit.EventEscalationCreated
 	}
-	r.auditEmitter.Emit(ctx, audit.EscalationChangeEvent(eventType, esc, previous))
-	r.auditedMu.Lock()
+	event := audit.EscalationChangeEvent(eventType, esc, previous)
+	event.Timestamp = first.at
+	r.auditEmitter.Emit(ctx, event)
 	if r.audited == nil {
 		r.audited = map[types.UID]int64{}
 	}
 	r.audited[esc.UID] = esc.Generation
-	r.auditedMu.Unlock()
+	delete(r.firstSeen, esc.UID)
 	return false
 }
 
@@ -132,8 +150,12 @@ func (r *EscalationReconciler) auditDeletion(obj client.Object) {
 		return
 	}
 	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
+	// The event time is when the delete was observed, also when it is
+	// delivered later.
+	event.Timestamp = time.Now().UTC()
 	r.auditedMu.Lock()
 	delete(r.audited, esc.UID)
+	delete(r.firstSeen, esc.UID)
 	if r.pendingDeletes == nil {
 		r.pendingDeletes = map[types.UID]*audit.Event{}
 	}

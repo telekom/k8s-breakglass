@@ -148,16 +148,21 @@ func TestEscalationReconcilerWaitsForAuditPipeline(t *testing.T) {
 	capture.setState(audit.ConfigurationUnavailable)
 	h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
 
+	observedAt := time.Now()
 	result := h.reconcile()
 	require.Equal(t, h.r.auditRetry, result.RequeueAfter, "retry until the audit pipeline is configured")
 	require.Empty(t, capture.take())
 	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter)
 
+	time.Sleep(20 * time.Millisecond)
+	readyAt := time.Now()
 	capture.setState(audit.ConfigurationReady)
 	require.Equal(t, reconcile.Result{}, h.reconcile())
 	events := capture.take()
 	require.Len(t, events, 1)
 	require.Equal(t, audit.EventEscalationCreated, events[0].Type)
+	require.WithinDuration(t, observedAt, events[0].Timestamp, time.Second, "the event keeps the first observation time")
+	require.True(t, events[0].Timestamp.Before(readyAt), "not the time the pipeline became ready")
 
 	disabled := newEscalationAuditCapture()
 	disabled.setState(audit.ConfigurationDisabled)
@@ -182,14 +187,18 @@ func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	pending.setState(audit.ConfigurationUnavailable)
 	waiting := NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(pending)
 	waiting.auditRetry = 10 * time.Millisecond
+	observedAt := time.Now()
 	waiting.auditDeletion(auditedEscalation(5))
 	time.Sleep(50 * time.Millisecond)
 	require.Empty(t, pending.take(), "nothing is emitted while the pipeline is unavailable")
 	pending.setState(audit.ConfigurationReady)
+	var delivered []*audit.Event
 	require.Eventually(t, func() bool {
-		events := pending.take()
-		return len(events) == 1 && events[0].ID == "escalation/esc-uid/deleted"
+		delivered = append(delivered, pending.take()...)
+		return len(delivered) == 1 && delivered[0].ID == "escalation/esc-uid/deleted"
 	}, 5*time.Second, 10*time.Millisecond)
+	require.WithinDuration(t, observedAt, delivered[0].Timestamp, 40*time.Millisecond,
+		"the timestamp is the observation time, not the delivery time")
 
 	// Intentionally disabled auditing drops it.
 	disabled := newEscalationAuditCapture()
