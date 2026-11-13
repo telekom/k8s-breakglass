@@ -6,6 +6,7 @@ package config
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -231,4 +232,33 @@ func TestAuditConfigInitialSyncWithoutConfigs(t *testing.T) {
 	require.Equal(t, audit.ConfigurationUnavailable, svc.ConfigurationState())
 	require.NoError(t, svc.ReloadMultipleWithAvailability(context.Background(), got, false))
 	require.Equal(t, audit.ConfigurationDisabled, svc.ConfigurationState())
+}
+
+// The startup sync and controller reconciles never overlap, so an older
+// AuditConfig snapshot cannot be reloaded after a newer one.
+func TestAuditConfigInitialSyncSerializesWithReconcile(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+	var inside, overlaps, calls atomic.Int32
+	r.onReloadMultiple = func(context.Context, []*breakglassv1alpha1.AuditConfig, bool) error {
+		if inside.Add(1) > 1 {
+			overlaps.Add(1)
+		}
+		time.Sleep(5 * time.Millisecond)
+		inside.Add(-1)
+		calls.Add(1)
+		return nil
+	}
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() { defer wg.Done(); r.initialSync(context.Background()) }()
+		go func() {
+			defer wg.Done()
+			_, err := r.Reconcile(context.Background(), reconcile.Request{NamespacedName: types.NamespacedName{Name: "any"}})
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+	require.EqualValues(t, 16, calls.Load())
+	require.Zero(t, overlaps.Load(), "list/validate/reload passes must not overlap")
 }

@@ -70,6 +70,11 @@ type AuditConfigReconciler struct {
 	resyncPeriod        time.Duration
 	controllerNamespace string
 
+	// reconcileMu serializes the whole list/validate/reload pass, including
+	// the startup sync that runs outside the controller's work queue, so an
+	// older snapshot can never be reloaded after a newer one.
+	reconcileMu sync.Mutex
+
 	// Cache for all active AuditConfigs
 	configMutex        sync.RWMutex
 	activeConfigs      []*breakglassv1alpha1.AuditConfig
@@ -154,6 +159,8 @@ func (r *AuditConfigReconciler) SetStatsProvider(fn func() *AuditStats) {
 // Called whenever an AuditConfig CR changes.
 // This reconciler lists ALL AuditConfigs and aggregates their sinks together.
 func (r *AuditConfigReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
+	r.reconcileMu.Lock()
+	defer r.reconcileMu.Unlock()
 	r.logger.Debugw("Reconciling AuditConfig (will aggregate all configs)",
 		"trigger", req.Name)
 
