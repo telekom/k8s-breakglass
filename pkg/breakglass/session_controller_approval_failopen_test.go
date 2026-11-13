@@ -3,6 +3,7 @@ package breakglass
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -386,5 +387,53 @@ func TestStaleProviderGroupMembershipDoesNotApprove(t *testing.T) {
 
 			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
 		})
+	}
+}
+
+func largeProviderGroupEscalation(size int, stale string) *breakglassv1alpha1.BreakglassEscalation {
+	members := make([]string, 0, size)
+	for i := 0; i < size; i++ {
+		members = append(members, fmt.Sprintf("member-%04d@example.com", i))
+	}
+	escalation := failOpenEscalation()
+	escalation.Status.ApproverGroupMembers = map[string][]string{"cluster-approvers": members}
+	escalation.Status.IDPGroupMemberships = map[string]map[string][]string{
+		"idp-a": {"cluster-approvers": append(append([]string(nil), members...), stale)},
+	}
+	return escalation
+}
+
+// With a 1,000-member group the stale-membership guard still denies a member
+// that is only in the per-IdP snapshot, a current member still approves, and
+// an unrelated caller is denied.
+func TestLargeProviderGroupMembershipCheck(t *testing.T) {
+	escalation := largeProviderGroupEscalation(1000, "stale@example.com")
+	for caller, allowed := range map[string]bool{
+		"member-0999@example.com": true,
+		"stale@example.com":       false,
+		"unrelated@example.com":   false,
+	} {
+		t.Run(caller, func(t *testing.T) {
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) { return []string{}, nil }
+			c := newApprovalAuthorizationTestContext(caller, "idp-a")
+			c.Set("groups", []string{})
+			require.Equal(t, allowed, ctrl.checkApprovalAuthorization(c, *failOpenSession()).Allowed)
+		})
+	}
+}
+
+// BenchmarkLargeProviderGroupUnrelatedCaller measures an approval check for a
+// caller outside a 1,000-member group; the aggregate is scanned only for a
+// per-IdP member that matches the caller, so the cost stays linear.
+func BenchmarkLargeProviderGroupUnrelatedCaller(b *testing.B) {
+	escalation := largeProviderGroupEscalation(1000, "stale@example.com")
+	ctrl := newApprovalAuthorizationTestController(b, failOpenSession(), escalation)
+	ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) { return []string{}, nil }
+	c := newApprovalAuthorizationTestContext("unrelated@example.com", "idp-a")
+	c.Set("groups", []string{})
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = ctrl.checkApprovalAuthorization(c, *failOpenSession())
 	}
 }
