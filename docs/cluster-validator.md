@@ -98,7 +98,8 @@ Errors go to stderr. `--log-level` (`LOG_LEVEL`: `debug`, `info`, `warn`,
 `console`; default `text`) control them. `text` writes the historical
 `cluster-validator: <error>` lines; `json` writes one JSON object per line
 with `level`, `ts`, `logger` (`cluster-validator`), `caller` and `msg`. The
-report on stdout and in the report file is not affected. In the
+report on stdout and in the report file is not affected. client-go and Go standard-library log lines go
+through the same logger and use the same format. In the
 `debug-session-catalogue` chart, add the flags to the `args` of the cluster
 validation profile.
 

@@ -66,6 +66,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 	log := logger.Named("cluster-validator")
 	defer func() { _ = log.Sync() }()
+	// client-go (klog) and standard-library log lines use the same format.
+	defer logging.RouteLibraryLogs(log)()
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()

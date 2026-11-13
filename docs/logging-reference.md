@@ -233,7 +233,6 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 453 | 337 | 341 | 262 | 0 | 0 | 0 |
 | controller | 468 | 344 | 352 | 271 | 0 | 0 | 0 |
 
 ## Message catalogue
