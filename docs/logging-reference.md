@@ -158,9 +158,12 @@ events.
 - **Tokens.** After authentication the API removes the `Authorization` header
   from the request (`pkg/api/auth.go`). The access log and the panic log do
   not log headers (test `TestRecoverPanicsDoesNotLogCredentials`) or the
-  query string, so the OIDC `code` and `state` of `/auth/callback` and the
-  `?token=` of approval links are never logged (test
-  `TestAccessLogNeverLogsQueryAndCoversPanics`). For OIDC
+  query string, so the OIDC `code` and `state` of `/auth/callback` are never
+  logged (test `TestAccessLogNeverLogsQueryAndCoversPanics`). The `?token=` of
+  an approval link is the name of the BreakglassSession, not a credential:
+  approving still requires an authenticated approver. That name appears in
+  many log lines as `session`. Treat session names as identifiers, not as
+  secrets. For OIDC
   claims, only the claim names, `sub` and `username` are logged, at debug.
   Session and cluster token code logs lengths and booleans (`tokenLen`,
   `hasRefreshToken`, `hasActorToken`, `expiresIn`), never the token.
