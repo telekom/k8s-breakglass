@@ -625,7 +625,8 @@ empty, clean-looking result whenever a check cannot be made:
 #!/usr/bin/env bash
 # Lists every bound user, group and ServiceAccount that may exec, attach or
 # port-forward in the debug namespace, as decided by the API server's
-# authorizers (aggregated roles, wildcards and cluster-wide bindings included).
+# authorizers (aggregated roles, wildcards and cluster-wide bindings included):
+# namespace-wide, and for each current Pod by name (resourceNames grants).
 set -euo pipefail
 ns=${1:-breakglass-debug}
 err=$(mktemp)
@@ -634,8 +635,20 @@ if [ "$(kubectl auth can-i create subjectaccessreviews.authorization.k8s.io 2>"$
   echo "error: this audit needs permission to create subjectaccessreviews $(cat "$err")" >&2
   exit 1
 fi
+# Each listing is checked on its own: a failed one aborts instead of silently
+# dropping its grants.
+if ! rolebindings=$(kubectl get rolebindings -n "$ns" -o json); then
+  echo "error: cannot list RoleBindings in $ns" >&2; exit 1
+fi
+if ! clusterrolebindings=$(kubectl get clusterrolebindings -o json); then
+  echo "error: cannot list ClusterRoleBindings" >&2; exit 1
+fi
+# Every current Pod is also checked by name, which catches resourceNames grants.
+if ! pods=$(kubectl get pods -n "$ns" -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}'); then
+  echo "error: cannot list Pods in $ns" >&2; exit 1
+fi
 # One subject per line, fields separated by U+001F (names may contain \ or tabs).
-subjects=$({ kubectl get rolebindings -n "$ns" -o json; kubectl get clusterrolebindings -o json; } |
+subjects=$(printf '%s\n%s\n' "$rolebindings" "$clusterrolebindings" |
   jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | join("\u001f")' | sort -u)
 while IFS=$'\x1f' read -r kind name subject_ns; do
   case "$kind" in
@@ -650,17 +663,35 @@ while IFS=$'\x1f' read -r kind name subject_ns; do
   esac
   # get pods/exec: before Kubernetes 1.31, WebSocket exec is authorized as get.
   for check in create:exec get:exec create:attach create:portforward; do
-    review=$(jq -n --argjson who "$who" --arg ns "$ns" --arg verb "${check%%:*}" --arg sub "${check#*:}" \
-      '{apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
-        spec: ($who + {resourceAttributes: {namespace: $ns, verb: $verb, resource: "pods", subresource: $sub}})}')
-    allowed=$(kubectl create -f - -o jsonpath='{.status.allowed}' <<<"$review" 2>"$err") || true
-    case "$allowed" in
-      true) echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns" ;;
-      false) ;;
-      *) echo "error: checking $kind $name: $(cat "$err")" >&2; exit 1 ;;
-    esac
+    # An empty name asks namespace-wide; the Pod names catch resourceNames grants.
+    while IFS= read -r pod; do
+      review=$(jq -n --argjson who "$who" --arg ns "$ns" --arg verb "${check%%:*}" --arg sub "${check#*:}" --arg pod "$pod" \
+        '{apiVersion: "authorization.k8s.io/v1", kind: "SubjectAccessReview",
+          spec: ($who + {resourceAttributes: {namespace: $ns, verb: $verb, resource: "pods", subresource: $sub, name: $pod}})}')
+      allowed=$(kubectl create -f - -o jsonpath='{.status.allowed}' <<<"$review" 2>"$err") || true
+      case "$allowed" in
+        true)
+          echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns${pod:+ on Pod $pod}"
+          break ;; # namespace-wide implies every Pod
+        false) ;;
+        *) echo "error: checking $kind $name: $(cat "$err")" >&2; exit 1 ;;
+      esac
+    done < <(echo; printf '%s' "$pods${pods:+$'\n'}")
   done
 done <<<"$subjects"
+```
+
+The named checks cover the Pods that exist when the script runs. A
+`resourceNames` grant can also name a Pod that does not exist yet, which no
+access review can see. List the Roles and ClusterRoles with such rules and
+review them by hand:
+
+```bash
+ns=breakglass-debug
+{ kubectl get roles -n "$ns" -o json && kubectl get clusterroles -o json; } |
+  jq -r '.items[] | select(any(.rules[]?; (.resourceNames // []) != [] and
+      any(.resources[]?; . == "*" or test("^(pods|\\*)/(exec|attach|portforward)$"))))
+    | "\(.kind) \(.metadata.namespace // "-")/\(.metadata.name)"'
 ```
 
 Only the controller's identity and the identities of session participants
