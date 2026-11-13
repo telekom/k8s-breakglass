@@ -143,6 +143,7 @@ func Setup(
 	auditService *audit.Service,
 	mailService *mail.Service,
 	frontendConfig config.Frontend,
+	debugSessionsConfig config.DebugSessions,
 	quotaNamespace string,
 	disableEmail bool,
 	escalationManager *escalation.EscalationManager,
@@ -321,7 +322,8 @@ func Setup(
 			WithLiveReader(mgr.GetAPIReader()).
 			WithQuotaNamespace(quotaNamespace).
 			WithAuditService(auditService).
-			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail)
+			WithMailService(mailService, frontendConfig.BrandingName, frontendConfig.BaseURL, disableEmail).
+			WithRuntimeIdentityMetadataDisabled(debugSessionsConfig.DisableRuntimeIdentityMetadata)
 		if len(artifactReconcilers) > 0 && artifactReconcilers[0] != nil {
 			debugSessionReconciler.WithTerminalRecordingArtifacts(artifactReconcilers[0].Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(mgr.GetClient()).WithLiveReader(mgr.GetAPIReader()).WithNamespace(quotaNamespace), debug.ClusterConfigCredentialSource(ccProvider)))
 		}

@@ -503,6 +503,26 @@ server:
 
 ---
 
+### `debugSessions` (Optional)
+
+Global DebugSession settings.
+
+#### `disableRuntimeIdentityMetadata` (Optional)
+
+**Type:** `bool`
+**Default:** `false`
+
+Transitional escape hatch: `true` stops the
+[runtime identity metadata](debug-session.md#runtime-identity-metadata) on all
+debug pods and keeps client-chosen ephemeral container names. Existing
+debug-session labels are kept. Templates can opt out on their own with
+`spec.audit.runtimeIdentityMetadata: false`. The switch will be removed.
+
+```yaml
+debugSessions:
+  disableRuntimeIdentityMetadata: false
+```
+
 ### `frontend`
 
 Frontend UI configuration.

@@ -1441,6 +1441,16 @@ spec:
                 description: templateRef is the name of the DebugSessionTemplate to
                   use.
                 type: string
+              ticketSystemID:
+                description: |-
+                  ticketSystemID is an optional, freeform ticket reference supplied by the
+                  requester for correlation and audit. Apart from the length limit of
+                  MaxTicketSystemIDLength (256) characters it has no format validation. It is
+                  not an authorization credential and does not replace reason or approval
+                  requirements. It is copied to the runtime identity annotations of the
+                  debug pods.
+                maxLength: 256
+                type: string
               userGroups:
                 description: |-
                   userGroups contains the groups the requesting user belongs to.
@@ -2563,6 +2573,12 @@ spec:
                               type: string
                             name:
                               description: name is the ephemeral container name.
+                              type: string
+                            requestedName:
+                              description: |-
+                                requestedName is the container name the client asked for when the
+                                controller assigned name instead (runtime identity metadata). Retries of
+                                the same request reuse the assigned name.
                               type: string
                             securityContextDigest:
                               description: securityContextDigest identifies the complete
@@ -4232,6 +4248,14 @@ spec:
                           are kept.
                         pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                         type: string
+                      runtimeIdentityMetadata:
+                        description: |-
+                          runtimeIdentityMetadata adds runtime identity labels and annotations to
+                          every pod and ephemeral container the session creates, so runtime
+                          security tools can attribute them to the session. Unset means true.
+                          Setting it to false is a transitional escape hatch and will be removed;
+                          existing debug-session labels are kept either way.
+                        type: boolean
                     type: object
                   auxiliaryResourceDefaults:
                     additionalProperties:

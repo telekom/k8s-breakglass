@@ -745,6 +745,7 @@ func (c *DebugSessionController) buildWorkload(ds *breakglassv1alpha1.DebugSessi
 		annotations = make(map[string]string)
 	}
 	annotations[sourceSessionUIDAnnotation] = string(ds.UID)
+	ApplyRuntimeIdentityMetadata(&metav1.ObjectMeta{Labels: labels, Annotations: annotations}, ds, &template.Spec, c.disableRuntimeIdentity)
 	if motd != nil {
 		annotations[motdProfileAnnotation] = motdProfileScript
 	}

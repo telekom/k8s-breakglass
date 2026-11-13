@@ -19,6 +19,10 @@ package v1alpha1
 type KubectlDebugEphemeralContainerIntentApplyConfiguration struct {
 	// name is the ephemeral container name.
 	Name *string `json:"name,omitempty"`
+	// requestedName is the container name the client asked for when the
+	// controller assigned name instead (runtime identity metadata). Retries of
+	// the same request reuse the assigned name.
+	RequestedName *string `json:"requestedName,omitempty"`
 	// image is the requested image.
 	Image *string `json:"image,omitempty"`
 	// command is the requested command.
@@ -44,6 +48,14 @@ func KubectlDebugEphemeralContainerIntent() *KubectlDebugEphemeralContainerInten
 // If called multiple times, the Name field is set to the value of the last call.
 func (b *KubectlDebugEphemeralContainerIntentApplyConfiguration) WithName(value string) *KubectlDebugEphemeralContainerIntentApplyConfiguration {
 	b.Name = &value
+	return b
+}
+
+// WithRequestedName sets the RequestedName field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RequestedName field is set to the value of the last call.
+func (b *KubectlDebugEphemeralContainerIntentApplyConfiguration) WithRequestedName(value string) *KubectlDebugEphemeralContainerIntentApplyConfiguration {
+	b.RequestedName = &value
 	return b
 }
 

@@ -51,6 +51,13 @@ type DebugSessionSpecApplyConfiguration struct {
 	RequestedDuration *string `json:"requestedDuration,omitempty"`
 	// reason explains why the debug session is needed.
 	Reason *string `json:"reason,omitempty"`
+	// ticketSystemID is an optional, freeform ticket reference supplied by the
+	// requester for correlation and audit. Apart from the length limit of
+	// MaxTicketSystemIDLength (256) characters it has no format validation. It is
+	// not an authorization credential and does not replace reason or approval
+	// requirements. It is copied to the runtime identity annotations of the
+	// debug pods.
+	TicketSystemID *string `json:"ticketSystemID,omitempty"`
 	// nodeSelector restricts debug pods to specific nodes.
 	// Merged with template's nodeSelector using OR logic.
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
@@ -205,6 +212,14 @@ func (b *DebugSessionSpecApplyConfiguration) WithRequestedDuration(value string)
 // If called multiple times, the Reason field is set to the value of the last call.
 func (b *DebugSessionSpecApplyConfiguration) WithReason(value string) *DebugSessionSpecApplyConfiguration {
 	b.Reason = &value
+	return b
+}
+
+// WithTicketSystemID sets the TicketSystemID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TicketSystemID field is set to the value of the last call.
+func (b *DebugSessionSpecApplyConfiguration) WithTicketSystemID(value string) *DebugSessionSpecApplyConfiguration {
+	b.TicketSystemID = &value
 	return b
 }
 

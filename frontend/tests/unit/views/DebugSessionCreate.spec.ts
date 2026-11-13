@@ -1380,6 +1380,52 @@ describe("DebugSessionCreate", () => {
     });
   });
 
+  describe("ticket system ID", () => {
+    type TicketVM = {
+      goToStep2: () => void;
+      handleSubmit: () => Promise<void>;
+      form: { cluster: string; reason: string; ticketSystemId: string };
+      isValid: boolean;
+    };
+
+    async function prepare(ticketSystemId: string): Promise<TicketVM> {
+      mockGetTemplateClusters.mockResolvedValue({
+        templateName: "standard-debug",
+        clusters: [{ name: "prod-east", displayName: "Production East" }],
+      });
+      const wrapper = await createWrapper();
+      const vm = wrapper.vm as unknown as TicketVM;
+      vm.goToStep2();
+      await flushPromises();
+      vm.form.cluster = "prod-east";
+      vm.form.reason = "Investigating production issue";
+      vm.form.ticketSystemId = ticketSystemId;
+      await flushPromises();
+      return vm;
+    }
+
+    it("sends ticketSystemID when it is filled in", async () => {
+      const vm = await prepare("INC-12345");
+      await vm.handleSubmit();
+      expect(mockCreateSession).toHaveBeenCalledWith(expect.objectContaining({ ticketSystemID: "INC-12345" }));
+    });
+
+    it("omits ticketSystemID when it is empty", async () => {
+      const vm = await prepare("");
+      await vm.handleSubmit();
+      expect(mockCreateSession).toHaveBeenCalledTimes(1);
+      expect(mockCreateSession.mock.calls[0]![0]).not.toHaveProperty("ticketSystemID");
+    });
+
+    it("accepts 256 code points and blocks submit above that", async () => {
+      expect((await prepare("😀".repeat(256))).isValid).toBe(true);
+      const vm = await prepare("😀".repeat(257));
+      expect(vm.isValid).toBe(false);
+      await vm.handleSubmit();
+      expect(mockCreateSession).not.toHaveBeenCalled();
+    });
+  });
+
   describe("submit validation", () => {
     it("does not submit when namespace violates allowed patterns", async () => {
       mockGetTemplateClusters.mockResolvedValue({

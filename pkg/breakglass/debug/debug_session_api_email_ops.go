@@ -449,7 +449,7 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
 		return
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity).WithRuntimeIdentityMetadataDisabled(c.disableRuntimeIdentity)
 	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Validate the request with the template security context applied, so the
@@ -478,7 +478,8 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 	}
 
 	// Inject the ephemeral container
-	if err := handler.InjectEphemeralContainer(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, securityContext, username); err != nil {
+	containerName, err := handler.InjectEphemeralContainerNamed(apiCtx, session, req.Namespace, req.PodName, req.ContainerName, req.Image, req.Command, securityContext, username)
+	if err != nil {
 		if kubectlDebugOperationHTTPStatus(err) >= http.StatusInternalServerError {
 			reqLog.Errorw("Failed to inject ephemeral container", "error", err)
 		} else {
@@ -495,14 +496,17 @@ func (c *DebugSessionAPIController) handleInjectEphemeralContainer(ctx *gin.Cont
 		"session", sessionName,
 		"pod", req.PodName,
 		"namespace", req.Namespace,
-		"container", req.ContainerName,
+		"container", containerName,
+		"requestedContainer", req.ContainerName,
 		"user", username)
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"message":   "ephemeral container injected successfully",
 		"pod":       req.PodName,
 		"namespace": req.Namespace,
-		"container": req.ContainerName,
+		"container": containerName,
+		// With runtime identity metadata the controller assigns the name.
+		"requestedContainerName": req.ContainerName,
 	})
 }
 
@@ -579,7 +583,7 @@ func (c *DebugSessionAPIController) handleCreatePodCopy(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
 		return
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity).WithRuntimeIdentityMetadataDisabled(c.disableRuntimeIdentity)
 	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the pod copy
@@ -687,7 +691,7 @@ func (c *DebugSessionAPIController) handleCreateNodeDebugPod(ctx *gin.Context) {
 		apiresponses.RespondInternalErrorSimple(ctx, "failed to validate debug session")
 		return
 	}
-	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity)
+	handler := NewKubectlDebugHandlerWithReader(c.client, c.reader(), provider).withIdentity(identity).WithRuntimeIdentityMetadataDisabled(c.disableRuntimeIdentity)
 	handler.WithConnectionLeaseValidator(c.connectionLeases.ValidateSession)
 
 	// Create the node debug pod

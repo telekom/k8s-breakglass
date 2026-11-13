@@ -291,6 +291,11 @@ spec:
 				require.Equal(t, corev1.PodSucceeded, pods.Items[0].Status.Phase)
 				require.Equal(t, object.Spec.ArtifactID, pods.Items[0].Labels["breakglass.t-caas.telekom.com/artifact"])
 				require.Equal(t, string(active.UID), pods.Items[0].Labels["breakglass.t-caas.telekom.com/session-uid"])
+				// Runtime identity metadata attributes the collector pod to its session.
+				require.Equal(t, string(active.UID), pods.Items[0].Labels["breakglass.telekom.com/debug-session-uid"])
+				require.Equal(t, active.Name, pods.Items[0].Labels["breakglass.telekom.com/debug-session"])
+				require.Equal(t, active.Spec.TemplateRef, pods.Items[0].Labels["breakglass.telekom.com/debug-template"])
+				require.Equal(t, active.Spec.RequestedBy, pods.Items[0].Annotations["breakglass.telekom.com/requested-by"])
 				owner := metav1.GetControllerOf(&pods.Items[0])
 				require.NotNil(t, owner)
 				require.Equal(t, "Job", owner.Kind)

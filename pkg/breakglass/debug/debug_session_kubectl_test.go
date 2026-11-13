@@ -948,7 +948,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 		storedPod := &corev1.Pod{}
 		require.NoError(t, targetClient.Get(context.Background(), ctrlclient.ObjectKey{Name: "test-pod", Namespace: "default"}, storedPod))
 		require.Len(t, storedPod.Spec.EphemeralContainers, 1)
-		assert.Equal(t, "debugger", storedPod.Spec.EphemeralContainers[0].Name)
+		assert.Equal(t, ephemeralContainerNamePrefix(testSession)+"1", storedPod.Spec.EphemeralContainers[0].Name)
 		var storedSession breakglassv1alpha1.DebugSession
 		require.NoError(t, hubClient.Get(context.Background(), ctrlclient.ObjectKeyFromObject(testSession), &storedSession))
 		operation := storedSession.Status.KubectlDebugStatus.Operations[0]
@@ -981,9 +981,11 @@ func TestKubectlDebugHandler_InjectEphemeralContainer(t *testing.T) {
 			},
 		}
 
+		// Client-chosen names are the opt-out path; the controller-assigned
+		// name never collides with an existing container.
 		handler2 := newTestKubectlDebugHandler(hubClient, mockProvider2).withIdentity(debugSessionReadIdentity{
 			username: "subject-123", email: "operator@example.com", provider: "idp-a", issuer: "https://idp-a.example",
-		})
+		}).WithRuntimeIdentityMetadataDisabled(true)
 
 		err := handler2.InjectEphemeralContainer(
 			context.Background(),
@@ -1653,7 +1655,8 @@ func TestKubectlDebugHandler_CompactedUnknownStillRequiresLiveAuthorization(t *t
 			hub := fake.NewClientBuilder().WithScheme(scheme).WithObjects(session).WithStatusSubresource(session).Build()
 			before := &breakglassv1alpha1.DebugSession{}
 			require.NoError(t, hub.Get(context.Background(), ctrlclient.ObjectKeyFromObject(session), before))
-			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}})
+			// Container names chosen by the client are the opt-out path.
+			handler := newTestKubectlDebugHandler(hub, &mockClientProvider{clients: map[string]ctrlclient.Client{"test-cluster": target}}).WithRuntimeIdentityMetadataDisabled(true)
 			user := "test-user@example.com"
 			if !test.authorized {
 				user = "unrelated@example.com"
@@ -2004,7 +2007,7 @@ func TestKubectlDebugHandler_EphemeralOperationRecoversAfterOutcomeWriteFailure(
 	require.Len(t, recovered.Status.KubectlDebugStatus.Operations, 1)
 	assert.Equal(t, breakglassv1alpha1.KubectlDebugOperationCompleted, recovered.Status.KubectlDebugStatus.Operations[0].State)
 	require.Len(t, recovered.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
-	assert.Equal(t, "debugger", recovered.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
+	assert.Equal(t, ephemeralContainerNamePrefix(session)+"1", recovered.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
 	assert.Len(t, changedPod.Spec.EphemeralContainers, 1, "recovery must not duplicate the target mutation")
 
 	// Retrying the original API operation after recovery must be an idempotent
@@ -2467,7 +2470,7 @@ func TestKubectlDebugHandler_InjectEphemeralContainerPreservesLiveStatusFromStal
 	assert.Equal(t, "active@example.com", stored.Status.Participants[0].User)
 	require.NotNil(t, stored.Status.KubectlDebugStatus)
 	require.Len(t, stored.Status.KubectlDebugStatus.EphemeralContainersInjected, 1)
-	assert.Equal(t, "debugger", stored.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
+	assert.Equal(t, ephemeralContainerNamePrefix(liveSession)+"1", stored.Status.KubectlDebugStatus.EphemeralContainersInjected[0].ContainerName)
 	assert.Contains(t, stored.Status.AllowedPods, breakglassv1alpha1.AllowedPodRef{
 		Namespace: "production",
 		Name:      "app-pod",

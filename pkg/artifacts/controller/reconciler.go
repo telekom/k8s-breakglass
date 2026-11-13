@@ -63,6 +63,9 @@ type Reconciler struct {
 	Now              func() time.Time
 	ClusterProvider  TargetClientProvider
 	LiveReader       ctrlclient.Reader
+	// DisableRuntimeIdentityMetadata is the global
+	// debugSessions.disableRuntimeIdentityMetadata escape hatch.
+	DisableRuntimeIdentityMetadata bool
 }
 
 func (reconciler *Reconciler) SetupWithManager(manager ctrl.Manager) error {
@@ -323,6 +326,7 @@ func (reconciler *Reconciler) ensureUploadResources(ctx context.Context, object 
 		return fmt.Errorf("build diagnostic artifact collector Job: %w", err)
 	}
 	collectorJob.OwnerReferences = nil
+	debug.ApplyRuntimeIdentityMetadata(&collectorJob.Spec.Template.ObjectMeta, session, session.Status.ResolvedTemplate, reconciler.DisableRuntimeIdentityMetadata)
 	if collectorJob.Annotations == nil {
 		collectorJob.Annotations = map[string]string{}
 	}
@@ -389,6 +393,18 @@ func validateCollectorJob(job, expected batchv1.Job, object breakglassv1alpha1.D
 	}
 	if job.Annotations["breakglass.t-caas.telekom.com/artifact-uid"] != string(object.UID) {
 		return errors.New("diagnostic artifact collector Job is not bound to the artifact")
+	}
+	// Runtime identity metadata is attribution, not part of the execution
+	// contract. Jobs created before an upgrade or before an opt-out change
+	// differ only in these keys and remain valid.
+	job, expected = *job.DeepCopy(), *expected.DeepCopy()
+	for _, meta := range []*metav1.ObjectMeta{&job.Spec.Template.ObjectMeta, &expected.Spec.Template.ObjectMeta} {
+		for _, key := range []string{debug.DebugSessionLabelKey, debug.DebugSessionUIDLabelKey, debug.DebugTemplateLabelKey} {
+			delete(meta.Labels, key)
+		}
+		for _, key := range []string{debug.RuntimeIdentityRequestedByAnnotation, debug.RuntimeIdentityApprovedByAnnotation, debug.RuntimeIdentityTicketAnnotation} {
+			delete(meta.Annotations, key)
+		}
 	}
 	return artifactjob.ValidateExecution(job, expected)
 }

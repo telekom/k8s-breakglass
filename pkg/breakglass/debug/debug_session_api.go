@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
@@ -88,6 +89,16 @@ type DebugSessionAPIController struct {
 	recordingConnections    TerminalRecordingConnectionProvider
 	terminalTargetResolver  terminalTargetResolver
 	terminalExecutorFactory terminalExecutorFactory
+	// disableRuntimeIdentity is the global debugSessions.disableRuntimeIdentityMetadata escape hatch.
+	disableRuntimeIdentity bool
+}
+
+// WithRuntimeIdentityMetadataDisabled applies the global
+// debugSessions.disableRuntimeIdentityMetadata escape hatch to the pods and
+// ephemeral containers the kubectl-debug endpoints create.
+func (c *DebugSessionAPIController) WithRuntimeIdentityMetadataDisabled(disabled bool) *DebugSessionAPIController {
+	c.disableRuntimeIdentity = disabled
+	return c
 }
 
 // WithTerminalRecordingMaxBytes applies the configured storage limit to
@@ -268,6 +279,7 @@ type CreateDebugSessionRequest struct {
 	NodeSelector             map[string]string                             `json:"nodeSelector,omitempty"`
 	Namespace                string                                        `json:"namespace,omitempty"` // Deprecated: alias for targetNamespace
 	Reason                   string                                        `json:"reason,omitempty"`
+	TicketSystemID           string                                        `json:"ticketSystemID,omitempty"` // Optional audit-only ticket reference, max 256 characters
 	InvitedParticipants      []string                                      `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string                                        `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
 	SelectedSchedulingOption string                                        `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
@@ -312,6 +324,9 @@ func validateCreateDebugSessionRequest(req CreateDebugSessionRequest) error {
 	}
 	if req.Cluster == "" {
 		return fmt.Errorf("cluster is required")
+	}
+	if utf8.RuneCountInString(req.TicketSystemID) > breakglassv1alpha1.MaxTicketSystemIDLength {
+		return fmt.Errorf("ticketSystemID must be at most %d characters", breakglassv1alpha1.MaxTicketSystemIDLength)
 	}
 	return nil
 }
@@ -1395,6 +1410,7 @@ func (c *DebugSessionAPIController) handleCreateDebugSession(ctx *gin.Context) {
 			RequestedDuration:             req.RequestedDuration,
 			NodeSelector:                  req.NodeSelector,
 			Reason:                        req.Reason,
+			TicketSystemID:                req.TicketSystemID,
 			InvitedParticipants:           req.InvitedParticipants,
 			TargetNamespace:               targetNamespace,
 			SelectedSchedulingOption:      selectedOption,

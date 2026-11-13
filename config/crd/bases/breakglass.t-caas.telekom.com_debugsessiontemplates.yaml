@@ -1368,6 +1368,14 @@ spec:
                       are kept.
                     pattern: ^((([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|µs|μs|ms|s|m|h))+|([0-9]+([.][0-9]+)?(ns|us|µs|ms|s|m|h)|[0-9]+(d|w|y))+)$
                     type: string
+                  runtimeIdentityMetadata:
+                    description: |-
+                      runtimeIdentityMetadata adds runtime identity labels and annotations to
+                      every pod and ephemeral container the session creates, so runtime
+                      security tools can attribute them to the session. Unset means true.
+                      Setting it to false is a transitional escape hatch and will be removed;
+                      existing debug-session labels are kept either way.
+                    type: boolean
                 type: object
               auxiliaryResourceDefaults:
                 additionalProperties:

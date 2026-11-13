@@ -6,6 +6,8 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,12 +148,20 @@ func TestDebugSessionBgctlInjectSecurityContext(t *testing.T) {
 	t.Run("DefaultsSatisfyRequireNonRoot", func(t *testing.T) {
 		out, err := bgctl("nonroot")
 		require.NoError(t, err, out)
+		// The controller assigns the container name (runtime identity metadata).
+		var response struct {
+			Container          string `json:"container"`
+			RequestedContainer string `json:"requestedContainerName"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out[strings.Index(out, "{"):]), &response), out)
+		require.Equal(t, "nonroot", response.RequestedContainer)
+		require.True(t, strings.HasPrefix(response.Container, "bg-"), response.Container)
 		require.Eventually(t, func() bool {
 			if target.Get(ctx, client.ObjectKeyFromObject(pod), pod) != nil {
 				return false
 			}
 			for _, status := range pod.Status.EphemeralContainerStatuses {
-				if status.Name == "nonroot" && status.State.Running != nil {
+				if status.Name == response.Container && status.State.Running != nil {
 					return true
 				}
 			}
@@ -160,7 +170,7 @@ func TestDebugSessionBgctlInjectSecurityContext(t *testing.T) {
 		names := make([]string, 0, len(pod.Spec.EphemeralContainers))
 		for _, ec := range pod.Spec.EphemeralContainers {
 			names = append(names, ec.Name)
-			if ec.Name != "nonroot" {
+			if ec.Name != response.Container {
 				continue
 			}
 			require.NotNil(t, ec.SecurityContext)
@@ -169,6 +179,6 @@ func TestDebugSessionBgctlInjectSecurityContext(t *testing.T) {
 			require.Equal(t, ptr.To(int64(65534)), ec.SecurityContext.RunAsGroup)
 			require.Equal(t, ptr.To(false), ec.SecurityContext.AllowPrivilegeEscalation)
 		}
-		require.Equal(t, []string{"nonroot"}, names, "rejected attempts must leave the pod unmodified")
+		require.Equal(t, []string{response.Container}, names, "rejected attempts must leave the pod unmodified")
 	})
 }

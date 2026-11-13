@@ -905,3 +905,42 @@ func TestDebugTemplateDiscoveryPreservesEffectivePolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestDebugSessionCreateCommand_TicketSystemID(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		ticket    string
+		wantError bool
+	}{
+		{name: "max length multibyte accepted", ticket: strings.Repeat("ü", breakglassv1alpha1.MaxTicketSystemIDLength)},
+		{name: "over max length rejected", ticket: strings.Repeat("a", breakglassv1alpha1.MaxTicketSystemIDLength+1), wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var received *client.CreateDebugSessionRequest
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				received = &client.CreateDebugSessionRequest{}
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(received))
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{Name: "debug-new"}})
+			}))
+			defer server.Close()
+
+			rootCmd := NewRootCommand(Config{ConfigPath: writeTestConfigForDebug(t, server.URL), OutputWriter: &bytes.Buffer{}})
+			rootCmd.SetArgs([]string{
+				"--server", server.URL, "--token", "test-token",
+				"debug", "session", "create", "--template", "my-template", "--cluster", "cluster-a",
+				"--ticket-system-id", tc.ticket, "-o", "json",
+			})
+			err := rootCmd.Execute()
+
+			if tc.wantError {
+				require.ErrorContains(t, err, "--ticket-system-id must be at most 256 characters")
+				require.Nil(t, received, "an over-length reference must not reach the API")
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, received)
+			assert.Equal(t, tc.ticket, received.TicketSystemID)
+		})
+	}
+}

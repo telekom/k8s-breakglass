@@ -374,6 +374,8 @@ spec:
     logCommands: true
     sidecar:
       image: registry.example/audit-logger@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+    # Transitional escape hatch, default true; see "Runtime identity metadata".
+    # runtimeIdentityMetadata: false
 
   # Optional: Granular pod operation controls
   allowedPodOperations:
@@ -751,6 +753,8 @@ spec:
   requestedBy: engineer@example.com
   requestedDuration: "2h"
   reason: "Investigating network latency issues on node pool"
+  # Optional, freeform, at most 256 characters; copied to the pods' ticket annotation.
+  ticketSystemID: "INC-12345"
   nodeSelector:
     node-pool: application
   invitedParticipants:
@@ -774,6 +778,60 @@ status:
       name: debug-session-abc123-ds
       namespace: breakglass-debug
 ```
+
+## Runtime identity metadata
+
+Every pod and container a DebugSession creates can be attributed to that
+session, so runtime security tools such as Tetragon or Falco can tie process,
+file and network events to the session, its requester, approver and ticket.
+The controller sets the metadata on workload pods, pod copies, node-debug pods
+and diagnostic artifact collector pods:
+
+| Key | Kind | Value |
+|-----|------|-------|
+| `breakglass.telekom.com/debug-session` | label | Session name |
+| `breakglass.telekom.com/debug-session-uid` | label | Session UID |
+| `breakglass.telekom.com/debug-template` | label | `spec.templateRef` |
+| `breakglass.telekom.com/requested-by` | annotation | `spec.requestedBy` |
+| `breakglass.telekom.com/approved-by` | annotation | `status.approval.approvedBy`, omitted without an approver |
+| `breakglass.telekom.com/ticket` | annotation | `spec.ticketSystemID`, omitted when empty |
+
+Label values that are not valid label values (longer than 63 characters or
+with other characters) keep a readable prefix and end in a hash. These keys are
+controller-owned: values from templates, bindings or pod manifests are
+overwritten, and an approver or ticket annotation from another source is
+removed when the session has none.
+
+Ephemeral containers inherit nothing from the target pod that identifies the
+session, so the controller names them `bg-<uid8>-<n>`, where `<uid8>` is the
+first eight characters of the session UID and `<n>` counts the session's
+containers in that pod. Before the injection it annotates the target pod with
+`breakglass.telekom.com/ephemeral.<name>: <session UID>`. The annotation key
+stays within the 63-character limit of the name part. The requested
+`containerName` is kept as the retry key: repeating a request returns the same
+container. The API response returns the assigned name in `container`.
+
+Sessions and pods created before an upgrade keep their metadata; nothing is
+relabeled. Operations recorded before the upgrade keep their requested names.
+
+### Escape hatches
+
+Two transitional switches turn the new metadata off. They will be removed once
+consumers rely on it; the existing labels (`debug-session`, `debug-template`,
+`debug-cluster` and the node-debug and pod-copy labels) are kept either way:
+
+- Globally, in the controller `config.yaml`:
+
+  ```yaml
+  debugSessions:
+    disableRuntimeIdentityMetadata: true
+  ```
+
+- Per template, with `spec.audit.runtimeIdentityMetadata: false` (unset means
+  `true`).
+
+With either switch, ephemeral containers keep the requested name and the target
+pod gets no annotation.
 
 ## Scheduling Constraints and Options
 

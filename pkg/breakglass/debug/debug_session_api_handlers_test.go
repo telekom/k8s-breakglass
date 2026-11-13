@@ -690,7 +690,7 @@ func TestHandleInjectEphemeralContainer_RejectsUnsafeSecurityContextBeforeIntent
 	storedPod := &corev1.Pod{}
 	require.NoError(t, targetClient.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: "target"}, storedPod))
 	require.Len(t, storedPod.Spec.EphemeralContainers, 1)
-	assert.Equal(t, "safe-debugger", storedPod.Spec.EphemeralContainers[0].Name)
+	assert.Equal(t, ephemeralContainerNamePrefix(session)+"1", storedPod.Spec.EphemeralContainers[0].Name)
 }
 
 func TestHandleInjectEphemeralContainer_AppliesTemplateSecurityContextBeforeValidation(t *testing.T) {

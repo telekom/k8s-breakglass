@@ -118,6 +118,15 @@ type DebugSessionController struct {
 	beforeDebugTargetWrite func(string)
 	recordingArtifacts     *backend.Service
 	recordingConnections   TerminalRecordingConnectionProvider
+	// disableRuntimeIdentity is the global debugSessions.disableRuntimeIdentityMetadata escape hatch.
+	disableRuntimeIdentity bool
+}
+
+// WithRuntimeIdentityMetadataDisabled applies the global
+// debugSessions.disableRuntimeIdentityMetadata escape hatch.
+func (c *DebugSessionController) WithRuntimeIdentityMetadataDisabled(disabled bool) *DebugSessionController {
+	c.disableRuntimeIdentity = disabled
+	return c
 }
 
 // WithTerminalRecordingArtifacts configures the shared artifact backend used by
@@ -1734,7 +1743,7 @@ func (c *DebugSessionController) newKubectlDebugHandler() *KubectlDebugHandler {
 	if c.targetClients != nil {
 		provider = c.targetClients
 	}
-	return NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider)
+	return NewKubectlDebugHandlerWithReader(c.client, c.approvalReader(), provider).WithRuntimeIdentityMetadataDisabled(c.disableRuntimeIdentity)
 }
 
 // bindingMatchesTemplate checks if a binding references the given template

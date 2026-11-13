@@ -1231,6 +1231,14 @@ type DebugSessionAuditConfig struct {
 	// +optional
 	// +kubebuilder:default=true
 	EnableShellHistory bool `json:"enableShellHistory,omitempty"`
+
+	// runtimeIdentityMetadata adds runtime identity labels and annotations to
+	// every pod and ephemeral container the session creates, so runtime
+	// security tools can attribute them to the session. Unset means true.
+	// Setting it to false is a transitional escape hatch and will be removed;
+	// existing debug-session labels are kept either way.
+	// +optional
+	RuntimeIdentityMetadata *bool `json:"runtimeIdentityMetadata,omitempty"`
 }
 
 // AuditDestination specifies where audit events are sent.

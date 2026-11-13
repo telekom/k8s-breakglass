@@ -3,6 +3,7 @@ package config_test
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -651,5 +652,26 @@ func TestServerTimeouts_WhitespaceTrimming(t *testing.T) {
 	}
 	if got := emptyTimeouts.GetReadTimeout(); got != config.DefaultReadTimeout {
 		t.Errorf("GetReadTimeout() with only whitespace = %v, want default %v", got, config.DefaultReadTimeout)
+	}
+}
+
+func TestLoadDebugSessionsRuntimeIdentityEscapeHatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("debugSessions:\n  disableRuntimeIdentityMetadata: true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.DebugSessions.DisableRuntimeIdentityMetadata {
+		t.Error("debugSessions.disableRuntimeIdentityMetadata was not loaded")
+	}
+	path = filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  listenAddress: \":8080\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if cfg, err = config.Load(path); err != nil || cfg.DebugSessions.DisableRuntimeIdentityMetadata {
+		t.Errorf("runtime identity metadata must be on by default, got %v, %v", cfg.DebugSessions, err)
 	}
 }

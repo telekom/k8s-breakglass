@@ -46,6 +46,7 @@ const form = reactive<{
   selectedBindingIndex: number; // Index of selected binding option (0 = first/default)
   requestedDuration: string;
   reason: string;
+  ticketSystemId: string;
   targetNamespace: string;
   selectedSchedulingOption: string;
   extraDeployValues: ExtraDeployValues;
@@ -56,6 +57,7 @@ const form = reactive<{
   selectedBindingIndex: 0,
   requestedDuration: "1h",
   reason: "",
+  ticketSystemId: "",
   targetNamespace: "",
   selectedSchedulingOption: "",
   extraDeployValues: {},
@@ -533,7 +535,9 @@ const isValid = computed(() => {
     Boolean(form.templateRef) &&
     Boolean(form.cluster) &&
     Boolean(form.requestedDuration) &&
-    form.reason.trim().length > 0;
+    form.reason.trim().length > 0 &&
+    // Mirrors breakglassv1alpha1.MaxTicketSystemIDLength in Unicode code points.
+    Array.from(form.ticketSystemId).length <= 256;
 
   if (!baseValid) return false;
 
@@ -646,6 +650,9 @@ async function handleSubmit() {
       requestedDuration: form.requestedDuration,
       reason: form.reason,
     };
+    if (form.ticketSystemId) {
+      request.ticketSystemID = form.ticketSystemId;
+    }
 
     // Preserve the visible selection even when it is the only binding option.
     const binding = selectedBindingOption.value?.bindingRef || selectedClusterDetail.value?.bindingRef;
@@ -901,6 +908,7 @@ function handleTemplateChange(ev: Event) {
         :namespace-validation-error="namespaceValidationError"
         :requested-duration="form.requestedDuration"
         :reason="form.reason"
+        :ticket-system-id="form.ticketSystemId"
         :extra-deploy-values="form.extraDeployValues"
         :show-advanced-options="form.showAdvancedOptions"
         @update:selected-scheduling-option="form.selectedSchedulingOption = $event"
@@ -908,6 +916,7 @@ function handleTemplateChange(ev: Event) {
         @update:extra-deploy-valid="updateExtraDeployValid"
         @update:requested-duration="form.requestedDuration = $event"
         @update:reason="form.reason = $event"
+        @update:ticket-system-id="form.ticketSystemId = $event"
         @update:extra-deploy-values="form.extraDeployValues = $event"
         @update:show-advanced-options="form.showAdvancedOptions = $event"
       />

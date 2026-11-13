@@ -11,6 +11,9 @@ import type {
 
 defineOptions({ name: "SessionConfigForm" });
 
+// Mirrors breakglassv1alpha1.MaxTicketSystemIDLength in Unicode code points.
+const TICKET_SYSTEM_ID_MAX_LENGTH = 256;
+
 interface DurationOption {
   value: string;
   label: string;
@@ -36,6 +39,7 @@ defineProps<{
   namespaceValidationError?: string;
   requestedDuration: string;
   reason: string;
+  ticketSystemId: string;
   extraDeployValues: ExtraDeployValues;
   showAdvancedOptions: boolean;
 }>();
@@ -46,6 +50,7 @@ const emit = defineEmits<{
   "update:extraDeployValid": [valid: boolean];
   "update:requestedDuration": [value: string];
   "update:reason": [value: string];
+  "update:ticketSystemId": [value: string];
   "update:extraDeployValues": [value: ExtraDeployValues];
   "update:showAdvancedOptions": [value: boolean];
 }>();
@@ -228,6 +233,15 @@ function handleDurationChange(ev: Event) {
       required
       @scale-change="emit('update:reason', ($event.target as HTMLTextAreaElement).value)"
     ></scale-textarea>
+
+    <scale-text-field
+      :value="ticketSystemId"
+      label="Ticket system ID"
+      data-testid="ticket-system-id-input"
+      :helper-text="`Optional reference for the audit trail and the debug pods, max ${TICKET_SYSTEM_ID_MAX_LENGTH} characters. Not otherwise validated.`"
+      :invalid="Array.from(ticketSystemId).length > TICKET_SYSTEM_ID_MAX_LENGTH"
+      @scale-change="emit('update:ticketSystemId', ($event.target as HTMLInputElement).value)"
+    ></scale-text-field>
 
     <!-- Extra Deploy Variables Section -->
     <div v-if="hasExtraDeployVariables" class="extra-variables-section" data-testid="extra-variables-section">

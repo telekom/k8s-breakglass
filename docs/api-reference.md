@@ -1098,6 +1098,7 @@ POST /api/debugSessions
     "zone": "us-east-1a"
   },
   "reason": "Investigating issue #12345",
+  "ticketSystemID": "INC-12345",
   "targetNamespace": "debug-team-sre",
   "selectedSchedulingOption": "network-capable"
 }
@@ -1113,6 +1114,7 @@ POST /api/debugSessions
 | `admissionRecipe` | object | Conditional | `targets`: 1 to 16 entries, each equal to an allowlist entry of a typed admission recipe template (`kind`, `apiVersion`, `name`, `webhook`). Required only for such a template; no field, value or patch input. See [Typed admission recipes](admission-recipes.md#request). |
 | `nodeSelector` | object | No | Additional node selector labels |
 | `reason` | string | No | Explanation for the debug session request. Required when the effective template or binding `requestReason.mandatory` is `true`; enforced after sanitization with configured `minLength` and `maxLength`. |
+| `ticketSystemID` | string | No | Optional, freeform ticket reference for correlation and audit, at most 256 characters (Unicode code points); otherwise not validated. Stored in `spec.ticketSystemID` and copied to the `breakglass.telekom.com/ticket` annotation of the debug pods ([runtime identity metadata](debug-session.md#runtime-identity-metadata)). |
 | `targetNamespace` | string | No | Target namespace for debug pods (if allowed by template's `namespaceConstraints`) |
 | `namespace` | string | No | Deprecated alias for `targetNamespace`; if both fields are sent they must match. This field does not control the namespace of the DebugSession object. |
 | `selectedSchedulingOption` | string | No | Name of a scheduling option from template's `schedulingOptions`; restricted options must allow the requester's username, email, or group |
@@ -1134,7 +1136,7 @@ Status-changing DebugSession actions such as renew, terminate, approve, reject, 
 **Response:** Created `DebugSession` object (201 Created).
 
 **Error Responses:**
-- `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, invalid scheduling option, or invalid request reason
+- `400 Bad Request`: Unknown JSON fields, malformed request body, invalid template, malformed or missing binding, invalid cluster, invalid duration, invalid scheduling option, invalid request reason, or a `ticketSystemID` longer than 256 characters
 - `403 Forbidden`: Requester, namespace, scheduling option, cluster readiness, or binding is not allowed by the effective template/binding constraints; provider-aware authentication is missing either the provider name or issuer, or the selected identity provider is not allowed
 
 For provider-aware authentication, session creation requires both the identity
@@ -1671,7 +1673,7 @@ from the caller.
 |-------|------|----------|-------------|
 | `namespace` | string | Yes | Target pod's namespace |
 | `podName` | string | Yes | Target pod's name |
-| `containerName` | string | Yes | Name for the ephemeral container |
+| `containerName` | string | Yes | Name for the ephemeral container. With [runtime identity metadata](debug-session.md#runtime-identity-metadata) the controller assigns the name `bg-<uid8>-<n>` instead and uses `containerName` only to make retries of the same request idempotent. |
 | `image` | string | Yes | Provider-selected image; the resolved template validates its allowlist and, when configured, requires an `@sha256:` digest |
 | `command` | string[] | No | Provider-selected command; an upstream deployment must not expose this as unrestricted caller input |
 | `securityContext` | object | No | Provider-selected security context; capabilities, privileged mode, and non-root requirements are checked against the resolved template |
@@ -1683,9 +1685,14 @@ from the caller.
   "message": "ephemeral container injected successfully",
   "pod": "my-app-pod-xyz",
   "namespace": "default",
-  "container": "debug"
+  "container": "bg-1a2b3c4d-1",
+  "requestedContainerName": "debug"
 }
 ```
+
+`container` is the name of the injected container; use it to attach or exec.
+It equals `requestedContainerName` only when runtime identity metadata is
+turned off.
 
 **Error Responses:**
 - `400 Bad Request` - Invalid request or ephemeral containers not enabled

@@ -81,6 +81,13 @@ kubernetes:
   #   openDuration: "30s"     # wait before probing
   #   halfOpenMaxRequests: 1  # concurrent probes in half-open
 
+# DebugSession settings (optional).
+# debugSessions:
+#   # Transitional escape hatch: stop the runtime identity labels and
+#   # annotations on debug pods and keep client-chosen ephemeral container
+#   # names. See docs/debug-session.md#runtime-identity-metadata.
+#   disableRuntimeIdentityMetadata: false
+
 # OpenTelemetry distributed tracing configuration.
 # See docs/opentelemetry-tracing.md for details.
 # telemetry:

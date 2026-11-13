@@ -8,8 +8,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/client"
 	"github.com/telekom/k8s-breakglass/pkg/bgctl/output"
 )
@@ -258,6 +260,7 @@ func newDebugSessionCreateCommand() *cobra.Command {
 		duration                 string
 		namespace                string
 		reason                   string
+		ticketSystemID           string
 		invitees                 []string
 		targetNamespace          string
 		selectedSchedulingOption string
@@ -299,6 +302,9 @@ Use --set to provide values for template extraDeployVariables:
 			if namespace != "" && targetNamespace != "" && namespace != targetNamespace {
 				return fmt.Errorf("--namespace is deprecated alias for --target-namespace and must match when both are set")
 			}
+			if utf8.RuneCountInString(ticketSystemID) > breakglassv1alpha1.MaxTicketSystemIDLength {
+				return fmt.Errorf("--ticket-system-id must be at most %d characters", breakglassv1alpha1.MaxTicketSystemIDLength)
+			}
 
 			req := client.CreateDebugSessionRequest{
 				TemplateRef:              templateRef,
@@ -307,6 +313,7 @@ Use --set to provide values for template extraDeployVariables:
 				RequestedDuration:        duration,
 				TargetNamespace:          targetNamespace,
 				Reason:                   reason,
+				TicketSystemID:           ticketSystemID,
 				InvitedParticipants:      invitees,
 				SelectedSchedulingOption: selectedSchedulingOption,
 			}
@@ -337,6 +344,7 @@ Use --set to provide values for template extraDeployVariables:
 	cmd.Flags().StringVar(&duration, "duration", "", "Requested duration (e.g. 1h)")
 	cmd.Flags().StringVar(&namespace, "namespace", "", "Target namespace for debug pods (legacy, use --target-namespace)")
 	cmd.Flags().StringVar(&reason, "reason", "", "Reason for debug session")
+	cmd.Flags().StringVar(&ticketSystemID, "ticket-system-id", "", "Optional freeform ticket system ID, max 256 characters (audit only; not otherwise validated)")
 	cmd.Flags().StringSliceVar(&invitees, "invite", nil, "Invite participants")
 	cmd.Flags().StringVar(&targetNamespace, "target-namespace", "", "Target namespace for debug pods")
 	cmd.Flags().StringVar(&selectedSchedulingOption, "scheduling-option", "", "Scheduling option name (from template)")

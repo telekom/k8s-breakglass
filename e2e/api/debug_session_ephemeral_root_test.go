@@ -146,13 +146,14 @@ func TestDebugSessionEphemeralRootNETRAWBindingFence(t *testing.T) {
 	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(pods[1]), pods[1]))
 	require.Empty(t, pods[1].Spec.EphemeralContainers, "denied source must remain unmodified")
 	injection.Namespace = pods[0].Namespace
-	require.NoError(t, requesterAPI.InjectEphemeralContainer(ctx, t, session.Name, injection))
+	injectedName, err := requesterAPI.InjectEphemeralContainerNamed(ctx, t, session.Name, injection)
+	require.NoError(t, err)
 	require.Eventually(t, func() bool {
 		if target.Get(ctx, client.ObjectKeyFromObject(pods[0]), pods[0]) != nil {
 			return false
 		}
 		for _, container := range pods[0].Status.EphemeralContainerStatuses {
-			if container.Name == injection.ContainerName && container.State.Running != nil {
+			if container.Name == injectedName && container.State.Running != nil {
 				return true
 			}
 		}
@@ -168,7 +169,7 @@ func TestDebugSessionEphemeralRootNETRAWBindingFence(t *testing.T) {
 	require.NoError(t, err)
 	request := kube.CoreV1().RESTClient().Post().Namespace(pods[0].Namespace).Resource("pods").
 		Name(pods[0].Name).SubResource("exec").VersionedParams(&corev1.PodExecOptions{
-		Container: injection.ContainerName, Stdout: true, Stderr: true,
+		Container: injectedName, Stdout: true, Stderr: true,
 		Command: []string{"sh", "-c", `set -eu; test "$(id -u)" = 0; grep -Eq '^CapEff:[[:space:]]+0000000000002000$' /proc/self/status; ping -c 1 -W 3 127.0.0.1; echo si-netraw-ok`},
 	}, scheme.ParameterCodec)
 	executor, err := remotecommand.NewSPDYExecutor(userConfig, http.MethodPost, request.URL())

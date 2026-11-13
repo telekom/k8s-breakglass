@@ -1764,6 +1764,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
       default: 90d
+    - name: runtimeIdentityMetadata
+      type:
+        scalar: boolean
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.DebugSessionClusterBinding
   map:
     fields:
@@ -2271,6 +2274,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: templateRef
+      type:
+        scalar: string
+    - name: ticketSystemID
       type:
         scalar: string
     - name: userGroups
@@ -3718,6 +3724,9 @@ var schemaYAML = typed.YAMLObject(`types:
       type:
         scalar: string
     - name: name
+      type:
+        scalar: string
+    - name: requestedName
       type:
         scalar: string
     - name: securityContextDigest

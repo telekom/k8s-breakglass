@@ -73,7 +73,8 @@ const (
 )
 
 // MaxTicketSystemIDLength is the maximum number of characters accepted in
-// BreakglassSessionSpec.TicketSystemID. Keep in sync with its MaxLength marker.
+// BreakglassSessionSpec.TicketSystemID and DebugSessionSpec.TicketSystemID.
+// Keep in sync with their MaxLength markers.
 const MaxTicketSystemIDLength = 256
 
 // BreakglassSessionSpec defines the desired state of BreakglassSession.

@@ -504,11 +504,20 @@ func (cb CircuitBreaker) GetOpenDuration() time.Duration {
 }
 
 type Config struct {
-	Server     Server
-	Frontend   Frontend
-	Kubernetes Kubernetes
-	Telemetry  Telemetry
-	Artifacts  Artifacts
+	Server        Server
+	Frontend      Frontend
+	Kubernetes    Kubernetes
+	Telemetry     Telemetry
+	Artifacts     Artifacts
+	DebugSessions DebugSessions `yaml:"debugSessions"`
+}
+
+// DebugSessions holds global DebugSession settings.
+type DebugSessions struct {
+	// DisableRuntimeIdentityMetadata stops the runtime identity labels and
+	// annotations on debug pods and the controller-assigned ephemeral container
+	// names. It is a transitional escape hatch and will be removed.
+	DisableRuntimeIdentityMetadata bool `yaml:"disableRuntimeIdentityMetadata,omitempty"`
 }
 
 // Telemetry configures OpenTelemetry tracing.

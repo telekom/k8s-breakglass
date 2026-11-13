@@ -65,6 +65,7 @@ type CreateDebugSessionRequest struct {
 	NodeSelector             map[string]string      `json:"nodeSelector,omitempty"`
 	Namespace                string                 `json:"namespace,omitempty"` // Deprecated: alias for TargetNamespace
 	Reason                   string                 `json:"reason,omitempty"`
+	TicketSystemID           string                 `json:"ticketSystemID,omitempty"`
 	InvitedParticipants      []string               `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string                 `json:"targetNamespace,omitempty"`
 	SelectedSchedulingOption string                 `json:"selectedSchedulingOption,omitempty"`

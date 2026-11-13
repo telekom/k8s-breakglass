@@ -3835,7 +3835,7 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		err := ctrl.Register(rg)
 		require.NoError(t, err)
 
-		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue"}`
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue","ticketSystemID":"INC-4711"}`
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		w := httptest.NewRecorder()
@@ -3853,6 +3853,30 @@ func TestDebugSessionAPIController_HandleCreateDebugSession(t *testing.T) {
 		stored := &breakglassv1alpha1.DebugSession{}
 		require.NoError(t, fakeClient.Get(context.Background(), client.ObjectKeyFromObject(&response.DebugSession), stored))
 		assert.True(t, stored.Status.AuthenticatedUserGroupsCaptured)
+		assert.Equal(t, "INC-4711", stored.Spec.TicketSystemID)
+	})
+
+	t.Run("create session rejects an over-length ticketSystemID", func(t *testing.T) {
+		fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(&template, readyProductionCluster.DeepCopy()).Build()
+		ctrl := NewDebugSessionAPIController(logger, fakeClient, nil, nil)
+		router := gin.New()
+		router.Use(func(c *gin.Context) {
+			c.Set("legacy_identity_allowed", true) // Authenticated single-provider fixture.
+			c.Set("username", "alice@example.com")
+			c.Set("email", "alice@example.com")
+			c.Next()
+		})
+		require.NoError(t, ctrl.Register(router.Group("/api/v1/"+ctrl.BasePath())))
+		body := `{"templateRef":"standard-debug","cluster":"production","reason":"debugging issue","ticketSystemID":"` + strings.Repeat("ü", breakglassv1alpha1.MaxTicketSystemIDLength+1) + `"}`
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/debugSessions", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		router.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "ticketSystemID must be at most 256 characters")
+		var sessions breakglassv1alpha1.DebugSessionList
+		require.NoError(t, fakeClient.List(context.Background(), &sessions))
+		assert.Empty(t, sessions.Items)
 	})
 
 	t.Run("create session rejects empty username", func(t *testing.T) {

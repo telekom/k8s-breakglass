@@ -494,8 +494,9 @@ bgctl debug kubectl inject DEBUG_SESSION_NAME \
   --image alpine:3.20 \
   --container debug
 
-# Then use kubectl exec to attach
-kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
+# The controller names the container bg-<uid8>-<n> (runtime identity
+# metadata); the output's "container" field has the name. Attach with it:
+kubectl exec -it api-7d9c4f8b-xkj2p -c bg-1a2b3c4d-1 -n production -- sh
 ```
 
 ### Debug Session Create Flags
@@ -506,6 +507,7 @@ kubectl exec -it api-7d9c4f8b-xkj2p -c debug -n production -- sh
 | `--cluster` | (Required) Target cluster name |
 | `--duration` | Requested duration (e.g., `1h`, `2h`, `1d`) |
 | `--reason` | Reason for the debug session request |
+| `--ticket-system-id` | Optional freeform ticket reference, max 256 characters; copied to the debug pods' `breakglass.telekom.com/ticket` annotation |
 | `--scheduling-option` | Scheduling option name from template (e.g., `sriov`, `standard`) |
 | `--target-namespace` | Namespace where debug pods will be deployed |
 | `--namespace` | Deprecated alias for `--target-namespace`; if both flags are set they must match |

@@ -524,7 +524,8 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		WithQuotaNamespace(cliConfig.BreakglassNamespace).
 		WithMailService(mailService, cfg.Frontend.BrandingName, cfg.Frontend.BaseURL).
 		WithAuditService(auditService).
-		WithDisableEmail(cliConfig.DisableEmail)
+		WithDisableEmail(cliConfig.DisableEmail).
+		WithRuntimeIdentityMetadataDisabled(cfg.DebugSessions.DisableRuntimeIdentityMetadata)
 
 	// Only supply an operational resolver; SetupResolver's no-op fallback cannot
 	// distinguish an empty group from unavailable group synchronization.
@@ -558,6 +559,9 @@ func setupServices(ctx context.Context, cliConfig *cli.Config, cfg config.Config
 		}
 		debugSessionAPICtrl.WithTerminalRecordingArtifacts(components.Service).WithTerminalRecordingConnections(debug.NewTerminalRecordingConnectionProvider(debug.NewConnectionLeaseService(uncachedClient).WithLiveReader(reconcilerMgr.GetAPIReader()).WithNamespace(cliConfig.BreakglassNamespace), debug.ClusterConfigCredentialSource(ccProvider)))
 		artifactReconciler = components.Controller
+		if artifactReconciler != nil {
+			artifactReconciler.DisableRuntimeIdentityMetadata = cfg.DebugSessions.DisableRuntimeIdentityMetadata
+		}
 		artifactClose = components.Close
 		artifactControllers = components.APIControllers
 	}
@@ -761,7 +765,7 @@ func startBackgroundRoutines(ctx context.Context, wg *sync.WaitGroup, errCh chan
 	go func() {
 		defer wg.Done()
 		if err := reconciler.Setup(ctx, deps.reconcilerMgr, deps.idpLoader, deps.server,
-			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend,
+			deps.ccProvider, deps.auditService, deps.mailService, deps.cfg.Frontend, deps.cfg.DebugSessions,
 			deps.cliConfig.BreakglassNamespace, deps.cliConfig.DisableEmail,
 			deps.escalationManager, deps.cliConfig.EnableControllers, log, deps.artifactReconciler); err != nil {
 			errCh <- fmt.Errorf("reconciler manager failed: %w", err)

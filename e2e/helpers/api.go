@@ -732,6 +732,7 @@ type DebugSessionRequest struct {
 	NodeSelector             map[string]string `json:"nodeSelector,omitempty"`
 	Namespace                string            `json:"namespace,omitempty"` // Deprecated: API alias for targetNamespace
 	Reason                   string            `json:"reason,omitempty"`
+	TicketSystemID           string            `json:"ticketSystemID,omitempty"`
 	InvitedParticipants      []string          `json:"invitedParticipants,omitempty"`
 	TargetNamespace          string            `json:"targetNamespace,omitempty"`          // User-selected namespace (if allowed by template)
 	SelectedSchedulingOption string            `json:"selectedSchedulingOption,omitempty"` // User-selected scheduling option
@@ -1246,6 +1247,14 @@ type NodeDebugResponse struct {
 
 // InjectEphemeralContainer injects an ephemeral container via the REST API
 func (c *APIClient) InjectEphemeralContainer(ctx context.Context, t *testing.T, sessionName string, req EphemeralContainerRequest) error {
+	_, err := c.InjectEphemeralContainerNamed(ctx, t, sessionName, req)
+	return err
+}
+
+// InjectEphemeralContainerNamed injects an ephemeral container and returns
+// the container name the controller assigned. With runtime identity metadata
+// it is bg-<uid8>-<n>, not the requested name.
+func (c *APIClient) InjectEphemeralContainerNamed(ctx context.Context, t *testing.T, sessionName string, req EphemeralContainerRequest) (string, error) {
 	cid := uuid.New().String()
 	path := fmt.Sprintf("%s/%s/injectEphemeralContainer", debugSessionsBasePath, sessionName)
 
@@ -1256,22 +1265,28 @@ func (c *APIClient) InjectEphemeralContainer(ctx context.Context, t *testing.T, 
 
 	resp, err := c.doRequestWithCID(ctx, http.MethodPost, path, req, cid)
 	if err != nil {
-		return fmt.Errorf("failed to inject ephemeral container (cid=%s): %w", cid, err)
+		return "", fmt.Errorf("failed to inject ephemeral container (cid=%s): %w", cid, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to inject ephemeral container (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+		return "", fmt.Errorf("failed to inject ephemeral container (cid=%s): status=%d, body=%s", cid, resp.StatusCode, string(body))
+	}
+	var result struct {
+		Container string `json:"container"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("failed to parse ephemeral container response (cid=%s): %w (body: %s)", cid, err, string(body))
 	}
 
 	if t != nil {
-		t.Logf("InjectEphemeralContainer: injected container=%s into pod=%s/%s, correlationID=%s",
-			req.ContainerName, req.Namespace, req.PodName, cid)
+		t.Logf("InjectEphemeralContainer: injected container=%s (requested %s) into pod=%s/%s, correlationID=%s",
+			result.Container, req.ContainerName, req.Namespace, req.PodName, cid)
 	}
 
-	return nil
+	return result.Container, nil
 }
 
 // CreatePodCopy creates a debug copy of a pod via the REST API

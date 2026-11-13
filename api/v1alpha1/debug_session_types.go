@@ -145,6 +145,16 @@ type DebugSessionSpec struct {
 	// +optional
 	Reason string `json:"reason,omitempty"`
 
+	// ticketSystemID is an optional, freeform ticket reference supplied by the
+	// requester for correlation and audit. Apart from the length limit of
+	// MaxTicketSystemIDLength (256) characters it has no format validation. It is
+	// not an authorization credential and does not replace reason or approval
+	// requirements. It is copied to the runtime identity annotations of the
+	// debug pods.
+	// +optional
+	// +kubebuilder:validation:MaxLength=256
+	TicketSystemID string `json:"ticketSystemID,omitempty"`
+
 	// nodeSelector restricts debug pods to specific nodes.
 	// Merged with template's nodeSelector using OR logic.
 	// +optional
@@ -738,6 +748,12 @@ type KubectlDebugEphemeralContainerIntent struct {
 	// name is the ephemeral container name.
 	// +required
 	Name string `json:"name"`
+
+	// requestedName is the container name the client asked for when the
+	// controller assigned name instead (runtime identity metadata). Retries of
+	// the same request reuse the assigned name.
+	// +optional
+	RequestedName string `json:"requestedName,omitempty"`
 
 	// image is the requested image.
 	// +required

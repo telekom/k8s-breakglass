@@ -178,6 +178,7 @@ export interface DebugSession {
     requestedDuration?: string;
     approvalReasonConfig?: ReasonConfigInfo;
     reason?: string;
+    ticketSystemID?: string;
     nodeSelector?: Record<string, string>;
   };
   status?: {
@@ -211,6 +212,7 @@ export interface CreateDebugSessionRequest {
   bindingRef?: string; // Optional: explicit binding selection as "namespace/name" when multiple match
   requestedDuration?: string;
   reason?: string;
+  ticketSystemID?: string; // Optional audit-only ticket reference, max 256 characters
   nodeSelector?: Record<string, string>;
   targetNamespace?: string;
   selectedSchedulingOption?: string;

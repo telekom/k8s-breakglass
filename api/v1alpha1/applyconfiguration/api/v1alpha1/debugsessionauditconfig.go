@@ -24,6 +24,12 @@ type DebugSessionAuditConfigApplyConfiguration struct {
 	RecordingRetention *string `json:"recordingRetention,omitempty"`
 	// enableShellHistory enables shell command history capture.
 	EnableShellHistory *bool `json:"enableShellHistory,omitempty"`
+	// runtimeIdentityMetadata adds runtime identity labels and annotations to
+	// every pod and ephemeral container the session creates, so runtime
+	// security tools can attribute them to the session. Unset means true.
+	// Setting it to false is a transitional escape hatch and will be removed;
+	// existing debug-session labels are kept either way.
+	RuntimeIdentityMetadata *bool `json:"runtimeIdentityMetadata,omitempty"`
 }
 
 // DebugSessionAuditConfigApplyConfiguration constructs a declarative configuration of the DebugSessionAuditConfig type for use with
@@ -74,5 +80,13 @@ func (b *DebugSessionAuditConfigApplyConfiguration) WithRecordingRetention(value
 // If called multiple times, the EnableShellHistory field is set to the value of the last call.
 func (b *DebugSessionAuditConfigApplyConfiguration) WithEnableShellHistory(value bool) *DebugSessionAuditConfigApplyConfiguration {
 	b.EnableShellHistory = &value
+	return b
+}
+
+// WithRuntimeIdentityMetadata sets the RuntimeIdentityMetadata field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the RuntimeIdentityMetadata field is set to the value of the last call.
+func (b *DebugSessionAuditConfigApplyConfiguration) WithRuntimeIdentityMetadata(value bool) *DebugSessionAuditConfigApplyConfiguration {
+	b.RuntimeIdentityMetadata = &value
 	return b
 }

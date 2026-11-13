@@ -1166,7 +1166,7 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 
 	// Inject ephemeral container via API
 	runAsNonRoot := true
-	err = api.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
+	injectedName, err := api.InjectEphemeralContainerNamed(ctx, t, session.Name, helpers.EphemeralContainerRequest{
 		Namespace:     "default",
 		PodName:       targetPod.Name,
 		ContainerName: "debugger",
@@ -1188,7 +1188,7 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 			return false
 		}
 		for _, container := range injectedPod.Spec.EphemeralContainers {
-			if container.Name == "debugger" && container.Image == "busybox:latest" {
+			if container.Name == injectedName && container.Image == "busybox:latest" {
 				return true
 			}
 		}
@@ -1204,7 +1204,7 @@ func TestDebugSession_E2E_EphemeralContainerInjection(t *testing.T) {
 			return false
 		}
 		for _, ref := range fetched.Status.KubectlDebugStatus.EphemeralContainersInjected {
-			if ref.Namespace == targetPod.Namespace && ref.PodName == targetPod.Name && ref.ContainerName == "debugger" && ref.Image == "busybox:latest" && ref.InjectedBy != "" {
+			if ref.Namespace == targetPod.Namespace && ref.PodName == targetPod.Name && ref.ContainerName == injectedName && ref.Image == "busybox:latest" && ref.InjectedBy != "" {
 				t.Logf("Ephemeral containers injected: %+v", fetched.Status.KubectlDebugStatus.EphemeralContainersInjected)
 				return true
 			}

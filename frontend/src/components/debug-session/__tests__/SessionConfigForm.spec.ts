@@ -24,6 +24,7 @@ const baseProps = {
   targetNamespace: "default",
   requestedDuration: "1h",
   reason: "",
+  ticketSystemId: "",
   extraDeployValues: {},
   showAdvancedOptions: false,
 };
@@ -126,5 +127,15 @@ describe("SessionConfigForm", () => {
     const wrapper = factory();
     expect(wrapper.find('[data-testid="schedule-checkbox"]').exists()).toBe(false);
     expect(wrapper.find('[data-testid="schedule-time-input"]').exists()).toBe(false);
+  });
+
+  it("renders the ticket system ID field and emits its value", async () => {
+    const wrapper = factory({ ticketSystemId: "INC-1" });
+    const field = wrapper.find('[data-testid="ticket-system-id-input"]');
+    expect(field.exists()).toBe(true);
+    expect(field.attributes("value")).toBe("INC-1");
+    (field.element as HTMLInputElement & { value: string }).value = "CHG-42";
+    await field.trigger("scale-change");
+    expect(wrapper.emitted("update:ticketSystemId")).toEqual([["CHG-42"]]);
   });
 });

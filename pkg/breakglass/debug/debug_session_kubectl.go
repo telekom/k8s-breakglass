@@ -56,6 +56,15 @@ type KubectlDebugHandler struct {
 	apiReader                ctrlclient.Reader
 	ccProvider               ClientProviderInterface
 	connectionLeaseValidator func(context.Context, *breakglassv1alpha1.DebugSession) error
+	// disableRuntimeIdentity is the global debugSessions.disableRuntimeIdentityMetadata escape hatch.
+	disableRuntimeIdentity bool
+}
+
+// WithRuntimeIdentityMetadataDisabled applies the global
+// debugSessions.disableRuntimeIdentityMetadata escape hatch.
+func (h *KubectlDebugHandler) WithRuntimeIdentityMetadataDisabled(disabled bool) *KubectlDebugHandler {
+	h.disableRuntimeIdentity = disabled
+	return h
 }
 
 // WithConnectionLeaseValidator installs the controller-owned access fence.
@@ -1090,12 +1099,29 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	securityContext *corev1.SecurityContext,
 	user string,
 ) error {
+	_, err := h.InjectEphemeralContainerNamed(ctx, ds, namespace, podName, containerName, image, command, securityContext, user)
+	return err
+}
+
+// InjectEphemeralContainerNamed injects an ephemeral container and returns its
+// name. With runtime identity metadata the controller assigns the name
+// bg-<uid8>-<n> and annotates the target pod with
+// breakglass.telekom.com/ephemeral.<name>: <session UID> before the injection;
+// containerName is then only the retry key of the request.
+func (h *KubectlDebugHandler) InjectEphemeralContainerNamed(
+	ctx context.Context,
+	ds *breakglassv1alpha1.DebugSession,
+	namespace, podName, containerName, image string,
+	command []string,
+	securityContext *corev1.SecurityContext,
+	user string,
+) (string, error) {
 	// The API handler's initial read is only a candidate. Fence again before
 	// reading or mutating the target cluster, then use the live object for both
 	// validation state and status merge.
 	live, err := h.liveSessionForMutation(ctx, ds, user)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ds = live
 	authorizationCandidate := ds.DeepCopy()
@@ -1104,7 +1130,7 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	// produced it. The same snapshot is checked again at the final write boundary.
 	targetClient, configuredCluster, err := h.privilegedOperationClient(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer releasePrivilegedOperationSnapshot(h.ccProvider, configuredCluster)
 
@@ -1113,51 +1139,60 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	// new mutation request, so retries are idempotent and never duplicate a
 	// completed ephemeral container.
 	if err := h.RecoverPendingKubectlDebugOperations(ctx, ds); err != nil {
-		return err
+		return "", err
 	}
 
 	// Get the target pod
 	pod := &corev1.Pod{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: podName}, pod); err != nil {
-		return fmt.Errorf("failed to get pod %s/%s: %w", namespace, podName, err)
+		return "", fmt.Errorf("failed to get pod %s/%s: %w", namespace, podName, err)
 	}
 	if pod.UID == "" {
-		return kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
+		return "", kubectlDebugPolicyErrorf("target pod %s/%s has no UID", namespace, podName)
 	}
 	// Re-read the target Pod and complete its identity checks before the final
 	// authorization fence. No target read may occur after the live session check.
 	freshPod := &corev1.Pod{}
 	if err := targetClient.Get(ctx, ctrlclient.ObjectKey{Namespace: namespace, Name: podName}, freshPod); err != nil {
-		return fmt.Errorf("failed to re-read pod %s/%s before injection: %w", namespace, podName, err)
+		return "", fmt.Errorf("failed to re-read pod %s/%s before injection: %w", namespace, podName, err)
 	}
 	if freshPod.UID == "" || freshPod.UID != pod.UID {
-		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
+		return "", kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
 	if pod.ResourceVersion != "" && freshPod.ResourceVersion != "" && freshPod.ResourceVersion != pod.ResourceVersion {
-		return kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
+		return "", kubectlDebugPolicyErrorf("target pod %s/%s changed during injection authorization", namespace, podName)
 	}
 	// Namespace labels and policy may change while the target Pod is read.
 	template := ds.Status.ResolvedTemplate
 	if template == nil || template.KubectlDebug == nil || template.KubectlDebug.EphemeralContainers == nil {
-		return kubectlDebugPolicyErrorf("ephemeral container policy is no longer available")
+		return "", kubectlDebugPolicyErrorf("ephemeral container policy is no longer available")
 	}
 	ecPolicy := template.KubectlDebug.EphemeralContainers
 	securityContext, err = effectiveEphemeralSecurityContext(ds, securityContext)
 	if err != nil {
-		return err
+		return "", err
 	}
 	namespaceAllowed, err := h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !namespaceAllowed {
-		return kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
+		return "", kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
 	}
 	if err := h.ValidateEphemeralContainerRequest(ctx, ds, namespace, podName, image, extractCapabilities(securityContext), extractRunAsNonRoot(securityContext), extractPrivileged(securityContext)); err != nil {
-		return err
+		return "", err
 	}
 	if err := validateEphemeralContainerSecurityContext(securityContext, ecPolicy); err != nil {
-		return err
+		return "", err
+	}
+	requestedName := containerName
+	runtimeIdentity := runtimeIdentityEnabled(h.disableRuntimeIdentity, ds.Status.ResolvedTemplate)
+	if runtimeIdentity {
+		existingNames := make([]string, 0, len(freshPod.Spec.EphemeralContainers))
+		for _, ec := range freshPod.Spec.EphemeralContainers {
+			existingNames = append(existingNames, ec.Name)
+		}
+		containerName = assignEphemeralContainerName(ds, string(pod.UID), existingNames, requestedName)
 	}
 	// Create ephemeral container spec
 	ephemeralContainer := desiredEphemeralContainerForIntent(containerName, image, command, securityContext)
@@ -1171,11 +1206,11 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		command,
 		ephemeralContainer.SecurityContext,
 	); recovered != nil && recovered.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
-		return nil
+		return containerName, nil
 	}
 	for _, ec := range freshPod.Spec.EphemeralContainers {
 		if ec.Name == containerName {
-			return fmt.Errorf("ephemeral container %s already exists in pod", containerName)
+			return "", fmt.Errorf("ephemeral container %s already exists in pod", containerName)
 		}
 	}
 	// Add the ephemeral container to the request object. The target API has not
@@ -1189,29 +1224,32 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	// written immediately after this fence and before the target API call.
 	live, err = h.liveSessionForMutation(ctx, ds, user)
 	if err != nil {
-		return err
+		return "", err
 	}
 	ds = live
 	operation := newEphemeralContainerOperationWithIdentity(freshPod, ephemeralContainer, h.operationIdentity(user))
+	if runtimeIdentity {
+		operation.EphemeralContainer.RequestedName = requestedName
+	}
 	existing, err := h.prepareEphemeralContainerOperation(ctx, ds, operation)
 	if err != nil {
 		// No target mutation has happened if durable intent cannot be written.
-		return fmt.Errorf("failed to persist ephemeral-container operation intent: %w", err)
+		return "", fmt.Errorf("failed to persist ephemeral-container operation intent: %w", err)
 	}
 	if existing != nil {
 		if existing.State == breakglassv1alpha1.KubectlDebugOperationCompleted {
-			return nil
+			return containerName, nil
 		}
-		return kubectlDebugRequestErrorf("an identical ephemeral-container operation is already in progress")
+		return "", kubectlDebugRequestErrorf("an identical ephemeral-container operation is already in progress")
 	}
 	kubectlStatus := ensureKubectlDebugStatus(&ds.Status)
 	kubectlStatus.Operations = append(kubectlStatus.Operations, operation)
 	kubectlStatus.Operations = terminalKubectlDebugOperations(kubectlStatus.Operations)
 	if err := h.verifyPreparedEphemeralContainerOperation(ctx, ds, operation.ID); err != nil {
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 
 	// Persisting intent is itself a potentially slow API operation. Re-fence
@@ -1220,30 +1258,30 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	live, err = h.liveSessionForMutation(ctx, authorizationCandidate, user)
 	if err != nil {
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 	ds = live
 	namespaceAllowed, err = h.isNamespaceAllowedForEphemeral(ctx, ds, namespace, ecPolicy.AllowedNamespaces, ecPolicy.DeniedNamespaces)
 	if err != nil {
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 	if !namespaceAllowed {
 		err := kubectlDebugPolicyErrorf("namespace %s is no longer allowed for ephemeral container injection", namespace)
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 	if err := h.fencePrivilegedOperationClusterConfig(ctx, configuredCluster); err != nil {
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 	// Namespace policy and ClusterConfig validation can both perform slow
 	// reads. Recheck the immutable session authorization after those reads and
@@ -1251,20 +1289,33 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 	live, err = h.liveSessionForMutation(ctx, authorizationCandidate, user)
 	if err != nil {
 		if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-			return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+			return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 		}
-		return err
+		return "", err
 	}
 	ds = live
+
+	// Annotate the target pod before the container exists, so runtime events
+	// of the container can always be attributed to the session.
+	if runtimeIdentity {
+		if err := annotateEphemeralContainer(ctx, targetClient, freshPod, containerName, ds); err != nil {
+			if isDeterministicEphemeralContainerUpdateError(err) {
+				if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
+					return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+				}
+			}
+			return "", fmt.Errorf("failed to annotate target pod for ephemeral container: %w", err)
+		}
+	}
 
 	// Update the pod using SubResource for ephemeral containers
 	if err := targetClient.SubResource("ephemeralcontainers").Update(ctx, freshPod); err != nil {
 		if isDeterministicEphemeralContainerUpdateError(err) {
 			if completeErr := h.completePreparedEphemeralContainerFailure(ctx, ds, operation.ID, err.Error()); completeErr != nil {
-				return fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
+				return "", fmt.Errorf("%w; failed to persist rejected operation: %w", err, completeErr)
 			}
 		}
-		return fmt.Errorf("failed to inject ephemeral container: %w", err)
+		return "", fmt.Errorf("failed to inject ephemeral container: %w", err)
 	}
 
 	// Track the injected container in session status
@@ -1288,11 +1339,39 @@ func (h *KubectlDebugHandler) InjectEphemeralContainer(
 		// The target update has already happened. The prepared operation remains
 		// durable in status and will be resolved by the next reconciliation or
 		// retry, so this path never leaves an untracked mutation.
-		return fmt.Errorf("failed to persist ephemeral-container operation outcome: %w", err)
+		return "", fmt.Errorf("failed to persist ephemeral-container operation outcome: %w", err)
 	}
 	if postMutationErr != nil {
-		return fmt.Errorf("target ephemeral-container mutation completed but outcome was recorded: %w", postMutationErr)
+		return "", fmt.Errorf("target ephemeral-container mutation completed but outcome was recorded: %w", postMutationErr)
 	}
+	return containerName, nil
+}
+
+// annotateEphemeralContainer sets breakglass.telekom.com/ephemeral.<name> to
+// the session UID on the target pod. The patch carries the observed
+// resourceVersion, so it fails on a concurrent pod change like the injection
+// itself would, and pod then carries the new resourceVersion for the injection.
+func annotateEphemeralContainer(ctx context.Context, targetClient ctrlclient.Client, pod *corev1.Pod, containerName string, ds *breakglassv1alpha1.DebugSession) error {
+	key, err := ephemeralContainerAnnotationKey(containerName)
+	if err != nil {
+		return kubectlDebugInternalErrorf("%v", err)
+	}
+	patch, err := json.Marshal(map[string]any{"metadata": map[string]any{
+		"resourceVersion": pod.ResourceVersion,
+		"annotations":     map[string]string{key: debugSessionIdentity(ds)},
+	}})
+	if err != nil {
+		return fmt.Errorf("encode ephemeral container annotation patch: %w", err)
+	}
+	patched := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: pod.Namespace, Name: pod.Name}}
+	if err := targetClient.Patch(ctx, patched, ctrlclient.RawPatch(types.MergePatchType, patch)); err != nil {
+		return err
+	}
+	pod.ResourceVersion = patched.ResourceVersion
+	if pod.Annotations == nil {
+		pod.Annotations = map[string]string{}
+	}
+	pod.Annotations[key] = debugSessionIdentity(ds)
 	return nil
 }
 
@@ -1405,6 +1484,7 @@ func (h *KubectlDebugHandler) CreatePodCopy(
 	for k, v := range pc.Labels {
 		copyPod.Labels[k] = v
 	}
+	ApplyRuntimeIdentityMetadata(&copyPod.ObjectMeta, ds, ds.Status.ResolvedTemplate, h.disableRuntimeIdentity)
 
 	// Modify for debugging
 	copyPod.Spec.RestartPolicy = corev1.RestartPolicyNever
@@ -1709,6 +1789,7 @@ func (h *KubectlDebugHandler) CreateNodeDebugPod(
 	}
 	injectPodMOTD(debugPod, motd)
 	injectToolbox(&debugPod.Spec, sessionToolbox(ds))
+	ApplyRuntimeIdentityMetadata(&debugPod.ObjectMeta, ds, ds.Status.ResolvedTemplate, h.disableRuntimeIdentity)
 
 	// Re-read the target Node and Namespace, then the ClusterConfig, then the
 	// live session, before every create attempt. No target read may occur

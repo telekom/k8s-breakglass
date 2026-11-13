@@ -1025,18 +1025,18 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 		breakglassv1alpha1.DebugSessionStateActive, 90*time.Second)
 
 	image := "busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662"
-	containerName := "hard-expiry-debug"
 	runAsNonRoot := true
-	s.Require().NoError(userAPI.InjectEphemeralContainer(ctx, t, session.Name, helpers.EphemeralContainerRequest{
+	containerName, err := userAPI.InjectEphemeralContainerNamed(ctx, t, session.Name, helpers.EphemeralContainerRequest{
 		Namespace:     targetPod.Namespace,
 		PodName:       targetPod.Name,
-		ContainerName: containerName,
+		ContainerName: "hard-expiry-debug",
 		Image:         image,
 		Command:       []string{"sh", "-c", "sleep 60"},
 		SecurityContext: &corev1.SecurityContext{
 			RunAsNonRoot: &runAsNonRoot,
 		},
-	}), "supported API-mediated ephemeral injection must succeed")
+	})
+	s.Require().NoError(err, "supported API-mediated ephemeral injection must succeed")
 
 	var injectedPod corev1.Pod
 	s.Require().Eventually(func() bool {
@@ -1089,10 +1089,8 @@ func (s *SpokeHubAuthorizationSuite) TestRetiredEphemeralAdmissionRouteAndAPIMed
 
 	var afterExpiry corev1.Pod
 	s.Require().NoError(spokeClient.Get(ctx, client.ObjectKeyFromObject(targetPod), &afterExpiry), "target pod must remain observable after denied operation")
-	for _, container := range afterExpiry.Spec.EphemeralContainers {
-		s.Require().NotEqual("hard-expiry-after-boundary", container.Name,
-			"a denied post-expiry operation must not mutate the target Pod")
-	}
+	s.Require().Len(afterExpiry.Spec.EphemeralContainers, 1,
+		"a denied post-expiry operation must not mutate the target Pod")
 }
 
 // TestWebhookEndpointAccessibleFromSpoke verifies the hub webhook endpoint is reachable
