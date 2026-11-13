@@ -662,6 +662,18 @@ The `status` section includes **cached group memberships** for performance and a
 
 - **idpGroupMemberships**: Per-IDP resolved group members (cached for performance)
 - **approverGroupMembers**: Deduplicated approvers across all IDPs (used for notifications)
+
+**Freshness of cached memberships.** Both maps are rewritten on every group
+sync (`--escalation-status-update-interval`, default 10m); there is no separate
+TTL. A per-IDP membership authorizes approval only while the group has an
+`approverGroupMembers` entry that also contains the member, so a snapshot that
+is no longer part of the current resolution cannot approve. When IDP discovery
+fails or finds no enabled IDP, the updater falls back to the legacy single
+resolver and removes all per-IDP memberships, because legacy mode does not
+refresh them. A transient lookup failure keeps the last resolved members until
+the next successful sync and sets `ApprovalGroupMembersResolved=False`; remove an
+approver from a group by fixing the identity provider, and the next successful
+sync drops them.
 - **Conditions**: Kubernetes-standard conditions tracking validation, references, and health
 
 ### Conditions

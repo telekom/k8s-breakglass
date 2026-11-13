@@ -339,3 +339,52 @@ func TestAmbiguousApproverGroupTokenFallback(t *testing.T) {
 		})
 	}
 }
+
+// Per-IdP memberships authorize approval only while they are part of the
+// group's current resolution (an ApproverGroupMembers entry that contains the
+// member). Stale snapshots, for example left behind after a fallback to legacy
+// mode, must not approve.
+func TestStaleProviderGroupMembershipDoesNotApprove(t *testing.T) {
+	tests := []struct {
+		name      string
+		aggregate map[string][]string
+		perIDP    []string
+		allowed   bool
+	}{
+		{
+			name:      "no current entry for the group, token without the group",
+			aggregate: map[string][]string{"other-group": {"someone@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+		},
+		{
+			name:      "member removed upstream after a resync",
+			aggregate: map[string][]string{"cluster-approvers": {"current@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+		},
+		{
+			name:      "current member of the current resolution",
+			aggregate: map[string][]string{"cluster-approvers": {"approver@example.com"}},
+			perIDP:    []string{"approver@example.com"},
+			allowed:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.aggregate
+			escalation.Status.IDPGroupMemberships = map[string]map[string][]string{
+				"idp-a": {"cluster-approvers": tt.perIDP},
+			}
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "idp-a")
+			c.Set("groups", []string{})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
+		})
+	}
+}

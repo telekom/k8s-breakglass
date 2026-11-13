@@ -344,7 +344,18 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 			}
 			if approverIdentityProvider != "" && len(esc.Status.IDPGroupMemberships) > 0 {
 				for _, g := range approverGroupsToCheck {
+					// Per-IdP memberships are only authoritative while they are
+					// part of the group's current resolution: the aggregate entry
+					// is rewritten on every sync, per-IdP entries may be stale
+					// (for example after a fallback to legacy mode).
+					current, resolved := esc.Status.ApproverGroupMembers[g]
+					if !resolved {
+						continue
+					}
 					for _, member := range esc.Status.IDPGroupMemberships[approverIdentityProvider][g] {
+						if !containsFold(current, member) {
+							continue
+						}
 						if identityMatchesContext(c, member, approverName) {
 							return ApprovalCheckResult{Allowed: true}
 						}
@@ -1377,4 +1388,16 @@ func recordApproverWithComparison(status *breakglassv1alpha1.BreakglassSessionSt
 	}
 	status.Approvers = append(status.Approvers, identity)
 	status.ApproverIdentityProviders = append(status.ApproverIdentityProviders, provider)
+}
+
+// containsFold reports whether values contains value, ignoring case and
+// surrounding whitespace (status member lists are normalized to lowercase).
+func containsFold(values []string, value string) bool {
+	value = strings.TrimSpace(value)
+	for _, v := range values {
+		if strings.EqualFold(strings.TrimSpace(v), value) {
+			return true
+		}
+	}
+	return false
 }

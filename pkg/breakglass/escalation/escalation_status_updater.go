@@ -778,6 +778,12 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			if len(privacyOnlyGroups) > 0 && pruneUnconfiguredGroupStatus(updated, groups, groups) {
 				changed = true
 			}
+			// Legacy mode never refreshes per-IdP memberships, for example after
+			// IdP discovery failed or found no enabled IdP. Drop them so stale
+			// members cannot keep approving.
+			if pruneProviderGroupMemberships(updated) {
+				changed = true
+			}
 
 			resolvedGroupCount := 0
 			failedGroupCount := 0
@@ -988,6 +994,22 @@ func pruneUnconfiguredGroupStatus(
 		escalation.Status.IDPGroupMemberships = nil
 	}
 
+	return changed
+}
+
+// pruneProviderGroupMemberships removes every per-IdP (non-empty key)
+// membership snapshot. It reports whether the status changed.
+func pruneProviderGroupMemberships(escalation *breakglassv1alpha1.BreakglassEscalation) bool {
+	changed := false
+	for idp := range escalation.Status.IDPGroupMemberships {
+		if idp != "" {
+			delete(escalation.Status.IDPGroupMemberships, idp)
+			changed = true
+		}
+	}
+	if len(escalation.Status.IDPGroupMemberships) == 0 {
+		escalation.Status.IDPGroupMemberships = nil
+	}
 	return changed
 }
 

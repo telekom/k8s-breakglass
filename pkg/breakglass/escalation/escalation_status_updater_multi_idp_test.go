@@ -49,6 +49,7 @@ const (
 	keycloakFixtureTransient        keycloakFixtureMode = "transient"
 	keycloakFixturePrivateEmpty     keycloakFixtureMode = "private-empty"
 	keycloakFixturePrivateTransient keycloakFixtureMode = "private-transient"
+	keycloakFixtureAmbiguous        keycloakFixtureMode = "ambiguous"
 )
 
 func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string) {
@@ -72,6 +73,10 @@ func newKeycloakFixture(t *testing.T, mode keycloakFixtureMode) (string, string)
 			}
 			if mode == keycloakFixtureMalformed {
 				writeJSON(`[{"name":"approvers"}]`)
+				return
+			}
+			if mode == keycloakFixtureAmbiguous {
+				writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"approver-group-dup-id","name":"approvers"}]`)
 				return
 			}
 			writeJSON(`[{"id":"approver-group-id","name":"approvers"},{"id":"private-group-id","name":"private"}]`)
