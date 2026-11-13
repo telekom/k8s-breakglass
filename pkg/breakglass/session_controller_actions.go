@@ -631,7 +631,7 @@ func (wc *BreakglassSessionController) sendOnRequestEmail(bs breakglassv1alpha1.
 	wc.log.Warnw("No mail provider configured - email notification skipped",
 		"session", bs.Name,
 		"recipientCount", len(approvers),
-		"subject", subject)
+		"subjectLength", len(subject))
 	return nil
 }
 
