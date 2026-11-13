@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
 // GroupMemberResolver abstracts IdP (Keycloak) group membership queries.
@@ -31,7 +33,8 @@ func (e GroupNotFoundError) Error() string {
 	if e.Group == "" {
 		return ErrGroupNotFound.Error()
 	}
-	return fmt.Sprintf("%s: %q", ErrGroupNotFound, e.Group)
+	// Errors are logged verbatim; honor server.redactLogs for the group name.
+	return fmt.Sprintf("%s: %q", ErrGroupNotFound, system.RedactGroupName(e.Group))
 }
 
 // Unwrap exposes the stable ErrGroupNotFound classification.
@@ -63,7 +66,8 @@ type GroupAmbiguousError struct {
 
 // Error implements the error interface.
 func (e GroupAmbiguousError) Error() string {
-	return fmt.Sprintf("%s: %q matches %d groups", ErrGroupAmbiguous, e.Group, e.Matches)
+	// Errors are logged verbatim; honor server.redactLogs for the group name.
+	return fmt.Sprintf("%s: %q matches %d groups", ErrGroupAmbiguous, system.RedactGroupName(e.Group), e.Matches)
 }
 
 // Unwrap exposes the stable ErrGroupAmbiguous classification.

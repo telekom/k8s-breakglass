@@ -769,10 +769,13 @@ group, so its members cannot be resolved authoritatively. The escalation (and,
 in multi-IDP mode, the IdentityProvider) shows a `Warning` event with reason
 `ApproverGroupAmbiguous`; the condition message lists the group as ambiguous.
 
-**Effect:** Cached members of the group are removed and the group has no entry
-in `status.approverGroupMembers`. Approvers whose token `groups` claim contains
-the exact group name can still approve. Pending and new sessions send no
-approval notifications to that group.
+**Effect:** Cached members of the group are removed. If every queried provider
+reports it as ambiguous, the group has no entry in
+`status.approverGroupMembers` and approvers whose token `groups` claim contains
+the exact group name can still approve. If another provider resolved the group
+or reported it missing, that result stays authoritative and approvers from the
+ambiguous provider are denied. Pending and new sessions send no approval
+notifications for members of the ambiguous provider's group.
 
 **Diagnosis:**
 

@@ -736,12 +736,18 @@ enabled), the lookup fails closed:
   on the escalation (and on the IdentityProvider in multi-IDP mode) and the
   `ApprovalGroupMembersResolved` condition is `False` with the group listed as
   ambiguous;
-- cached members of that group are removed, and the group gets **no** entry in
+- cached members of that group are removed. When every queried identity
+  provider reports the group as ambiguous, it gets **no** entry in
   `status.approverGroupMembers` (not an empty list). Approval therefore still
   works for approvers whose own token `groups` claim contains the exact group
   name, because approval falls back to token groups for groups without resolved
   members. This is safe: token groups are exact claims signed by the identity
   provider and are never case-folded;
+- in multi-IDP mode, when another provider resolved the group (with members or
+  as empty) or reported it missing, that result stays authoritative: the entry
+  keeps that provider's members (or `[]`), so the token-group fallback does not
+  apply and approvers from the ambiguous provider are denied (fail closed) until
+  the ambiguity is fixed;
 - pending and new sessions send no approval notifications to that group,
   because no members can be resolved for it.
 

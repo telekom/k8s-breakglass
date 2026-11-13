@@ -36,6 +36,7 @@ import (
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
+	"github.com/telekom/k8s-breakglass/pkg/system"
 )
 
 // ZAM role names as delivered in the OIDC groups claim: "dttcaas-" followed by
@@ -256,6 +257,7 @@ func TestFetchGroupMembersReportAmbiguousGroupSkipsCache(t *testing.T) {
 	}}
 	report := updater.fetchGroupMembersFromMultipleIDPsReport(context.Background(), escalation, []string{"idp"}, []string{zamMixedCase}, zap.NewNop().Sugar())
 	assert.Equal(t, []string{zamMixedCase}, report.ambiguousGroups)
+	assert.Equal(t, []string{zamMixedCase}, report.ambiguousEverywhere, "a single resolver is every provider")
 	assert.Empty(t, report.missingGroups)
 	assert.Empty(t, deduplicateMembersFromHierarchy(report.hierarchy, zamMixedCase))
 }
@@ -288,4 +290,29 @@ func TestEscalationGroupIndexLookupValuesZAMNames(t *testing.T) {
 		escalationGroupIndexLookupValues([]string{zamLongest}, []string{zamOIDCPrefix}))
 	assert.Equal(t, []string{zamPrefixedMax, zamLongest},
 		escalationGroupIndexLookupValues([]string{zamPrefixedMax}, []string{zamOIDCPrefix}))
+}
+
+// Only a group that every queried provider reports as ambiguous loses its
+// aggregate entry; a provider that resolved it (even as empty) stays
+// authoritative.
+func TestGroupsAmbiguousInAllProviders(t *testing.T) {
+	counts := map[string]int{"both": 2, "only-a": 1}
+	assert.Equal(t, []string{"both"}, groupsAmbiguousInAllProviders(counts, 2))
+	assert.Equal(t, []string{"both", "only-a"}, groupsAmbiguousInAllProviders(map[string]int{"both": 1, "only-a": 1}, 1))
+	assert.Empty(t, groupsAmbiguousInAllProviders(counts, 0))
+}
+
+// Ambiguity errors are logged verbatim, so they must honor server.redactLogs
+// while keeping their classification.
+func TestAmbiguousLookupErrorHonorsLogRedaction(t *testing.T) {
+	system.SetLogRedaction(true)
+	t.Cleanup(func() { system.SetLogRedaction(false) })
+	server := keycloakCaseVariantServer(t, zamLongest, zamLongest)
+	defer server.Close()
+
+	_, err := newTestKeycloakResolver(server.URL).Members(context.Background(), zamLongest)
+	require.Error(t, err)
+	assert.True(t, breakglass.IsGroupAmbiguous(err))
+	assert.NotContains(t, err.Error(), zamLongest)
+	assert.NotContains(t, breakglass.NewGroupNotFoundError(zamLongest).Error(), zamLongest)
 }

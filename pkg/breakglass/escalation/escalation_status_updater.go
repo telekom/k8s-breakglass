@@ -740,9 +740,11 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			for _, g := range groups {
 				dedupMembers := deduplicateMembersFromHierarchy(hierarchy, g)
 				currentMembers, exists := updated.Status.ApproverGroupMembers[g]
-				if len(dedupMembers) == 0 && slices.Contains(ambiguousGroups, g) {
-					// No authoritative membership: drop the entry so approval
-					// falls back to exact token groups instead of an empty list.
+				if slices.Contains(syncReport.ambiguousEverywhere, g) {
+					// No provider has authoritative membership: drop the entry so
+					// approval falls back to exact token groups instead of an empty
+					// list. If any provider resolved the group (even as empty) or
+					// reported it missing, its result stays authoritative.
 					if exists {
 						delete(updated.Status.ApproverGroupMembers, g)
 						changed = true
@@ -1052,12 +1054,15 @@ func mergeIDPGroupMemberships(base, extra map[string]map[string][]string) map[st
 }
 
 type groupSyncReport struct {
-	hierarchy           map[string]map[string][]string
-	syncStatus          string
-	syncErrors          []string
-	emptyGroups         []string
-	missingGroups       []string
-	ambiguousGroups     []string
+	hierarchy       map[string]map[string][]string
+	syncStatus      string
+	syncErrors      []string
+	emptyGroups     []string
+	missingGroups   []string
+	ambiguousGroups []string
+	// ambiguousEverywhere lists groups that every queried provider reported
+	// as ambiguous, so no provider holds authoritative membership.
+	ambiguousEverywhere []string
 	missingFailureCount int
 }
 
@@ -1094,6 +1099,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 	var emptyGroups []string
 	var missingGroups []string
 	var ambiguousGroups []string
+	ambiguousProviderCount := map[string]int{}
 	missingFailureCount := 0
 	successCount := 0
 	failureCount := 0
@@ -1152,6 +1158,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 			emptyGroups:         uniqueSortedGroupNames(emptyGroups),
 			missingGroups:       uniqueSortedGroupNames(missingGroups),
 			ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
+			ambiguousEverywhere: uniqueSortedGroupNames(ambiguousGroups),
 			missingFailureCount: missingFailureCount,
 		}
 	}
@@ -1213,6 +1220,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 					missingFailureCount++
 				} else if breakglass.IsGroupAmbiguous(err) {
 					ambiguousGroups = append(ambiguousGroups, g)
+					ambiguousProviderCount[g]++
 				}
 
 				// Emit event on IdentityProvider resource
@@ -1314,8 +1322,21 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 		emptyGroups:         uniqueSortedGroupNames(emptyApproverGroups(hierarchy, groups)),
 		missingGroups:       uniqueSortedGroupNames(missingGroups),
 		ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
+		ambiguousEverywhere: groupsAmbiguousInAllProviders(ambiguousProviderCount, len(idpNames)),
 		missingFailureCount: missingFailureCount,
 	}
+}
+
+// groupsAmbiguousInAllProviders returns the groups that every queried
+// provider reported as ambiguous.
+func groupsAmbiguousInAllProviders(counts map[string]int, providers int) []string {
+	var out []string
+	for g, n := range counts {
+		if providers > 0 && n == providers {
+			out = append(out, g)
+		}
+	}
+	return uniqueSortedGroupNames(out)
 }
 
 func updateNoApproverGroupsCondition(escalation *breakglassv1alpha1.BreakglassEscalation) bool {

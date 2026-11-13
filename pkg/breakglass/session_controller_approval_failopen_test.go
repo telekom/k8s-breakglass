@@ -308,3 +308,34 @@ func TestApprovalUnverifiedGroupsEventTypeClassification(t *testing.T) {
 func init() {
 	gin.SetMode(gin.TestMode)
 }
+
+// An approver group without a status entry (ambiguous in every provider)
+// falls back to the approver's exact token groups; a group a provider
+// resolved, even as empty, stays authoritative and blocks that fallback.
+func TestAmbiguousApproverGroupTokenFallback(t *testing.T) {
+	tests := []struct {
+		name    string
+		members map[string][]string
+		allowed bool
+	}{
+		{name: "ambiguous everywhere: no entry, exact token group approves", members: map[string][]string{"other-group": {"someone@example.com"}}, allowed: true},
+		{name: "another provider resolved it empty: denied", members: map[string][]string{"cluster-approvers": {}}},
+		{name: "another provider resolved other members: denied", members: map[string][]string{"cluster-approvers": {"b-user@example.com"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			escalation := failOpenEscalation()
+			escalation.Status.ApproverGroupMembers = tt.members
+			ctrl := newApprovalAuthorizationTestController(t, failOpenSession(), escalation)
+			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) {
+				return []string{"cluster-approvers"}, nil
+			}
+			c := newApprovalAuthorizationTestContext("approver@example.com", "")
+			c.Set("groups", []string{"cluster-approvers"})
+
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+
+			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
+		})
+	}
+}
