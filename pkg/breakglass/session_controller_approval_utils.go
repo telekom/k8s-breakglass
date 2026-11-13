@@ -353,10 +353,8 @@ func (wc *BreakglassSessionController) checkApprovalAuthorization(c *gin.Context
 						continue
 					}
 					for _, member := range esc.Status.IDPGroupMemberships[approverIdentityProvider][g] {
-						if !containsFold(current, member) {
-							continue
-						}
-						if identityMatchesContext(c, member, approverName) {
+						// Match the caller first; scan the aggregate only for that member.
+						if identityMatchesContext(c, member, approverName) && containsFold(current, member) {
 							return ApprovalCheckResult{Allowed: true}
 						}
 					}
