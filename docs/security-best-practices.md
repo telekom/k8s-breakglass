@@ -646,17 +646,28 @@ jq -nr --slurpfile rb "$tmp/rb.json" --slurpfile roles "$tmp/roles.json" \
                                    "*/exec", "*/attach", "*/portforward"] | index($r) != null))];
   ($roles[0].items | map({key: .metadata.name, value: .}) | from_entries) as $role
   | ($cr[0].items | map({key: .metadata.name, value: .}) | from_entries) as $clusterrole
-  | ($rb[0].items[], $crb[0].items[]) as $b
-  | ((if $b.roleRef.kind == "Role" then $role else $clusterrole end)[$b.roleRef.name] // {} | grants) as $g
-  | select($g | length > 0)
-  | (if any($g[]; (.resourceNames // []) == []) then "all Pods"
-     else "only Pods " + ([$g[].resourceNames[]] | unique | join(", ")) end) as $scope
-  | $b.subjects[]?
-  | "\(.kind) \(.name)\(if .kind == "ServiceAccount" then " (namespace \(.namespace // $ns))" else "" end): \($scope) in \($ns), via \($b.kind) \($b.metadata.name) -> \($b.roleRef.kind) \($b.roleRef.name)"'
+  | [ ($rb[0].items[], $crb[0].items[]) as $b
+      | ((if $b.roleRef.kind == "Role" then $role else $clusterrole end)[$b.roleRef.name]) as $target
+      | ([$b.subjects[]? | "\(.kind) \(.name)"] | join(", ")) as $who
+      | if $target == null then
+          # Grants nothing today, but whatever role is created under that name later.
+          "WARNING roleRef \($b.roleRef.kind)/\($b.roleRef.name) not found (\($b.kind) \($b.metadata.name), subjects: \($who))"
+        else
+          ($target | grants) as $g
+          | select($g | length > 0)
+          | (if any($g[]; (.resourceNames // []) == []) then "all Pods"
+             else "only Pods " + ([$g[].resourceNames[]] | unique | join(", ")) end) as $scope
+          | $b.subjects[]?
+          | "\(.kind) \(.name)\(if .kind == "ServiceAccount" then " (namespace \(.namespace // $ns))" else "" end): \($scope) in \($ns), via \($b.kind) \($b.metadata.name) -> \($b.roleRef.kind) \($b.roleRef.name)"
+        end ]
+  | if length == 0 then "no subjects with exec, attach or port-forward found in \($ns)" else .[] end'
 ```
 
 A `Group system:authenticated` (or `system:serviceaccounts`) line means every
-user (or every ServiceAccount) has that access. To spot-check one identity,
+user (or every ServiceAccount) has that access. A `WARNING roleRef ... not
+found` line is a binding whose Role or ClusterRole does not exist: it grants
+nothing today, but whatever role is later created under that name; review
+or delete it. To spot-check one identity,
 including its group memberships, use
 `kubectl auth can-i create pods --subresource=exec -n <ns> --as=<user> --as-group=<group>`.
 
