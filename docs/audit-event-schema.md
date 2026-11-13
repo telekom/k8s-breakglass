@@ -211,9 +211,9 @@ event cannot be delivered. `approvedBy` is personal data.
 
 | Definition | Event types | Fields |
 |---|---|---|
-| `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `.result` | `sessionUID`*, `operationID`*, `approvalID`, `approvedBy`, `approvedAt`, `nodeUID`, `tuple`, `image`, `dryRun`, `podUID`, `jobUID`, `leaseUID`, `result`, `bootID`, `restartPods`, `restartedPodUIDs`, `hostUnchanged` |
+| `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `.result` | `sessionUID`*, `operationID`*, `approvalID`, `approvedBy`, `approvedAt`, `nodeUID`, `tuple`, `image`, `dryRun`, `podUID`, `jobUID`, `leaseUID`, `result`, `bootID`, `restartPods` (`namespace`, `matchLabels`), `restartedPodUIDs`, `hostUnchanged` |
 | `debugSessionAdmissionRecipe` | `debug_session.admission_recipe.applied`, `.drift`, `.reverted` | `sessionUID`*, `operationID`*, `action`*, `approvedBy`, `approvedAt`, `targets[]` (`target`, `state`, `original`, `applied`, `message`) |
-| `debugSessionHotfix` | `debug_session.hotfix.intent`, `.node_intent`, `.node_result`, `.result` | `sessionUID`*, `stage`*, `approvedBy`, `operationID`, `recordName`, `planHash`, `payloadSHA256`, `executorImage`, `payload` (intent only), `nodes` (count, or counts per result), `nodeUID`, `beforeSHA256`, `afterSHA256`, `podUID`, `result`, `message`, `phase`, `reason`, `state` |
+| `debugSessionHotfix` | `debug_session.hotfix.intent`, `.node_intent`, `.node_result`, `.result` | `sessionUID`*, `stage`*, `approvedBy`, `operationID`, `recordName`, `planHash`, `payloadSHA256`, `executorImage`, `payload` (intent only: the approved `spec.hotfix.payload` with `type`, `file`, `debs`, `rollbackDebs`, `image`, `restart`; a `node-file` replacement includes its `content`), `nodes` (count, or counts per result), `nodeUID`, `beforeSHA256`, `afterSHA256`, `podUID`, `result`, `message`, `phase`, `reason`, `state` |
 
 \* always present.
 

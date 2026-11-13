@@ -562,6 +562,34 @@
     }
   ],
   "$defs": {
+    "hotfixDeb": {
+      "type": "object",
+      "required": [
+        "url",
+        "sha256",
+        "package",
+        "version"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "Package URL."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "Package digest."
+        },
+        "package": {
+          "type": "string",
+          "description": "Package name."
+        },
+        "version": {
+          "type": "string",
+          "description": "Package version."
+        }
+      }
+    },
     "actor": {
       "type": "object",
       "description": "Who triggered the event.",
@@ -966,10 +994,28 @@
             "array",
             "null"
           ],
+          "description": "Pod selectors restarted after a service restart.",
           "items": {
-            "type": "object"
-          },
-          "description": "Pod selectors restarted after a service restart."
+            "type": "object",
+            "required": [
+              "namespace",
+              "matchLabels"
+            ],
+            "properties": {
+              "namespace": {
+                "type": "string",
+                "description": "Pod namespace."
+              },
+              "matchLabels": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "minProperties": 1,
+                "description": "Label selector."
+              }
+            }
+          }
         },
         "restartedPodUIDs": {
           "type": [
@@ -1100,7 +1146,117 @@
             "object",
             "null"
           ],
-          "description": "Full hotfix payload (debug_session.hotfix.intent only)."
+          "description": "Full approved hotfix payload (debug_session.hotfix.intent only); mirrors DebugSession spec.hotfix.payload.",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Payload kind. Known values are listed in examples; accept others.",
+              "examples": [
+                "node-file",
+                "node-deb",
+                "static-pod-image",
+                "host-container-image"
+              ]
+            },
+            "file": {
+              "type": "object",
+              "required": [
+                "path",
+                "mode"
+              ],
+              "properties": {
+                "path": {
+                  "type": "string",
+                  "description": "Node file path."
+                },
+                "mode": {
+                  "type": "string",
+                  "description": "Edit mode. Known values are listed in examples; accept others.",
+                  "examples": [
+                    "replace",
+                    "sed",
+                    "diff"
+                  ]
+                },
+                "beforeSHA256": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  },
+                  "description": "Accepted digests before the change."
+                },
+                "afterSHA256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "Expected digest after the change."
+                },
+                "content": {
+                  "type": "string",
+                  "description": "Replacement content (mode replace)."
+                },
+                "url": {
+                  "type": "string",
+                  "description": "Content URL (mode replace)."
+                },
+                "sedExpressions": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "sed expressions (mode sed)."
+                },
+                "diff": {
+                  "type": "string",
+                  "description": "Unified diff (mode diff)."
+                }
+              }
+            },
+            "debs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/hotfixDeb"
+              },
+              "description": "Packages installed in one transaction."
+            },
+            "rollbackDebs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/hotfixDeb"
+              },
+              "description": "Packages reinstalled on rollback."
+            },
+            "image": {
+              "type": "object",
+              "required": [
+                "image"
+              ],
+              "properties": {
+                "staticPod": {
+                  "type": "string",
+                  "description": "Static Pod to update."
+                },
+                "hostContainer": {
+                  "type": "string",
+                  "description": "Host container to update."
+                },
+                "image": {
+                  "type": "string",
+                  "description": "Image reference."
+                }
+              }
+            },
+            "restart": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "systemd units to restart."
+            }
+          }
         },
         "nodes": {
           "type": [
@@ -1480,7 +1636,8 @@
     },
     "generic": {
       "title": "Unstructured details",
-      "description": "Declared event types without a structured payload in this release. Details, when present, are an object of string keys; the payload is defined additively in a later v1 schema revision.",
+      "properties": {},
+      "description": "Reserved event types, declared but not emitted, without a structured payload. The published schema accepts any object; the strict CI variant accepts none, so a type must get a structured definition before it is emitted.",
       "type": "object"
     }
   }

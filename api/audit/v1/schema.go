@@ -70,13 +70,14 @@ func compileSchema(raw []byte) (*jsonschema.Schema, error) {
 	return schema, nil
 }
 
-// closeObjects forbids undeclared properties on every "type": "object" schema
-// that declares properties and does not already constrain additional ones.
-// if/then dispatch clauses carry no type and stay open.
+// closeObjects forbids undeclared properties on every object schema ("type"
+// "object" or a type list that includes it) that declares properties and
+// does not already constrain additional ones. if/then dispatch clauses carry
+// no type and stay open.
 func closeObjects(node any) {
 	switch n := node.(type) {
 	case map[string]any:
-		if _, ok := n["properties"]; ok && n["type"] == "object" {
+		if _, ok := n["properties"]; ok && allowsObject(n["type"]) {
 			if _, set := n["additionalProperties"]; !set {
 				n["additionalProperties"] = false
 			}
@@ -120,4 +121,18 @@ func validate(document []byte, closed bool) error {
 		return fmt.Errorf("audit event violates schema: %w", err)
 	}
 	return nil
+}
+
+func allowsObject(typ any) bool {
+	switch t := typ.(type) {
+	case string:
+		return t == "object"
+	case []any:
+		for _, v := range t {
+			if v == "object" {
+				return true
+			}
+		}
+	}
+	return false
 }

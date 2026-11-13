@@ -322,6 +322,45 @@ func TestAuditSchemaRejectsMalformedEvents(t *testing.T) {
 	}
 	require.NoError(t, auditv1.Validate(mutate(func(d map[string]any) { delete(d, "details") })),
 		"details stay optional for payloads without mandatory fields")
+	strictRejects := func(name string, event map[string]any) {
+		t.Helper()
+		doc, err := json.Marshal(event)
+		require.NoError(t, err)
+		require.Error(t, auditv1.ValidateStrict(doc), name)
+	}
+	receipt := func(eventType EventType, details map[string]any) map[string]any {
+		return map[string]any{"id": "r1", "schemaVersion": "v1", "type": string(eventType), "severity": "critical",
+			"timestamp": "2026-11-13T09:00:00Z", "actor": map[string]any{"user": "alice"},
+			"target": map[string]any{"kind": "Node", "name": "n"}, "details": details}
+	}
+	hotfix := func(payload map[string]any) map[string]any {
+		return receipt(EventDebugSessionHotfixIntent, map[string]any{"sessionUID": "u", "stage": "canary", "payload": payload})
+	}
+	deb := map[string]any{"url": "https://example.com/a.deb", "sha256": strings.Repeat("b", 64), "package": "a", "version": "1"}
+	validHotfix, err := json.Marshal(hotfix(map[string]any{"type": "node-deb", "debs": []any{deb}}))
+	require.NoError(t, err)
+	require.NoError(t, auditv1.ValidateStrict(validHotfix))
+	strictRejects("hotfix payload without type", hotfix(map[string]any{"debs": []any{deb}}))
+	strictRejects("hotfix deb without sha256", hotfix(map[string]any{"type": "node-deb", "debs": []any{map[string]any{"url": "u", "package": "a", "version": "1"}}}))
+	strictRejects("hotfix deb with bad sha256", hotfix(map[string]any{"type": "node-deb", "debs": []any{map[string]any{"url": "u", "sha256": "x", "package": "a", "version": "1"}}}))
+	strictRejects("hotfix file without mode", hotfix(map[string]any{"type": "node-file", "file": map[string]any{"path": "/etc/x"}}))
+	strictRejects("undeclared hotfix payload field", hotfix(map[string]any{"type": "node-deb", "script": "rm -rf /"}))
+	maintenance := func(restartPods any) map[string]any {
+		return receipt(EventDebugSessionMaintenanceIntent, map[string]any{"sessionUID": "u", "operationID": "op", "restartPods": restartPods})
+	}
+	okSelector, err := json.Marshal(maintenance([]any{map[string]any{"namespace": "kube-system", "matchLabels": map[string]any{"k8s-app": "cilium"}}}))
+	require.NoError(t, err)
+	require.NoError(t, auditv1.ValidateStrict(okSelector))
+	strictRejects("selector without matchLabels", maintenance([]any{map[string]any{"namespace": "kube-system"}}))
+	strictRejects("selector with empty matchLabels", maintenance([]any{map[string]any{"namespace": "kube-system", "matchLabels": map[string]any{}}}))
+	strictRejects("selector with non-string label", maintenance([]any{map[string]any{"namespace": "kube-system", "matchLabels": map[string]any{"a": 1}}}))
+	strictRejects("selector that is not an object", maintenance([]any{"kube-system/cilium"}))
+	strictRejects("undeclared selector field", maintenance([]any{map[string]any{"namespace": "n", "matchLabels": map[string]any{"a": "b"}, "fieldSelector": "x"}}))
+	strictRejects("undeclared admission recipe target field", receipt(EventDebugSessionAdmissionRecipeApplied,
+		map[string]any{"sessionUID": "u", "operationID": "op", "action": "a", "targets": []any{map[string]any{"target": "t", "secret": "s"}}}))
+	strictRejects("details on a reserved type", receipt(EventConfigChanged, map[string]any{"anything": 1}))
+	require.Error(t, auditv1.ValidateStrict(mutate(func(d map[string]any) { d["actor"].(map[string]any)["token"] = "t" })), "undeclared actor field")
+
 	extra := mutate(func(d map[string]any) { d["details"].(map[string]any)["newField"] = 1; d["newEnvelopeField"] = true })
 	require.NoError(t, auditv1.Validate(extra), "published schema must stay open for additive changes")
 	require.Error(t, auditv1.ValidateStrict(extra), "strict schema must reject undeclared fields")
