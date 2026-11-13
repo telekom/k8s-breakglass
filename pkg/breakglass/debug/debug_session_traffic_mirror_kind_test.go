@@ -195,8 +195,10 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, session.Status.State, session.Status.Message)
 		require.Eventually(t, func() bool {
 			reconcile(session)
-			return session.Status.TrafficMirror.State == breakglassv1alpha1.TrafficMirrorStateMirroring
+			return session.Status.State != breakglassv1alpha1.DebugSessionStateActive ||
+				session.Status.TrafficMirror.State == breakglassv1alpha1.TrafficMirrorStateMirroring
 		}, 3*time.Minute, 2*time.Second, "the mirror never attached")
+		require.Equal(t, breakglassv1alpha1.DebugSessionStateActive, session.Status.State, session.Status.Message)
 		return session
 	}
 	requireMirrored := func(session *breakglassv1alpha1.DebugSession, needle string) {

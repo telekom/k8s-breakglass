@@ -38,7 +38,7 @@ namespace (`breakglass-node-maintenance`) on the source Node:
  (target Pod, or the Node for host mode)
  ┌──────────────────────────────┐             ┌──────────────────────────┐
  │ eth0 / net1 (clsact)         │             │                          │
- │  ingress ─┐  u32 match-all   │   veth      │  bgmirror0 ──> tcpdump   │
+ │  ingress ─┐  basic match-all │   veth      │  bgmirror0 ──> tcpdump   │
  │  egress  ─┴─ mirred mirror ─>│ bgm<12hex> ═══ (capture container,     │
  │             cookie <op>      │  tbf limit  │   NET_RAW only)          │
  └──────────────────────────────┘             └──────────────────────────┘
@@ -51,18 +51,24 @@ namespace (`breakglass-node-maintenance`) on the source Node:
   host namespace, creates a veth pair with the peer in its own Pod, puts a
   `tbf` on the mirror device (`maxBandwidthMbps`; excess copies are dropped,
   the original traffic is never shaped), adds `clsact` if absent and one
-  `u32 match u32 0 0` filter per direction with
-  `action mirred egress mirror dev bgm… cookie <operation>`.
+  `basic` (no ematch, so match-all) filter per direction with
+  `action mirred egress mirror dev bgm… cookie <operation>`. The agent also
+  receives the absolute approved expiry: it refuses to attach after it and
+  detaches itself, with verification, when it is reached.
 - The `capture` container (only `NET_RAW`) waits for the peer and runs
-  `tcpdump -p -n -l -e -s snapLength -c maxPackets -- filter`. The filter is
+  `tcpdump -p -n -l -e -s snapLength -c maxPackets -- filter` under a
+  `timeout` that ends at the approved expiry. The filter is
   a template field passed as one argument, never through a shell.
-- Session participants may read the capture container's logs; exec, attach
+- Session participants may read the capture container's logs unless the
+  template or binding sets `allowedPodOperations.logs: false`; exec, attach
   and port-forward stay denied (`AllowedPodOperations` and a UID-fenced
   `AllowedPods` entry).
 
-The `u32` match-all classifier is used instead of `matchall` because it is
-available on every kernel with `tc`, while `cls_matchall` is missing from
-some VM kernels.
+The `basic` classifier is used because `cls_matchall` is missing from some
+VM kernels and `u32` hash tables are shared between the clsact ingress and
+egress hooks, which makes per-hook ownership ambiguous. Teardown deletes only
+the exact filter handles whose action carries the operation cookie, so a
+foreign filter added at the same preference survives.
 
 Because the mechanism is plain `tc` in the source network namespace, it works
 for the primary interface, Multus secondary interfaces and kernel-bound
@@ -118,16 +124,22 @@ fails closed if any identity, label or the interface changed.
    `debug_session.traffic_mirror.failed`) when the agent exits or the Pod
    disappears or changes identity.
 4. **End.** On expiry, termination, failure or deletion the controller
-   deletes the mirror Pod. The agent traps `SIGTERM` and detaches. The Pod
-   also has `activeDeadlineSeconds` at the session expiry, so the kubelet
-   stops it on time even while the controller is down.
+   deletes the mirror Pod; a deleted session that is still active is first
+   made terminal so the teardown can record its progress. The agent traps
+   `SIGTERM` and detaches. Independently the agent and the capture stop at
+   the absolute approved expiry, and `activeDeadlineSeconds` is a backstop,
+   so mirroring ends on time even while the controller is down.
 5. **Verified teardown.** Whenever `createAttempted` is set, the controller
    then runs a teardown Pod on the same Node. It deletes only filters whose
    action cookie is the operation's, deletes the mirror device and an empty
    `clsact`, and exits successfully only after re-reading that none remain.
-   A failed teardown Pod is replaced; the session keeps its finalizer and
-   reports `CleanupFailed` until the teardown succeeds. A deleted or
-   replaced Node needs no teardown.
+   Every inspection must succeed: a namespace or `tc` read error fails the
+   teardown instead of counting as absence. A failed teardown Pod is
+   replaced; the session keeps its finalizer and reports `CleanupFailed`
+   until the teardown succeeds. A Node that was deleted and registered again
+   is torn down like the original (it may be the same kernel). A Node that
+   is gone cannot be verified, so cleanup stays unresolved until an operator
+   confirms the host is gone and removes the finalizer.
 6. **Release.** After `debug_session.traffic_mirror.stopped` the teardown
    Pod and auxiliary resources are removed and `released` is set.
 

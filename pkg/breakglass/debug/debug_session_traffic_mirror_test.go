@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -98,9 +99,13 @@ func (f *mirrorFixture) pod(t *testing.T, name string) *corev1.Pod {
 }
 
 func (f *mirrorFixture) eventTypes() []audit.EventType {
+	// Generic session events are emitted asynchronously; compare the
+	// synchronous mirror receipts only.
 	var types []audit.EventType
 	for _, event := range f.sink.Events() {
-		types = append(types, event.Type)
+		if strings.HasPrefix(string(event.Type), "debug_session.traffic_mirror.") {
+			types = append(types, event.Type)
+		}
 	}
 	return types
 }
@@ -163,8 +168,14 @@ func TestTrafficMirrorDeployCreatesFixedCapturePod(t *testing.T) {
 	require.Len(t, f.sink.Events(), 1)
 	require.Equal(t, []breakglassv1alpha1.AllowedPodRef{{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: status.OperationID,
 		UID: status.PodUID, NodeName: "node-a"}}, trafficMirrorAllowedPods(f.ds))
-	require.True(t, *trafficMirrorPodOperations().Logs)
-	require.False(t, *trafficMirrorPodOperations().Exec)
+	require.True(t, *trafficMirrorPodOperations(nil, nil).Logs)
+	require.False(t, *trafficMirrorPodOperations(nil, nil).Exec)
+	require.False(t, *trafficMirrorPodOperations(&breakglassv1alpha1.AllowedPodOperations{Logs: ptr.To(false)}, nil).Logs)
+	require.False(t, *trafficMirrorPodOperations(nil, &breakglassv1alpha1.AllowedPodOperations{Logs: ptr.To(false)}).Logs)
+	require.False(t, *trafficMirrorPodOperations(&breakglassv1alpha1.AllowedPodOperations{Exec: ptr.To(true)}, nil).Exec)
+	expires := strconv.FormatInt(f.ds.Status.ExpiresAt.Unix(), 10)
+	require.Equal(t, expires, envValue(agent, "MIRROR_EXPIRES_UNIX"), "the agent enforces the absolute expiry")
+	require.Equal(t, expires, envValue(capture, "MIRROR_EXPIRES_UNIX"))
 }
 
 func TestTrafficMirrorDeployFailsClosed(t *testing.T) {
@@ -303,16 +314,50 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	require.Len(t, f.sink.Events(), 2)
 }
 
-func TestTrafficMirrorCleanupOfReplacedNodeNeedsNoTeardown(t *testing.T) {
-	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
-	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
-	node := &corev1.Node{}
-	require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
-	require.NoError(t, f.spoke.Delete(t.Context(), node))
-	require.NoError(t, f.c.cleanupTrafficMirror(t.Context(), f.ds))
-	require.True(t, f.ds.Status.TrafficMirror.Released)
-	require.Equal(t, "source Node is gone", f.ds.Status.TrafficMirror.Message)
-	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix))
+func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {
+	t.Run("replaced Node is still torn down", func(t *testing.T) {
+		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+		require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+		node := &corev1.Node{}
+		require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
+		require.NoError(t, f.spoke.Delete(t.Context(), node))
+		require.NoError(t, f.spoke.Create(t.Context(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}))
+		require.ErrorIs(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), errTrafficMirrorTeardownPending)
+		require.NotNil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix), "the same host may keep the filters")
+	})
+	t.Run("deleted Node keeps cleanup unresolved", func(t *testing.T) {
+		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+		require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+		node := &corev1.Node{}
+		require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
+		require.NoError(t, f.spoke.Delete(t.Context(), node))
+		require.ErrorContains(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "cannot be verified")
+		require.False(t, f.ds.Status.TrafficMirror.TeardownVerified)
+		require.False(t, f.ds.Status.TrafficMirror.Released)
+	})
+}
+
+func TestTrafficMirrorFailureClassification(t *testing.T) {
+	terminated := func(name string, code int32) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: code}}}
+	}
+	for name, tc := range map[string]struct {
+		status  corev1.PodStatus
+		failure bool
+	}{
+		"running":                  {corev1.PodStatus{Phase: corev1.PodRunning}, false},
+		"agent detached at expiry": {corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{terminated("mirror", 0)}}, false},
+		"capture packet limit":     {corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{terminated("capture", 0)}}, false},
+		"capture expiry timeout":   {corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{terminated("capture", 124)}}, false},
+		"kubelet deadline":         {corev1.PodStatus{Phase: corev1.PodFailed, Reason: "DeadlineExceeded"}, false},
+		"agent crashed":            {corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{terminated("mirror", 137)}}, true},
+		"invalid filter":           {corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{terminated("capture", 1)}}, true},
+		"evicted":                  {corev1.PodStatus{Phase: corev1.PodFailed, Reason: "Evicted"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.Equal(t, tc.failure, trafficMirrorFailure(&corev1.Pod{Status: tc.status}) != "")
+		})
+	}
 }
 
 func TestTrafficMirrorCleanupRefusesForeignPod(t *testing.T) {

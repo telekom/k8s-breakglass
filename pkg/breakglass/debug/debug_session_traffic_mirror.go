@@ -200,7 +200,6 @@ func trafficMirrorEnv(ds *breakglassv1alpha1.DebugSession) []corev1.EnvVar {
 	cookie, pref, veth := trafficMirrorTuple(operationID)
 	return []corev1.EnvVar{
 		{Name: "MIRROR_OPERATION", Value: operationID},
-		{Name: "MIRROR_SELF_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{APIVersion: "v1", FieldPath: "metadata.uid"}}},
 		{Name: "MIRROR_POD_UID", Value: request.PodUID},
 		{Name: "MIRROR_INTERFACE", Value: request.Interface},
 		{Name: "MIRROR_DIRECTION", Value: ds.Status.ResolvedTemplate.TrafficMirror.EffectiveDirection()},
@@ -256,6 +255,7 @@ func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession, podIP string) *corev1
 	pod := trafficMirrorPodBase(ds, ds.Status.TrafficMirror.OperationID, int64(math.Ceil(time.Until(ds.Status.ExpiresAt.Time).Seconds()))+2)
 	env := append(trafficMirrorEnv(ds),
 		corev1.EnvVar{Name: "MIRROR_POD_IP", Value: podIP},
+		corev1.EnvVar{Name: "MIRROR_EXPIRES_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 		corev1.EnvVar{Name: "MIRROR_RATE_MBIT", Value: strconv.Itoa(int(mirror.EffectiveMaxBandwidthMbps()))})
 	agent := trafficMirrorAgent(ds, "attach", env)
 	agent.VolumeMounts = []corev1.VolumeMount{{Name: "run", MountPath: "/run/mirror"}}
@@ -270,6 +270,7 @@ func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession, podIP string) *corev1
 			{Name: "MIRROR_SNAPLEN", Value: strconv.Itoa(int(mirror.EffectiveSnapLength()))},
 			{Name: "MIRROR_MAX_PACKETS", Value: strconv.Itoa(int(mirror.EffectiveMaxPackets()))},
 			{Name: "MIRROR_FILTER", Value: mirror.Filter},
+			{Name: "MIRROR_EXPIRES_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 		},
 		SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
 			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_RAW"}}},
@@ -400,16 +401,23 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	return c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.PodUID = string(pod.UID) })
 }
 
-// trafficMirrorFailure reports why the mirror Pod no longer mirrors, or "".
+// trafficMirrorFailure reports why the mirror Pod failed, or "". Both
+// containers stop on their own at the approved expiry: the agent exits 0
+// after a verified detach, the capture exits 0 at maxPackets or 124 when
+// its timeout reaches the expiry. Those are not failures.
 func trafficMirrorFailure(pod *corev1.Pod) string {
-	if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded {
-		return fmt.Sprintf("mirror Pod %s: %s", pod.Status.Phase, pod.Status.Message)
-	}
 	for _, container := range pod.Status.ContainerStatuses {
-		if container.Name == "mirror" && container.State.Terminated != nil {
-			terminated := container.State.Terminated
+		terminated := container.State.Terminated
+		switch {
+		case terminated == nil:
+		case container.Name == "mirror" && terminated.ExitCode != 0:
 			return fmt.Sprintf("mirror agent exited %d: %s", terminated.ExitCode, terminated.Message)
+		case container.Name == "capture" && terminated.ExitCode != 0 && terminated.ExitCode != 124:
+			return fmt.Sprintf("capture exited %d: %s", terminated.ExitCode, terminated.Message)
 		}
+	}
+	if pod.Status.Phase == corev1.PodFailed && pod.Status.Reason != "DeadlineExceeded" {
+		return fmt.Sprintf("mirror Pod failed: %s %s", pod.Status.Reason, pod.Status.Message)
 	}
 	return ""
 }
@@ -601,16 +609,17 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 }
 
 // runTrafficMirrorTeardown runs the teardown Pod on the source Node and
-// reports whether it verified a clean Node. A replaced or deleted Node has
-// no kernel state left to remove.
+// reports whether it verified a clean Node. A Node object that was deleted
+// and registered again may still be the same host and kernel, so a replaced
+// Node is torn down like the original. A deleted Node cannot be verified:
+// cleanup stays unresolved until an operator confirms the host is gone and
+// removes the finalizer.
 func (c *DebugSessionController) runTrafficMirrorTeardown(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession, name string) (bool, string, error) {
 	node := &corev1.Node{}
 	if err := target.Get(ctx, ctrlclient.ObjectKey{Name: ds.Spec.TrafficMirror.NodeName}, node); apierrors.IsNotFound(err) {
-		return true, "source Node is gone", nil
+		return false, "", fmt.Errorf("trafficMirror teardown cannot be verified: source Node %s is gone", ds.Spec.TrafficMirror.NodeName)
 	} else if err != nil {
 		return false, "", err
-	} else if string(node.UID) != ds.Spec.TrafficMirror.NodeUID {
-		return true, "source Node was replaced", nil
 	}
 	pod := &corev1.Pod{}
 	key := ctrlclient.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: name}
@@ -647,10 +656,12 @@ func trafficMirrorTerminationMessage(pod *corev1.Pod) string {
 	return pod.Status.Message
 }
 
-// trafficMirrorPodOperations allows only reading the capture logs.
-func trafficMirrorPodOperations() *breakglassv1alpha1.AllowedPodOperations {
+// trafficMirrorPodOperations allows at most reading the capture logs. An
+// explicit logs: false in the template or the binding still denies them.
+func trafficMirrorPodOperations(template, binding *breakglassv1alpha1.AllowedPodOperations) *breakglassv1alpha1.AllowedPodOperations {
 	operations := maintenancePodOperations()
-	operations.Logs = ptr.To(true)
+	operations.Logs = ptr.To((template == nil || template.Logs == nil || *template.Logs) &&
+		(binding == nil || binding.Logs == nil || *binding.Logs))
 	return operations
 }
 

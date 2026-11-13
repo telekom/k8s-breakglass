@@ -23,7 +23,7 @@ controller with `--disable-traffic-mirror`.
   per-session PolicyException as an auxiliary resource of the template.
 - Use an image with `ip`, `tc`, `nsenter` and `tcpdump`, pinned by digest,
   for example the [network-debug](network-debug-image.md) utility.
-- The source Node kernel needs `sch_ingress`/`clsact`, `cls_u32`,
+- The source Node kernel needs `sch_ingress`/`clsact`, `cls_basic`,
   `act_mirred`, `sch_tbf` and `veth`.
 
 ## Template
@@ -104,7 +104,8 @@ and Node are the approved incarnations and still allowlisted. Then:
 kubectl -n breakglass-node-maintenance logs -f <status.trafficMirror.operationID> -c capture
 ```
 
-Exec, attach and port-forward into the mirror Pod stay denied.
+Exec, attach and port-forward into the mirror Pod stay denied. Log access is
+granted unless the template or binding sets `allowedPodOperations.logs: false`.
 
 ## Mirror Pod contract
 
@@ -115,7 +116,8 @@ Exec, attach and port-forward into the mirror Pod stay denied.
 
 The Pod uses `hostPID` (to find the source network namespace) but not the
 host network, has no service account token, runs on the source Node with
-`restartPolicy: Never` and `activeDeadlineSeconds` at the session expiry.
+`restartPolicy: Never`. Both containers receive the absolute approved expiry
+and stop at it on their own; `activeDeadlineSeconds` is a backstop.
 
 ## Cleanup
 
@@ -123,9 +125,13 @@ On expiry, termination, failure or deletion the controller deletes the
 mirror Pod (the agent detaches), then runs a teardown Pod on the Node that
 removes only `tc` filters carrying the session's action cookie, the mirror
 device and an empty `clsact`, and succeeds only after verifying that none
-remain. The session keeps its finalizer and the `CleanupFailed` condition
-until that verification succeeds, which also covers a controller restart and
-a crashed agent. A deleted or replaced Node needs no teardown.
+remain; an inspection error is a failure, never proof of absence. The
+session keeps its finalizer and the `CleanupFailed` condition until that
+verification succeeds, which also covers a controller restart and a crashed
+agent. A Node that was deleted and registered again is torn down like the
+original. If the Node is gone, the teardown cannot be verified: confirm that
+the host was reprovisioned, then remove the finalizer
+`breakglass.t-caas.telekom.com/node-maintenance-cleanup` by hand.
 
 ## Audit
 
@@ -148,3 +154,5 @@ synchronous durable audit sink.
   is planned as a separate recipe.
 - One filter preference per operation is derived from the session UID; if a
   foreign filter already uses it on the interface, the session fails closed.
+- The session fails when the capture exits with an error (for example an
+  invalid filter expression).

@@ -287,6 +287,22 @@ func (c *DebugSessionController) Reconcile(ctx context.Context, req ctrl.Request
 		if err := c.cleanupMaintenance(ctx, ds); err != nil {
 			return ctrl.Result{}, err
 		}
+		// A deleted session that is still active (for example one that expired
+		// while the controller was down) becomes terminal first: an expired
+		// active session accepts only terminal status updates, and the
+		// teardown records its progress in the status.
+		if ds.Status.TrafficMirror != nil && !debugSessionTerminal(ds) {
+			state := breakglassv1alpha1.DebugSessionStateTerminated
+			if isDebugSessionExpired(ds, time.Now().UTC()) {
+				state = breakglassv1alpha1.DebugSessionStateExpired
+			}
+			if err := breakglass.PatchDebugSessionStatusWithOptimisticLock(ctx, c.client, ds, func(status *breakglassv1alpha1.DebugSessionStatus) {
+				status.State = state
+				status.Message = "Session deleted; removing traffic mirror"
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 		if err := c.cleanupTrafficMirror(ctx, ds); err != nil {
 			if errors.Is(err, errTrafficMirrorTeardownPending) {
 				return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -1226,7 +1242,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 	}
 	if template.Spec.TrafficMirror != nil {
 		// Participants may read the capture container logs, nothing else.
-		ds.Status.AllowedPodOperations = trafficMirrorPodOperations()
+		ds.Status.AllowedPodOperations = trafficMirrorPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 		ds.Status.AllowedPods = trafficMirrorAllowedPods(ds)
 		ds.Status.Message = "Traffic mirror Pod " + ds.Status.TrafficMirror.OperationID + " created"
 	}

@@ -30,7 +30,7 @@ fail() {
 }
 
 require_env() {
-	: "${MIRROR_OPERATION:?}" "${MIRROR_INTERFACE:?}" "${MIRROR_VETH:?}" "${MIRROR_COOKIE:?}" "${MIRROR_PREF:?}" "${MIRROR_SELF_UID:?}"
+	: "${MIRROR_OPERATION:?}" "${MIRROR_INTERFACE:?}" "${MIRROR_VETH:?}" "${MIRROR_COOKIE:?}" "${MIRROR_PREF:?}"
 }
 
 # pod_pid prints a PID whose cgroup belongs to the Pod UID, or fails.
@@ -47,10 +47,13 @@ pod_pid() {
 	return 1
 }
 
-# check_scan refuses to run when the scan cannot even find this Pod, so an
-# unreadable /proc is never mistaken for a target that is gone.
+# check_scan refuses to run when the scan cannot see other Pods or enter
+# PID 1, so an unreadable /proc is never mistaken for a target that is gone.
+# Our own cgroup reads as "/" in a private cgroup namespace, so we look for
+# any kubepods cgroup instead of our own Pod UID.
 check_scan() {
-	pod_pid "$MIRROR_SELF_UID" >/dev/null || fail scan-failed "cannot resolve Pods from /proc; hostPID and SYS_PTRACE are required"
+	readlink /proc/1/ns/net >/dev/null 2>&1 || fail scan-failed "cannot enter PID 1; hostPID and SYS_PTRACE are required"
+	grep -q -s kubepods /proc/[0-9]*/cgroup || fail scan-failed "cannot see Pod cgroups in /proc; hostPID is required"
 }
 
 # target_pid prints the target network namespace owner: PID 1 for a Node.
@@ -74,46 +77,96 @@ hooks() {
 	esac
 }
 
-# owned_filters prints the hooks that still carry this operation's cookie.
-owned_filters() {
-	for hook in ingress egress; do
-		if in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" 2>/dev/null | grep -q "cookie $MIRROR_COOKIE"; then
-			printf '%s\n' "$hook"
-		fi
-	done
+# link_absent succeeds only when the namespace was inspected and the link is
+# gone; any other inspection failure stops the script.
+link_absent() {
+	if out=$(in_target ip link show dev "$1" 2>&1); then
+		return 1
+	fi
+	case "$out" in
+	*"does not exist"*) return 0 ;;
+	esac
+	fail inspect-failed "cannot inspect $1: $out"
+}
+
+# show_filters prints the filters of one hook; a missing interface has none.
+show_filters() {
+	if out=$(in_target tc filter show dev "$MIRROR_INTERFACE" "$1" 2>&1); then
+		printf '%s\n' "$out"
+		return 0
+	fi
+	link_absent "$MIRROR_INTERFACE" || fail inspect-failed "cannot list $1 filters: $out"
+}
+
+# owned_handles prints the filter handles at this operation's preference whose
+# action carries the operation cookie. Other filters are never selected.
+owned_handles() {
+	filters=$(show_filters "$1") || exit 1
+	printf '%s\n' "$filters" | awk -v cookie="cookie $MIRROR_COOKIE" -v pref="pref $MIRROR_PREF " '
+		/^filter / {
+			handle = ""
+			if (index($0, pref) && match($0, /handle 0x[0-9a-f]+/)) handle = substr($0, RSTART + 7, RLENGTH - 7)
+		}
+		index($0, cookie) && handle != "" { print handle }'
+}
+
+# keys_at_pref counts the filters left at this operation's preference.
+keys_at_pref() {
+	filters=$(show_filters "$1") || exit 1
+	printf '%s\n' "$filters" | grep "pref $MIRROR_PREF " | grep -c 'handle 0x' || true
 }
 
 detach() {
-	for hook in $(owned_filters); do
-		in_target tc filter del dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" 2>/dev/null || true
+	for hook in ingress egress; do
+		handles=$(owned_handles "$hook") || exit 1
+		for handle in $handles; do
+			in_target tc filter del dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" handle "$handle" protocol all basic ||
+				fail teardown-failed "cannot delete filter $handle on $hook"
+		done
+		# Drop an empty classifier left at our preference, never foreign filters.
+		if [ -n "$handles" ] && [ "$(keys_at_pref "$hook")" = 0 ]; then
+			in_target tc filter del dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic 2>/dev/null || true
+		fi
 	done
-	in_target ip link del "$MIRROR_VETH" 2>/dev/null || true
+	if ! link_absent "$MIRROR_VETH"; then
+		in_target ip link del "$MIRROR_VETH" || fail teardown-failed "cannot delete $MIRROR_VETH"
+	fi
 	# ponytail: an empty clsact is deleted even if another tool created it;
 	# a tool that attaches later recreates it.
-	if in_target tc qdisc show dev "$MIRROR_INTERFACE" 2>/dev/null | grep -q 'qdisc clsact' &&
-		[ -z "$(in_target tc filter show dev "$MIRROR_INTERFACE" ingress 2>/dev/null)" ] &&
-		[ -z "$(in_target tc filter show dev "$MIRROR_INTERFACE" egress 2>/dev/null)" ]; then
+	ingress=$(show_filters ingress) || exit 1
+	egress=$(show_filters egress) || exit 1
+	if [ -z "$ingress$egress" ] && in_target tc qdisc show dev "$MIRROR_INTERFACE" 2>/dev/null | grep -q 'qdisc clsact'; then
 		in_target tc qdisc del dev "$MIRROR_INTERFACE" clsact 2>/dev/null || true
 	fi
 }
 
 verify_detached() {
-	[ -z "$(owned_filters)" ] || fail teardown-failed "tc filters with the operation cookie remain"
-	! in_target ip link show dev "$MIRROR_VETH" >/dev/null 2>&1 || fail teardown-failed "mirror device remains"
+	for hook in ingress egress; do
+		handles=$(owned_handles "$hook") || exit 1
+		[ -z "$handles" ] || fail teardown-failed "tc filters with the operation cookie remain on $hook"
+	done
+	link_absent "$MIRROR_VETH" || fail teardown-failed "mirror device remains"
+}
+
+# remaining prints the seconds until the approved session expiry.
+remaining() {
+	printf '%s\n' $((${MIRROR_EXPIRES_UNIX:?} - $(date +%s)))
 }
 
 attach() {
 	require_env
 	check_scan
+	[ "$(remaining)" -gt 0 ] || fail expired "the approved session has expired"
 	tpid=$(target_pid) || fail target-missing "the target Pod has no process on this Node"
+	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	if [ -n "${MIRROR_POD_UID:-}" ]; then
 		[ "$(readlink "/proc/$tpid/ns/net")" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
 		in_target ip -o addr show | grep -F -q " ${MIRROR_POD_IP:?}/" || fail target-mismatch "the target network namespace does not own the Pod IP"
 	fi
-	in_target ip link show dev "$MIRROR_INTERFACE" >/dev/null 2>&1 || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
+	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
 	detach
 	for hook in ingress egress; do
-		if [ -n "$(in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" 2>/dev/null)" ]; then
+		if [ -n "$(in_target tc filter show dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF")" ]; then
 			fail pref-busy "another filter uses preference $MIRROR_PREF on $hook"
 		fi
 	done
@@ -128,17 +181,23 @@ attach() {
 	in_target tc qdisc replace dev "$MIRROR_VETH" root tbf rate "${MIRROR_RATE_MBIT:?}mbit" burst 64kb latency 100ms
 	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact
 	for hook in $(hooks); do
-		# u32 "match u32 0 0" matches every packet; unlike matchall it is
-		# available on every kernel with tc.
-		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all u32 match u32 0 0 \
+		# basic without an ematch matches every packet. Unlike matchall it is
+		# built on every kernel with tc, and unlike u32 its filters are per hook.
+		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic \
 			action mirred egress mirror dev "$MIRROR_VETH" cookie "$MIRROR_COOKIE"
 	done
 	: >/run/mirror/attached
 	log mirror-started "$MIRROR_INTERFACE"
-	while :; do
-		sleep 3600 &
+	# The absolute approved expiry ends the mirror even without the controller.
+	while left=$(remaining) && [ "$left" -gt 0 ]; do
+		[ "$left" -le 30 ] || left=30
+		sleep "$left" &
 		wait $! || true
 	done
+	detach
+	verify_detached
+	trap - EXIT
+	log mirror-expired "$MIRROR_INTERFACE"
 }
 
 capture() {
@@ -148,7 +207,10 @@ capture() {
 		[ "$attempts" -le 120 ] || fail capture-failed "mirror device did not appear"
 		sleep 1
 	done
-	exec tcpdump -p -n -l -e -i "$peer" -s "${MIRROR_SNAPLEN:?}" -c "${MIRROR_MAX_PACKETS:?}" -- ${MIRROR_FILTER:+"$MIRROR_FILTER"}
+	left=$(remaining)
+	[ "$left" -gt 0 ] || exit 0
+	# timeout exits 124 at the approved expiry.
+	exec timeout "$left" tcpdump -p -n -l -e -i "$peer" -s "${MIRROR_SNAPLEN:?}" -c "${MIRROR_MAX_PACKETS:?}" -- ${MIRROR_FILTER:+"$MIRROR_FILTER"}
 }
 
 teardown() {
@@ -158,6 +220,7 @@ teardown() {
 		log teardown-verified "target network namespace is gone"
 		return 0
 	fi
+	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	detach
 	verify_detached
 	log teardown-verified "$MIRROR_INTERFACE"
