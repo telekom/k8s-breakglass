@@ -148,14 +148,16 @@ spec:
     reason: Forbidden
   # Orphaning deletes leave the marked children running after cleanup. Where
   # the kube-controller-manager shares one identity, its garbage collector is
-  # exempt, so this must be refused at the delete itself.
+  # exempt, so this must be refused at the delete itself. Jobs and
+  # ReplicationControllers orphan by default, so an explicit cascading policy
+  # is required for every kind (kubectl sends Background by default).
   - expression: >-
       request.operation != 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
-      !(request.options != null &&
-        ((has(request.options.propagationPolicy) && request.options.propagationPolicy == 'Orphan') ||
-         (has(request.options.orphanDependents) && request.options.orphanDependents == true)))
+      (request.options != null &&
+       has(request.options.propagationPolicy) && request.options.propagationPolicy in ['Background', 'Foreground'] &&
+       !(has(request.options.orphanDependents) && request.options.orphanDependents == true))
     messageExpression: >-
-      'breakglass debug workloads may only be deleted with cascading deletion; ' + request.userInfo.username + ' may not orphan their Pods'
+      'breakglass debug workloads may only be deleted with propagationPolicy Background or Foreground; ' + request.userInfo.username + ' may not orphan their Pods'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

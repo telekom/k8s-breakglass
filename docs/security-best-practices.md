@@ -558,8 +558,8 @@ breakglass controller. It covers:
 - the pod templates of Deployments, ReplicaSets, StatefulSets, DaemonSets,
   Jobs, CronJobs and ReplicationControllers.
 
-Debug workloads are Deployments or DaemonSets, so their Pods are created by
-the kube-controller-manager, not by the controller. The policy therefore also
+Debug workloads are Deployments, DaemonSets or Jobs, so their Pods are
+created by the kube-controller-manager, not by the controller. The policy therefore also
 exempts the kube-controller-manager users that copy a template into Pods
 (`system:kube-controller-manager` and the `kube-system` controller
 ServiceAccounts). This is safe only because the templates themselves are
@@ -578,7 +578,9 @@ whose Pod or pod template carries a reserved key, the policy therefore also
 freezes the pod spec, the owner references, the labels, the selector and the
 `orphan` finalizer for everyone except the exempt users, through the main
 resource and its `status` subresource. Orphaning deletes
-(`kubectl delete --cascade=orphan`) of such workloads are denied too; this
+of such workloads are denied too: deletes must set `propagationPolicy`
+`Background` (the `kubectl delete` default) or `Foreground`, because Jobs and
+ReplicationControllers orphan their Pods when no policy is given; this
 matters where the kube-controller-manager runs without
 `--use-service-account-credentials`, because its garbage collector then shares
 the exempt `system:kube-controller-manager` identity. Scaling, kubelet status

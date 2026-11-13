@@ -257,9 +257,24 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		// covers clusters where the garbage collector shares the exempt
 		// kube-controller-manager identity.
 		orphan := client.PropagationPolicy(metav1.DeletePropagationOrphan)
-		err := forger.Delete(ctx, debugDeployment.DeepCopy(), orphan)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "may only be deleted with cascading deletion")
+		deleteDenied := func(t *testing.T, err error) {
+			t.Helper()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "may only be deleted with propagationPolicy Background or Foreground")
+		}
+		deleteDenied(t, forger.Delete(ctx, debugDeployment.DeepCopy(), orphan))
+
+		// Jobs and ReplicationControllers orphan their Pods when the delete
+		// carries no policy, so a marked one needs an explicit cascading policy.
+		markedJob := &batchv1.Job{ObjectMeta: meta("marked-job"), Spec: batchv1.JobSpec{Suspend: ptr.To(true), Template: template(selected)}}
+		markedRC := &corev1.ReplicationController{ObjectMeta: meta("marked-rc"),
+			Spec: corev1.ReplicationControllerSpec{Replicas: ptr.To[int32](0), Selector: map[string]string{"app": "w"}, Template: always.DeepCopy()}}
+		require.NoError(t, controller.Create(ctx, markedJob))
+		require.NoError(t, controller.Create(ctx, markedRC))
+		deleteDenied(t, forger.Delete(ctx, markedJob.DeepCopy()))
+		deleteDenied(t, forger.Delete(ctx, markedRC.DeepCopy()))
+		assert.NoError(t, forger.Delete(ctx, markedJob.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationForeground)))
+		assert.NoError(t, forger.Delete(ctx, markedRC.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationBackground)))
 		denied(t, edit(func(d *appsv1.Deployment) { d.Finalizers = append(d.Finalizers, "orphan") }), "the orphan finalizer")
 		assert.NoError(t, forger.Delete(ctx, plain.DeepCopy(), orphan), "unmarked workloads may be orphaned")
 		assert.NoError(t, forger.Delete(ctx, debugDeployment.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationBackground)),
