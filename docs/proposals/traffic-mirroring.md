@@ -48,17 +48,31 @@ namespace (`breakglass-node-maintenance`) on the source Node:
   AppArmor unconfined, seccomp `RuntimeDefault`, read-only root) finds the
   source network namespace from the Pod UID in `/proc/*/cgroup` (PID 1 for a
   Node), checks that the namespace owns the approved Pod IP and is not the
-  host namespace, creates a veth pair with the peer in its own Pod, puts a
+  host namespace (a Pod is selected by the process whose namespace owns the
+  approved Pod IP, also for the teardown), creates a veth pair with the peer
+  in its own Pod. The pair carries mirrored copies only: both ends have
+  `addrgenmode none` (no IPv6 link-local address) and ARP off, and a
+  `basic action drop` ingress filter on the source-side end drops every
+  frame sent from the capture side before the source network stack. The
+  agent puts a
   `tbf` on the mirror device (`maxBandwidthMbps`; excess copies are dropped,
   the original traffic is never shaped), adds `clsact` if absent and one
   `basic` (no ematch, so match-all) filter per direction with
   `action mirred egress mirror dev bgm… cookie <operation>`. The agent also
   receives the absolute approved expiry: it refuses to attach after it and
   detaches itself, with verification, when it is reached.
-- The `capture` container (only `NET_RAW`) waits for the peer and runs
-  `tcpdump -p -n -l -e -s snapLength -c maxPackets -- filter` under a
-  `timeout` that ends at the approved expiry. The filter is
-  a template field passed as one argument, never through a shell.
+- The `capture` container (`NET_RAW`, plus `SETUID`/`SETGID` to drop to
+  `nobody` with `tcpdump -Z`) waits for the peer and runs
+  `tcpdump -q -p -n -l -e -s 96 -c maxPackets -- filter` under a `timeout`
+  that ends at the approved expiry. `-q` and the 96-byte snap length keep
+  the output to packet headers; `capturePayload: true` in the template
+  restores protocol decoding and `snapLength`. The filter is a template
+  field passed as one argument, never through a shell.
+- A per-operation deny-all NetworkPolicy selects the mirror and teardown
+  Pods, so the capture container cannot send the mirrored data anywhere.
+- `status.trafficMirror.clusterConfigUID` binds the operation to the exact
+  ClusterConfig; cleanup refuses a replaced ClusterConfig of the same name
+  and leaves it to an operator.
 - Session participants may read the capture container's logs unless the
   template or binding sets `allowedPodOperations.logs: false`; exec, attach
   and port-forward stay denied (`AllowedPodOperations` and a UID-fenced
@@ -118,7 +132,9 @@ fails closed if any identity, label or the interface changed.
 2. **Start.** Before any target write the controller installs the cleanup
    finalizer, emits the durable `debug_session.traffic_mirror.started` receipt
    and persists the inventory, then `createAttempted`, then creates the Pod.
-   The receipt and markers have deterministic IDs, so retries never duplicate.
+   Receipts are delivered at least once: a retry after a failed status
+   write can emit the same receipt again with the same deterministic event
+   ID, so consumers deduplicate by event ID.
 3. **Active.** The controller marks `mirroring` once the agent's readiness
    probe reports the attach, and fails the session (with
    `debug_session.traffic_mirror.failed`) when the agent exits or the Pod

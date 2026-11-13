@@ -132,19 +132,14 @@ func maintenanceApproved(ds *breakglassv1alpha1.DebugSession) bool {
 
 // maintenanceClient uses the same privileged ClusterConfig provenance as workload deployment.
 func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrlclient.Client, func() error, func(), error) {
-	return c.fencedTargetClient(ctx, ds, false)
+	target, fence, release, _, err := c.fencedTargetClient(ctx, ds, false)
+	return target, fence, release, err
 }
 
-// maintenanceCleanupClient is maintenanceClient for removing executor state:
-// it also works while the ClusterConfig is being deleted, since that
-// deletion waits for the cleanup. UID, spec and credential fences still apply.
-func (c *DebugSessionController) maintenanceCleanupClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrlclient.Client, func() error, func(), error) {
-	return c.fencedTargetClient(ctx, ds, true)
-}
-
-func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cleanup bool) (ctrlclient.Client, func() error, func(), error) {
+// fencedTargetClient also returns the UID of the exact ClusterConfig used.
+func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cleanup bool) (ctrlclient.Client, func() error, func(), string, error) {
 	if c.ccProvider == nil {
-		return nil, nil, nil, fmt.Errorf("nodeMaintenance requires a target cluster provider")
+		return nil, nil, nil, "", fmt.Errorf("nodeMaintenance requires a target cluster provider")
 	}
 	resolve := c.ccProvider.GetRESTConfigForPrivilegedOperation
 	if cleanup {
@@ -152,7 +147,7 @@ func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *bre
 	}
 	cfg, configured, err := resolve(ctx, ds.Spec.Cluster)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	release := func() { c.ccProvider.ReleasePrivilegedOperationClusterConfig(configured) }
 	var target ctrlclient.Client
@@ -163,12 +158,12 @@ func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *bre
 	}
 	if err != nil {
 		release()
-		return nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	fence := func() error {
 		return c.ccProvider.ValidatePrivilegedOperationClusterConfig(ctx, configured)
 	}
-	return target, fence, release, nil
+	return target, fence, release, string(configured.UID), nil
 }
 
 // kexecExecutes reports whether a profile reboots its Node rather than only

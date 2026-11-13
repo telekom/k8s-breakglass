@@ -19,6 +19,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/breakglass"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -219,6 +221,7 @@ func trafficMirrorEnv(ds *breakglassv1alpha1.DebugSession) []corev1.EnvVar {
 	return []corev1.EnvVar{
 		{Name: "MIRROR_OPERATION", Value: operationID},
 		{Name: "MIRROR_POD_UID", Value: request.PodUID},
+		{Name: "MIRROR_POD_IP", Value: ds.Status.TrafficMirror.SourcePodIP},
 		{Name: "MIRROR_INTERFACE", Value: request.Interface},
 		{Name: "MIRROR_DIRECTION", Value: ds.Status.ResolvedTemplate.TrafficMirror.EffectiveDirection()},
 		{Name: "MIRROR_COOKIE", Value: cookie},
@@ -240,7 +243,7 @@ func trafficMirrorAgent(ds *breakglassv1alpha1.DebugSession, mode string, env []
 			AppArmorProfile: &corev1.AppArmorProfile{Type: corev1.AppArmorProfileTypeUnconfined},
 			Capabilities:    &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"}}},
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("16Mi")},
-			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("64Mi")}},
+			Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("200m"), corev1.ResourceMemory: resource.MustParse("64Mi")}},
 		TerminationMessagePolicy: corev1.TerminationMessageFallbackToLogsOnError,
 	}
 }
@@ -249,7 +252,8 @@ func trafficMirrorPodBase(ds *breakglassv1alpha1.DebugSession, name string, dead
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
 			Labels: map[string]string{DebugSessionLabelKey: ds.Name, DebugSessionUIDLabelKey: debugSessionIdentity(ds),
-				DebugTemplateLabelKey: ds.Spec.TemplateRef, DebugClusterLabelKey: ds.Spec.Cluster, "app.kubernetes.io/managed-by": "breakglass"},
+				DebugTemplateLabelKey: ds.Spec.TemplateRef, DebugClusterLabelKey: ds.Spec.Cluster, "app.kubernetes.io/managed-by": "breakglass",
+				trafficMirrorOperation: ds.Status.TrafficMirror.OperationID},
 			Annotations: map[string]string{trafficMirrorSessionUID: string(ds.UID), trafficMirrorOperation: ds.Status.TrafficMirror.OperationID}},
 		Spec: corev1.PodSpec{
 			NodeName: ds.Spec.TrafficMirror.NodeName, HostPID: true, RestartPolicy: corev1.RestartPolicyNever,
@@ -267,12 +271,11 @@ func trafficMirrorPodBase(ds *breakglassv1alpha1.DebugSession, name string, dead
 // attaches the mirror and an unprivileged (NET_RAW only) tcpdump. The Pod's
 // activeDeadlineSeconds ends at the session expiry, so the kubelet detaches
 // the mirror on time even while the controller is down.
-func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession, podIP string) *corev1.Pod {
+func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession) *corev1.Pod {
 	mirror := ds.Status.ResolvedTemplate.TrafficMirror
 	// Two seconds of slack keep a kubelet deadline from racing the controller's expiry.
 	pod := trafficMirrorPodBase(ds, ds.Status.TrafficMirror.OperationID, int64(math.Ceil(time.Until(ds.Status.ExpiresAt.Time).Seconds()))+2)
 	env := append(trafficMirrorEnv(ds),
-		corev1.EnvVar{Name: "MIRROR_POD_IP", Value: podIP},
 		corev1.EnvVar{Name: "MIRROR_EXPIRES_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 		corev1.EnvVar{Name: "MIRROR_RATE_MBIT", Value: strconv.Itoa(int(mirror.EffectiveMaxBandwidthMbps()))})
 	agent := trafficMirrorAgent(ds, "attach", env)
@@ -285,15 +288,18 @@ func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession, podIP string) *corev1
 		Name: "capture", Image: mirror.Image, ImagePullPolicy: corev1.PullIfNotPresent,
 		Command: trafficMirrorCommand("capture"),
 		Env: []corev1.EnvVar{
-			{Name: "MIRROR_SNAPLEN", Value: strconv.Itoa(int(mirror.EffectiveSnapLength()))},
+			{Name: "MIRROR_SNAPLEN", Value: strconv.Itoa(int(mirror.EffectiveCaptureSnapLength()))},
+			{Name: "MIRROR_CAPTURE_PAYLOAD", Value: strconv.FormatBool(mirror.CapturePayload)},
 			{Name: "MIRROR_MAX_PACKETS", Value: strconv.Itoa(int(mirror.EffectiveMaxPackets()))},
 			{Name: "MIRROR_FILTER", Value: mirror.Filter},
 			{Name: "MIRROR_EXPIRES_UNIX", Value: strconv.FormatInt(ds.Status.ExpiresAt.Unix(), 10)},
 		},
+		// tcpdump opens the capture socket with NET_RAW and then drops to
+		// nobody (-Z), which needs SETUID and SETGID once.
 		SecurityContext: &corev1.SecurityContext{Privileged: ptr.To(false), AllowPrivilegeEscalation: ptr.To(false), ReadOnlyRootFilesystem: ptr.To(true),
-			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_RAW"}}},
+			Capabilities: &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: []corev1.Capability{"NET_RAW", "SETGID", "SETUID"}}},
 		Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("10m"), corev1.ResourceMemory: resource.MustParse("32Mi")},
-			Limits: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("256Mi")}},
+			Limits: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("500m"), corev1.ResourceMemory: resource.MustParse("256Mi")}},
 	}}
 	return pod
 }
@@ -357,7 +363,7 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if err := c.ensureMaintenanceFinalizer(ctx, ds); err != nil {
 		return err
 	}
-	target, configurationFence, release, err := c.maintenanceClient(ctx, ds)
+	target, configurationFence, release, clusterConfigUID, err := c.fencedTargetClient(ctx, ds, false)
 	if err != nil {
 		return err
 	}
@@ -365,9 +371,12 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if err := configurationFence(); err != nil {
 		return err
 	}
+	if ds.Status.TrafficMirror != nil && ds.Status.TrafficMirror.ClusterConfigUID != clusterConfigUID {
+		return fmt.Errorf("trafficMirror ClusterConfig %s was replaced", ds.Spec.Cluster)
+	}
 	if ds.Status.TrafficMirror == nil {
 		inventory := &breakglassv1alpha1.TrafficMirrorStatus{OperationID: breakglassv1alpha1.TrafficMirrorOperationID(string(ds.UID)),
-			State: breakglassv1alpha1.TrafficMirrorStatePending}
+			State: breakglassv1alpha1.TrafficMirrorStatePending, ClusterConfigUID: clusterConfigUID}
 		receipt := ds.DeepCopy()
 		receipt.Status.TrafficMirror = inventory
 		if err := c.auditTrafficMirror(ctx, receipt, audit.EventDebugSessionTrafficMirrorStarted, "start", "mirror approved and starting"); err != nil {
@@ -397,6 +406,9 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if err := c.deployMaintenanceAuxiliaryResources(ctx, ds, target, configurationFence); err != nil {
 		return err
 	}
+	if err := ensureTrafficMirrorNetworkPolicy(ctx, target, ds); err != nil {
+		return err
+	}
 	if !status.CreateAttempted {
 		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.CreateAttempted = true }); err != nil {
 			return err
@@ -411,14 +423,77 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if !reflect.DeepEqual(resolved, ds.Spec.TrafficMirror) {
 		return fmt.Errorf("trafficMirror source changed since approval")
 	}
+	if status := ds.Status.TrafficMirror; status.SourcePodIP != podIP {
+		if status.SourcePodIP != "" {
+			return fmt.Errorf("trafficMirror source Pod IP changed since the create marker")
+		}
+		// Persisted before the Pod exists, so the teardown finds the same namespace.
+		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.SourcePodIP = podIP }); err != nil {
+			return err
+		}
+	}
 	if err := c.trafficMirrorFence(ctx, ds, configurationFence); err != nil {
 		return err
 	}
-	pod = trafficMirrorPod(ds, podIP)
+	pod = trafficMirrorPod(ds)
 	if err := target.Create(ctx, pod); err != nil {
 		return admitMaintenanceCreate(ds, err)
 	}
 	return c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.PodUID = string(pod.UID) })
+}
+
+// trafficMirrorNetworkPolicy denies all Pod-network traffic of the mirror
+// and teardown Pods of one operation: they need none, and the capture
+// container must not reach anything with the mirrored data.
+func trafficMirrorNetworkPolicy(ds *breakglassv1alpha1.DebugSession) *networkingv1.NetworkPolicy {
+	operationID := ds.Status.TrafficMirror.OperationID
+	return &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: operationID, Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+			Labels:      map[string]string{DebugSessionLabelKey: ds.Name, "app.kubernetes.io/managed-by": "breakglass"},
+			Annotations: map[string]string{trafficMirrorSessionUID: string(ds.UID), trafficMirrorOperation: operationID}},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{trafficMirrorOperation: operationID}},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress},
+		},
+	}
+}
+
+func ensureTrafficMirrorNetworkPolicy(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
+	policy := trafficMirrorNetworkPolicy(ds)
+	err := target.Create(ctx, policy)
+	if apierrors.IsAlreadyExists(err) {
+		live := &networkingv1.NetworkPolicy{}
+		if err := target.Get(ctx, ctrlclient.ObjectKeyFromObject(policy), live); err != nil {
+			return err
+		}
+		if live.Annotations[trafficMirrorSessionUID] != string(ds.UID) || !apiequality.Semantic.DeepEqual(live.Spec, policy.Spec) {
+			return fmt.Errorf("trafficMirror NetworkPolicy %s is not this session's deny-all policy", policy.Name)
+		}
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("create trafficMirror NetworkPolicy: %w", err)
+	}
+	return nil
+}
+
+// deleteTrafficMirrorNetworkPolicy removes the operation's own policy.
+func deleteTrafficMirrorNetworkPolicy(ctx context.Context, target ctrlclient.Client, ds *breakglassv1alpha1.DebugSession) error {
+	live := &networkingv1.NetworkPolicy{}
+	key := ctrlclient.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: ds.Status.TrafficMirror.OperationID}
+	if err := target.Get(ctx, key, live); apierrors.IsNotFound(err) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if live.Annotations[trafficMirrorSessionUID] != string(ds.UID) {
+		return fmt.Errorf("trafficMirror NetworkPolicy %s is not owned by this session", key.Name)
+	}
+	uid := live.UID
+	if err := target.Delete(ctx, live, ctrlclient.Preconditions{UID: &uid}); err != nil && !apierrors.IsNotFound(err) {
+		return err
+	}
+	return nil
 }
 
 // trafficMirrorFailure reports why the mirror Pod failed, or "". Both
@@ -562,13 +637,18 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 	if ds.Spec.TrafficMirror == nil || ds.Status.ResolvedTemplate == nil || ds.Status.ResolvedTemplate.TrafficMirror == nil {
 		return fmt.Errorf("trafficMirror cleanup provenance is incomplete")
 	}
-	target, configurationFence, release, err := c.maintenanceCleanupClient(ctx, ds)
+	target, configurationFence, release, clusterConfigUID, err := c.fencedTargetClient(ctx, ds, true)
 	if err != nil {
 		return err
 	}
 	defer release()
 	if err := configurationFence(); err != nil {
 		return err
+	}
+	// Never act on another cluster that reuses the ClusterConfig name: an
+	// operator resolves a replaced ClusterConfig by hand.
+	if status.ClusterConfigUID != "" && status.ClusterConfigUID != clusterConfigUID {
+		return fmt.Errorf("trafficMirror cleanup refused: ClusterConfig %s was replaced since the mirror was created", ds.Spec.Cluster)
 	}
 	// The agent detaches on SIGTERM; a killed agent leaves filters that only
 	// mirror into a deleted device until the teardown Pod removes them.
@@ -578,7 +658,10 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 		return fmt.Errorf("%w: mirror Pod is terminating", errTrafficMirrorTeardownPending)
 	}
 	teardownName := status.OperationID + trafficMirrorTeardownSuffix
-	if status.CreateAttempted && !status.TeardownVerified {
+	// A Pod source is attached only after its IP is persisted, so without one
+	// nothing reached the Node.
+	attachable := status.CreateAttempted && (ds.Spec.TrafficMirror.PodName == "" || status.SourcePodIP != "")
+	if attachable && !status.TeardownVerified {
 		verified, message, err := c.runTrafficMirrorTeardown(ctx, target, ds, teardownName)
 		if err != nil {
 			return err
@@ -619,6 +702,9 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 		return err
 	} else if !gone {
 		return fmt.Errorf("%w: teardown Pod is terminating", errTrafficMirrorTeardownPending)
+	}
+	if err := deleteTrafficMirrorNetworkPolicy(ctx, target, ds); err != nil {
+		return err
 	}
 	if hasOutstandingAuxiliaryResources(ds) {
 		if c.auxiliaryMgr == nil {

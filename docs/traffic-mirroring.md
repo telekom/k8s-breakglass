@@ -72,6 +72,7 @@ spec:
 | `snapLength` | 256 | Captured bytes per packet (64–65535). |
 | `maxPackets` | 10000 | The capture stops after this many packets (1–1000000). |
 | `maxBandwidthMbps` | 10 | Token bucket on the mirror device (1–1000). Excess copies are dropped; the source traffic is never shaped. |
+| `capturePayload` | `false` | `false` prints packet headers only (`tcpdump -q`, at most 96 bytes captured per packet). `true` restores protocol decoding (for example HTTP request lines) and `snapLength`. |
 
 The template is a fixed executor: no Pod template, scheduling, terminal
 sharing, recording or renewal, explicit approvers and blocked self-approval.
@@ -112,12 +113,33 @@ granted unless the template or binding sets `allowedPodOperations.logs: false`.
 | Container | Privileges | Purpose |
 | --- | --- | --- |
 | `mirror` | root, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, AppArmor unconfined, seccomp `RuntimeDefault`, read-only root, no privilege escalation | Enters the source network namespace, attaches the mirror, detaches on `SIGTERM`. |
-| `capture` | root, only `NET_RAW`, read-only root, no privilege escalation | `tcpdump` on the mirror device. |
+| `capture` | `NET_RAW`, `SETUID`, `SETGID`; tcpdump drops to `nobody` after opening its socket; read-only root, no privilege escalation | `tcpdump` on the mirror device. |
 
 The Pod uses `hostPID` (to find the source network namespace) but not the
 host network, has no service account token, runs on the source Node with
-`restartPolicy: Never`. Both containers receive the absolute approved expiry
-and stop at it on their own; `activeDeadlineSeconds` is a backstop.
+`restartPolicy: Never`, and both containers have CPU and memory limits.
+Both containers receive the absolute approved expiry and stop at it on their
+own; `activeDeadlineSeconds` is a backstop.
+
+The mirror devices are no path into the source: neither end has an IPv4 or
+IPv6 address, ARP is off, and every frame sent from the capture side is
+dropped at the source-side device. A per-operation deny-all NetworkPolicy
+isolates the mirror and teardown Pods on the Pod network.
+
+## Capture logs are sensitive
+
+The capture log contains the source's addresses, ports and timing, and with
+`capturePayload: true` decoded protocol content such as URLs, query tokens
+or plain-text credentials.
+
+- Readers: session participants through the `log` subresource (unless
+  `logs: false`), and anyone with `get` on `pods/log` in
+  `breakglass-node-maintenance`. Keep that RBAC to platform operators.
+- Retention: the log lives in the kubelet container log of the mirror Pod
+  and is removed with the Pod at cleanup. Copies made by node log shippers
+  follow their own retention.
+- Exclude `breakglass-node-maintenance` from log shipping, or restrict its
+  index to the audiences above, before enabling a mirror template.
 
 ## Cleanup
 

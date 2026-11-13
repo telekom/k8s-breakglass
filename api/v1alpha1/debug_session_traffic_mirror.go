@@ -79,6 +79,12 @@ type DebugSessionTrafficMirror struct {
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Maximum=1000000
 	MaxPackets int32 `json:"maxPackets,omitempty"`
+	// capturePayload lets the capture log print decoded protocol content
+	// (for example HTTP request lines). By default the capture prints only
+	// packet headers (tcpdump -q) and captures at most 96 bytes per packet,
+	// because the log may reach node log shippers.
+	// +optional
+	CapturePayload bool `json:"capturePayload,omitempty"`
 	// maxBandwidthMbps limits the mirrored copies with a token bucket on the
 	// mirror device (default 10). Excess copies are dropped; the original
 	// traffic is never shaped.
@@ -166,6 +172,14 @@ type TrafficMirrorStatus struct {
 	// podUID is the mirror Pod incarnation.
 	// +optional
 	PodUID string `json:"podUID,omitempty"`
+	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
+	// create it; cleanup refuses a replaced ClusterConfig.
+	// +optional
+	ClusterConfigUID string `json:"clusterConfigUID,omitempty"`
+	// sourcePodIP is the approved source Pod IP that identifies its network
+	// namespace on the Node, also for the teardown.
+	// +optional
+	SourcePodIP string `json:"sourcePodIP,omitempty"`
 	// teardownVerified is set after a teardown Pod proved that no tc filter
 	// with this operation's cookie and no mirror device remain.
 	// +optional
@@ -211,6 +225,17 @@ func (m *DebugSessionTrafficMirror) EffectiveMaxPackets() int32 {
 		return defaultTrafficMirrorMaxPackets
 	}
 	return m.MaxPackets
+}
+
+// HeaderOnlySnapLength bounds the capture when capturePayload is false.
+const HeaderOnlySnapLength = 96
+
+// EffectiveCaptureSnapLength returns the snap length the capture uses.
+func (m *DebugSessionTrafficMirror) EffectiveCaptureSnapLength() int32 {
+	if !m.CapturePayload {
+		return min(m.EffectiveSnapLength(), HeaderOnlySnapLength)
+	}
+	return m.EffectiveSnapLength()
 }
 
 // EffectiveMaxBandwidthMbps returns the mirror bandwidth with its default.

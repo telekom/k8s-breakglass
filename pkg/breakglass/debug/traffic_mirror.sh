@@ -33,18 +33,24 @@ require_env() {
 	: "${MIRROR_OPERATION:?}" "${MIRROR_INTERFACE:?}" "${MIRROR_VETH:?}" "${MIRROR_COOKIE:?}" "${MIRROR_PREF:?}"
 }
 
-# pod_pid prints a PID whose cgroup belongs to the Pod UID, or fails.
+# pod_pid prints the PID of a process of the Pod UID whose network namespace
+# owns the approved Pod IP. It prints nothing when the Pod has no process on
+# this Node and fails when its processes exist but none owns the IP.
 pod_pid() {
 	uid=$1
 	alt=$(printf '%s' "$uid" | tr - _)
+	found=""
 	for cgroup in /proc/[0-9]*/cgroup; do
-		if grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null; then
-			pid=${cgroup#/proc/}
-			printf '%s\n' "${pid%/cgroup}"
+		grep -q -e "pod$uid" -e "pod$alt" "$cgroup" 2>/dev/null || continue
+		pid=${cgroup#/proc/}
+		pid=${pid%/cgroup}
+		found=1
+		if nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>/dev/null | grep -F -q " ${MIRROR_POD_IP:?}/"; then
+			printf '%s\n' "$pid"
 			return 0
 		fi
 	done
-	return 1
+	[ -z "$found" ] || fail target-mismatch "no network namespace of the Pod owns the approved Pod IP"
 }
 
 # check_scan refuses to run when the scan cannot see other Pods or enter
@@ -57,6 +63,7 @@ check_scan() {
 }
 
 # target_pid prints the target network namespace owner: PID 1 for a Node.
+# It prints nothing when the target Pod is gone from this Node.
 target_pid() {
 	if [ -z "${MIRROR_POD_UID:-}" ]; then
 		printf '1\n'
@@ -159,7 +166,8 @@ attach() {
 	require_env
 	check_scan
 	[ "$(remaining)" -gt 0 ] || fail expired "the approved session has expired"
-	tpid=$(target_pid) || fail target-missing "the target Pod has no process on this Node"
+	tpid=$(target_pid) || exit 1
+	[ -n "$tpid" ] || fail target-missing "the target Pod has no process on this Node"
 	pin_target
 	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	if [ -n "${MIRROR_POD_UID:-}" ]; then
@@ -178,6 +186,13 @@ attach() {
 	trap 'detach' EXIT
 	trap 'detach; verify_detached; log mirror-stopped; exit 0' TERM INT
 	in_target ip link add name "$MIRROR_VETH" type veth peer name "$peer" netns "$$"
+	# The pair carries mirrored copies only, never a path into the source:
+	# no IPv6 link-local addresses, no ARP, and every frame arriving from the
+	# capture side is dropped before the source network stack.
+	in_target ip link set dev "$MIRROR_VETH" addrgenmode none arp off
+	ip link set dev "$peer" addrgenmode none arp off
+	in_target tc qdisc add dev "$MIRROR_VETH" clsact
+	in_target tc filter add dev "$MIRROR_VETH" ingress pref 1 protocol all basic action drop
 	in_target ip link set "$MIRROR_VETH" up
 	ip link set "$peer" up
 	# Only the mirrored copies pass this bucket; excess copies are dropped.
@@ -212,14 +227,19 @@ capture() {
 	done
 	left=$(remaining)
 	[ "$left" -gt 0 ] || exit 0
-	# timeout exits 124 at the approved expiry.
-	exec timeout "$left" tcpdump -p -n -l -e -i "$peer" -s "${MIRROR_SNAPLEN:?}" -c "${MIRROR_MAX_PACKETS:?}" -- ${MIRROR_FILTER:+"$MIRROR_FILTER"}
+	# Header-only output unless the template opted into payload decoding.
+	quiet=-q
+	[ "${MIRROR_CAPTURE_PAYLOAD:-false}" != true ] || quiet=
+	# timeout exits 124 at the approved expiry. tcpdump drops to nobody after
+	# opening the capture socket.
+	exec timeout "$left" tcpdump -Z nobody -p -n -l -e $quiet -i "$peer" -s "${MIRROR_SNAPLEN:?}" -c "${MIRROR_MAX_PACKETS:?}" -- ${MIRROR_FILTER:+"$MIRROR_FILTER"}
 }
 
 teardown() {
 	require_env
 	check_scan
-	if ! tpid=$(target_pid); then
+	tpid=$(target_pid) || exit 1
+	if [ -z "$tpid" ]; then
 		log teardown-verified "target network namespace is gone"
 		return 0
 	fi

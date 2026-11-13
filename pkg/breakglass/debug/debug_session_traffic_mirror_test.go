@@ -16,6 +16,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -141,7 +142,21 @@ func TestTrafficMirrorDeployCreatesFixedCapturePod(t *testing.T) {
 	require.Len(t, pod.Spec.Containers, 2)
 	agent, capture := pod.Spec.Containers[0], pod.Spec.Containers[1]
 	require.Equal(t, []corev1.Capability{"NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"}, agent.SecurityContext.Capabilities.Add)
-	require.Equal(t, []corev1.Capability{"NET_RAW"}, capture.SecurityContext.Capabilities.Add)
+	require.Equal(t, []corev1.Capability{"NET_RAW", "SETGID", "SETUID"}, capture.SecurityContext.Capabilities.Add,
+		"tcpdump drops to nobody after opening its socket")
+	require.Equal(t, "cluster-uid", status.ClusterConfigUID, "the mirror is bound to the exact ClusterConfig")
+	require.Equal(t, "10.244.0.7", status.SourcePodIP)
+	for _, container := range pod.Spec.Containers {
+		require.False(t, container.Resources.Limits.Cpu().IsZero(), "%s has a CPU limit", container.Name)
+		require.False(t, container.Resources.Limits.Memory().IsZero(), "%s has a memory limit", container.Name)
+	}
+	require.Equal(t, status.OperationID, pod.Labels[trafficMirrorOperation])
+	policy := &networkingv1.NetworkPolicy{}
+	require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: status.OperationID}, policy))
+	require.Equal(t, map[string]string{trafficMirrorOperation: status.OperationID}, policy.Spec.PodSelector.MatchLabels)
+	require.ElementsMatch(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}, policy.Spec.PolicyTypes)
+	require.Empty(t, policy.Spec.Ingress, "deny all ingress")
+	require.Empty(t, policy.Spec.Egress, "deny all egress")
 	for _, container := range pod.Spec.Containers {
 		require.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
 		require.False(t, *container.SecurityContext.Privileged)
@@ -157,7 +172,8 @@ func TestTrafficMirrorDeployCreatesFixedCapturePod(t *testing.T) {
 	require.Equal(t, "eth0", envValue(agent, "MIRROR_INTERFACE"))
 	require.Equal(t, "10", envValue(agent, "MIRROR_RATE_MBIT"))
 	require.Equal(t, "tcp port 8080", envValue(capture, "MIRROR_FILTER"))
-	require.Equal(t, "256", envValue(capture, "MIRROR_SNAPLEN"))
+	require.Equal(t, "96", envValue(capture, "MIRROR_SNAPLEN"), "header-only capture by default")
+	require.Equal(t, "false", envValue(capture, "MIRROR_CAPTURE_PAYLOAD"))
 	cookie, pref, veth := trafficMirrorTuple(status.OperationID)
 	require.Equal(t, cookie, envValue(agent, "MIRROR_COOKIE"))
 	require.Equal(t, pref, envValue(agent, "MIRROR_PREF"))
@@ -306,6 +322,7 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	require.NotNil(t, pod)
 	require.Len(t, pod.Spec.Containers, 1)
 	require.Equal(t, "teardown", pod.Spec.Containers[0].Command[4])
+	require.Equal(t, "10.244.0.7", envValue(pod.Spec.Containers[0], "MIRROR_POD_IP"), "the teardown selects the namespace that owns the approved IP")
 	require.Equal(t, "node-a", pod.Spec.NodeName)
 
 	// A failed teardown is never accepted; the attempt is replaced.
@@ -323,6 +340,9 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	require.True(t, status.Released)
 	require.Equal(t, breakglassv1alpha1.TrafficMirrorStateStopped, status.State)
 	require.Nil(t, f.pod(t, teardown), "the teardown Pod is removed after verification")
+	policy := &networkingv1.NetworkPolicy{}
+	require.True(t, apierrors.IsNotFound(f.spoke.Get(t.Context(), client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: name}, policy)),
+		"the deny-all policy is removed after the Pods")
 	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted, audit.EventDebugSessionTrafficMirrorStopped}, f.eventTypes())
 	require.NoError(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "cleanup is idempotent")
 	require.Len(t, f.sink.Events(), 2)
@@ -349,6 +369,26 @@ func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {
 		require.False(t, f.ds.Status.TrafficMirror.TeardownVerified)
 		require.False(t, f.ds.Status.TrafficMirror.Released)
 	})
+}
+
+func TestTrafficMirrorCleanupRefusesReplacedClusterConfig(t *testing.T) {
+	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	require.NoError(t, f.c.patchTrafficMirrorStatus(t.Context(), f.ds, func(status *breakglassv1alpha1.TrafficMirrorStatus) {
+		status.ClusterConfigUID = "original-cluster-uid"
+	}))
+	require.ErrorContains(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), "was replaced")
+	require.NotNil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "nothing is deleted in another cluster")
+	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID+trafficMirrorTeardownSuffix), "no privileged teardown Pod in another cluster")
+	require.False(t, f.ds.Status.TrafficMirror.Released)
+	require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "was replaced")
+}
+
+func TestTrafficMirrorCapturePayloadOptIn(t *testing.T) {
+	mirror := &breakglassv1alpha1.DebugSessionTrafficMirror{SnapLength: 1500}
+	require.Equal(t, int32(96), mirror.EffectiveCaptureSnapLength())
+	mirror.CapturePayload = true
+	require.Equal(t, int32(1500), mirror.EffectiveCaptureSnapLength())
 }
 
 func TestTrafficMirrorFailureClassification(t *testing.T) {

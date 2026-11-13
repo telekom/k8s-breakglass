@@ -2671,6 +2671,9 @@ var schemaYAML = typed.YAMLObject(`types:
           elementType:
             namedType: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorSource
           elementRelationship: atomic
+    - name: capturePayload
+      type:
+        scalar: boolean
     - name: direction
       type:
         scalar: string
@@ -4968,6 +4971,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorStatus
   map:
     fields:
+    - name: clusterConfigUID
+      type:
+        scalar: string
     - name: createAttempted
       type:
         scalar: boolean
@@ -4983,6 +4989,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: released
       type:
         scalar: boolean
+    - name: sourcePodIP
+      type:
+        scalar: string
     - name: state
       type:
         scalar: string

@@ -5592,6 +5592,13 @@ spec:
                     minItems: 1
                     type: array
                     x-kubernetes-list-type: atomic
+                  capturePayload:
+                    description: |-
+                      capturePayload lets the capture log print decoded protocol content
+                      (for example HTTP request lines). By default the capture prints only
+                      packet headers (tcpdump -q) and captures at most 96 bytes per packet,
+                      because the log may reach node log shippers.
+                    type: boolean
                   direction:
                     description: direction selects the mirrored traffic of the interface
                       (default both).

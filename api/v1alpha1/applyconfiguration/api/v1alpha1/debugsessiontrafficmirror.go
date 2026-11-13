@@ -31,6 +31,11 @@ type DebugSessionTrafficMirrorApplyConfiguration struct {
 	SnapLength *int32 `json:"snapLength,omitempty"`
 	// maxPackets stops the capture after this many packets (default 10000).
 	MaxPackets *int32 `json:"maxPackets,omitempty"`
+	// capturePayload lets the capture log print decoded protocol content
+	// (for example HTTP request lines). By default the capture prints only
+	// packet headers (tcpdump -q) and captures at most 96 bytes per packet,
+	// because the log may reach node log shippers.
+	CapturePayload *bool `json:"capturePayload,omitempty"`
 	// maxBandwidthMbps limits the mirrored copies with a token bucket on the
 	// mirror device (default 10). Excess copies are dropped; the original
 	// traffic is never shaped.
@@ -93,6 +98,14 @@ func (b *DebugSessionTrafficMirrorApplyConfiguration) WithSnapLength(value int32
 // If called multiple times, the MaxPackets field is set to the value of the last call.
 func (b *DebugSessionTrafficMirrorApplyConfiguration) WithMaxPackets(value int32) *DebugSessionTrafficMirrorApplyConfiguration {
 	b.MaxPackets = &value
+	return b
+}
+
+// WithCapturePayload sets the CapturePayload field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CapturePayload field is set to the value of the last call.
+func (b *DebugSessionTrafficMirrorApplyConfiguration) WithCapturePayload(value bool) *DebugSessionTrafficMirrorApplyConfiguration {
+	b.CapturePayload = &value
 	return b
 }
 

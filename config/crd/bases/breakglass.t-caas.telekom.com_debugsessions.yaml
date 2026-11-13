@@ -8508,6 +8508,13 @@ spec:
                         minItems: 1
                         type: array
                         x-kubernetes-list-type: atomic
+                      capturePayload:
+                        description: |-
+                          capturePayload lets the capture log print decoded protocol content
+                          (for example HTTP request lines). By default the capture prints only
+                          packet headers (tcpdump -q) and captures at most 96 bytes per packet,
+                          because the log may reach node log shippers.
+                        type: boolean
                       direction:
                         description: direction selects the mirrored traffic of the
                           interface (default both).
@@ -8772,6 +8779,11 @@ spec:
                 description: trafficMirror tracks the mirror executor until its teardown
                   is verified.
                 properties:
+                  clusterConfigUID:
+                    description: |-
+                      clusterConfigUID binds the mirror to the exact ClusterConfig used to
+                      create it; cleanup refuses a replaced ClusterConfig.
+                    type: string
                   createAttempted:
                     description: |-
                       createAttempted is persisted before the mirror Pod is created; once set,
@@ -8791,6 +8803,11 @@ spec:
                     description: released is set once every target resource of the
                       mirror is gone.
                     type: boolean
+                  sourcePodIP:
+                    description: |-
+                      sourcePodIP is the approved source Pod IP that identifies its network
+                      namespace on the Node, also for the teardown.
+                    type: string
                   state:
                     description: state is the last observed mirror state.
                     enum:

@@ -22,6 +22,12 @@ type TrafficMirrorStatusApplyConfiguration struct {
 	CreateAttempted *bool `json:"createAttempted,omitempty"`
 	// podUID is the mirror Pod incarnation.
 	PodUID *string `json:"podUID,omitempty"`
+	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
+	// create it; cleanup refuses a replaced ClusterConfig.
+	ClusterConfigUID *string `json:"clusterConfigUID,omitempty"`
+	// sourcePodIP is the approved source Pod IP that identifies its network
+	// namespace on the Node, also for the teardown.
+	SourcePodIP *string `json:"sourcePodIP,omitempty"`
 	// teardownVerified is set after a teardown Pod proved that no tc filter
 	// with this operation's cookie and no mirror device remain.
 	TeardownVerified *bool `json:"teardownVerified,omitempty"`
@@ -68,6 +74,22 @@ func (b *TrafficMirrorStatusApplyConfiguration) WithCreateAttempted(value bool) 
 // If called multiple times, the PodUID field is set to the value of the last call.
 func (b *TrafficMirrorStatusApplyConfiguration) WithPodUID(value string) *TrafficMirrorStatusApplyConfiguration {
 	b.PodUID = &value
+	return b
+}
+
+// WithClusterConfigUID sets the ClusterConfigUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the ClusterConfigUID field is set to the value of the last call.
+func (b *TrafficMirrorStatusApplyConfiguration) WithClusterConfigUID(value string) *TrafficMirrorStatusApplyConfiguration {
+	b.ClusterConfigUID = &value
+	return b
+}
+
+// WithSourcePodIP sets the SourcePodIP field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the SourcePodIP field is set to the value of the last call.
+func (b *TrafficMirrorStatusApplyConfiguration) WithSourcePodIP(value string) *TrafficMirrorStatusApplyConfiguration {
+	b.SourcePodIP = &value
 	return b
 }
 

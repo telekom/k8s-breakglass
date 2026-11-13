@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -40,6 +41,33 @@ if [ -n "$uid" ]; then
 fi
 for hook in ingress egress; do nsenter -t "$pid" -n tc filter show dev eth0 "$hook"; done
 nsenter -t "$pid" -n ip -o link show`
+
+// kindIsolation proves that the capture side has no path into the source
+// network namespace: neither veth end has an address, and frames injected
+// from the mirror Pod toward the source Pod IP are dropped at the source-side
+// device. It prints the drop counter before and after the injection.
+const kindIsolation = `mirror=$1 source=$2 ip=$3 veth=$4
+pidof_pod() {
+	alt=$(printf '%s' "$1" | tr - _)
+	grep -l -e "pod$1" -e "pod$alt" /proc/[0-9]*/cgroup 2>/dev/null | head -1 | cut -d/ -f3
+}
+mpid=$(pidof_pod "$mirror")
+spid=""
+alt=$(printf '%s' "$source" | tr - _)
+for cgroup in $(grep -l -e "pod$source" -e "pod$alt" /proc/[0-9]*/cgroup 2>/dev/null); do
+	pid=$(printf '%s' "$cgroup" | cut -d/ -f3)
+	if nsenter -t "$pid" -n ip -o addr show | grep -F -q " $ip/"; then spid=$pid; break; fi
+done
+[ -n "$mpid" ] && [ -n "$spid" ] || { echo "MISSING-NETNS"; exit 1; }
+echo "SOURCE-ADDRS=[$(nsenter -t "$spid" -n ip -o addr show dev "$veth")]"
+echo "CAPTURE-ADDRS=[$(nsenter -t "$mpid" -n ip -o addr show dev bgmirror0)]"
+mac=$(nsenter -t "$spid" -n ip -o link show dev "$veth" | sed -n 's/.*link\/ether \([0-9a-f:]*\).*/\1/p')
+dropped() { nsenter -t "$spid" -n tc -s filter show dev "$veth" ingress | sed -n 's/.*dropped \([0-9]*\).*/\1/p' | head -1; }
+echo "DROPPED-BEFORE=$(dropped)"
+nsenter -t "$mpid" -n sh -c "ip addr add 169.254.77.2/32 dev bgmirror0 && ip route add $ip/32 dev bgmirror0 && ip neigh replace $ip lladdr $mac dev bgmirror0 nud permanent"
+nsenter -t "$mpid" -n timeout 3 bash -c "echo > /dev/tcp/$ip/8080" >/dev/null 2>&1 && echo "CONNECTED"
+nsenter -t "$mpid" -n ip addr del 169.254.77.2/32 dev bgmirror0
+echo "DROPPED-AFTER=$(dropped)"`
 
 // kindKillAgent SIGKILLs the mirror agent, which cannot trap it: its tc
 // filters and mirror device stay behind like after a crash.
@@ -85,7 +113,7 @@ func TestTrafficMirrorKind(t *testing.T) {
 			Spec: corev1.PodSpec{AutomountServiceAccountToken: ptr.To(false), TerminationGracePeriodSeconds: ptr.To(int64(1)),
 				Containers: []corev1.Container{{Name: "main", Image: image, Command: []string{"/bin/sh", "-c", script}}}}}
 	}
-	server := "while true; do printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\n\\r\\n' | nc -l -p 8080 -q 1 >/dev/null 2>&1; done"
+	server := "serve() { while true; do printf 'HTTP/1.1 204 No Content\\r\\nContent-Length: 0\\r\\n\\r\\n' | nc -l -p $1 -q 1 >/dev/null 2>&1; done; }; serve 8081 & serve 8080"
 	for _, pod := range []*corev1.Pod{shell("target", "target", server), shell("decoy", "decoy", server)} {
 		require.NoError(t, hub.Create(ctx, pod))
 	}
@@ -97,7 +125,9 @@ func TestTrafficMirrorKind(t *testing.T) {
 		return pod.Status.PodIP
 	}
 	targetIP, decoyIP := podIP("target"), podIP("decoy")
-	traffic := "while true; do curl -s -m 1 http://" + targetIP + ":8080/ >/dev/null; curl -s -m 1 http://" + decoyIP + ":8080/ >/dev/null; sleep 0.2; done"
+	// Port 8081 crosses the same target interface and must be removed by the
+	// template's capture filter; the decoy Pod's traffic never may appear.
+	traffic := "while true; do for url in " + targetIP + ":8080 " + targetIP + ":8081 " + decoyIP + ":8080; do curl -s -m 1 http://$url/ >/dev/null; done; sleep 0.2; done"
 	require.NoError(t, hub.Create(ctx, shell("client", "client", traffic)))
 	podIP("client")
 	target := &corev1.Pod{}
@@ -256,7 +286,30 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.Equal(t, string(target.UID), session.Spec.TrafficMirror.PodUID)
 		requireMirrored(session, targetIP+".8080")
 		require.NotContains(t, captureLog(session), decoyIP+".8080", "only the target's interface is mirrored")
+		require.NotContains(t, captureLog(session), targetIP+".8081", "the template filter removes other traffic of the same interface")
 		requireActiveState(session, string(target.UID))
+
+		// The capture side has no path into the source namespace.
+		mirrorPod := &corev1.Pod{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.TrafficMirror.OperationID}, mirrorPod))
+		_, _, veth := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
+		output, err := exec.CommandContext(ctx, "docker", "exec", nodeID, "sh", "-c", kindIsolation, "isolation",
+			string(mirrorPod.UID), string(target.UID), targetIP, veth).CombinedOutput()
+		require.NoError(t, err, string(output))
+		report := string(output)
+		require.Contains(t, report, "SOURCE-ADDRS=[]", "no address on the source-side mirror device: %s", report)
+		require.Contains(t, report, "CAPTURE-ADDRS=[]", "no address on the capture-side mirror device: %s", report)
+		require.NotContains(t, report, "CONNECTED", "the capture side reached the source Pod: %s", report)
+		var before, after int
+		for _, line := range strings.Split(report, "\n") {
+			if value, ok := strings.CutPrefix(line, "DROPPED-BEFORE="); ok {
+				before, _ = strconv.Atoi(strings.TrimSpace(value))
+			}
+			if value, ok := strings.CutPrefix(line, "DROPPED-AFTER="); ok {
+				after, _ = strconv.Atoi(strings.TrimSpace(value))
+			}
+		}
+		require.Greater(t, after, before, "injected frames are dropped at the source-side device: %s", report)
 		require.Len(t, session.Status.AllowedPods, 1)
 		require.True(t, *session.Status.AllowedPodOperations.Logs)
 		require.False(t, *session.Status.AllowedPodOperations.Exec)
