@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zaptest"
 )
 
@@ -441,6 +442,46 @@ func TestConfigValidateQuotaNamespaceRoleMatrix(t *testing.T) {
 				cfg.BreakglassNamespace = "breakglass-system"
 				assert.NoError(t, cfg.Validate())
 			}
+		})
+	}
+}
+
+func TestParse_Logging(t *testing.T) {
+	tests := []struct {
+		name                  string
+		args                  []string
+		env                   map[string]string
+		wantLevel, wantFormat string
+		wantErr               string
+	}{
+		{name: "defaults", wantLevel: "info", wantFormat: "json"},
+		{name: "flags", args: []string{"--log-level=debug", "--log-format=json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "env", env: map[string]string{"LOG_LEVEL": "warn", "LOG_FORMAT": "console"}, wantLevel: "warn", wantFormat: "console"},
+		{name: "flag overrides env", args: []string{"--log-level=error"}, env: map[string]string{"LOG_LEVEL": "warn"}, wantLevel: "error", wantFormat: "json"},
+		{name: "deprecated --debug keeps console", args: []string{"--debug"}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug with json", args: []string{"--debug", "--log-format=json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "--debug with LOG_FORMAT", args: []string{"--debug"}, env: map[string]string{"LOG_FORMAT": "json"}, wantLevel: "debug", wantFormat: "json"},
+		{name: "--debug with --log-level=debug", args: []string{"--debug", "--log-level=debug"}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug conflicts with info", args: []string{"--debug", "--log-level=info"}, wantErr: "--debug conflicts with --log-level=info"},
+		{name: "--debug conflicts with LOG_LEVEL", args: []string{"--debug"}, env: map[string]string{"LOG_LEVEL": "error"}, wantErr: "--debug conflicts with --log-level=error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("LOG_LEVEL", "")
+			t.Setenv("LOG_FORMAT", "")
+			for k, v := range tt.env {
+				t.Setenv(k, v)
+			}
+			cfg := parseWithArgs(t, append([]string{"--breakglass-namespace=ns"}, tt.args...))
+			err := cfg.Validate()
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			level, format := cfg.Logging()
+			assert.Equal(t, tt.wantLevel, level)
+			assert.Equal(t, tt.wantFormat, format)
 		})
 	}
 }
