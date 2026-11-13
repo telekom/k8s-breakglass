@@ -21,7 +21,7 @@ ARG BUILD_DATE=unknown
 # generation; the build flags mirror its `pwru` target. The compiler and build
 # dependencies never enter the runtime image. Storage tooling is intentionally
 # excluded; kubestr belongs to storage-debug.
-FROM golang:1.27.3@sha256:957861185dbf29d93668ace41e011d091c6e779953d47f0316ef2cc58e28fe2b AS tools
+FROM golang:1.27.4@sha256:5e8afd493a7124a8586e134d9b532731161d4b9becf9dee5a5956b107426f93d AS tools
 ARG TARGETARCH
 
 COPY pwru/go.mod pwru/go.sum /src/tools/
