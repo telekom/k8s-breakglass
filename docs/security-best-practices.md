@@ -572,8 +572,11 @@ from their own custom resources are not exempt, so they cannot be used to
 launder the keys.
 
 Keeping the keys is not enough on its own: anyone allowed to edit a debug pod
-or a debug Deployment could swap its image or command, or add an ephemeral
-container, and run their own code under the genuine markers. They could also
+or a debug Deployment could otherwise swap its image or command, or add an
+ephemeral container, through the API and run their own code under the
+genuine markers. The policy blocks these spec edits (see below); exec, attach
+and port-forward are a separate path that it cannot block (see the
+limitation further down). They could also
 remove a marked ReplicaSet's owner reference, or change its labels so the
 Deployment does not adopt it again; cleanup deletes the Deployment and the
 detached ReplicaSet keeps creating marked Pods. On every Pod and workload
@@ -609,19 +612,38 @@ namespace) can therefore run commands there that runtime-security tools
 attribute to the session. Run debug Pods in dedicated namespaces where no
 identity other than the controller and the session's participants holds
 `pods/exec`, `pods/attach` or `pods/portforward`, and audit the bindings
-there regularly, for example:
+there regularly. Ask the API server's authorizer instead of reading role
+names: that resolves aggregated roles such as `edit` and `admin`, wildcard
+verbs and resources, and bindings in the namespace and cluster-wide. The
+following lists every bound user, group and ServiceAccount that may exec,
+attach or port-forward there (run it with a user allowed to impersonate):
 
 ```bash
 ns=breakglass-debug
-for b in $(kubectl get rolebindings -n "$ns" -o name); do
-  role=$(kubectl get -n "$ns" "$b" -o jsonpath='{.roleRef.kind}/{.roleRef.name}')
-  echo "$b -> $role: $(kubectl get -n "$ns" "$b" -o jsonpath='{range .subjects[*]}{.kind}:{.name} {end}')"
+{ kubectl get rolebindings -n "$ns" -o json; kubectl get clusterrolebindings -o json; } |
+  jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | @tsv' | sort -u |
+while IFS=$'\t' read -r kind name subject_ns; do
+  case "$kind" in
+    User) as=(--as="$name") ;;
+    Group) as=(--as=breakglass-exec-audit --as-group="$name") ;;
+    ServiceAccount) as=(--as="system:serviceaccount:${subject_ns:-$ns}:$name") ;;
+  esac
+  # get pods/exec: before Kubernetes 1.31, WebSocket exec is authorized as get.
+  for check in create:exec get:exec create:attach create:portforward; do
+    if kubectl auth can-i "${check%%:*}" pods --subresource="${check#*:}" -n "$ns" "${as[@]}" >/dev/null 2>&1; then
+      echo "$kind $name may ${check%%:*} pods/${check#*:} in $ns"
+    fi
+  done
 done
-kubectl get clusterrolebindings -o json | jq -r '.items[]
-  | "\(.metadata.name) -> \(.roleRef.name): \([.subjects[]? | "\(.kind):\(.name)"] | join(" "))"'
-# Then check who may actually exec into a debug Pod:
-kubectl auth can-i create pods/exec -n "$ns" --as=<user> --as-group=<group>
 ```
+
+Only the controller's identity and the identities of session participants
+should appear, plus identities the cluster trusts anyway: cluster
+administrators, `system:masters`, and control-plane ServiceAccounts in
+`kube-system` with broad rights (on a kubeadm cluster, for example,
+`generic-garbage-collector` and `namespace-controller` may `get pods/exec`). Remove any other binding that grants these
+rights in the debug namespace, for example a binding to `edit`, `admin` or
+`cluster-admin`.
 
 A possible future hardening is an opt-in authorizer or validating-webhook
 check that denies exec, attach and port-forward on marked Pods for anyone
