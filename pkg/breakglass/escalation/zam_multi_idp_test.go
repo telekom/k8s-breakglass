@@ -18,6 +18,7 @@ package escalation
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -28,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	cfgpkg "github.com/telekom/k8s-breakglass/pkg/config"
@@ -173,27 +175,47 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 	}
 }
 
-// When IdP discovery finds no enabled IdP, the updater falls back to legacy
-// mode, which never refreshes per-IdP memberships. They must be dropped so a
-// member removed upstream cannot keep approving.
+// When IdP discovery fails or finds no enabled IdP, the updater falls back to
+// legacy mode, which never refreshes per-IdP memberships. They must be dropped
+// so a member removed upstream cannot keep approving.
 func TestLegacyFallbackDropsStaleProviderMemberships(t *testing.T) {
-	cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
-	log := zap.NewNop().Sugar()
-	updater := EscalationStatusUpdater{
-		Log:           log,
-		K8sClient:     cli,
-		IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
-		EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
-		Resolver:      &MockResolver{members: map[string][]string{"approvers": {"current@example.com"}}},
+	for _, discoveryFails := range []bool{false, true} {
+		name := "no enabled identity provider"
+		if discoveryFails {
+			name = "identity provider discovery fails"
+		}
+		t.Run(name, func(t *testing.T) {
+			cli, escalation := newTwoIDPStatusClient(t, nil, staleTwoIDPStatus())
+			updated := escalation.DeepCopy()
+			updated.Spec.AllowedIdentityProvidersForRequests = nil
+			updated.Spec.AllowedIdentityProvidersForApprovers = nil
+			require.NoError(t, cli.Update(context.Background(), updated))
+
+			loaderClient := cli
+			if discoveryFails {
+				loaderClient = interceptor.NewClient(cli.(client.WithWatch), interceptor.Funcs{
+					List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+						if _, ok := list.(*breakglassv1alpha1.IdentityProviderList); ok {
+							return errors.New("identity provider list unavailable")
+						}
+						return c.List(ctx, list, opts...)
+					},
+				})
+			}
+			log := zap.NewNop().Sugar()
+			updater := EscalationStatusUpdater{
+				Log:           log,
+				K8sClient:     cli,
+				IDPLoader:     cfgpkg.NewIdentityProviderLoader(loaderClient),
+				EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
+				Resolver:      &MockResolver{members: map[string][]string{"approvers": {"current@example.com"}}},
+			}
+
+			updater.runOnce(context.Background(), log)
+
+			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
+			assert.Equal(t, []string{"current@example.com"}, updated.Status.ApproverGroupMembers["approvers"])
+			assert.Empty(t, updated.Status.IDPGroupMemberships, "legacy mode must drop per-IdP snapshots it does not refresh")
+		})
 	}
-	updated := escalation.DeepCopy()
-	updated.Spec.AllowedIdentityProvidersForRequests = nil
-	updated.Spec.AllowedIdentityProvidersForApprovers = nil
-	require.NoError(t, cli.Update(context.Background(), updated))
-
-	updater.runOnce(context.Background(), log)
-
-	require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
-	assert.Equal(t, []string{"current@example.com"}, updated.Status.ApproverGroupMembers["approvers"])
-	assert.Empty(t, updated.Status.IDPGroupMemberships, "legacy mode must drop per-IdP snapshots it does not refresh")
 }

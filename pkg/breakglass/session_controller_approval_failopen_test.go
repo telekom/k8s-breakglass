@@ -386,6 +386,11 @@ func TestStaleProviderGroupMembershipDoesNotApprove(t *testing.T) {
 			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
 
 			require.Equal(t, tt.allowed, result.Allowed, "reason %s", result.Reason)
+			if !tt.allowed {
+				// The denial must come from group membership, not from an
+				// unrelated check such as the identity provider allow-list.
+				require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+			}
 		})
 	}
 }
@@ -418,7 +423,11 @@ func TestLargeProviderGroupMembershipCheck(t *testing.T) {
 			ctrl.getUserGroupsFn = func(context.Context, ClusterUserGroup) ([]string, error) { return []string{}, nil }
 			c := newApprovalAuthorizationTestContext(caller, "idp-a")
 			c.Set("groups", []string{})
-			require.Equal(t, allowed, ctrl.checkApprovalAuthorization(c, *failOpenSession()).Allowed)
+			result := ctrl.checkApprovalAuthorization(c, *failOpenSession())
+			require.Equal(t, allowed, result.Allowed)
+			if !allowed {
+				require.Equal(t, ApprovalDenialNotAnApprover, result.Reason)
+			}
 		})
 	}
 }

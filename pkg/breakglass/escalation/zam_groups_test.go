@@ -59,6 +59,15 @@ func TestZAMFixtureLengths(t *testing.T) {
 	require.Greater(t, len(zamPrefixedMax), 63, "prefixed form must exceed the label-value limit")
 }
 
+func withSubGroups(parent *gocloak.Group, children ...*gocloak.Group) *gocloak.Group {
+	sub := make([]gocloak.Group, 0, len(children))
+	for _, child := range children {
+		sub = append(sub, *child)
+	}
+	parent.SubGroups = &sub
+	return parent
+}
+
 func kcGroup(id, name string) *gocloak.Group {
 	return &gocloak.Group{ID: gocloak.StringP(id), Name: gocloak.StringP(name)}
 }
@@ -89,6 +98,8 @@ func TestMatchKeycloakGroupZAMNames(t *testing.T) {
 		{name: "missing id rejected", groups: []*gocloak.Group{{Name: gocloak.StringP(zamPlatform)}}, lookup: zamPlatform, wantErr: "without an ID"},
 		{name: "nil entries ignored", groups: []*gocloak.Group{nil, {ID: gocloak.StringP("x")}, kcGroup("5", zamFirstLine)}, lookup: zamFirstLine, wantID: "5"},
 		{name: "no match", groups: []*gocloak.Group{kcGroup("6", zamPlatform)}, lookup: zamTenant},
+		{name: "same-named subgroup makes the name ambiguous", groups: []*gocloak.Group{kcGroup("top", zamTenant), withSubGroups(kcGroup("parent", "tenants"), kcGroup("sub", zamTenant))}, lookup: zamTenant, wantAmbiguous: true},
+		{name: "nested subgroup is a match", groups: []*gocloak.Group{withSubGroups(kcGroup("parent", "tenants"), kcGroup("sub", zamTenant))}, lookup: zamTenant, wantID: "sub"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -514,17 +514,33 @@ func ApproverGroupCaseInsensitiveFallback() bool {
 // breakglass.ErrGroupAmbiguous error. It returns nil when no group matches.
 func matchKeycloakGroup(groups []*gocloak.Group, name string, caseInsensitiveFallback bool) (*gocloak.Group, error) {
 	var exact, folded []*gocloak.Group
-	for _, g := range groups {
-		if g == nil || g.Name == nil {
-			continue
-		}
-		switch {
-		case *g.Name == name:
-			exact = append(exact, g)
-		case strings.EqualFold(*g.Name, name):
-			folded = append(folded, g)
+	// Keycloak search returns matching subgroups nested under their parents.
+	// A subgroup with the configured name is a distinct group, so it counts
+	// as a candidate and makes the name ambiguous rather than being ignored.
+	var visit func([]*gocloak.Group)
+	visit = func(level []*gocloak.Group) {
+		for _, g := range level {
+			if g == nil {
+				continue
+			}
+			if g.Name != nil {
+				switch {
+				case *g.Name == name:
+					exact = append(exact, g)
+				case strings.EqualFold(*g.Name, name):
+					folded = append(folded, g)
+				}
+			}
+			if g.SubGroups != nil {
+				sub := make([]*gocloak.Group, 0, len(*g.SubGroups))
+				for i := range *g.SubGroups {
+					sub = append(sub, &(*g.SubGroups)[i])
+				}
+				visit(sub)
+			}
 		}
 	}
+	visit(groups)
 	candidates := exact
 	if len(candidates) == 0 && caseInsensitiveFallback {
 		candidates = folded
