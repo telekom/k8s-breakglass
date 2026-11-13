@@ -334,7 +334,7 @@ func run() error {
 
 	// Create channels for leader election signal and background error propagation
 	leaderElectedCh := make(chan struct{})
-	errCh := make(chan error, 4) // buffer matches sender count: background, cert-manager, webhook-server, reconciler
+	errCh := make(chan error, 5) // buffer matches sender count: background, cert-manager, webhook-server, reconciler, HTTP server
 
 	var wg sync.WaitGroup
 	managerCtx, cancel := context.WithCancel(context.Background())
@@ -385,7 +385,11 @@ func run() error {
 
 	// Start HTTP server if either frontend or API is enabled
 	if shouldEnableHTTPServer {
-		go func() { server.Listen() }()
+		go func() {
+			if err := server.Listen(); err != nil {
+				errCh <- fmt.Errorf("HTTP server failed: %w", err)
+			}
+		}()
 	}
 
 	runErr := awaitShutdownSignal(sigChan, errCh, log)
@@ -896,6 +900,9 @@ func validateServerTLS(server config.Server, httpEnabled bool) error {
 		return nil
 	}
 	if _, _, err := server.ClientTLS(); err != nil {
+		return fmt.Errorf("validate server TLS config: %w", err)
+	}
+	if err := server.ValidateWebhook(); err != nil {
 		return fmt.Errorf("validate server TLS config: %w", err)
 	}
 	return nil

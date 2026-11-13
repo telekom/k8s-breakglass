@@ -4,6 +4,13 @@ server:
   tlsKeyFile: /some/file.key # optional for https
   # clientAuth: none # optional mutual TLS: none (default), request, verifyIfGiven, require
   # clientCAFile: /some/client-ca.pem # PEM bundle; required for verifyIfGiven and require
+  # tlsReloadDisabled: false # transitional: true reads the TLS files once at startup instead of reloading them
+  # webhook: # optional dedicated mTLS listener for the SAR authorization webhook
+  #   listenAddress: :8443
+  #   clientAuth: require
+  #   clientCAFile: /some/apiserver-ca.pem
+  #   requireCommonNameMatch: true # default under require: the client cert must name the cluster
+  #   disableOnMainListener: false
   # hardenedIDPHints controls whether identity provider names are exposed in error messages.
   # When false (default): Error messages list available IDPs to help users troubleshoot.
   # When true: Error messages are generic to prevent IDP reconnaissance attacks.

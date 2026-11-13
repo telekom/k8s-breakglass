@@ -1,14 +1,25 @@
 package api
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -1312,4 +1323,388 @@ func TestSetup_FrontendOnly_ExcludesSAR(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/foo", nil)
 	server.gin.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// writeServerCert writes a localhost serving certificate with the given
+// serial number, signed by ca, to certFile and keyFile.
+func writeServerCert(t *testing.T, ca testCA, serial int64, certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+	require.NoError(t, os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+}
+
+// TestReloadingTLSConfig serves HTTPS the way Listen does, rotates the
+// certificate files and the client CA bundle on disk, and checks what the
+// next handshake sees.
+func TestReloadingTLSConfig(t *testing.T) {
+	saved := clientCAReloadInterval
+	clientCAReloadInterval = 50 * time.Millisecond
+	t.Cleanup(func() { clientCAReloadInterval = saved })
+
+	serverCA := newTestCA(t, "server-ca")
+	oldClientCA := newTestCA(t, "old-client-ca")
+	newClientCA := newTestCA(t, "new-client-ca")
+	oldClient := oldClientCA.clientCert(t, time.Now().Add(time.Hour))
+	newClient := newClientCA.clientCert(t, time.Now().Add(time.Hour))
+	roots := x509.NewCertPool()
+	roots.AddCert(serverCA.cert)
+
+	serve := func(t *testing.T, reloadDisabled bool) (cfg config.Server, addr string) {
+		t.Helper()
+		dir := t.TempDir()
+		cfg = config.Server{
+			TLSCertFile:       filepath.Join(dir, "tls.crt"),
+			TLSKeyFile:        filepath.Join(dir, "tls.key"),
+			ClientAuth:        config.ClientAuthRequire,
+			ClientCAFile:      filepath.Join(dir, "client-ca.pem"),
+			TLSReloadDisabled: reloadDisabled,
+		}
+		writeServerCert(t, serverCA, 100, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, oldClientCA.pem, 0o600))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		tlsCfg, err := reloadingTLSConfig(ctx, cfg, zaptest.NewLogger(t).Sugar())
+		require.NoError(t, err)
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		srv := &http.Server{
+			Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+			TLSConfig:         tlsCfg,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		certFile, keyFile := tlsFiles(cfg)
+		go func() { _ = srv.ServeTLS(ln, certFile, keyFile) }()
+		t.Cleanup(func() { _ = srv.Close() })
+		return cfg, ln.Addr().String()
+	}
+	// handshake returns the server certificate serial and the negotiated
+	// ALPN protocol. TLS 1.2 makes the server's client-certificate verdict
+	// part of the handshake.
+	handshake := func(addr string, client tls.Certificate) (int64, string, error) {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr, &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+			ServerName: "localhost",
+			NextProtos: []string{"h2", "http/1.1"},
+			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				return &client, nil
+			},
+		})
+		if err != nil {
+			return 0, "", err
+		}
+		defer func() { _ = conn.Close() }()
+		state := conn.ConnectionState()
+		return state.PeerCertificates[0].SerialNumber.Int64(), state.NegotiatedProtocol, nil
+	}
+
+	t.Run("reload", func(t *testing.T) {
+		cfg, addr := serve(t, false)
+		serial, proto, err := handshake(addr, oldClient)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), serial)
+		assert.Equal(t, "h2", proto, "HTTP/2 must survive GetConfigForClient")
+		_, _, err = handshake(addr, newClient)
+		require.ErrorContains(t, err, "tls: unknown certificate authority")
+
+		writeServerCert(t, serverCA, 200, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+
+		// certwatcher reacts to fsnotify or polls every 10s.
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			serial, _, err := handshake(addr, newClient)
+			if assert.NoError(c, err) {
+				assert.Equal(c, int64(200), serial)
+			}
+		}, 20*time.Second, 50*time.Millisecond)
+		_, _, err = handshake(addr, oldClient)
+		assert.ErrorContains(t, err, "tls: unknown certificate authority", "the replaced client CA must no longer be trusted")
+	})
+
+	t.Run("invalid-ca-update-keeps-current", func(t *testing.T) {
+		otherCA := newTestCA(t, "other-client-ca")
+		for name, bundle := range map[string][]byte{
+			"not PEM": []byte("not a certificate"),
+			// A multi-CA bundle caught mid-write: the first CA is complete.
+			"truncated second CA": append(append([]byte{}, newClientCA.pem...), otherCA.pem[:len(otherCA.pem)/2]...),
+		} {
+			t.Run(name, func(t *testing.T) {
+				cfg, addr := serve(t, false)
+				require.NoError(t, os.WriteFile(cfg.ClientCAFile, bundle, 0o600))
+				time.Sleep(5 * clientCAReloadInterval)
+				_, _, err := handshake(addr, oldClient)
+				assert.NoError(t, err, "the current bundle stays in use")
+				_, _, err = handshake(addr, newClient)
+				assert.ErrorContains(t, err, "tls: unknown certificate authority", "a partial bundle must not be published")
+			})
+		}
+	})
+
+	// A resumed session must not outlive the rotation of its client CA.
+	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
+		t.Run("resumption/"+tls.VersionName(version), func(t *testing.T) {
+			cfg, addr := serve(t, false)
+			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+				DisableKeepAlives: true,
+				TLSClientConfig: &tls.Config{
+					MinVersion:         version,
+					MaxVersion:         version,
+					RootCAs:            roots,
+					ServerName:         "localhost",
+					ClientSessionCache: tls.NewLRUClientSessionCache(4),
+					GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+						return &oldClient, nil
+					},
+				},
+			}}
+			// get returns whether the connection resumed a session.
+			get := func() (bool, error) {
+				resp, err := client.Get("https://" + addr + "/")
+				if err != nil {
+					return false, err
+				}
+				defer func() { _ = resp.Body.Close() }()
+				return resp.TLS.DidResume, nil
+			}
+			_, err := get()
+			require.NoError(t, err)
+			resumed, err := get()
+			require.NoError(t, err)
+			require.True(t, resumed, "the session must resume before the rotation")
+
+			require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				_, _, err := handshake(addr, newClient)
+				assert.NoError(c, err)
+			}, 10*time.Second, 50*time.Millisecond)
+
+			// The response is read, so a TLS 1.3 alert after the handshake is seen.
+			_, err = get()
+			assert.Error(t, err, "the retired client must not resume or handshake")
+		})
+	}
+
+	t.Run("disabled", func(t *testing.T) {
+		cfg, addr := serve(t, true)
+		_, _, err := handshake(addr, oldClient) // the server has loaded the files
+		require.NoError(t, err)
+		writeServerCert(t, serverCA, 200, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+		time.Sleep(5 * clientCAReloadInterval)
+
+		serial, _, err := handshake(addr, oldClient)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), serial)
+		_, _, err = handshake(addr, newClient)
+		assert.ErrorContains(t, err, "tls: unknown certificate authority")
+	})
+}
+
+// stubWebhook stands in for the webhook controller: it echoes the cluster
+// name of /authorize/:cluster_name.
+type stubWebhook struct{}
+
+func (stubWebhook) BasePath() string { return webhookBasePath }
+func (stubWebhook) Register(rg *gin.RouterGroup) error {
+	rg.POST("/authorize/:cluster_name", func(c *gin.Context) { c.String(http.StatusOK, "authorized "+c.Param("cluster_name")) })
+	return nil
+}
+func (stubWebhook) Handlers() []gin.HandlerFunc { return nil }
+
+// TestRegisterAllWebhookListener checks which listener serves the webhook
+// routes for each server.webhook setting.
+func TestRegisterAllWebhookListener(t *testing.T) {
+	paths := []string{"/api/breakglass/webhook/authorize/prod-eu", "/breakglass/webhook/authorize/prod-eu"}
+	post := func(h http.Handler, path string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodPost, path, strings.NewReader("{}")))
+		return w
+	}
+	tests := []struct {
+		name        string
+		webhook     config.ServerWebhook
+		wantMain    int
+		wantWebhook int // 0: no webhook listener
+	}{
+		{name: "unset keeps today's behaviour", wantMain: http.StatusOK},
+		{name: "both listeners", webhook: config.ServerWebhook{ListenAddress: ":8443"}, wantMain: http.StatusOK, wantWebhook: http.StatusOK},
+		{name: "disabled on main", webhook: config.ServerWebhook{ListenAddress: ":8443", DisableOnMainListener: true}, wantMain: http.StatusNotFound, wantWebhook: http.StatusOK},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{ListenAddress: ":8080", AllowedOrigins: []string{"https://breakglass.example.com"}, Webhook: tt.webhook}}, false, &AuthHandler{})
+			t.Cleanup(s.Close)
+			require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+			for _, path := range paths {
+				w := post(s.Handler(), path)
+				assert.Equal(t, tt.wantMain, w.Code, "main listener %s: %s", path, w.Body.String())
+				if tt.wantMain == http.StatusOK {
+					assert.Equal(t, "authorized prod-eu", w.Body.String())
+				}
+			}
+			if tt.wantWebhook == 0 {
+				assert.Nil(t, s.webhookServer)
+				return
+			}
+			require.NotNil(t, s.webhookServer)
+			assert.Equal(t, ":8443", s.webhookServer.Addr)
+			for _, path := range paths {
+				w := post(s.webhookServer.Handler, path)
+				assert.Equal(t, tt.wantWebhook, w.Code, "webhook listener %s", path)
+				assert.Equal(t, "authorized prod-eu", w.Body.String())
+			}
+			// The webhook listener serves nothing else.
+			w := httptest.NewRecorder()
+			s.webhookServer.Handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+			assert.Equal(t, http.StatusNotFound, w.Code)
+		})
+	}
+}
+
+// TestWebhookListenerRequiresClusterIdentity checks that the listener puts
+// the client certificate identity check in front of the webhook when
+// requireCommonNameMatch is in effect.
+func TestWebhookListenerRequiresClusterIdentity(t *testing.T) {
+	off := false
+	verified := func(name string) *tls.ConnectionState {
+		leaf := &x509.Certificate{Subject: pkix.Name{CommonName: name}, DNSNames: []string{name}}
+		return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+	}
+	for name, tt := range map[string]struct {
+		webhook   config.ServerWebhook
+		wantOther int
+	}{
+		"require defaults to name match": {webhook: config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire}, wantOther: http.StatusForbidden},
+		"transitional escape":            {webhook: config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire, RequireCommonNameMatch: &off}, wantOther: http.StatusOK},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{ListenAddress: ":8080", AllowedOrigins: []string{"https://breakglass.example.com"}, Webhook: tt.webhook}}, false, &AuthHandler{})
+			t.Cleanup(s.Close)
+			require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+			for cert, want := range map[string]int{"prod-eu": http.StatusOK, "prod-us": tt.wantOther} {
+				req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/prod-eu", strings.NewReader("{}"))
+				req.TLS = verified(cert)
+				w := httptest.NewRecorder()
+				s.webhookServer.Handler.ServeHTTP(w, req)
+				assert.Equal(t, want, w.Code, "certificate for %s", cert)
+			}
+		})
+	}
+}
+
+// TestListenReportsWebhookListenerFailure: a webhook port that cannot be
+// bound must surface from Listen instead of leaving a ready pod without a
+// working webhook endpoint.
+func TestListenReportsWebhookListenerFailure(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = taken.Close() })
+
+	s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{
+		ListenAddress:  "127.0.0.1:0",
+		AllowedOrigins: []string{"https://breakglass.example.com"},
+		Webhook:        config.ServerWebhook{ListenAddress: taken.Addr().String()},
+	}}, false, &AuthHandler{})
+	t.Cleanup(s.Close)
+	require.NoError(t, s.RegisterAll([]APIController{stubWebhook{}}))
+
+	done := make(chan error, 1)
+	go func() { done <- s.Listen() }()
+	select {
+	case err := <-done:
+		require.ErrorContains(t, err, "webhook listener "+taken.Addr().String())
+	case <-time.After(10 * time.Second):
+		t.Fatal("Listen did not report the bind failure")
+	}
+	require.NoError(t, s.Shutdown(context.Background()))
+}
+
+func TestParseCABundle(t *testing.T) {
+	a, b := newTestCA(t, "a"), newTestCA(t, "b")
+	both := append(append([]byte{}, a.pem...), b.pem...)
+	tests := map[string]struct {
+		data    []byte
+		wantErr string
+	}{
+		"one":                 {data: a.pem},
+		"two with text":       {data: append([]byte("# bundle\n"), both...)},
+		"empty":               {data: nil, wantErr: "no PEM certificates"},
+		"not PEM":             {data: []byte("garbage"), wantErr: "no PEM certificates"},
+		"truncated second":    {data: append(append([]byte{}, a.pem...), b.pem[:len(b.pem)/2]...), wantErr: "malformed PEM block after 1 certificates"},
+		"malformed first":     {data: append([]byte("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n"), both...), wantErr: "malformed PEM block after 0 certificates"},
+		"malformed middle":    {data: append(append(append([]byte{}, a.pem...), []byte("-----BEGIN CERTIFICATE-----\n!!!\n-----END CERTIFICATE-----\n")...), b.pem...), wantErr: "malformed PEM block after 1 certificates"},
+		"unparsable":          {data: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("nope")}), wantErr: "certificate 1"},
+		"other block skipped": {data: append(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: []byte("x")}), a.pem...)},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			pool, err := parseCABundle(tt.data)
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, pool)
+		})
+	}
+}
+
+// limitedStubWebhook is stubWebhook behind a limiter that admits limit
+// requests and answers 429 after that.
+type limitedStubWebhook struct {
+	stubWebhook
+	limit *int
+}
+
+func (l limitedStubWebhook) Handlers() []gin.HandlerFunc {
+	return []gin.HandlerFunc{func(c *gin.Context) {
+		if *l.limit <= 0 {
+			c.AbortWithStatus(http.StatusTooManyRequests)
+			return
+		}
+		*l.limit--
+		c.Next()
+	}}
+}
+
+// TestWebhookListenerRateLimitsRejectedIdentity: a request whose client
+// certificate names another cluster is rejected only after the SAR rate
+// limiter has counted it, so cross-cluster probing stays rate limited.
+func TestWebhookListenerRateLimitsRejectedIdentity(t *testing.T) {
+	limit := 2
+	s := NewServer(zaptest.NewLogger(t), config.Config{Server: config.Server{
+		ListenAddress:  ":8080",
+		AllowedOrigins: []string{"https://breakglass.example.com"},
+		Webhook:        config.ServerWebhook{ListenAddress: ":8443", ClientAuth: config.ClientAuthRequire},
+	}}, false, &AuthHandler{})
+	t.Cleanup(s.Close)
+	require.NoError(t, s.RegisterAll([]APIController{limitedStubWebhook{limit: &limit}}))
+
+	leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "prod-us"}, DNSNames: []string{"prod-us"}}
+	var codes []int
+	for range 3 {
+		req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/prod-eu", strings.NewReader("{}"))
+		req.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+		w := httptest.NewRecorder()
+		s.webhookServer.Handler.ServeHTTP(w, req)
+		codes = append(codes, w.Code)
+	}
+	assert.Equal(t, []int{http.StatusForbidden, http.StatusForbidden, http.StatusTooManyRequests}, codes)
 }
