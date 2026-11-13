@@ -151,7 +151,8 @@ events.
 - **Secrets.** Kubeconfigs, SMTP passwords and S3 credentials are not logged;
   when loading them fails, only the error is logged. Audit webhook URLs are
   redacted in errors (test `TestWebhookSinkRedactsTransportURL`). Mail
-  subjects are logged as `subjectLength`. Recipients are not logged when an
+  subjects, which name the requester and the requested group, are logged only as
+  `subjectLength`. Recipients are not logged when an
   SMTP server rejects them (test `TestPlainSMTPRecipientReplyIsPrivate`).
 - **Terminal content.** The terminal stream and the recordings
   (`pkg/breakglass/debug/terminal_protocol.go`, `recording.go`) have no log
@@ -233,7 +234,7 @@ Number of distinct messages per process and level.
 |---|---|---|---|---|---|---|---|
 | bgctl | 1 | 0 | 0 | 0 | 0 | 0 | 0 |
 | cluster-validator | 0 | 0 | 0 | 2 | 0 | 0 | 0 |
-| controller | 468 | 344 | 352 | 271 | 0 | 0 | 0 |
+| controller | 468 | 345 | 353 | 272 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -329,14 +330,16 @@ variable part of a concatenated message.
 | info | `Frontend UI enabled via --enable-frontend=true` |  | api.go |
 | info | `HTTP server shutdown complete` |  | api.go |
 | info | `Initiating graceful HTTP server shutdown` |  | api.go |
+| info | `Reloaded client CA bundle` | `file` | api.go |
 | info | `Session activity tracking enabled` |  | api.go |
 | info | `Starting HTTP server` | `address` | api.go |
-| info | `Starting HTTPS server` | `address`, `clientAuth`, `tlsMinVersion` | api.go |
+| info | `Starting HTTPS server` | `address`, `clientAuth`, `tlsMinVersion`, `tlsReload` | api.go |
 | info | `http_request` | `cid`, `latency`, `method`, `path`, `status` | api.go |
 | info | `identity provider loaded` | `authority`, `name`, `type` | api.go |
 | info | `identity provider reloaded successfully` | `name`, `type` | api.go |
 | warn | `CORS: no allowed origins configured and defaults not enabled — browser requests with Origin header will be blocked; set server.allowedOrigins in config` |  | api.go |
 | warn | `CORS: using default localhost origins because BREAKGLASS_ALLOW_DEFAULT_ORIGINS is enabled — not suitable for production; set server.allowedOrigins in config` | `BREAKGLASS_ALLOW_DEFAULT_ORIGINS`, `origins` | api.go |
+| warn | `Cannot reload client CA bundle; the current one stays in use` | `error`, `file` | api.go |
 | warn | `Failed to set trusted proxies` | `error` | api.go |
 | warn | `HTTP server shutdown error` | `error` | api.go |
 | warn | `OIDC proxy: server.allowOIDCProxyRedirects is enabled — the proxy will follow upstream 30x responses without re-checking the authority allowlist, which permits SSRF via a redirecting identity provider; unset this field to restore the secure default` |  | api.go |
@@ -357,6 +360,7 @@ variable part of a concatenated message.
 | warn | `oidc_proxy_url_resolution_attack` | `originalPath` | api.go |
 | warn | `refusing insecure TLS verification for identity provider` | `authority`, `idpName`, `remediation` | api.go |
 | error | `Invalid server TLS configuration` | `error` | api.go |
+| error | `Server certificate watcher stopped; the current certificate stays in use` | `error` | api.go |
 | error | `Server listen error` | `error` | api.go |
 | error | `[Recovery from panic]` | `cid`, `error`, `method`, `path` | api.go |
 | error | `failed_to_reload_identity_provider` | `error` | api.go |
@@ -527,7 +531,7 @@ variable part of a concatenated message.
 | debug | `Possible escalations found` | `cluster`, `count`, `user`† | session_request_helpers.go |
 | debug | `Processing escalation for approver resolution` | `approverGroupCount`†, `escalatedGroup`†, `escalationName`, `explicitUserCount`† | session_request_helpers.go |
 | debug | `Querying for active breakglass session` | `cluster`, `group`†, `user`† | session_controller_status.go |
-| debug | `Rendering breakglass session request email` | `approvers`†, `group`†, `recipientCount`†, `requestEmail`†, `requestUsername`†, `session`, `subject`† | session_controller_actions.go |
+| debug | `Rendering breakglass session request email` | `approvers`†, `group`†, `recipientCount`†, `requestEmail`†, `requestUsername`†, `session`, `subjectLength`† | session_controller_actions.go |
 | debug | `Resolved approver group members` | `escalation`, `group`†, `memberCount` | session_request_helpers.go |
 | debug | `Resolved group members for sync` | `count`, `group`† | session_request_helpers.go |
 | debug | `Resolved user groups via spoke cluster rest.Config` | `cluster`, `groupCount`†, `user`† | session_controller_approval_utils.go |
@@ -687,8 +691,8 @@ variable part of a concatenated message.
 | warn | `Duplicate cleanup audit delivered but acknowledgement failed; retaining retryable outbox state` | `error`, `namespace`, `session` | cleanup_duplicate_sessions.go |
 | warn | `Duration validation failed` | `error`, `maxAllowed`, `requestedDuration` | session_request_helpers.go |
 | warn | `Failed to drain duplicate cleanup audit` | `error`, `namespace`, `session` | cleanup_duplicate_sessions.go |
-| warn | `Failed to enqueue session request email (will not retry)` | `error`, `recipientCount`†, `session`, `subject`† | session_controller_actions.go |
-| warn | `Failed to enqueue session request email via mail service` | `error`, `recipientCount`†, `session`, `subject`† | session_controller_actions.go |
+| warn | `Failed to enqueue session request email (will not retry)` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
+| warn | `Failed to enqueue session request email via mail service` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
 | warn | `Failed to get authenticated identity for approval meta` | `error` | session_controller_status.go |
 | warn | `Failed to list approved sessions for activity tracker pruning` | `error` | cleanup_task.go |
 | warn | `Failed to list escalations for group sync` | `error` | session_request_helpers.go |
@@ -838,7 +842,7 @@ variable part of a concatenated message.
 | error | `failed to render session activated email` | `error`, `namespace`, `session` | scheduled_activation.go |
 | error | `failed to render session expired email` | `error`, `namespace`, `session` | expire_approved_sessions.go |
 | error | `failed to retry session expiry notification enqueue` | `error`, `namespace`, `session` | expire_approved_sessions.go |
-| error | `failed to send request email` | `error`, `recipientCount`†, `session`, `subject`† | session_controller_actions.go |
+| error | `failed to send request email` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
 | error | `failed to update expired session status` | `error`, `session` | expire_approved_sessions.go |
 | error | `failed to update idle-expired session after retries` | `error`, `session` | expire_idle_sessions.go |
 | error | `failed to update session status while expiring pending session` | `error` | expire_pending_sessions.go |
