@@ -5,6 +5,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,7 @@ import (
 type escalationAuditCapture struct {
 	mu     sync.Mutex
 	state  audit.ConfigurationState
+	reject bool
 	events []*audit.Event
 }
 
@@ -33,11 +35,15 @@ func newEscalationAuditCapture() *escalationAuditCapture {
 	return &escalationAuditCapture{state: audit.ConfigurationReady}
 }
 
-func (c *escalationAuditCapture) Emit(_ context.Context, event *audit.Event) {
-	audittest.Record(event)
+func (c *escalationAuditCapture) TryEmit(_ context.Context, event *audit.Event) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.reject {
+		return false
+	}
+	audittest.Record(event)
 	c.events = append(c.events, event)
+	return true
 }
 
 func (c *escalationAuditCapture) ConfigurationState() audit.ConfigurationState {
@@ -46,10 +52,10 @@ func (c *escalationAuditCapture) ConfigurationState() audit.ConfigurationState {
 	return c.state
 }
 
-func (c *escalationAuditCapture) setState(state audit.ConfigurationState) {
+func (c *escalationAuditCapture) set(state audit.ConfigurationState, reject bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.state = state
+	c.state, c.reject = state, reject
 }
 
 func (c *escalationAuditCapture) take() []*audit.Event {
@@ -80,10 +86,10 @@ type escalationAuditHarness struct {
 	r   *EscalationReconciler
 }
 
-func newEscalationAuditHarness(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation, capture *escalationAuditCapture) *escalationAuditHarness {
+func newEscalationAuditHarness(t *testing.T, esc *breakglassv1alpha1.BreakglassEscalation, emitter EscalationAuditEmitter) *escalationAuditHarness {
 	cli := fake.NewClientBuilder().WithScheme(newTestEscalationReconcilerScheme()).WithObjects(esc).WithStatusSubresource(esc).Build()
 	return &escalationAuditHarness{t: t, cli: cli,
-		r: NewEscalationReconciler(cli, zap.NewNop().Sugar(), newEscalationFakeEventRecorder(10), nil, nil, 0).WithAuditEmitter(capture)}
+		r: NewEscalationReconciler(cli, zap.NewNop().Sugar(), newEscalationFakeEventRecorder(10), nil, nil, 0).WithAuditEmitter(emitter)}
 }
 
 func (h *escalationAuditHarness) reconcile() reconcile.Result {
@@ -141,75 +147,199 @@ func TestEscalationReconcilerAuditsSpecChanges(t *testing.T) {
 	require.NotContains(t, events[0].Details, "previousGeneration")
 }
 
-// Escalations reconciled before the AuditConfig reconciler loaded the audit
-// pipeline are audited once it is ready, not dropped; disabled auditing
-// emits nothing and does not requeue.
-func TestEscalationReconcilerWaitsForAuditPipeline(t *testing.T) {
-	capture := newEscalationAuditCapture()
-	capture.setState(audit.ConfigurationUnavailable)
-	h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
+// An event that the pipeline did not accept (not configured yet, or a full
+// queue) is retried with backoff and keeps its first observation time;
+// disabled auditing emits nothing and does not requeue.
+func TestEscalationReconcilerRetriesUnacceptedEvents(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		state audit.ConfigurationState
+	}{{"pipeline not configured yet", audit.ConfigurationUnavailable}, {"queue full", audit.ConfigurationReady}} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture := newEscalationAuditCapture()
+			capture.set(tc.state, true)
+			h := newEscalationAuditHarness(t, auditedEscalation(1), capture)
+			observedAt := time.Now()
+			require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter)
+			require.Equal(t, 2*escalationAuditRetry, h.reconcile().RequeueAfter, "backoff doubles")
+			require.Empty(t, capture.take())
 
-	observedAt := time.Now()
-	result := h.reconcile()
-	require.Equal(t, h.r.auditRetry, result.RequeueAfter, "retry until the audit pipeline is configured")
-	require.Empty(t, capture.take())
-	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter)
-
-	time.Sleep(20 * time.Millisecond)
-	readyAt := time.Now()
-	capture.setState(audit.ConfigurationReady)
-	require.Equal(t, reconcile.Result{}, h.reconcile())
-	events := capture.take()
-	require.Len(t, events, 1)
-	require.Equal(t, audit.EventEscalationCreated, events[0].Type)
-	require.WithinDuration(t, observedAt, events[0].Timestamp, time.Second, "the event keeps the first observation time")
-	require.True(t, events[0].Timestamp.Before(readyAt), "not the time the pipeline became ready")
+			time.Sleep(20 * time.Millisecond)
+			readyAt := time.Now()
+			capture.set(audit.ConfigurationReady, false)
+			require.Equal(t, reconcile.Result{}, h.reconcile())
+			events := capture.take()
+			require.Len(t, events, 1)
+			require.Equal(t, audit.EventEscalationCreated, events[0].Type)
+			require.WithinDuration(t, observedAt, events[0].Timestamp, time.Second)
+			require.True(t, events[0].Timestamp.Before(readyAt), "the event keeps its first observation time")
+			require.Empty(t, h.r.auditor.pending)
+		})
+	}
 
 	disabled := newEscalationAuditCapture()
-	disabled.setState(audit.ConfigurationDisabled)
-	require.Equal(t, reconcile.Result{}, newEscalationAuditHarness(t, auditedEscalation(1), disabled).reconcile())
+	disabled.set(audit.ConfigurationDisabled, false)
+	h := newEscalationAuditHarness(t, auditedEscalation(1), disabled)
+	require.Equal(t, reconcile.Result{}, h.reconcile())
 	require.Empty(t, disabled.take())
+	require.Empty(t, h.r.auditor.pending)
+}
+
+func TestEscalationAuditorBoundsAndExpiry(t *testing.T) {
+	capture := newEscalationAuditCapture()
+	capture.set(audit.ConfigurationUnavailable, true)
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	now := time.Now()
+	a.now = func() time.Time { return now }
+	for i := range escalationAuditLimit + 10 {
+		esc := auditedEscalation(1)
+		esc.UID = types.UID(fmt.Sprintf("uid-%d", i))
+		now = now.Add(time.Millisecond)
+		require.Positive(t, a.specChange(context.Background(), esc))
+		deleted := auditedEscalation(1)
+		deleted.UID = types.UID(fmt.Sprintf("deleted-%d", i))
+		a.deletion(deleted)
+	}
+	require.Len(t, a.pending, escalationAuditLimit, "pending spec changes are bounded")
+	require.Len(t, a.deletes, escalationAuditLimit, "pending deletions are bounded")
+	require.NotContains(t, a.deletes, types.UID("deleted-0"), "the oldest entry is evicted")
+	require.NotContains(t, a.pending, types.UID("uid-0"), "the oldest entry is evicted")
+
+	now = now.Add(escalationAuditTTL + time.Minute)
+	require.Zero(t, a.flush(context.Background()), "expired deletions are dropped")
+	esc := auditedEscalation(1)
+	esc.UID = "uid-20"
+	require.Zero(t, a.specChange(context.Background(), esc), "an expired spec change stops retrying")
+	require.NotContains(t, a.pending, esc.UID)
 }
 
 func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	capture := newEscalationAuditCapture()
-	r := NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(capture)
-	r.auditDeletion(auditedEscalation(5))
-	events := capture.take()
-	require.Len(t, events, 1)
-	require.Equal(t, audit.EventEscalationDeleted, events[0].Type)
-	require.Equal(t, "escalation/esc-uid/deleted", events[0].ID)
-	require.Equal(t, audit.SeverityWarning, audit.SeverityForEventType(events[0].Type))
-	require.NoError(t, audittest.Check(events[0]))
+	capture.set(audit.ConfigurationUnavailable, true)
+	a := newEscalationAuditor(capture, zap.NewNop().Sugar())
+	a.retry = 10 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { a.run(ctx); close(done) }()
 
-	// A delete observed before the audit pipeline is configured is retained
-	// and delivered once it is ready.
-	pending := newEscalationAuditCapture()
-	pending.setState(audit.ConfigurationUnavailable)
-	waiting := NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(pending)
-	waiting.auditRetry = 10 * time.Millisecond
 	observedAt := time.Now()
-	waiting.auditDeletion(auditedEscalation(5))
+	a.deletion(auditedEscalation(5))
 	time.Sleep(50 * time.Millisecond)
-	require.Empty(t, pending.take(), "nothing is emitted while the pipeline is unavailable")
-	pending.setState(audit.ConfigurationReady)
+	require.Empty(t, capture.take(), "nothing is accepted while the pipeline is unavailable")
+	capture.set(audit.ConfigurationReady, false)
 	var delivered []*audit.Event
 	require.Eventually(t, func() bool {
-		delivered = append(delivered, pending.take()...)
-		return len(delivered) == 1 && delivered[0].ID == "escalation/esc-uid/deleted"
+		delivered = append(delivered, capture.take()...)
+		return len(delivered) == 1
 	}, 5*time.Second, 10*time.Millisecond)
-	require.WithinDuration(t, observedAt, delivered[0].Timestamp, 40*time.Millisecond,
-		"the timestamp is the observation time, not the delivery time")
+	require.Equal(t, audit.EventEscalationDeleted, delivered[0].Type)
+	require.Equal(t, "escalation/esc-uid/deleted", delivered[0].ID)
+	require.WithinDuration(t, observedAt, delivered[0].Timestamp, 40*time.Millisecond, "observation time, not delivery time")
+	require.Equal(t, audit.SeverityWarning, audit.SeverityForEventType(delivered[0].Type))
+	require.NoError(t, audittest.Check(delivered[0]))
 
-	// Intentionally disabled auditing drops it.
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the retry loop must stop when its context ends")
+	}
+
 	disabled := newEscalationAuditCapture()
-	disabled.setState(audit.ConfigurationDisabled)
-	NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).WithAuditEmitter(disabled).auditDeletion(auditedEscalation(5))
+	disabled.set(audit.ConfigurationDisabled, false)
+	b := newEscalationAuditor(disabled, zap.NewNop().Sugar())
+	b.deletion(auditedEscalation(5))
+	require.Zero(t, b.flush(context.Background()))
 	require.Empty(t, disabled.take())
 
 	// Without an emitter nothing happens.
-	NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).auditDeletion(auditedEscalation(1))
+	var none *escalationAuditor
+	none.deletion(auditedEscalation(1))
+	require.Zero(t, none.specChange(context.Background(), auditedEscalation(1)))
 }
+
+// With the real audit.Service: no AuditConfig means disabled after the
+// initial sync, so escalations do not requeue and nothing is retained.
+func TestEscalationAuditWithRealServiceAndNoAuditConfig(t *testing.T) {
+	svc := audit.NewService(nil, nil, zap.NewNop(), "ns")
+	h := newEscalationAuditHarness(t, auditedEscalation(1), svc)
+	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter, "before the initial AuditConfig sync the pipeline is unavailable")
+
+	syncer, _ := newTestAuditConfigReconciler(t)
+	syncer.onReloadMultiple = func(ctx context.Context, configs []*breakglassv1alpha1.AuditConfig, unavailable bool) error {
+		return svc.ReloadMultipleWithAvailability(ctx, configs, unavailable)
+	}
+	syncer.initialSync(context.Background())
+	require.Equal(t, audit.ConfigurationDisabled, svc.ConfigurationState())
+
+	for range 3 {
+		require.Equal(t, reconcile.Result{}, h.reconcile(), "no requeue loop while auditing is disabled")
+	}
+	require.Empty(t, h.r.auditor.pending)
+	h.r.auditor.deletion(auditedEscalation(1))
+	require.Zero(t, h.r.auditor.flush(context.Background()))
+}
+
+// With the real audit.Service and a full queue (dropOnFull), the event is not
+// marked audited and is delivered once the queue drains.
+func TestEscalationAuditWithRealServiceFullQueue(t *testing.T) {
+	block := make(chan struct{})
+	var mu sync.Mutex
+	var got []*audit.Event
+	sink := &blockingEscalationSink{block: block, write: func(e *audit.Event) {
+		mu.Lock()
+		defer mu.Unlock()
+		got = append(got, e)
+	}}
+	manager := audit.NewManager(sink, audit.ManagerConfig{QueueSize: 1, WorkerCount: 1, DropOnFull: true}, zap.NewNop())
+	t.Cleanup(func() { _ = manager.Close() })
+	emitter := &managerEmitter{m: manager}
+	// Occupy the worker and the one queue slot.
+	require.True(t, manager.TryEmit(context.Background(), &audit.Event{Type: audit.EventConfigChanged, Actor: audit.Actor{User: "x"}}))
+	require.Eventually(t, func() bool { return sink.busy.Load() }, 5*time.Second, time.Millisecond)
+	require.True(t, manager.TryEmit(context.Background(), &audit.Event{Type: audit.EventConfigChanged, Actor: audit.Actor{User: "x"}}))
+
+	h := newEscalationAuditHarness(t, auditedEscalation(1), emitter)
+	require.Equal(t, escalationAuditRetry, h.reconcile().RequeueAfter, "a dropped event is retried")
+	require.Contains(t, h.r.auditor.pending, types.UID("esc-uid"))
+
+	close(block)
+	require.Eventually(t, func() bool { return h.reconcile() == reconcile.Result{} }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, e := range got {
+			if e.Type == audit.EventEscalationCreated {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
+type managerEmitter struct{ m *audit.Manager }
+
+func (e *managerEmitter) TryEmit(ctx context.Context, event *audit.Event) bool {
+	return e.m.TryEmit(ctx, event)
+}
+func (e *managerEmitter) ConfigurationState() audit.ConfigurationState {
+	return audit.ConfigurationReady
+}
+
+type blockingEscalationSink struct {
+	block chan struct{}
+	busy  atomic.Bool
+	write func(*audit.Event)
+}
+
+func (s *blockingEscalationSink) Write(_ context.Context, e *audit.Event) error {
+	s.busy.Store(true)
+	<-s.block
+	s.write(e)
+	return nil
+}
+func (s *blockingEscalationSink) Close() error { return nil }
+func (s *blockingEscalationSink) Name() string { return "blocking" }
 
 // With no AuditConfig at all, the initial sync reports an empty set, so the
 // audit service becomes "disabled" instead of staying "unavailable", and

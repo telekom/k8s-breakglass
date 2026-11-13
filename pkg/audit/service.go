@@ -386,15 +386,27 @@ func managerEventTypeFilters(configs []*breakglassv1alpha1.AuditConfig) ([]strin
 
 // Emit sends an audit event asynchronously.
 func (s *Service) Emit(ctx context.Context, event *Event) {
+	s.TryEmit(ctx, event)
+}
+
+// TryEmit is Emit that reports whether the event was accepted (queued, or
+// intentionally filtered or sampled). It returns false when no pipeline is
+// running or the event was dropped, so the caller can retry it.
+func (s *Service) TryEmit(ctx context.Context, event *Event) bool {
 	m := s.currentManager()
-	if m == nil || m.Emit(ctx, event) {
-		return
+	if m == nil {
+		return false
+	}
+	result := m.emit(ctx, event)
+	if result != emitClosed {
+		return result == emitAccepted
 	}
 	// A reload replaced the Manager between the read and the enqueue: hand
 	// the event to the new one once instead of losing it.
 	if next := s.currentManager(); next != nil && next != m {
-		next.Emit(ctx, event)
+		return next.TryEmit(ctx, event)
 	}
+	return false
 }
 
 // currentManager returns the enabled Manager without holding s.mu during the

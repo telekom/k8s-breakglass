@@ -7,14 +7,12 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"go.uber.org/zap"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/events"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -23,11 +21,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
-	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
@@ -53,150 +51,15 @@ type EscalationReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
-	// auditEmitter receives escalation.created/updated/deleted events (optional)
-	auditEmitter EscalationAuditEmitter
-	// audited holds the last audited generation per escalation UID.
-	auditedMu sync.Mutex
-	audited   map[types.UID]int64
-	// pendingDeletes holds escalation.deleted events observed before the
-	// audit pipeline was configured; deleteRetry is set while a retry loop runs.
-	pendingDeletes map[types.UID]*audit.Event
-	deleteRetry    bool
-	// auditRetry is the retry interval while the pipeline is unavailable.
-	auditRetry time.Duration
-	// firstSeen records when a not yet audited generation was first observed,
-	// so a delayed event keeps its observation time.
-	firstSeen map[types.UID]observedGeneration
-}
-
-type observedGeneration struct {
-	generation int64
-	at         time.Time
-}
-
-// escalationAuditRetry is how long an escalation change waits for the audit
-// pipeline's first configuration before it is audited again.
-const escalationAuditRetry = 5 * time.Second
-
-// EscalationAuditEmitter receives escalation change audit events.
-type EscalationAuditEmitter interface {
-	Emit(ctx context.Context, event *audit.Event)
-	ConfigurationState() audit.ConfigurationState
+	// auditor emits escalation.created/updated/deleted events (optional)
+	auditor *escalationAuditor
 }
 
 // WithAuditEmitter emits escalation.created, escalation.updated and
 // escalation.deleted audit events for observed BreakglassEscalation changes.
 func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) *EscalationReconciler {
-	r.auditEmitter = emitter
-	r.auditRetry = escalationAuditRetry
+	r.auditor = newEscalationAuditor(emitter, r.logger)
 	return r
-}
-
-// auditSpecChange emits escalation.created (generation 1) or
-// escalation.updated for a generation that this process has not audited yet.
-// It is independent of status.observedGeneration, which other status writers
-// also advance. After a restart or leader change the current generation is
-// emitted again with the same event ID, which consumers deduplicate. While the
-// audit pipeline has not loaded its configuration yet it reports retry, so the
-// change is audited once the pipeline is ready instead of being dropped;
-// intentionally disabled auditing emits nothing.
-func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) (retry bool) {
-	if r.auditEmitter == nil {
-		return false
-	}
-	r.auditedMu.Lock()
-	defer r.auditedMu.Unlock()
-	previous, seen := r.audited[esc.UID]
-	if seen && previous == esc.Generation {
-		return false
-	}
-	if r.firstSeen == nil {
-		r.firstSeen = map[types.UID]observedGeneration{}
-	}
-	first, ok := r.firstSeen[esc.UID]
-	if !ok || first.generation != esc.Generation {
-		first = observedGeneration{generation: esc.Generation, at: time.Now().UTC()}
-		r.firstSeen[esc.UID] = first
-	}
-	switch r.auditEmitter.ConfigurationState() {
-	case audit.ConfigurationDisabled:
-		delete(r.firstSeen, esc.UID)
-		return false
-	case audit.ConfigurationUnavailable:
-		return true
-	}
-	eventType := audit.EventEscalationUpdated
-	if esc.Generation <= 1 {
-		eventType = audit.EventEscalationCreated
-	}
-	event := audit.EscalationChangeEvent(eventType, esc, previous)
-	event.Timestamp = first.at
-	r.auditEmitter.Emit(ctx, event)
-	if r.audited == nil {
-		r.audited = map[types.UID]int64{}
-	}
-	r.audited[esc.UID] = esc.Generation
-	delete(r.firstSeen, esc.UID)
-	return false
-}
-
-// auditDeletion emits escalation.deleted for an observed delete event. The
-// object is gone afterwards, so a delete observed before the audit pipeline
-// is configured keeps its event and retries it until the pipeline is ready
-// (or intentionally disabled).
-func (r *EscalationReconciler) auditDeletion(obj client.Object) {
-	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
-	if r.auditEmitter == nil || !ok {
-		return
-	}
-	event := audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation)
-	// The event time is when the delete was observed, also when it is
-	// delivered later.
-	event.Timestamp = time.Now().UTC()
-	r.auditedMu.Lock()
-	delete(r.audited, esc.UID)
-	delete(r.firstSeen, esc.UID)
-	if r.pendingDeletes == nil {
-		r.pendingDeletes = map[types.UID]*audit.Event{}
-	}
-	r.pendingDeletes[esc.UID] = event
-	startRetry := !r.deleteRetry
-	r.deleteRetry = true
-	r.auditedMu.Unlock()
-	if r.flushPendingDeletes() || !startRetry {
-		return
-	}
-	go func() {
-		ticker := time.NewTicker(r.auditRetry)
-		defer ticker.Stop()
-		for range ticker.C {
-			if r.flushPendingDeletes() {
-				return
-			}
-		}
-	}()
-}
-
-// flushPendingDeletes emits the retained deletion events once the audit
-// pipeline is ready, or drops them when auditing is disabled. It reports
-// whether nothing is pending any more.
-func (r *EscalationReconciler) flushPendingDeletes() bool {
-	r.auditedMu.Lock()
-	defer r.auditedMu.Unlock()
-	switch r.auditEmitter.ConfigurationState() {
-	case audit.ConfigurationUnavailable:
-		if len(r.pendingDeletes) > 0 {
-			return false
-		}
-	case audit.ConfigurationReady:
-		for uid, event := range r.pendingDeletes {
-			r.auditEmitter.Emit(context.Background(), event)
-			delete(r.pendingDeletes, uid)
-		}
-	}
-	clear(r.pendingDeletes)
-	r.deleteRetry = false
-	return true
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
@@ -283,10 +146,10 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
-	if r.auditSpecChange(ctx, escalation) {
+	if after := r.auditor.specChange(ctx, escalation); after > 0 {
 		defer func() {
-			if err == nil && result.IsZero() {
-				result.RequeueAfter = r.auditRetry
+			if err == nil && (result.RequeueAfter == 0 || result.RequeueAfter > after) {
+				result.RequeueAfter = after
 			}
 		}()
 	}
@@ -550,12 +413,22 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
 		DeleteFunc: func(e event.DeleteEvent) bool {
-			r.auditDeletion(e.Object)
+			r.auditor.deletion(e.Object)
 			return true
 		},
 	}
 
 	dependencyPredicate := dependencyChangePredicate()
+
+	if r.auditor != nil {
+		// Retries retained escalation.deleted events; stops with the manager.
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			r.auditor.run(ctx)
+			return nil
+		})); err != nil {
+			return fmt.Errorf("add escalation audit retry loop: %w", err)
+		}
+	}
 
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.BreakglassEscalation{}, builder.WithPredicates(specChangePredicate)).

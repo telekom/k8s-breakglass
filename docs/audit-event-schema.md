@@ -266,13 +266,20 @@ controller emits `escalation.created` for generation 1 and
 `escalation/<uid>/<generation>` or `escalation/<uid>/deleted`. After a
 controller restart or leader change the current generation of every
 escalation is emitted again with the same ID (without `previousGeneration`);
-deduplicate on `id`. Escalations reconciled before the audit pipeline has
-loaded its AuditConfig are retried until it is ready, so they are not lost at
-startup; a delete is retained in memory for the same reason. With no
-AuditConfig at all, auditing is disabled and nothing is retried. Retained
-events are in memory: a controller crash before the pipeline is ready loses
-them, and the next leader re-emits the current generation of every
-escalation (not deletes it did not observe). The actor is `system`; the event does not identify who changed the spec.
+deduplicate on `id`.
+
+Delivery guarantee: an escalation event counts as audited only when the audit
+pipeline accepted it. Until then (no AuditConfig loaded yet, or the ingress
+queue full or timing out) the controller retains it in memory and retries
+with exponential backoff (5 s up to 5 min), keeping the time it first observed
+the change. Retention is bounded: at most 1000 pending changes and 1000
+pending deletions, each for at most one hour; beyond that the oldest event is
+dropped with a warning log. So delivery is at least once while the controller
+runs. Events are lost when the controller crashes before they were accepted
+(a new leader re-emits the current generation of each existing escalation,
+but not a delete it did not observe) or when the pipeline does not accept
+them within the retention bounds. With no AuditConfig at all, auditing is
+disabled and nothing is retained or retried. The actor is `system`; the event does not identify who changed the spec.
 `resourceVersion` is the version that the controller observed, which can
 belong to a later status or metadata write. To attribute a change, search the
 Kubernetes API server audit log for create, update, patch and delete requests
