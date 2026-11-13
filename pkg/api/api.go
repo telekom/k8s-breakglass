@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -343,12 +344,18 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	})
 
 	// Always expose CORS for browser-based OIDC flows (token exchange happens against keycloak but frontend hits API)
+	allowHeaders := []string{"Origin", "Authorization", "Content-Type", "X-OIDC-Authority"}
+	exposeHeaders := []string{"Authorization", "X-Notification-Sent"}
+	if cfg.StepUp.Enabled {
+		allowHeaders = append(allowHeaders, StepUpChallengeHeader)
+		exposeHeaders = append(exposeHeaders, StepUpChallengeHeader, "WWW-Authenticate")
+	}
 	engine.Use(
 		cors.New(cors.Config{
 			AllowOrigins:     allowedOrigins,
 			AllowMethods:     []string{http.MethodGet, http.MethodPut, http.MethodPatch, http.MethodPost, http.MethodOptions},
-			AllowHeaders:     []string{"Origin", "Authorization", "Content-Type", "X-OIDC-Authority"},
-			ExposeHeaders:    []string{"Authorization", "X-Notification-Sent"},
+			AllowHeaders:     allowHeaders,
+			ExposeHeaders:    exposeHeaders,
 			AllowCredentials: true,
 			MaxAge:           12 * time.Hour,
 		}),
@@ -675,10 +682,23 @@ func (s *Server) SetEscalationReconciler(reconciler *config.EscalationReconciler
 }
 
 func (s *Server) RegisterAll(controllers []APIController) error {
+	stepUp, err := newStepUp(s.config.StepUp, s.log)
+	if err != nil {
+		return fmt.Errorf("step-up configuration: %w", err)
+	}
+	var stepUpMiddleware gin.HandlerFunc
+	if stepUp != nil {
+		stepUpMiddleware = stepUp.middleware()
+	}
 	apiGroup := s.gin.Group("/api")
 	for _, c := range controllers {
+		handlers := c.Handlers()
+		if stepUpMiddleware != nil {
+			// Runs after the controller's authentication middleware.
+			handlers = append(slices.Clip(handlers), stepUpMiddleware)
+		}
 		// Register under /api/<base>
-		if err := c.Register(apiGroup.Group(c.BasePath(), c.Handlers()...)); err != nil {
+		if err := c.Register(apiGroup.Group(c.BasePath(), handlers...)); err != nil {
 			return err
 		}
 		// For backwards compatibility, register the webhook authorizer under the legacy root path as well.
