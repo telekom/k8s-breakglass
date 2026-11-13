@@ -510,7 +510,9 @@ func matchKeycloakGroup(groups []*gocloak.Group, name string) (*gocloak.Group, e
 	case len(candidates) == 0:
 		return nil, nil
 	case len(candidates) > 1:
-		return nil, fmt.Errorf("keycloak group %q is ambiguous: %d groups match", name, len(candidates))
+		// Classified as not found so the updaters drop cached members
+		// instead of retaining approvers from an earlier first-match lookup.
+		return nil, fmt.Errorf("%w (%d groups match ambiguously)", breakglass.NewGroupNotFoundError(name), len(candidates))
 	case candidates[0].ID == nil || strings.TrimSpace(*candidates[0].ID) == "":
 		return nil, fmt.Errorf("keycloak group %q matched without an ID", name)
 	}

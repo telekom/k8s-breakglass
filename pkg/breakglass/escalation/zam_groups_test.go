@@ -22,6 +22,8 @@ import (
 	"github.com/Nerzal/gocloak/v13"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	breakglass "github.com/telekom/k8s-breakglass/pkg/breakglass"
 )
 
 // ZAM role names as delivered in the OIDC groups claim: "dttcaas-" followed by
@@ -66,7 +68,7 @@ func TestMatchKeycloakGroupZAMNames(t *testing.T) {
 		{name: "ambiguous case variants fail closed", groups: []*gocloak.Group{
 			kcGroup("a", "dttcaas-tenant-a_cluster.01_poweruser"),
 			kcGroup("b", "DTTCAAS-TENANT-A_CLUSTER.01_POWERUSER"),
-		}, lookup: zamMixedCase, wantErr: "ambiguous"},
+		}, lookup: zamMixedCase, wantErr: "ambiguously"},
 		{name: "underscore and hyphen are distinct", groups: []*gocloak.Group{kcGroup("4", "dttcaas-multi-idp-tenant-appowner")}, lookup: zamTenant},
 		{name: "missing id rejected", groups: []*gocloak.Group{{Name: gocloak.StringP(zamPlatform)}}, lookup: zamPlatform, wantErr: "without an ID"},
 		{name: "nil entries ignored", groups: []*gocloak.Group{nil, {ID: gocloak.StringP("x")}, kcGroup("5", zamFirstLine)}, lookup: zamFirstLine, wantID: "5"},
@@ -78,6 +80,8 @@ func TestMatchKeycloakGroupZAMNames(t *testing.T) {
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
 				assert.Nil(t, got)
+				// Ambiguity must clear cached approver members like a missing group.
+				assert.Equal(t, tt.wantErr == "ambiguously", breakglass.IsGroupNotFound(err))
 				return
 			}
 			require.NoError(t, err)
