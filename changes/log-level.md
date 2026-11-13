@@ -18,3 +18,8 @@ section: Upgrade notes
   `error`, `cid`, `method` and `path`, without the request dump that included
   the request headers. client-go (klog) and Go standard-library log output now
   goes through the controller logger and uses `--log-format`.
+- The controller no longer samples its logs. The `json` format used to keep
+  only the first 100 identical lines per second and then every 100th, which
+  dropped repeated authorization decisions and `audit_event` lines. Lines of
+  the Go standard `log` package (for example `http: TLS handshake error`) are
+  now JSON lines at `warn` with the logger name `stdlog`.

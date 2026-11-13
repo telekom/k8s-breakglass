@@ -64,9 +64,9 @@ tab-separated text for people; its layout is not stable.
 
 ### Sampling and rate limits
 
-The `json` format uses zap's production sampling: for each message and level,
-the first 100 lines per second are written, then every 100th. The `console`
-format does not sample. The controller has no other log rate limiting or
+The controller does not sample its logs. Every log call at or above the
+configured level is written, so repeated lines such as authorization decisions
+are all kept (test `TestNewDoesNotSample`). There is no log rate limiting or
 de-duplication. Trace sampling (`--otel-sampling-rate`) does not affect the
 log. Audit event sampling (`AuditConfig`) does: a sampled-out event reaches no
 sink, so the `log` sink writes no `audit_event` line for it (see
@@ -81,7 +81,8 @@ These lines come from libraries, so the catalogue does not list them:
 | HTTP access log (`gin-contrib/zap`), one line per request | info; error once per handler error | the request path | `status`, `method`, `path`, `query`†, `ip`†, `user-agent`, `latency`, `time` |
 | controller-runtime (manager, controllers, webhooks, cache) | info, error; V(1) at debug | for example `Starting Controller`, `Reconciler error` | `logger` (for example `controller-runtime.webhook`), `controller`, `controllerGroup`, `controllerKind`, `name`, `namespace`, `reconcileID` |
 | client-go (klog) | info, error | for example leader-election and reflector errors | free text |
-| Go standard `log` package, `net/http` server errors | info | the text of the message | none |
+| OpenTelemetry SDK | error; internal V-levels at debug or not written | for example exporter errors | free text |
+| Go standard `log` package, for example `http: TLS handshake error from …` of `net/http` servers | warn | the text of the message | `logger` is `stdlog` |
 
 ### Request context fields
 
@@ -153,13 +154,11 @@ types and [Audit delivery](audit-delivery.md) for delivery, retries and loss.
 
 Only the `log` sink writes into the controller log: one info line per event,
 with `logger` set to `audit-service.audit` and the message `audit_event`.
-Because these are ordinary controller log lines, three things can make an
+Because these are ordinary controller log lines, two things can make an
 audit event missing from the log although it happened:
 
 - `--log-level=warn` or `error` drops all `audit_event` lines, because they are
   at info;
-- in the `json` format, zap sampling applies (the first 100 identical
-  `audit_event` messages per second, then every 100th);
 - audit event sampling and the include/exclude event types in `AuditConfig`
   drop events before they reach any sink.
 
@@ -214,7 +213,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| controller | 453 | 337 | 341 | 262 | 0 | 0 | 0 |
+| controller | 468 | 344 | 352 | 271 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -224,6 +223,17 @@ message built at run time, typically from an error value; `…` marks the
 variable part of a concatenated message.
 
 ### controller
+
+#### `api/v1alpha1`
+
+| Level | Message | Fields | File |
+|---|---|---|---|
+| warn | `ensureClusterWideUniqueName called without context, using fallback` |  | validation_helpers.go |
+| warn | `validateIdentityProviderFields called without context, using fallback` |  | validation_helpers.go |
+| warn | `validateIdentityProviderRefs called without context, using fallback` |  | validation_helpers.go |
+| warn | `validateMailProviderReference called without context, using fallback` |  | validation_helpers.go |
+| warn | `validateSessionIdentityProviderAuthorization called without context, using fallback` |  | validation_helpers.go |
+| error | `CRITICAL: ensureClusterWideUniqueIssuer called without context - creating timeout-bounded fallback` |  | validation_helpers.go |
 
 #### `cmd`
 
@@ -417,6 +427,7 @@ variable part of a concatenated message.
 | debug | `Built hidden users set` | `directHiddenUserCount`† | session_controller_actions.go |
 | debug | `Cannot resolve additional excluded group members` | `escalationManagerNil`, `groupCount`†, `knownGroupMemberCount`†, `resolverNil` | session_controller_actions.go |
 | debug | `Checking debug session for expiration` |  | cleanup_task.go |
+| debug | `Checking if groups can perform SAR operation` | `cluster`, `groupCount`† | group_checker.go |
 | debug | `Checking session for expiration` |  | cleanup_task.go |
 | debug | `Checking session retainedUntil` | `retainedUntil` | cleanup_task.go |
 | debug | `Cluster config not available for IDP check (will default to false for restriction)` | `cluster` | session_request_helpers.go |
@@ -447,17 +458,24 @@ variable part of a concatenated message.
 | debug | `Field index lookup returned no sessions; falling back to selector` | `name` | session_manager.go |
 | debug | `Field index not available; falling back to client-side filtering` | `cluster`, `error`, `states`, `user`† | session_manager.go |
 | debug | `Found session slot candidate` | `session`, `state` | session_controller_status.go |
+| debug | `Getting user groups for cluster user group` | `cluster`, `username`† | group_checker.go |
+| debug | `Getting user groups for cluster user group with custom config` | `cluster`, `configPath`, `username`† | group_checker.go |
 | debug | `Handling GET /status for breakglass session` |  | session_controller_status.go |
 | debug | `Ignoring approver group cache entry with unexpected type` | `cacheKey`, `cachedType` | session_controller_approval_utils.go |
+| debug | `Impersonated SelfSubjectAccessReview result` | `allowed`, `impersonationConstraint`, `mode` | group_checker_impersonation.go |
 | debug | `Keycloak provider retrieved email` | `email`† | identity_provider.go |
 | debug | `Keycloak provider retrieved user identifier` | `claimType`, `identifier` | identity_provider.go |
 | debug | `Keycloak provider retrieved user_id` | `user_id`† | identity_provider.go |
 | debug | `Keycloak provider retrieved username` | `username`† | identity_provider.go |
+| debug | `Loaded rest.Config for cluster context` | `cluster`, `context` | group_checker.go |
+| debug | `Loaded rest.Config via kind- fallback` | `cluster`, `context` | group_checker.go |
 | debug | `Matched IDP group override` | `idp`, `matchedGroupHint`†, `patternHint`, `unlimited` | session_controller_status.go |
 | debug | `Matched escalation found during session creation` | `escalationName`, `escalationNamespace`, `escalationUID` | session_request_helpers.go |
 | debug | `Matched escalation selected for approver resolution` | `denyPolicyCount`, `escalatedGroup`†, `escalationName` | session_request_helpers.go |
 | debug | `No ClusterConfig found for approval policy, continuing with defaults` | `cluster`, `error` | session_controller_approval_utils.go |
 | debug | `No IDP name set, skipping IDP-level session limits` |  | session_controller_status.go |
+| debug | `No OIDC prefixes configured, returning groups unchanged` |  | group_checker.go |
+| debug | `No OIDC prefixes configured, using original groups` |  | group_checker.go |
 | debug | `No approver groups found to sync` | `cluster`, `escalationCount` | session_request_helpers.go |
 | debug | `No escalation with matching granted group for approval` | `approverEmail`†, `approverGroupCount`†, `session` | session_controller_approval_utils.go |
 | debug | `No hidden approvers configured, returning all approvers` | `escalationNil`, `hiddenCount` | session_controller_actions.go |
@@ -465,7 +483,10 @@ variable part of a concatenated message.
 | debug | `No notification exclusions configured` | `escalationNil` | session_controller_actions.go |
 | debug | `No session limit applicable` | `escalation`, `idp` | session_controller_status.go |
 | debug | `No session limits configured on IDP` | `idp` | session_controller_status.go |
+| debug | `OIDC prefix stripping complete` | `originalGroupCount`†, `strippedGroupCount`† | group_checker.go |
 | debug | `OwnerReference prepared for session create` | `ownerRefs` | session_request_helpers.go |
+| debug | `Parsing user info from v1.SelfSubjectReview` |  | group_checker.go |
+| debug | `Parsing user info from v1beta1.SelfSubjectReview` |  | group_checker.go |
 | debug | `Possible escalations found` | `cluster`, `count`, `user`† | session_request_helpers.go |
 | debug | `Processing escalation for approver resolution` | `approverGroupCount`†, `escalatedGroup`†, `escalationName`, `explicitUserCount`† | session_request_helpers.go |
 | debug | `Querying for active breakglass session` | `cluster`, `group`†, `user`† | session_controller_status.go |
@@ -495,6 +516,8 @@ variable part of a concatenated message.
 | debug | `Starting approver resolution from escalations` | `escalationCount`, `requestedGroup`† | session_request_helpers.go |
 | debug | `Starting expired debug session cleanup` |  | cleanup_task.go |
 | debug | `Starting expired session cleanup` |  | cleanup_task.go |
+| debug | `Stripped OIDC prefix from group` | `prefix` | group_checker.go |
+| debug | `Stripping OIDC prefixes from groups` | `originalGroupCount`†, `prefixCount` | group_checker.go |
 | debug | `Syncing approver groups` | `cluster`, `groupCount`† | session_request_helpers.go |
 | debug | `Token validation: session not found` | `tokenLen` | session_controller_status.go |
 | debug | `Total session count for escalation` | `activeCount`, `escalation`, `escalationUID`, `limit`, `source` | session_controller_status.go |
@@ -519,6 +542,7 @@ variable part of a concatenated message.
 | debug | `skipping expired debug session status update after concurrent change` |  | cleanup_task.go |
 | info | `Activating scheduled session` | `namespace`, `now`, `scheduledStartTime`, `session` | scheduled_activation.go |
 | info | `Adding new BreakglassSession` |  | session_manager.go |
+| info | `Applied OIDC prefix stripping` | `finalGroupCount`†, `oidcPrefixCount`, `originalGroupCount`† | group_checker.go |
 | info | `Breakglass session request email queued` | `group`†, `recipientCount`†, `session` | session_controller_actions.go |
 | info | `Breakglass session request email sent` | `group`†, `recipientCount`†, `session` | session_controller_actions.go |
 | info | `BreakglassSession created successfully` |  | session_manager.go |
@@ -529,6 +553,9 @@ variable part of a concatenated message.
 | info | `Cleanup routine waiting for leadership signal before starting...` |  | cleanup_task.go |
 | info | `Completed approver resolution from escalations` | `approverGroupsCount`†, `requestedGroup`†, `totalApproversCollected`† | session_request_helpers.go |
 | info | `Concurrent session creation already in-flight, returning conflict` | `cluster`, `group`†, `user`† | session_controller.go |
+| info | `Constrained impersonation confirmed on spoke` | `cluster`, `serverVersion` | group_checker_capability.go |
+| info | `Constrained impersonation is not usable on this spoke; using legacy impersonation. Expected when the ConstrainedImpersonation feature gate is disabled, or before config/rbac/impersonate_constrained_role.yaml has been applied to the spoke.` | `cluster`, `error`, `serverVersion` | group_checker_capability.go |
+| info | `Constrained impersonation refused by spoke; falling back to legacy impersonation for the RBAC probe. This is expected on Kubernetes below 1.35, with the ConstrainedImpersonation gate disabled, or before the constrained RBAC is applied.` | `cluster`, `error`, `mode` | group_checker_impersonation.go |
 | info | `Context cancelled during idle session expiry` | `error` | expire_idle_sessions.go |
 | info | `Debug session approval timed out, marking as Failed` |  | cleanup_task.go |
 | info | `Debug session cleanup completed` | `expired`, `timedOut` | cleanup_task.go |
@@ -558,6 +585,8 @@ variable part of a concatenated message.
 | info | `Fetched BreakglassSessions with selector string` | `count`, `selector` | session_manager.go |
 | info | `Filtering results` | `excludedApproverCount`†, `hiddenApproverCount`†, `originalApproverCount`†, `totalDirectExcluded`, `totalDirectHidden`, `totalGroupMembersExcluded`†, `totalGroupMembersHidden`†, `visibleApproverCount`† | session_controller_actions.go |
 | info | `Finished breakglass session cleanup task` |  | cleanup_task.go |
+| info | `GetUserGroups complete` | `cluster`, `groupCount`†, `username`† | group_checker.go |
+| info | `GetUserGroupsWithConfig complete` | `cluster`, `groupCount`†, `username`† | group_checker.go |
 | info | `Handling GET /breakglassSessions/:name` | `session` | session_controller_status.go |
 | info | `Handling duplicate session` | `created`, `namespace`, `session`, `state` | cleanup_duplicate_sessions.go |
 | info | `Hidden approvers configured` | `hiddenItemCount` | session_controller_actions.go |
@@ -588,6 +617,7 @@ variable part of a concatenated message.
 | info | `Skipping duplicate session that changed after survivor selection` | `namespace`, `session`, `state` | cleanup_duplicate_sessions.go |
 | info | `Skipping duplicate session that is no longer in the active duplicate set` | `namespace`, `session` | cleanup_duplicate_sessions.go |
 | info | `Skipping duplicate session that is now the preferred survivor` | `namespace`, `session`, `state` | cleanup_duplicate_sessions.go |
+| info | `Spoke cannot support constrained impersonation; using legacy impersonation. This is expected below Kubernetes 1.35 and whenever the spoke's version cannot be read.` | `cluster`, `serverVersion` | group_checker_capability.go |
 | info | `Successfully activated scheduled session` | `actualStartTime`, `namespace`, `session` | scheduled_activation.go |
 | info | `Successfully resolved excluded group members` | `group`†, `memberCount` | session_controller_actions.go |
 | info | `Successfully resolved hidden group members` | `group`†, `memberCount` | session_controller_actions.go |
@@ -615,6 +645,7 @@ variable part of a concatenated message.
 | warn | `Breakglass session approver reason is invalid` | `action`, `error`, `session` | session_controller_status.go |
 | warn | `Cannot resolve additional hidden group members - resolver not available` | `escalationManagerNil`, `knownGroupMemberCount`†, `resolverNil` | session_controller_actions.go |
 | warn | `Cannot send emails by group: matched escalation is nil` | `session` | session_controller_actions.go |
+| warn | `Could not determine constrained-impersonation capability for spoke; leaving it undetermined and retrying on the next request` | `cluster`, `error`, `serverVersion` | group_checker_capability.go |
 | warn | `Duplicate active sessions detected — terminating duplicates` | `cluster`, `duplicateCount`, `group`†, `keepSession`, `user`† | cleanup_duplicate_sessions.go |
 | warn | `Duplicate cleanup audit delivered but acknowledgement failed; retaining retryable outbox state` | `error`, `namespace`, `session` | cleanup_duplicate_sessions.go |
 | warn | `Duration validation failed` | `error`, `maxAllowed`, `requestedDuration` | session_request_helpers.go |
@@ -626,6 +657,7 @@ variable part of a concatenated message.
 | warn | `Failed to list escalations for group sync` | `error` | session_request_helpers.go |
 | warn | `Failed to list sessions for duplicate cleanup` | `error`, `state` | cleanup_duplicate_sessions.go |
 | warn | `Failed to list terminal sessions for duplicate cleanup audit drain` | `error`, `state` | cleanup_duplicate_sessions.go |
+| warn | `Failed to load rest.Config for cluster` | `cluster`, `error` | group_checker.go |
 | warn | `Failed to parse MaxValidFor duration` | `error`, `value` | session_request_helpers.go |
 | warn | `Failed to parse scheduledStartTime` | `error`, `value` | session_request_helpers.go |
 | warn | `Failed to refresh BreakglassSessions from live reader after cache lookup found no eligible session` | `cluster`, `error`, `user`† | session_manager.go |
@@ -637,6 +669,7 @@ variable part of a concatenated message.
 | warn | `Failed to send email for approver` | `error`, `groupCount`†, `recipientCount`†, `session` | session_controller_actions.go |
 | warn | `Failed to send email for explicit users` | `error`, `recipientCount`†, `session` | session_controller_actions.go |
 | warn | `Failed to update duplicate session status` | `error`, `session` | cleanup_duplicate_sessions.go |
+| warn | `Falling back to authentication.k8s.io/v1beta1 SelfSubjectReview (cluster predates K8s 1.28)` |  | group_checker.go |
 | warn | `Group member resolution failed during sync` | `error`, `group`† | session_request_helpers.go |
 | warn | `IdentityProvider not found — session limits cannot be enforced; failing closed` | `idp` | session_controller_status.go |
 | warn | `Invalid glob pattern in IDP group override, skipping` | `error`, `idp`, `patternHint` | session_controller_status.go |
@@ -661,6 +694,7 @@ variable part of a concatenated message.
 | warn | `Session admission status recovery deferred` | `error`, `session` | session_admission.go |
 | warn | `Session limit check failed` | `error`, `escalation`, `user`† | session_request_helpers.go |
 | warn | `Session not found` | `error`, `session` | session_controller_status.go |
+| warn | `SessionManager using global logger — use WithSessionLogger() in production` |  | session_manager.go |
 | warn | `Skipping debug session audit event: template audit policy unavailable` | `error`, `session`, `template` | debug_session_audit_policy.go |
 | warn | `Suppressing session request notifications because excluded-group membership could not be resolved` | `escalationName`, `originalApproverCount`† | session_request_helpers.go |
 | warn | `Suppressing session request notifications because hidden-group membership could not be resolved` | `escalationName`, `originalApproverCount`† | session_request_helpers.go |
@@ -676,6 +710,7 @@ variable part of a concatenated message.
 | warn | `User is not authorized to read session` | `session` | session_controller_status.go |
 | warn | `User not authorized for group` | `group`†, `user`† | session_controller.go |
 | warn | `cleanup routine stopped (context cancelled)` |  | cleanup_task.go |
+| warn | `constrainedImpersonation.probeMode must be user-info or legacy: the RBAC probe impersonates groups, and user-info is the only mode that can carry them. Using user-info.` | `configured` | group_checker_impersonation.go |
 | warn | `could not refetch session before idle status update; skipping idle expiry` | `error`, `namespace`, `session` | expire_idle_sessions.go |
 | warn | `failed to update idle-expired session status (will retry)` | `attempt`, `error`, `session` | expire_idle_sessions.go |
 | warn | `invalid idleTimeout on refetched session, skipping idle expiry` | `error`, `idleTimeout`, `session` | expire_idle_sessions.go |
@@ -696,9 +731,13 @@ variable part of a concatenated message.
 | error | `Error listing cluster escalations for approval` | `error` | session_controller_approval_utils.go |
 | error | `Failed to create field selector` | `error`, `selector` | session_manager.go |
 | error | `Failed to create new BreakglassSession` |  | session_manager.go |
+| error | `Failed to create new client` | `error` | session_manager.go |
 | error | `Failed to decode JSON request body` | `error` | session_controller.go |
 | error | `Failed to delete BreakglassSession` |  | session_manager.go |
 | error | `Failed to get BreakglassSessionList` | `error` | session_manager.go |
+| error | `Failed to get config with context` | `context`, `error` | session_manager.go |
+| error | `Failed to get user info from response` | `error` | group_checker.go |
+| error | `Failed to get user's subject review` | `error` | group_checker.go |
 | error | `Failed to list BreakglassSessionList for fallback lookup` | `error`, `selector` | session_manager.go |
 | error | `Failed to list BreakglassSessionList with selector` | `error`, `selector` | session_manager.go |
 | error | `Failed to list BreakglassSessionList with string selector` | `error`, `selector` | session_manager.go |
@@ -707,17 +746,21 @@ variable part of a concatenated message.
 | error | `Failed to list BreakglassSessions for user` | `error`, `user`† | session_manager.go |
 | error | `Failed to list ClusterConfig resources` | `error` | cluster_config_manager.go |
 | error | `Failed to list sessions for getActiveBreakglassSession` | `error` | session_controller_status.go |
+| error | `Failed to load config for OIDC prefixes` | `error` | group_checker.go |
 | error | `Failed to parse field selector for fallback lookup` | `error`, `selector` | session_manager.go |
 | error | `Failed to resolve BreakglassSession before status update` |  | session_manager.go |
 | error | `Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups` | `approver`†, `cluster`, `error`, `requestContextGroupCount`† | session_controller_approval_utils.go |
 | error | `Failed to retrieve user groups for escalation determination` | `error` | session_request_helpers.go |
 | error | `Failed to update BreakglassSession` |  | session_manager.go |
 | error | `Failed to update BreakglassSession status` |  | session_manager.go |
+| error | `GetUserGroups: client construction failed` | `cluster`, `error` | group_checker.go |
+| error | `GetUserGroups: rest.Config load failed` | `cluster`, `error` | group_checker.go |
 | error | `No authenticated identity claims found in request context` |  | session_request_helpers.go |
 | error | `Refusing to create session for matched escalation without UID` | `error`, `escalationName`, `escalationNamespace` | session_request_helpers.go |
 | error | `There is more than a single active breakglass session; this should not happen` | `cluster`, `group`†, `num_sessions`, `username`† | session_controller_status.go |
 | error | `Token validation: unable to load session` | `error`, `tokenLen` | session_controller_status.go |
 | error | `Unable to identify approver` | `error` | session_controller_approval_utils.go |
+| error | `Unexpected response type for user info extraction` | `type` | group_checker.go |
 | error | `error deleting debug session past retention` | `error` | cleanup_task.go |
 | error | `error deleting expired breakglass session` |  | cleanup_task.go |
 | error | `error deleting orphaned breakglass session` |  | cleanup_task.go |
@@ -1594,8 +1637,11 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
+| debug | `Object unchanged, skipping SSA apply` | `kind`, `name`, `namespace` | patchhelper.go |
+| debug | `Unstructured object unchanged, skipping SSA apply` | `kind`, `name`, `namespace` | patchhelper.go |
 | warn | `Invalid … in spec; falling back to default` | `default`, `error`, `value` | duration_helpers.go |
 | warn | `Non-positive … in spec; falling back to default` | `default`, `parsedDuration`, `value` | duration_helpers.go |
+| warn | `SSA apply conflict` | `error`, `kind`, `name`, `namespace` | patchhelper.go |
 
 #### `pkg/webhook`
 

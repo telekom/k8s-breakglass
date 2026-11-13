@@ -31,6 +31,7 @@ func f() {
 	r.Log.V(1).Info("cache hit", "key", k)
 	log.Debug("value: " + v)
 	log.Error(err)
+	zap.S().Warnw("global sugared", "k", v)
 	c.Error(err)
 	fmt.Errorf("not a log %d", 1)
 	err.Error()
@@ -56,6 +57,7 @@ func f() {
 		"controller debug (V(1)) cache hit": "key",
 		"controller debug value: …":         "",
 		"controller error (dynamic)":        "",
+		"controller warn global sugared":    "k",
 		"bgctl info cli":                    "email",
 	}
 	if len(got) != len(want) {
@@ -68,7 +70,7 @@ func f() {
 	}
 
 	md := render(entries)
-	for _, s := range []string{"| controller | 1 | 1 | 1 | 3 | 0 | 0 | 1 |", "`recipient`†", "`email`†", "`cluster`,"} {
+	for _, s := range []string{"| controller | 1 | 1 | 2 | 3 | 0 | 0 | 1 |", "`recipient`†", "`email`†", "`cluster`,"} {
 		if !strings.Contains(md, s) {
 			t.Errorf("rendered catalogue lacks %q:\n%s", s, md)
 		}
