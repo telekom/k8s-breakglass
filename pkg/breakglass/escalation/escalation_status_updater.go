@@ -917,8 +917,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 							strings.Join(uniqueSortedGroupNames(emptyGroups), ", "))
 					} else if len(ambiguousGroups) > 0 {
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupAmbiguous, groupSyncReasonGroupAmbiguous,
-							"Configured approver group(s) match more than one identity-provider group: %s. Cached approvers were removed; approval by exact token group still applies.",
-							strings.Join(uniqueSortedGroupNames(ambiguousGroups), ", "))
+							"%s", ambiguousGroupsEventMessage(uniqueSortedGroupNames(ambiguousGroups), updated.Status.ApproverGroupMembers))
 					} else if len(missingGroups) > 0 {
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupNotFound, groupSyncReasonGroupNotFound,
 							"Configured approver group(s) were not found: %s. Stale cached approvers were removed.",
@@ -1363,6 +1362,30 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 		ambiguousEverywhere: groupsAmbiguousInAllProviders(ambiguousProviderCount, len(idpNames)),
 		missingFailureCount: missingFailureCount,
 	}
+}
+
+// ambiguousGroupsEventMessage describes ambiguous approver groups. Approval by
+// exact token group applies only to groups left without an
+// approverGroupMembers entry; a group that another provider resolved (with
+// members, empty or missing) keeps that authoritative result instead.
+func ambiguousGroupsEventMessage(ambiguous []string, members map[string][]string) string {
+	var tokenFallback, authoritative []string
+	for _, g := range ambiguous {
+		if _, ok := members[g]; ok {
+			authoritative = append(authoritative, g)
+		} else {
+			tokenFallback = append(tokenFallback, g)
+		}
+	}
+	msg := fmt.Sprintf("Configured approver group(s) match more than one identity-provider group: %s. Cached approvers from the ambiguous lookups were removed.",
+		strings.Join(ambiguous, ", "))
+	if len(tokenFallback) > 0 {
+		msg += fmt.Sprintf(" Approval by exact token group applies to: %s.", strings.Join(tokenFallback, ", "))
+	}
+	if len(authoritative) > 0 {
+		msg += fmt.Sprintf(" Another identity provider's result (members, empty or missing) stays authoritative for: %s; token-group approval does not apply to them.", strings.Join(authoritative, ", "))
+	}
+	return msg
 }
 
 // groupsAmbiguousInAllProviders returns the groups that every queried

@@ -109,6 +109,7 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 		wantPresent bool
 		wantMembers []string
 		wantPerIDP  map[string][]string
+		wantEvent   string
 	}{
 		{
 			// Guards: no cache retention for ambiguous lookups (idp-a keeps
@@ -122,8 +123,9 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 		{
 			// Guard: the aggregate entry is dropped only when every provider
 			// is ambiguous.
-			name: "ambiguous in both providers",
-			idps: []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureAmbiguous}},
+			name:      "ambiguous in both providers",
+			idps:      []idpFixture{{"idp-a", keycloakFixtureAmbiguous}, {"idp-b", keycloakFixtureAmbiguous}},
+			wantEvent: "Approval by exact token group applies to: approvers.",
 		},
 		{
 			// Guard: a provider that fails to load is not counted as
@@ -139,20 +141,26 @@ func TestMultiIDPAmbiguousApproverGroup(t *testing.T) {
 			wantPresent: true,
 			wantMembers: []string{},
 			wantPerIDP:  map[string][]string{"idp-b": {}},
+			wantEvent:   "stays authoritative for: approvers; token-group approval does not apply",
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cli, escalation := newTwoIDPStatusClient(t, tt.idps, staleTwoIDPStatus())
 			log := zap.NewNop().Sugar()
+			recorder := fakeEventRecorder{Events: make(chan string, 20)}
 			updater := EscalationStatusUpdater{
 				Log:           log,
 				K8sClient:     cli,
 				IDPLoader:     cfgpkg.NewIdentityProviderLoader(cli),
-				EventRecorder: fakeEventRecorder{Events: make(chan string, 20)},
+				EventRecorder: recorder,
 			}
 
 			updater.runOnce(context.Background(), log)
+			events := drainRecordedEvents(recorder.Events)
+			if tt.wantEvent != "" {
+				assert.True(t, recordedEventContains(events, "Warning ApproverGroupAmbiguous", tt.wantEvent), "events: %v", events)
+			}
 
 			updated := &breakglassv1alpha1.BreakglassEscalation{}
 			require.NoError(t, cli.Get(context.Background(), client.ObjectKeyFromObject(escalation), updated))
