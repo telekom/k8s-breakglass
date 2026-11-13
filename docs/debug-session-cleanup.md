@@ -145,8 +145,12 @@ spec:
 Writing a DebugSession grants nothing. The ClusterRole
 `debugsession-cleanup-acknowledger`
 (`config/rbac/debugsession_cleanup_acknowledger_role.yaml`) grants it and is
-**bound to nobody by default**. Bind it only to operators who are independent
-of the sessions they acknowledge.
+**bound to nobody by default**. The standard deployment (`config/base`) adds
+the name prefix `breakglass-`, so bind the deployed ClusterRole
+`breakglass-debugsession-cleanup-acknowledger` (check with
+`kubectl get clusterrole | grep cleanup-acknowledger` if you use your own
+prefix). Bind it only to operators who are independent of the sessions they
+acknowledge.
 
 - The object is immutable: the CRD rejects any change to `spec`.
 - It is bound to one session instance by `sessionUID`.

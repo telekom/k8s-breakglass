@@ -14,7 +14,7 @@ This checklist helps ensure a secure and reliable production deployment of the b
 - [ ] Storage for audit logs (optional, if using persistent audit)
 - [ ] ValidatingAdmissionPolicy component enabled (K8s 1.30+, optional — see [VAP Migration](validating-admission-policy.md))
 - [ ] Cleanup acknowledgement policy component `config/components/cleanup-acknowledgement-policy` enabled (K8s 1.30+, recommended — enforces `acknowledgedBy` in the API server; see [DebugSession cleanup recovery](debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone))
-- [ ] `debugsession-cleanup-acknowledger` ClusterRole bound only to operators independent of the sessions they acknowledge
+- [ ] `breakglass-debugsession-cleanup-acknowledger` ClusterRole (`debugsession-cleanup-acknowledger` plus the kustomize name prefix) bound only to operators independent of the sessions they acknowledge
 
 ### Authentication & Identity
 
