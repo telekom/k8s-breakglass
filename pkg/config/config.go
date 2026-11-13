@@ -188,13 +188,19 @@ type Server struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"` // Explicit list of origins permitted for credentialed browser calls
 	// ClientCAFile is a PEM bundle of CAs that sign accepted client
 	// certificates. Required for clientAuth verifyIfGiven and require.
-	// Read once at startup; restart the server after changing it.
+	// Re-read while the server runs unless TLSReloadDisabled is set.
 	// +optional
 	ClientCAFile string `yaml:"clientCAFile,omitempty"`
 	// ClientAuth selects the TLS client-certificate policy: none (default),
 	// request, verifyIfGiven or require. Only applies when HTTPS is enabled.
 	// +optional
 	ClientAuth string `yaml:"clientAuth,omitempty"`
+	// TLSReloadDisabled restores the previous behaviour of reading
+	// TLSCertFile, TLSKeyFile and ClientCAFile once at startup. By default
+	// the server re-reads them when they change. Transitional opt-out; it
+	// will be removed in a future release.
+	// +optional
+	TLSReloadDisabled bool `yaml:"tlsReloadDisabled,omitempty"`
 	// HardenedIDPHints when true, prevents disclosure of available identity providers in error messages.
 	// Default: true (hardened) unless explicitly set to false in config.
 	// +optional
