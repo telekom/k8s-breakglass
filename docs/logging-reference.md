@@ -214,7 +214,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| controller | 468 | 344 | 352 | 271 | 0 | 0 | 0 |
+| controller | 468 | 345 | 353 | 272 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -293,14 +293,16 @@ variable part of a concatenated message.
 | info | `Frontend UI enabled via --enable-frontend=true` |  | api.go |
 | info | `HTTP server shutdown complete` |  | api.go |
 | info | `Initiating graceful HTTP server shutdown` |  | api.go |
+| info | `Reloaded client CA bundle` | `file` | api.go |
 | info | `Session activity tracking enabled` |  | api.go |
 | info | `Starting HTTP server` | `address` | api.go |
-| info | `Starting HTTPS server` | `address`, `clientAuth`, `tlsMinVersion` | api.go |
+| info | `Starting HTTPS server` | `address`, `clientAuth`, `tlsMinVersion`, `tlsReload` | api.go |
 | info | `http_request` | `cid`, `latency`, `method`, `path`, `status` | api.go |
 | info | `identity provider loaded` | `authority`, `name`, `type` | api.go |
 | info | `identity provider reloaded successfully` | `name`, `type` | api.go |
 | warn | `CORS: no allowed origins configured and defaults not enabled — browser requests with Origin header will be blocked; set server.allowedOrigins in config` |  | api.go |
 | warn | `CORS: using default localhost origins because BREAKGLASS_ALLOW_DEFAULT_ORIGINS is enabled — not suitable for production; set server.allowedOrigins in config` | `BREAKGLASS_ALLOW_DEFAULT_ORIGINS`, `origins` | api.go |
+| warn | `Cannot reload client CA bundle; the current one stays in use` | `error`, `file` | api.go |
 | warn | `Failed to set trusted proxies` | `error` | api.go |
 | warn | `HTTP server shutdown error` | `error` | api.go |
 | warn | `OIDC proxy: server.allowOIDCProxyRedirects is enabled — the proxy will follow upstream 30x responses without re-checking the authority allowlist, which permits SSRF via a redirecting identity provider; unset this field to restore the secure default` |  | api.go |
@@ -321,6 +323,7 @@ variable part of a concatenated message.
 | warn | `oidc_proxy_url_resolution_attack` | `originalPath` | api.go |
 | warn | `refusing insecure TLS verification for identity provider` | `authority`, `idpName`, `remediation` | api.go |
 | error | `Invalid server TLS configuration` | `error` | api.go |
+| error | `Server certificate watcher stopped; the current certificate stays in use` | `error` | api.go |
 | error | `Server listen error` | `error` | api.go |
 | error | `[Recovery from panic]` | `cid`, `error`, `method`, `path` | api.go |
 | error | `failed_to_reload_identity_provider` | `error` | api.go |
