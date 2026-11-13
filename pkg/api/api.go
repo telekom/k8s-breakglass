@@ -1519,7 +1519,12 @@ func recoverPanics(log *zap.Logger) gin.HandlerFunc {
 			zap.String("cid", fmt.Sprintf("%v", cid)),
 			zap.String("method", c.Request.Method),
 			zap.String("path", c.FullPath()))
-		apiresponses.RespondInternalErrorSimple(c, "internal server error")
+		// A handler that already wrote (for example a flushed terminal or
+		// recording stream) keeps its status and body; appending an error
+		// body would corrupt the stream.
+		if !c.Writer.Written() {
+			apiresponses.RespondInternalErrorSimple(c, "internal server error")
+		}
 		c.Abort()
 	})
 }

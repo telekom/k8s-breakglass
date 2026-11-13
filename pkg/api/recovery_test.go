@@ -47,3 +47,25 @@ func TestRecoverPanicsDoesNotLogCredentials(t *testing.T) {
 		}
 	}
 }
+
+func TestRecoverPanicsAfterFlushKeepsTheStream(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zapcore.DebugLevel)
+	engine := gin.New()
+	engine.Use(recoverPanics(zap.New(core)))
+	engine.GET("/stream", func(c *gin.Context) {
+		c.String(http.StatusOK, "partial")
+		c.Writer.Flush()
+		panic("kaboom")
+	})
+
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/stream", nil))
+
+	if rec.Code != http.StatusOK || rec.Body.String() != "partial" {
+		t.Fatalf("status %d body %q, want the flushed 200 \"partial\" unchanged", rec.Code, rec.Body.String())
+	}
+	if logs.FilterMessage("[Recovery from panic]").Len() != 1 {
+		t.Fatalf("panic not logged: %v", logs.AllUntimed())
+	}
+}
