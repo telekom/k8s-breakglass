@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Deutsche Telekom AG
 # SPDX-License-Identifier: Apache-2.0
 
-FROM alpine:3.24@sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 ARG VERSION=0.1.0
 ARG VCS_REF=unknown
@@ -57,7 +57,7 @@ LABEL org.opencontainers.image.title="Breakglass workload-debug" \
       org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.vendor="Deutsche Telekom AG" \
       org.opencontainers.image.base.name="alpine:3.24" \
-      org.opencontainers.image.base.digest="sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6" \
+      org.opencontainers.image.base.digest="sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf" \
       io.telekom.breakglass.image.role="debug-workload" \
       io.telekom.breakglass.sbom.format="spdx-json" \
       io.telekom.breakglass.signing="cosign-keyless"
