@@ -1439,12 +1439,65 @@ func TestReloadingTLSConfig(t *testing.T) {
 	})
 
 	t.Run("invalid-ca-update-keeps-current", func(t *testing.T) {
-		cfg, addr := serve(t, false)
-		require.NoError(t, os.WriteFile(cfg.ClientCAFile, []byte("not a certificate"), 0o600))
-		time.Sleep(5 * clientCAReloadInterval)
-		_, _, err := handshake(addr, oldClient)
-		assert.NoError(t, err)
+		otherCA := newTestCA(t, "other-client-ca")
+		for name, bundle := range map[string][]byte{
+			"not PEM": []byte("not a certificate"),
+			// A multi-CA bundle caught mid-write: the first CA is complete.
+			"truncated second CA": append(append([]byte{}, newClientCA.pem...), otherCA.pem[:len(otherCA.pem)/2]...),
+		} {
+			t.Run(name, func(t *testing.T) {
+				cfg, addr := serve(t, false)
+				require.NoError(t, os.WriteFile(cfg.ClientCAFile, bundle, 0o600))
+				time.Sleep(5 * clientCAReloadInterval)
+				_, _, err := handshake(addr, oldClient)
+				assert.NoError(t, err, "the current bundle stays in use")
+				_, _, err = handshake(addr, newClient)
+				assert.ErrorContains(t, err, "tls: unknown certificate authority", "a partial bundle must not be published")
+			})
+		}
 	})
+
+	// A resumed session must not outlive the rotation of its client CA.
+	for _, version := range []uint16{tls.VersionTLS12, tls.VersionTLS13} {
+		t.Run("resumption/"+tls.VersionName(version), func(t *testing.T) {
+			cfg, addr := serve(t, false)
+			client := &http.Client{Timeout: 5 * time.Second, Transport: &http.Transport{
+				DisableKeepAlives: true,
+				TLSClientConfig: &tls.Config{
+					MinVersion:         version,
+					MaxVersion:         version,
+					RootCAs:            roots,
+					ServerName:         "localhost",
+					ClientSessionCache: tls.NewLRUClientSessionCache(4),
+					GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+						return &oldClient, nil
+					},
+				},
+			}}
+			get := func() (*http.Response, error) {
+				resp, err := client.Get("https://" + addr + "/")
+				if err == nil {
+					_ = resp.Body.Close()
+				}
+				return resp, err
+			}
+			_, err := get()
+			require.NoError(t, err)
+			resp, err := get()
+			require.NoError(t, err)
+			require.True(t, resp.TLS.DidResume, "the session must resume before the rotation")
+
+			require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+			require.EventuallyWithT(t, func(c *assert.CollectT) {
+				_, _, err := handshake(addr, newClient)
+				assert.NoError(c, err)
+			}, 10*time.Second, 50*time.Millisecond)
+
+			// The response is read, so a TLS 1.3 alert after the handshake is seen.
+			_, err = get()
+			assert.Error(t, err, "the retired client must not resume or handshake")
+		})
+	}
 
 	t.Run("disabled", func(t *testing.T) {
 		cfg, addr := serve(t, true)
@@ -1460,4 +1513,32 @@ func TestReloadingTLSConfig(t *testing.T) {
 		_, _, err = handshake(addr, newClient)
 		assert.ErrorContains(t, err, "tls: unknown certificate authority")
 	})
+}
+
+func TestParseCABundle(t *testing.T) {
+	a, b := newTestCA(t, "a"), newTestCA(t, "b")
+	both := append(append([]byte{}, a.pem...), b.pem...)
+	tests := map[string]struct {
+		data    []byte
+		wantErr string
+	}{
+		"one":                 {data: a.pem},
+		"two with text":       {data: append([]byte("# bundle\n"), both...)},
+		"empty":               {data: nil, wantErr: "no PEM certificates"},
+		"not PEM":             {data: []byte("garbage"), wantErr: "no PEM certificates"},
+		"truncated second":    {data: append(append([]byte{}, a.pem...), b.pem[:len(b.pem)/2]...), wantErr: "malformed PEM block after 1 certificates"},
+		"unparsable":          {data: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("nope")}), wantErr: "certificate 1"},
+		"other block skipped": {data: append(pem.EncodeToMemory(&pem.Block{Type: "X509 CRL", Bytes: []byte("x")}), a.pem...)},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			pool, err := parseCABundle(tt.data)
+			if tt.wantErr != "" {
+				assert.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.NotNil(t, pool)
+		})
+	}
 }
