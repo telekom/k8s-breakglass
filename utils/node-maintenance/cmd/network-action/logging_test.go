@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,9 +37,11 @@ func runMain(t *testing.T, env ...string) (stderr string, code int) {
 	var buf bytes.Buffer
 	cmd.Stderr = &buf
 	err := cmd.Run()
-	if exit, ok := err.(*exec.ExitError); ok {
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
 		return buf.String(), exit.ExitCode()
-	} else if err != nil {
+	}
+	if err != nil {
 		t.Fatal(err)
 	}
 	return buf.String(), 0
