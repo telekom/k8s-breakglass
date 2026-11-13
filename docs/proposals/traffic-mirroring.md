@@ -30,12 +30,14 @@ The feature must:
 
 ### Mechanism
 
-The controller creates one **mirror Pod** per session in the fixed executor
-namespace (`breakglass-node-maintenance`) on the source Node:
+The controller creates two Pods per session in the fixed executor namespace
+(`breakglass-node-maintenance`) on the source Node: an unprivileged
+**capture Pod** without host namespaces, and a privileged **agent Pod**
+with `hostPID`, created only after the capture Pod runs.
 
 ```
- source network namespace                     mirror Pod network namespace
- (target Pod, or the Node for host mode)
+ source network namespace                     capture Pod network namespace
+ (target Pod, or the Node for host mode)      (no hostPID)
  ┌──────────────────────────────┐             ┌──────────────────────────┐
  │ eth0 / net1 (clsact)         │             │                          │
  │  ingress ─┐  basic match-all │   veth      │  bgmirror0 ──> tcpdump   │
@@ -44,13 +46,15 @@ namespace (`breakglass-node-maintenance`) on the source Node:
  └──────────────────────────────┘             └──────────────────────────┘
 ```
 
-- The `mirror` container (hostPID, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`,
+- The agent's `mirror` container (hostPID, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`,
   AppArmor unconfined, seccomp `RuntimeDefault`, read-only root) finds the
   source network namespace from the Pod UID in `/proc/*/cgroup` (PID 1 for a
   Node), checks that the namespace owns the approved Pod IP and is not the
   host namespace (a Pod is selected by the process whose namespace owns the
-  approved Pod IP, also for the teardown), creates a veth pair with the peer
-  in its own Pod. The pair carries mirrored copies only: both ends have
+  approved Pod IP, also for the teardown), pins the capture Pod's namespace
+  the same way (by its UID and IP) and creates a veth pair whose peer goes
+  straight into that namespace. It brings the capture end up last, after
+  every filter is attached; that is the capture's start signal. The pair carries mirrored copies only: both ends have
   `addrgenmode none` (no IPv6 link-local address) and ARP off, and a
   `basic action drop` ingress filter on the source-side end drops every
   frame sent from the capture side before the source network stack. The
@@ -61,15 +65,17 @@ namespace (`breakglass-node-maintenance`) on the source Node:
   `action mirred egress mirror dev bgm… cookie <operation>`. The agent also
   receives the absolute approved expiry: it refuses to attach after it and
   detaches itself, with verification, when it is reached.
-- The `capture` container (`NET_RAW`, plus `SETUID`/`SETGID` to drop to
-  `nobody` with `tcpdump -Z`) waits for the peer and runs
+- The capture Pod's only container (`NET_RAW`, plus `SETUID`/`SETGID` to drop
+  to `nobody` with `tcpdump -Z`; no hostPID, so it cannot read or signal
+  host processes) waits until the peer is up and runs
   `tcpdump -q -p -n -l -e -s 96 -c maxPackets -- filter` under a `timeout`
   that ends at the approved expiry. `-q` and the 96-byte snap length keep
   the output to packet headers; `capturePayload: true` in the template
   restores protocol decoding and `snapLength`. The filter is a template
   field passed as one argument, never through a shell.
-- A per-operation deny-all NetworkPolicy selects the mirror and teardown
-  Pods, so the capture container cannot send the mirrored data anywhere.
+- A per-operation deny-all NetworkPolicy selects the capture, agent and
+  teardown Pods, so the capture cannot send the mirrored data anywhere. This
+  requires a CNI that enforces NetworkPolicy.
 - `status.trafficMirror.clusterConfigUID` binds the operation to the exact
   ClusterConfig; cleanup refuses a replaced ClusterConfig of the same name
   and leaves it to an operator.
@@ -150,8 +156,12 @@ fails closed if any identity, label or the interface changed.
    action cookie is the operation's and the mirror device, leaves the
    `clsact` qdisc (another tool may own it), and exits successfully only
    after re-reading that none remain. The helper opens the source network
-   namespace once and enters it only through that descriptor, so a reused
-   PID cannot redirect it after the identity checks.
+   namespace once, repeats the identity checks (not the host namespace, owns
+   the approved Pod IP) through that descriptor, and enters it only through
+   the descriptor afterwards. If the Pod still has processes but none owns
+   the approved IP, its sandbox was recreated and the original namespace
+   with the mirror state is gone; the teardown reports that, and the stop
+   receipt records it.
    Every inspection must succeed: a namespace or `tc` read error fails the
    teardown instead of counting as absence. A failed teardown Pod is
    replaced; the session keeps its finalizer and reports `CleanupFailed`

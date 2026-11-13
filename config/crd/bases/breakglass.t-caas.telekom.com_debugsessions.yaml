@@ -8779,6 +8779,11 @@ spec:
                 description: trafficMirror tracks the mirror executor until its teardown
                   is verified.
                 properties:
+                  capturePodUID:
+                    description: |-
+                      capturePodUID is the unprivileged capture Pod incarnation (no hostPID)
+                      that receives the mirrored copies.
+                    type: string
                   clusterConfigUID:
                     description: |-
                       clusterConfigUID binds the mirror to the exact ClusterConfig used to
@@ -8797,7 +8802,7 @@ spec:
                       events.
                     type: string
                   podUID:
-                    description: podUID is the mirror Pod incarnation.
+                    description: podUID is the privileged mirror agent Pod incarnation.
                     type: string
                   released:
                     description: released is set once every target resource of the
@@ -8819,6 +8824,11 @@ spec:
                   stopAudited:
                     description: stopAudited records the durable stop receipt.
                     type: boolean
+                  teardownResult:
+                    description: |-
+                      teardownResult records what the verified teardown found, for example
+                      that the source sandbox had been recreated.
+                    type: string
                   teardownVerified:
                     description: |-
                       teardownVerified is set after a teardown Pod proved that no tc filter

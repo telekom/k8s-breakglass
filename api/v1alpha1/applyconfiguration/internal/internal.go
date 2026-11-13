@@ -4971,6 +4971,9 @@ var schemaYAML = typed.YAMLObject(`types:
 - name: com.github.telekom.k8s-breakglass.api.v1alpha1.TrafficMirrorStatus
   map:
     fields:
+    - name: capturePodUID
+      type:
+        scalar: string
     - name: clusterConfigUID
       type:
         scalar: string
@@ -4998,6 +5001,9 @@ var schemaYAML = typed.YAMLObject(`types:
     - name: stopAudited
       type:
         scalar: boolean
+    - name: teardownResult
+      type:
+        scalar: string
     - name: teardownVerified
       type:
         scalar: boolean

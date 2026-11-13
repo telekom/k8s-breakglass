@@ -169,9 +169,17 @@ type TrafficMirrorStatus struct {
 	// cleanup always runs and verifies the teardown on the Node.
 	// +optional
 	CreateAttempted bool `json:"createAttempted,omitempty"`
-	// podUID is the mirror Pod incarnation.
+	// podUID is the privileged mirror agent Pod incarnation.
 	// +optional
 	PodUID string `json:"podUID,omitempty"`
+	// capturePodUID is the unprivileged capture Pod incarnation (no hostPID)
+	// that receives the mirrored copies.
+	// +optional
+	CapturePodUID string `json:"capturePodUID,omitempty"`
+	// teardownResult records what the verified teardown found, for example
+	// that the source sandbox had been recreated.
+	// +optional
+	TeardownResult string `json:"teardownResult,omitempty"`
 	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
 	// create it; cleanup refuses a replaced ClusterConfig.
 	// +optional

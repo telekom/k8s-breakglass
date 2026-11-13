@@ -20,8 +20,14 @@ type TrafficMirrorStatusApplyConfiguration struct {
 	// createAttempted is persisted before the mirror Pod is created; once set,
 	// cleanup always runs and verifies the teardown on the Node.
 	CreateAttempted *bool `json:"createAttempted,omitempty"`
-	// podUID is the mirror Pod incarnation.
+	// podUID is the privileged mirror agent Pod incarnation.
 	PodUID *string `json:"podUID,omitempty"`
+	// capturePodUID is the unprivileged capture Pod incarnation (no hostPID)
+	// that receives the mirrored copies.
+	CapturePodUID *string `json:"capturePodUID,omitempty"`
+	// teardownResult records what the verified teardown found, for example
+	// that the source sandbox had been recreated.
+	TeardownResult *string `json:"teardownResult,omitempty"`
 	// clusterConfigUID binds the mirror to the exact ClusterConfig used to
 	// create it; cleanup refuses a replaced ClusterConfig.
 	ClusterConfigUID *string `json:"clusterConfigUID,omitempty"`
@@ -74,6 +80,22 @@ func (b *TrafficMirrorStatusApplyConfiguration) WithCreateAttempted(value bool) 
 // If called multiple times, the PodUID field is set to the value of the last call.
 func (b *TrafficMirrorStatusApplyConfiguration) WithPodUID(value string) *TrafficMirrorStatusApplyConfiguration {
 	b.PodUID = &value
+	return b
+}
+
+// WithCapturePodUID sets the CapturePodUID field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the CapturePodUID field is set to the value of the last call.
+func (b *TrafficMirrorStatusApplyConfiguration) WithCapturePodUID(value string) *TrafficMirrorStatusApplyConfiguration {
+	b.CapturePodUID = &value
+	return b
+}
+
+// WithTeardownResult sets the TeardownResult field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the TeardownResult field is set to the value of the last call.
+func (b *TrafficMirrorStatusApplyConfiguration) WithTeardownResult(value string) *TrafficMirrorStatusApplyConfiguration {
+	b.TeardownResult = &value
 	return b
 }
 

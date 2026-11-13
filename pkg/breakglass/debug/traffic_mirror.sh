@@ -5,9 +5,11 @@
 # Controller-owned session traffic mirror helper. The controller renders the
 # whole Pod; requesters never supply commands, arguments or environment.
 #
-#   attach    mirror INTERFACE of the target network namespace into a veth
-#             pair whose peer lives in this Pod, then wait. SIGTERM detaches.
-#   capture   wait for the mirror device and run the bounded tcpdump.
+#   attach    (agent Pod, hostPID) mirror INTERFACE of the target network
+#             namespace into a veth pair whose peer is moved into the
+#             separate capture Pod, then wait. SIGTERM detaches.
+#   capture   (capture Pod, no hostPID) wait until the agent brought the
+#             mirror device up, then run the bounded tcpdump.
 #   teardown  remove this operation's tc filters and mirror device from the
 #             target network namespace and verify that none remain.
 #
@@ -18,6 +20,8 @@ set -eu
 
 mode=${1:-}
 peer=bgmirror0
+# The agent writes its readiness marker here after a complete attach.
+run_dir=${MIRROR_RUN_DIR:-/run/mirror}
 
 log() {
 	printf '{"event":"%s","operation":"%s","detail":"%s"}\n' "$1" "${MIRROR_OPERATION:-}" "${2:-}"
@@ -33,11 +37,13 @@ require_env() {
 	: "${MIRROR_OPERATION:?}" "${MIRROR_INTERFACE:?}" "${MIRROR_VETH:?}" "${MIRROR_COOKIE:?}" "${MIRROR_PREF:?}"
 }
 
-# pod_pid prints the PID of a process of the Pod UID whose network namespace
-# owns the approved Pod IP. It prints nothing when the Pod has no process on
-# this Node and fails when its processes exist but none owns the IP.
+# pod_pid UID IP prints the PID of a process of the Pod whose network
+# namespace owns IP, "recreated" when the Pod has processes but none owns IP
+# (its sandbox was recreated with a new address), or nothing when the Pod has
+# no process on this Node.
 pod_pid() {
 	uid=$1
+	ip=$2
 	alt=$(printf '%s' "$uid" | tr - _)
 	found=""
 	for cgroup in /proc/[0-9]*/cgroup; do
@@ -45,12 +51,12 @@ pod_pid() {
 		pid=${cgroup#/proc/}
 		pid=${pid%/cgroup}
 		found=1
-		if nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>/dev/null | grep -F -q " ${MIRROR_POD_IP:?}/"; then
+		if nsenter --net="/proc/$pid/ns/net" -- ip -o addr show 2>/dev/null | grep -F -q " $ip/"; then
 			printf '%s\n' "$pid"
 			return 0
 		fi
 	done
-	[ -z "$found" ] || fail target-mismatch "no network namespace of the Pod owns the approved Pod IP"
+	[ -z "$found" ] || printf 'recreated\n'
 }
 
 # check_scan refuses to run when the scan cannot see other Pods or enter
@@ -69,7 +75,7 @@ target_pid() {
 		printf '1\n'
 		return 0
 	fi
-	pod_pid "$MIRROR_POD_UID"
+	pod_pid "$MIRROR_POD_UID" "${MIRROR_POD_IP:?}"
 }
 
 # pin_target opens the target network namespace once. Every later step
@@ -81,6 +87,28 @@ pin_target() {
 
 in_target() {
 	nsenter --net=/proc/self/fd/3 -- "$@"
+}
+
+# The capture Pod's network namespace is pinned on descriptor 4.
+in_capture() {
+	nsenter --net=/proc/self/fd/4 -- "$@"
+}
+
+# verify_pinned_target repeats the identity checks through the pinned
+# descriptor: a Pod target is not the host namespace and owns the Pod IP.
+verify_pinned_target() {
+	in_target true || fail inspect-failed "cannot enter the target network namespace"
+	if [ -n "${MIRROR_POD_UID:-}" ]; then
+		[ "$(readlink /proc/self/fd/3)" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
+		in_target ip -o addr show | grep -F -q " ${MIRROR_POD_IP:?}/" || fail target-mismatch "the target network namespace does not own the Pod IP"
+	fi
+}
+
+# Nodes booted with ipv6.disable=1 reject addrgenmode.
+addrgen() {
+	if [ -d /proc/sys/net/ipv6 ]; then
+		printf 'addrgenmode none\n'
+	fi
 }
 
 hooks() {
@@ -167,13 +195,20 @@ attach() {
 	check_scan
 	[ "$(remaining)" -gt 0 ] || fail expired "the approved session has expired"
 	tpid=$(target_pid) || exit 1
-	[ -n "$tpid" ] || fail target-missing "the target Pod has no process on this Node"
+	case "$tpid" in
+	"") fail target-missing "the target Pod has no process on this Node" ;;
+	recreated) fail target-mismatch "no network namespace of the target Pod owns the approved Pod IP" ;;
+	esac
 	pin_target
-	in_target true || fail inspect-failed "cannot enter the target network namespace"
-	if [ -n "${MIRROR_POD_UID:-}" ]; then
-		[ "$(readlink /proc/self/fd/3)" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
-		in_target ip -o addr show | grep -F -q " ${MIRROR_POD_IP:?}/" || fail target-mismatch "the target network namespace does not own the Pod IP"
-	fi
+	verify_pinned_target
+	cpid=$(pod_pid "${MIRROR_CAPTURE_POD_UID:?}" "${MIRROR_CAPTURE_POD_IP:?}") || exit 1
+	case "$cpid" in
+	"" | recreated) fail capture-missing "the capture Pod is not running with its approved IP on this Node" ;;
+	esac
+	exec 4<"/proc/$cpid/ns/net" || fail inspect-failed "cannot open the capture network namespace"
+	[ "$(readlink /proc/self/fd/4)" != "$(readlink /proc/1/ns/net)" ] || fail capture-missing "the capture Pod uses the host network"
+	[ "$(readlink /proc/self/fd/4)" != "$(readlink /proc/self/fd/3)" ] || fail capture-missing "the capture Pod shares the target network namespace"
+	in_capture ip -o addr show | grep -F -q " $MIRROR_CAPTURE_POD_IP/" || fail capture-missing "the capture network namespace does not own the capture Pod IP"
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
 	detach
 	for hook in ingress egress; do
@@ -185,16 +220,18 @@ attach() {
 	# Pod's activeDeadlineSeconds) detaches and verifies before exiting.
 	trap 'detach' EXIT
 	trap 'detach; verify_detached; log mirror-stopped; exit 0' TERM INT
-	in_target ip link add name "$MIRROR_VETH" type veth peer name "$peer" netns "$$"
+	# The peer goes straight into the pinned capture namespace.
+	in_target ip link add name "$MIRROR_VETH" type veth peer name "$peer" netns /proc/self/fd/4
 	# The pair carries mirrored copies only, never a path into the source:
 	# no IPv6 link-local addresses, no ARP, and every frame arriving from the
 	# capture side is dropped before the source network stack.
-	in_target ip link set dev "$MIRROR_VETH" addrgenmode none arp off
-	ip link set dev "$peer" addrgenmode none arp off
+	# shellcheck disable=SC2046 # addrgen prints nothing or two words.
+	in_target ip link set dev "$MIRROR_VETH" $(addrgen) arp off
+	# shellcheck disable=SC2046
+	in_capture ip link set dev "$peer" $(addrgen) arp off
 	in_target tc qdisc add dev "$MIRROR_VETH" clsact
 	in_target tc filter add dev "$MIRROR_VETH" ingress pref 1 protocol all basic action drop
 	in_target ip link set "$MIRROR_VETH" up
-	ip link set "$peer" up
 	# Only the mirrored copies pass this bucket; excess copies are dropped.
 	in_target tc qdisc replace dev "$MIRROR_VETH" root tbf rate "${MIRROR_RATE_MBIT:?}mbit" burst 64kb latency 100ms
 	in_target tc qdisc show dev "$MIRROR_INTERFACE" | grep -q 'qdisc clsact' || in_target tc qdisc add dev "$MIRROR_INTERFACE" clsact
@@ -204,7 +241,10 @@ attach() {
 		in_target tc filter add dev "$MIRROR_INTERFACE" "$hook" pref "$MIRROR_PREF" protocol all basic \
 			action mirred egress mirror dev "$MIRROR_VETH" cookie "$MIRROR_COOKIE"
 	done
-	: >/run/mirror/attached
+	# Bringing the capture side up last tells the capture Pod that the
+	# attach is complete.
+	in_capture ip link set "$peer" up
+	: >"$run_dir/attached"
 	log mirror-started "$MIRROR_INTERFACE"
 	# The absolute approved expiry ends the mirror even without the controller.
 	while left=$(remaining) && [ "$left" -gt 0 ]; do
@@ -219,10 +259,13 @@ attach() {
 }
 
 capture() {
+	# The agent brings the device up only after a complete attach; an
+	# existing but down device would make tcpdump fail. The agent Pod is
+	# created after this Pod runs, so allow for its image pull.
 	attempts=0
-	until ip link show dev "$peer" >/dev/null 2>&1; do
+	until ip -o link show dev "$peer" 2>/dev/null | grep -q '[<,]UP[,>]'; do
 		attempts=$((attempts + 1))
-		[ "$attempts" -le 120 ] || fail capture-failed "mirror device did not appear"
+		[ "$attempts" -le "${MIRROR_ATTACH_WAIT_SECONDS:-300}" ] || fail capture-failed "the mirror was not attached in time"
 		sleep 1
 	done
 	left=$(remaining)
@@ -239,15 +282,23 @@ teardown() {
 	require_env
 	check_scan
 	tpid=$(target_pid) || exit 1
-	if [ -z "$tpid" ]; then
-		log teardown-verified "target network namespace is gone"
-		return 0
-	fi
+	case "$tpid" in
+	"") verified "the target network namespace is gone" ;;
+	recreated) verified "the target Pod sandbox was recreated; its original network namespace is gone" ;;
+	esac
 	pin_target
-	in_target true || fail inspect-failed "cannot enter the target network namespace"
+	verify_pinned_target
 	detach
 	verify_detached
-	log teardown-verified "$MIRROR_INTERFACE"
+	verified "no filter with the operation cookie and no mirror device remain on $MIRROR_INTERFACE"
+}
+
+# verified reports a successful teardown, also as termination message for
+# the controller's audit record, and ends the script.
+verified() {
+	log teardown-verified "$1"
+	printf '%s\n' "$1" >/dev/termination-log 2>/dev/null || true
+	exit 0
 }
 
 case "$mode" in

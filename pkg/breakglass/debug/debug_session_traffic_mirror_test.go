@@ -6,6 +6,9 @@ package debug
 import (
 	"context"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,98 +123,139 @@ func envValue(container corev1.Container, name string) string {
 	return ""
 }
 
-func TestTrafficMirrorDeployCreatesFixedCapturePod(t *testing.T) {
+// runCapture marks the capture Pod as running with an IP, as the kubelet
+// would, and lets the active handler create the agent.
+func (f *mirrorFixture) runCapture(t *testing.T) {
+	t.Helper()
+	setMirrorPodStatus(t, f, f.ds.Status.TrafficMirror.OperationID+trafficMirrorCaptureSuffix, func(pod *corev1.Pod) {
+		pod.Status.Phase, pod.Status.PodIP = corev1.PodRunning, "10.244.0.9"
+	})
+	_, err := f.c.handleTrafficMirrorActive(t.Context(), f.ds)
+	require.NoError(t, err)
+}
+
+func TestTrafficMirrorDeployCreatesSeparateCaptureAndAgentPods(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
-	require.True(t, hasMaintenanceFinalizer(f.ds), "cleanup responsibility is durable before the Pod exists")
+	require.True(t, hasMaintenanceFinalizer(f.ds), "cleanup responsibility is durable before any Pod exists")
 	status := f.ds.Status.TrafficMirror
 	require.Equal(t, breakglassv1alpha1.TrafficMirrorOperationID("session-uid"), status.OperationID)
-	require.True(t, status.CreateAttempted)
-	require.Equal(t, status.OperationID+"-uid", status.PodUID)
+	require.Equal(t, "cluster-uid", status.ClusterConfigUID, "the mirror is bound to the exact ClusterConfig")
 	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted}, f.eventTypes())
+	require.False(t, status.CreateAttempted, "activation creates only the unprivileged capture Pod")
+	require.Nil(t, f.pod(t, status.OperationID), "no privileged agent before the capture Pod runs")
 
-	pod := f.pod(t, status.OperationID)
-	require.NotNil(t, pod)
-	require.Equal(t, "node-a", pod.Spec.NodeName)
-	require.True(t, pod.Spec.HostPID)
-	require.False(t, pod.Spec.HostNetwork, "the capture side keeps its own network namespace")
-	require.False(t, *pod.Spec.AutomountServiceAccountToken)
-	require.Equal(t, corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
-	require.LessOrEqual(t, *pod.Spec.ActiveDeadlineSeconds, int64(time.Until(f.ds.Status.ExpiresAt.Time).Seconds())+3,
-		"the kubelet detaches the mirror at session expiry without the controller")
-	require.Len(t, pod.Spec.Containers, 2)
-	agent, capture := pod.Spec.Containers[0], pod.Spec.Containers[1]
-	require.Equal(t, []corev1.Capability{"NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"}, agent.SecurityContext.Capabilities.Add)
+	capturePod := f.pod(t, status.OperationID+trafficMirrorCaptureSuffix)
+	require.NotNil(t, capturePod)
+	require.Equal(t, string(capturePod.UID), status.CapturePodUID)
+	require.False(t, capturePod.Spec.HostPID, "the capture Pod shares no host namespace")
+	require.False(t, capturePod.Spec.HostNetwork)
+	require.Len(t, capturePod.Spec.Containers, 1)
+	capture := capturePod.Spec.Containers[0]
 	require.Equal(t, []corev1.Capability{"NET_RAW", "SETGID", "SETUID"}, capture.SecurityContext.Capabilities.Add,
 		"tcpdump drops to nobody after opening its socket")
-	require.Equal(t, "cluster-uid", status.ClusterConfigUID, "the mirror is bound to the exact ClusterConfig")
-	require.Equal(t, "10.244.0.7", status.SourcePodIP)
-	for _, container := range pod.Spec.Containers {
-		require.False(t, container.Resources.Limits.Cpu().IsZero(), "%s has a CPU limit", container.Name)
-		require.False(t, container.Resources.Limits.Memory().IsZero(), "%s has a memory limit", container.Name)
-	}
-	require.Equal(t, status.OperationID, pod.Labels[trafficMirrorOperation])
+	require.Nil(t, capture.SecurityContext.AppArmorProfile, "the capture stays under the runtime AppArmor profile")
+	require.Equal(t, "capture", capture.Command[4])
+	require.Equal(t, "tcp port 8080", envValue(capture, "MIRROR_FILTER"))
+	require.Equal(t, "96", envValue(capture, "MIRROR_SNAPLEN"), "header-only capture by default")
+	require.Equal(t, "false", envValue(capture, "MIRROR_CAPTURE_PAYLOAD"))
+	require.Equal(t, []breakglassv1alpha1.AllowedPodRef{{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+		Name: status.OperationID + trafficMirrorCaptureSuffix, UID: status.CapturePodUID, NodeName: "node-a"}}, trafficMirrorAllowedPods(f.ds),
+		"participants may read the capture Pod only")
+
 	policy := &networkingv1.NetworkPolicy{}
 	require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: status.OperationID}, policy))
 	require.Equal(t, map[string]string{trafficMirrorOperation: status.OperationID}, policy.Spec.PodSelector.MatchLabels)
 	require.ElementsMatch(t, []networkingv1.PolicyType{networkingv1.PolicyTypeIngress, networkingv1.PolicyTypeEgress}, policy.Spec.PolicyTypes)
 	require.Empty(t, policy.Spec.Ingress, "deny all ingress")
 	require.Empty(t, policy.Spec.Egress, "deny all egress")
-	for _, container := range pod.Spec.Containers {
-		require.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
-		require.False(t, *container.SecurityContext.Privileged)
-		require.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
-		require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
-		require.Equal(t, mirrorTemplateSpec().TrafficMirror.Image, container.Image)
-		require.Equal(t, trafficMirrorScript, kubeletExpand(container.Command[2]), "only the controller-owned helper runs, unexpanded")
-	}
+	require.Equal(t, status.OperationID, capturePod.Labels[trafficMirrorOperation], "the deny-all policy selects the capture Pod")
+
+	// The agent follows once the capture Pod runs with an IP.
+	f.runCapture(t)
+	status = f.ds.Status.TrafficMirror
+	require.True(t, status.CreateAttempted)
+	require.Equal(t, "10.244.0.7", status.SourcePodIP)
+	agentPod := f.pod(t, status.OperationID)
+	require.NotNil(t, agentPod)
+	require.Equal(t, string(agentPod.UID), status.PodUID)
+	require.Equal(t, "node-a", agentPod.Spec.NodeName)
+	require.True(t, agentPod.Spec.HostPID, "only the agent has hostPID")
+	require.False(t, agentPod.Spec.HostNetwork)
+	require.Equal(t, status.OperationID, agentPod.Labels[trafficMirrorOperation])
+	require.Len(t, agentPod.Spec.Containers, 1)
+	agent := agentPod.Spec.Containers[0]
+	require.Equal(t, []corev1.Capability{"NET_ADMIN", "SYS_ADMIN", "SYS_PTRACE"}, agent.SecurityContext.Capabilities.Add)
 	require.Equal(t, "attach", agent.Command[4])
-	require.Equal(t, "capture", capture.Command[4])
 	require.Equal(t, "cart-uid", envValue(agent, "MIRROR_POD_UID"))
 	require.Equal(t, "10.244.0.7", envValue(agent, "MIRROR_POD_IP"))
+	require.Equal(t, status.CapturePodUID, envValue(agent, "MIRROR_CAPTURE_POD_UID"))
+	require.Equal(t, "10.244.0.9", envValue(agent, "MIRROR_CAPTURE_POD_IP"))
 	require.Equal(t, "eth0", envValue(agent, "MIRROR_INTERFACE"))
 	require.Equal(t, "10", envValue(agent, "MIRROR_RATE_MBIT"))
-	require.Equal(t, "tcp port 8080", envValue(capture, "MIRROR_FILTER"))
-	require.Equal(t, "96", envValue(capture, "MIRROR_SNAPLEN"), "header-only capture by default")
-	require.Equal(t, "false", envValue(capture, "MIRROR_CAPTURE_PAYLOAD"))
 	cookie, pref, veth := trafficMirrorTuple(status.OperationID)
 	require.Equal(t, cookie, envValue(agent, "MIRROR_COOKIE"))
 	require.Equal(t, pref, envValue(agent, "MIRROR_PREF"))
 	require.Equal(t, veth, envValue(agent, "MIRROR_VETH"))
+	expires := strconv.FormatInt(f.ds.Status.ExpiresAt.Unix(), 10)
+	require.Equal(t, expires, envValue(agent, "MIRROR_EXPIRES_UNIX"), "the agent enforces the absolute expiry")
+	require.Equal(t, expires, envValue(capture, "MIRROR_EXPIRES_UNIX"))
 
-	// A second reconcile neither creates nor audits again.
+	for _, pod := range []*corev1.Pod{capturePod, agentPod} {
+		require.False(t, *pod.Spec.AutomountServiceAccountToken)
+		require.Equal(t, corev1.RestartPolicyNever, pod.Spec.RestartPolicy)
+		require.LessOrEqual(t, *pod.Spec.ActiveDeadlineSeconds, int64(time.Until(f.ds.Status.ExpiresAt.Time).Seconds())+4, // ceil plus 2s slack, measured later
+			"the kubelet stops %s at session expiry without the controller", pod.Name)
+		for _, container := range pod.Spec.Containers {
+			require.Equal(t, []corev1.Capability{"ALL"}, container.SecurityContext.Capabilities.Drop)
+			require.False(t, *container.SecurityContext.Privileged)
+			require.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
+			require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
+			require.False(t, container.Resources.Limits.Cpu().IsZero(), "%s has a CPU limit", container.Name)
+			require.False(t, container.Resources.Limits.Memory().IsZero(), "%s has a memory limit", container.Name)
+			require.Equal(t, mirrorTemplateSpec().TrafficMirror.Image, container.Image)
+			require.Equal(t, trafficMirrorScript, kubeletExpand(container.Command[2]), "only the controller-owned helper runs, unexpanded")
+		}
+	}
+
+	// Further reconciles neither create nor audit again.
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	_, err := f.c.handleTrafficMirrorActive(t.Context(), f.ds)
+	require.NoError(t, err)
 	require.Len(t, f.sink.Events(), 1)
-	require.Equal(t, []breakglassv1alpha1.AllowedPodRef{{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: status.OperationID,
-		UID: status.PodUID, NodeName: "node-a"}}, trafficMirrorAllowedPods(f.ds))
 	require.True(t, *trafficMirrorPodOperations(nil, nil).Logs)
 	require.False(t, *trafficMirrorPodOperations(nil, nil).Exec)
 	require.False(t, *trafficMirrorPodOperations(&breakglassv1alpha1.AllowedPodOperations{Logs: ptr.To(false)}, nil).Logs)
 	require.False(t, *trafficMirrorPodOperations(nil, &breakglassv1alpha1.AllowedPodOperations{Logs: ptr.To(false)}).Logs)
 	require.False(t, *trafficMirrorPodOperations(&breakglassv1alpha1.AllowedPodOperations{Exec: ptr.To(true)}, nil).Exec)
-	expires := strconv.FormatInt(f.ds.Status.ExpiresAt.Unix(), 10)
-	require.Equal(t, expires, envValue(agent, "MIRROR_EXPIRES_UNIX"), "the agent enforces the absolute expiry")
-	require.Equal(t, expires, envValue(capture, "MIRROR_EXPIRES_UNIX"))
 }
 
-func TestTrafficMirrorDeployFailsClosed(t *testing.T) {
+func TestTrafficMirrorAgentFailsClosed(t *testing.T) {
 	t.Run("unapproved", func(t *testing.T) {
 		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 		f.ds.Status.Approval.ApprovedBy = "tester"
 		require.Error(t, f.c.deployTrafficMirror(t.Context(), f.ds))
 		require.Empty(t, f.sink.Events())
 	})
-	t.Run("replaced source Pod", func(t *testing.T) {
-		replaced := mirrorSourcePod("cart", "cart")
-		replaced.UID = "replacement-uid"
-		f := newMirrorFixture(t, approvedPodRequest(), replaced)
-		require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "replaced")
-		require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID))
-		require.True(t, f.ds.Status.TrafficMirror.CreateAttempted, "the source is checked after the marker, so cleanup still verifies the Node")
-	})
-	t.Run("relabelled source Pod", func(t *testing.T) {
-		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "payments"))
-		require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "allowlist")
+	for name, source := range map[string]*corev1.Pod{
+		"replaced source Pod":   func() *corev1.Pod { pod := mirrorSourcePod("cart", "cart"); pod.UID = "replacement-uid"; return pod }(),
+		"relabelled source Pod": mirrorSourcePod("cart", "payments"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newMirrorFixture(t, approvedPodRequest(), source)
+			require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+			f.runCapture(t)
+			require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "no privileged agent for a changed source")
+			require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, f.ds.Status.State)
+			require.True(t, f.ds.Status.TrafficMirror.CreateAttempted, "the source is checked after the marker, so cleanup still runs")
+		})
+	}
+	t.Run("capture Pod not running yet", func(t *testing.T) {
+		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+		require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+		result, err := f.c.handleTrafficMirrorActive(t.Context(), f.ds)
+		require.NoError(t, err)
+		require.Positive(t, result.RequeueAfter)
 		require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID))
 	})
 	t.Run("globally disabled", func(t *testing.T) {
@@ -274,9 +318,10 @@ func setMirrorPodStatus(t *testing.T, f *mirrorFixture, name string, mutate func
 func TestTrafficMirrorActiveTracksAgent(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	f.runCapture(t)
 	name := f.ds.Status.TrafficMirror.OperationID
 	setMirrorPodStatus(t, f, name, func(pod *corev1.Pod) {
-		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "mirror", Ready: true}, {Name: "capture", Ready: true}}
+		pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "mirror", Ready: true}}
 	})
 	_, err := f.c.handleTrafficMirrorActive(t.Context(), f.ds)
 	require.NoError(t, err)
@@ -311,6 +356,7 @@ func TestTrafficMirrorActiveTracksAgent(t *testing.T) {
 func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	f.runCapture(t)
 	name := f.ds.Status.TrafficMirror.OperationID
 	teardown := name + trafficMirrorTeardownSuffix
 
@@ -318,6 +364,7 @@ func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
 	// same pass creates the teardown Pod and waits for it.
 	require.ErrorIs(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), errTrafficMirrorTeardownPending)
 	require.Nil(t, f.pod(t, name))
+	require.Nil(t, f.pod(t, name+trafficMirrorCaptureSuffix), "the capture Pod is deleted before the teardown")
 	pod := f.pod(t, teardown)
 	require.NotNil(t, pod)
 	require.Len(t, pod.Spec.Containers, 1)
@@ -352,6 +399,7 @@ func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {
 	t.Run("replaced Node is still torn down", func(t *testing.T) {
 		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 		require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+		f.runCapture(t)
 		node := &corev1.Node{}
 		require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
 		require.NoError(t, f.spoke.Delete(t.Context(), node))
@@ -362,6 +410,7 @@ func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {
 	t.Run("deleted Node keeps cleanup unresolved", func(t *testing.T) {
 		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 		require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+		f.runCapture(t)
 		node := &corev1.Node{}
 		require.NoError(t, f.spoke.Get(t.Context(), client.ObjectKey{Name: "node-a"}, node))
 		require.NoError(t, f.spoke.Delete(t.Context(), node))
@@ -374,6 +423,7 @@ func TestTrafficMirrorCleanupNodeIdentity(t *testing.T) {
 func TestTrafficMirrorCleanupRefusesReplacedClusterConfig(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	f.runCapture(t)
 	require.NoError(t, f.c.patchTrafficMirrorStatus(t.Context(), f.ds, func(status *breakglassv1alpha1.TrafficMirrorStatus) {
 		status.ClusterConfigUID = "original-cluster-uid"
 	}))
@@ -417,6 +467,7 @@ func TestTrafficMirrorFailureClassification(t *testing.T) {
 func TestTrafficMirrorCleanupRefusesForeignPod(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
 	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
+	f.runCapture(t)
 	setMirrorPodStatus(t, f, f.ds.Status.TrafficMirror.OperationID, func(pod *corev1.Pod) {
 		pod.Annotations[trafficMirrorSessionUID] = "other-session"
 	})
@@ -440,7 +491,7 @@ func kubeletExpand(command string) string {
 }
 
 func TestTrafficMirrorCommandSurvivesKubeletExpansion(t *testing.T) {
-	require.Contains(t, trafficMirrorScript, `"$$"`, "the helper passes its own PID to ip link netns")
+	require.Contains(t, trafficMirrorScript, "${", "the helper uses parameter expansion")
 	require.Contains(t, trafficMirrorScript, "$(", "the helper uses command substitution")
 	command := trafficMirrorCommand("attach")
 	require.Equal(t, []string{"/bin/sh", "-c"}, command[:2])
@@ -472,6 +523,7 @@ func TestTrafficMirrorDefersMissingProvenanceWithinGrace(t *testing.T) {
 
 func TestTrafficMirrorFencesSessionAfterCreateMarker(t *testing.T) {
 	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+	require.NoError(t, f.c.deployTrafficMirror(t.Context(), f.ds))
 	f.c.beforeDebugTargetWrite = func(string) {
 		// The session is terminated after the create marker was persisted.
 		live := &breakglassv1alpha1.DebugSession{}
@@ -479,9 +531,63 @@ func TestTrafficMirrorFencesSessionAfterCreateMarker(t *testing.T) {
 		live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
 		require.NoError(t, f.c.client.Status().Update(t.Context(), live))
 	}
-	require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "no longer approved")
-	require.True(t, f.ds.Status.TrafficMirror.CreateAttempted, "cleanup will verify the Node even though nothing was created")
+	setMirrorPodStatus(t, f, f.ds.Status.TrafficMirror.OperationID+trafficMirrorCaptureSuffix, func(pod *corev1.Pod) {
+		pod.Status.Phase, pod.Status.PodIP = corev1.PodRunning, "10.244.0.9"
+	})
+	_, _ = f.c.handleTrafficMirrorActive(t.Context(), f.ds)
+	live := &breakglassv1alpha1.DebugSession{}
+	require.NoError(t, f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), live))
+	require.True(t, live.Status.TrafficMirror.CreateAttempted, "cleanup will verify the Node even though nothing was created")
 	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "no privileged Pod after the live fence fails")
+}
+
+// TestTrafficMirrorCaptureWaitsForCompleteAttach runs the real helper in
+// capture mode with stub ip, timeout and tcpdump commands: tcpdump must not
+// start while the mirror device exists but is down. The agent brings it up
+// only after the attach is complete.
+func TestTrafficMirrorCaptureWaitsForCompleteAttach(t *testing.T) {
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		t.Skip("sh is required")
+	}
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(bin, 0o755))
+	stubs := map[string]string{
+		"ip": `#!/bin/sh
+if [ -e "$STATE/up" ]; then echo "9: bgmirror0@if8: <BROADCAST,MULTICAST,NOARP,UP,LOWER_UP> mtu 1500"
+else echo "9: bgmirror0@if8: <BROADCAST,MULTICAST,NOARP> mtu 1500"; fi`,
+		"timeout": "#!/bin/sh\nshift\nexec \"$@\"",
+		"tcpdump": "#!/bin/sh\necho \"$*\" > \"$STATE/started\"",
+	}
+	for name, body := range stubs {
+		require.NoError(t, os.WriteFile(filepath.Join(bin, name), []byte(body+"\n"), 0o755))
+	}
+	script := filepath.Join(dir, "traffic_mirror.sh")
+	require.NoError(t, os.WriteFile(script, []byte(trafficMirrorScript), 0o644))
+	command := exec.CommandContext(t.Context(), shell, script, "capture")
+	command.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "STATE="+dir,
+		"MIRROR_EXPIRES_UNIX="+strconv.FormatInt(time.Now().Add(10*time.Minute).Unix(), 10),
+		"MIRROR_SNAPLEN=96", "MIRROR_MAX_PACKETS=10", "MIRROR_FILTER=tcp port 8080", "MIRROR_CAPTURE_PAYLOAD=false")
+	require.NoError(t, command.Start())
+	t.Cleanup(func() { _ = command.Process.Kill(); _ = command.Wait() })
+	started := filepath.Join(dir, "started")
+
+	time.Sleep(2500 * time.Millisecond)
+	require.NoFileExists(t, started, "a created but down device must not start tcpdump")
+
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "up"), nil, 0o644))
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(started)
+		return err == nil
+	}, 10*time.Second, 200*time.Millisecond)
+	arguments, err := os.ReadFile(started)
+	require.NoError(t, err)
+	require.Contains(t, string(arguments), "-Z nobody")
+	require.Contains(t, string(arguments), "-q")
+	require.Contains(t, string(arguments), "-i bgmirror0")
+	require.Contains(t, string(arguments), "-s 96")
+	require.Contains(t, string(arguments), "-- tcp port 8080")
 }
 
 func TestTrafficMirrorTuple(t *testing.T) {

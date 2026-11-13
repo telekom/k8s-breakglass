@@ -1247,7 +1247,7 @@ func (c *DebugSessionController) activateSession(ctx context.Context, ds *breakg
 		// Participants may read the capture container logs, nothing else.
 		ds.Status.AllowedPodOperations = trafficMirrorPodOperations(template.Spec.AllowedPodOperations, bindingOps)
 		ds.Status.AllowedPods = trafficMirrorAllowedPods(ds)
-		ds.Status.Message = "Traffic mirror Pod " + ds.Status.TrafficMirror.OperationID + " created"
+		ds.Status.Message = "Traffic mirror capture Pod " + ds.Status.TrafficMirror.OperationID + trafficMirrorCaptureSuffix + " created"
 	}
 	if template.Spec.AdmissionRecipe != nil {
 		ds.Status.Message = "Admission recipe applied: " + admissionRecipeTargetsDescription(ds.Spec.AdmissionRecipe.Targets)

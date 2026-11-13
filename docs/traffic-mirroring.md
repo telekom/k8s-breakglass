@@ -17,14 +17,24 @@ controller with `--disable-traffic-mirror`.
 ## Operator prerequisites
 
 - Provision the target-cluster namespace `breakglass-node-maintenance` (shared
-  with the other fixed executors). Its admission policy must admit the mirror
-  Pod contract below; with Pod Security Admission that is the `privileged`
-  level. With Kyverno, add a required, create-before, delete-after
-  per-session PolicyException as an auxiliary resource of the template.
-- Use an image with `ip`, `tc`, `nsenter` and `tcpdump`, pinned by digest,
-  for example the [network-debug](network-debug-image.md) utility.
-- The source Node kernel needs `sch_ingress`/`clsact`, `cls_basic`,
-  `act_mirred`, `sch_tbf` and `veth`.
+  with the other fixed executors). Its admission policy must admit the Pod
+  contract below; with Pod Security Admission the agent and teardown Pods
+  need the `privileged` level. With Kyverno, add a required, create-before,
+  delete-after per-session PolicyException as an auxiliary resource of the
+  template.
+- The ClusterConfig credential of the target cluster must be allowed to
+  create, get and delete `pods` and `networking.k8s.io/networkpolicies` in
+  `breakglass-node-maintenance`, and to get `pods` in the source namespaces
+  and `nodes`.
+- The CNI must enforce NetworkPolicy. Otherwise the per-operation deny-all
+  policy has no effect and the capture Pod is not isolated on the Pod
+  network; the controller cannot detect this, so verify it before enabling
+  a mirror template.
+- Use an image with `ip`, `tc`, `nsenter`, `timeout` and `tcpdump`, pinned
+  by digest, for example the [network-debug](network-debug-image.md) utility.
+- The source Node kernel needs `sch_ingress` (`clsact`), `cls_basic`,
+  `act_mirred`, `act_gact` (drop), `sch_tbf` and `veth`. Nodes booted with
+  `ipv6.disable=1` are supported.
 
 ## Template
 
@@ -102,29 +112,35 @@ After approval the controller re-reads the source and starts only if the Pod
 and Node are the approved incarnations and still allowlisted. Then:
 
 ```bash
-kubectl -n breakglass-node-maintenance logs -f <status.trafficMirror.operationID> -c capture
+kubectl -n breakglass-node-maintenance logs -f <status.trafficMirror.operationID>-capture
 ```
 
-Exec, attach and port-forward into the mirror Pod stay denied. Log access is
+Exec, attach and port-forward into the mirror Pods stay denied. Log access is
 granted unless the template or binding sets `allowedPodOperations.logs: false`.
 
-## Mirror Pod contract
+## Pod contract
 
-| Container | Privileges | Purpose |
-| --- | --- | --- |
-| `mirror` | root, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, AppArmor unconfined, seccomp `RuntimeDefault`, read-only root, no privilege escalation | Enters the source network namespace, attaches the mirror, detaches on `SIGTERM`. |
-| `capture` | `NET_RAW`, `SETUID`, `SETGID`; tcpdump drops to `nobody` after opening its socket; read-only root, no privilege escalation | `tcpdump` on the mirror device. |
+Each session runs two Pods on the source Node, plus a teardown Pod at the
+end:
 
-The Pod uses `hostPID` (to find the source network namespace) but not the
-host network, has no service account token, runs on the source Node with
-`restartPolicy: Never`, and both containers have CPU and memory limits.
-Both containers receive the absolute approved expiry and stop at it on their
-own; `activeDeadlineSeconds` is a backstop.
+| Pod | Host namespaces | Privileges | Purpose |
+| --- | --- | --- | --- |
+| `<operationID>-capture` | none | `NET_RAW`, `SETUID`, `SETGID`; tcpdump drops to `nobody` after opening its socket; runtime AppArmor and seccomp profiles; read-only root; no privilege escalation | Receives the mirrored copies on `bgmirror0` and runs `tcpdump`. The only Pod participants may read. |
+| `<operationID>` (agent) | `hostPID` | root, `NET_ADMIN`, `SYS_ADMIN`, `SYS_PTRACE`, AppArmor unconfined, seccomp `RuntimeDefault`, read-only root, no privilege escalation | Enters the source namespace, attaches the mirror, moves the capture end of the veth into the capture Pod, detaches on `SIGTERM` or at expiry. Never captures. |
+| `<operationID>-teardown` | `hostPID` | as the agent | Removes and verifies the operation's state after the session. |
+
+The capture Pod is created first; the controller creates the agent only
+after the capture Pod runs, and passes its UID and IP so the agent can find
+exactly that namespace. Because the capture has no `hostPID`, a compromised
+tcpdump cannot see or signal host processes. No Pod has the host network or
+a service account token; all run with `restartPolicy: Never`, CPU and memory
+limits, and the absolute approved expiry (`activeDeadlineSeconds` is a
+backstop).
 
 The mirror devices are no path into the source: neither end has an IPv4 or
 IPv6 address, ARP is off, and every frame sent from the capture side is
 dropped at the source-side device. A per-operation deny-all NetworkPolicy
-isolates the mirror and teardown Pods on the Pod network.
+isolates all three Pods on the Pod network.
 
 ## Capture logs are sensitive
 
@@ -135,7 +151,7 @@ or plain-text credentials.
 - Readers: session participants through the `log` subresource (unless
   `logs: false`), and anyone with `get` on `pods/log` in
   `breakglass-node-maintenance`. Keep that RBAC to platform operators.
-- Retention: the log lives in the kubelet container log of the mirror Pod
+- Retention: the log lives in the kubelet container log of the capture Pod
   and is removed with the Pod at cleanup. Copies made by node log shippers
   follow their own retention.
 - Exclude `breakglass-node-maintenance` from log shipping, or restrict its
@@ -144,7 +160,7 @@ or plain-text credentials.
 ## Cleanup
 
 On expiry, termination, failure or deletion the controller deletes the
-mirror Pod (the agent detaches), then runs a teardown Pod on the Node that
+agent and capture Pods (the agent detaches), then runs a teardown Pod on the Node that
 removes only `tc` filters carrying the session's action cookie, the mirror
 device (the `clsact` qdisc stays), and succeeds only after verifying that none
 remain; an inspection error is a failure, never proof of absence. The
@@ -159,8 +175,8 @@ the host was reprovisioned, then remove the finalizer
 
 | Event | When |
 | --- | --- |
-| `debug_session.traffic_mirror.started` | After approval, before the mirror Pod is created. |
-| `debug_session.traffic_mirror.failed` | The agent exited or the mirror Pod disappeared or changed. |
+| `debug_session.traffic_mirror.started` | After approval, before any Pod is created. |
+| `debug_session.traffic_mirror.failed` | The agent or the capture failed, or one of their Pods disappeared or changed. |
 | `debug_session.traffic_mirror.stopped` | After the teardown was verified. |
 
 Each event carries the session and operation IDs, approver, Node and Pod

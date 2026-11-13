@@ -44,8 +44,9 @@ nsenter -t "$pid" -n ip -o link show`
 
 // kindIsolation proves that the capture side has no path into the source
 // network namespace: neither veth end has an address, and frames injected
-// from the mirror Pod toward the source Pod IP are dropped at the source-side
-// device. It prints the drop counter before and after the injection.
+// from the capture Pod toward the source Pod IP are dropped at the
+// source-side device. It prints the drop counter before and after the
+// injection; replies could never come back, so only the counter is evidence.
 const kindIsolation = `mirror=$1 source=$2 ip=$3 veth=$4
 pidof_pod() {
 	alt=$(printf '%s' "$1" | tr - _)
@@ -65,7 +66,7 @@ mac=$(nsenter -t "$spid" -n ip -o link show dev "$veth" | sed -n 's/.*link\/ethe
 dropped() { nsenter -t "$spid" -n tc -s filter show dev "$veth" ingress | sed -n 's/.*dropped \([0-9]*\).*/\1/p' | head -1; }
 echo "DROPPED-BEFORE=$(dropped)"
 nsenter -t "$mpid" -n sh -c "ip addr add 169.254.77.2/32 dev bgmirror0 && ip route add $ip/32 dev bgmirror0 && ip neigh replace $ip lladdr $mac dev bgmirror0 nud permanent"
-nsenter -t "$mpid" -n timeout 3 bash -c "echo > /dev/tcp/$ip/8080" >/dev/null 2>&1 && echo "CONNECTED"
+nsenter -t "$mpid" -n timeout 3 bash -c "echo > /dev/tcp/$ip/8080" >/dev/null 2>&1 || true
 nsenter -t "$mpid" -n ip addr del 169.254.77.2/32 dev bgmirror0
 echo "DROPPED-AFTER=$(dropped)"`
 
@@ -186,7 +187,7 @@ func TestTrafficMirrorKind(t *testing.T) {
 	}
 	captureLog := func(session *breakglassv1alpha1.DebugSession) string {
 		raw, err := clientset.CoreV1().Pods(breakglassv1alpha1.NodeMaintenanceNamespace).
-			GetLogs(session.Status.TrafficMirror.OperationID, &corev1.PodLogOptions{Container: "capture"}).DoRaw(ctx)
+			GetLogs(session.Status.TrafficMirror.OperationID+trafficMirrorCaptureSuffix, &corev1.PodLogOptions{Container: "capture"}).DoRaw(ctx)
 		if err != nil {
 			return ""
 		}
@@ -289,17 +290,27 @@ func TestTrafficMirrorKind(t *testing.T) {
 		require.NotContains(t, captureLog(session), targetIP+".8081", "the template filter removes other traffic of the same interface")
 		requireActiveState(session, string(target.UID))
 
+		// Header-only output: tcpdump -q prints "tcp <length>", never TCP flags
+		// or decoded payload.
+		for _, line := range strings.Split(captureLog(session), "\n") {
+			if strings.Contains(line, targetIP+".8080") {
+				require.NotContains(t, line, "Flags [", "the capture prints packet headers only: %s", line)
+			}
+		}
+		capturePod := &corev1.Pod{}
+		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace,
+			Name: session.Status.TrafficMirror.OperationID + trafficMirrorCaptureSuffix}, capturePod))
+		require.False(t, capturePod.Spec.HostPID, "the capture runs without hostPID")
+		require.Equal(t, capturePod.Name, session.Status.AllowedPods[0].Name, "participants read the capture Pod")
+
 		// The capture side has no path into the source namespace.
-		mirrorPod := &corev1.Pod{}
-		require.NoError(t, hub.Get(ctx, client.ObjectKey{Namespace: breakglassv1alpha1.NodeMaintenanceNamespace, Name: session.Status.TrafficMirror.OperationID}, mirrorPod))
 		_, _, veth := trafficMirrorTuple(session.Status.TrafficMirror.OperationID)
 		output, err := exec.CommandContext(ctx, "docker", "exec", nodeID, "sh", "-c", kindIsolation, "isolation",
-			string(mirrorPod.UID), string(target.UID), targetIP, veth).CombinedOutput()
+			string(capturePod.UID), string(target.UID), targetIP, veth).CombinedOutput()
 		require.NoError(t, err, string(output))
 		report := string(output)
 		require.Contains(t, report, "SOURCE-ADDRS=[]", "no address on the source-side mirror device: %s", report)
 		require.Contains(t, report, "CAPTURE-ADDRS=[]", "no address on the capture-side mirror device: %s", report)
-		require.NotContains(t, report, "CONNECTED", "the capture side reached the source Pod: %s", report)
 		var before, after int
 		for _, line := range strings.Split(report, "\n") {
 			if value, ok := strings.CutPrefix(line, "DROPPED-BEFORE="); ok {

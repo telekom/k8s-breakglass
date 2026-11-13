@@ -39,6 +39,10 @@ rename.
   and update Job status,
   in that namespace. For `kexec-recovery` it additionally needs to get and
   patch Nodes, list Pods in all namespaces and create `pods/eviction`.
+  [Traffic mirror](traffic-mirroring.md#operator-prerequisites) templates
+  share this namespace and additionally need create, get and delete on
+  `networking.k8s.io/networkpolicies` there, and a CNI that enforces
+  NetworkPolicy.
   Requesters must not have Pod, Lease or session-status write
   access. Do not impersonate a requester for this executor.
 - Requests must use the authenticated HTTP API. Directly created CRs without its
