@@ -869,16 +869,19 @@ func RequireClusterIdentity(log *zap.SugaredLogger) gin.HandlerFunc {
 }
 
 // CertificateNamesCluster reports whether cert identifies cluster: one of
-// its DNS SANs equals cluster, or, only when it has no DNS SANs, its subject
-// common name equals cluster. Like hostname verification (RFC 6125), the
-// common name is ignored once SANs are present, so a certificate cannot
-// claim a second cluster through its CN.
+// its DNS SANs equals cluster exactly, or, only when the certificate has no
+// subject alternative names of any kind (DNS, IP, URI or email), its subject
+// common name equals cluster exactly. A certificate with SANs is matched by
+// its DNS SANs alone, so it cannot claim a cluster through its common name.
 func CertificateNamesCluster(cert *x509.Certificate, cluster string) bool {
 	if cluster == "" {
 		return false
 	}
 	if len(cert.DNSNames) > 0 {
 		return slices.Contains(cert.DNSNames, cluster)
+	}
+	if len(cert.IPAddresses) > 0 || len(cert.URIs) > 0 || len(cert.EmailAddresses) > 0 {
+		return false
 	}
 	return cert.Subject.CommonName == cluster
 }

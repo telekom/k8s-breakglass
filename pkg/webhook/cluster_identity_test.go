@@ -4,12 +4,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -18,19 +21,33 @@ func TestCertificateNamesCluster(t *testing.T) {
 		name    string
 		cn      string
 		dns     []string
+		uris    []string
+		ips     []string
+		emails  []string
 		cluster string
 		want    bool
 	}{
 		{name: "SAN match", cn: "ignored", dns: []string{"other", "prod-eu"}, cluster: "prod-eu", want: true},
 		{name: "SAN mismatch ignores matching CN", cn: "prod-eu", dns: []string{"prod-us"}, cluster: "prod-eu", want: false},
-		{name: "CN fallback without SANs", cn: "prod-eu", cluster: "prod-eu", want: true},
+		{name: "CN fallback without any SANs", cn: "prod-eu", cluster: "prod-eu", want: true},
+		{name: "URI SAN only ignores matching CN", cn: "prod-eu", uris: []string{"spiffe://example.org/prod-eu"}, cluster: "prod-eu", want: false},
+		{name: "IP SAN only ignores matching CN", cn: "prod-eu", ips: []string{"10.0.0.1"}, cluster: "prod-eu", want: false},
+		{name: "email SAN only ignores matching CN", cn: "prod-eu", emails: []string{"apiserver@example.org"}, cluster: "prod-eu", want: false},
 		{name: "CN mismatch", cn: "prod-us", cluster: "prod-eu", want: false},
 		{name: "exact match only", cn: "Prod-EU", cluster: "prod-eu", want: false},
 		{name: "empty cluster", cn: "", cluster: "", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cert := &x509.Certificate{Subject: pkix.Name{CommonName: tt.cn}, DNSNames: tt.dns}
+			cert := &x509.Certificate{Subject: pkix.Name{CommonName: tt.cn}, DNSNames: tt.dns, EmailAddresses: tt.emails}
+			for _, raw := range tt.uris {
+				u, err := url.Parse(raw)
+				require.NoError(t, err)
+				cert.URIs = append(cert.URIs, u)
+			}
+			for _, ip := range tt.ips {
+				cert.IPAddresses = append(cert.IPAddresses, net.ParseIP(ip))
+			}
 			assert.Equal(t, tt.want, CertificateNamesCluster(cert, tt.cluster))
 		})
 	}
@@ -58,6 +75,10 @@ func TestRequireClusterIdentity(t *testing.T) {
 		{name: "own cluster by CN", state: verified("prod-eu"), want: http.StatusOK},
 		{name: "other cluster by SAN", state: verified("prod-eu", "prod-us"), want: http.StatusForbidden},
 		{name: "other cluster by CN", state: verified("prod-us"), want: http.StatusForbidden},
+		{name: "URI SAN only with matching CN", state: func() *tls.ConnectionState {
+			leaf := &x509.Certificate{Subject: pkix.Name{CommonName: "prod-eu"}, URIs: []*url.URL{{Scheme: "spiffe", Host: "example.org", Path: "/prod-eu"}}}
+			return &tls.ConnectionState{PeerCertificates: []*x509.Certificate{leaf}, VerifiedChains: [][]*x509.Certificate{{leaf}}}
+		}(), want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

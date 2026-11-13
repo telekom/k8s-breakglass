@@ -329,14 +329,19 @@ limiter but without the frontend, the REST API, CORS or the OIDC proxy.
 client certificate must name `{cluster-name}`:
 
 - if the certificate has DNS subject alternative names, one of them must equal
-  `{cluster-name}` exactly, and the common name is ignored;
-- only a certificate without DNS SANs is matched by its subject common name.
+  `{cluster-name}` exactly; the common name is ignored;
+- if it has no DNS SANs but other SANs (IP, URI or email), it never matches;
+  the common name is ignored;
+- only a certificate without any SANs is matched by its subject common name,
+  which must equal `{cluster-name}` exactly.
 
-This follows hostname verification (RFC 6125): SANs are preferred, and a
+Matching is an exact, case-sensitive string comparison, without wildcards.
+Because the common name counts only when there are no SANs at all, a
 certificate cannot claim a second cluster through its CN. Issue each
-kube-apiserver a certificate whose DNS SAN (or, without SANs, CN) is its
-`ClusterConfig` name. Under `verifyIfGiven`, a request without a client
-certificate is not checked; use `require` to make the identity mandatory.
+kube-apiserver a certificate whose DNS SAN is its `ClusterConfig` name (or,
+for a certificate without SANs, whose CN is). Under `verifyIfGiven`, a request
+without a client certificate is not checked; use `require` to make the
+identity mandatory.
 
 ```yaml
 server:
