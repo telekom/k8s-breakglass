@@ -363,7 +363,7 @@ the clients that need a certificate under `require`.
 
 ### Network Policies
 
-Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port.
+Restrict network access to the breakglass pods. The SAR authorization webhook (`/breakglass/webhook/authorize/:cluster_name`) is intentionally unauthenticated — see [SAR Authorization Webhook](#sar-authorization-webhook-design-decision) below for details. Use a NetworkPolicy to ensure only the Kubernetes API server can reach the webhook port. Alternatively, serve it on the [dedicated mTLS listener](webhook-setup.md#dedicated-mtls-listener) (`server.webhook`), which requires a per-cluster kube-apiserver client certificate.
 
 ```yaml
 apiVersion: networking.k8s.io/v1

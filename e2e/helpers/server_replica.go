@@ -19,6 +19,7 @@ package helpers
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"path"
 	"strings"
 	"testing"
@@ -52,6 +53,8 @@ type ServerReplica struct {
 	Flags        map[string]string
 	Volumes      []corev1.Volume
 	VolumeMounts []corev1.VolumeMount
+	// Ports are extra container ports the Service exposes next to 8080.
+	Ports []int32
 }
 
 // DeployServerReplica creates the replica and registers it for cleanup. It
@@ -98,6 +101,10 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 	}
 	c.Args = OverrideFlags(c.Args, flags)
 
+	ports := []corev1.ServicePort{{Name: "http", Port: 8080, TargetPort: intstr.FromInt32(8080)}}
+	for _, p := range r.Ports {
+		ports = append(ports, corev1.ServicePort{Name: fmt.Sprintf("port-%d", p), Port: p, TargetPort: intstr.FromInt32(p)})
+	}
 	meta := metav1.ObjectMeta{Name: r.Name, Namespace: s.Namespace, Labels: labels}
 	s.MustCreateResource(&corev1.ConfigMap{ObjectMeta: meta, Data: map[string]string{path.Base(cfgPath): string(raw)}})
 	replicas := int32(1)
@@ -113,7 +120,7 @@ func DeployServerReplica(t *testing.T, s *TestSetup, r ServerReplica) {
 		ObjectMeta: meta,
 		Spec: corev1.ServiceSpec{
 			Selector: labels,
-			Ports:    []corev1.ServicePort{{Name: "http", Port: 8080, TargetPort: intstr.FromInt32(8080)}},
+			Ports:    ports,
 		},
 	})
 }
