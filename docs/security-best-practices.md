@@ -639,8 +639,9 @@ subjects=$({ kubectl get rolebindings -n "$ns" -o json; kubectl get clusterroleb
   jq -r '.items[].subjects[]? | [.kind, .name, (.namespace // "")] | join("\u001f")' | sort -u)
 while IFS=$'\x1f' read -r kind name subject_ns; do
   case "$kind" in
-    User) who=$(jq -n --arg u "$name" '{user: $u}') ;;
-    Group) who=$(jq -n --arg g "$name" '{user: "breakglass-exec-audit", groups: [$g]}') ;;
+    # Every authenticated identity is also in system:authenticated.
+    User) who=$(jq -n --arg u "$name" '{user: $u, groups: ["system:authenticated"]}') ;;
+    Group) who=$(jq -n --arg g "$name" '{user: "breakglass-exec-audit", groups: [$g, "system:authenticated"]}') ;;
     ServiceAccount)
       sa_ns=${subject_ns:-$ns}
       who=$(jq -n --arg u "system:serviceaccount:$sa_ns:$name" --arg n "system:serviceaccounts:$sa_ns" \
