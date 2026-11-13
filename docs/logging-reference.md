@@ -13,8 +13,10 @@ explains how to set the level and format.
 The [message catalogue](#message-catalogue) at the end is generated from the
 log calls in the Go code by `go run ./hack/logref`. The unit test in
 `hack/logref` (part of `make test`) fails when the catalogue does not match the
-code. A pull request that adds, removes or changes a log message, level or
-literal field key must regenerate the catalogue.
+code, when a `main` package is missing from the programs table, and when a
+line of this hand-written part names a catalogued message with a level that
+the code does not log it at. A pull request that adds, removes or changes a
+log message, level or literal field key must regenerate the catalogue.
 
 ## Programs that log
 
@@ -81,7 +83,7 @@ These lines come from libraries, so the catalogue does not list them:
 | HTTP access log (`gin-contrib/zap`), one line per request | info; error once per handler error | the request path | `status`, `method`, `path`, `query`†, `ip`†, `user-agent`, `latency`, `time` |
 | controller-runtime (manager, controllers, webhooks, cache) | info, error; V(1) at debug | for example `Starting Controller`, `Reconciler error` | `logger` (for example `controller-runtime.webhook`), `controller`, `controllerGroup`, `controllerKind`, `name`, `namespace`, `reconcileID` |
 | client-go (klog) | info, error | for example leader-election and reflector errors | free text |
-| OpenTelemetry SDK | error; internal V-levels at debug or not written | for example exporter errors | free text |
+| OpenTelemetry SDK | warn for SDK errors such as failed exports; the SDK's own warnings at debug; its info and debug messages are not written | `OpenTelemetry internal error` (logged by `pkg/telemetry`) at warn; otherwise the SDK's message | `error`; otherwise free text |
 | Go standard `log` package, for example `http: TLS handshake error from …` of `net/http` servers | warn | the text of the message | `logger` is `stdlog` |
 
 ### Request context fields
@@ -158,8 +160,7 @@ with `logger` set to `audit-service.audit` and the message `audit_event`.
 Because these are ordinary controller log lines, two things can make an
 audit event missing from the log although it happened:
 
-- `--log-level=warn` or `error` drops all `audit_event` lines, because they are
-  at info;
+- `audit_event` lines are at info, so `--log-level=warn` or `error` drops them;
 - audit event sampling and the include/exclude event types in `AuditConfig`
   drop events before they reach any sink.
 

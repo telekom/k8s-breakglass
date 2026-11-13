@@ -9,7 +9,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestGetEnvString(t *testing.T) {
@@ -482,6 +486,31 @@ func TestParse_Logging(t *testing.T) {
 			level, format := cfg.Logging()
 			assert.Equal(t, tt.wantLevel, level)
 			assert.Equal(t, tt.wantFormat, format)
+		})
+	}
+}
+
+// TestConfig_PrintLogsEffectiveLogging proves that the startup line reports
+// the level and format in effect, not the raw (possibly empty) flag values.
+func TestConfig_PrintLogsEffectiveLogging(t *testing.T) {
+	tests := []struct {
+		name                  string
+		cfg                   Config
+		wantLevel, wantFormat string
+	}{
+		{name: "defaults", wantLevel: "info", wantFormat: "json"},
+		{name: "deprecated --debug", cfg: Config{Debug: true}, wantLevel: "debug", wantFormat: "console"},
+		{name: "--debug with json", cfg: Config{Debug: true, Log: logging.Options{Format: "json"}}, wantLevel: "debug", wantFormat: "json"},
+		{name: "explicit", cfg: Config{Log: logging.Options{Level: "warn", Format: "console"}}, wantLevel: "warn", wantFormat: "console"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			core, logs := observer.New(zapcore.InfoLevel)
+			tt.cfg.Print(zap.New(core).Sugar())
+			require.Equal(t, 1, logs.Len())
+			fields := logs.All()[0].ContextMap()
+			assert.Equal(t, tt.wantLevel, fields["log_level"])
+			assert.Equal(t, tt.wantFormat, fields["log_format"])
 		})
 	}
 }

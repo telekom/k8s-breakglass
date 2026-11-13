@@ -28,6 +28,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -77,6 +78,9 @@ func run(root string, check bool) error {
 	if err := checkPrograms(string(doc), mains); err != nil {
 		return err
 	}
+	if err := checkProseLevels(string(doc), entries); err != nil {
+		return err
+	}
 	updated, err := replaceSection(string(doc), render(entries))
 	if err != nil {
 		return err
@@ -105,6 +109,63 @@ func checkPrograms(doc string, mains map[string]bool) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("%s does not describe the programs %s; add them to \"Programs that log\"", docPath, strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+var (
+	backtickRe = regexp.MustCompile("`([^`]+)`")
+	// A level word not joined to other words ("debug-session" is not one).
+	levelWordRe = regexp.MustCompile(`(?:^|[^\w-])(debug|info|warn|error)(?:[^\w-]|$)`)
+)
+
+// checkProseLevels fails when a line of the hand-written part names a
+// catalogued message in backticks together with levels, and none of those
+// levels is a level the code logs that message at.
+func checkProseLevels(doc string, entries map[string]*entry) error {
+	levelsOf := map[string]map[string]bool{}
+	for _, e := range entries {
+		if e.message == dynamicMsg || len(e.message) < 8 {
+			continue
+		}
+		if levelsOf[e.message] == nil {
+			levelsOf[e.message] = map[string]bool{}
+		}
+		levelsOf[e.message][strings.Fields(e.level)[0]] = true
+	}
+	prose, _, _ := strings.Cut(doc, beginMark)
+	var bad []string
+	for _, line := range strings.Split(prose, "\n") {
+		// Backticked text counts only when it is exactly a level.
+		var words []string
+		for _, m := range levelWordRe.FindAllStringSubmatch(backtickRe.ReplaceAllString(line, " "), -1) {
+			words = append(words, m[1])
+		}
+		for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
+			if slices.Contains(levels[:4], m[1]) {
+				words = append(words, m[1])
+			}
+		}
+		if len(words) == 0 {
+			continue
+		}
+		for _, m := range backtickRe.FindAllStringSubmatch(line, -1) {
+			want, ok := levelsOf[m[1]]
+			if !ok {
+				continue
+			}
+			found := false
+			for _, w := range words {
+				found = found || want[w]
+			}
+			if !found {
+				bad = append(bad, fmt.Sprintf("%q is logged at %s, but the line says %s",
+					m[1], strings.Join(sortedKeys(want), "/"), strings.Join(words, "/")))
+			}
+		}
+	}
+	if len(bad) > 0 {
+		return fmt.Errorf("%s states wrong levels: %s", docPath, strings.Join(bad, "; "))
 	}
 	return nil
 }

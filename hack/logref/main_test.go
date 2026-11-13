@@ -109,6 +109,19 @@ func TestRunRequiresEveryProgram(t *testing.T) {
 	}
 }
 
+func TestRunRejectsWrongProseLevel(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "pkg", "x", "x.go"), "package x\nfunc f() { log.Warnw(\"exporter failed\", \"error\", err) }\n")
+	writeFile(t, filepath.Join(root, docPath), "# Ref\nFailed exports are logged as `exporter failed` at error.\n"+beginMark+"\n"+endMark+"\n")
+	if err := run(root, false); err == nil || !strings.Contains(err.Error(), `"exporter failed" is logged at warn`) {
+		t.Fatalf("wrong level not detected: %v", err)
+	}
+	writeFile(t, filepath.Join(root, docPath), "# Ref\nFailed exports are logged as `exporter failed` at warn.\n"+beginMark+"\n"+endMark+"\n")
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {

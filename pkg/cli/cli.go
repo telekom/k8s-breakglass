@@ -235,11 +235,13 @@ func (c *Config) Validate() error {
 }
 
 func (c *Config) Print(log *zap.SugaredLogger) {
+	// The effective values, after --debug and the defaults are applied.
+	logLevel, logFormat := c.Logging()
 	log.Infow("CLI Configuration",
 		// Debug and logging
 		"debug", c.Debug,
-		"log_level", c.Log.Level,
-		"log_format", c.Log.Format,
+		"log_level", logLevel,
+		"log_format", logFormat,
 		// Webhook server configuration
 		"webhook_bind_address", c.Webhook.BindAddr,
 		"webhook_cert_path", c.Webhook.CertPath,
