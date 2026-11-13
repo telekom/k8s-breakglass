@@ -1,0 +1,1475 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/telekom/k8s-breakglass/main/api/audit/v1/audit-event.schema.json",
+  "title": "Breakglass audit event v1",
+  "description": "One audit event as written by every audit sink (Kafka record value, webhook body, log line). See docs/audit-event-schema.md. Within v1 only additive changes are made: consumers must ignore unknown properties and unknown event types.",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "severity",
+    "timestamp",
+    "actor",
+    "target"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique event ID; stable across delivery retries. Deduplicate on it.",
+      "minLength": 1
+    },
+    "schemaVersion": {
+      "type": "string",
+      "description": "Envelope schema major version. Absent on events of releases before the schema was published; treat absence as v1.",
+      "const": "v1"
+    },
+    "type": {
+      "type": "string",
+      "description": "Event type; selects the details payload.",
+      "pattern": "^[a-z_]+(\\.[a-z_]+)+$"
+    },
+    "severity": {
+      "type": "string",
+      "description": "Severity.",
+      "enum": [
+        "info",
+        "warning",
+        "critical"
+      ]
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the event occurred (RFC 3339, nanosecond precision)."
+    },
+    "actor": {
+      "$ref": "#/$defs/actor"
+    },
+    "target": {
+      "$ref": "#/$defs/target"
+    },
+    "details": {
+      "type": "object",
+      "description": "Event-type-specific payload; see $defs per event type."
+    },
+    "requestContext": {
+      "$ref": "#/$defs/requestContext"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "session.requested",
+              "session.approved",
+              "session.denied",
+              "session.rejected",
+              "session.activated",
+              "session.expired",
+              "session.revoked",
+              "session.withdrawn",
+              "session.dropped",
+              "session.extended",
+              "session.validated",
+              "session.invalidated",
+              "session.termination_intent"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/sessionLifecycle"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "session.approval_unverified_groups"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/sessionApprovalUnverifiedGroups"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.created",
+              "debug_session.started",
+              "debug_session.approved",
+              "debug_session.rejected",
+              "debug_session.renewed",
+              "debug_session.validated",
+              "debug_session.validation_failed",
+              "debug_session.terminated",
+              "debug_session.failed",
+              "debug_session.expired",
+              "debug_session.approval_timeout",
+              "debug_session.cleanup_failed",
+              "debug_session.cleanup_recovered",
+              "debug_session.binding_unresolved"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionLifecycle"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.pod_failed",
+              "debug_session.pod_restarted",
+              "debug_session.resource_deployed",
+              "debug_session.resource_cleanup"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionWorkload"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.node_maintenance.execution_intent",
+              "debug_session.node_maintenance.result"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionNodeMaintenance"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.admission_recipe.applied",
+              "debug_session.admission_recipe.drift",
+              "debug_session.admission_recipe.reverted"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionAdmissionRecipe"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.hotfix.intent",
+              "debug_session.hotfix.node_intent",
+              "debug_session.hotfix.node_result",
+              "debug_session.hotfix.result"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionHotfix"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.terminal_recording_started",
+              "debug_session.terminal_recording_finalized",
+              "debug_session.terminal_recording_failed"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/terminalRecording"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.terminal_recording_accessed"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/terminalRecordingAccess"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "access.allowed",
+              "access.granted",
+              "access.denied",
+              "access.checked"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/accessDecision"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "access.denied.policy"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/accessPolicyDenial"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "policy.violation"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/policyViolation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "pod_security.evaluated",
+              "pod_security.allowed",
+              "pod_security.denied",
+              "pod_security.warning",
+              "pod_security.override"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/podSecurity"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "resource.impersonate"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/impersonation"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "escalation.created",
+              "escalation.approved",
+              "escalation.rejected",
+              "escalation.expired",
+              "escalation.revoked",
+              "escalation.updated",
+              "escalation.validated",
+              "resource.get",
+              "resource.list",
+              "resource.watch",
+              "resource.create",
+              "resource.update",
+              "resource.patch",
+              "resource.delete",
+              "resource.deletecollection",
+              "resource.exec",
+              "resource.portforward",
+              "resource.logs",
+              "resource.attach",
+              "resource.proxy",
+              "resource.scale",
+              "resource.approve",
+              "resource.sign",
+              "resource.bind",
+              "secret.accessed",
+              "secret.created",
+              "secret.updated",
+              "secret.deleted",
+              "configmap.accessed",
+              "serviceaccount.used",
+              "token.generated",
+              "token.validated",
+              "token.revoked",
+              "role.created",
+              "role.updated",
+              "role.deleted",
+              "rolebinding.created",
+              "rolebinding.updated",
+              "rolebinding.deleted",
+              "clusterrole.created",
+              "clusterrole.updated",
+              "clusterrole.deleted",
+              "clusterrolebinding.created",
+              "clusterrolebinding.updated",
+              "clusterrolebinding.deleted",
+              "policy.created",
+              "policy.updated",
+              "policy.deleted",
+              "policy.evaluated",
+              "policy.bypassed",
+              "debug_session.attached",
+              "debug_session.detached",
+              "debug_session.command",
+              "debug_session.output",
+              "debug_session.file_access",
+              "debug_session.net_access",
+              "debug_session.proc_access",
+              "pod.created",
+              "pod.deleted",
+              "pod.exec",
+              "pod.attach",
+              "pod.portforward",
+              "pod.logs",
+              "container.start",
+              "container.stop",
+              "container.kill",
+              "namespace.created",
+              "namespace.deleted",
+              "namespace.accessed",
+              "node.cordon",
+              "node.uncordon",
+              "node.drain",
+              "node.taint",
+              "node.label",
+              "networkpolicy.created",
+              "networkpolicy.updated",
+              "networkpolicy.deleted",
+              "deployment.scaled",
+              "deployment.rolled",
+              "deployment.paused",
+              "deployment.resumed",
+              "statefulset.scaled",
+              "daemonset.updated",
+              "job.created",
+              "cronjob.triggered",
+              "crd.created",
+              "crd.updated",
+              "crd.deleted",
+              "customresource.created",
+              "customresource.updated",
+              "customresource.deleted",
+              "admission.allowed",
+              "admission.denied",
+              "admission.mutated",
+              "webhook.called",
+              "webhook.timeout",
+              "webhook.error",
+              "api.request",
+              "api.response",
+              "auth.attempt",
+              "auth.success",
+              "auth.failure",
+              "auth.mfa",
+              "auth.token_issued",
+              "auth.token_refresh",
+              "config.changed",
+              "cluster.added",
+              "cluster.removed",
+              "cluster.updated",
+              "provider.added",
+              "provider.removed",
+              "provider.updated",
+              "system.startup",
+              "system.shutdown",
+              "system.reload",
+              "system.health_check",
+              "system.leader_elected",
+              "system.leader_lost",
+              "system.cache_refresh",
+              "system.gc_completed",
+              "audit.started",
+              "audit.stopped",
+              "audit.dropped",
+              "audit.backpressure",
+              "nonresource.access",
+              "nonresource.metrics",
+              "nonresource.healthz",
+              "nonresource.readyz",
+              "nonresource.livez",
+              "nonresource.version",
+              "nonresource.api",
+              "nonresource.openapi",
+              "nonresource.logs",
+              "nonresource.swagger"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/generic"
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "actor": {
+      "type": "object",
+      "description": "Who triggered the event.",
+      "required": [
+        "user"
+      ],
+      "properties": {
+        "user": {
+          "type": "string",
+          "description": "User identifier: email, username, service account, or \"system\" for controller actions.",
+          "x-pii": true
+        },
+        "identityProvider": {
+          "type": "string",
+          "description": "Identity provider that authenticated the user."
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Verified group claims of the user.",
+          "x-pii": true
+        },
+        "sourceIP": {
+          "type": "string",
+          "description": "IP address of the request origin.",
+          "x-pii": true
+        },
+        "userAgent": {
+          "type": "string",
+          "description": "User agent of the request."
+        }
+      }
+    },
+    "target": {
+      "type": "object",
+      "description": "What the event affected.",
+      "required": [
+        "kind",
+        "name"
+      ],
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Immutable Kubernetes UID of the target, when known."
+        },
+        "kind": {
+          "type": "string",
+          "description": "Kubernetes kind or resource."
+        },
+        "name": {
+          "type": "string",
+          "description": "Resource name."
+        },
+        "namespace": {
+          "type": "string",
+          "description": "Resource namespace."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "clusterUID": {
+          "type": "string",
+          "description": "Immutable UID of the referenced ClusterConfig."
+        },
+        "apiGroup": {
+          "type": "string",
+          "description": "API group of the resource."
+        },
+        "namespaceLabels": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "Labels of the target namespace, when known."
+        }
+      }
+    },
+    "requestContext": {
+      "type": "object",
+      "description": "Correlation identifiers.",
+      "properties": {
+        "correlationId": {
+          "type": "string",
+          "description": "Request correlation ID; groups the events of one API request or terminal stream."
+        },
+        "sessionName": {
+          "type": "string",
+          "description": "BreakglassSession name."
+        },
+        "sessionUID": {
+          "type": "string",
+          "description": "BreakglassSession UID (or DebugSession UID for debug-session events)."
+        },
+        "escalationName": {
+          "type": "string",
+          "description": "BreakglassEscalation name."
+        },
+        "escalationUID": {
+          "type": "string",
+          "description": "BreakglassEscalation UID."
+        },
+        "debugSessionName": {
+          "type": "string",
+          "description": "DebugSession name."
+        },
+        "debugSessionUID": {
+          "type": "string",
+          "description": "DebugSession UID."
+        }
+      }
+    },
+    "sessionLifecycle": {
+      "title": "Breakglass session lifecycle",
+      "description": "Details of BreakglassSession lifecycle events. Correlate by requestContext.sessionUID.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Human-readable summary of the transition."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name (ClusterConfig name)."
+        },
+        "grantedGroup": {
+          "type": "string",
+          "description": "Group granted by the session."
+        },
+        "state": {
+          "type": "string",
+          "description": "Session state after the transition."
+        },
+        "ticketSystemID": {
+          "type": "string",
+          "description": "Ticket or incident reference supplied with the request."
+        },
+        "user": {
+          "type": "string",
+          "description": "Requesting user (session spec.user).",
+          "x-pii": true
+        },
+        "requestedBy": {
+          "type": "string",
+          "description": "Requesting user.",
+          "x-pii": true
+        },
+        "escalationName": {
+          "type": "string",
+          "description": "Escalation that the session was requested through."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason code or free-text reason supplied with the decision."
+        },
+        "expirationReason": {
+          "type": "string",
+          "description": "Why the session expired, for example timeExpired or approvalTimeout."
+        },
+        "terminalState": {
+          "type": "string",
+          "description": "Terminal state recorded by duplicate-session cleanup."
+        },
+        "terminalDecision": {
+          "type": "string",
+          "description": "Terminal decision of a session.termination_intent event."
+        },
+        "transitionCommitted": {
+          "type": "boolean",
+          "description": "True when the status transition was committed before the event was emitted."
+        },
+        "scheduledStartTime": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Requested start of a scheduled session. RFC 3339 timestamp, or null when unset."
+        },
+        "actualStartTime": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Actual activation time of a scheduled session. RFC 3339 timestamp, or null when unset."
+        }
+      }
+    },
+    "sessionApprovalUnverifiedGroups": {
+      "title": "Approval on unverified groups",
+      "description": "An approval was authorized on JWT-claim groups because the cluster-side group lookup failed.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Human-readable summary."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "grantedGroup": {
+          "type": "string",
+          "description": "Group granted by the session."
+        },
+        "matchedGroup": {
+          "type": "string",
+          "description": "Approver group that matched."
+        },
+        "groupBasis": {
+          "type": "string",
+          "description": "Basis of the group decision.",
+          "enum": [
+            "unverified_request_context"
+          ]
+        },
+        "loadBearing": {
+          "type": "boolean",
+          "description": "True when the unverified group decided the approval."
+        },
+        "authorization": {
+          "type": "string",
+          "description": "Authorization outcome.",
+          "enum": [
+            "allowed"
+          ]
+        },
+        "ticketSystemID": {
+          "type": "string",
+          "description": "Ticket or incident reference."
+        }
+      }
+    },
+    "debugSessionLifecycle": {
+      "title": "Debug session lifecycle",
+      "description": "Details of DebugSession lifecycle events. Correlate by requestContext.debugSessionUID.",
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "Human-readable summary of the transition."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "templateRef": {
+          "type": "string",
+          "description": "DebugSessionTemplate name."
+        },
+        "templateName": {
+          "type": "string",
+          "description": "DebugSessionTemplate name (debug_session.created, debug_session.started)."
+        },
+        "template": {
+          "type": "string",
+          "description": "DebugSessionTemplate name (debug_session.failed)."
+        },
+        "requestedBy": {
+          "type": "string",
+          "description": "Requesting user.",
+          "x-pii": true
+        },
+        "requested_by": {
+          "type": "string",
+          "description": "Requesting user (debug_session.failed).",
+          "x-pii": true
+        },
+        "previous_state": {
+          "type": "string",
+          "description": "State before the failure (debug_session.failed)."
+        },
+        "state": {
+          "type": "string",
+          "description": "Session state after the transition."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for the transition."
+        },
+        "residuals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Identities of resources left behind by a failed cleanup."
+        },
+        "bindingName": {
+          "type": "string",
+          "description": "Unresolvable DebugSessionClusterBinding name."
+        },
+        "bindingNamespace": {
+          "type": "string",
+          "description": "Unresolvable DebugSessionClusterBinding namespace."
+        }
+      }
+    },
+    "debugSessionWorkload": {
+      "title": "Debug session workload",
+      "description": "Debug pod health and deployed-resource events. The envelope target is the Pod or resource.",
+      "type": "object",
+      "properties": {
+        "debug_session": {
+          "type": "string",
+          "description": "DebugSession name."
+        },
+        "session_ns": {
+          "type": "string",
+          "description": "DebugSession namespace."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "failure_reason": {
+          "type": "string",
+          "description": "Pod failure reason."
+        },
+        "message": {
+          "type": "string",
+          "description": "Pod failure message."
+        },
+        "restart_count": {
+          "type": "integer",
+          "description": "Container restart count.",
+          "minimum": 0
+        },
+        "last_termination_reason": {
+          "type": "string",
+          "description": "Reason of the last container termination."
+        }
+      }
+    },
+    "debugSessionNodeMaintenance": {
+      "title": "Node maintenance",
+      "description": "Synchronously delivered intent and result receipts of a node-maintenance operation. The event id is <operationID>-intent or <operationID>-result.",
+      "type": "object",
+      "properties": {
+        "sessionUID": {
+          "type": "string",
+          "description": "DebugSession UID."
+        },
+        "operationID": {
+          "type": "string",
+          "description": "Operation identifier; stable across retries."
+        },
+        "approvalID": {
+          "type": "string",
+          "description": "Approval identifier (equals operationID)."
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Independent approver.",
+          "x-pii": true
+        },
+        "approvedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Approval time. RFC 3339 timestamp, or null when unset."
+        },
+        "nodeUID": {
+          "type": "string",
+          "description": "Target Node UID."
+        },
+        "tuple": {
+          "type": "string",
+          "description": "Canonical maintenance action tuple."
+        },
+        "image": {
+          "type": "string",
+          "description": "Maintenance executor image."
+        },
+        "dryRun": {
+          "type": "boolean",
+          "description": "True for a dry run."
+        },
+        "podUID": {
+          "type": "string",
+          "description": "Executor Pod UID."
+        },
+        "jobUID": {
+          "type": "string",
+          "description": "Executor Job UID."
+        },
+        "leaseUID": {
+          "type": "string",
+          "description": "Node lease UID."
+        },
+        "result": {
+          "type": "string",
+          "description": "Operation result; empty in the intent."
+        },
+        "bootID": {
+          "type": "string",
+          "description": "Node boot ID observed by the operation."
+        },
+        "restartPods": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "object"
+          },
+          "description": "Pod selectors restarted after a service restart."
+        },
+        "restartedPodUIDs": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "UIDs of the Pods the controller restarted."
+        },
+        "hostUnchanged": {
+          "type": "boolean",
+          "description": "True when the host was verified unchanged."
+        }
+      },
+      "required": [
+        "sessionUID",
+        "operationID"
+      ]
+    },
+    "debugSessionAdmissionRecipe": {
+      "title": "Admission recipe",
+      "description": "Synchronously delivered admission-recipe receipts. The event id is <operationID>-<stage>.",
+      "type": "object",
+      "properties": {
+        "sessionUID": {
+          "type": "string",
+          "description": "DebugSession UID."
+        },
+        "operationID": {
+          "type": "string",
+          "description": "Operation identifier; stable across retries."
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Independent approver.",
+          "x-pii": true
+        },
+        "approvedAt": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Approval time. RFC 3339 timestamp, or null when unset."
+        },
+        "action": {
+          "type": "string",
+          "description": "Admission recipe action."
+        },
+        "targets": {
+          "type": "array",
+          "description": "Per-target state.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "target": {
+                "type": "string",
+                "description": "Target key."
+              },
+              "state": {
+                "type": "string",
+                "description": "Target state."
+              },
+              "original": {
+                "type": "string",
+                "description": "Value before the recipe."
+              },
+              "applied": {
+                "type": "string",
+                "description": "Value applied by the recipe."
+              },
+              "message": {
+                "type": "string",
+                "description": "Status message."
+              }
+            }
+          }
+        }
+      },
+      "required": [
+        "sessionUID",
+        "operationID",
+        "action"
+      ]
+    },
+    "debugSessionHotfix": {
+      "title": "Hotfix",
+      "description": "Synchronously delivered hotfix receipts. The event id is <operationID>-intent/-result or <node operation>-intent/-result.",
+      "type": "object",
+      "properties": {
+        "sessionUID": {
+          "type": "string",
+          "description": "DebugSession UID."
+        },
+        "stage": {
+          "type": "string",
+          "description": "Hotfix stage."
+        },
+        "approvedBy": {
+          "type": "string",
+          "description": "Independent approver.",
+          "x-pii": true
+        },
+        "operationID": {
+          "type": "string",
+          "description": "Operation identifier; stable across retries."
+        },
+        "recordName": {
+          "type": "string",
+          "description": "Hotfix record name."
+        },
+        "planHash": {
+          "type": "string",
+          "description": "Hash of the approved plan."
+        },
+        "payloadSHA256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the hotfix payload."
+        },
+        "executorImage": {
+          "type": "string",
+          "description": "Hotfix executor image."
+        },
+        "payload": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "description": "Full hotfix payload (debug_session.hotfix.intent only)."
+        },
+        "nodes": {
+          "type": [
+            "integer",
+            "object"
+          ],
+          "description": "Node count (intent) or per-result node counts (result).",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "nodeUID": {
+          "type": "string",
+          "description": "Target Node UID."
+        },
+        "beforeSHA256": {
+          "type": "string",
+          "description": "Digest before the change."
+        },
+        "afterSHA256": {
+          "type": "string",
+          "description": "Digest after the change."
+        },
+        "podUID": {
+          "type": "string",
+          "description": "Executor Pod UID."
+        },
+        "result": {
+          "type": "string",
+          "description": "Per-node result."
+        },
+        "message": {
+          "type": "string",
+          "description": "Per-node result message."
+        },
+        "phase": {
+          "type": "string",
+          "description": "Final hotfix phase."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Reason for the final phase."
+        },
+        "state": {
+          "type": "string",
+          "description": "DebugSession state."
+        }
+      },
+      "required": [
+        "sessionUID",
+        "stage"
+      ]
+    },
+    "terminalRecording": {
+      "title": "Terminal recording",
+      "description": "Recording lifecycle. Carries recording identity, integrity digest, size, completeness and retention; never terminal bytes.",
+      "type": "object",
+      "properties": {
+        "recordingId": {
+          "type": "string",
+          "description": "Recording identifier (artifact ID). Use it to request replay through the Breakglass API."
+        },
+        "podNamespace": {
+          "type": "string",
+          "description": "Target Pod namespace."
+        },
+        "podName": {
+          "type": "string",
+          "description": "Target Pod name."
+        },
+        "podUID": {
+          "type": "string",
+          "description": "Target Pod UID."
+        },
+        "container": {
+          "type": "string",
+          "description": "Target container."
+        },
+        "operation": {
+          "type": "string",
+          "description": "Terminal operation.",
+          "enum": [
+            "exec",
+            "attach"
+          ]
+        },
+        "formatVersion": {
+          "type": "integer",
+          "description": "Recording format version.",
+          "minimum": 1
+        },
+        "leaseUID": {
+          "type": "string",
+          "description": "Connection lease UID."
+        },
+        "generation": {
+          "type": "string",
+          "description": "Opaque connection lease generation."
+        },
+        "retentionExpiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "When the retained recording expires."
+        },
+        "frames": {
+          "type": "integer",
+          "description": "Recorded frames.",
+          "minimum": 0
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Recording size in bytes.",
+          "minimum": 0
+        },
+        "complete": {
+          "type": "boolean",
+          "description": "True when the stream ended normally and authority still held."
+        },
+        "streamError": {
+          "type": "string",
+          "description": "Set when the stream was aborted."
+        },
+        "abortReason": {
+          "type": "string",
+          "description": "Bounded reason code of an aborted stream.",
+          "enum": [
+            "credential_changed",
+            "cluster_config_changed",
+            "target_changed",
+            "session_authority_changed",
+            "lease_changed",
+            "expired",
+            "client_disconnected",
+            "stream_failed"
+          ]
+        },
+        "stage": {
+          "type": "string",
+          "description": "Failed stage.",
+          "enum": [
+            "reserve",
+            "finalize"
+          ]
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the finalized recording."
+        }
+      }
+    },
+    "terminalRecordingAccess": {
+      "title": "Terminal recording access",
+      "description": "An authorized reader listed or replayed recordings.",
+      "type": "object",
+      "properties": {
+        "access": {
+          "type": "string",
+          "description": "Access kind.",
+          "enum": [
+            "list",
+            "replay"
+          ]
+        },
+        "recordingIds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Listed recording IDs (access=list)."
+        },
+        "recordingId": {
+          "type": "string",
+          "description": "Replayed recording ID (access=replay)."
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the replayed recording."
+        },
+        "bytes": {
+          "type": "integer",
+          "description": "Replayed size in bytes.",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "access"
+      ]
+    },
+    "accessDecision": {
+      "title": "Access decision",
+      "description": "Authorization webhook decision for one SubjectAccessReview.",
+      "type": "object",
+      "properties": {
+        "verb": {
+          "type": "string",
+          "description": "Kubernetes verb."
+        },
+        "apiGroup": {
+          "type": "string",
+          "description": "API group."
+        },
+        "subresource": {
+          "type": "string",
+          "description": "Subresource."
+        },
+        "allowed": {
+          "type": "boolean",
+          "description": "Decision."
+        },
+        "source": {
+          "type": "string",
+          "description": "Component or rule that decided."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Decision reason."
+        }
+      }
+    },
+    "accessPolicyDenial": {
+      "title": "Deny policy",
+      "description": "A DenyPolicy blocked the request.",
+      "type": "object",
+      "properties": {
+        "verb": {
+          "type": "string",
+          "description": "Kubernetes verb."
+        },
+        "apiGroup": {
+          "type": "string",
+          "description": "API group."
+        },
+        "subresource": {
+          "type": "string",
+          "description": "Subresource."
+        },
+        "policyName": {
+          "type": "string",
+          "description": "DenyPolicy name."
+        },
+        "policyScope": {
+          "type": "string",
+          "description": "DenyPolicy scope."
+        }
+      }
+    },
+    "policyViolation": {
+      "title": "Policy violation",
+      "description": "A policy was violated.",
+      "type": "object",
+      "properties": {
+        "policyName": {
+          "type": "string",
+          "description": "Policy name."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Violation reason."
+        }
+      }
+    },
+    "podSecurity": {
+      "title": "Pod security",
+      "description": "Pod security evaluation of an exec/attach/port-forward target.",
+      "type": "object",
+      "properties": {
+        "verb": {
+          "type": "string",
+          "description": "Kubernetes verb."
+        },
+        "apiGroup": {
+          "type": "string",
+          "description": "API group."
+        },
+        "subresource": {
+          "type": "string",
+          "description": "Subresource."
+        },
+        "policyName": {
+          "type": "string",
+          "description": "Policy name."
+        },
+        "action": {
+          "type": "string",
+          "description": "Resulting action."
+        },
+        "riskScore": {
+          "type": "integer",
+          "description": "Computed risk score."
+        },
+        "riskFactors": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Detected risk factors."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Evaluation reason."
+        },
+        "overrideApplied": {
+          "type": "boolean",
+          "description": "True when an override allowed the request."
+        }
+      }
+    },
+    "impersonation": {
+      "title": "Impersonation",
+      "description": "Authorization decision for an impersonation request.",
+      "type": "object",
+      "properties": {
+        "allowed": {
+          "type": "boolean",
+          "description": "Decision."
+        },
+        "impersonationVerb": {
+          "type": "string",
+          "description": "Raw impersonation verb."
+        },
+        "impersonationVerbKind": {
+          "type": "string",
+          "description": "Impersonation verb kind."
+        },
+        "impersonationMode": {
+          "type": "string",
+          "description": "Impersonation mode (legacy or constrained)."
+        },
+        "impersonationConstraint": {
+          "type": "string",
+          "description": "Constrained impersonation verb; empty for legacy, as in the API server audit log."
+        },
+        "identityResource": {
+          "type": "string",
+          "description": "Impersonated identity resource (users, groups, serviceaccounts, uids, userextras)."
+        },
+        "identityName": {
+          "type": "string",
+          "description": "Impersonated identity name.",
+          "x-pii": true
+        },
+        "identityNamespace": {
+          "type": "string",
+          "description": "Impersonated service account namespace."
+        },
+        "source": {
+          "type": "string",
+          "description": "Component or rule that decided."
+        },
+        "requestorUID": {
+          "type": "string",
+          "description": "UID of the requesting identity.",
+          "x-pii": true
+        },
+        "extraKey": {
+          "type": "string",
+          "description": "User-extra key for userextras impersonation."
+        },
+        "underlyingVerb": {
+          "type": "string",
+          "description": "Verb of the impersonated request."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Decision reason."
+        },
+        "legacyFallbackWarned": {
+          "type": "boolean",
+          "description": "True when a legacy fallback warning was issued."
+        }
+      }
+    },
+    "generic": {
+      "title": "Unstructured details",
+      "description": "Declared event types without a structured payload in this release. Details, when present, are an object of string keys; the payload is defined additively in a later v1 schema revision.",
+      "type": "object"
+    }
+  }
+}

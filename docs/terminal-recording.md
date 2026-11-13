@@ -82,6 +82,7 @@ share its correlation ID and never contain terminal bytes:
 | `debug_session.terminal_recording_failed` | Reservation or publication failed | `stage` (`reserve` or `finalize`) and the identifiers known at that point |
 | `debug_session.terminal_recording_accessed` | An authorized reader listed or replayed recordings | `access` (`list` or `replay`), `recordingIds` or `recordingId`, `sha256`, `bytes`; the actor is the reader |
 
+Their schema is in [Audit event schema](audit-event-schema.md#terminal-recordings-terminalrecording-terminalrecordingaccess).
 These events ignore the template's `audit.enabled` switch, because they index
 the retained evidence, and they are never sampled.
 

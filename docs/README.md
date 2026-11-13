@@ -98,6 +98,7 @@ Every utility is published as an immutable,
 - **[DenyPolicy](./deny-policy.md)** - Explicit access restrictions
 - **[AuditConfig](./audit-config.md)** - Configure audit sinks (Kafka, webhooks, logs)
 - **[Audit delivery](./audit-delivery.md)** - Bounded retries, backpressure, correlation and delivery metrics
+- **[Audit event schema](./audit-event-schema.md)** - Versioned JSON Schema, Kafka record contract and consumer guidance
 - **[IdentityProvider](./identity-provider.md)** - OIDC identity provider configuration
 - **[MailProvider](./mail-provider.md)** - SMTP mail provider configuration
 - **[Webhook Setup](./webhook-setup.md)** - Authorization webhook configuration

@@ -16,6 +16,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/segmentio/kafka-go"
 	"github.com/stretchr/testify/require"
+	auditv1 "github.com/telekom/k8s-breakglass/api/audit/v1"
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
@@ -110,9 +111,21 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, reader.Close()) })
 	message, err := reader.ReadMessage(ctx)
 	require.NoError(t, err)
+	// The record produced by the real Kafka sink honours the published
+	// contract (docs/audit-event-schema.md): schema, key and headers.
+	require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+	require.Equal(t, "outage-event", string(message.Key))
+	headers := map[string]string{}
+	for _, header := range message.Headers {
+		headers[header.Key] = string(header.Value)
+	}
+	require.Equal(t, string(audit.EventConfigChanged), headers["event-type"])
+	require.Equal(t, audit.SchemaVersion, headers["schema-version"])
+	require.Equal(t, "operator", headers["actor"])
 	var event audit.Event
 	require.NoError(t, json.Unmarshal(message.Value, &event))
 	require.Equal(t, "outage-event", event.ID)
+	require.Equal(t, audit.SchemaVersion, event.SchemaVersion)
 	require.Equal(t, string(ns.UID), event.Target.UID)
 	require.Equal(t, "operator", event.Actor.User)
 	require.ElementsMatch(t, groups, event.Actor.Groups)

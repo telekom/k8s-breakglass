@@ -265,6 +265,7 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
@@ -506,6 +507,7 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 	if event.ID == "" {
 		event.ID = uuid.New().String()
 	}
+	event.SchemaVersion = SchemaVersion
 
 	// Set default severity if not set
 	if event.Severity == "" {
