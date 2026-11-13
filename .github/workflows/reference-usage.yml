@@ -58,7 +58,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@2f5e7bc67f1f9972ab16657bb795f36d8f04de0e # v5.1.0
         with:
-          version: v4.2.2
+          version: v4.3.1
       - name: Install reference tools
         run: |
           make kustomize
