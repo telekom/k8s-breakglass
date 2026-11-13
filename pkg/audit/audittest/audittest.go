@@ -56,9 +56,12 @@ func Record(event *audit.Event) {
 	}
 }
 
-// Main runs the package's tests and fails them when any recorded event
-// violated the schema. Use it from TestMain: os.Exit(audittest.Main(m)).
+// Main runs the package's tests and fails them when any event that a test
+// emitted through an audit Manager, or recorded from a test double, violated
+// the schema. Use it from TestMain: os.Exit(audittest.Main(m)).
 func Main(m *testing.M) int {
+	audit.ObserveEmitted(Record)
+	defer audit.ObserveEmitted(nil)
 	code := m.Run()
 	mu.Lock()
 	defer mu.Unlock()

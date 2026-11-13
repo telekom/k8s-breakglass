@@ -110,6 +110,42 @@ of an event.
 The schema maps every declared event type to exactly one `details` definition
 (`$defs`). A contract test fails when a new event type has no mapping.
 
+**Not every declared type is emitted.** `pkg/audit` declares more event types
+than this release produces. The table below is generated from the code: an
+event type counts as emitted when non-test production code references it
+(directly or through a Manager helper that production code calls). Reserved
+types are not sent today; for example, exec and attach into debug pods are
+audited through the `debug_session.terminal_recording_*` events and the
+authorization webhook's `access.*` decisions (with `subresource` `exec`,
+`attach` or `portforward`), not through `pod.exec` or `debug_session.attached`,
+and BreakglassEscalation changes are not audited. Every emitted type has a
+structured details definition.
+
+<!-- BEGIN GENERATED: emitted event types (UPDATE_AUDIT_SCHEMA_DOCS=1 go test ./pkg/audit -run TestAuditSchemaEmittedTypesDocumented) -->
+
+| Details definition | Emitted by this release | Declared, not emitted (reserved) |
+|---|---|---|
+| `sessionLifecycle` | `session.requested`, `session.approved`, `session.denied`, `session.activated`, `session.expired`, `session.revoked`, `session.withdrawn`, `session.dropped`, `session.termination_intent` | `session.rejected`, `session.extended`, `session.validated`, `session.invalidated` |
+| `sessionApprovalUnverifiedGroups` | `session.approval_unverified_groups` | none |
+| `debugSessionLifecycle` | `debug_session.created`, `debug_session.started`, `debug_session.approved`, `debug_session.rejected`, `debug_session.renewed`, `debug_session.validation_failed`, `debug_session.terminated`, `debug_session.failed`, `debug_session.expired`, `debug_session.approval_timeout`, `debug_session.cleanup_failed`, `debug_session.cleanup_recovered`, `debug_session.binding_unresolved` | `debug_session.validated` |
+| `debugSessionWorkload` | `debug_session.pod_failed`, `debug_session.pod_restarted`, `debug_session.resource_deployed`, `debug_session.resource_cleanup` | none |
+| `debugSessionNodeMaintenance` | `debug_session.node_maintenance.execution_intent`, `debug_session.node_maintenance.result` | none |
+| `debugSessionAdmissionRecipe` | `debug_session.admission_recipe.applied`, `debug_session.admission_recipe.drift`, `debug_session.admission_recipe.reverted` | none |
+| `debugSessionHotfix` | `debug_session.hotfix.intent`, `debug_session.hotfix.node_intent`, `debug_session.hotfix.node_result`, `debug_session.hotfix.result` | none |
+| `terminalRecording` | `debug_session.terminal_recording_started`, `debug_session.terminal_recording_finalized`, `debug_session.terminal_recording_failed` | none |
+| `terminalRecordingAccess` | `debug_session.terminal_recording_accessed` | none |
+| `accessDecision` | `access.granted`, `access.denied` | `access.allowed`, `access.checked` |
+| `accessPolicyDenial` | `access.denied.policy` | none |
+| `policyViolation` | none | `policy.violation` |
+| `podSecurity` | `pod_security.evaluated`, `pod_security.denied`, `pod_security.warning`, `pod_security.override` | `pod_security.allowed` |
+| `impersonation` | `resource.impersonate` | none |
+| `generic` | none | `escalation.created`, `escalation.approved`, `escalation.rejected`, `escalation.expired`, `escalation.revoked`, `escalation.updated`, `escalation.validated`, `resource.get`, `resource.list`, `resource.watch`, `resource.create`, `resource.update`, `resource.patch`, `resource.delete`, `resource.deletecollection`, `resource.exec`, `resource.portforward`, `resource.logs`, `resource.attach`, `resource.proxy`, `resource.scale`, `resource.approve`, `resource.sign`, `resource.bind`, `secret.accessed`, `secret.created`, `secret.updated`, `secret.deleted`, `configmap.accessed`, `serviceaccount.used`, `token.generated`, `token.validated`, `token.revoked`, `role.created`, `role.updated`, `role.deleted`, `rolebinding.created`, `rolebinding.updated`, `rolebinding.deleted`, `clusterrole.created`, `clusterrole.updated`, `clusterrole.deleted`, `clusterrolebinding.created`, `clusterrolebinding.updated`, `clusterrolebinding.deleted`, `policy.created`, `policy.updated`, `policy.deleted`, `policy.evaluated`, `policy.bypassed`, `debug_session.attached`, `debug_session.detached`, `debug_session.command`, `debug_session.output`, `debug_session.file_access`, `debug_session.net_access`, `debug_session.proc_access`, `pod.created`, `pod.deleted`, `pod.exec`, `pod.attach`, `pod.portforward`, `pod.logs`, `container.start`, `container.stop`, `container.kill`, `namespace.created`, `namespace.deleted`, `namespace.accessed`, `node.cordon`, `node.uncordon`, `node.drain`, `node.taint`, `node.label`, `networkpolicy.created`, `networkpolicy.updated`, `networkpolicy.deleted`, `deployment.scaled`, `deployment.rolled`, `deployment.paused`, `deployment.resumed`, `statefulset.scaled`, `daemonset.updated`, `job.created`, `cronjob.triggered`, `crd.created`, `crd.updated`, `crd.deleted`, `customresource.created`, `customresource.updated`, `customresource.deleted`, `admission.allowed`, `admission.denied`, `admission.mutated`, `webhook.called`, `webhook.timeout`, `webhook.error`, `api.request`, `api.response`, `auth.attempt`, `auth.success`, `auth.failure`, `auth.mfa`, `auth.token_issued`, `auth.token_refresh`, `config.changed`, `cluster.added`, `cluster.removed`, `cluster.updated`, `provider.added`, `provider.removed`, `provider.updated`, `system.startup`, `system.shutdown`, `system.reload`, `system.health_check`, `system.leader_elected`, `system.leader_lost`, `system.cache_refresh`, `system.gc_completed`, `audit.started`, `audit.stopped`, `audit.dropped`, `audit.backpressure`, `nonresource.access`, `nonresource.metrics`, `nonresource.healthz`, `nonresource.readyz`, `nonresource.livez`, `nonresource.version`, `nonresource.api`, `nonresource.openapi`, `nonresource.logs`, `nonresource.swagger` |
+
+<!-- END GENERATED: emitted event types -->
+
+The field tables below describe each definition; fields listed there apply
+only to the emitted types.
+
 ### Breakglass sessions (`sessionLifecycle`)
 
 `session.requested`, `session.approved`, `session.denied`, `session.rejected`,
@@ -228,20 +264,24 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 | `podSecurity` | `pod_security.evaluated`, `.allowed`, `.denied`, `.warning`, `.override` | `policyName`, `action`, `riskScore`, `riskFactors`, `reason`, `verb`, `apiGroup`, `subresource`, `overrideApplied` |
 | `impersonation` | `resource.impersonate` | `allowed`, `impersonationVerb`, `impersonationVerbKind`, `impersonationMode`, `impersonationConstraint`, `identityResource`, `identityName` (**PII**), `identityNamespace`, `source`, `requestorUID` (**PII**), `extraKey`, `underlyingVerb`, `reason`, `legacyFallbackWarned` |
 
-### Other declared types (`generic`)
+### Reserved types (`generic`)
 
-The remaining declared types (for example `resource.*`, `secret.*`,
-`config.changed`, `system.*`, `audit.*`, `nonresource.*`, and
-`debug_session.command`) have no structured payload in this release. Their
-`details`, when present, is an object. A later v1 revision may define it
-additively.
+The types mapped to `generic` (see the generated table) are declared but not
+emitted, and have no structured payload. If a later v1 release starts to emit
+one, it first gets a structured definition, additively.
 
 ## Versioning and compatibility
 
-- The schema directory and `schemaVersion` carry the major version (`v1`).
+- The schema directory, its `$id` (`urn:telekom:k8s-breakglass:audit-event:v1`)
+  and `schemaVersion` carry the major version (`v1`). Take the schema file from
+  the release tag that you consume.
 - Within v1, changes are **additive only**: new optional envelope or details
-  fields, new event types, and new enum values for fields documented as reason
-  codes. Fields are not removed, renamed, retyped or made required.
+  fields, new event types, and new values of reason-code fields. Fields are not
+  removed, renamed, retyped or made required.
+- Reason-code details fields (`abortReason`, `stage`, `access`, `operation`,
+  `groupBasis`, `authorization`) are open strings: the schema lists the known
+  values as `examples`, and consumers must accept others. Only the envelope
+  `severity` and `schemaVersion` are closed.
 - Consumers must ignore unknown properties and unknown event types. The
   published schema is open (it allows unknown properties). CI validates emitted
   events against a strict variant, so every field that the code emits is
@@ -255,12 +295,13 @@ CI enforces the contract:
   details definition, compares the envelope with the Go types, validates the
   Manager's emitters, rejects malformed events, and validates the examples on
   this page.
-- The `pkg/breakglass` and `pkg/breakglass/debug` test doubles validate every
-  event that the session, debug session, hotfix, admission-recipe,
-  node-maintenance and terminal-recording code emits in its tests
-  (`pkg/audit/audittest`).
-- The Kafka delivery e2e (`hack/audit-delivery-kind.sh`) validates a record
-  that a real broker returned, including its key and headers.
+- `pkg/audit/audittest` validates, strictly, every event that the tests of
+  each emitting package (`pkg/breakglass`, `pkg/breakglass/debug`,
+  `pkg/webhook`) emit through an audit Manager or record in a test double.
+- The Kafka delivery e2e (`hack/audit-delivery-kind.sh`) validates a
+  structured `session.requested` record that a real broker returned, including
+  its key and its `event-type`, `schema-version`, `actor` and `correlation-id`
+  headers.
 
 ## Consuming from SOC/CDI
 

@@ -6,11 +6,13 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/constant"
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -56,31 +58,134 @@ func loadSchemaDoc(t *testing.T) schemaDoc {
 	return doc
 }
 
-// declaredEventTypes parses types.go, so a new EventType constant cannot
-// escape the contract by being left out of a hand-maintained list.
-func declaredEventTypes(t *testing.T) []string {
+var eventTypePattern = regexp.MustCompile(`^[a-z_]+(\.[a-z_]+)+$`)
+
+// declaredEventConsts parses every non-test file of this package and returns
+// the EventType constants by name, so a new event type cannot escape the
+// contract by being left out of a hand-maintained list. A string constant that
+// looks like an event type but is not typed EventType fails the test.
+func declaredEventConsts(t *testing.T) map[string]string {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "types.go", nil, 0)
+	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
-	var types []string
-	for _, decl := range file.Decls {
-		gen, ok := decl.(*ast.GenDecl)
-		if !ok || gen.Tok != token.CONST {
+	consts := map[string]string{}
+	for _, name := range files {
+		if strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		for _, spec := range gen.Specs {
-			value := spec.(*ast.ValueSpec)
-			if ident, ok := value.Type.(*ast.Ident); !ok || ident.Name != "EventType" {
+		file, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		require.NoError(t, err)
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
 				continue
 			}
-			for _, v := range value.Values {
-				lit := v.(*ast.BasicLit)
-				types = append(types, constant.StringVal(constant.MakeFromLiteral(lit.Value, lit.Kind, 0)))
+			for _, spec := range gen.Specs {
+				value := spec.(*ast.ValueSpec)
+				ident, typed := value.Type.(*ast.Ident)
+				typed = typed && ident.Name == "EventType"
+				for i, v := range value.Values {
+					if call, ok := v.(*ast.CallExpr); ok {
+						// EventType("x") is typed too.
+						if fun, ok := call.Fun.(*ast.Ident); ok && fun.Name == "EventType" && len(call.Args) == 1 {
+							typed, v = true, call.Args[0]
+						}
+					}
+					lit, ok := v.(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						require.False(t, typed, "%s: EventType constant %s must be a string literal", name, value.Names[i])
+						continue
+					}
+					str := constant.StringVal(constant.MakeFromLiteral(lit.Value, lit.Kind, 0))
+					if !typed {
+						require.False(t, eventTypePattern.MatchString(str),
+							"%s: constant %s = %q looks like an event type but is not typed EventType", name, value.Names[i], str)
+						continue
+					}
+					consts[value.Names[i].Name] = str
+				}
 			}
 		}
 	}
-	require.Greater(t, len(types), 100, "EventType constants not found in types.go")
+	require.Greater(t, len(consts), 100, "EventType constants not found")
+	return consts
+}
+
+func declaredEventTypes(t *testing.T) []string {
+	t.Helper()
+	var types []string
+	for _, v := range declaredEventConsts(t) {
+		types = append(types, v)
+	}
+	sort.Strings(types)
 	return types
+}
+
+const auditImportPath = "github.com/telekom/k8s-breakglass/pkg/audit"
+
+// emittedEventTypes returns the event types that production code can emit:
+// every audit.EventX referenced by non-test code outside this package, plus
+// the types of the Manager helper methods that such code calls.
+func emittedEventTypes(t *testing.T) map[string]bool {
+	t.Helper()
+	consts := declaredEventConsts(t)
+	fset := token.NewFileSet()
+	manager, err := parser.ParseFile(fset, "manager.go", nil, 0)
+	require.NoError(t, err)
+	helpers := map[string][]string{}
+	for _, decl := range manager.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Body == nil || fn.Name.Name == "Emit" || fn.Name.Name == "EmitSync" {
+			continue
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && consts[id.Name] != "" {
+				helpers[fn.Name.Name] = append(helpers[fn.Name.Name], consts[id.Name])
+			}
+			return true
+		})
+	}
+	emitted := map[string]bool{}
+	for _, root := range []string{"../../cmd", "../../internal", "../../pkg", "../../api"} {
+		err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") ||
+				filepath.Dir(path) == "../../pkg/audit" {
+				return err
+			}
+			// Helper calls need no import of this package (for example through
+			// a field of type *audit.Manager), so every file is scanned.
+			file, err := parser.ParseFile(fset, path, nil, 0)
+			if err != nil {
+				return err
+			}
+			alias := ""
+			for _, imp := range file.Imports {
+				if imp.Path.Value == `"`+auditImportPath+`"` {
+					alias = "audit"
+					if imp.Name != nil {
+						alias = imp.Name.Name
+					}
+				}
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if x, ok := sel.X.(*ast.Ident); ok && alias != "" && x.Name == alias && consts[sel.Sel.Name] != "" {
+					emitted[consts[sel.Sel.Name]] = true
+				}
+				for _, eventType := range helpers[sel.Sel.Name] {
+					emitted[eventType] = true
+				}
+				return true
+			})
+			return nil
+		})
+		require.NoError(t, err)
+	}
+	require.NotEmpty(t, emitted)
+	return emitted
 }
 
 // Every declared event type has exactly one details schema, and the schema
@@ -264,4 +369,56 @@ func TestKafkaHeadersDocumented(t *testing.T) {
 		keys = append(keys, header.Key)
 	}
 	require.False(t, slices.Contains(keys, "actor") || slices.Contains(keys, "correlation-id"), "empty optional headers are omitted")
+}
+
+const (
+	emittedBegin = "<!-- BEGIN GENERATED: emitted event types (UPDATE_AUDIT_SCHEMA_DOCS=1 go test ./pkg/audit -run TestAuditSchemaEmittedTypesDocumented) -->\n"
+	emittedEnd   = "<!-- END GENERATED: emitted event types -->"
+)
+
+func codeList(types []string) string {
+	if len(types) == 0 {
+		return "none"
+	}
+	return "`" + strings.Join(types, "`, `") + "`"
+}
+
+// The docs list exactly the event types that production code emits, every
+// emitted type has a structured details schema, and the remaining declared
+// types are marked reserved. Regenerate with UPDATE_AUDIT_SCHEMA_DOCS=1.
+func TestAuditSchemaEmittedTypesDocumented(t *testing.T) {
+	doc := loadSchemaDoc(t)
+	emitted := emittedEventTypes(t)
+	var b strings.Builder
+	b.WriteString(emittedBegin)
+	b.WriteString("\n| Details definition | Emitted by this release | Declared, not emitted (reserved) |\n|---|---|---|\n")
+	for _, clause := range doc.AllOf {
+		def := strings.TrimPrefix(clause.Then.Properties.Details.Ref, "#/$defs/")
+		var emittedTypes, reserved []string
+		for _, eventType := range clause.If.Properties.Type.Enum {
+			if emitted[eventType] {
+				emittedTypes = append(emittedTypes, eventType)
+			} else {
+				reserved = append(reserved, eventType)
+			}
+		}
+		if def == "generic" {
+			require.Empty(t, emittedTypes, "emitted event types need a structured details schema")
+		}
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", def, codeList(emittedTypes), codeList(reserved))
+	}
+	b.WriteString("\n" + emittedEnd)
+
+	const path = "../../docs/audit-event-schema.md"
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+	start, end := strings.Index(content, emittedBegin), strings.Index(content, emittedEnd)
+	require.True(t, start >= 0 && end > start, "generated markers missing in %s", path)
+	updated := content[:start] + b.String() + content[end+len(emittedEnd):]
+	if os.Getenv("UPDATE_AUDIT_SCHEMA_DOCS") != "" {
+		require.NoError(t, os.WriteFile(path, []byte(updated), 0o600))
+		return
+	}
+	require.Equal(t, updated, content, "emitted event types are stale: run UPDATE_AUDIT_SCHEMA_DOCS=1 go test ./pkg/audit -run TestAuditSchemaEmittedTypesDocumented")
 }

@@ -95,10 +95,17 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	stop = func() {}
 	groups := []string{"/operations/platform", "auditors", "system:authenticated"}
 	actorCtx := audit.WithAuthenticatedActor(ctx, []string{"operator"}, groups)
+	// A structured, security-relevant event (sessionLifecycle details) with a
+	// correlation ID, as the session controller emits it.
 	svc.Emit(actorCtx, &audit.Event{
-		ID: "outage-event", Type: audit.EventConfigChanged,
+		ID: "outage-event", Type: audit.EventSessionRequested,
 		Actor:  audit.Actor{User: "operator"},
 		Target: audit.Target{Kind: "Namespace", Name: ns.Name, UID: string(ns.UID)},
+		Details: map[string]interface{}{
+			"message": "Session requested", "cluster": "audit-delivery", "grantedGroup": "cluster-admin",
+			"state": "Pending", "ticketSystemID": "INC-1", "user": "operator",
+		},
+		RequestContext: &audit.RequestContext{CorrelationID: "outage-correlation", SessionName: "outage-session", SessionUID: string(ns.UID)},
 	})
 	require.Eventually(t, func() bool {
 		stats := svc.GetQueuedSinkHealth()
@@ -119,9 +126,10 @@ func TestBrokerOutageRetainsEventsAndIdentity(t *testing.T) {
 	for _, header := range message.Headers {
 		headers[header.Key] = string(header.Value)
 	}
-	require.Equal(t, string(audit.EventConfigChanged), headers["event-type"])
+	require.Equal(t, string(audit.EventSessionRequested), headers["event-type"])
 	require.Equal(t, audit.SchemaVersion, headers["schema-version"])
 	require.Equal(t, "operator", headers["actor"])
+	require.Equal(t, "outage-correlation", headers["correlation-id"])
 	var event audit.Event
 	require.NoError(t, json.Unmarshal(message.Value, &event))
 	require.Equal(t, "outage-event", event.ID)

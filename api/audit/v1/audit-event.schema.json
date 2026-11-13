@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/telekom/k8s-breakglass/main/api/audit/v1/audit-event.schema.json",
+  "$id": "urn:telekom:k8s-breakglass:audit-event:v1",
   "title": "Breakglass audit event v1",
   "description": "One audit event: a Kafka record value, a webhook single-event body, or one element of a webhook batch's events array. The log sink flattens events into log fields and is not covered. See docs/audit-event-schema.md. Within v1 only additive changes are made: consumers must ignore unknown properties and unknown event types.",
   "type": "object",
@@ -774,8 +774,8 @@
         },
         "groupBasis": {
           "type": "string",
-          "description": "Basis of the group decision.",
-          "enum": [
+          "description": "Basis of the group decision. Known values are listed in examples; accept others.",
+          "examples": [
             "unverified_request_context"
           ]
         },
@@ -785,8 +785,8 @@
         },
         "authorization": {
           "type": "string",
-          "description": "Authorization outcome.",
-          "enum": [
+          "description": "Authorization outcome. Known values are listed in examples; accept others.",
+          "examples": [
             "allowed"
           ]
         },
@@ -1181,8 +1181,8 @@
         },
         "operation": {
           "type": "string",
-          "description": "Terminal operation.",
-          "enum": [
+          "description": "Terminal operation. Known values are listed in examples; accept others.",
+          "examples": [
             "exec",
             "attach"
           ]
@@ -1225,8 +1225,8 @@
         },
         "abortReason": {
           "type": "string",
-          "description": "Bounded reason code of an aborted stream.",
-          "enum": [
+          "description": "Bounded reason code of an aborted stream. Known values are listed in examples; accept others.",
+          "examples": [
             "credential_changed",
             "cluster_config_changed",
             "target_changed",
@@ -1239,8 +1239,8 @@
         },
         "stage": {
           "type": "string",
-          "description": "Failed stage.",
-          "enum": [
+          "description": "Failed stage. Known values are listed in examples; accept others.",
+          "examples": [
             "reserve",
             "finalize"
           ]
@@ -1259,8 +1259,8 @@
       "properties": {
         "access": {
           "type": "string",
-          "description": "Access kind.",
-          "enum": [
+          "description": "Access kind. Known values are listed in examples; accept others.",
+          "examples": [
             "list",
             "replay"
           ]

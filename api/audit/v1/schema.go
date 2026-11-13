@@ -19,7 +19,8 @@ import (
 )
 
 // SchemaID is the $id of the audit event schema.
-const SchemaID = "https://raw.githubusercontent.com/telekom/k8s-breakglass/main/api/audit/v1/audit-event.schema.json"
+// It is a version-stable URN: it names v1, not a branch or file location.
+const SchemaID = "urn:telekom:k8s-breakglass:audit-event:v1"
 
 // Schema is the JSON Schema (draft 2020-12) of one audit event.
 //
