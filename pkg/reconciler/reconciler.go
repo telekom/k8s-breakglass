@@ -254,6 +254,10 @@ func Setup(
 			10*time.Minute,
 		)
 
+		if auditService != nil {
+			escalationReconciler.WithAuditEmitter(auditService)
+		}
+
 		// Set reconciler in API server so it can use the cached escalation->IDP mapping.
 		// This prevents the API from querying the Kubernetes APIServer on every /api/config/idps request.
 		if plan.attachCachedReconcilers {

@@ -21,6 +21,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"go.uber.org/zap"
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -293,4 +294,50 @@ func TestDropAfterRetryWindowOptOut(t *testing.T) {
 	ids := readIDs(ctx, t, topic, int(svc.GetQueuedSinkHealth()[0].ProcessedEvents))
 	require.NotContains(t, ids, "dropped")
 	require.Contains(t, ids[0], "after-recovery-")
+}
+
+// The security events that the controller and the authorization webhook emit
+// (escalation changes, debug-session attach) reach a real broker as
+// schema-valid records with their headers.
+func TestSecurityEventsOnKafka(t *testing.T) {
+	if os.Getenv("AUDIT_DELIVERY_E2E") != "true" {
+		t.Skip("run hack/audit-delivery-kind.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	cli := kubeClient(t)
+	stop := forward(t)
+	t.Cleanup(func() { stop() })
+	const topic = "audit-security"
+	svc := newKafkaService(ctx, t, cli, topic, &breakglassv1alpha1.AuditQueueConfig{Size: 1000, Workers: 1})
+
+	escalation := &breakglassv1alpha1.BreakglassEscalation{
+		ObjectMeta: metav1.ObjectMeta{Name: "prod-admin", Namespace: "breakglass", UID: "esc-uid", Generation: 1, ResourceVersion: "1"},
+		Spec:       breakglassv1alpha1.BreakglassEscalationSpec{EscalatedGroup: "cluster-admin"},
+	}
+	svc.Emit(ctx, audit.EscalationChangeEvent(audit.EventEscalationCreated, escalation, 0))
+	attached := audit.DebugSessionAttachedEvent("alice@example.com", []string{"ops"}, "spoke",
+		&authorizationv1.ResourceAttributes{Verb: "create", Resource: "pods", Subresource: "exec", Name: "dbg-pod", Namespace: "debug"},
+		audit.Target{Kind: "pods", Name: "dbg-pod", Namespace: "debug"}, "breakglass", "dbg", "dbg-uid")
+	attached.ID = "attached-event"
+	attached.RequestContext.CorrelationID = "attach-correlation"
+	svc.Emit(ctx, attached)
+
+	reader := kafka.NewReader(kafka.ReaderConfig{Brokers: []string{"localhost:19093"}, Topic: topic, Partition: 0, MinBytes: 1, MaxBytes: 1e6})
+	t.Cleanup(func() { require.NoError(t, reader.Close()) })
+	seen := map[string]map[string]string{}
+	for len(seen) < 2 {
+		message, err := reader.ReadMessage(ctx)
+		require.NoError(t, err)
+		require.NoError(t, auditv1.ValidateStrict(message.Value), "%s", message.Value)
+		headers := map[string]string{}
+		for _, header := range message.Headers {
+			headers[header.Key] = string(header.Value)
+		}
+		seen[string(message.Key)] = headers
+	}
+	require.Equal(t, string(audit.EventEscalationCreated), seen["escalation/esc-uid/1"]["event-type"])
+	require.Equal(t, string(audit.EventDebugSessionAttached), seen["attached-event"]["event-type"])
+	require.Equal(t, "attach-correlation", seen["attached-event"]["correlation-id"])
+	require.Equal(t, "alice@example.com", seen["attached-event"]["actor"])
 }

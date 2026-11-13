@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
+	"github.com/telekom/k8s-breakglass/pkg/audit"
 	"github.com/telekom/k8s-breakglass/pkg/indexer"
 	sharedpatch "github.com/telekom/t-caas-go-library/pkg/patch"
 )
@@ -50,6 +51,45 @@ type EscalationReconciler struct {
 	onError func(ctx context.Context, err error)
 	// resyncPeriod defines the full list reconciliation interval (default 10m)
 	resyncPeriod time.Duration
+	// auditEmitter receives escalation.created/updated/deleted events (optional)
+	auditEmitter EscalationAuditEmitter
+}
+
+// EscalationAuditEmitter receives escalation change audit events.
+type EscalationAuditEmitter interface {
+	Emit(ctx context.Context, event *audit.Event)
+}
+
+// WithAuditEmitter emits escalation.created, escalation.updated and
+// escalation.deleted audit events for observed BreakglassEscalation changes.
+func (r *EscalationReconciler) WithAuditEmitter(emitter EscalationAuditEmitter) *EscalationReconciler {
+	r.auditEmitter = emitter
+	return r
+}
+
+// auditSpecChange emits escalation.created or escalation.updated when the
+// escalation's generation has not been observed yet. The status write that
+// follows records the generation, so a restart does not repeat the event; a
+// repeat after a failed status write carries the same event ID.
+func (r *EscalationReconciler) auditSpecChange(ctx context.Context, esc *breakglassv1alpha1.BreakglassEscalation) {
+	previous := esc.Status.ObservedGeneration
+	if r.auditEmitter == nil || previous == esc.Generation {
+		return
+	}
+	eventType := audit.EventEscalationUpdated
+	if previous == 0 {
+		eventType = audit.EventEscalationCreated
+	}
+	r.auditEmitter.Emit(ctx, audit.EscalationChangeEvent(eventType, esc, previous))
+}
+
+// auditDeletion emits escalation.deleted for an observed delete event.
+func (r *EscalationReconciler) auditDeletion(obj client.Object) {
+	esc, ok := obj.(*breakglassv1alpha1.BreakglassEscalation)
+	if r.auditEmitter == nil || !ok {
+		return
+	}
+	r.auditEmitter.Emit(context.Background(), audit.EscalationChangeEvent(audit.EventEscalationDeleted, esc, esc.Generation))
 }
 
 func (r *EscalationReconciler) applyStatus(ctx context.Context, escalation *breakglassv1alpha1.BreakglassEscalation) error {
@@ -136,6 +176,7 @@ func (r *EscalationReconciler) Reconcile(ctx context.Context, req reconcile.Requ
 		}
 		return reconcile.Result{}, err
 	}
+	r.auditSpecChange(ctx, escalation)
 
 	// Validate escalation configuration and references
 	now := metav1.Now()
@@ -395,7 +436,10 @@ func (r *EscalationReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			return shouldReconcileEscalationUpdate(e.ObjectOld, e.ObjectNew)
 		},
 		CreateFunc: func(e event.CreateEvent) bool { return true },
-		DeleteFunc: func(e event.DeleteEvent) bool { return true },
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			r.auditDeletion(e.Object)
+			return true
+		},
 	}
 
 	dependencyPredicate := dependencyChangePredicate()

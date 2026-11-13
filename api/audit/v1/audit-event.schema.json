@@ -48,6 +48,7 @@
         "escalation.revoked",
         "escalation.updated",
         "escalation.validated",
+        "escalation.deleted",
         "access.allowed",
         "access.granted",
         "access.denied",
@@ -604,11 +605,59 @@
           "type": {
             "enum": [
               "escalation.created",
+              "escalation.updated",
+              "escalation.deleted"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/escalationChange"
+          }
+        },
+        "required": [
+          "details"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
+              "debug_session.attached"
+            ]
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "then": {
+        "properties": {
+          "details": {
+            "$ref": "#/$defs/debugSessionAttach"
+          }
+        },
+        "required": [
+          "details"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "enum": [
               "escalation.approved",
               "escalation.rejected",
               "escalation.expired",
               "escalation.revoked",
-              "escalation.updated",
               "escalation.validated",
               "resource.get",
               "resource.list",
@@ -653,7 +702,6 @@
               "policy.deleted",
               "policy.evaluated",
               "policy.bypassed",
-              "debug_session.attached",
               "debug_session.detached",
               "debug_session.command",
               "debug_session.output",
@@ -1828,6 +1876,84 @@
           "description": "True when a legacy fallback warning was issued."
         }
       }
+    },
+    "escalationChange": {
+      "title": "Escalation change",
+      "description": "The controller observed a BreakglassEscalation create, spec update or delete. The actor is system; the authenticated requester is in the Kubernetes API server audit log for the same object UID and resourceVersion. The event id is escalation/<uid>/<generation> or escalation/<uid>/deleted.",
+      "type": "object",
+      "properties": {
+        "generation": {
+          "type": "integer",
+          "description": "Observed metadata.generation.",
+          "minimum": 0
+        },
+        "previousGeneration": {
+          "type": "integer",
+          "description": "Previously observed generation (escalation.updated).",
+          "minimum": 0
+        },
+        "escalatedGroup": {
+          "type": "string",
+          "description": "Group that the escalation grants."
+        },
+        "specSHA256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "SHA-256 of the JSON-encoded spec."
+        },
+        "resourceVersion": {
+          "type": "string",
+          "description": "Observed metadata.resourceVersion."
+        },
+        "fieldManager": {
+          "type": "string",
+          "description": "Field manager of the latest managedFields entry. It names the client tool, not the user."
+        }
+      },
+      "required": [
+        "generation",
+        "specSHA256"
+      ]
+    },
+    "debugSessionAttach": {
+      "title": "Debug session attach",
+      "description": "The authorization webhook authorized exec, attach or port-forward into a debug-session pod. The API server may cache an allow decision, so repeated connections within its cache TTL can produce one event.",
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "description": "Pod subresource. Known values are listed in examples; accept others.",
+          "examples": [
+            "exec",
+            "attach",
+            "portforward"
+          ]
+        },
+        "verb": {
+          "type": "string",
+          "description": "Kubernetes verb."
+        },
+        "podName": {
+          "type": "string",
+          "description": "Target Pod name."
+        },
+        "podNamespace": {
+          "type": "string",
+          "description": "Target Pod namespace."
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Target cluster name."
+        },
+        "sessionNamespace": {
+          "type": "string",
+          "description": "DebugSession namespace."
+        }
+      },
+      "required": [
+        "operation",
+        "podName"
+      ]
     },
     "generic": {
       "title": "Unstructured details",

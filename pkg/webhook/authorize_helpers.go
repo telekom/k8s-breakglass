@@ -1176,6 +1176,10 @@ func (wc *WebhookController) sendAuthorizationResponse(c *gin.Context, s *author
 	// the final live fence.
 	wc.emitAccessDecisionAuditWithTarget(s.ctx, username, s.sar.Spec.Groups,
 		&s.sar, s.auditTarget, s.allowed, s.allowSource, s.reason)
+	if s.allowed && s.allowSource == "debug-session" {
+		wc.emitDebugSessionAttachedAudit(s.ctx, username, s.sar.Spec.Groups, s.clusterName, &s.sar, s.auditTarget,
+			s.debugSessionNamespace, s.debugSessionName, s.debugSessionUID)
+	}
 
 	// Record total SAR processing duration
 	decision := "allowed"

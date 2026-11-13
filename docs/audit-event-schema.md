@@ -114,11 +114,12 @@ The schema maps every declared event type to exactly one `details` definition
 than this release produces. The table below is generated from the code: an
 event type counts as emitted when non-test production code references it
 (directly or through a Manager helper that production code calls). Reserved
-types are not sent today; for example, exec and attach into debug pods are
-audited through the `debug_session.terminal_recording_*` events and the
-authorization webhook's `access.*` decisions (with `subresource` `exec`,
-`attach` or `portforward`), not through `pod.exec` or `debug_session.attached`,
-and BreakglassEscalation changes are not audited. Every emitted type has a
+types are not sent today. Exec, attach and port-forward into debug pods are
+audited by the authorization webhook as `access.granted` or `access.denied`
+(with `subresource` `exec`, `attach` or `portforward`) and, when a
+DebugSession authorized them, as `debug_session.attached`; the recorded
+terminal transport adds the `debug_session.terminal_recording_*` events.
+`pod.exec` and `pod.attach` are not emitted. Every emitted type has a
 structured details definition.
 
 <!-- BEGIN GENERATED: emitted event types (UPDATE_AUDIT_SCHEMA_DOCS=1 go test ./pkg/audit -run TestAuditSchemaEmittedTypesDocumented) -->
@@ -139,7 +140,9 @@ structured details definition.
 | `policyViolation` | none | `policy.violation` |
 | `podSecurity` | `pod_security.evaluated`, `pod_security.denied`, `pod_security.warning`, `pod_security.override` | `pod_security.allowed` |
 | `impersonation` | `resource.impersonate` | none |
-| `generic` | none | `escalation.created`, `escalation.approved`, `escalation.rejected`, `escalation.expired`, `escalation.revoked`, `escalation.updated`, `escalation.validated`, `resource.get`, `resource.list`, `resource.watch`, `resource.create`, `resource.update`, `resource.patch`, `resource.delete`, `resource.deletecollection`, `resource.exec`, `resource.portforward`, `resource.logs`, `resource.attach`, `resource.proxy`, `resource.scale`, `resource.approve`, `resource.sign`, `resource.bind`, `secret.accessed`, `secret.created`, `secret.updated`, `secret.deleted`, `configmap.accessed`, `serviceaccount.used`, `token.generated`, `token.validated`, `token.revoked`, `role.created`, `role.updated`, `role.deleted`, `rolebinding.created`, `rolebinding.updated`, `rolebinding.deleted`, `clusterrole.created`, `clusterrole.updated`, `clusterrole.deleted`, `clusterrolebinding.created`, `clusterrolebinding.updated`, `clusterrolebinding.deleted`, `policy.created`, `policy.updated`, `policy.deleted`, `policy.evaluated`, `policy.bypassed`, `debug_session.attached`, `debug_session.detached`, `debug_session.command`, `debug_session.output`, `debug_session.file_access`, `debug_session.net_access`, `debug_session.proc_access`, `pod.created`, `pod.deleted`, `pod.exec`, `pod.attach`, `pod.portforward`, `pod.logs`, `container.start`, `container.stop`, `container.kill`, `namespace.created`, `namespace.deleted`, `namespace.accessed`, `node.cordon`, `node.uncordon`, `node.drain`, `node.taint`, `node.label`, `networkpolicy.created`, `networkpolicy.updated`, `networkpolicy.deleted`, `deployment.scaled`, `deployment.rolled`, `deployment.paused`, `deployment.resumed`, `statefulset.scaled`, `daemonset.updated`, `job.created`, `cronjob.triggered`, `crd.created`, `crd.updated`, `crd.deleted`, `customresource.created`, `customresource.updated`, `customresource.deleted`, `admission.allowed`, `admission.denied`, `admission.mutated`, `webhook.called`, `webhook.timeout`, `webhook.error`, `api.request`, `api.response`, `auth.attempt`, `auth.success`, `auth.failure`, `auth.mfa`, `auth.token_issued`, `auth.token_refresh`, `config.changed`, `cluster.added`, `cluster.removed`, `cluster.updated`, `provider.added`, `provider.removed`, `provider.updated`, `system.startup`, `system.shutdown`, `system.reload`, `system.health_check`, `system.leader_elected`, `system.leader_lost`, `system.cache_refresh`, `system.gc_completed`, `audit.started`, `audit.stopped`, `audit.dropped`, `audit.backpressure`, `nonresource.access`, `nonresource.metrics`, `nonresource.healthz`, `nonresource.readyz`, `nonresource.livez`, `nonresource.version`, `nonresource.api`, `nonresource.openapi`, `nonresource.logs`, `nonresource.swagger` |
+| `escalationChange` | `escalation.created`, `escalation.updated`, `escalation.deleted` | none |
+| `debugSessionAttach` | `debug_session.attached` | none |
+| `generic` | none | `escalation.approved`, `escalation.rejected`, `escalation.expired`, `escalation.revoked`, `escalation.validated`, `resource.get`, `resource.list`, `resource.watch`, `resource.create`, `resource.update`, `resource.patch`, `resource.delete`, `resource.deletecollection`, `resource.exec`, `resource.portforward`, `resource.logs`, `resource.attach`, `resource.proxy`, `resource.scale`, `resource.approve`, `resource.sign`, `resource.bind`, `secret.accessed`, `secret.created`, `secret.updated`, `secret.deleted`, `configmap.accessed`, `serviceaccount.used`, `token.generated`, `token.validated`, `token.revoked`, `role.created`, `role.updated`, `role.deleted`, `rolebinding.created`, `rolebinding.updated`, `rolebinding.deleted`, `clusterrole.created`, `clusterrole.updated`, `clusterrole.deleted`, `clusterrolebinding.created`, `clusterrolebinding.updated`, `clusterrolebinding.deleted`, `policy.created`, `policy.updated`, `policy.deleted`, `policy.evaluated`, `policy.bypassed`, `debug_session.detached`, `debug_session.command`, `debug_session.output`, `debug_session.file_access`, `debug_session.net_access`, `debug_session.proc_access`, `pod.created`, `pod.deleted`, `pod.exec`, `pod.attach`, `pod.portforward`, `pod.logs`, `container.start`, `container.stop`, `container.kill`, `namespace.created`, `namespace.deleted`, `namespace.accessed`, `node.cordon`, `node.uncordon`, `node.drain`, `node.taint`, `node.label`, `networkpolicy.created`, `networkpolicy.updated`, `networkpolicy.deleted`, `deployment.scaled`, `deployment.rolled`, `deployment.paused`, `deployment.resumed`, `statefulset.scaled`, `daemonset.updated`, `job.created`, `cronjob.triggered`, `crd.created`, `crd.updated`, `crd.deleted`, `customresource.created`, `customresource.updated`, `customresource.deleted`, `admission.allowed`, `admission.denied`, `admission.mutated`, `webhook.called`, `webhook.timeout`, `webhook.error`, `api.request`, `api.response`, `auth.attempt`, `auth.success`, `auth.failure`, `auth.mfa`, `auth.token_issued`, `auth.token_refresh`, `config.changed`, `cluster.added`, `cluster.removed`, `cluster.updated`, `provider.added`, `provider.removed`, `provider.updated`, `system.startup`, `system.shutdown`, `system.reload`, `system.health_check`, `system.leader_elected`, `system.leader_lost`, `system.cache_refresh`, `system.gc_completed`, `audit.started`, `audit.stopped`, `audit.dropped`, `audit.backpressure`, `nonresource.access`, `nonresource.metrics`, `nonresource.healthz`, `nonresource.readyz`, `nonresource.livez`, `nonresource.version`, `nonresource.api`, `nonresource.openapi`, `nonresource.logs`, `nonresource.swagger` |
 
 <!-- END GENERATED: emitted event types -->
 
@@ -253,6 +256,47 @@ session reader; `bgctl debug recordings export` converts it to asciicast. See
 ```json
 {"id":"6e7f8091-a2b3-4c4d-9e5f-60718293a4b5","schemaVersion":"v1","type":"debug_session.terminal_recording_accessed","severity":"info","timestamp":"2026-11-14T08:00:00Z","actor":{"user":"auditor@example.com","groups":["/security/soc"]},"target":{"uid":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d","kind":"DebugSession","name":"dbg-node-a","namespace":"breakglass","cluster":"prod-eu-1"},"details":{"access":"replay","recordingId":"rec-01JC7Z8K2M","sha256":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08","bytes":18234},"requestContext":{"correlationId":"4c1d2e3f-5a6b-4c7d-8e9f-0a1b2c3d4e5f","debugSessionName":"dbg-node-a","debugSessionUID":"9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"}}
 ```
+
+### Escalation changes (`escalationChange`)
+
+`escalation.created`, `escalation.updated`, `escalation.deleted`. The
+controller emits them when it observes a new BreakglassEscalation generation
+(created for the first observed generation, updated for a later one) or a
+delete. The event ID is `escalation/<uid>/<generation>` or
+`escalation/<uid>/deleted`. The actor is `system`: the authenticated requester
+is in the Kubernetes API server audit log for the same object UID and
+`resourceVersion`. A delete that happens while no controller replica is
+leading is not observed.
+
+| Field | Type | Description |
+|---|---|---|
+| `generation`* | integer | Observed generation. |
+| `previousGeneration` | integer | Previously observed generation (`escalation.updated`). |
+| `escalatedGroup` | string | Granted group. |
+| `specSHA256`* | 64 hex digits | SHA-256 of the JSON-encoded spec; compare it across events to detect changes. |
+| `resourceVersion` | string | Observed resource version; join key to the API server audit log. |
+| `fieldManager` | string | Field manager of the latest change (the client tool, not the user). |
+
+### Debug session attach (`debugSessionAttach`)
+
+`debug_session.attached`: the authorization webhook authorized exec, attach or
+port-forward into a debug-session pod. The actor is the requester, the target
+is the Pod, and `requestContext.debugSessionUID` names the session. The API
+server caches allow decisions of the authorization webhook, so repeated
+connections within that cache TTL can produce one event.
+
+| Field | Type | Description |
+|---|---|---|
+| `operation`* | string | `exec`, `attach` or `portforward` (open). |
+| `podName`*, `podNamespace` | string | Target Pod. |
+| `verb` | string | Kubernetes verb. |
+| `cluster` | string | Target cluster. |
+| `sessionNamespace` | string | DebugSession namespace. |
+
+\* always present.
+
+These events are sensitive: they are never sampled. Exclude them per sink with
+`eventTypes` or with `filtering.excludeEventTypes` if they are not wanted.
 
 ### Authorization webhook
 

@@ -1085,6 +1085,20 @@ func (wc *WebhookController) auditTargetFromSARWithoutEnrichment(sar *authorizat
 	return target, verb, subresource, apiGroup
 }
 
+// emitDebugSessionAttachedAudit emits debug_session.attached when a
+// DebugSession authorized exec, attach or port-forward into one of its pods,
+// correlated by the DebugSession name and UID.
+func (wc *WebhookController) emitDebugSessionAttachedAudit(ctx context.Context, username string, groups []string, cluster string,
+	sar *authorizationv1.SubjectAccessReview, target audit.Target, sessionNamespace, sessionName, sessionUID string) {
+	if wc.auditService == nil || sar == nil {
+		return
+	}
+	if event := audit.DebugSessionAttachedEvent(username, groups, cluster, sar.Spec.ResourceAttributes, target,
+		sessionNamespace, sessionName, sessionUID); event != nil {
+		wc.auditService.Emit(ctx, event)
+	}
+}
+
 // emitPolicyDenialAudit emits an audit event when a DenyPolicy blocks access.
 func (wc *WebhookController) emitPolicyDenialAudit(ctx context.Context, username string, groups []string, cluster string, sar *authorizationv1.SubjectAccessReview, policyName, scope string) {
 	if wc.auditService == nil {
