@@ -200,7 +200,7 @@ func addCall(entries map[string]*entry, fset *token.FileSet, dir, file string, c
 	}
 	fields := map[string]bool{}
 	withFields(sel.X, fields)
-	msg := dynamicMsg
+	var msg string
 	args := call.Args
 	switch m[2] {
 	case "f":
