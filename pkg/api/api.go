@@ -241,7 +241,7 @@ func NewServer(log *zap.Logger, cfg config.Config,
 
 	engine.Use(
 		ginzap.Ginzap(log, time.RFC3339, true),
-		ginzap.RecoveryWithZap(log, false),
+		recoverPanics(log),
 		// Request-scoped logger middleware: attach a sugared logger with request fields
 		func(c *gin.Context) {
 			cid, _ := c.Get(apiresponses.CIDKey)
@@ -1506,4 +1506,19 @@ func isTerminalStreamRequest(r *http.Request) bool {
 	}
 	name, suffix, ok := strings.Cut(rest, "/")
 	return ok && name != "" && suffix == "terminal"
+}
+
+// recoverPanics answers a panicking request with 500 and logs the panic
+// without the request headers, so that credentials never reach the log.
+// (ginzap.RecoveryWithZap logs a full request dump, Authorization included.)
+func recoverPanics(log *zap.Logger) gin.HandlerFunc {
+	return gin.CustomRecoveryWithWriter(nil, func(c *gin.Context, rec any) {
+		cid, _ := c.Get(apiresponses.CIDKey)
+		log.Error("[Recovery from panic]",
+			zap.Any("error", rec),
+			zap.String("cid", fmt.Sprintf("%v", cid)),
+			zap.String("method", c.Request.Method),
+			zap.String("path", c.FullPath()))
+		c.AbortWithStatus(http.StatusInternalServerError)
+	})
 }

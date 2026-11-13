@@ -24,6 +24,7 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/cluster"
 	"github.com/telekom/k8s-breakglass/pkg/config"
 	"github.com/telekom/k8s-breakglass/pkg/leaderelection"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
 	"github.com/telekom/k8s-breakglass/pkg/mail"
 	"github.com/telekom/k8s-breakglass/pkg/metrics"
 	"github.com/telekom/k8s-breakglass/pkg/policy"
@@ -42,6 +43,7 @@ import (
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -159,7 +161,7 @@ func run() error {
 	// Setup logging with zap
 	logLevel, logFormat := cliConfig.Logging()
 	debugLogging := logLevel == "debug"
-	zapLogger, err := utils.SetupLogger(logLevel, logFormat)
+	zapLogger, err := logging.New(logLevel, logFormat)
 	if err != nil {
 		return fmt.Errorf("setup logger: %w", err)
 	}
@@ -173,7 +175,13 @@ func run() error {
 		_ = zapLogger.Sync()
 	}()
 
-	ctrl.SetLogger(zapr.NewLogger(zapLogger))
+	// Route controller-runtime, client-go (klog) and the standard library log
+	// package (net/http server errors, for example) through the same logger,
+	// so that every line has the selected format.
+	logrLogger := zapr.NewLogger(zapLogger)
+	ctrl.SetLogger(logrLogger)
+	klog.SetLogger(logrLogger)
+	defer zap.RedirectStdLog(zapLogger)()
 
 	log := zapLogger.Sugar()
 	log.Infow("Starting breakglass controller", "version", system.Version)

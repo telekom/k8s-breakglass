@@ -175,6 +175,9 @@ The Go backend uses structured logging (see `pkg/logging/`) with consistent form
 
 ### Log Level and Format
 
+For what each program logs at which level, with the fields, see the
+[Logging Reference](logging-reference.md).
+
 The controller writes its logs to stderr through zap. Two flags, each with an
 environment variable, choose the level and the format:
 
@@ -203,7 +206,19 @@ output, or `--log-level=debug` for JSON.
 
 #### JSON fields
 
-Every line of the `json` format is a JSON object with these fields:
+Every line the controller logger writes in the `json` format is a JSON object
+with the fields below. The controller routes controller-runtime, client-go
+(klog) and the Go standard `log` package (for example `net/http` server
+errors) through this logger, so their lines use the same format. Exceptions,
+which a log collector must tolerate:
+
+- If startup fails, or the logger cannot be built, the process writes one
+  plain-text line `fatal: <error>` to stderr and exits with code 1.
+- Output written before the logger exists, such as a failure to parse the
+  built-in mail templates at package initialization, is plain text.
+- `--otel-exporter=stdout` writes trace spans as multi-line, indented JSON to
+  stdout. Use it only for local debugging.
+
 
 | Field | Type | Content |
 |-------|------|---------|
@@ -219,7 +234,7 @@ All other keys are the structured fields of the log call (for example
 `stacktrace` field. Example:
 
 ```json
-{"level":"debug","ts":1763030400.123,"caller":"cmd/main.go:184","msg":"Debug logging enabled","logLevel":"debug","logFormat":"json"}
+{"level":"debug","ts":1763030400.123,"caller":"cmd/main.go:191","msg":"Debug logging enabled","logLevel":"debug","logFormat":"json"}
 ```
 
 The `console` format writes `time<TAB>LEVEL<TAB>logger<TAB>caller<TAB>msg<TAB>{fields}`
