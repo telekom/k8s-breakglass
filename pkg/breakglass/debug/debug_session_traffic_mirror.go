@@ -587,7 +587,11 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 			return fmt.Errorf("%w: %s", errTrafficMirrorTeardownPending, message)
 		}
 		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) {
-			current.TeardownVerified, current.Message = true, message
+			current.TeardownVerified = true
+			// A failed mirror keeps its cause for the pending failure receipt.
+			if current.State != breakglassv1alpha1.TrafficMirrorStateFailed {
+				current.Message = message
+			}
 		}); err != nil {
 			return err
 		}

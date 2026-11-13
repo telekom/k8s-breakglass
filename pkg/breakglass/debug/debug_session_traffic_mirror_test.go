@@ -284,6 +284,12 @@ func TestTrafficMirrorActiveTracksAgent(t *testing.T) {
 	require.NoError(t, f.c.cleanupTrafficMirror(t.Context(), f.ds))
 	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted, audit.EventDebugSessionTrafficMirrorFailed,
 		audit.EventDebugSessionTrafficMirrorStopped}, f.eventTypes())
+	for _, event := range f.sink.Events() {
+		if event.Type == audit.EventDebugSessionTrafficMirrorFailed {
+			require.Contains(t, event.Details["message"], "exited 137", "the failure receipt carries the cause, not the teardown result")
+		}
+	}
+	require.True(t, f.ds.Status.TrafficMirror.TeardownVerified)
 }
 
 func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
