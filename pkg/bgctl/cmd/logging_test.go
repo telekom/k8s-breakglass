@@ -61,9 +61,12 @@ func TestLogLevelAndFormat(t *testing.T) {
 	})
 
 	t.Run("invalid level", func(t *testing.T) {
+		var stderr bytes.Buffer
 		root := NewRootCommand(Config{OutputWriter: &bytes.Buffer{}})
-		root.SetErr(&bytes.Buffer{})
+		root.SetErr(&stderr)
 		root.SetArgs([]string{"--log-level=trace", "--server", server.URL, "--token", "t", "escalation", "list"})
 		assert.ErrorContains(t, root.Execute(), `invalid log level "trace"`)
+		// The parse error is printed, not swallowed.
+		assert.Contains(t, stderr.String(), `invalid log level "trace"`)
 	})
 }
