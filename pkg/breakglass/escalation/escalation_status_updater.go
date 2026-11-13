@@ -301,26 +301,20 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 
 	// Find matching group by name
-	var groupID *string
-	for _, g := range groups {
-		if g == nil {
-			continue
+	match, err := matchKeycloakGroup(groups, group)
+	if err != nil {
+		if log != nil {
+			log.Errorw("Keycloak group search returned an unusable match",
+				"group", system.RedactGroupName(group),
+				"error", err)
 		}
-		if g.Name != nil && strings.EqualFold(*g.Name, group) {
-			if g.ID == nil || strings.TrimSpace(*g.ID) == "" {
-				err := fmt.Errorf("keycloak group %q matched without an ID", group)
-				if log != nil {
-					log.Errorw("Keycloak group search returned a group without an ID",
-						"group", system.RedactGroupName(group),
-						"error", err)
-				}
-				return nil, err
-			}
-			groupID = g.ID
-			if log != nil {
-				log.Debugw("Found matching group by name", "group", system.RedactGroupName(group), "groupID", *groupID, "matchedNameHint", system.RedactGroupName(*g.Name))
-			}
-			break
+		return nil, err
+	}
+	var groupID *string
+	if match != nil {
+		groupID = match.ID
+		if log != nil {
+			log.Debugw("Found matching group by name", "group", system.RedactGroupName(group), "groupID", *groupID, "matchedNameHint", system.RedactGroupName(*match.Name))
 		}
 	}
 	if groupID == nil {
@@ -488,6 +482,39 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 		log.Debugw("Group member resolution returning successfully", "group", system.RedactGroupName(group), "memberCount", len(out))
 	}
 	return out, nil
+}
+
+// matchKeycloakGroup selects the configured group from a Keycloak search
+// result. Group names such as ZAM roles are case-sensitive identities, so an
+// exact match always wins. A case-insensitive match is accepted only when it is
+// unique; names that differ only in case fail closed instead of resolving the
+// members of an arbitrary group. It returns nil when no group matches.
+func matchKeycloakGroup(groups []*gocloak.Group, name string) (*gocloak.Group, error) {
+	var exact, folded []*gocloak.Group
+	for _, g := range groups {
+		if g == nil || g.Name == nil {
+			continue
+		}
+		switch {
+		case *g.Name == name:
+			exact = append(exact, g)
+		case strings.EqualFold(*g.Name, name):
+			folded = append(folded, g)
+		}
+	}
+	candidates := exact
+	if len(candidates) == 0 {
+		candidates = folded
+	}
+	switch {
+	case len(candidates) == 0:
+		return nil, nil
+	case len(candidates) > 1:
+		return nil, fmt.Errorf("keycloak group %q is ambiguous: %d groups match", name, len(candidates))
+	case candidates[0].ID == nil || strings.TrimSpace(*candidates[0].ID) == "":
+		return nil, fmt.Errorf("keycloak group %q matched without an ID", name)
+	}
+	return candidates[0], nil
 }
 
 func classifyKeycloakGroupLookupError(group string, err error) error {

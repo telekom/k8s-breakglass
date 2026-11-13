@@ -322,6 +322,60 @@
   ],
   "users": [
     {
+      "username": "zam-requester",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "zam-requester@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "zam-requester-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dttcaas-ZAM-Tenant.123_tcaas-mgmt-nord-1.prd.b_reader-restricted"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "zam-requester"
+        ]
+      },
+      "firstName": "ZAM",
+      "lastName": "Requester"
+    },
+    {
+      "username": "zam-approver",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "zam-approver@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "zam-approver-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dttcaas-ZAM-Tenant.123_appowner"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "zam-approver"
+        ]
+      },
+      "firstName": "ZAM",
+      "lastName": "Approver"
+    },
+    {
       "username": "test-user",
       "enabled": true,
       "emailVerified": true,
@@ -1910,6 +1964,12 @@
     }
   ],
   "groups": [
+    {
+      "name": "dttcaas-ZAM-Tenant.123_tcaas-mgmt-nord-1.prd.b_reader-restricted"
+    },
+    {
+      "name": "dttcaas-ZAM-Tenant.123_appowner"
+    },
     {
       "name": "dev"
     },

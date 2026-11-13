@@ -174,6 +174,12 @@ var TestUsers = struct {
 	// CompleteFlowApprover is an approver for complete flow tests
 	// Groups: approver, complete-flow-approver
 	CompleteFlowApprover TestUser
+
+	// ZAMRequester carries a production-syntax ZAM role group at the 64-character CN limit.
+	ZAMRequester TestUser
+
+	// ZAMApprover carries a mixed-case ZAM appowner group used as an approver group.
+	ZAMApprover TestUser
 }{
 	Requester: TestUser{
 		Username: "test-user",
@@ -457,6 +463,18 @@ var TestUsers = struct {
 		Password: "complete-flow-approver-password",
 		Email:    "complete-flow-approver@example.com",
 		Groups:   []string{"approver", "complete-flow-approver"},
+	},
+	ZAMRequester: TestUser{
+		Username: "zam-requester",
+		Password: "zam-requester-password",
+		Email:    "zam-requester@example.com",
+		Groups:   []string{"dttcaas-ZAM-Tenant.123_tcaas-mgmt-nord-1.prd.b_reader-restricted"},
+	},
+	ZAMApprover: TestUser{
+		Username: "zam-approver",
+		Password: "zam-approver-password",
+		Email:    "zam-approver@example.com",
+		Groups:   []string{"dttcaas-ZAM-Tenant.123_appowner"},
 	},
 }
 
