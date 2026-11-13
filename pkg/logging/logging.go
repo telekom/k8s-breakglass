@@ -15,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zapgrpc"
+	"google.golang.org/grpc/grpclog"
 	"k8s.io/klog/v2"
 )
 
@@ -49,13 +51,17 @@ func envOr(key, def string) string {
 
 // RouteLibraryLogs sends the output of the standard log package (for example
 // net/http server errors such as "http: TLS handshake error"), client-go
-// (klog) and the OpenTelemetry SDK through logger, so that every line uses its
-// format. Standard log lines are logged at warn with the logger name "stdlog".
-// It returns a function that restores the standard log package.
+// (klog), the OpenTelemetry SDK and gRPC (used by the OTLP gRPC exporter)
+// through logger, so that every line uses its format. Standard log lines are
+// logged at warn with the logger name "stdlog"; gRPC warnings and errors with
+// the logger name "grpc" (its info messages are dropped). It returns a
+// function that restores the standard log package. Call it before any gRPC
+// activity.
 func RouteLibraryLogs(logger *zap.Logger) func() {
 	l := zapr.NewLogger(logger)
 	klog.SetLogger(l)
 	otel.SetLogger(l)
+	grpclog.SetLoggerV2(zapgrpc.NewLogger(logger.Named("grpc").WithOptions(zap.IncreaseLevel(zapcore.WarnLevel))))
 	// RedirectStdLogAt fails only for a level above Fatal.
 	undo, _ := zap.RedirectStdLogAt(logger.Named("stdlog"), zapcore.WarnLevel)
 	return undo

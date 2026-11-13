@@ -80,10 +80,10 @@ These lines come from libraries, so the catalogue does not list them:
 
 | Source | Level | Message | Fields |
 |--------|-------|---------|--------|
-| HTTP access log (`gin-contrib/zap`), one line per request | info; error once per handler error | the request path | `status`, `method`, `path`, `query`†, `ip`†, `user-agent`, `latency`, `time` |
 | controller-runtime (manager, controllers, webhooks, cache) | info, error; V(1) at debug | for example `Starting Controller`, `Reconciler error` | `logger` (for example `controller-runtime.webhook`), `controller`, `controllerGroup`, `controllerKind`, `name`, `namespace`, `reconcileID` |
 | client-go (klog) | info, error | for example leader-election and reflector errors | free text |
 | OpenTelemetry SDK | warn for SDK errors such as failed exports; the SDK's own warnings at debug; its info and debug messages are not written | `OpenTelemetry internal error` (logged by `pkg/telemetry`) at warn; otherwise the SDK's message | `error`; otherwise free text |
+| gRPC (used by the OTLP gRPC trace exporter) | warn, error; its info messages are not written | the gRPC message | `logger` is `grpc` |
 | Go standard `log` package, for example `http: TLS handshake error from …` of `net/http` servers | warn | the text of the message | `logger` is `stdlog` |
 
 ### Request context fields
@@ -93,9 +93,13 @@ Every HTTP request gets a request-scoped logger with the fields `cid`
 (the route template, for example `/api/breakglassSessions/:name`) and
 `remote`† (client IP). Lines logged through it carry these fields in addition
 to the fields in the catalogue. Handlers that authenticate the caller add
-`email`†, `username`† and `groupCount`. Besides the library access-log line,
-the controller writes one `http_request` line (info) for each request, with
-`cid`, `method`, `path`, `status` and `latency`, and one `handler_error` line
+`email`†, `username`† and `groupCount`.
+
+The access log is one `http_request` line (info) for each request, including a
+request whose handler panicked, with `cid`, `method`, `path` (the route
+template, or the URL path for an unmatched route), `status`, `latency`, `ip`†
+and `user_agent`. It never contains the query string. The controller also
+writes one `handler_error` line
 (error) for each failed request, with `error` and `meta`. A panic in a
 handler is logged as `[Recovery from panic]` (error) with `error`, `cid`,
 `method` and `path`, without the request headers.
@@ -105,13 +109,13 @@ handler is logged as `[Recovery from panic]` (error) with `error`, `cid`,
 Fields marked † on this page and in the catalogue can contain personal or
 host data:
 
-- user identities: `user`, `username`, `email`, `requester`, `approver`,
-  `subject`, `sub`, `actor_user`;
+- user identities: `user`, `username`, `email`, `requester`, `requestor`,
+  `requestorUID`, `approver`, `rejector`, `member` (an e-mail address),
+  `identifier`, `subject`, `sub`, `actor_user`, and keys containing these
+  words;
 - group names and lists: `group`, `groups`, `actor_groups`;
 - network data: `remote`, `ip`, `clientIP`, `actor_ip`;
-- command lines: `command`, `args`;
-- the access-log `query`, which can hold the `user` and `group` filters of
-  API calls.
+- command lines: `command`, `args`.
 
 Messages built from errors (`(dynamic)` in the catalogue) can also contain
 such data, for example in a Kubernetes API error message.
@@ -128,7 +132,10 @@ events.
 
 - **Tokens.** After authentication the API removes the `Authorization` header
   from the request (`pkg/api/auth.go`). The access log and the panic log do
-  not log headers (test `TestRecoverPanicsDoesNotLogCredentials`). For OIDC
+  not log headers (test `TestRecoverPanicsDoesNotLogCredentials`) or the
+  query string, so the OIDC `code` and `state` of `/auth/callback` and the
+  `?token=` of approval links are never logged (test
+  `TestAccessLogNeverLogsQueryAndCoversPanics`). For OIDC
   claims, only the claim names, `sub` and `username` are logged, at debug.
   Session and cluster token code logs lengths and booleans (`tokenLen`,
   `hasRefreshToken`, `hasActorToken`, `expiresIn`), never the token.
@@ -142,9 +149,6 @@ events.
   (`pkg/breakglass/debug/terminal_protocol.go`, `recording.go`) have no log
   calls. The recording API logs only the session, the recording ID and errors.
   See [Terminal recording](terminal-recording.md).
-
-The access log writes the raw query string (`query`). Do not put credentials
-in URL query parameters.
 
 ### Logs and audit events
 
@@ -190,9 +194,9 @@ controller's `--log-format`.
 
 ```json
 {"level":"debug","ts":1763030400.120,"caller":"cmd/main.go:191","msg":"Debug logging enabled","logLevel":"debug","logFormat":"json"}
-{"level":"info","ts":1763030400.531,"caller":"api/api.go:260","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042}
+{"level":"info","ts":1763030400.531,"caller":"api/api.go:759","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042,"ip":"10.0.0.7","user_agent":"Mozilla/5.0 …"}
 {"level":"warn","ts":1763030401.002,"caller":"cmd/main.go:189","msg":"--debug is deprecated; use --log-level=debug and, for this output format, --log-format=console"}
-{"level":"error","ts":1763030402.877,"caller":"api/api.go:271","msg":"handler_error","cid":"5f0c…","method":"POST","path":"/api/breakglassSessions","remote":"10.0.0.7","error":"…","meta":"…"}
+{"level":"error","ts":1763030402.877,"caller":"api/api.go:253","msg":"handler_error","cid":"5f0c…","method":"POST","path":"/api/breakglassSessions","remote":"10.0.0.7","error":"…","meta":"…"}
 {"level":"info","ts":1763030403.100,"logger":"audit-service.audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":1763030403.099,"actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
 ```
 
@@ -215,7 +219,7 @@ Number of distinct messages per process and level.
 
 | Process | debug | info | warn | error | dpanic | fatal | V-levels |
 |---|---|---|---|---|---|---|---|
-| controller | 468 | 345 | 353 | 272 | 0 | 0 | 0 |
+| controller | 468 | 346 | 354 | 270 | 0 | 0 | 0 |
 
 ## Message catalogue
 
@@ -289,6 +293,7 @@ variable part of a concatenated message.
 | debug | `oidc_proxy_using_custom_authority` | `authority`, `path` | api.go |
 | debug | `using cached escalation→IDP mapping` | `escalationCount` | api.go |
 | info | `API controllers enabled` | `components` | api.go |
+| info | `Authorization webhook served only on server.webhook.listenAddress` |  | api.go |
 | info | `CORS: allowed origins configured` | `origins` | api.go |
 | info | `Debug session API controller enabled` |  | api.go |
 | info | `Frontend UI enabled via --enable-frontend=true` |  | api.go |
@@ -298,7 +303,7 @@ variable part of a concatenated message.
 | info | `Session activity tracking enabled` |  | api.go |
 | info | `Starting HTTP server` | `address` | api.go |
 | info | `Starting HTTPS server` | `address`, `clientAuth`, `tlsMinVersion`, `tlsReload` | api.go |
-| info | `http_request` | `cid`, `latency`, `method`, `path`, `status` | api.go |
+| info | `http_request` | `cid`, `ip`†, `latency`, `method`, `path`, `status`, `user_agent`† | api.go |
 | info | `identity provider loaded` | `authority`, `name`, `type` | api.go |
 | info | `identity provider reloaded successfully` | `name`, `type` | api.go |
 | warn | `CORS: no allowed origins configured and defaults not enabled — browser requests with Origin header will be blocked; set server.allowedOrigins in config` |  | api.go |
@@ -323,9 +328,7 @@ variable part of a concatenated message.
 | warn | `oidc_proxy_unknown_authority` | `customAuthority` | api.go |
 | warn | `oidc_proxy_url_resolution_attack` | `originalPath` | api.go |
 | warn | `refusing insecure TLS verification for identity provider` | `authority`, `idpName`, `remediation` | api.go |
-| error | `Invalid server TLS configuration` | `error` | api.go |
 | error | `Server certificate watcher stopped; the current certificate stays in use` | `error` | api.go |
-| error | `Server listen error` | `error` | api.go |
 | error | `[Recovery from panic]` | `cid`, `error`, `method`, `path` | api.go |
 | error | `failed_to_reload_identity_provider` | `error` | api.go |
 | error | `handler_error` | `cid`, `error`, `meta` | api.go |
@@ -366,13 +369,13 @@ variable part of a concatenated message.
 | info | `audit manager started` | `batch_enabled`, `queue_size`, `sample_rate`, `stats_interval`, `workers` | manager.go |
 | info | `audit manager stopped` | `dropped`, `processed` | manager.go |
 | info | `audit service closed` |  | service.go |
-| info | `audit sink circuit breaker state change` | `from`, `to` | service.go |
+| info | `audit sink circuit breaker state change` | `from`, `to`† | service.go |
 | info | `audit system configured with aggregated sinks` | `configs`, `dropOnFull`, `queueSize`, `sampleRate`, `totalSinks`, `workers` | service.go |
 | info | `audit system disabled (no enabled configs)` |  | service.go |
 | info | `audit_event` |  | sink.go |
 | info | `circuit breaker created` | `failure_threshold`, `open_timeout`, `sink`, `success_threshold` | circuit_breaker.go |
 | info | `circuit breaker reset` |  | circuit_breaker.go |
-| info | `circuit breaker state changed` | `from`, `to` | circuit_breaker.go |
+| info | `circuit breaker state changed` | `from`, `to`† | circuit_breaker.go |
 | info | `closing Kafka audit sink` | `batches_sent`, `messages_failed`, `messages_written`, `name` | kafka_sink.go |
 | info | `closing circuit breaker sink` | `state` | circuit_breaker.go |
 | info | `closing webhook audit sink` | `batches_written`, `events_failed`, `events_written`, `name` | sink.go |
@@ -416,23 +419,23 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| debug | `About to filter approvers` | `escalationName`, `preFilterApproverCount`† | session_request_helpers.go |
+| debug | `About to filter approvers` | `escalationName`, `preFilterApproverCount` | session_request_helpers.go |
 | debug | `About to send breakglass request email` | `approvalsRequired`, `cluster`, `group`†, `requestorEmail`†, `requestorUsername`† | session_request_helpers.go |
 | debug | `Added explicit approver user` | `escalation`, `totalApproversNow`†, `user`† | session_request_helpers.go |
-| debug | `Added group members to approvers` | `escalation`, `group`†, `newMembersAdded`, `totalApproversNow`† | session_request_helpers.go |
-| debug | `After filterExcludedNotificationRecipients` | `excludedCount`, `postExcludeApproverCount`† | session_request_helpers.go |
-| debug | `After filterHiddenFromUIRecipients` | `hiddenFilteredOutCount`, `postHiddenFilterApproverCount`† | session_request_helpers.go |
+| debug | `Added group members to approvers` | `escalation`, `group`†, `newMembersAdded`†, `totalApproversNow`† | session_request_helpers.go |
+| debug | `After filterExcludedNotificationRecipients` | `excludedCount`, `postExcludeApproverCount` | session_request_helpers.go |
+| debug | `After filterHiddenFromUIRecipients` | `hiddenFilteredOutCount`, `postHiddenFilterApproverCount` | session_request_helpers.go |
 | debug | `Approver email unavailable; using authenticated username` | `error`, `username`† | session_controller_approval_utils.go |
 | debug | `Approver evaluation context` | `approverEmail`†, `candidateEscalationCount`, `session`, `sessionGroup`† | session_controller_approval_utils.go |
 | debug | `Approver identity verified` | `cluster`, `email`†, `username`† | session_controller_approval_utils.go |
 | debug | `Attempting to resolve excluded group members` | `group`† | session_controller_actions.go |
 | debug | `Attempting to resolve hidden item as group` | `itemHint` | session_controller_actions.go |
 | debug | `BreakglassSession not found by name across namespaces` | `name` | session_manager.go |
-| debug | `Built excluded users set` | `directExcludedUserCount`† | session_controller_actions.go |
-| debug | `Built hidden users set` | `directHiddenUserCount`† | session_controller_actions.go |
-| debug | `Cannot resolve additional excluded group members` | `escalationManagerNil`, `groupCount`†, `knownGroupMemberCount`†, `resolverNil` | session_controller_actions.go |
+| debug | `Built excluded users set` | `directExcludedUserCount` | session_controller_actions.go |
+| debug | `Built hidden users set` | `directHiddenUserCount` | session_controller_actions.go |
+| debug | `Cannot resolve additional excluded group members` | `escalationManagerNil`, `groupCount`, `knownGroupMemberCount`, `resolverNil` | session_controller_actions.go |
 | debug | `Checking debug session for expiration` |  | cleanup_task.go |
-| debug | `Checking if groups can perform SAR operation` | `cluster`, `groupCount`† | group_checker.go |
+| debug | `Checking if groups can perform SAR operation` | `cluster`, `groupCount` | group_checker.go |
 | debug | `Checking session for expiration` |  | cleanup_task.go |
 | debug | `Checking session retainedUntil` | `retainedUntil` | cleanup_task.go |
 | debug | `Cluster config not available for IDP check (will default to false for restriction)` | `cluster` | session_request_helpers.go |
@@ -446,11 +449,11 @@ variable part of a concatenated message.
 | debug | `Direct GET failed; falling back to list across namespaces` | `error`, `name` | session_manager.go |
 | debug | `Email claim unavailable; continuing with authenticated username` | `error`, `username`† | session_controller.go |
 | debug | `Email sending disabled via --disable-email flag` |  | session_request_helpers.go |
-| debug | `Email template rendered successfully` | `bodyLength`, `group`†, `recipientCount`†, `session` | session_controller_actions.go |
-| debug | `Escalation found but user not in approvers (continuing)` | `approverGroupCount`†, `approverUserCount`†, `escalation`, `session`, `user`†, `userGroupCount`† | session_controller_approval_utils.go |
+| debug | `Email template rendered successfully` | `bodyLength`, `group`†, `recipientCount`, `session` | session_controller_actions.go |
+| debug | `Escalation found but user not in approvers (continuing)` | `approverGroupCount`, `approverUserCount`, `escalation`, `session`, `user`†, `userGroupCount` | session_controller_approval_utils.go |
 | debug | `Escalation found but user not in deduplicated approvers (continuing)` | `dedupMemberCount`, `escalation`, `session`, `user`† | session_controller_approval_utils.go |
 | debug | `Evaluating matching escalation` | `escalation`, `groups`†, `users`† | session_controller_approval_utils.go |
-| debug | `Extracted raw token groups from JWT claims` | `rawTokenGroupCount`†, `rawTokenGroups`† | session_request_helpers.go |
+| debug | `Extracted raw token groups from JWT claims` | `rawTokenGroupCount`, `rawTokenGroups`† | session_request_helpers.go |
 | debug | `Failed to resolve members of hidden group` | `error`, `errorType`, `itemHint` | session_controller_actions.go |
 | debug | `Fetching BreakglassSession by name (direct GET)` |  | session_manager.go |
 | debug | `Fetching BreakglassSessions by states (using field index)` | `states` | session_manager.go |
@@ -469,12 +472,12 @@ variable part of a concatenated message.
 | debug | `Ignoring approver group cache entry with unexpected type` | `cacheKey`, `cachedType` | session_controller_approval_utils.go |
 | debug | `Impersonated SelfSubjectAccessReview result` | `allowed`, `impersonationConstraint`, `mode` | group_checker_impersonation.go |
 | debug | `Keycloak provider retrieved email` | `email`† | identity_provider.go |
-| debug | `Keycloak provider retrieved user identifier` | `claimType`, `identifier` | identity_provider.go |
+| debug | `Keycloak provider retrieved user identifier` | `claimType`, `identifier`† | identity_provider.go |
 | debug | `Keycloak provider retrieved user_id` | `user_id`† | identity_provider.go |
 | debug | `Keycloak provider retrieved username` | `username`† | identity_provider.go |
 | debug | `Loaded rest.Config for cluster context` | `cluster`, `context` | group_checker.go |
 | debug | `Loaded rest.Config via kind- fallback` | `cluster`, `context` | group_checker.go |
-| debug | `Matched IDP group override` | `idp`, `matchedGroupHint`†, `patternHint`, `unlimited` | session_controller_status.go |
+| debug | `Matched IDP group override` | `idp`, `matchedGroupHint`, `patternHint`, `unlimited` | session_controller_status.go |
 | debug | `Matched escalation found during session creation` | `escalationName`, `escalationNamespace`, `escalationUID` | session_request_helpers.go |
 | debug | `Matched escalation selected for approver resolution` | `denyPolicyCount`, `escalatedGroup`†, `escalationName` | session_request_helpers.go |
 | debug | `No ClusterConfig found for approval policy, continuing with defaults` | `cluster`, `error` | session_controller_approval_utils.go |
@@ -482,30 +485,30 @@ variable part of a concatenated message.
 | debug | `No OIDC prefixes configured, returning groups unchanged` |  | group_checker.go |
 | debug | `No OIDC prefixes configured, using original groups` |  | group_checker.go |
 | debug | `No approver groups found to sync` | `cluster`, `escalationCount` | session_request_helpers.go |
-| debug | `No escalation with matching granted group for approval` | `approverEmail`†, `approverGroupCount`†, `session` | session_controller_approval_utils.go |
+| debug | `No escalation with matching granted group for approval` | `approverEmail`†, `approverGroupCount`, `session` | session_controller_approval_utils.go |
 | debug | `No hidden approvers configured, returning all approvers` | `escalationNil`, `hiddenCount` | session_controller_actions.go |
 | debug | `No matching escalation found during session creation; no ownerRef will be attached` | `cluster`, `requestedGroup`† | session_request_helpers.go |
 | debug | `No notification exclusions configured` | `escalationNil` | session_controller_actions.go |
 | debug | `No session limit applicable` | `escalation`, `idp` | session_controller_status.go |
 | debug | `No session limits configured on IDP` | `idp` | session_controller_status.go |
-| debug | `OIDC prefix stripping complete` | `originalGroupCount`†, `strippedGroupCount`† | group_checker.go |
+| debug | `OIDC prefix stripping complete` | `originalGroupCount`, `strippedGroupCount` | group_checker.go |
 | debug | `OwnerReference prepared for session create` | `ownerRefs` | session_request_helpers.go |
 | debug | `Parsing user info from v1.SelfSubjectReview` |  | group_checker.go |
 | debug | `Parsing user info from v1beta1.SelfSubjectReview` |  | group_checker.go |
 | debug | `Possible escalations found` | `cluster`, `count`, `user`† | session_request_helpers.go |
-| debug | `Processing escalation for approver resolution` | `approverGroupCount`†, `escalatedGroup`†, `escalationName`, `explicitUserCount`† | session_request_helpers.go |
+| debug | `Processing escalation for approver resolution` | `approverGroupCount`, `escalatedGroup`†, `escalationName`, `explicitUserCount` | session_request_helpers.go |
 | debug | `Querying for active breakglass session` | `cluster`, `group`†, `user`† | session_controller_status.go |
-| debug | `Rendering breakglass session request email` | `approvers`†, `group`†, `recipientCount`†, `requestEmail`†, `requestUsername`†, `session`, `subjectLength`† | session_controller_actions.go |
+| debug | `Rendering breakglass session request email` | `approvers`†, `group`†, `recipientCount`, `requestEmail`†, `requestUsername`†, `session`, `subjectLength` | session_controller_actions.go |
 | debug | `Resolved approver group members` | `escalation`, `group`†, `memberCount` | session_request_helpers.go |
 | debug | `Resolved group members for sync` | `count`, `group`† | session_request_helpers.go |
-| debug | `Resolved user groups via spoke cluster rest.Config` | `cluster`, `groupCount`†, `user`† | session_controller_approval_utils.go |
+| debug | `Resolved user groups via spoke cluster rest.Config` | `cluster`, `groupCount`, `user`† | session_controller_approval_utils.go |
 | debug | `Resolved user identifier for session` | `requestUsername`†, `userIdentifier`†, `userIdentifierClaim`† | session_request_helpers.go |
 | debug | `Resolving approver group members` | `escalation`, `group`† | session_request_helpers.go |
 | debug | `Scheduled start time set` | `nowUTC`, `scheduledStartTimeISO`, `scheduledTimeLocal`, `scheduledTimeUTC`, `secondsInFuture` | session_request_helpers.go |
 | debug | `Self-approval blocked by escalation/cluster setting` | `approver`†, `escalation` | session_controller_approval_utils.go |
-| debug | `Sending email for approver` | `groupCount`†, `recipientCount`†, `session` | session_controller_actions.go |
-| debug | `Sending email for explicit users` | `recipientCount`†, `session` | session_controller_actions.go |
-| debug | `Sending emails per approver group` | `groupCount`†, `session`, `totalApprovers`† | session_controller_actions.go |
+| debug | `Sending email for approver` | `groupCount`, `recipientCount`, `session` | session_controller_actions.go |
+| debug | `Sending email for explicit users` | `recipientCount`, `session` | session_controller_actions.go |
+| debug | `Sending emails per approver group` | `groupCount`, `session`, `totalApprovers`† | session_controller_actions.go |
 | debug | `Session count for user` | `activeCount`, `limit`, `source`, `user`† | session_controller_status.go |
 | debug | `Session created` | `cluster`, `generatedName`, `group`†, `user`† | session_controller.go |
 | debug | `Session creation initiated by user` | `requestedCluster`, `requestedGroup`†, `requestorEmail`†, `requestorUsername`† | session_controller.go |
@@ -522,15 +525,15 @@ variable part of a concatenated message.
 | debug | `Starting expired debug session cleanup` |  | cleanup_task.go |
 | debug | `Starting expired session cleanup` |  | cleanup_task.go |
 | debug | `Stripped OIDC prefix from group` | `prefix` | group_checker.go |
-| debug | `Stripping OIDC prefixes from groups` | `originalGroupCount`†, `prefixCount` | group_checker.go |
-| debug | `Syncing approver groups` | `cluster`, `groupCount`† | session_request_helpers.go |
+| debug | `Stripping OIDC prefixes from groups` | `originalGroupCount`, `prefixCount` | group_checker.go |
+| debug | `Syncing approver groups` | `cluster`, `groupCount` | session_request_helpers.go |
 | debug | `Token validation: session not found` | `tokenLen` | session_controller_status.go |
 | debug | `Total session count for escalation` | `activeCount`, `escalation`, `escalationUID`, `limit`, `source` | session_controller_status.go |
-| debug | `User is authorized to approve/reject session` | `isRequester`†, `session`, `user`† | session_controller_status.go |
+| debug | `User is authorized to approve/reject session` | `isRequester`, `session`, `user`† | session_controller_status.go |
 | debug | `User is not authorized to approve session` | `message`, `reason`, `session`, `user`† | session_controller_status.go |
 | debug | `User is session approver (direct user)` | `escalation`, `session`, `user`† | session_controller_approval_utils.go |
 | debug | `User is session approver (request identity group fallback)` | `escalation`, `group`†, `session` | session_controller_approval_utils.go |
-| debug | `User is session approver (resolved group member)` | `escalation`, `member`, `session` | session_controller_approval_utils.go |
+| debug | `User is session approver (resolved group member)` | `escalation`, `member`†, `session` | session_controller_approval_utils.go |
 | debug | `User is session approver (target cluster group)` | `escalation`, `group`†, `session` | session_controller_approval_utils.go |
 | debug | `Using already-fetched cluster config for IDP restriction check` | `cluster`, `clusterHasIDPRestriction`, `escalationHasIDPRestriction` | session_request_helpers.go |
 | debug | `Using approval timeout from escalation spec` | `approvalTimeout` | session_request_helpers.go |
@@ -538,25 +541,25 @@ variable part of a concatenated message.
 | debug | `Using escalation-level per-user session limit override` | `escalation`, `maxPerUser`† | session_controller_status.go |
 | debug | `Using escalation-level total session limit override` | `escalation`, `maxTotal` | session_controller_status.go |
 | debug | `Using field selector for sessions query` | `selector` | session_controller_status.go |
-| debug | `Using provided approver groups for email` | `approverGroupCount`†, `session` | session_controller_actions.go |
+| debug | `Using provided approver groups for email` | `approverGroupCount`, `session` | session_controller_actions.go |
 | debug | `Using resolved approver group members from escalation status` | `escalation`, `group`†, `memberCount` | session_controller_approval_utils.go |
 | debug | `Using state index for sessions query` | `states` | session_controller_status.go |
-| debug | `filterExcludedNotificationRecipients called` | `approverCount`†, `escalationNil`, `hasNotificationExclusions` | session_controller_actions.go |
-| debug | `filterHiddenFromUIRecipients called` | `approverCount`†, `escalationNil`, `hiddenFromUICount` | session_controller_actions.go |
+| debug | `filterExcludedNotificationRecipients called` | `approverCount`, `escalationNil`, `hasNotificationExclusions` | session_controller_actions.go |
+| debug | `filterHiddenFromUIRecipients called` | `approverCount`, `escalationNil`, `hiddenFromUICount` | session_controller_actions.go |
 | debug | `skipping approval-timeout debug session status update after concurrent change` |  | cleanup_task.go |
 | debug | `skipping expired debug session status update after concurrent change` |  | cleanup_task.go |
 | info | `Activating scheduled session` | `namespace`, `now`, `scheduledStartTime`, `session` | scheduled_activation.go |
 | info | `Adding new BreakglassSession` |  | session_manager.go |
-| info | `Applied OIDC prefix stripping` | `finalGroupCount`†, `oidcPrefixCount`, `originalGroupCount`† | group_checker.go |
-| info | `Breakglass session request email queued` | `group`†, `recipientCount`†, `session` | session_controller_actions.go |
-| info | `Breakglass session request email sent` | `group`†, `recipientCount`†, `session` | session_controller_actions.go |
+| info | `Applied OIDC prefix stripping` | `finalGroupCount`, `oidcPrefixCount`, `originalGroupCount` | group_checker.go |
+| info | `Breakglass session request email queued` | `group`†, `recipientCount`, `session` | session_controller_actions.go |
+| info | `Breakglass session request email sent` | `group`†, `recipientCount`, `session` | session_controller_actions.go |
 | info | `BreakglassSession created successfully` |  | session_manager.go |
 | info | `BreakglassSession deleted successfully` |  | session_manager.go |
 | info | `BreakglassSession status updated successfully` |  | session_manager.go |
 | info | `BreakglassSession updated successfully` |  | session_manager.go |
 | info | `Cert-controller's manager stopping before acquiring leadership (context cancelled)` |  | cleanup_task.go |
 | info | `Cleanup routine waiting for leadership signal before starting...` |  | cleanup_task.go |
-| info | `Completed approver resolution from escalations` | `approverGroupsCount`†, `requestedGroup`†, `totalApproversCollected`† | session_request_helpers.go |
+| info | `Completed approver resolution from escalations` | `approverGroupsCount`, `requestedGroup`†, `totalApproversCollected`† | session_request_helpers.go |
 | info | `Concurrent session creation already in-flight, returning conflict` | `cluster`, `group`†, `user`† | session_controller.go |
 | info | `Constrained impersonation confirmed on spoke` | `cluster`, `serverVersion` | group_checker_capability.go |
 | info | `Constrained impersonation is not usable on this spoke; using legacy impersonation. Expected when the ConstrainedImpersonation feature gate is disabled, or before config/rbac/impersonate_constrained_role.yaml has been applied to the spoke.` | `cluster`, `error`, `serverVersion` | group_checker_capability.go |
@@ -570,7 +573,7 @@ variable part of a concatenated message.
 | info | `Deleting session without OwnerReferences (orphaned/legacy - no RetainedUntil)` |  | cleanup_task.go |
 | info | `Duplicate cleanup interrupted by context cancellation` | `cluster`, `group`†, `user`† | cleanup_duplicate_sessions.go |
 | info | `Email sending disabled for this escalation via DisableNotifications` | `cluster`, `escalationName`, `group`† | session_request_helpers.go |
-| info | `Excluded group resolution summary` | `requestResolvedGroupMemberCount`†, `resolvedGroupCount`†, `totalGroupMemberCount`†, `uniqueExcludedGroupMemberCount`† | session_controller_actions.go |
+| info | `Excluded group resolution summary` | `requestResolvedGroupMemberCount`, `resolvedGroupCount`, `totalGroupMemberCount`, `uniqueExcludedGroupMemberCount` | session_controller_actions.go |
 | info | `Existing session found` | `cluster`, `group`†, `session`, `state`, `user`† | session_request_helpers.go |
 | info | `Expired breakglass sessions deletion completed` | `deleted` | cleanup_task.go |
 | info | `Expiring approved session due to reached ExpiresAt` | `expiresAt`, `now`, `session` | expire_approved_sessions.go |
@@ -588,21 +591,21 @@ variable part of a concatenated message.
 | info | `Fetched BreakglassSessions from live reader after cluster cache lookup` | `cluster`, `count` | session_manager.go |
 | info | `Fetched BreakglassSessions with selector` | `count`, `selector` | session_manager.go |
 | info | `Fetched BreakglassSessions with selector string` | `count`, `selector` | session_manager.go |
-| info | `Filtering results` | `excludedApproverCount`†, `hiddenApproverCount`†, `originalApproverCount`†, `totalDirectExcluded`, `totalDirectHidden`, `totalGroupMembersExcluded`†, `totalGroupMembersHidden`†, `visibleApproverCount`† | session_controller_actions.go |
+| info | `Filtering results` | `excludedApproverCount`, `hiddenApproverCount`, `originalApproverCount`, `totalDirectExcluded`, `totalDirectHidden`, `totalGroupMembersExcluded`†, `totalGroupMembersHidden`†, `visibleApproverCount` | session_controller_actions.go |
 | info | `Finished breakglass session cleanup task` |  | cleanup_task.go |
-| info | `GetUserGroups complete` | `cluster`, `groupCount`†, `username`† | group_checker.go |
-| info | `GetUserGroupsWithConfig complete` | `cluster`, `groupCount`†, `username`† | group_checker.go |
+| info | `GetUserGroups complete` | `cluster`, `groupCount`, `username`† | group_checker.go |
+| info | `GetUserGroupsWithConfig complete` | `cluster`, `groupCount`, `username`† | group_checker.go |
 | info | `Handling GET /breakglassSessions/:name` | `session` | session_controller_status.go |
 | info | `Handling duplicate session` | `created`, `namespace`, `session`, `state` | cleanup_duplicate_sessions.go |
 | info | `Hidden approvers configured` | `hiddenItemCount` | session_controller_actions.go |
-| info | `Hidden group resolution summary` | `requestResolvedGroupMemberCount`†, `resolvedGroupCount`†, `totalGroupMemberCount`†, `uniqueHiddenGroupMemberCount`† | session_controller_actions.go |
+| info | `Hidden group resolution summary` | `requestResolvedGroupMemberCount`, `resolvedGroupCount`, `totalGroupMemberCount`, `uniqueHiddenGroupMemberCount` | session_controller_actions.go |
 | info | `Leadership acquired - starting cleanup routine` |  | cleanup_task.go |
 | info | `Maximum total approvers limit reached, stopping escalation processing` | `limit`, `matchedEscalation` | session_request_helpers.go |
 | info | `No active breakglass session found` | `cluster`, `group`†, `user`† | session_controller_status.go |
-| info | `No approvers remain eligible for session request notifications after configured exclusions and hidden approvers` | `escalationName`, `originalApproverCount`† | session_request_helpers.go |
-| info | `Notification exclusions configured` | `excludedGroupCount`†, `excludedUserCount`† | session_controller_actions.go |
+| info | `No approvers remain eligible for session request notifications after configured exclusions and hidden approvers` | `escalationName`, `originalApproverCount` | session_request_helpers.go |
+| info | `Notification exclusions configured` | `excludedGroupCount`, `excludedUserCount` | session_controller_actions.go |
 | info | `Processing breakglass session request` |  | session_controller.go |
-| info | `Resolved approvers from escalation (explicit users + group members)` | `approverCount`†, `cluster`, `group`† | session_request_helpers.go |
+| info | `Resolved approvers from escalation (explicit users + group members)` | `approverCount`, `cluster`, `group`† | session_request_helpers.go |
 | info | `Returning active breakglass session` | `session` | session_controller_status.go |
 | info | `Returning filtered breakglass sessions` | `count` | session_controller_status.go |
 | info | `Running breakglass session cleanup task` |  | cleanup_task.go |
@@ -615,7 +618,7 @@ variable part of a concatenated message.
 | info | `Session no longer has idle timeout after refetch; skipping idle expiry` | `session` | expire_idle_sessions.go |
 | info | `Session no longer idle after refetch; skipping expiry` | `idleTimeout`, `refreshedIdleSince`, `session` | expire_idle_sessions.go |
 | info | `Session no longer pending or timed out after refetch; skipping approval timeout` | `currentState`, `session` | expire_pending_sessions.go |
-| info | `Session retrieved with approval metadata` | `canApprove`, `denialReason`, `isApprover`†, `isRequester`†, `session`, `state` | session_controller_status.go |
+| info | `Session retrieved with approval metadata` | `canApprove`, `denialReason`, `isApprover`, `isRequester`, `session`, `state` | session_controller_status.go |
 | info | `Session ticket reference recorded` | `session`, `ticketSystemID` | session_controller.go |
 | info | `SessionManager initialized` | `context` | session_manager.go |
 | info | `Skipping duplicate session because fewer than two active sessions remain` | `namespace`, `session` | cleanup_duplicate_sessions.go |
@@ -630,8 +633,8 @@ variable part of a concatenated message.
 | info | `Updating BreakglassSession` |  | session_manager.go |
 | info | `Updating BreakglassSession status` |  | session_manager.go |
 | info | `Validated session request parameters` |  | session_controller.go |
-| info | `approval email enqueued for sending` | `session`, `to` | session_controller_approval_utils.go |
-| info | `rejection email enqueued for sending` | `session`, `to` | session_controller_approval_utils.go |
+| info | `approval email enqueued for sending` | `session`, `to`† | session_controller_approval_utils.go |
+| info | `rejection email enqueued for sending` | `session`, `to`† | session_controller_approval_utils.go |
 | info | `skipping approved session expiry because context is cancelled` | `error` | expire_approved_sessions.go |
 | info | `skipping pending session expiry because context is cancelled` | `error` | expire_pending_sessions.go |
 | info | `skipping scheduled session activation because context is cancelled` | `error` | scheduled_activation.go |
@@ -644,19 +647,19 @@ variable part of a concatenated message.
 | info | `stopping pending session expiry because context is cancelled` | `error` | expire_pending_sessions.go |
 | info | `stopping scheduled session activation because context is cancelled` | `error` | scheduled_activation.go |
 | warn | `Approval authorized on UNVERIFIED groups: cluster group lookup failed and the JWT-claim group fallback was load-bearing for this decision` | `approver`†, `cluster`, `identityProvider`†, `matchedGroup`†, `remediation`, `session` | session_controller_approval_utils.go |
-| warn | `Approver authenticated with disallowed identity provider` | `allowedIdentityProviderCount`†, `approver`†, `escalation`, `identityProvider`† | session_controller_approval_utils.go |
+| warn | `Approver authenticated with disallowed identity provider` | `allowedIdentityProviderCount`, `approver`†, `escalation`, `identityProvider`† | session_controller_approval_utils.go |
 | warn | `Approver email does not match allowed domains for escalation` | `allowedDomains`, `approver`†, `escalation` | session_controller_approval_utils.go |
 | warn | `Approver group has too many members, truncating` | `escalation`, `group`†, `limit`, `originalCount` | session_request_helpers.go |
 | warn | `Breakglass session approver reason is invalid` | `action`, `error`, `session` | session_controller_status.go |
-| warn | `Cannot resolve additional hidden group members - resolver not available` | `escalationManagerNil`, `knownGroupMemberCount`†, `resolverNil` | session_controller_actions.go |
+| warn | `Cannot resolve additional hidden group members - resolver not available` | `escalationManagerNil`, `knownGroupMemberCount`, `resolverNil` | session_controller_actions.go |
 | warn | `Cannot send emails by group: matched escalation is nil` | `session` | session_controller_actions.go |
 | warn | `Could not determine constrained-impersonation capability for spoke; leaving it undetermined and retrying on the next request` | `cluster`, `error`, `serverVersion` | group_checker_capability.go |
 | warn | `Duplicate active sessions detected — terminating duplicates` | `cluster`, `duplicateCount`, `group`†, `keepSession`, `user`† | cleanup_duplicate_sessions.go |
 | warn | `Duplicate cleanup audit delivered but acknowledgement failed; retaining retryable outbox state` | `error`, `namespace`, `session` | cleanup_duplicate_sessions.go |
 | warn | `Duration validation failed` | `error`, `maxAllowed`, `requestedDuration` | session_request_helpers.go |
 | warn | `Failed to drain duplicate cleanup audit` | `error`, `namespace`, `session` | cleanup_duplicate_sessions.go |
-| warn | `Failed to enqueue session request email (will not retry)` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
-| warn | `Failed to enqueue session request email via mail service` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
+| warn | `Failed to enqueue session request email (will not retry)` | `error`, `recipientCount`, `session`, `subjectLength` | session_controller_actions.go |
+| warn | `Failed to enqueue session request email via mail service` | `error`, `recipientCount`, `session`, `subjectLength` | session_controller_actions.go |
 | warn | `Failed to get authenticated identity for approval meta` | `error` | session_controller_status.go |
 | warn | `Failed to list approved sessions for activity tracker pruning` | `error` | cleanup_task.go |
 | warn | `Failed to list escalations for group sync` | `error` | session_request_helpers.go |
@@ -671,8 +674,8 @@ variable part of a concatenated message.
 | warn | `Failed to resolve approver group members` | `error`, `group`† | session_request_helpers.go |
 | warn | `Failed to resolve members of excluded group` | `error`, `errorType`, `group`† | session_controller_actions.go |
 | warn | `Failed to revalidate duplicate session set` | `cluster`, `error`, `group`†, `user`† | cleanup_duplicate_sessions.go |
-| warn | `Failed to send email for approver` | `error`, `groupCount`†, `recipientCount`†, `session` | session_controller_actions.go |
-| warn | `Failed to send email for explicit users` | `error`, `recipientCount`†, `session` | session_controller_actions.go |
+| warn | `Failed to send email for approver` | `error`, `groupCount`, `recipientCount`, `session` | session_controller_actions.go |
+| warn | `Failed to send email for explicit users` | `error`, `recipientCount`, `session` | session_controller_actions.go |
 | warn | `Failed to update duplicate session status` | `error`, `session` | cleanup_duplicate_sessions.go |
 | warn | `Falling back to authentication.k8s.io/v1beta1 SelfSubjectReview (cluster predates K8s 1.28)` |  | group_checker.go |
 | warn | `Group member resolution failed during sync` | `error`, `group`† | session_request_helpers.go |
@@ -684,11 +687,11 @@ variable part of a concatenated message.
 | warn | `No approvers resolved for email notification; cannot send email with empty recipients` | `cluster`, `group`†, `requestorEmail`†, `requestorUsername`† | session_request_helpers.go |
 | warn | `No authenticated identity claims found for session ownership filtering` | `error` | session_controller_status.go |
 | warn | `No escalation groups found for user` | `cluster`, `requestedGroup`†, `resolvedUserGroups`†, `user`† | session_request_helpers.go |
-| warn | `No mail provider configured - email notification skipped` | `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
-| warn | `No remaining capacity for approvers, skipping group` | `escalation`, `group`†, `totalApproversLimit`† | session_request_helpers.go |
+| warn | `No mail provider configured - email notification skipped` | `recipientCount`, `session`, `subjectLength` | session_controller_actions.go |
+| warn | `No remaining capacity for approvers, skipping group` | `escalation`, `group`†, `totalApproversLimit` | session_request_helpers.go |
 | warn | `Reason field sanitization failed` | `error` | session_controller.go |
 | warn | `Refusing to create session without matched escalation` | `cluster`, `group`†, `user`† | session_request_helpers.go |
-| warn | `Request username does not match authenticated identity` | `authIdentifiers`, `requestUsername`† | session_request_helpers.go |
+| warn | `Request username does not match authenticated identity` | `authIdentifiers`†, `requestUsername`† | session_request_helpers.go |
 | warn | `Requested ClusterConfig is not ready` | `cluster` | session_request_helpers.go |
 | warn | `Requested cluster has no ClusterConfig` | `cluster` | session_request_helpers.go |
 | warn | `Requested escalation exists but is not ready` | `cluster`, `group`† | session_request_helpers.go |
@@ -701,14 +704,14 @@ variable part of a concatenated message.
 | warn | `Session not found` | `error`, `session` | session_controller_status.go |
 | warn | `SessionManager using global logger — use WithSessionLogger() in production` |  | session_manager.go |
 | warn | `Skipping debug session audit event: template audit policy unavailable` | `error`, `session`, `template` | debug_session_audit_policy.go |
-| warn | `Suppressing session request notifications because excluded-group membership could not be resolved` | `escalationName`, `originalApproverCount`† | session_request_helpers.go |
-| warn | `Suppressing session request notifications because hidden-group membership could not be resolved` | `escalationName`, `originalApproverCount`† | session_request_helpers.go |
+| warn | `Suppressing session request notifications because excluded-group membership could not be resolved` | `escalationName`, `originalApproverCount` | session_request_helpers.go |
+| warn | `Suppressing session request notifications because hidden-group membership could not be resolved` | `escalationName`, `originalApproverCount` | session_request_helpers.go |
 | warn | `Ticket system ID validation failed` | `error` | session_controller.go |
 | warn | `Token validation: unable to verify session read authorization` | `error`, `tokenLen` | session_controller_status.go |
 | warn | `Token validation: user is not authorized to read session` | `tokenLen` | session_controller_status.go |
 | warn | `Total approvers limit reached while adding explicit users` | `escalation`, `limit` | session_request_helpers.go |
 | warn | `Total approvers limit reached, skipping remaining groups` | `escalation`, `group`†, `limit` | session_request_helpers.go |
-| warn | `Truncating members to fit within total approvers limit` | `escalation`, `group`†, `originalCount`, `totalApproversLimit`†, `truncatedTo` | session_request_helpers.go |
+| warn | `Truncating members to fit within total approvers limit` | `escalation`, `group`†, `originalCount`, `totalApproversLimit`, `truncatedTo` | session_request_helpers.go |
 | warn | `Unable to look up ClusterConfig for approval policy` | `cluster`, `error` | session_controller_approval_utils.go |
 | warn | `Unable to resolve unique ClusterConfig for approval policy` | `cluster`, `error` | session_controller_approval_utils.go |
 | warn | `Unable to verify session read authorization` | `error`, `session` | session_controller_status.go |
@@ -754,7 +757,7 @@ variable part of a concatenated message.
 | error | `Failed to load config for OIDC prefixes` | `error` | group_checker.go |
 | error | `Failed to parse field selector for fallback lookup` | `error`, `selector` | session_manager.go |
 | error | `Failed to resolve BreakglassSession before status update` |  | session_manager.go |
-| error | `Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups` | `approver`†, `cluster`, `error`, `requestContextGroupCount`† | session_controller_approval_utils.go |
+| error | `Failed to retrieve cluster-verified approver groups; approval will be evaluated without verified groups` | `approver`†, `cluster`, `error`, `requestContextGroupCount` | session_controller_approval_utils.go |
 | error | `Failed to retrieve user groups for escalation determination` | `error` | session_request_helpers.go |
 | error | `Failed to update BreakglassSession` |  | session_manager.go |
 | error | `Failed to update BreakglassSession status` |  | session_manager.go |
@@ -786,27 +789,27 @@ variable part of a concatenated message.
 | error | `expiring session in WaitingForScheduledTime state with no ScheduledStartTime` | `namespace`, `session` | scheduled_activation.go |
 | error | `failed to acknowledge disabled expiry notification` | `error`, `namespace`, `session` | expire_approved_sessions.go |
 | error | `failed to activate scheduled session` | `error`, `namespace`, `session` | scheduled_activation.go |
-| error | `failed to enqueue approval email` | `error`, `session`, `to` | session_controller_approval_utils.go |
-| error | `failed to enqueue approval email via mail service` | `error`, `session`, `to` | session_controller_approval_utils.go |
+| error | `failed to enqueue approval email` | `error`, `session`, `to`† | session_controller_approval_utils.go |
+| error | `failed to enqueue approval email via mail service` | `error`, `session`, `to`† | session_controller_approval_utils.go |
 | error | `failed to enqueue approval timeout notification` | `error`, `namespace`, `session` | expire_pending_sessions.go |
 | error | `failed to enqueue approved session expiry notification` | `error`, `namespace`, `session` | expire_approved_sessions.go |
 | error | `failed to enqueue debug session expired email` |  | cleanup_task.go |
 | error | `failed to enqueue idle-expired session email` | `error`, `session` | expire_idle_sessions.go |
-| error | `failed to enqueue rejection email` | `error`, `session`, `to` | session_controller_approval_utils.go |
-| error | `failed to enqueue rejection email via mail service` | `error`, `session`, `to` | session_controller_approval_utils.go |
+| error | `failed to enqueue rejection email` | `error`, `session`, `to`† | session_controller_approval_utils.go |
+| error | `failed to enqueue rejection email via mail service` | `error`, `session`, `to`† | session_controller_approval_utils.go |
 | error | `failed to enqueue session activated email` | `error`, `namespace`, `session` | scheduled_activation.go |
 | error | `failed to enqueue session expired email` | `error`, `namespace`, `session` | expire_approved_sessions.go |
 | error | `failed to expire scheduled session` | `error`, `namespace`, `reason`, `session` | scheduled_activation.go |
 | error | `failed to list sessions with pending expiry notifications` | `error`, `state` | expire_approved_sessions.go |
 | error | `failed to render approval email template` | `error`, `session` | session_controller_approval_utils.go |
 | error | `failed to render debug session expired email` |  | cleanup_task.go |
-| error | `failed to render email template` | `error`, `group`†, `recipientCount`†, `session` | session_controller_actions.go |
+| error | `failed to render email template` | `error`, `group`†, `recipientCount`, `session` | session_controller_actions.go |
 | error | `failed to render idle-expired session email` | `error`, `session` | expire_idle_sessions.go |
 | error | `failed to render rejection email template` | `error`, `session` | session_controller_approval_utils.go |
 | error | `failed to render session activated email` | `error`, `namespace`, `session` | scheduled_activation.go |
 | error | `failed to render session expired email` | `error`, `namespace`, `session` | expire_approved_sessions.go |
 | error | `failed to retry session expiry notification enqueue` | `error`, `namespace`, `session` | expire_approved_sessions.go |
-| error | `failed to send request email` | `error`, `recipientCount`†, `session`, `subjectLength`† | session_controller_actions.go |
+| error | `failed to send request email` | `error`, `recipientCount`, `session`, `subjectLength` | session_controller_actions.go |
 | error | `failed to update expired session status` | `error`, `session` | expire_approved_sessions.go |
 | error | `failed to update idle-expired session after retries` | `error`, `session` | expire_idle_sessions.go |
 | error | `failed to update session status while expiring pending session` | `error` | expire_pending_sessions.go |
@@ -910,7 +913,7 @@ variable part of a concatenated message.
 | info | `All auxiliary resources cleaned up` |  | auxiliary_resource_manager.go |
 | info | `Approval required by binding` | `binding`, `bindingNamespace`, `session` | debug_session_reconciler.go |
 | info | `Auto-approving debug session based on cluster match` | `cluster`, `pattern`, `session` | debug_session_reconciler.go |
-| info | `Auto-approving debug session based on group match` | `matchedGroupHint`†, `session`, `user`† | debug_session_reconciler.go |
+| info | `Auto-approving debug session based on group match` | `matchedGroupHint`, `session`, `user`† | debug_session_reconciler.go |
 | info | `Auto-discovered binding for session` | `binding`, `namespace` | debug_session_reconciler.go |
 | info | `Auxiliary resource is ready` | `kind`, `name`, `resource` | auxiliary_resource_manager.go |
 | info | `Auxiliary resources deployed` | `deployed`, `errors`, `total` | auxiliary_resource_manager.go |
@@ -926,7 +929,7 @@ variable part of a concatenated message.
 | info | `Debug session created email queued` | `requester`†, `session` | debug_session_api_email_ops.go |
 | info | `Debug session expired` |  | debug_session_reconciler.go |
 | info | `Debug session failed email queued` | `requester`†, `session` | debug_session_api_email_ops.go, debug_session_reconciler.go |
-| info | `Debug session rejected` | `reason`, `rejector`, `session` | debug_session_api_session_ops.go |
+| info | `Debug session rejected` | `reason`, `rejector`†, `session` | debug_session_api_session_ops.go |
 | info | `Debug session rejection email queued` | `session` | debug_session_api_email_ops.go |
 | info | `Debug session renewed` | `extendBy`, `newExpiry`, `renewalCount`, `session` | debug_session_api_session_ops.go |
 | info | `Debug session request email queued` | `approvers`†, `session` | debug_session_api_email_ops.go |
@@ -935,7 +938,7 @@ variable part of a concatenated message.
 | info | `Deleted auxiliary resource` | `kind`, `name`, `namespace`, `resourceName` | auxiliary_resource_manager.go |
 | info | `Deleted debug resource` | `kind`, `name`, `namespace` | debug_session_reconciler_lifecycle.go |
 | info | `Deleted pod template resource` | `kind`, `name`, `namespace` | debug_session_reconciler_lifecycle.go |
-| info | `Denying debug session approval: no approvers configured, so no user is an approver` | `approver`†, `approverSource`†, `session` | debug_session_api_resolution.go |
+| info | `Denying debug session approval: no approvers configured, so no user is an approver` | `approver`†, `approverSource`, `session` | debug_session_api_resolution.go |
 | info | `Deployed auxiliary resource document` | `auxiliaryResource`, `kind`, `name`, `namespace` | auxiliary_resource_manager.go |
 | info | `Deployed debug workload` | `kind`, `name`, `namespace` | debug_session_reconciler_workload.go |
 | info | `Deployed multiple resources from single auxiliary resource` | `name`, `resources` | auxiliary_resource_manager.go |
@@ -987,7 +990,7 @@ variable part of a concatenated message.
 | warn | `Debug session status update conflict` | `action`, `error`, `session` | debug_session_api_status_patch.go |
 | warn | `DebugSession failed structural validation, skipping reconciliation` | `errors` | debug_session_reconciler.go |
 | warn | `Deleted orphaned debug pod after status update failure` | `pod`, `podNamespace`, `statusError`† | debug_session_kubectl.go |
-| warn | `ExtraDeployValues validation failed` | `errors`, `templateRef`, `userGroupCount`† | debug_session_api.go |
+| warn | `ExtraDeployValues validation failed` | `errors`, `templateRef`, `userGroupCount` | debug_session_api.go |
 | warn | `Failed to cleanup auxiliary resources` | `error` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to cleanup pod template resources` | `error` | debug_session_reconciler_lifecycle.go |
 | warn | `Failed to converge debug session connection lease; will retry` | `error` | debug_session_reconciler.go |
@@ -1009,7 +1012,7 @@ variable part of a concatenated message.
 | warn | `Failed to synchronize renewed debug workload deadline; will retry` | `error` | debug_session_reconciler.go |
 | warn | `HotfixRecord drift check failed; keeping the last observation` | `error`, `record` | hotfix_record_reconciler.go |
 | warn | `Invalid bindingRef format` | `bindingRef` | debug_session_api.go |
-| warn | `No binding allows the requester for this template and cluster` | `bindingsChecked`, `cluster`, `groupCount`†, `templateRef`, `user`† | debug_session_api.go |
+| warn | `No binding allows the requester for this template and cluster` | `bindingsChecked`, `cluster`, `groupCount`, `templateRef`, `user`† | debug_session_api.go |
 | warn | `Node-maintenance target validation unavailable` | `error` | debug_session_node_maintenance.go |
 | warn | `Optional discovery aliases unavailable; retaining identity authorization` | `error` | debug_session_api_templates.go |
 | warn | `Preserved orphaned debug pod because its immutable identity changed` | `pod`, `podNamespace`, `statusError`† | debug_session_kubectl.go |
@@ -1037,7 +1040,7 @@ variable part of a concatenated message.
 | warn | `Target namespace validation failed` | `allowUserNamespace`†, `bindingUsed`, `defaultNamespace`, `error`, `requestedNamespace`, `templateRef` | debug_session_api.go |
 | warn | `Template not found` | `templateRef` | debug_session_api.go |
 | warn | `Unknown debug session state` | `state` | debug_session_reconciler.go |
-| warn | `User is not allowed to request debug session` | `bindingRef`, `groupCount`†, `selectedBindingRef`, `templateRef`, `user`† | debug_session_api.go |
+| warn | `User is not allowed to request debug session` | `bindingRef`, `groupCount`, `selectedBindingRef`, `templateRef`, `user`† | debug_session_api.go |
 | warn | `deprecated notify-only expiration still enforces hard expiry` |  | debug_session_reconciler.go |
 | warn | `findBindingsForTemplate: failed to parse templateSelector` | `binding`, `error` | debug_session_api_templates.go |
 | warn | `findBindingsForTemplate: skipping binding with invalid variable constraints` | `binding`, `error` | debug_session_api_templates.go |
@@ -1124,13 +1127,13 @@ variable part of a concatenated message.
 | debug | `Escalation has no approver groups; updating group sync status` | `escalation` | escalation_status_updater.go |
 | debug | `Escalation matched filter` |  | escalation_manager.go |
 | debug | `Escalation matches user group` |  | escalation_manager.go |
-| debug | `Escalation skipped: group mismatch` | `allowedGroups`†, `escalation`, `userGroupCount`† | escalation_manager.go |
+| debug | `Escalation skipped: group mismatch` | `allowedGroups`†, `escalation`, `userGroupCount` | escalation_manager.go |
 | debug | `Escalation status update cycle canceled while listing escalations` | `error` | escalation_status_updater.go |
-| debug | `Extracted raw token groups from JWT claims` | `rawTokenGroupCount`† | escalation_controller.go |
+| debug | `Extracted raw token groups from JWT claims` | `rawTokenGroupCount` | escalation_controller.go |
 | debug | `Fell back to full escalation scan` | `cluster`, `totalEscalations` | escalation_manager.go |
-| debug | `Fell back to full target escalation scan` | `cluster`, `targetGroupHint`†, `totalEscalations` | escalation_manager.go |
+| debug | `Fell back to full target escalation scan` | `cluster`, `targetGroupHint`, `totalEscalations` | escalation_manager.go |
 | debug | `Fetched escalation candidates with group index` | `candidateCount`, `cluster` | escalation_manager.go |
-| debug | `Fetched escalation candidates with target-group index` | `candidateCount`, `cluster`, `targetGroupHint`† | escalation_manager.go |
+| debug | `Fetched escalation candidates with target-group index` | `candidateCount`, `cluster`, `targetGroupHint` | escalation_manager.go |
 | debug | `Fetched escalations for status update` | `count` | escalation_status_updater.go |
 | debug | `Fetched group escalation candidates with group index` | `candidateCount`, `matched` | escalation_manager.go |
 | debug | `Fetching BreakglassEscalation by name` | `name`, `namespace` | escalation_manager.go |
@@ -1138,10 +1141,10 @@ variable part of a concatenated message.
 | debug | `Fetching BreakglassEscalations with selector` | `selector` | escalation_manager.go |
 | debug | `Fetching all BreakglassEscalations` |  | escalation_manager.go |
 | debug | `Fetching cluster BreakglassEscalations` | `cluster` | escalation_manager.go |
-| debug | `Fetching cluster-group BreakglassEscalations` | `cluster`, `groupCount`† | escalation_manager.go |
-| debug | `Fetching cluster-group-target BreakglassEscalations` | `cluster`, `targetGroupHint`†, `userGroupCount`† | escalation_manager.go |
-| debug | `Fetching group BreakglassEscalations` | `groupCount`† | escalation_manager.go |
-| debug | `Fetching group members from IDP` | `escalation`, `groupCount`†, `idp` | escalation_status_updater.go |
+| debug | `Fetching cluster-group BreakglassEscalations` | `cluster`, `groupCount` | escalation_manager.go |
+| debug | `Fetching cluster-group-target BreakglassEscalations` | `cluster`, `targetGroupHint`, `userGroupCount` | escalation_manager.go |
+| debug | `Fetching group BreakglassEscalations` | `groupCount` | escalation_manager.go |
+| debug | `Fetching group members from IDP` | `escalation`, `groupCount`, `idp` | escalation_status_updater.go |
 | debug | `Found matching group by name` | `group`†, `groupID`†, `matchedNameHint` | escalation_status_updater.go |
 | debug | `GetGroup API call details` | `baseURL`, `endpoint`, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
 | debug | `GetGroupMembers API call details` | `baseURL`, `endpoint`, `groupID`†, `realm`, `tokenLen` | escalation_status_updater.go |
@@ -1150,20 +1153,20 @@ variable part of a concatenated message.
 | debug | `Group member resolution returning successfully` | `group`†, `memberCount` | escalation_status_updater.go |
 | debug | `Group member resolver returned members` | `escalation`, `group`†, `rawMemberCount` | escalation_status_updater.go |
 | debug | `Group members changed; marking for update` | `escalation`, `group`†, `newCount`, `oldCount` | escalation_status_updater.go |
-| debug | `Group search result` | `groupID`†, `groupNameHint`†, `hasSubgroups`†, `index` | escalation_status_updater.go |
+| debug | `Group search result` | `groupID`†, `groupNameHint`, `hasSubgroups`, `index` | escalation_status_updater.go |
 | debug | `IDPLoader not configured; using single resolver fallback` | `escalation` | escalation_status_updater.go |
 | debug | `Initializing BreakglassEscalationController with Keycloak identity provider` |  | escalation_controller.go |
 | debug | `Keycloak cache hit for group` | `group`†, `membersCount` | escalation_status_updater.go |
 | debug | `Keycloak cache miss for group; will perform lookup` | `group`† | escalation_status_updater.go |
 | debug | `Keycloak client configured with custom CA certificate` | `baseURL`, `realm` | escalation_status_updater.go |
 | debug | `Keycloak group search returned a nil group entry` | `index` | escalation_status_updater.go |
-| debug | `Keycloak groups search completed` | `group`†, `returnedGroupCount`† | escalation_status_updater.go |
+| debug | `Keycloak groups search completed` | `group`†, `returnedGroupCount` | escalation_status_updater.go |
 | debug | `Keycloak token acquisition canceled` | `clientID`, `endpoint`, `error`, `grantType` | escalation_status_updater.go |
 | debug | `Keycloak token lookup canceled` | `error`, `group`† | escalation_status_updater.go |
 | debug | `KeycloakIdentityProvider configured for user identity extraction` |  | escalation_controller.go |
-| debug | `Processing escalation with approver groups` | `escalation`, `groupCount`† | escalation_status_updater.go |
-| debug | `Processing subgroup` | `group`†, `parentGroupID`†, `subgroupID`†, `subgroupIndex`†, `subgroupNameHint`† | escalation_status_updater.go |
-| debug | `Resolved user groups (token first)` | `userGroupCount`† | escalation_controller.go |
+| debug | `Processing escalation with approver groups` | `escalation`, `groupCount` | escalation_status_updater.go |
+| debug | `Processing subgroup` | `group`†, `parentGroupID`†, `subgroupID`†, `subgroupIndex`†, `subgroupNameHint` | escalation_status_updater.go |
+| debug | `Resolved user groups (token first)` | `userGroupCount` | escalation_controller.go |
 | debug | `Resolving group for escalation` | `escalation`, `group`†, `resolverType` | escalation_status_updater.go |
 | debug | `Retrieved escalations for filtering` | `totalCount` | escalation_manager.go |
 | debug | `Returning escalations response (filtered, hidden groups removed)` | `responseCount` | escalation_controller.go |
@@ -1176,11 +1179,11 @@ variable part of a concatenated message.
 | debug | `Stopping escalation status update cycle because IDP loading was canceled` | `error` | escalation_status_updater.go |
 | debug | `Stopping escalation status update cycle because context is done` | `error` | escalation_status_updater.go |
 | debug | `Subgroup members fetch completed` | `memberCount`, `subgroupID`† | escalation_status_updater.go |
-| debug | `Subgroups fetch completed` | `group`†, `subgroupCount`† | escalation_status_updater.go |
+| debug | `Subgroups fetch completed` | `group`†, `subgroupCount` | escalation_status_updater.go |
 | debug | `Successfully extracted user identity from token` | `email`†, `username`† | escalation_controller.go |
 | debug | `Successfully fetched escalations from manager` | `escalationCount` | escalation_controller.go |
 | debug | `Token acquired successfully` | `clientID`, `expiresIn`, `tokenLen`, `tokenType` | escalation_status_updater.go |
-| debug | `Updated escalation successfully` | `escalation`, `groupCount`† | escalation_status_updater.go |
+| debug | `Updated escalation successfully` | `escalation`, `groupCount` | escalation_status_updater.go |
 | debug | `Using cached token` | `expiresIn` | escalation_status_updater.go |
 | debug | `Using explicitly configured IDPs` | `escalation`, `idps` | escalation_status_updater.go |
 | debug | `Using legacy single resolver mode` | `escalation` | escalation_status_updater.go |
@@ -1207,7 +1210,7 @@ variable part of a concatenated message.
 | info | `Retaining previously cached group members due to fetch error` | `count`, `escalation`, `group`†, `idp` | escalation_status_updater.go |
 | info | `Starting escalation status updater` | `interval` | escalation_status_updater.go |
 | info | `Updating BreakglassEscalation status` | `name` | escalation_manager.go |
-| info | `Updating escalation status with resolved group members` | `escalation`, `groupCount`† | escalation_status_updater.go |
+| info | `Updating escalation status with resolved group members` | `escalation`, `groupCount` | escalation_status_updater.go |
 | warn | `Configured Keycloak group disappeared during lookup` | `error`, `group`† | escalation_status_updater.go |
 | warn | `Configured Keycloak group was not found` | `group`† | escalation_status_updater.go |
 | warn | `Configured approver group resolved but has no members` | `escalation`, `group`† | escalation_status_updater.go |
@@ -1316,7 +1319,7 @@ variable part of a concatenated message.
 | info | `TOFU: Trusting API server certificate` | `apiServer`, `fingerprint`, `issuer`, `notAfter`, `notBefore`, `subject`† | oidc.go |
 | info | `TOFU: captured CA for cluster` | `cluster` | oidc.go |
 | info | `TOFU: captured and cached OIDC issuer CA` | `issuer` | oidc.go |
-| info | `circuit breaker state changed` | `from`, `to` | circuitbreaker.go |
+| info | `circuit breaker state changed` | `from`, `to`† | circuitbreaker.go |
 | warn | `Cached refresh token failed, trying next auth method` | `cluster`, `error`, `namespace` | oidc.go |
 | warn | `Cluster CA secret key missing or empty; will attempt TOFU` | `cluster`, `key`, `secret` | oidc.go |
 | warn | `Cluster is operating in degraded auth mode (using fallback credentials)` | `cluster`, `namespace` | oidc.go |
@@ -1530,8 +1533,8 @@ variable part of a concatenated message.
 
 | Level | Message | Fields | File |
 |---|---|---|---|
-| debug | `Email queued for sending` | `id`, `receivers`, `subjectLength`† | queue.go |
-| debug | `Preparing to send mail` | `recipientCount`†, `subjectLength`† | mail.go |
+| debug | `Email queued for sending` | `id`, `receivers`, `subjectLength` | queue.go |
+| debug | `Preparing to send mail` | `recipientCount`, `subjectLength` | mail.go |
 | info | `Attempting final send for pending item before shutdown` | `attempt`, `id` | queue.go |
 | info | `Initializing mail queue` | `initialBackoffMs`, `maxAttempts`, `maxQueueSize`, `maxRetries` | queue.go |
 | info | `Initializing mail sender from MailProvider` | `disableTLS`, `host`, `port`, `provider` | mail.go |
@@ -1540,10 +1543,10 @@ variable part of a concatenated message.
 | info | `Mail queue stopped gracefully` |  | queue.go |
 | info | `Mail queue worker shutting down` |  | queue.go |
 | info | `Mail queue worker started` |  | queue.go |
-| info | `Mail sent successfully` | `recipientCount`† | mail.go |
+| info | `Mail sent successfully` | `recipientCount` | mail.go |
 | info | `Processing pending items on shutdown` | `count` | queue.go |
 | info | `Processing queued email` | `attempt`, `id`, `maxAttempts`, `receivers` | queue.go |
-| info | `Queued email sent successfully` | `attempt`, `id`, `receivers`, `subjectLength`† | queue.go |
+| info | `Queued email sent successfully` | `attempt`, `id`, `receivers`, `subjectLength` | queue.go |
 | info | `Stopping existing mail queue for reload` |  | service.go |
 | info | `Stopping mail queue` |  | queue.go |
 | info | `Stopping mail service` |  | service.go |
@@ -1554,12 +1557,12 @@ variable part of a concatenated message.
 | warn | `Mail queue not initialized, rejecting email` | `recipients`†, `sessionID` | service.go |
 | warn | `Mail queue shutdown timeout, some items may not have been processed` |  | queue.go |
 | warn | `No default mail provider found - mail notifications disabled` | `error` | service.go |
-| error | `Cannot enqueue email: empty receivers list` | `id`, `recipientCount`†, `subjectLength`† | queue.go |
+| error | `Cannot enqueue email: empty receivers list` | `id`, `recipientCount`, `subjectLength` | queue.go |
 | error | `Cannot enqueue, queue is shutting down` | `id` | queue.go |
-| error | `Email send failed after all retries` | `attempts`, `error`, `id`, `recipientCount`†, `subjectLength`† | queue.go |
+| error | `Email send failed after all retries` | `attempts`, `error`, `id`, `recipientCount`, `subjectLength` | queue.go |
 | error | `Failed to send mail` | `error` | mail.go |
 | error | `Mail queue is full, dropping message` | `id`, `queueSize`, `receivers` | queue.go |
-| error | `Send called with no receivers` | `subjectLength`† | mail.go |
+| error | `Send called with no receivers` | `subjectLength` | mail.go |
 | error | `mail queue worker exceeded max consecutive panic recoveries, stopping queue` | `maxRecoveries` | queue.go |
 | error | `panic in mail queue worker recovered` | `consecutivePanics`, `panic` | queue.go |
 
@@ -1570,7 +1573,7 @@ variable part of a concatenated message.
 | debug | `Blocked factor exempted by escalation override` | `factor`, `pod` | deny.go |
 | debug | `Pod exempt from security evaluation` | `namespace`, `pod` | deny.go |
 | debug | `Pod security overrides not applicable: namespace not in scope` | `namespace`, `namespaceScope`, `pod` | deny.go |
-| info | `Impersonation denied by DenyPolicy` | `cluster`, `identity`†, `identityResource`†, `mode`, `policy`, `ruleIndex`, `verb`, `verbKind` | impersonation.go |
+| info | `Impersonation denied by DenyPolicy` | `cluster`, `identity`†, `identityResource`, `mode`, `policy`, `ruleIndex`, `verb`, `verbKind` | impersonation.go |
 | info | `Pod access allowed via escalation override` | `factors`, `maxAllowed`, `namespace`, `pod`, `score` | deny.go |
 | warn | `Failed to parse reason template` | `error`, `template` | deny.go |
 | warn | `Failed to render reason template` | `error` | deny.go |
@@ -1663,7 +1666,7 @@ variable part of a concatenated message.
 | debug | `Debug session participant role cannot perform pod operation` | `operation`, `role`, `session`, `user`† | controller.go |
 | debug | `Debug session skipped because it is expired, idle, or missing expiry` | `expiresAt`, `session` | controller.go |
 | debug | `Direct debug-session pod operation denied because recording is required` | `operation`, `session` | controller.go |
-| debug | `Escalation lookup groups` | `cluster`, `sarGroupCount`†, `sessionGroupCount`†, `totalUniqueGroupCount`† | authorize_helpers.go |
+| debug | `Escalation lookup groups` | `cluster`, `sarGroupCount`, `sessionGroupCount`, `totalUniqueGroupCount` | authorize_helpers.go |
 | debug | `Escalation paths available` | `count` | authorize_helpers.go |
 | debug | `Escalations filtered by requestor IDP` | `afterFilter`, `beforeFilter`, `issuer` | authorize_helpers.go |
 | debug | `Extracted issuer from SAR for session matching` | `issuer` | authorize_helpers.go |
@@ -1678,13 +1681,13 @@ variable part of a concatenated message.
 | debug | `Global denyEval matched` | `action`, `policy` | authorize_helpers.go |
 | debug | `Ignoring PodSecurityOverrides for owner reference with mismatched UID` | `escalation`, `escalationUID`, `ownerUID`, `session` | controller.go |
 | debug | `Ignoring PodSecurityOverrides without configured additional approval` | `escalation`, `session` | controller.go |
-| debug | `Impersonation groups to try` | `groupCount`†, `session` | controller.go |
-| debug | `Invoking RBAC canDoFn` | `cluster`, `groupCount`†, `resourceAttributes` | authorize_helpers.go |
+| debug | `Impersonation groups to try` | `groupCount`, `session` | controller.go |
+| debug | `Invoking RBAC canDoFn` | `cluster`, `groupCount`, `resourceAttributes` | authorize_helpers.go |
 | debug | `No escalation allowed groups found; falling back to session granted group for prefix detection` | `session`, `sessionGroup`† | controller.go |
 | debug | `No escalation paths for user` | `username`† | authorize_helpers.go |
 | debug | `Parsed webhook bind address` | `bindAddress`, `host`, `port` | manager.go |
 | debug | `Processing authorization request for cluster` | `cluster` | authorize_helpers.go |
-| debug | `RBAC check result` | `allowed`, `groupCount`† | authorize_helpers.go |
+| debug | `RBAC check result` | `allowed`, `groupCount` | authorize_helpers.go |
 | debug | `Received SubjectAccessReview` |  | authorize_helpers.go |
 | debug | `Request allowed: IDP in AllowedIdentityProvidersForRequests` | `escalation`, `idp` | controller.go |
 | debug | `Request denied: IDP not in allowed request providers` | `allowedIDPs`, `escalation`, `idp` | controller.go |
@@ -1692,9 +1695,9 @@ variable part of a concatenated message.
 | debug | `Request issuer matches multiple enabled IdentityProviders; denying request` | `first`, `issuer`, `second` | controller.go |
 | debug | `Request missing issuer information required for multi-IDP validation` | `escalation` | controller.go |
 | debug | `Retrieved group-specific escalations` | `escalationsCount` | authorize_helpers.go |
-| debug | `Retrieved target group escalations` | `groupEscalationsCount`† | authorize_helpers.go |
-| debug | `Retrieved user groups for cluster` | `groupCount`†, `idpMismatches`, `sessions`, `tenant` | authorize_helpers.go |
-| debug | `Retrieved user groups from active sessions` | `activeUserGroupCount`† | authorize_helpers.go |
+| debug | `Retrieved target group escalations` | `groupEscalationsCount` | authorize_helpers.go |
+| debug | `Retrieved user groups for cluster` | `groupCount`, `idpMismatches`, `sessions`, `tenant` | authorize_helpers.go |
+| debug | `Retrieved user groups from active sessions` | `activeUserGroupCount` | authorize_helpers.go |
 | debug | `Returning SubjectAccessReview response (raw)` | `body` | authorize_helpers.go |
 | debug | `SAR phase completed` | `duration_ms`, `phase` | phase_tracker.go |
 | debug | `Sending JSON response via c.JSON` |  | authorize_helpers.go |
@@ -1712,7 +1715,7 @@ variable part of a concatenated message.
 | debug | `final cluster configuration fence denied session access` | `cluster`, `error` | controller.go |
 | debug | `final session access fence could not read session` | `error`, `session` | controller.go |
 | debug | `handleAuthorize entered` | `cluster` | authorize_helpers.go |
-| info | (dynamic) | `cluster`, `impersonationConstraint`, `mode`, `requestor`, `requestorUID`, `source`, `verb` | authorize_impersonation.go |
+| info | (dynamic) | `cluster`, `impersonationConstraint`, `mode`, `requestor`†, `requestorUID`†, `source`, `verb` | authorize_impersonation.go |
 | info | `Active sessions present but unable to validate them against target cluster` | `error`, `sessionCount`, `sessionDetails` | authorize_helpers.go |
 | info | `Cert-controller will generate certs in %q` |  | manager.go |
 | info | `Configuring separate metrics server for webhooks` | `address`, `secure` | manager.go |
@@ -1720,12 +1723,12 @@ variable part of a concatenated message.
 | info | `Debug session pod operation allowed` | `operation`, `pod`, `role`, `session`, `user`† | controller.go |
 | info | `Failed to get REST config for standard RBAC check; using legacy fallback` | `error` | authorize_helpers.go |
 | info | `Final accepted impersonated group` | `cluster`, `impersonationGroup`†, `session`, `sessionGroup`†, `username`† | authorize_helpers.go |
-| info | `Impersonation DENIED` | `cluster`, `mode`, `reason`, `requestor`, `requestorUID`, `source`, `verb`, `verbKind` | authorize_impersonation.go |
+| info | `Impersonation DENIED` | `cluster`, `mode`, `reason`, `requestor`†, `requestorUID`†, `source`, `verb`, `verbKind` | authorize_impersonation.go |
 | info | `Initializing webhook certificate watcher using provided certificates` | `webhook-cert-key`, `webhook-cert-name`, `webhook-cert-path` | manager.go |
 | info | `Initializing webhook metrics certificate watcher using generated certificates` | `path`, `webhooks-metrics-cert-key`, `webhooks-metrics-cert-name` | manager.go |
 | info | `Initializing webhook metrics certificate watcher using provided certificates` | `webhooks-metrics-cert-key`, `webhooks-metrics-cert-name`, `webhooks-metrics-cert-path` | manager.go |
 | info | `No webhook certificate path provided - cert-controller will generate certs in default directory %q` |  | manager.go |
-| info | `Processing authorization` | `groupsRequestedCount`†, `username`† | authorize_helpers.go |
+| info | `Processing authorization` | `groupsRequestedCount`, `username`† | authorize_helpers.go |
 | info | `Pruned orphaned activity tracker entries` | `pruned`, `remaining` | activity_tracker.go |
 | info | `Registering webhook controller routes` | `path` | controller.go |
 | info | `Request denied by global/cluster DenyPolicy` | `activeSessions`, `apiGroup`†, `cluster`, `namespace`, `policy`, `resource`, `resourceName`, `subresource`, `tenant`, `username`†, `verb` | authorize_helpers.go |
@@ -1733,7 +1736,7 @@ variable part of a concatenated message.
 | info | `SAR processing timing summary` | `cluster`, `timings_ms` | phase_tracker.go |
 | info | `SAR request DENIED - summary` | `details`, `finalReason` | authorize_helpers.go |
 | info | `Starting webhook manager` | `bindAddress` | manager.go |
-| info | `SubjectAccessReview concerns impersonation` | `cluster`, `extraKey`, `identityName`†, `identityNamespace`†, `identityResource`†, `mode`, `requestor`, `requestorUID`, `verb`, `verbKind` | authorize_impersonation.go |
+| info | `SubjectAccessReview concerns impersonation` | `cluster`, `extraKey`, `identityName`†, `identityNamespace`†, `identityResource`, `mode`, `requestor`†, `requestorUID`†, `verb`, `verbKind` | authorize_impersonation.go |
 | info | `SubjectAccessReview contains no resource or non-resource attributes` |  | authorize_helpers.go |
 | info | `SubjectAccessReview processed` | `allowed`, `cluster`, `reason`, `response`, `username`† | authorize_helpers.go |
 | info | `SubjectAccessReview requested action` | `action`, `apiGroup`†, `name`, `namespace`, `resource`, `subresource`, `verb` | authorize_helpers.go |
@@ -1755,12 +1758,13 @@ variable part of a concatenated message.
 | warn | `Failed to list debug sessions through live reader for pod operation check` | `error` | controller.go |
 | warn | `Failed to parse webhook port from bind address; using default` | `bindAddress`, `defaultPort`, `error` | manager.go |
 | warn | `Failed to update session activity` | `error`, `retries`, `session` | activity_tracker.go |
-| warn | Legacy (unconstrained) impersonation in use; the API server does not apply the constrained restrictions to this path and any blanket `impersonate` grant defeats configured constraints | `cluster`, `identityName`†, `identityResource`†, `requestor` | authorize_impersonation.go |
+| warn | Legacy (unconstrained) impersonation in use; the API server does not apply the constrained restrictions to this path and any blanket `impersonate` grant defeats configured constraints | `cluster`, `identityName`†, `identityResource`, `requestor`† | authorize_impersonation.go |
 | warn | `RBAC check failed (infrastructure unavailable or forbidden); treating as denied and falling through to session-based authorization` | `error` | authorize_helpers.go |
 | warn | `Shutdown context expired waiting for flush goroutine` | `error` | activity_tracker.go |
 | warn | `SubjectAccessReview body too large` | `error` | authorize_helpers.go |
 | warn | `Unable to load target cluster rest.Config for SAR; skipping session SAR checks` | `error` | authorize_helpers.go |
 | warn | `Unrecognised impersonation verb allowed to proceed because denyUnrecognisedVerbs is disabled on this ClusterConfig; constrained impersonation may be granted without breakglass evaluation` | `cluster`, `verb` | authorize_impersonation.go |
+| warn | `Webhook client certificate does not name the requested cluster` | `cluster`, `dnsNames`, `subjectCN`† | controller.go |
 | warn | `session SAR error` | `error`, `group`† | controller.go |
 | error | `Discarding activity entry after max retries` | `count`, `retries`, `session` | activity_tracker.go |
 | error | `Failed to count escalations for deny response` | `error` | authorize_helpers.go |

@@ -120,6 +120,21 @@ func TestRunRejectsWrongProseLevel(t *testing.T) {
 	if err := run(root, false); err != nil {
 		t.Fatal(err)
 	}
+
+	// A table row: the Level column must hold the code's level, even when
+	// other cells mention other levels.
+	table := func(level string) string {
+		return "# Ref\n\n| Source | Level | Message |\n|---|---|---|\n| SDK | " + level +
+			" for export errors; SDK warnings at debug | `exporter failed`; otherwise info |\n\n" + beginMark + "\n" + endMark + "\n"
+	}
+	writeFile(t, filepath.Join(root, docPath), table("error"))
+	if err := run(root, false); err == nil || !strings.Contains(err.Error(), `"exporter failed" is logged at warn, but the reference says error`) {
+		t.Fatalf("wrong table level not detected: %v", err)
+	}
+	writeFile(t, filepath.Join(root, docPath), table("warn"))
+	if err := run(root, false); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {

@@ -5,6 +5,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -67,5 +68,49 @@ func TestRecoverPanicsAfterFlushKeepsTheStream(t *testing.T) {
 	}
 	if logs.FilterMessage("[Recovery from panic]").Len() != 1 {
 		t.Fatalf("panic not logged: %v", logs.AllUntimed())
+	}
+}
+
+func TestAccessLogNeverLogsQueryAndCoversPanics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zapcore.DebugLevel)
+	log := zap.New(core)
+	engine := gin.New()
+	engine.Use(accessLog(log), recoverPanics(log))
+	engine.GET("/auth/callback", func(c *gin.Context) { c.Status(http.StatusOK) })
+	engine.GET("/api/breakglassSessions/status", func(c *gin.Context) { c.Status(http.StatusOK) })
+	engine.GET("/boom", func(*gin.Context) { panic("kaboom") })
+
+	for _, target := range []string{
+		"/auth/callback?code=secret-code&state=secret-state",
+		"/api/breakglassSessions/status?token=secret-token",
+		"/not-a-route?code=secret-code",
+		"/boom?token=secret-token",
+	} {
+		engine.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, target, nil))
+	}
+
+	lines := logs.FilterMessage("http_request").AllUntimed()
+	if len(lines) != 4 {
+		t.Fatalf("got %d http_request lines, want 4", len(lines))
+	}
+	wantPaths := []string{"/auth/callback", "/api/breakglassSessions/status", "/not-a-route", "/boom"}
+	for i, e := range lines {
+		if got := e.ContextMap()["path"]; got != wantPaths[i] {
+			t.Errorf("line %d path %v, want %s", i, got, wantPaths[i])
+		}
+	}
+	if got := lines[3].ContextMap()["status"]; got != int64(http.StatusInternalServerError) {
+		t.Errorf("panicking request logged with status %v, want 500", got)
+	}
+	for _, e := range logs.AllUntimed() {
+		if strings.Contains(e.Message, "secret") {
+			t.Errorf("message leaks a secret: %q", e.Message)
+		}
+		for k, v := range e.ContextMap() {
+			if strings.Contains(fmt.Sprint(v), "secret") {
+				t.Errorf("%s: field %s leaks a secret: %v", e.Message, k, v)
+			}
+		}
 	}
 }
