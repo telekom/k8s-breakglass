@@ -287,12 +287,12 @@ func (m *Manager) Emit(ctx context.Context, event *Event) bool {
 		event.ID = uuid.New().String()
 	}
 	event.SchemaVersion = SchemaVersion
-	observeEmitted(event)
 
 	// Set default severity if not set
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
+	observeEmitted(event)
 
 	// Non-blocking send to async queue.
 	// Hold closeMu.RLock so that Close cannot close the channel concurrently.
@@ -530,12 +530,12 @@ func (m *Manager) EmitSync(ctx context.Context, event *Event) error {
 		event.ID = uuid.New().String()
 	}
 	event.SchemaVersion = SchemaVersion
-	observeEmitted(event)
 
 	// Set default severity if not set
 	if event.Severity == "" {
 		event.Severity = SeverityForEventType(event.Type)
 	}
+	observeEmitted(event)
 
 	return m.syncWriteDirect(ctx, event)
 }
