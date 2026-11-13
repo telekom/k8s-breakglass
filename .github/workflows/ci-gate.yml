@@ -67,6 +67,9 @@ jobs:
             gh api --paginate "${api}/commits/${HEAD_SHA}/check-runs?per_page=100" |
               jq -rs --argjson dropped "${dropped}" '[.[].check_runs[]
                   | select(.name != "all-checks-green" and .name != "dependabot-auto-merge")
+                  # Dependabot's config-validation check (".github/dependabot.yml") can stay
+                  # queued for hours; only count it once it has completed.
+                  | select(.app.slug != "dependabot" or .status == "completed")
                   | select(.check_suite.id | IN($dropped[]) | not)]
                 | group_by([.app.id, .name])[] | max_by(.id)
                 | ["check " + .name, .status, .conclusion // ""] | @tsv' &&
