@@ -21,11 +21,12 @@
 # Exempting the kube-controller-manager is safe only because the templates
 # it copies are reserved as well.
 #
-# On a Pod or template that carries reserved keys, the same users may also not
-# change the pod spec (image, command, containers, ephemeral containers), so
-# nobody can run their own code under genuine session markers. Other requests
-# are allowed, so kubelet status updates, scaling and unrelated label edits
-# keep working.
+# On a Pod or workload that carries reserved keys, the same users may also not
+# change the pod spec (image, command, containers, ephemeral containers), the
+# owner references, the labels or the selector, so nobody can run their own
+# code under genuine session markers or detach a marked ReplicaSet or Pod so
+# that it outlives the session. Other requests are allowed, so kubelet status
+# updates, scaling and annotation edits keep working.
 #
 # Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
 apiVersion: admissionregistration.k8s.io/v1
@@ -117,6 +118,21 @@ spec:
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
+  # Ownership and selection: changing them can detach a marked ReplicaSet or
+  # Pod from the workload the controller cleans up, so it would outlive the
+  # session.
+  - name: newOwners
+    expression: "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
+  - name: oldOwners
+    expression: "oldObject == null || !has(oldObject.metadata.ownerReferences) ? [] : oldObject.metadata.ownerReferences"
+  - name: newLabels
+    expression: "has(object.metadata.labels) ? object.metadata.labels : {}"
+  - name: oldLabels
+    expression: "oldObject == null || !has(oldObject.metadata.labels) ? {} : oldObject.metadata.labels"
+  - name: newSelector
+    expression: "object.kind in ['Pod', 'Binding'] || !has(object.spec.selector) ? null : object.spec.selector"
+  - name: oldSelector
+    expression: "oldObject == null || oldObject.kind in ['Pod', 'Binding'] || !has(oldObject.spec.selector) ? null : oldObject.spec.selector"
   - name: exempt
     expression: >-
       request.userInfo.username in variables.controllerUsers ||
@@ -140,6 +156,14 @@ spec:
     messageExpression: >-
       'the pod spec of a breakglass debug pod or debug workload template is reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change it'
+    reason: Forbidden
+  - expression: >-
+      variables.exempt || variables.oldReserved.size() == 0 ||
+      (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
+       variables.newSelector == variables.oldSelector)
+    messageExpression: >-
+      'the owner references, labels and selector of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
+      + request.userInfo.username + ' may not change them'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

@@ -570,30 +570,41 @@ launder the keys.
 
 Keeping the keys is not enough on its own: anyone allowed to edit a debug pod
 or a debug Deployment could swap its image or command, or attach an ephemeral
-container, and run their own code under the genuine markers. The policy
-therefore also freezes the pod spec of every Pod and pod template that
-carries a reserved key for everyone except the exempt users. Scaling, kubelet
-status updates and edits to labels, annotations or workload metadata stay
-allowed; `kubectl rollout restart` and `kubectl debug` against debug
-workloads are denied.
+container, and run their own code under the genuine markers. They could also
+remove a marked ReplicaSet's owner reference, or change its labels so the
+Deployment does not adopt it again; cleanup deletes the Deployment and the
+detached ReplicaSet keeps creating marked Pods. On every Pod and workload
+whose Pod or pod template carries a reserved key, the policy therefore also
+freezes the pod spec, the owner references, the labels and the selector for
+everyone except the exempt users. Scaling, kubelet status updates and
+annotation edits stay allowed. `kubectl rollout restart` and `kubectl debug`
+against debug workloads are denied, and `kubectl delete --cascade=orphan`
+stalls because the garbage collector may not strip the owner references;
+delete debug workloads with the default cascading deletion.
 
-Admission is not retroactive. Before runtime-security rules start trusting
-the keys on a cluster, check for objects that already carry them and were not
-created by the controller, and delete them:
+Admission is not retroactive, and a label value proves nothing about who set
+it: before the policy was installed, anyone could have labelled an unrelated
+Pod or Deployment with the name of a real session. Establish a clean start
+instead of trying to vouch for existing objects:
 
-```bash
-kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers \
-  -A -o json | jq -r '.items[]
-    | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata)
-        | (.labels // {}), (.annotations // {}) | keys[]
-        | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral."))]
-      | length > 0)
-    | "\(.kind) \(.metadata.namespace)/\(.metadata.name)"'
-```
+1. Install the policy.
+2. Terminate or let expire every DebugSession targeting the cluster.
+3. Delete every remaining object that carries a reserved key, for example
+   all objects listed by:
 
-Every listed object must belong to an active DebugSession (compare the
-`breakglass.telekom.com/debug-session` value with `kubectl get debugsessions -A`
-on the hub).
+   ```bash
+   kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers \
+     -A -o json | jq -r '.items[]
+       | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata)
+           | (.labels // {}), (.annotations // {}) | keys[]
+           | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral."))]
+         | length > 0)
+       | "\(.kind) \(.metadata.namespace)/\(.metadata.name)"'
+   ```
+
+4. Only then let runtime-security rules trust the keys. From here on, every
+   object carrying them was created by the controller, or by the
+   kube-controller-manager from a template the controller wrote.
 
 Deploy the component on every cluster where debug pods run, and list every
 identity the controller writes debug pods as on that cluster. Otherwise the

