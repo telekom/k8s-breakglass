@@ -19,6 +19,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,9 +28,11 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 
 	breakglassv1alpha1 "github.com/telekom/k8s-breakglass/api/v1alpha1"
 	"github.com/telekom/k8s-breakglass/e2e/helpers"
+	"github.com/telekom/k8s-breakglass/pkg/naming"
 )
 
 // TestOIDCZAMGroupSyntax proves that group names in the production ZAM syntax
@@ -37,6 +40,11 @@ import (
 // limit, mixed case, '.', '-' and '_') survive the whole OIDC path unchanged:
 // Keycloak groups claim -> breakglass API (request and approval) -> session ->
 // webhook SubjectAccessReview with the groups as the kube-apiserver presents them.
+//
+// The realm also holds dttcaas-ZAM-TENANT.123_appowner, which differs from the
+// approver group only in case: its member must neither be notified nor be able
+// to approve. The granted group sits at the 64-character CN limit, so the
+// session's group label (max 63) must be the sanitized, truncated form.
 //
 // The single-cluster kind setup maps groups with the "oidc:" apiserver prefix,
 // so the escalation lists the requester group in that prefixed form; the
@@ -60,10 +68,14 @@ func TestOIDCZAMGroupSyntax(t *testing.T) {
 
 	requester := helpers.TestUsers.ZAMRequester
 	approver := helpers.TestUsers.ZAMApprover
+	variant := helpers.TestUsers.ZAMApproverVariant
 	requesterGroup := requester.Groups[0]
 	approverGroup := approver.Groups[0]
-	const escalatedGroup = "dttcaas-ZAM-Tenant.123_bm4x-fra-1_poweruser"
+	const escalatedGroup = "dttcaas-ZAM-Tenant.123_tcaas-mgmt-nord-1.prd.b_poweruser-elevate"
 	require.Len(t, requesterGroup, 64, "fixture must sit at the ZAM LDAP CN limit")
+	require.Len(t, escalatedGroup, 64, "granted group must sit at the ZAM LDAP CN limit")
+	require.True(t, strings.EqualFold(approverGroup, variant.Groups[0]) && approverGroup != variant.Groups[0],
+		"variant fixture must differ only in case")
 
 	apiserverGroupPrefix := "oidc:"
 	targetClient := cli
@@ -119,6 +131,31 @@ func TestOIDCZAMGroupSyntax(t *testing.T) {
 	require.NoError(t, err, "the token's ZAM group must match the escalation's allowed group")
 	cleanup.Add(session)
 	require.Equal(t, escalatedGroup, session.Spec.GrantedGroup, "granted group must not be normalized")
+	groupLabel := session.Labels["breakglass.t-caas.telekom.com/group"]
+	require.Equal(t, naming.ToRFC1123Label(escalatedGroup), groupLabel)
+	require.Empty(t, validation.IsValidLabelValue(groupLabel), "group label must be a valid label value")
+	require.Len(t, groupLabel, 63, "the 64-character group must be truncated to the label limit")
+
+	if helpers.IsMailHogTestEnabled() {
+		recipients := map[string]bool{}
+		err := helpers.WaitForCondition(ctx, func() (bool, error) {
+			for _, msg := range getMailHogMessages(t) {
+				body, err := decodeMailHogBody(msg)
+				if err != nil || !strings.Contains(body, escalatedGroup) {
+					continue
+				}
+				for _, to := range msg.To {
+					recipients[to.Mailbox+"@"+to.Domain] = true
+				}
+			}
+			return recipients[approver.Email], nil
+		}, helpers.WaitForStateTimeout, time.Second)
+		require.NoError(t, err, "the exact ZAM approver group member must be notified")
+		require.False(t, recipients[variant.Email], "the case-variant group member must not be notified")
+	}
+
+	require.Error(t, tc.ClientForUser(variant).ApproveSessionViaAPI(ctx, t, session.Name, namespace),
+		"a group that differs only in case must not authorize approval")
 
 	require.NoError(t, tc.ClientForUser(approver).ApproveSessionViaAPI(ctx, t, session.Name, namespace),
 		"the mixed-case ZAM approver group must authorize approval")

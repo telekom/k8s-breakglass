@@ -762,6 +762,30 @@ kubectl get events --field-selector involvedObject.name=<name>
 **Solution:** Verify the exact group name and the selected IdentityProvider,
 then create/rename the AD/Keycloak group or update the escalation configuration.
 
+### ApprovalGroupMembersResolved Condition: False (ambiguous approver group)
+
+**Cause:** A configured approver group matches more than one identity-provider
+group, so its members cannot be resolved authoritatively. The escalation (and,
+in multi-IDP mode, the IdentityProvider) shows a `Warning` event with reason
+`ApproverGroupAmbiguous`; the condition message lists the group as ambiguous.
+
+**Effect:** Cached members of the group are removed and the group has no entry
+in `status.approverGroupMembers`. Approvers whose token `groups` claim contains
+the exact group name can still approve. Pending and new sessions send no
+approval notifications to that group.
+
+**Diagnosis:**
+
+```bash
+kubectl get breakglassescalation <name> -o jsonpath='{.status.conditions[?(@.type=="ApprovalGroupMembersResolved")]}'
+kubectl get events --field-selector involvedObject.name=<name>,reason=ApproverGroupAmbiguous
+```
+
+**Solution:** Rename or remove the duplicate group in the identity provider
+(for example two groups that differ only in case), or disable the transitional
+`kubernetes.approverGroupCaseInsensitiveFallback` setting so only the exact
+name resolves.
+
 ## General Debug Commands
 
 View all resources:

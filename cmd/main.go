@@ -198,6 +198,10 @@ func run() error {
 	}
 
 	system.SetLogRedaction(cfg.Server.RedactLogs)
+	escalation.SetApproverGroupCaseInsensitiveFallback(cfg.Kubernetes.ApproverGroupCaseInsensitiveFallback)
+	if cfg.Kubernetes.ApproverGroupCaseInsensitiveFallback {
+		log.Warnw("Transitional kubernetes.approverGroupCaseInsensitiveFallback is enabled: approver groups may resolve by a unique case-insensitive Keycloak match")
+	}
 	if cfg.Server.RedactLogs {
 		log.Infow("Log redaction enabled via config")
 	}

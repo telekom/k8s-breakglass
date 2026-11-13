@@ -376,6 +376,33 @@
       "lastName": "Approver"
     },
     {
+      "username": "zam-approver-variant",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "zam-approver-variant@example.com",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "zam-approver-variant-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "offline_access",
+        "uma_authorization"
+      ],
+      "groups": [
+        "dttcaas-ZAM-TENANT.123_appowner"
+      ],
+      "attributes": {
+        "preferred_username": [
+          "zam-approver-variant"
+        ]
+      },
+      "firstName": "ZAM",
+      "lastName": "Approver Variant"
+    },
+    {
       "username": "test-user",
       "enabled": true,
       "emailVerified": true,
@@ -1969,6 +1996,9 @@
     },
     {
       "name": "dttcaas-ZAM-Tenant.123_appowner"
+    },
+    {
+      "name": "dttcaas-ZAM-TENANT.123_appowner"
     },
     {
       "name": "dev"

@@ -462,6 +462,13 @@ func parseDurationOrDefault(value string, defaultVal time.Duration) time.Duratio
 type Kubernetes struct {
 	Context      string   `yaml:"context"`
 	OIDCPrefixes []string `yaml:"oidcPrefixes"`
+	// ApproverGroupCaseInsensitiveFallback is a transitional opt-out for
+	// Keycloak approver group sync. By default only a group with the exact,
+	// case-sensitive configured name resolves. When true, a unique
+	// case-insensitive match is accepted if no exact match exists; several
+	// candidates still fail closed. Read at startup. Default: false.
+	// +optional
+	ApproverGroupCaseInsensitiveFallback bool `yaml:"approverGroupCaseInsensitiveFallback"`
 	// ClusterConfigCheckInterval controls how often ClusterConfig resources are validated (e.g. "10m").
 	// +optional
 	ClusterConfigCheckInterval string `yaml:"clusterConfigCheckInterval"`

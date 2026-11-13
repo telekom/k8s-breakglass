@@ -180,6 +180,9 @@ var TestUsers = struct {
 
 	// ZAMApprover carries a mixed-case ZAM appowner group used as an approver group.
 	ZAMApprover TestUser
+
+	// ZAMApproverVariant carries a group that differs from ZAMApprover's only in case.
+	ZAMApproverVariant TestUser
 }{
 	Requester: TestUser{
 		Username: "test-user",
@@ -475,6 +478,12 @@ var TestUsers = struct {
 		Password: "zam-approver-password",
 		Email:    "zam-approver@example.com",
 		Groups:   []string{"dttcaas-ZAM-Tenant.123_appowner"},
+	},
+	ZAMApproverVariant: TestUser{
+		Username: "zam-approver-variant",
+		Password: "zam-approver-variant-password",
+		Email:    "zam-approver-variant@example.com",
+		Groups:   []string{"dttcaas-ZAM-TENANT.123_appowner"},
 	},
 }
 

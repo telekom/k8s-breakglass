@@ -164,7 +164,6 @@ func ExpireActiveSessionsForUserAndGroup(ctx context.Context, cli client.Client,
 	return nil
 }
 
-// waitForSessionsDeleted polls until no active sessions exist for the given labels
 // waitForSessionsDeleted waits until none of the named sessions is still active.
 // Only the named sessions count: sanitized label values may also select
 // unrelated sessions whose group or cluster maps to the same label.

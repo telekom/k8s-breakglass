@@ -724,6 +724,30 @@ condition is `False` with reason `GroupNotFound`; mixed failures retain
 the condition message. In all cases, stale cached members are removed and a
 warning event identifies the missing group.
 
+#### Ambiguous approver groups
+
+Approver groups resolve by exact, case-sensitive name. When more than one
+identity-provider group matches a configured name (two exact matches, or two
+case variants with the transitional
+[`approverGroupCaseInsensitiveFallback`](configuration-reference.md#approvergroupcaseinsensitivefallback-optional-transitional)
+enabled), the lookup fails closed:
+
+- the controller emits a `Warning` event with reason `ApproverGroupAmbiguous`
+  on the escalation (and on the IdentityProvider in multi-IDP mode) and the
+  `ApprovalGroupMembersResolved` condition is `False` with the group listed as
+  ambiguous;
+- cached members of that group are removed, and the group gets **no** entry in
+  `status.approverGroupMembers` (not an empty list). Approval therefore still
+  works for approvers whose own token `groups` claim contains the exact group
+  name, because approval falls back to token groups for groups without resolved
+  members. This is safe: token groups are exact claims signed by the identity
+  provider and are never case-folded;
+- pending and new sessions send no approval notifications to that group,
+  because no members can be resolved for it.
+
+A not-found group is different: it is stored as an empty list, which blocks
+token-group approval and notifications for that group.
+
 #### Condition Reasons
 
 | Reason | Status | Description |

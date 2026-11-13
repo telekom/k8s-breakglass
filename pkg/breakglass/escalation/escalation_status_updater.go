@@ -7,9 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Nerzal/gocloak/v13"
@@ -38,6 +40,7 @@ const (
 	groupSyncReasonResolved       = "GroupMembersResolved"
 	groupSyncReasonEmpty          = "GroupMembersEmpty"
 	groupSyncReasonGroupNotFound  = "GroupNotFound"
+	groupSyncReasonGroupAmbiguous = "ApproverGroupAmbiguous"
 	groupSyncReasonNotRequired    = "NoApproverGroupsConfigured"
 	groupSyncReasonPartialFailure = "GroupSyncPartialFailure"
 	groupSyncReasonFailed         = "GroupSyncFailed"
@@ -261,9 +264,12 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 			"tokenLen", len(token),
 			"endpoint", fmt.Sprintf("%s/admin/realms/%s/groups", k.cfg.BaseURL, k.cfg.Realm))
 	}
+	// Exact search is case-sensitive in Keycloak. The transitional fallback
+	// needs the case-insensitive substring search to see case variants.
+	caseInsensitiveFallback := ApproverGroupCaseInsensitiveFallback()
 	params := gocloak.GetGroupsParams{
 		Search: gocloak.StringP(group),
-		Exact:  gocloak.BoolP(true),
+		Exact:  gocloak.BoolP(!caseInsensitiveFallback),
 	}
 	groups, err := k.gocloak.GetGroups(ctx, token, k.cfg.Realm, params)
 	if err != nil {
@@ -301,7 +307,7 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	}
 
 	// Find matching group by name
-	match, err := matchKeycloakGroup(groups, group)
+	match, err := matchKeycloakGroup(groups, group, caseInsensitiveFallback)
 	if err != nil {
 		if log != nil {
 			log.Errorw("Keycloak group search returned an unusable match",
@@ -484,12 +490,29 @@ func (k *KeycloakGroupMemberResolver) Members(ctx context.Context, group string)
 	return out, nil
 }
 
+// approverGroupCaseInsensitiveFallback holds the transitional
+// kubernetes.approverGroupCaseInsensitiveFallback setting.
+var approverGroupCaseInsensitiveFallback atomic.Bool
+
+// SetApproverGroupCaseInsensitiveFallback sets the transitional opt-out that
+// lets approver group sync accept a unique case-insensitive Keycloak group
+// match when no group has the exact configured name. Default: false.
+func SetApproverGroupCaseInsensitiveFallback(enabled bool) {
+	approverGroupCaseInsensitiveFallback.Store(enabled)
+}
+
+// ApproverGroupCaseInsensitiveFallback reports the transitional opt-out.
+func ApproverGroupCaseInsensitiveFallback() bool {
+	return approverGroupCaseInsensitiveFallback.Load()
+}
+
 // matchKeycloakGroup selects the configured group from a Keycloak search
-// result. Group names such as ZAM roles are case-sensitive identities, so an
-// exact match always wins. A case-insensitive match is accepted only when it is
-// unique; names that differ only in case fail closed instead of resolving the
-// members of an arbitrary group. It returns nil when no group matches.
-func matchKeycloakGroup(groups []*gocloak.Group, name string) (*gocloak.Group, error) {
+// result. Group names such as ZAM roles are case-sensitive identities, so only
+// the exact name matches. With caseInsensitiveFallback (transitional opt-out)
+// a case-insensitive match is accepted when no exact match exists and it is
+// unique. More than one candidate always fails closed with a
+// breakglass.ErrGroupAmbiguous error. It returns nil when no group matches.
+func matchKeycloakGroup(groups []*gocloak.Group, name string, caseInsensitiveFallback bool) (*gocloak.Group, error) {
 	var exact, folded []*gocloak.Group
 	for _, g := range groups {
 		if g == nil || g.Name == nil {
@@ -503,16 +526,14 @@ func matchKeycloakGroup(groups []*gocloak.Group, name string) (*gocloak.Group, e
 		}
 	}
 	candidates := exact
-	if len(candidates) == 0 {
+	if len(candidates) == 0 && caseInsensitiveFallback {
 		candidates = folded
 	}
 	switch {
 	case len(candidates) == 0:
 		return nil, nil
 	case len(candidates) > 1:
-		// Classified as not found so the updaters drop cached members
-		// instead of retaining approvers from an earlier first-match lookup.
-		return nil, fmt.Errorf("%w (%d groups match ambiguously)", breakglass.NewGroupNotFoundError(name), len(candidates))
+		return nil, breakglass.NewGroupAmbiguousError(name, len(candidates))
 	case candidates[0].ID == nil || strings.TrimSpace(*candidates[0].ID) == "":
 		return nil, fmt.Errorf("keycloak group %q matched without an ID", name)
 	}
@@ -677,6 +698,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 
 		var emptyGroups []string
 		var missingGroups []string
+		var ambiguousGroups []string
 		syncErrorCount := 0
 		var syncStatus string
 
@@ -701,6 +723,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			syncErrorCount = len(syncErrors)
 			emptyGroups = syncReport.emptyGroups
 			missingGroups = syncReport.missingGroups
+			ambiguousGroups = syncReport.ambiguousGroups
 
 			// Store full IDP hierarchy in status (NOT deduplicated)
 			if !equalIDPHierarchy(hierarchy, updated.Status.IDPGroupMemberships) {
@@ -717,6 +740,15 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 			for _, g := range groups {
 				dedupMembers := deduplicateMembersFromHierarchy(hierarchy, g)
 				currentMembers, exists := updated.Status.ApproverGroupMembers[g]
+				if len(dedupMembers) == 0 && slices.Contains(ambiguousGroups, g) {
+					// No authoritative membership: drop the entry so approval
+					// falls back to exact token groups instead of an empty list.
+					if exists {
+						delete(updated.Status.ApproverGroupMembers, g)
+						changed = true
+					}
+					continue
+				}
 				if !exists || !equalStringSlices(dedupMembers, currentMembers) {
 					updated.Status.ApproverGroupMembers[g] = dedupMembers
 					changed = true
@@ -733,6 +765,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				groupSyncConditionDetails{
 					emptyGroups:         emptyGroups,
 					missingGroups:       syncReport.missingGroups,
+					ambiguousGroups:     syncReport.ambiguousGroups,
 					missingFailureCount: syncReport.missingFailureCount,
 				}) {
 				changed = true
@@ -765,6 +798,17 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 							missingGroups = append(missingGroups, g)
 							missingFailureCount++
 							log.Warnw("Configured approver group was not found; removed stale members from escalation status",
+								"group", system.RedactGroupName(g),
+								"escalation", esc.Name)
+						} else if breakglass.IsGroupAmbiguous(err) {
+							// No authoritative membership: drop the entry so approval
+							// falls back to exact token groups instead of an empty list.
+							if _, exists := updated.Status.ApproverGroupMembers[g]; exists {
+								delete(updated.Status.ApproverGroupMembers, g)
+								changed = true
+							}
+							ambiguousGroups = append(ambiguousGroups, g)
+							log.Warnw("Configured approver group is ambiguous; removed cached members from escalation status",
 								"group", system.RedactGroupName(g),
 								"escalation", esc.Name)
 						}
@@ -802,6 +846,7 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 				groupSyncConditionDetails{
 					emptyGroups:         uniqueSortedGroupNames(emptyGroups),
 					missingGroups:       uniqueSortedGroupNames(missingGroups),
+					ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
 					missingFailureCount: missingFailureCount,
 				}) {
 				changed = true
@@ -846,6 +891,10 @@ func (u EscalationStatusUpdater) runOnce(ctx context.Context, log *zap.SugaredLo
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonEmpty, groupSyncReasonEmpty,
 							"Group member sync completed, but configured approver group(s) have no members: %s. Sessions may remain pending until approval timeout.",
 							strings.Join(uniqueSortedGroupNames(emptyGroups), ", "))
+					} else if len(ambiguousGroups) > 0 {
+						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupAmbiguous, groupSyncReasonGroupAmbiguous,
+							"Configured approver group(s) match more than one identity-provider group: %s. Cached approvers were removed; approval by exact token group still applies.",
+							strings.Join(uniqueSortedGroupNames(ambiguousGroups), ", "))
 					} else if len(missingGroups) > 0 {
 						u.EventRecorder.Eventf(updated, nil, "Warning", groupSyncReasonGroupNotFound, groupSyncReasonGroupNotFound,
 							"Configured approver group(s) were not found: %s. Stale cached approvers were removed.",
@@ -1008,12 +1057,14 @@ type groupSyncReport struct {
 	syncErrors          []string
 	emptyGroups         []string
 	missingGroups       []string
+	ambiguousGroups     []string
 	missingFailureCount int
 }
 
 type groupSyncConditionDetails struct {
 	emptyGroups         []string
 	missingGroups       []string
+	ambiguousGroups     []string
 	missingFailureCount int
 }
 
@@ -1042,6 +1093,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 	var syncErrors []string
 	var emptyGroups []string
 	var missingGroups []string
+	var ambiguousGroups []string
 	missingFailureCount := 0
 	successCount := 0
 	failureCount := 0
@@ -1074,6 +1126,8 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 				if breakglass.IsGroupNotFound(err) {
 					missingGroups = append(missingGroups, g)
 					missingFailureCount++
+				} else if breakglass.IsGroupAmbiguous(err) {
+					ambiguousGroups = append(ambiguousGroups, g)
 				} else if cachedIDP, ok := escalation.Status.IDPGroupMemberships[""]; ok {
 					if cachedMembers, ok := cachedIDP[g]; ok {
 						groupMembers[g] = cachedMembers
@@ -1097,6 +1151,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 			syncErrors:          syncErrors,
 			emptyGroups:         uniqueSortedGroupNames(emptyGroups),
 			missingGroups:       uniqueSortedGroupNames(missingGroups),
+			ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
 			missingFailureCount: missingFailureCount,
 		}
 	}
@@ -1156,6 +1211,8 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 				if breakglass.IsGroupNotFound(err) {
 					missingGroups = append(missingGroups, g)
 					missingFailureCount++
+				} else if breakglass.IsGroupAmbiguous(err) {
+					ambiguousGroups = append(ambiguousGroups, g)
 				}
 
 				// Emit event on IdentityProvider resource
@@ -1164,7 +1221,12 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 					idp.SetName(idpName)
 					eventReason := "GroupFetchFailed"
 					eventMessage := "Failed to fetch group %s for escalation %s/%s: %v"
-					if breakglass.IsGroupNotFound(err) {
+					if breakglass.IsGroupAmbiguous(err) {
+						eventReason = groupSyncReasonGroupAmbiguous
+						u.EventRecorder.Eventf(idp, nil, "Warning", eventReason, eventReason,
+							"Configured group %s matches more than one group in IdentityProvider %s for escalation %s/%s",
+							system.RedactGroupName(g), idpName, escalation.Namespace, escalation.Name)
+					} else if breakglass.IsGroupNotFound(err) {
 						eventReason = groupSyncReasonGroupNotFound
 						eventMessage = "Configured group %s was not found in IdentityProvider %s for escalation %s/%s"
 						u.EventRecorder.Eventf(idp, nil, "Warning", eventReason, eventReason,
@@ -1177,7 +1239,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 					}
 				}
 
-				if !breakglass.IsGroupNotFound(err) && escalation.Status.IDPGroupMemberships != nil {
+				if !breakglass.IsGroupNotFound(err) && !breakglass.IsGroupAmbiguous(err) && escalation.Status.IDPGroupMemberships != nil {
 					if cachedIDP, ok := escalation.Status.IDPGroupMemberships[idpName]; ok {
 						if cachedMembers, ok := cachedIDP[g]; ok {
 							idpGroupMembers[g] = cachedMembers
@@ -1251,6 +1313,7 @@ func (u EscalationStatusUpdater) fetchGroupMembersFromMultipleIDPsReport(
 		syncErrors:          syncErrors,
 		emptyGroups:         uniqueSortedGroupNames(emptyApproverGroups(hierarchy, groups)),
 		missingGroups:       uniqueSortedGroupNames(missingGroups),
+		ambiguousGroups:     uniqueSortedGroupNames(ambiguousGroups),
 		missingFailureCount: missingFailureCount,
 	}
 }
@@ -1317,10 +1380,13 @@ func updateApprovalGroupMembersResolvedCondition(
 }
 
 func appendMissingGroupDetails(message string, details groupSyncConditionDetails) string {
-	if len(details.missingGroups) == 0 {
-		return message
+	if len(details.missingGroups) > 0 {
+		message = fmt.Sprintf("%s Configured group(s) not found: %s.", message, strings.Join(details.missingGroups, ", "))
 	}
-	return fmt.Sprintf("%s Configured group(s) not found: %s.", message, strings.Join(details.missingGroups, ", "))
+	if len(details.ambiguousGroups) > 0 {
+		message = fmt.Sprintf("%s Configured group(s) ambiguous: %s.", message, strings.Join(uniqueSortedGroupNames(details.ambiguousGroups), ", "))
+	}
+	return message
 }
 
 func emptyApproverGroups(hierarchy map[string]map[string][]string, groups []string) []string {
