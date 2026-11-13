@@ -362,11 +362,18 @@ All commands support these flags:
 - `--config` - Path to config file (default: `~/.config/bgctl/config.yaml`)
 - `--server` - Override server URL (bypasses context)
 - `--token` - Bearer token override (bypasses OIDC)
-- `--verbose` / `-v` - Enable verbose output with correlation IDs for debugging (writes to stderr)
+- `--verbose` / `-v` - Log each API request with its correlation ID; same as `--log-level=debug`
+- `--log-level` - Diagnostic log level: `debug`, `info`, `warn`, `error` (default `warn`, or `debug` with `--verbose`)
+- `--log-format` - Diagnostic log format: `console` (default) or `json`
 - `--page` - Page number for paginated output
 - `--page-size` - Items per page
 - `--all` - Disable pagination
 - `--non-interactive` - Fail instead of prompting for input
+
+Diagnostic logs always go to stderr. Command output (`-o table|wide|json|yaml`)
+goes to stdout, so `bgctl ... -o json --log-format=json 2>bgctl.log | jq` keeps
+the two apart. Logs never contain the bearer token. See the
+[Logging Reference](logging-reference.md).
 
 ### Environment Variables
 
@@ -376,7 +383,8 @@ Global flags can also be set via environment variables:
 - `BGCTL_OUTPUT` - Output format
 - `BGCTL_SERVER` - Server URL override
 - `BGCTL_TOKEN` - Bearer token override
-- `BGCTL_VERBOSE` - Set to `true` to enable verbose logging (output goes to stderr)
+- `BGCTL_VERBOSE` - Set to `true` for `--verbose`
+- `LOG_LEVEL`, `LOG_FORMAT` - Defaults for `--log-level` and `--log-format`
 - `BGCTL_NON_INTERACTIVE` - Set to `true` to disable interactive prompts
 
 ### Local File Permissions

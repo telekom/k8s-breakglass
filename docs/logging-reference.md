@@ -22,16 +22,34 @@ literal field key must regenerate the catalogue.
 |---------|---------|--------|--------|--------|
 | Controller (`/breakglass`, `cmd/main.go`) | `breakglass-manager` Deployment. Covers the hub API, frontend, SubjectAccessReview webhook, validating webhooks, reconcilers, cleanup, audit, mail, leader election, debug sessions, terminal recordings and artifacts | zap | debug, info, warn, error | `json` (default) or `console` on stderr |
 | `breakglass artifacts provision` (`cmd/artifacts.go`) | one-off subcommand of the controller binary | plain text | none | text on stdout; `fatal: …` on stderr |
-| `bgctl` (`cmd/bgctl`) | operator CLI | plain text | `--verbose` / `BGCTL_VERBOSE=true` | the verbose request trace (`[DEBUG] [bgctl] METHOD path (correlationID=…)`, then `-> status`) goes to stderr; command output goes to stdout (`-o table\|wide\|json\|yaml`) |
-| `cluster-validator` (`cmd/cluster-validator`) | validator image | plain text | none | `cluster-validator: <error>` on stderr; the JSON report on stdout or a file |
+| `bgctl` (`cmd/bgctl`) | operator CLI | zap | warn by default; debug with `--verbose` | `console` (default) or `json` on stderr. Debug lines log each API request (`METHOD path (correlationID=…)` and `-> status`), never the token. Command output goes to stdout (`-o table\|wide\|json\|yaml`) and never mixes with the logs |
+| `cluster-validator` (`cmd/cluster-validator`) | validator image | zap | info by default; only errors are logged | `text` (default: `cluster-validator: <error>`), `json` or `console` on stderr; the JSON report goes to stdout or a file |
 | Node-maintenance helpers: `utils/node-maintenance/cmd/hotfix-action`, `utils/node-maintenance/cmd/kexec-action`, `utils/node-maintenance/cmd/network-action`, `utils/node-maintenance/cmd/service-action`, and the `node-maintenance` shell entrypoint | node-maintenance utility image | plain text | none | `<name>: <error>` on stderr; `hotfix-action` writes its JSON result to stdout and the termination log |
 | Diagnostic artifact collector: `utils/images/diagnostic-artifact-collector/copier`, `utils/images/diagnostic-artifact-collector/uploader`, and the shell entrypoint | artifact collection pod | plain text | none | `diagnostic-artifact-collector: …` on stderr. The uploader replaces upload URLs, tokens and archive paths with `[URL]`, `[TOKEN]` and `[ARCHIVE]` |
 | `utils/network-debug/tools` (`fetch`) | network-debug image build only; not in the runtime image | plain text | none | errors on stderr during the image build |
 | `dump-reader`, `storage-debug`, `network-debug`, `workload-debug` images | debug-session pods | shell `printf`/`echo` | none | `<name>: <message>` on stderr. The third-party tools built into them (`pwru`, `kubestr`) keep their own logging |
 | Frontend | browser (the controller serves the files) | browser console | debug only in a development build (`?debugLogs=` or the `breakglass:debugLogs` local-storage key) | browser console; nothing is sent to the server |
 
-Only the controller has log levels. The rest of this page covers the
-controller.
+The controller, `bgctl` and `cluster-validator` take `--log-level` and
+`--log-format` and the `LOG_LEVEL` and `LOG_FORMAT` environment variables,
+through the shared package `pkg/logging`. A flag overrides its variable.
+
+| Program | Default level | Default format | Formats |
+|---------|---------------|----------------|---------|
+| Controller | `info` (`debug` with the deprecated `--debug`) | `json` (`console` with `--debug`) | `json`, `console` |
+| `bgctl` | `warn` (`debug` with `--verbose`) | `console` | `json`, `console`, `text` |
+| `cluster-validator` | `info` | `text` | `json`, `console`, `text` |
+
+The node-maintenance helpers, the artifact collector binaries and the shell
+entrypoints do not take these settings. Each is built from its own directory
+with `GO111MODULE=off` and only the standard library, so that the image's build
+context and dependencies stay minimal. Their argument lists are also fixed:
+for example, `kexec-action` takes exactly five arguments and the uploader only
+`--archive /output/artifact.tar.gz`, and any extra flag is rejected. Each writes
+at most one error line before it exits, so a level would have nothing to
+select.
+
+The rest of this page covers the controller.
 
 ## Controller
 

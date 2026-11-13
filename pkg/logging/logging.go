@@ -9,16 +9,20 @@ package logging
 import (
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-// Accepted --log-format values.
+// Accepted --log-format values. FormatText is accepted by NewWriter only.
 const (
 	FormatJSON    = "json"
 	FormatConsole = "console"
+	// FormatText writes "<logger name>: <message>" per line, the historical
+	// error output of the command-line tools.
+	FormatText = "text"
 )
 
 // Options holds the values of --log-level and --log-format.
@@ -34,7 +38,7 @@ func (o *Options) AddFlags(fs *flag.FlagSet, defaultLevel, defaultFormat string)
 	fs.StringVar(&o.Level, "log-level", envOr("LOG_LEVEL", defaultLevel),
 		"Log level: debug, info, warn or error (env LOG_LEVEL)")
 	fs.StringVar(&o.Format, "log-format", envOr("LOG_FORMAT", defaultFormat),
-		"Log format: json or console (env LOG_FORMAT)")
+		"Log format: json, console or text where supported (env LOG_FORMAT)")
 }
 
 func envOr(key, def string) string {
@@ -59,14 +63,9 @@ func New(level, format string) (*zap.Logger, error) {
 	default:
 		return nil, fmt.Errorf("invalid log format %q: must be json or console", format)
 	}
-	var lvl zapcore.Level
-	switch level {
-	case "debug", "info", "warn", "error":
-		if err := lvl.UnmarshalText([]byte(level)); err != nil {
-			return nil, fmt.Errorf("parse log level %q: %w", level, err)
-		}
-	default:
-		return nil, fmt.Errorf("invalid log level %q: must be debug, info, warn or error", level)
+	lvl, err := parseLevel(level)
+	if err != nil {
+		return nil, err
 	}
 	cfg.Level = zap.NewAtomicLevelAt(lvl)
 	cfg.EncoderConfig.StacktraceKey = "" // Disable stacktrace field entirely
@@ -75,4 +74,51 @@ func New(level, format string) (*zap.Logger, error) {
 		return nil, fmt.Errorf("unable to create logger (level %s, format %s): %w", level, format, err)
 	}
 	return logger, nil
+}
+
+// NewWriter creates a logger for a command-line tool that writes to w. It
+// accepts the formats of New and FormatText, and does not sample.
+func NewWriter(w io.Writer, level, format string) (*zap.Logger, error) {
+	lvl, err := parseLevel(level)
+	if err != nil {
+		return nil, err
+	}
+	sink := zapcore.Lock(zapcore.AddSync(w))
+	opts := []zap.Option{zap.ErrorOutput(sink)}
+	var enc zapcore.Encoder
+	switch format {
+	case FormatJSON:
+		ec := zap.NewProductionEncoderConfig()
+		ec.StacktraceKey = ""
+		enc = zapcore.NewJSONEncoder(ec)
+		opts = append(opts, zap.AddCaller())
+	case FormatConsole:
+		ec := zap.NewDevelopmentEncoderConfig()
+		ec.StacktraceKey = ""
+		enc = zapcore.NewConsoleEncoder(ec)
+		opts = append(opts, zap.AddCaller())
+	case FormatText:
+		enc = zapcore.NewConsoleEncoder(zapcore.EncoderConfig{
+			MessageKey:       "msg",
+			NameKey:          "logger",
+			EncodeName:       zapcore.FullNameEncoder,
+			ConsoleSeparator: ": ",
+		})
+	default:
+		return nil, fmt.Errorf("invalid log format %q: must be json, console or text", format)
+	}
+	return zap.New(zapcore.NewCore(enc, sink, lvl), opts...), nil
+}
+
+func parseLevel(level string) (zapcore.Level, error) {
+	var lvl zapcore.Level
+	switch level {
+	case "debug", "info", "warn", "error":
+		if err := lvl.UnmarshalText([]byte(level)); err != nil {
+			return lvl, fmt.Errorf("parse log level %q: %w", level, err)
+		}
+		return lvl, nil
+	default:
+		return lvl, fmt.Errorf("invalid log level %q: must be debug, info, warn or error", level)
+	}
 }

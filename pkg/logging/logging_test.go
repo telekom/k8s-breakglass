@@ -151,3 +151,61 @@ func TestAddFlags(t *testing.T) {
 		})
 	}
 }
+
+func TestNewWriter(t *testing.T) {
+	tests := []struct {
+		name, level, format string
+		want                func(t *testing.T, out string)
+		wantErr             string
+	}{
+		{name: "text keeps the historical tool output", level: "info", format: FormatText, want: func(t *testing.T, out string) {
+			if out != "tool: boom\n" {
+				t.Fatalf("output %q", out)
+			}
+		}},
+		{name: "json", level: "debug", format: FormatJSON, want: func(t *testing.T, out string) {
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if len(lines) != 2 {
+				t.Fatalf("want debug and error lines, got %q", out)
+			}
+			for _, line := range lines {
+				var e map[string]any
+				if err := json.Unmarshal([]byte(line), &e); err != nil {
+					t.Fatalf("not JSON: %s", line)
+				}
+				if e["logger"] != "tool" || e["caller"] == nil || e["ts"] == nil {
+					t.Fatalf("fields: %s", line)
+				}
+			}
+		}},
+		{name: "console", level: "warn", format: FormatConsole, want: func(t *testing.T, out string) {
+			if !strings.Contains(out, "ERROR\ttool\t") || strings.Contains(out, "debug line") {
+				t.Fatalf("output %q", out)
+			}
+		}},
+		{name: "text is not a controller format", level: "info", format: "yaml", wantErr: `invalid log format "yaml"`},
+		{name: "bad level", level: "trace", format: FormatText, wantErr: `invalid log level "trace"`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			logger, err := NewWriter(&buf, tt.level, tt.format)
+			if tt.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+					t.Fatalf("error %v, want %q", err, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			logger = logger.Named("tool")
+			logger.Debug("debug line")
+			logger.Error("boom")
+			tt.want(t, buf.String())
+		})
+	}
+	if _, err := New("info", FormatText); err == nil {
+		t.Fatal("New must reject the text format")
+	}
+}

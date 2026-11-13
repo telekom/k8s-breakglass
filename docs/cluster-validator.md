@@ -93,6 +93,15 @@ Equivalent environment variables are `VALIDATOR_MODE`,
 `VALIDATOR_TIMEOUT`, `VALIDATOR_INCLUDE_TIMESTAMP`, and
 `VALIDATOR_SKIP_PODS`. CLI flags take precedence over environment variables.
 
+Errors go to stderr. `--log-level` (`LOG_LEVEL`: `debug`, `info`, `warn`,
+`error`; default `info`) and `--log-format` (`LOG_FORMAT`: `text`, `json`,
+`console`; default `text`) control them. `text` writes the historical
+`cluster-validator: <error>` lines; `json` writes one JSON object per line
+with `level`, `ts`, `logger` (`cluster-validator`), `caller` and `msg`. The
+report on stdout and in the report file is not affected. In the
+`debug-session-catalogue` chart, add the flags to the `args` of the cluster
+validation profile.
+
 The identity needs read access to `nodes`, `namespaces`, and `pods`, plus
 discovery access. A minimal starting point is:
 

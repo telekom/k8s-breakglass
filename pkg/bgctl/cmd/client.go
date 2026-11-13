@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -30,11 +29,9 @@ func buildClient(cmdCtx context.Context, rt *runtimeState) (*client.Client, erro
 		}
 		// No TLS config when bypassing - user is responsible for providing valid server URL
 		options = append(options, client.WithTLSConfig("", false))
-		// Add verbose logging if enabled - write to stderr to avoid corrupting JSON output
-		if rt.verbose {
-			options = append(options, client.WithVerbose(func(format string, args ...any) {
-				_, _ = fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", args...)
-			}))
+		// Log requests at debug level to stderr, never into the data output.
+		if logf := rt.requestLogger(); logf != nil {
+			options = append(options, client.WithVerbose(logf))
 		}
 		return client.New(options...)
 	}
@@ -71,11 +68,9 @@ func buildClient(cmdCtx context.Context, rt *runtimeState) (*client.Client, erro
 	}
 	// TLS config should be applied after timeout to ensure timeout is set on the http client
 	options = append(options, client.WithTLSConfig(resolveCAFile(ctxCfg, rt), ctxCfg.InsecureSkipTLSVerify))
-	// Add verbose logging if enabled - write to stderr to avoid corrupting JSON output
-	if rt.verbose {
-		options = append(options, client.WithVerbose(func(format string, args ...any) {
-			_, _ = fmt.Fprintf(os.Stderr, "[DEBUG] "+format+"\n", args...)
-		}))
+	// Log requests at debug level to stderr, never into the data output.
+	if logf := rt.requestLogger(); logf != nil {
+		options = append(options, client.WithVerbose(logf))
 	}
 	return client.New(options...)
 }

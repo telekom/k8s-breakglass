@@ -18,3 +18,9 @@ section: Upgrade notes
   `error`, `cid`, `method` and `path`, without the request dump that included
   the request headers. client-go (klog) and Go standard-library log output now
   goes through the controller logger and uses `--log-format`.
+- `bgctl` and `cluster-validator` take `--log-level` and `--log-format`
+  (`LOG_LEVEL`, `LOG_FORMAT`). `bgctl` logs to stderr at `warn` in the
+  `console` format by default; `--verbose` now means `--log-level=debug`, and
+  its request lines use the logger format instead of `[DEBUG] [bgctl] …`.
+  `cluster-validator` keeps its `cluster-validator: <error>` output (format
+  `text`) by default.

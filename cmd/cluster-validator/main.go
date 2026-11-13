@@ -19,6 +19,8 @@ import (
 	"time"
 
 	"github.com/telekom/k8s-breakglass/pkg/clustervalidator"
+	"github.com/telekom/k8s-breakglass/pkg/logging"
+	"go.uber.org/zap"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -41,6 +43,7 @@ type options struct {
 	timeout          time.Duration
 	includeTimestamp bool
 	skipPods         bool
+	log              logging.Options
 }
 
 func main() {
@@ -56,24 +59,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
 		return 2
 	}
+	logger, err := logging.NewWriter(stderr, opts.log.Level, opts.log.Format)
+	if err != nil {
+		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		return 2
+	}
+	log := logger.Named("cluster-validator")
+	defer func() { _ = log.Sync() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
 	defer cancel()
 	config, err := clientConfig(opts)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not load Kubernetes client configuration", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 	config.Timeout = opts.timeout
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not create Kubernetes client", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
 		report := failureReport(opts.mode, "configuration", "could not create Kubernetes discovery client", opts.includeTimestamp)
-		return writeResult(report, opts.reportPath, stdout, stderr, 2)
+		return writeResult(report, opts.reportPath, stdout, log, 2)
 	}
 
 	report := clustervalidator.NewValidator(clustervalidator.BuiltinChecks(opts.skipPods)...).ValidateWithPodIdentity(
@@ -88,16 +98,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 		},
 	)
 	if err := writeReport(report, opts.reportPath); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator: write report to stdout:", err)
+		log.Error("write report to stdout: " + err.Error())
 		return 2
 	}
 	if report.Status != clustervalidator.StatusReady {
@@ -137,6 +147,8 @@ func parseOptions(args []string) (options, error) {
 	}
 	fs.BoolVar(&includeTimestamp, "include-timestamp", includeTimestamp, "include a non-deterministic UTC generatedAt field")
 	fs.BoolVar(&skipPods, "skip-pods", skipPods, "skip the cluster-wide pod readiness check")
+	var logOpts logging.Options
+	logOpts.AddFlags(fs, "info", logging.FormatText)
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -160,7 +172,7 @@ func parseOptions(args []string) (options, error) {
 		// overwrite a one-time report.
 		reportPath = filepath.Join(defaultReportDirectory, mode+".json")
 	}
-	return options{mode: mode, reportPath: reportPath, kubeconfig: kubeconfig, contextName: contextName, timeout: timeout, includeTimestamp: includeTimestamp, skipPods: skipPods}, nil
+	return options{mode: mode, reportPath: reportPath, kubeconfig: kubeconfig, contextName: contextName, timeout: timeout, includeTimestamp: includeTimestamp, skipPods: skipPods, log: logOpts}, nil
 }
 
 func clientConfig(opts options) (*rest.Config, error) {
@@ -287,14 +299,14 @@ func safeReportPath(path, root string) (string, string, error) {
 	return root, relativePath, nil
 }
 
-func writeResult(report clustervalidator.Report, path string, stdout, stderr io.Writer, exitCode int) int {
+func writeResult(report clustervalidator.Report, path string, stdout io.Writer, log *zap.Logger, exitCode int) int {
 	if err := writeReport(report, path); err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	data, err := clustervalidator.MarshalReport(report)
 	if err != nil {
-		_, _ = fmt.Fprintln(stderr, "cluster-validator:", err)
+		log.Error(err.Error())
 		return 2
 	}
 	if _, err := stdout.Write(data); err != nil {

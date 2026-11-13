@@ -6,13 +6,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/telekom/k8s-breakglass/pkg/clustervalidator"
+	"go.uber.org/zap"
 )
 
 func TestParseOptionsUsesModeSpecificDefaultReport(t *testing.T) {
@@ -48,7 +51,7 @@ func TestRunHelpExitsSuccessfully(t *testing.T) {
 func TestWriteResultProducesContractAndExitCode(t *testing.T) {
 	var output bytes.Buffer
 	report := failureReport(clustervalidator.ModeOneTime, "configuration", "test failure", false)
-	exitCode := writeResult(report, "-", &output, &output, 1)
+	exitCode := writeResult(report, "-", &output, zap.NewNop(), 1)
 	require.Equal(t, 1, exitCode)
 	require.Contains(t, output.String(), `"apiVersion": "cluster-validator.telekom.com/v1alpha1"`)
 	require.Contains(t, output.String(), `"status": "not-ready"`)
@@ -110,4 +113,30 @@ func TestWriteReportPreservesExistingDestination(t *testing.T) {
 	contents, err := os.ReadFile(destination)
 	require.NoError(t, err)
 	require.Equal(t, []byte("existing report"), contents)
+}
+
+// TestRunLogFormats proves the error output: plain "cluster-validator: …"
+// lines by default, and one JSON object per line with --log-format=json.
+func TestRunLogFormats(t *testing.T) {
+	t.Setenv("LOG_LEVEL", "")
+	t.Setenv("LOG_FORMAT", "")
+	args := []string{"--kubeconfig", "/does/not/exist", "--report", filepath.Join(t.TempDir(), "outside", "report.json")}
+
+	var stdout, stderr bytes.Buffer
+	require.Equal(t, 2, run(args, &stdout, &stderr))
+	require.Regexp(t, `^cluster-validator: [^\n{]+\n$`, stderr.String())
+	want := strings.TrimSuffix(strings.TrimPrefix(stderr.String(), "cluster-validator: "), "\n")
+
+	stderr.Reset()
+	require.Equal(t, 2, run(append([]string{"--log-format=json"}, args...), &stdout, &stderr))
+	var entry map[string]any
+	require.NoError(t, json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &entry), "stderr: %s", stderr.String())
+	require.Equal(t, "error", entry["level"])
+	require.Equal(t, "cluster-validator", entry["logger"])
+	require.Equal(t, want, entry["msg"])
+
+	stderr.Reset()
+	t.Setenv("LOG_LEVEL", "verbose")
+	require.Equal(t, 2, run(args, &stdout, &stderr))
+	require.Contains(t, stderr.String(), `cluster-validator: invalid log level "verbose"`)
 }
