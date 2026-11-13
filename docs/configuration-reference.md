@@ -259,10 +259,45 @@ and `clientCAFile` at startup and refuses to start on an unknown mode, a
 missing or empty CA bundle, or a mode/CA mismatch. Cleanup-only and
 webhook-only deployments (`--enable-frontend=false --enable-api=false`) do not
 start this listener and skip the check, so they can share the config without
-mounting the client CA. The file is read once at startup, like `tlsCertFile` and
-`tlsKeyFile` (the server certificate is not hot-reloaded either): restart the
-pods after rotating the client CA. During a rotation, put the old and the new
-CA in the same bundle.
+mounting the client CA. The server re-reads the file while it runs (see
+[`tlsReloadDisabled`](#tlsreloaddisabled-optional)). During a rotation, put the
+old and the new CA in the same bundle until every client has a certificate from
+the new CA.
+
+#### `tlsReloadDisabled` (Optional)
+
+By default the HTTPS server reloads `tlsCertFile`/`tlsKeyFile` and
+`clientCAFile` when they change, so a renewed certificate (for example from
+cert-manager into a mounted Secret) is served without a pod restart.
+
+| Property | Value |
+|----------|-------|
+| **Type** | `bool` |
+| **Default** | `false` (reload) |
+
+- The certificate and key are watched with controller-runtime's
+  `certwatcher` (file events, plus a poll every 10 seconds). The client CA
+  bundle is re-read every 10 seconds.
+- A change applies to new TLS connections. Established keep-alive
+  connections keep the certificate they were opened with.
+- A Secret volume update reaches the pod after the kubelet sync (up to about
+  a minute), then within 10 seconds of that.
+- A file that cannot be read or parsed (for example a key that does not match
+  the certificate during a partial write) is logged and the previous
+  certificate or CA bundle stays in use.
+- Startup validation is unchanged: missing or invalid files at startup still
+  stop the server.
+
+`tlsReloadDisabled: true` restores the previous behaviour: the files are read
+once at startup and the pods must be restarted after a rotation. This is a
+transitional opt-out and will be removed in a future release.
+
+```yaml
+server:
+  tlsCertFile: /etc/breakglass/tls.crt
+  tlsKeyFile: /etc/breakglass/tls.key
+  tlsReloadDisabled: true # transitional: read the files once at startup
+```
 
 ---
 

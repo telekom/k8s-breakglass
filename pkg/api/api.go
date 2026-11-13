@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-contrib/cors"
@@ -38,6 +39,8 @@ import (
 	"github.com/telekom/k8s-breakglass/pkg/webhook"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 )
 
 type APIController interface {
@@ -704,14 +707,18 @@ func (s *Server) Listen() {
 
 	var err error
 	if s.config.Server.TLSCertFile != "" && s.config.Server.TLSKeyFile != "" {
-		s.httpServer.TLSConfig, err = serverTLSConfig(s.config.Server)
+		// The reload watchers live as long as the server.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		s.httpServer.TLSConfig, err = reloadingTLSConfig(ctx, s.config.Server, s.log.Sugar())
 		if err != nil {
 			s.log.Sugar().Errorw("Invalid server TLS configuration", "error", err)
 			return
 		}
 		s.log.Sugar().Infow("Starting HTTPS server", "address", s.config.Server.ListenAddress,
-			"tlsMinVersion", "TLS 1.2", "clientAuth", s.httpServer.TLSConfig.ClientAuth.String())
-		err = s.httpServer.ListenAndServeTLS(s.config.Server.TLSCertFile, s.config.Server.TLSKeyFile)
+			"tlsMinVersion", "TLS 1.2", "clientAuth", s.httpServer.TLSConfig.ClientAuth.String(),
+			"tlsReload", !s.config.Server.TLSReloadDisabled)
+		err = s.httpServer.ListenAndServeTLS(tlsFiles(s.config.Server))
 	} else {
 		s.log.Sugar().Infow("Starting HTTP server", "address", s.config.Server.ListenAddress)
 		err = s.httpServer.ListenAndServe()
@@ -741,6 +748,79 @@ func serverTLSConfig(cfg config.Server) (*tls.Config, error) {
 		ClientAuth: clientAuth,
 		ClientCAs:  clientCAs,
 	}, nil
+}
+
+// clientCAReloadInterval is how often the client CA bundle is re-read; it
+// matches the certwatcher poll interval.
+var clientCAReloadInterval = 10 * time.Second
+
+// tlsFiles returns the certificate files for ListenAndServeTLS: none when
+// reloadingTLSConfig serves the certificate itself.
+func tlsFiles(cfg config.Server) (certFile, keyFile string) {
+	if cfg.TLSReloadDisabled {
+		return cfg.TLSCertFile, cfg.TLSKeyFile
+	}
+	return "", ""
+}
+
+// reloadingTLSConfig returns serverTLSConfig(cfg). Unless
+// cfg.TLSReloadDisabled is set, the serving certificate and the client CA
+// bundle are re-read from disk while ctx is alive, so a rotated Secret takes
+// effect for new connections without a restart. A file that fails to load
+// keeps the previous certificate or CA bundle in use.
+func reloadingTLSConfig(ctx context.Context, cfg config.Server, log *zap.SugaredLogger) (*tls.Config, error) {
+	tlsCfg, err := serverTLSConfig(cfg)
+	if err != nil || cfg.TLSReloadDisabled {
+		return tlsCfg, err
+	}
+	watcher, err := certwatcher.New(cfg.TLSCertFile, cfg.TLSKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("load server certificate: %w", err)
+	}
+	go func() {
+		if err := watcher.Start(ctx); err != nil {
+			log.Errorw("Server certificate watcher stopped; the current certificate stays in use", "error", err)
+		}
+	}()
+	tlsCfg.GetCertificate = watcher.GetCertificate
+	if tlsCfg.ClientCAs == nil {
+		return tlsCfg, nil
+	}
+
+	// A config returned by GetConfigForClient replaces the server's config
+	// for the handshake, including NextProtos; set what http.Server adds by
+	// default so HTTP/2 keeps working.
+	tlsCfg.NextProtos = []string{"h2", "http/1.1"}
+	base := tlsCfg.Clone()
+	var current atomic.Pointer[tls.Config]
+	current.Store(base)
+	var lastPEM []byte // nil: the first run re-reads what ClientTLS loaded
+	go wait.UntilWithContext(ctx, func(context.Context) {
+		pem, err := os.ReadFile(cfg.ClientCAFile)
+		if err != nil {
+			log.Warnw("Cannot reload client CA bundle; the current one stays in use", "file", cfg.ClientCAFile, "error", err)
+			return
+		}
+		if bytes.Equal(pem, lastPEM) {
+			return
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(pem) {
+			log.Warnw("Client CA bundle contains no PEM certificates; the current one stays in use", "file", cfg.ClientCAFile)
+			return
+		}
+		next := base.Clone()
+		next.ClientCAs = pool
+		current.Store(next)
+		if lastPEM != nil {
+			log.Infow("Reloaded client CA bundle", "file", cfg.ClientCAFile)
+		}
+		lastPEM = pem
+	}, clientCAReloadInterval)
+	tlsCfg.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		return current.Load(), nil
+	}
+	return tlsCfg, nil
 }
 
 // Shutdown gracefully shuts down the HTTP server, allowing in-flight requests to complete.

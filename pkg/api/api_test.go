@@ -1,14 +1,25 @@
 package api
 
 import (
+	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
+	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -1312,4 +1323,141 @@ func TestSetup_FrontendOnly_ExcludesSAR(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/breakglass/webhook/authorize/foo", nil)
 	server.gin.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+// writeServerCert writes a localhost serving certificate with the given
+// serial number, signed by ca, to certFile and keyFile.
+func writeServerCert(t *testing.T, ca testCA, serial int64, certFile, keyFile string) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	tmpl := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject:      pkix.Name{CommonName: "localhost"},
+		DNSNames:     []string{"localhost"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, &key.PublicKey, ca.key)
+	require.NoError(t, err)
+	keyDER, err := x509.MarshalECPrivateKey(key)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(keyFile, pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: keyDER}), 0o600))
+	require.NoError(t, os.WriteFile(certFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+}
+
+// TestReloadingTLSConfig serves HTTPS the way Listen does, rotates the
+// certificate files and the client CA bundle on disk, and checks what the
+// next handshake sees.
+func TestReloadingTLSConfig(t *testing.T) {
+	saved := clientCAReloadInterval
+	clientCAReloadInterval = 50 * time.Millisecond
+	t.Cleanup(func() { clientCAReloadInterval = saved })
+
+	serverCA := newTestCA(t, "server-ca")
+	oldClientCA := newTestCA(t, "old-client-ca")
+	newClientCA := newTestCA(t, "new-client-ca")
+	oldClient := oldClientCA.clientCert(t, time.Now().Add(time.Hour))
+	newClient := newClientCA.clientCert(t, time.Now().Add(time.Hour))
+	roots := x509.NewCertPool()
+	roots.AddCert(serverCA.cert)
+
+	serve := func(t *testing.T, reloadDisabled bool) (cfg config.Server, addr string) {
+		t.Helper()
+		dir := t.TempDir()
+		cfg = config.Server{
+			TLSCertFile:       filepath.Join(dir, "tls.crt"),
+			TLSKeyFile:        filepath.Join(dir, "tls.key"),
+			ClientAuth:        config.ClientAuthRequire,
+			ClientCAFile:      filepath.Join(dir, "client-ca.pem"),
+			TLSReloadDisabled: reloadDisabled,
+		}
+		writeServerCert(t, serverCA, 100, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, oldClientCA.pem, 0o600))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		tlsCfg, err := reloadingTLSConfig(ctx, cfg, zaptest.NewLogger(t).Sugar())
+		require.NoError(t, err)
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		srv := &http.Server{
+			Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }),
+			TLSConfig:         tlsCfg,
+			ReadHeaderTimeout: 5 * time.Second,
+		}
+		certFile, keyFile := tlsFiles(cfg)
+		go func() { _ = srv.ServeTLS(ln, certFile, keyFile) }()
+		t.Cleanup(func() { _ = srv.Close() })
+		return cfg, ln.Addr().String()
+	}
+	// handshake returns the server certificate serial and the negotiated
+	// ALPN protocol. TLS 1.2 makes the server's client-certificate verdict
+	// part of the handshake.
+	handshake := func(addr string, client tls.Certificate) (int64, string, error) {
+		conn, err := tls.DialWithDialer(&net.Dialer{Timeout: 5 * time.Second}, "tcp", addr, &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			MaxVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+			ServerName: "localhost",
+			NextProtos: []string{"h2", "http/1.1"},
+			GetClientCertificate: func(*tls.CertificateRequestInfo) (*tls.Certificate, error) {
+				return &client, nil
+			},
+		})
+		if err != nil {
+			return 0, "", err
+		}
+		defer func() { _ = conn.Close() }()
+		state := conn.ConnectionState()
+		return state.PeerCertificates[0].SerialNumber.Int64(), state.NegotiatedProtocol, nil
+	}
+
+	t.Run("reload", func(t *testing.T) {
+		cfg, addr := serve(t, false)
+		serial, proto, err := handshake(addr, oldClient)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), serial)
+		assert.Equal(t, "h2", proto, "HTTP/2 must survive GetConfigForClient")
+		_, _, err = handshake(addr, newClient)
+		require.ErrorContains(t, err, "tls: unknown certificate authority")
+
+		writeServerCert(t, serverCA, 200, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+
+		// certwatcher reacts to fsnotify or polls every 10s.
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			serial, _, err := handshake(addr, newClient)
+			if assert.NoError(c, err) {
+				assert.Equal(c, int64(200), serial)
+			}
+		}, 20*time.Second, 50*time.Millisecond)
+		_, _, err = handshake(addr, oldClient)
+		assert.ErrorContains(t, err, "tls: unknown certificate authority", "the replaced client CA must no longer be trusted")
+	})
+
+	t.Run("invalid-ca-update-keeps-current", func(t *testing.T) {
+		cfg, addr := serve(t, false)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, []byte("not a certificate"), 0o600))
+		time.Sleep(5 * clientCAReloadInterval)
+		_, _, err := handshake(addr, oldClient)
+		assert.NoError(t, err)
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		cfg, addr := serve(t, true)
+		_, _, err := handshake(addr, oldClient) // the server has loaded the files
+		require.NoError(t, err)
+		writeServerCert(t, serverCA, 200, cfg.TLSCertFile, cfg.TLSKeyFile)
+		require.NoError(t, os.WriteFile(cfg.ClientCAFile, newClientCA.pem, 0o600))
+		time.Sleep(5 * clientCAReloadInterval)
+
+		serial, _, err := handshake(addr, oldClient)
+		require.NoError(t, err)
+		assert.Equal(t, int64(100), serial)
+		_, _, err = handshake(addr, newClient)
+		assert.ErrorContains(t, err, "tls: unknown certificate authority")
+	})
 }
