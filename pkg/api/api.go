@@ -204,6 +204,11 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	// Correlation ID middleware. Registered before the rate limiter so that
 	// every response, including a 429, carries the request correlation ID.
 	engine.Use(correlationID)
+	// The access log and panic recovery come before the rate limiter, so that
+	// rejected (429) requests are logged too. accessLog is outside
+	// recoverPanics so that it logs the final status of a request whose
+	// handler panicked.
+	engine.Use(accessLog(log), recoverPanics(log))
 
 	// Basic per-IP rate limiter for public/unauthenticated endpoints
 	// This applies to all requests before authentication (e.g., /api/config, /api/identity-provider)
@@ -236,10 +241,6 @@ func NewServer(log *zap.Logger, cfg config.Config,
 	engine.Use(otelgin.Middleware("k8s-breakglass"))
 
 	engine.Use(
-		// accessLog is outside recoverPanics so that it logs the final status
-		// of a request whose handler panicked.
-		accessLog(log),
-		recoverPanics(log),
 		requestLogger(log),
 		func(c *gin.Context) { // unified error propagation: if handler set context error, respond JSON
 			c.Next()

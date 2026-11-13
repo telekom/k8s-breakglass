@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/telekom/k8s-breakglass/pkg/config"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/zaptest/observer"
@@ -112,5 +113,39 @@ func TestAccessLogNeverLogsQueryAndCoversPanics(t *testing.T) {
 				t.Errorf("%s: field %s leaks a secret: %v", e.Message, k, v)
 			}
 		}
+	}
+}
+
+// TestAccessLogCoversRateLimitedRequests drives the real server: requests the
+// public rate limiter rejects with 429 are logged too.
+func TestAccessLogCoversRateLimitedRequests(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	core, logs := observer.New(zapcore.InfoLevel)
+	cfg := config.Config{Frontend: config.Frontend{BaseURL: "https://breakglass.example"}}
+	srv := NewServer(zap.New(core), cfg, false, NewAuth(zap.NewNop().Sugar(), cfg))
+	limited := 0
+	for range 200 {
+		req := httptest.NewRequest(http.MethodGet, "/api/config?token=secret-token", nil)
+		req.RemoteAddr = "192.0.2.10:1234"
+		rec := httptest.NewRecorder()
+		srv.gin.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			limited++
+		}
+	}
+	if limited == 0 {
+		t.Fatal("the rate limiter rejected no request; the test needs more requests")
+	}
+	got := 0
+	for _, e := range logs.FilterMessage("http_request").AllUntimed() {
+		if e.ContextMap()["status"] == int64(http.StatusTooManyRequests) {
+			got++
+		}
+		if strings.Contains(fmt.Sprint(e.ContextMap()), "secret") {
+			t.Fatalf("query leaked: %v", e.ContextMap())
+		}
+	}
+	if got != limited {
+		t.Fatalf("%d requests rejected with 429, %d logged", limited, got)
 	}
 }
