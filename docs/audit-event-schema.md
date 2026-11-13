@@ -49,14 +49,20 @@ newer one.
 
 ### Delivery semantics
 
-Delivery is **at least once** for synchronous Kafka sinks (`kafka.async: false`,
-the default). A failed batch is retried with the **same event IDs**, retained
+Delivery is **at least once** for synchronous Kafka sinks with broker
+acknowledgements (`kafka.async: false` and `kafka.requiredAcks` `-1` or `1`,
+the defaults). A failed batch is retried with the **same event IDs**, retained
 past its retry window, and handed over on a configuration reload; see
 [Audit delivery](audit-delivery.md). A retry after a broker timeout can write a
-record twice. The documented loss cases are counted in
-`breakglass_audit_events_dropped_total`: a full queue, shutdown or a controller
-crash (queues are in memory), and permanent rejection. `kafka.async: true` is
-fire-and-forget and has no delivery guarantee.
+record twice. `kafka.requiredAcks: 0` and `kafka.async: true` are best effort:
+a write can succeed without the broker having accepted the record.
+
+Detected losses are counted in `breakglass_audit_events_dropped_total`: a full
+queue, shutdown, and permanent rejection. A controller crash or kill loses the
+events that are still queued or retained in memory **without** counting them.
+Detect that gap on the consumer side, for example by reconciling the session
+lifecycle (a `session.requested` without a terminal event) and alerting on
+controller restarts.
 
 **Deduplicate on `id`.** It is unique per event and stable across retries.
 Most IDs are random UUIDs. Synchronously delivered receipts use deterministic
