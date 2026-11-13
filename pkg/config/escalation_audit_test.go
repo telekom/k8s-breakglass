@@ -209,3 +209,26 @@ func TestEscalationReconcilerAuditsDeletion(t *testing.T) {
 	// Without an emitter nothing happens.
 	NewEscalationReconciler(nil, zap.NewNop().Sugar(), nil, nil, nil, 0).auditDeletion(auditedEscalation(1))
 }
+
+// With no AuditConfig at all, the initial sync reports an empty set, so the
+// audit service becomes "disabled" instead of staying "unavailable", and
+// escalation auditing stops retrying.
+func TestAuditConfigInitialSyncWithoutConfigs(t *testing.T) {
+	r, _ := newTestAuditConfigReconciler(t)
+	called := false
+	var got []*breakglassv1alpha1.AuditConfig
+	r.onReloadMultiple = func(_ context.Context, configs []*breakglassv1alpha1.AuditConfig, configuredUnavailable bool) error {
+		called = true
+		got = configs
+		require.False(t, configuredUnavailable)
+		return nil
+	}
+	r.initialSync(context.Background())
+	require.True(t, called, "the initial sync must reload the audit service even without AuditConfigs")
+	require.Empty(t, got)
+
+	svc := audit.NewService(nil, nil, zap.NewNop(), "ns")
+	require.Equal(t, audit.ConfigurationUnavailable, svc.ConfigurationState())
+	require.NoError(t, svc.ReloadMultipleWithAvailability(context.Background(), got, false))
+	require.Equal(t, audit.ConfigurationDisabled, svc.ConfigurationState())
+}

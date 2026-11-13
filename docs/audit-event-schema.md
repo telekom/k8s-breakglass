@@ -268,7 +268,11 @@ controller restart or leader change the current generation of every
 escalation is emitted again with the same ID (without `previousGeneration`);
 deduplicate on `id`. Escalations reconciled before the audit pipeline has
 loaded its AuditConfig are retried until it is ready, so they are not lost at
-startup. The actor is `system`; the event does not identify who changed the spec.
+startup; a delete is retained in memory for the same reason. With no
+AuditConfig at all, auditing is disabled and nothing is retried. Retained
+events are in memory: a controller crash before the pipeline is ready loses
+them, and the next leader re-emits the current generation of every
+escalation (not deletes it did not observe). The actor is `system`; the event does not identify who changed the spec.
 `resourceVersion` is the version that the controller observed, which can
 belong to a later status or metadata write. To attribute a change, search the
 Kubernetes API server audit log for create, update, patch and delete requests

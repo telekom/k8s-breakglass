@@ -33,6 +33,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -577,6 +578,20 @@ func (r *AuditConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		DeleteFunc: func(e event.DeleteEvent) bool { return true },
 	}
 
+	// Without any AuditConfig nothing triggers Reconcile, and the audit
+	// service would stay "unavailable" instead of "disabled" (consumers that
+	// wait for the pipeline, such as escalation auditing, would retry forever).
+	// Load the initial state once the cache has synced.
+	if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		if !mgr.GetCache().WaitForCacheSync(ctx) {
+			return nil
+		}
+		r.initialSync(ctx)
+		return nil
+	})); err != nil {
+		return fmt.Errorf("add initial AuditConfig sync: %w", err)
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&breakglassv1alpha1.AuditConfig{}).
 		WithOptions(controller.Options{
@@ -584,4 +599,11 @@ func (r *AuditConfigReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		}).
 		WithEventFilter(specChangePredicate).
 		Complete(r)
+}
+
+// initialSync aggregates all AuditConfigs once, also when there are none.
+func (r *AuditConfigReconciler) initialSync(ctx context.Context) {
+	if _, err := r.Reconcile(ctx, reconcile.Request{}); err != nil {
+		r.logger.Warnw("Initial AuditConfig sync failed; the next AuditConfig event retries", "error", err)
+	}
 }
