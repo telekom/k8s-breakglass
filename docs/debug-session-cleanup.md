@@ -143,14 +143,34 @@ spec:
 **Authorization (four-eyes).** Creating the object requires RBAC `create` on
 `debugsessioncleanupacknowledgements`, which the API server enforces itself.
 Writing a DebugSession grants nothing. The ClusterRole
-`debugsession-cleanup-acknowledger`
-(`config/rbac/debugsession_cleanup_acknowledger_role.yaml`) grants it and is
-**bound to nobody by default**. The standard deployment (`config/base`) adds
-the name prefix `breakglass-`, so bind the deployed ClusterRole
-`breakglass-debugsession-cleanup-acknowledger` (check with
-`kubectl get clusterrole | grep cleanup-acknowledger` if you use your own
-prefix). Bind it only to operators who are independent of the sessions they
-acknowledge.
+`breakglass-debugsession-cleanup-acknowledger` grants it and is **bound to
+nobody by default**. It is defined as `debugsession-cleanup-acknowledger` in
+`config/rbac/debugsession_cleanup_acknowledger_role.yaml`; the `breakglass-`
+part is the kustomize `namePrefix` of `config/base`. A binding to the
+unprefixed name grants nothing. If you deploy with your own overlay and
+prefix, find the rendered name with
+`kubectl get clusterrole -o name | grep cleanup-acknowledger`. (The Helm
+charts in `charts/` render only configuration objects, not the controller or
+its RBAC, so there is no Helm-rendered variant of this role.) Bind it only to
+operators who are independent of the sessions they acknowledge:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: debugsession-cleanup-acknowledgers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: breakglass-debugsession-cleanup-acknowledger
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: platform-cleanup-reviewers   # operators independent of the sessions
+```
+
+To allow acknowledgements in one namespace only, reference the same
+ClusterRole from a RoleBinding in the session's namespace instead.
 
 - The object is immutable: the CRD rejects any change to `spec`.
 - It is bound to one session instance by `sessionUID`.
@@ -259,8 +279,10 @@ acknowledgement triggers a reconcile of its session at once.
   the controller removes once its session instance is gone (confirmed with an
   uncached read, so a lagging cache or a recreated session of the same name
   cannot release it), so deleting the acknowledgement cannot drop that
-  evidence. Rejected acknowledgements carry
-  no finalizer. The replica that records a rejection audits it.
+  evidence. If the DebugSession CRD is no longer served (for example during
+  an uninstall), no session can exist and the controller releases the
+  finalizer; a transient discovery failure does not release it. Rejected
+  acknowledgements carry no finalizer. The replica that records a rejection audits it.
   - If no residual remains, the condition becomes `CleanupFailed=False` with
     reason `CleanupAcknowledged`, followed by `debug_session.cleanup_recovered`.
   - If residuals remain, the new residual set is reported once with

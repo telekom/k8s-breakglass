@@ -63,7 +63,9 @@ func (c *DebugSessionController) releaseAcknowledgement(ctx context.Context, ack
 // naming session key.Name) whose session instance is no longer live. The
 // session is read uncached: a lagging cache may still show an old instance,
 // or not yet show a recreated one, and releasing on that view would drop the
-// retirement evidence of a live session.
+// retirement evidence of a live session. A DebugSession kind that is
+// definitively not served (CRD removed, for example during uninstall) means
+// no session exists; a transient discovery failure keeps the evidence.
 func (c *DebugSessionController) releaseStaleAcknowledgements(ctx context.Context, key ctrlclient.ObjectKey, acks []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement) error {
 	var candidates []*breakglassv1alpha1.DebugSessionCleanupAcknowledgement
 	for _, ack := range acks {
@@ -78,7 +80,7 @@ func (c *DebugSessionController) releaseStaleAcknowledgements(ctx context.Contex
 	live := &breakglassv1alpha1.DebugSession{}
 	if err := c.approvalReader().Get(ctx, key, live); err == nil {
 		liveUID = string(live.UID)
-	} else if !apierrors.IsNotFound(err) {
+	} else if !apierrors.IsNotFound(err) && !isKindNotServedError(err) {
 		return fmt.Errorf("read debug session %s before releasing cleanup acknowledgements: %w", key, err)
 	}
 	for _, ack := range candidates {

@@ -568,17 +568,37 @@ kubectl get secrets,configmaps -n breakglass-system -o yaml > backup.yaml
 
 ## Uninstalling Breakglass
 
-```bash
-# Delete all custom resources
-kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all
+Delete the custom resources **while the controller is still running**, so it
+can run its finalizers (debug session cleanup and the
+`breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer of
+Applied DebugSessionCleanupAcknowledgements):
 
-# Delete deployment
+```bash
+# 1. Delete sessions and acknowledgements first and wait until they are gone
+kubectl delete debugsessions,debugsessioncleanupacknowledgements --all -A --wait
+kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A
+
+# 2. Only then remove the controller
 kubectl delete namespace breakglass-system
 
 # On tenant clusters, remove webhook config:
 # 1. Remove authorization-config.yaml
 # 2. Remove webhook kubeconfig
 # 3. Restart kube-apiserver
+```
+
+If the controller was removed first, the namespace or CRD deletion hangs on
+these finalizers. Remove the acknowledgement retention finalizer by hand
+(this drops the retirement evidence, which is safe only because no
+controller will write the sessions again):
+
+```bash
+kubectl get debugsessioncleanupacknowledgements -A --no-headers \
+  -o custom-columns=NS:.metadata.namespace,NAME:.metadata.name |
+while read -r ns name; do
+  kubectl patch debugsessioncleanupacknowledgement "$name" -n "$ns" \
+    --type=json -p='[{"op":"remove","path":"/metadata/finalizers"}]'
+done
 ```
 
 ## Controller Configuration Flags

@@ -13,8 +13,12 @@ section: Behaviour changes
   `DebugSessionCleanupAcknowledgement` resource, which emits
   `debug_session.cleanup_acknowledged` (#1663).
 - Creating a `DebugSessionCleanupAcknowledgement` requires RBAC `create` on
-  the new resource; the new ClusterRole `debugsession-cleanup-acknowledger` is
-  bound to nobody. On Kubernetes 1.30+, add the optional kustomize component
+  the new resource; the new ClusterRole
+  `breakglass-debugsession-cleanup-acknowledger` (`debugsession-cleanup-acknowledger`
+  plus the `config/base` kustomize name prefix) is bound to nobody.
+  Applied acknowledgements carry a retention finalizer: when uninstalling,
+  delete DebugSessions and acknowledgements before the controller (see
+  `docs/installation.md#uninstalling-breakglass`). On Kubernetes 1.30+, add the optional kustomize component
   `config/components/cleanup-acknowledgement-policy`: its
   ValidatingAdmissionPolicy enforces `acknowledgedBy` in the API server, even
   before the webhook is deployed. Acknowledgements are processed only while their validating webhook

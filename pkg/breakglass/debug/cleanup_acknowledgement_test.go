@@ -28,6 +28,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
@@ -996,4 +997,42 @@ func TestLaggingCacheDoesNotReleaseTheEvidenceOfARecreatedSession(t *testing.T) 
 	_, err = c.Reconcile(ctx, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(old)})
 	require.NoError(t, err)
 	assert.False(t, retained())
+}
+
+func TestAcknowledgementIsReleasedOnlyWhenTheSessionKindIsDefinitivelyNotServed(t *testing.T) {
+	ctx := context.Background()
+	ds := failingSession(t)
+	ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
+	ack.Finalizers = []string{cleanupAcknowledgementFinalizer}
+	at := metav1.Now()
+	ack.Status = breakglassv1alpha1.DebugSessionCleanupAcknowledgementObjectStatus{Phase: breakglassv1alpha1.CleanupAcknowledgementApplied, ProcessedAt: &at, CompletedAt: &at,
+		Retired: allResidualsOfFailingSession}
+	f := newAckFixture(t, ds, ack)
+	retained := func() bool {
+		got := &breakglassv1alpha1.DebugSessionCleanupAcknowledgement{}
+		require.NoError(t, f.hub.Get(ctx, client.ObjectKeyFromObject(ack), got))
+		return slices.Contains(got.Finalizers, cleanupAcknowledgementFinalizer)
+	}
+	sessionReadFails := func(sessionErr error) *DebugSessionController {
+		reader := interceptor.NewClient(f.hub.(client.WithWatch), interceptor.Funcs{
+			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				if _, ok := obj.(*breakglassv1alpha1.DebugSession); ok {
+					return sessionErr
+				}
+				return cl.Get(ctx, key, obj, opts...)
+			},
+		})
+		return NewDebugSessionController(zap.NewNop().Sugar(), f.hub, nil).WithAPIReader(reader)
+	}
+	sessionGV := breakglassv1alpha1.GroupVersion
+
+	// A transient discovery failure proves nothing: the evidence stays.
+	transient := &apiutil.ErrResourceDiscoveryFailed{sessionGV: apierrors.NewServiceUnavailable("down")}
+	require.Error(t, sessionReadFails(transient).releaseAcknowledgementsOfDeletedSession(ctx, client.ObjectKeyFromObject(ds)))
+	assert.True(t, retained(), "a transient discovery failure does not release the evidence")
+
+	// The DebugSession CRD is gone (uninstall): no session can exist.
+	noMatch := &meta.NoKindMatchError{GroupKind: sessionGV.WithKind("DebugSession").GroupKind(), SearchedVersions: []string{sessionGV.Version}}
+	require.NoError(t, sessionReadFails(noMatch).releaseAcknowledgementsOfDeletedSession(ctx, client.ObjectKeyFromObject(ds)))
+	assert.False(t, retained(), "an unserved DebugSession kind releases the retention finalizer")
 }
