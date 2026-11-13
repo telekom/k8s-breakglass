@@ -12,8 +12,8 @@ sync (charts/escalation-config/ci/test-runtime-label-reservation.sh compares the
 {{- if not (semverCompare ">=1.30.0-0" .Capabilities.KubeVersion.Version) }}
 {{- fail "runtimeLabelReservation.enabled requires Kubernetes 1.30 or newer" }}
 {{- end }}
-{{- if not $r.controllerUsers }}
-{{- fail "runtimeLabelReservation.controllerUsers must name the identity the breakglass controller uses on this cluster" }}
+{{- if not (or $r.controllerUsers $r.controllerGroups) }}
+{{- fail "runtimeLabelReservation.controllerUsers or controllerGroups must name the identity the breakglass controller uses on this cluster" }}
 {{- end }}
 ---
 apiVersion: admissionregistration.k8s.io/v1
@@ -30,7 +30,7 @@ spec:
     - apiGroups: [""]
       apiVersions: ["v1"]
       operations: ["CREATE", "UPDATE"]
-      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "replicationcontrollers"]
+      resources: ["pods", "pods/status", "pods/ephemeralcontainers", "pods/binding", "bindings", "replicationcontrollers"]
     - apiGroups: ["apps"]
       apiVersions: ["v1"]
       operations: ["CREATE", "UPDATE"]
@@ -41,20 +41,35 @@ spec:
       resources: ["jobs", "cronjobs"]
   variables:
   - name: controllerUsers
-    expression: {{ $r.controllerUsers | toJson | quote }}
+    expression: {{ $r.controllerUsers | default list | toJson | quote }}
+  - name: controllerGroups
+    expression: {{ $r.controllerGroups | default list | toJson | quote }}
   - name: workloadControllerUsers
     expression: {{ $r.workloadControllerUsers | default list | toJson | quote }}
   - name: newMeta
     expression: >-
-      object.kind == 'Pod' ? object.metadata :
+      object.kind in ['Pod', 'Binding'] ? object.metadata :
       object.kind == 'CronJob' ? (has(object.spec.jobTemplate.spec.template.metadata) ? object.spec.jobTemplate.spec.template.metadata : {}) :
       (has(object.spec.template) && has(object.spec.template.metadata) ? object.spec.template.metadata : {})
   - name: oldMeta
     expression: >-
       oldObject == null ? {} :
-      oldObject.kind == 'Pod' ? oldObject.metadata :
+      oldObject.kind in ['Pod', 'Binding'] ? oldObject.metadata :
       oldObject.kind == 'CronJob' ? (has(oldObject.spec.jobTemplate.spec.template.metadata) ? oldObject.spec.jobTemplate.spec.template.metadata : {}) :
       (has(oldObject.spec.template) && has(oldObject.spec.template.metadata) ? oldObject.spec.template.metadata : {})
+  # What runs: the Pod spec, or the pod template spec of a workload.
+  - name: newSpec
+    expression: >-
+      object.kind == 'Binding' ? null :
+      object.kind == 'Pod' ? object.spec :
+      object.kind == 'CronJob' ? object.spec.jobTemplate.spec.template.spec :
+      (has(object.spec.template) && has(object.spec.template.spec) ? object.spec.template.spec : null)
+  - name: oldSpec
+    expression: >-
+      oldObject == null || oldObject.kind == 'Binding' ? null :
+      oldObject.kind == 'Pod' ? oldObject.spec :
+      oldObject.kind == 'CronJob' ? oldObject.spec.jobTemplate.spec.template.spec :
+      (has(oldObject.spec.template) && has(oldObject.spec.template.spec) ? oldObject.spec.template.spec : null)
   - name: newReserved
     expression: >-
       (has(variables.newMeta.labels) ? variables.newMeta.labels.map(k,
@@ -71,15 +86,29 @@ spec:
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
+  - name: exempt
+    expression: >-
+      request.userInfo.username in variables.controllerUsers ||
+      (has(request.userInfo.groups) && request.userInfo.groups.exists(g, g in variables.controllerGroups)) ||
+      request.userInfo.username in variables.workloadControllerUsers
   validations:
   - expression: >-
-      request.userInfo.username in variables.controllerUsers ||
-      request.userInfo.username in variables.workloadControllerUsers ||
+      variables.exempt ||
       (variables.newReserved.all(e, e in variables.oldReserved) &&
        variables.oldReserved.all(e, e in variables.newReserved))
     messageExpression: >-
       'labels and annotations with the prefixes breakglass.telekom.com/debug-session and breakglass.telekom.com/ephemeral. are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not set, change or remove them'
+    reason: Forbidden
+  # Otherwise anyone who may edit a debug pod or workload could swap its image,
+  # command or containers (including ephemeral containers) and run their own
+  # code under the genuine session markers. Scaling and metadata edits stay
+  # allowed.
+  - expression: >-
+      variables.exempt || variables.oldReserved.size() == 0 || variables.newSpec == variables.oldSpec
+    messageExpression: >-
+      'the pod spec of a breakglass debug pod or debug workload template is reserved for the breakglass controller; '
+      + request.userInfo.username + ' may not change it'
     reason: Forbidden
 ---
 apiVersion: admissionregistration.k8s.io/v1

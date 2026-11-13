@@ -1248,9 +1248,14 @@
           "type": "boolean"
         },
         "controllerUsers": {
-          "description": "Users the breakglass controller authenticates as on this cluster.",
+          "description": "Users the breakglass controller writes debug pods as on this cluster.",
           "items": {"minLength": 1, "type": "string"},
-          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "controllerGroups": {
+          "description": "Groups whose members count as the breakglass controller on this cluster.",
+          "items": {"minLength": 1, "type": "string"},
           "type": "array",
           "uniqueItems": true
         },

@@ -553,7 +553,8 @@ changes or removes a reserved key, unless the request comes from the
 breakglass controller. It covers:
 
 - Pods, including the `pods/status` and `pods/ephemeralcontainers`
-  subresources;
+  subresources, and Pod bindings (`pods/binding`, `bindings`), whose
+  annotations the API server copies onto the Pod;
 - the pod templates of Deployments, ReplicaSets, StatefulSets, DaemonSets,
   Jobs, CronJobs and ReplicationControllers.
 
@@ -565,13 +566,52 @@ ServiceAccounts). This is safe only because the templates themselves are
 reserved: nobody but the controller can put a reserved key into a template
 that the kube-controller-manager would copy. Other operators that create Pods
 from their own custom resources are not exempt, so they cannot be used to
-launder the keys. Requests that leave the reserved keys unchanged are always
-allowed, so scaling, kubelet status updates and other label edits keep
-working.
+launder the keys.
 
-Deploy the component on every cluster where debug pods run, and list the
-user the hub authenticates as on that cluster (the user of the
-ClusterConfig credentials, shown by `kubectl auth whoami` with them):
+Keeping the keys is not enough on its own: anyone allowed to edit a debug pod
+or a debug Deployment could swap its image or command, or attach an ephemeral
+container, and run their own code under the genuine markers. The policy
+therefore also freezes the pod spec of every Pod and pod template that
+carries a reserved key for everyone except the exempt users. Scaling, kubelet
+status updates and edits to labels, annotations or workload metadata stay
+allowed; `kubectl rollout restart` and `kubectl debug` against debug
+workloads are denied.
+
+Admission is not retroactive. Before runtime-security rules start trusting
+the keys on a cluster, check for objects that already carry them and were not
+created by the controller, and delete them:
+
+```bash
+kubectl get pods,deployments,replicasets,statefulsets,daemonsets,jobs,cronjobs,replicationcontrollers \
+  -A -o json | jq -r '.items[]
+    | select([(.metadata, .spec.template.metadata, .spec.jobTemplate.spec.template.metadata)
+        | (.labels // {}), (.annotations // {}) | keys[]
+        | select(startswith("breakglass.telekom.com/debug-session") or startswith("breakglass.telekom.com/ephemeral."))]
+      | length > 0)
+    | "\(.kind) \(.metadata.namespace)/\(.metadata.name)"'
+```
+
+Every listed object must belong to an active DebugSession (compare the
+`breakglass.telekom.com/debug-session` value with `kubectl get debugsessions -A`
+on the hub).
+
+Deploy the component on every cluster where debug pods run, and list every
+identity the controller writes debug pods as on that cluster. Otherwise the
+policy denies the controller's own writes and debug sessions fail to deploy:
+
+- the ClusterConfig credentials' user, shown by `kubectl auth whoami` with
+  them. With `kubeconfigSecretRef` this is the kubeconfig's user or
+  ServiceAccount. With `oidcAuth` or `oidcFromIdentityProvider` it is the
+  username the target API server maps from the token, including its
+  configured prefix (for example `oidc:breakglass@example.com`).
+  Alternatively, list an OIDC group that only the controller's client is in
+  under `controllerGroups` (`variables/1`);
+- every ServiceAccount a DebugSessionTemplate impersonates through
+  `spec.impersonation`, because those writes reach the API server as the
+  ServiceAccount;
+- the in-cluster controller ServiceAccount
+  (`system:serviceaccount:breakglass-system:breakglass-manager`, the
+  default), if the hub is itself a target.
 
 ```yaml
 components:
@@ -583,11 +623,15 @@ patches:
     patch: |
       - op: replace
         path: /spec/variables/0/expression
-        value: '["system:serviceaccount:breakglass-system:breakglass-manager", "breakglass-hub"]'
+        value: '["system:serviceaccount:breakglass-system:breakglass-manager", "oidc:breakglass@example.com"]'
+      - op: replace
+        path: /spec/variables/1/expression
+        value: '["oidc:breakglass-controllers"]'
 ```
 
 With Helm, set `runtimeLabelReservation.enabled=true` and
-`runtimeLabelReservation.controllerUsers` in the `escalation-config` chart.
+`runtimeLabelReservation.controllerUsers` and/or
+`runtimeLabelReservation.controllerGroups` in the `escalation-config` chart.
 If the kube-controller-manager runs without
 `--use-service-account-credentials`, `system:kube-controller-manager` already
 covers it; adjust `workloadControllerUsers` only for distributions that use
@@ -598,7 +642,8 @@ It is not part of `config/base`, so clusters from Kubernetes 1.24 keep working
 without it; on those clusters, runtime-security rules must not trust the
 labels alone. Treat the keys as trustworthy only on clusters with the policy
 in place, and keep RBAC that lets users write to the controller's identity or
-impersonate the exempt users as tightly held as cluster-admin.
+impersonate the exempt users, or add users to an exempt group, as tightly held
+as cluster-admin.
 
 ## Cross-Site Request Forgery (CSRF) Protection
 

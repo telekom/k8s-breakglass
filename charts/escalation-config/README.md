@@ -664,13 +664,15 @@ Kubernetes 1.30 or newer. See
 runtimeLabelReservation:
   enabled: true
   controllerUsers:
-    - breakglass-hub   # the user of the hub's ClusterConfig credentials on this cluster
+    - oidc:breakglass@example.com   # the user of the hub's ClusterConfig credentials on this cluster
+  controllerGroups: []
 ```
 
 | Value | Description | Default |
 |-------|-------------|---------|
 | `runtimeLabelReservation.enabled` | Create the policy and its `Deny` binding | `false` |
-| `runtimeLabelReservation.controllerUsers` | Users the breakglass controller authenticates as on this cluster | `[system:serviceaccount:breakglass-system:breakglass-manager]` |
+| `runtimeLabelReservation.controllerUsers` | Users the controller writes debug pods as on this cluster (its ServiceAccount, the ClusterConfig credential user — for OIDC the mapped username with prefix — and ServiceAccounts templates impersonate) | `[system:serviceaccount:breakglass-system:breakglass-manager]` |
+| `runtimeLabelReservation.controllerGroups` | Groups whose members count as the controller, e.g. an OIDC group only the controller's client is in | `[]` |
 | `runtimeLabelReservation.workloadControllerUsers` | kube-controller-manager users that create Pods from reserved templates | `system:kube-controller-manager` and the `kube-system` workload controller ServiceAccounts |
 
 ## Uninstalling

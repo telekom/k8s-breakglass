@@ -19,7 +19,9 @@
 # The default exempts the in-cluster controller ServiceAccount
 # (system:serviceaccount:breakglass-system:breakglass-manager). On a target
 # cluster, list the user the hub's ClusterConfig credentials authenticate as
-# (`kubectl auth whoami` with that kubeconfig):
+# (`kubectl auth whoami` with them; for OIDC credentials the username after
+# the API server's claim mapping and prefix), and any ServiceAccount that
+# templates impersonate. variables/1 takes groups instead of users:
 #
 #   patches:
 #     - target:
@@ -28,7 +30,10 @@
 #       patch: |
 #         - op: replace
 #           path: /spec/variables/0/expression
-#           value: '["system:serviceaccount:breakglass-system:breakglass-manager", "breakglass-hub"]'
+#           value: '["system:serviceaccount:breakglass-system:breakglass-manager", "oidc:breakglass@example.com"]'
+#         - op: replace
+#           path: /spec/variables/1/expression
+#           value: '["oidc:breakglass-controllers"]'
 #
 # See docs/security-best-practices.md#reserved-debug-session-labels.
 

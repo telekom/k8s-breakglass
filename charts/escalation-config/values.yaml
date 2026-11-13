@@ -28,11 +28,17 @@ validatingAdmissionPolicy:
 # Requires Kubernetes 1.30 or newer. See docs/security-best-practices.md.
 runtimeLabelReservation:
   enabled: false
-  # Users that may set the reserved keys: the identity the breakglass
-  # controller authenticates as on this cluster (`kubectl auth whoami` with
-  # the ClusterConfig credentials).
+  # Users that may set the reserved keys: every identity the breakglass
+  # controller writes debug pods as on this cluster. That is its
+  # ServiceAccount, the user of the hub's ClusterConfig credentials
+  # (`kubectl auth whoami` with them; for OIDC credentials the mapped username
+  # including any prefix, e.g. oidc:breakglass@example.com), and any
+  # ServiceAccount a template impersonates via spec.impersonation.
   controllerUsers:
     - system:serviceaccount:breakglass-system:breakglass-manager
+  # Groups whose members may set the reserved keys, e.g. an OIDC group that
+  # only the controller's client is in. At least one user or group is needed.
+  controllerGroups: []
   # kube-controller-manager identities that copy a reserved pod template into
   # Pods. Safe to exempt because the templates are reserved too.
   workloadControllerUsers:
