@@ -442,8 +442,8 @@ func (w ServerWebhook) IdentityRequired() bool {
 }
 
 // WebhookServer returns the server settings of the dedicated webhook
-// listener: the server certificate and reload policy with the webhook's
-// listen address and client certificate policy.
+// listener: the server certificate, reload policy and timeouts with the
+// webhook's listen address and client certificate policy.
 func (s Server) WebhookServer() Server {
 	return Server{
 		ListenAddress:     s.Webhook.ListenAddress,
@@ -452,6 +452,7 @@ func (s Server) WebhookServer() Server {
 		ClientAuth:        s.Webhook.ClientAuth,
 		ClientCAFile:      s.Webhook.ClientCAFile,
 		TLSReloadDisabled: s.TLSReloadDisabled,
+		Timeouts:          s.Timeouts,
 	}
 }
 

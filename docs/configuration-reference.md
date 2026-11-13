@@ -285,8 +285,11 @@ cert-manager into a mounted Secret) is served without a pod restart.
 - A Secret volume update reaches the pod after the kubelet sync (up to about
   a minute), then within 10 seconds of that.
 - A file that cannot be read or parsed (for example a key that does not match
-  the certificate during a partial write) is logged and the previous
-  certificate or CA bundle stays in use.
+  the certificate, or a CA bundle with a truncated certificate, during a
+  partial write) is logged and the previous certificate or CA bundle stays in
+  use. A CA bundle is published only when every certificate in it parses.
+- A resumed TLS session is verified against the current client CA bundle, so a
+  client of a removed CA cannot resume a session either.
 - Startup validation is unchanged: missing or invalid files at startup still
   stop the server.
 
@@ -349,7 +352,10 @@ server:
 ```
 
 The controller validates `server.webhook` at startup together with
-`clientAuth`, and refuses to start on an invalid combination.
+`clientAuth`, and refuses to start on an invalid combination. The listener
+uses [`timeouts`](#timeouts-optional). If either listener cannot bind its
+address, the controller shuts down instead of running without it, and on
+shutdown both listeners drain concurrently within `shutdownTimeout`.
 
 ---
 

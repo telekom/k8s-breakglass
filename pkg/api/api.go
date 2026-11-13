@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -760,11 +761,24 @@ func requestLogger(log *zap.Logger) gin.HandlerFunc {
 	}
 }
 
-func (s *Server) Listen() {
+// Listen serves the main listener and, when configured, the webhook
+// listener. It returns the first error of either, for example a port that
+// cannot be bound, so the caller can stop the process instead of running
+// without a listener; it returns nil once both are shut down.
+func (s *Server) Listen() error {
+	errs := make(chan error, 2)
+	listeners := 1
 	if s.webhookServer != nil {
-		go s.serve(s.webhookServer, s.config.Server.WebhookServer(), "webhook")
+		listeners++
+		go func() { errs <- s.serve(s.webhookServer, s.config.Server.WebhookServer(), "webhook") }()
 	}
-	s.serve(s.httpServer, s.config.Server, "main")
+	go func() { errs <- s.serve(s.httpServer, s.config.Server, "main") }()
+	for range listeners {
+		if err := <-errs; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // newHTTPServer returns an http.Server for handler with the configured timeouts
@@ -783,8 +797,8 @@ func newHTTPServer(cfg config.Server, handler http.Handler) *http.Server {
 }
 
 // serve runs srv until it is shut down: over HTTPS when cfg has a server
-// certificate, otherwise over HTTP.
-func (s *Server) serve(srv *http.Server, cfg config.Server, listener string) {
+// certificate, otherwise over HTTP. It returns nil after Shutdown.
+func (s *Server) serve(srv *http.Server, cfg config.Server, listener string) error {
 	log := s.log.Sugar().With("listener", listener)
 	var err error
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
@@ -793,8 +807,7 @@ func (s *Server) serve(srv *http.Server, cfg config.Server, listener string) {
 		defer cancel()
 		srv.TLSConfig, err = reloadingTLSConfig(ctx, cfg, log)
 		if err != nil {
-			log.Errorw("Invalid server TLS configuration", "error", err)
-			return
+			return fmt.Errorf("%s listener: invalid server TLS configuration: %w", listener, err)
 		}
 		log.Infow("Starting HTTPS server", "address", cfg.ListenAddress,
 			"tlsMinVersion", "TLS 1.2", "clientAuth", srv.TLSConfig.ClientAuth.String(),
@@ -805,8 +818,9 @@ func (s *Server) serve(srv *http.Server, cfg config.Server, listener string) {
 		err = srv.ListenAndServe()
 	}
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		log.Errorw("Server listen error", "error", err)
+		return fmt.Errorf("%s listener %s: %w", listener, cfg.ListenAddress, err)
 	}
+	return nil
 }
 
 // serverTLSConfig returns the HTTPS server policy, including the optional
@@ -877,26 +891,27 @@ func reloadingTLSConfig(ctx context.Context, cfg config.Server, log *zap.Sugared
 	current.Store(base)
 	var lastPEM []byte // nil: the first run re-reads what ClientTLS loaded
 	go wait.UntilWithContext(ctx, func(context.Context) {
-		pem, err := os.ReadFile(cfg.ClientCAFile)
+		data, err := os.ReadFile(cfg.ClientCAFile)
 		if err != nil {
 			log.Warnw("Cannot reload client CA bundle; the current one stays in use", "file", cfg.ClientCAFile, "error", err)
 			return
 		}
-		if bytes.Equal(pem, lastPEM) {
+		if bytes.Equal(data, lastPEM) {
 			return
 		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			log.Warnw("Client CA bundle contains no PEM certificates; the current one stays in use", "file", cfg.ClientCAFile)
+		first := lastPEM == nil
+		lastPEM = data // warn once per content, not on every poll
+		pool, err := parseCABundle(data)
+		if err != nil {
+			log.Warnw("Cannot reload client CA bundle; the current one stays in use", "file", cfg.ClientCAFile, "error", err)
 			return
 		}
 		next := base.Clone()
 		next.ClientCAs = pool
 		current.Store(next)
-		if lastPEM != nil {
+		if !first {
 			log.Infow("Reloaded client CA bundle", "file", cfg.ClientCAFile)
 		}
-		lastPEM = pem
 	}, clientCAReloadInterval)
 	tlsCfg.GetConfigForClient = func(*tls.ClientHelloInfo) (*tls.Config, error) {
 		return current.Load(), nil
@@ -904,20 +919,55 @@ func reloadingTLSConfig(ctx context.Context, cfg config.Server, log *zap.Sugared
 	return tlsCfg, nil
 }
 
+// parseCABundle parses every certificate of a PEM bundle. Unlike
+// x509.CertPool.AppendCertsFromPEM it fails on a truncated or unparsable
+// certificate, so a bundle caught mid-write is not published with only its
+// first CAs.
+func parseCABundle(data []byte) (*x509.CertPool, error) {
+	pool := x509.NewCertPool()
+	count := 0
+	for rest := data; ; {
+		var block *pem.Block
+		block, rest = pem.Decode(rest)
+		if block == nil {
+			if bytes.Contains(rest, []byte("-----BEGIN")) {
+				return nil, fmt.Errorf("malformed PEM block after %d certificates", count)
+			}
+			break
+		}
+		if block.Type != "CERTIFICATE" {
+			continue
+		}
+		cert, err := x509.ParseCertificate(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("certificate %d: %w", count+1, err)
+		}
+		pool.AddCert(cert)
+		count++
+	}
+	if count == 0 {
+		return nil, errors.New("no PEM certificates")
+	}
+	return pool, nil
+}
+
 // Shutdown gracefully shuts down the HTTP server, allowing in-flight requests to complete.
 // The provided context can set a deadline for the shutdown. If the deadline is exceeded,
 // remaining connections are forcibly closed.
 func (s *Server) Shutdown(ctx context.Context) error {
-	if s.webhookServer != nil {
-		if err := s.webhookServer.Shutdown(ctx); err != nil {
-			s.log.Sugar().Warnw("Webhook server shutdown error", "error", err)
-		}
-	}
 	if s.httpServer == nil {
 		return nil
 	}
 	s.log.Sugar().Infow("Initiating graceful HTTP server shutdown")
-	err := s.httpServer.Shutdown(ctx)
+	// Both listeners stop accepting at once and drain under the shared deadline.
+	var webhookErr error
+	var wg sync.WaitGroup
+	if s.webhookServer != nil {
+		wg.Go(func() { webhookErr = s.webhookServer.Shutdown(ctx) })
+	}
+	mainErr := s.httpServer.Shutdown(ctx)
+	wg.Wait()
+	err := errors.Join(mainErr, webhookErr)
 	if err != nil {
 		s.log.Sugar().Warnw("HTTP server shutdown error", "error", err)
 	} else {
