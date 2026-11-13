@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -1035,4 +1036,49 @@ func TestAcknowledgementIsReleasedOnlyWhenTheSessionKindIsDefinitivelyNotServed(
 	noMatch := &meta.NoKindMatchError{GroupKind: sessionGV.WithKind("DebugSession").GroupKind(), SearchedVersions: []string{sessionGV.Version}}
 	require.NoError(t, sessionReadFails(noMatch).releaseAcknowledgementsOfDeletedSession(ctx, client.ObjectKeyFromObject(ds)))
 	assert.False(t, retained(), "an unserved DebugSession kind releases the retention finalizer")
+}
+
+func TestCompletionNearTheSizeBudgetStillRetires(t *testing.T) {
+	for name, headroom := range map[string]int{
+		"record does not fit":          200,   // the retirement reasons fit, the record does not
+		"retirement reasons not fit":   -4096, // already over budget: only deleted markers are kept
+		"record fits with the reasons": 4096,
+	} {
+		t.Run(name, func(t *testing.T) {
+			ds := failingSession(t)
+			ds.Status.AuxiliaryResourceStatuses = append(ds.Status.AuxiliaryResourceStatuses, breakglassv1alpha1.AuxiliaryResourceStatus{Name: "padding", Deleted: true})
+			pad := &ds.Status.AuxiliaryResourceStatuses[len(ds.Status.AuxiliaryResourceStatuses)-1]
+			pad.Error = strings.Repeat("x", cleanupAcknowledgementStatusBudget-serializedSize(ds)-headroom)
+			ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
+			record := decideCleanupAcknowledgement(ds, ack, "", false)
+			require.True(t, record.Applied, record.Message)
+
+			require.True(t, completeCleanupAcknowledgement(ds, record), "an Applied acknowledgement is always completable")
+			assert.Empty(t, outstandingCleanupResiduals(ds), "every listed residual is retired")
+			assert.True(t, acknowledgementCompleted(ds, record))
+			if headroom >= 0 {
+				assert.LessOrEqual(t, serializedSize(ds), cleanupAcknowledgementStatusBudget)
+			}
+			recorded := acknowledgementProcessed(ds, record.UID)
+			assert.Equal(t, headroom > 1024, recorded, "the record is kept only within the budget")
+			reasons := 0
+			for _, entry := range ds.Status.AuxiliaryResourceStatuses {
+				if entry.Error == acknowledgedAbsentReason {
+					reasons++
+				}
+			}
+			assert.Equal(t, headroom >= 0, reasons > 0, "retirement reasons are dropped only when they exceed the budget")
+		})
+	}
+}
+
+func TestUnresolvedApproverKubernetesUserFailsClosed(t *testing.T) {
+	ds := failingSession(t)
+	ds.Status.Approval = &breakglassv1alpha1.DebugSessionApproval{ApprovedBy: "alice", ApprovedByIdentities: []string{"alice", "alice@example.com"}, ApprovedByKubernetesUserUnresolved: true}
+	ack := acknowledgement(ds, "a", allResidualsOfFailingSession...)
+	ack.Spec.AcknowledgedBy = "oidc:alice-sub" // the approver's unrecorded mapped identity
+	record := decideCleanupAcknowledgement(ds, ack, "", false)
+	assert.False(t, record.Applied)
+	assert.Contains(t, record.Message, "approvedByKubernetesUserUnresolved")
+	assert.True(t, decideCleanupAcknowledgement(ds, ack, "", true).Applied, "the legacy approver opt-out compares the recorded identities only")
 }

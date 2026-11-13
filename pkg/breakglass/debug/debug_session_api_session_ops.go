@@ -98,12 +98,12 @@ func (c *DebugSessionAPIController) handleJoinDebugSession(ctx *gin.Context) {
 		}
 	}
 
-	var clusterConfig breakglassv1alpha1.ClusterConfig
-	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: session.Spec.Cluster}, &clusterConfig); err != nil {
+	clusterConfig, err := c.sessionClusterConfig(apiCtx, session)
+	if err != nil {
 		apiresponses.RespondForbidden(ctx, "target-cluster identity policy is unavailable")
 		return
 	}
-	kubernetesUser, err := c.kubernetesUser(ctx, &clusterConfig)
+	kubernetesUser, err := c.kubernetesUser(ctx, clusterConfig)
 	if err != nil {
 		apiresponses.RespondForbidden(ctx, "required target-cluster identity claim is missing")
 		return
@@ -614,7 +614,7 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 	}
 	approval.ApprovedBy = currentUser
 	approval.ApprovedByIdentityProvider = ctx.GetString("identity_provider_name")
-	approval.ApprovedByIdentities = c.approverIdentities(ctx, apiCtx, session, identity)
+	approval.ApprovedByIdentities, approval.ApprovedByKubernetesUserUnresolved = c.approverIdentities(ctx, apiCtx, session, identity)
 	approval.ApprovedAt = &now
 	approval.Reason = req.Reason
 
@@ -639,22 +639,36 @@ func (c *DebugSessionAPIController) handleApproveDebugSession(ctx *gin.Context) 
 }
 
 // approverIdentities lists the approver's distinct authenticated identities,
-// so cleanup acknowledgements can enforce four-eyes against each of them. The
-// target-cluster Kubernetes user is added when it resolves; approval does not
-// depend on it.
-func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) []string {
-	ids := []string{identity.username}
+// so cleanup acknowledgements can enforce four-eyes against each of them.
+// Approval does not depend on the target-cluster Kubernetes user; when it does
+// not resolve, unresolved is true and acknowledgements fail closed.
+func (c *DebugSessionAPIController) approverIdentities(ctx *gin.Context, apiCtx context.Context, session *breakglassv1alpha1.DebugSession, identity debugSessionReadIdentity) (ids []string, unresolved bool) {
+	ids = []string{identity.username}
 	if identity.email != "" {
 		ids = append(ids, identity.email)
 	}
-	var clusterConfig breakglassv1alpha1.ClusterConfig
-	if err := c.reader().Get(apiCtx, ctrlclient.ObjectKey{Namespace: session.Namespace, Name: session.Spec.Cluster}, &clusterConfig); err == nil {
-		if kubernetesUser, err := c.kubernetesUser(ctx, &clusterConfig); err == nil {
-			ids = append(ids, kubernetesUser)
+	unresolved = true
+	if clusterConfig, err := c.sessionClusterConfig(apiCtx, session); err == nil {
+		if kubernetesUser, err := c.kubernetesUser(ctx, clusterConfig); err == nil {
+			ids, unresolved = append(ids, kubernetesUser), false
 		}
 	}
 	slices.Sort(ids)
-	return slices.Compact(ids)
+	return slices.Compact(ids), unresolved
+}
+
+// sessionClusterConfig resolves spec.cluster as session creation does: by
+// name or tenant alias across all namespaces, refusing ambiguous matches.
+func (c *DebugSessionAPIController) sessionClusterConfig(ctx context.Context, session *breakglassv1alpha1.DebugSession) (*breakglassv1alpha1.ClusterConfig, error) {
+	var list breakglassv1alpha1.ClusterConfigList
+	if err := c.reader().List(ctx, &list); err != nil {
+		return nil, err
+	}
+	clusterConfig, ambiguity := findDebugClusterConfigByNameOrTenant(list.Items, session.Spec.Cluster)
+	if clusterConfig == nil || ambiguity != debugClusterConfigAmbiguityNone {
+		return nil, fmt.Errorf("cluster %q does not resolve to exactly one ClusterConfig", session.Spec.Cluster)
+	}
+	return clusterConfig, nil
 }
 
 // handleRejectDebugSession rejects a pending debug session

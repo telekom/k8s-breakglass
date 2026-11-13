@@ -680,11 +680,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 				}
 				return fmt.Errorf("claim cleanup acknowledgement %s: %w", ack.Name, err)
 			}
-			if firstClaim && ack.Name == e2eHoldCleanupAcknowledgementClaim {
-				// e2e fault injection: stall the claimant so the test can
-				// kill it while the acknowledgement is Processing.
-				log.Warnw(e2eHoldCleanupAcknowledgementClaimLog, "acknowledgement", ack.Name)
-				<-ctx.Done()
+			if firstClaim && holdCleanupAcknowledgementClaim(ctx, log, ack.Name) {
 				return ctx.Err()
 			}
 			live := &breakglassv1alpha1.DebugSession{}
@@ -773,7 +769,7 @@ func (c *DebugSessionController) processCleanupAcknowledgement(ctx context.Conte
 		ds.Status = patched.Status
 		ds.ResourceVersion = patched.ResourceVersion
 		c.cleanupNotBefore.Delete(ctrlclient.ObjectKeyFromObject(ds))
-		if !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
+		if !acknowledgementProcessed(ds, record.UID) && cleanupAcknowledgementRecordFits(ds, record) {
 			// The API server pruned the field: the DebugSession CRD predates
 			// this controller. The retirement persisted and the
 			// acknowledgement keeps its provenance; only the session record

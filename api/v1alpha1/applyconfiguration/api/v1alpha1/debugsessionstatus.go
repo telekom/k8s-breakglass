@@ -32,6 +32,9 @@ type DebugSessionStatusApplyConfiguration struct {
 	// cleanupAcknowledgements records the applied
 	// DebugSessionCleanupAcknowledgements that retired residuals of this
 	// session. Rejections are recorded on the acknowledgement object only.
+	// A record is omitted when it would push the serialized session beyond
+	// the controller's size budget; the retained acknowledgement object then
+	// keeps its provenance.
 	CleanupAcknowledgements []DebugSessionCleanupAcknowledgementStatusApplyConfiguration `json:"cleanupAcknowledgements,omitempty"`
 	// ObservedGeneration reflects the generation of the most recently observed DebugSession.
 	ObservedGeneration *int64 `json:"observedGeneration,omitempty"`

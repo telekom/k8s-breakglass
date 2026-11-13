@@ -153,7 +153,7 @@ func setControllerEnv(t *testing.T, s *helpers.TestSetup, name, value string) {
 
 // updateController changes the breakglass controller deployment and waits for
 // the rollout and the API. Restoration of the original replicas and container
-// environment is registered before the mutation, so a failed wait cannot leak
+// is registered before the mutation, so a failed wait cannot leak
 // the change into later tests.
 func updateController(t *testing.T, s *helpers.TestSetup, mutate func(*appsv1.Deployment)) {
 	t.Helper()
@@ -164,7 +164,7 @@ func updateController(t *testing.T, s *helpers.TestSetup, mutate func(*appsv1.De
 	require.NoError(t, s.Client.List(ctx, &list, client.MatchingLabels{"app": "breakglass"}))
 	require.Len(t, list.Items, 1, "expected exactly one breakglass controller deployment in the cluster")
 	key := client.ObjectKeyFromObject(&list.Items[0])
-	originalEnv := list.Items[0].Spec.Template.Spec.Containers[0].Env
+	originalContainer := *list.Items[0].Spec.Template.Spec.Containers[0].DeepCopy()
 	originalReplicas := list.Items[0].Spec.Replicas
 
 	apply := func(ctx context.Context, change func(*appsv1.Deployment)) {
@@ -209,7 +209,7 @@ func updateController(t *testing.T, s *helpers.TestSetup, mutate func(*appsv1.De
 		restoreCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 		apply(restoreCtx, func(d *appsv1.Deployment) {
-			d.Spec.Template.Spec.Containers[0].Env = originalEnv
+			d.Spec.Template.Spec.Containers[0] = originalContainer
 			d.Spec.Replicas = originalReplicas
 		})
 	})

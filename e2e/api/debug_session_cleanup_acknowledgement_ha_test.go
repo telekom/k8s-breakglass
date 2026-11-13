@@ -7,6 +7,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"slices"
@@ -26,6 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -52,10 +54,16 @@ func TestDebugSessionCleanupAcknowledgementHA(t *testing.T) {
 	suffix := helpers.GenerateUniqueName("ack-ha")
 	ackName := suffix + "-ack"
 
-	// Two replicas; the first claimant of ackName stalls after claiming it.
+	// Two replicas of the e2e_ha build (e2e/build-ha-image.sh); the first
+	// claimant of ackName stalls after claiming it.
+	haImage := os.Getenv("E2E_HA_IMAGE")
+	if haImage == "" {
+		haImage = "breakglass:e2e-ha"
+	}
 	updateController(t, s, func(d *appsv1.Deployment) {
 		d.Spec.Replicas = ptr.To[int32](2)
 		c := &d.Spec.Template.Spec.Containers[0]
+		c.Image, c.ImagePullPolicy = haImage, corev1.PullIfNotPresent
 		c.Env = append(slices.DeleteFunc(slices.Clone(c.Env), func(e corev1.EnvVar) bool { return e.Name == holdClaimEnv }),
 			corev1.EnvVar{Name: holdClaimEnv, Value: ackName})
 	})
@@ -188,18 +196,43 @@ data:
 	firstClaim := claimed.Status.ClaimedAt.Time
 	t.Logf("claim holder %s claimed %s at %s", holder, ackName, firstClaim)
 
-	// Kill the claim holder, then restart the API server.
-	var controllerNamespace string
-	require.NoError(t, func() error {
-		pods, err := controllerPods(ctx, s.Client)
-		for _, p := range pods {
-			if p.Name == holder {
-				controllerNamespace = p.Namespace
-			}
+	// Kill the claim holder without letting a replacement pod start, so only
+	// the other, surviving replica can take the claim over: the holder gets
+	// the lowest pod-deletion-cost, the Deployment is scaled to one, and the
+	// holder is force-deleted. Then restart the API server.
+	pods, err := controllerPods(ctx, s.Client)
+	require.NoError(t, err)
+	require.Len(t, pods, 2, "two controller replicas")
+	var controllerNamespace, survivor string
+	for _, p := range pods {
+		controllerNamespace = p.Namespace
+		cost := "1000"
+		if p.Name == holder {
+			cost = "-1000"
+		} else {
+			survivor = p.Name
 		}
-		return err
-	}())
-	require.NoError(t, kube.CoreV1().Pods(controllerNamespace).Delete(ctx, holder, metav1.DeleteOptions{GracePeriodSeconds: ptr.To[int64](0)}))
+		patch := client.MergeFrom(p.DeepCopy())
+		if p.Annotations == nil {
+			p.Annotations = map[string]string{}
+		}
+		p.Annotations["controller.kubernetes.io/pod-deletion-cost"] = cost
+		require.NoError(t, s.Client.Patch(ctx, &p, patch))
+	}
+	require.NotEmpty(t, survivor)
+	require.NoError(t, retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var list appsv1.DeploymentList
+		if err := s.Client.List(ctx, &list, client.MatchingLabels{"app": "breakglass"}); err != nil {
+			return err
+		}
+		if len(list.Items) != 1 {
+			return fmt.Errorf("expected one controller deployment, got %d", len(list.Items))
+		}
+		list.Items[0].Spec.Replicas = ptr.To[int32](1)
+		return s.Client.Update(ctx, &list.Items[0])
+	}))
+	require.NoError(t, client.IgnoreNotFound(kube.CoreV1().Pods(controllerNamespace).Delete(ctx, holder, metav1.DeleteOptions{GracePeriodSeconds: ptr.To[int64](0)})))
+	t.Logf("killed claim holder %s; surviving replica %s", holder, survivor)
 	restartKindAPIServer(t, ctx, kube)
 
 	// Another replica takes the claim over after its timeout and applies it.
@@ -215,6 +248,10 @@ data:
 	require.NotNil(t, done.Status.ClaimedAt)
 	assert.True(t, done.Status.ClaimedAt.After(firstClaim), "a surviving replica took the claim over")
 	assert.False(t, podExists(ctx, kube, controllerNamespace, holder), "the claim holder is gone")
+	remaining, err := controllerPods(ctx, s.Client)
+	require.NoError(t, err)
+	require.Len(t, remaining, 1, "no replacement replica was started")
+	assert.Equal(t, survivor, remaining[0].Name, "the surviving replica took the claim over")
 	completedAt := done.Status.CompletedAt.Time
 
 	isEvent := func(e helpers.ReceivedAuditEvent, eventType string) bool {

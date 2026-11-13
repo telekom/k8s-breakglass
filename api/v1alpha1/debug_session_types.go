@@ -232,6 +232,9 @@ type DebugSessionStatus struct {
 	// cleanupAcknowledgements records the applied
 	// DebugSessionCleanupAcknowledgements that retired residuals of this
 	// session. Rejections are recorded on the acknowledgement object only.
+	// A record is omitted when it would push the serialized session beyond
+	// the controller's size budget; the retained acknowledgement object then
+	// keeps its provenance.
 	// +optional
 	// +listType=map
 	// +listMapKey=uid
@@ -487,6 +490,13 @@ type DebugSessionApproval struct {
 	// +kubebuilder:validation:MaxItems=8
 	// +listType=atomic
 	ApprovedByIdentities []string `json:"approvedByIdentities,omitempty"`
+	// approvedByKubernetesUserUnresolved records that the approver's
+	// Kubernetes user on the target cluster could not be resolved at
+	// approval time, so approvedByIdentities lacks it. Cleanup
+	// acknowledgements for such a session are rejected (fail closed) unless
+	// the controller allows legacy approver comparison.
+	// +optional
+	ApprovedByKubernetesUserUnresolved bool `json:"approvedByKubernetesUserUnresolved,omitempty"`
 
 	// approvedAt is when the session was approved.
 	// +optional

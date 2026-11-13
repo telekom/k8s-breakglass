@@ -561,6 +561,16 @@ jobs:
         run: test -z "$(gofmt -l $(git ls-files '*.go') | tee /dev/stderr)" || { echo 'Please run make fmt'; exit 1; }
       - name: Vet
         run: go vet ./...
+      - name: Release binary excludes e2e fault injection
+        run: |
+          # The claim hold hook exists only in e2e_ha builds.
+          CGO_ENABLED=0 go build -trimpath -o /tmp/breakglass-release ./cmd
+          if grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-release; then
+            echo "release binary contains the e2e fault injection" >&2
+            exit 1
+          fi
+          CGO_ENABLED=0 go build -tags e2e_ha -trimpath -o /tmp/breakglass-e2e-ha ./cmd
+          grep -q BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM /tmp/breakglass-e2e-ha
 
   build-image:
     name: Build Image
@@ -1181,6 +1191,7 @@ jobs:
         if: matrix.shard == 'api-debug'
         run: |
           set -o pipefail
+          bash e2e/build-ha-image.sh
           go test -tags=e2e_ha -v ./e2e/api -run '^TestDebugSessionCleanupAcknowledgementHA$' -count=1 -timeout 30m 2>&1 | tee e2e-ha-results.txt
         env:
           E2E_TEST: "true"

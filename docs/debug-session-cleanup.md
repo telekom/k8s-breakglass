@@ -193,12 +193,15 @@ ClusterRole from a RoleBinding in the session's namespace instead.
   membership is not compared: four-eyes concerns the acting person.
   The requester and participants are compared by username, email and
   Kubernetes user. The approver is compared by `approvedBy` and every entry
-  of `status.approval.approvedByIdentities` (username, email and, when it
-  resolved, the target-cluster Kubernetes user), which the hub records at
-  approval. A session approved before that field existed cannot be fully
+  of `status.approval.approvedByIdentities` (username, email and the
+  target-cluster Kubernetes user), which the hub records at approval. The
+  target cluster is resolved like at session creation (ClusterConfig name or
+  tenant alias, in any namespace). A session approved before that field
+  existed, or whose approver's Kubernetes user could not be resolved
+  (`status.approval.approvedByKubernetesUserUnresolved`), cannot be fully
   compared, so its acknowledgements are rejected (fail closed) unless the
   controller runs with `--allow-legacy-approver-cleanup-acknowledgement`,
-  which compares `approvedBy` alone.
+  which compares only the recorded identities.
 
 **Requirements.**
 
@@ -261,9 +264,12 @@ acknowledgement triggers a reconcile of its session at once.
 - **Applied:** matching entries are marked `deleted` (pod-template and deployed
   entries are dropped) with the reason in their `error` field. The DebugSession
   also records the acknowledgement in `status.cleanupAcknowledgements` (at most
-  64 per session). An Applied decision whose record no longer fits is still
-  carried out, with its provenance kept on the acknowledgement object, so the
-  record limit can never block cleanup. An
+  64 per session, and only while the serialized DebugSession stays within a
+  1 MiB budget, below the API server's request limit). An Applied decision
+  whose record no longer fits is still carried out, with its provenance and
+  retired identities kept on the retained acknowledgement object; if even the
+  `error` reasons would exceed the budget they are left empty (`deleted` is
+  still set). So neither limit can block cleanup. An
   Applied acknowledgement is only ever applied to the session instance named
   by its `sessionUID`.
 - After completing an Applied decision on the session, the replica marks the

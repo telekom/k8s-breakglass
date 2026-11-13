@@ -568,38 +568,53 @@ kubectl get secrets,configmaps -n breakglass-system -o yaml > backup.yaml
 
 ## Uninstalling Breakglass
 
-Uninstall in this order. Keep the controller (and the ClusterConfigs it needs
-to reach target clusters) running until step 4: it runs the DebugSession
-cleanup finalizers and releases the
+Uninstall in this order. Keep the controller running until step 6, and the
+ClusterConfigs it needs to reach target clusters until step 5: it cleans up the spoke
+resources of debug sessions and releases the
 `breakglass.t-caas.telekom.com/cleanup-acknowledgement-retention` finalizer
-of Applied DebugSessionCleanupAcknowledgements. Do not delete
-acknowledgements together with sessions: a session whose cleanup failed
-(`CleanupFailed=True`) keeps its finalizer until its residuals are removed or
-retired by an acknowledgement, so deleting the acknowledgements first makes
-the session deletion hang.
+of Applied DebugSessionCleanupAcknowledgements.
+
+Deleting a DebugSession object is **not** a cleanup barrier. Only sessions
+whose template uses node maintenance, a hotfix or an admission recipe carry a
+finalizer; every other session (workload, hybrid, kubectl-debug) disappears
+at once and leaves its spoke resources behind. So end sessions through the
+API first and delete the objects only after their cleanup has finished:
 
 ```bash
-# 1. Delete all DebugSessions and wait until they are gone.
+# 1. End every session through the API (or let it expire). Pending sessions
+#    can be rejected instead.
+bgctl debug session list
+bgctl debug session terminate <session>
+
+# 2. Wait until no session is still running or has cleanup left: every
+#    session is Expired, Terminated, Failed or Rejected, has no
+#    CleanupFailed=True condition and no deployed resources left.
+#    No output means all sessions are cleaned up.
+kubectl get debugsessions -A -o json | jq -r '.items[] | select(
+    (.status.state | IN("Expired","Terminated","Failed","Rejected") | not)
+    or any(.status.conditions[]?; .type == "CleanupFailed" and .status == "True")
+    or ((.status.deployedResources // []) | length > 0)
+  ) | "\(.metadata.namespace)/\(.metadata.name) \(.status.state)"'
+# For a session with CleanupFailed=True, verify its residual resources are
+# gone, retire them with a DebugSessionCleanupAcknowledgement
+# (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone)
+# and run the check again. Resources a template keeps on purpose
+# (deleteAfter: false) are not removed by any step.
+
+# 3. Delete the session objects and wait until they are gone.
 kubectl delete debugsessions --all -A --wait=false
 kubectl wait --for=delete debugsessions --all -A --timeout=10m
 
-# If sessions remain, check which ones failed cleanup (CLEANUP_FAILED=True):
-kubectl get debugsessions -A \
-  -o custom-columns='NS:.metadata.namespace,NAME:.metadata.name,CLEANUP_FAILED:.status.conditions[?(@.type=="CleanupFailed")].status'
-# Verify their residual resources are gone, retire them with a
-# DebugSessionCleanupAcknowledgement (docs/debug-session-cleanup.md#retiring-residuals-the-controller-cannot-prove-gone),
-# and repeat the wait above.
-
-# 2. With no session left, the controller releases every acknowledgement.
+# 4. With no session left, the controller releases every acknowledgement.
 #    Verify that no acknowledgement still carries a finalizer (no output):
 kubectl get debugsessioncleanupacknowledgements -A \
   -o jsonpath='{range .items[?(@.metadata.finalizers)]}{.metadata.namespace}/{.metadata.name}{"\n"}{end}'
 kubectl delete debugsessioncleanupacknowledgements --all -A --wait
 
-# 3. Delete the remaining custom resources.
+# 5. Delete the remaining custom resources.
 kubectl delete breakglassescalation,breakglasssession,clusterconfig,denypolicy --all -A --wait
 
-# 4. Only then remove the controller.
+# 6. Only then remove the controller.
 kubectl delete namespace breakglass-system
 
 # On tenant clusters, remove webhook config:

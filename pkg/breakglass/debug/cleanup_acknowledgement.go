@@ -6,8 +6,8 @@ package debug
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"fmt"
-	"os"
 	"slices"
 	"strings"
 	"time"
@@ -151,6 +151,9 @@ func decideCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, ack *brea
 	case !legacyApprover && approverIdentitiesMissing(ds):
 		return reject("four-eyes: the approval of this session predates recorded approver identities (status.approval.approvedByIdentities), " +
 			"so the acknowledging user cannot be compared with every identity of the approver")
+	case !legacyApprover && ds.Status.Approval != nil && ds.Status.Approval.ApprovedByKubernetesUserUnresolved:
+		return reject("four-eyes: the approver's Kubernetes user on the target cluster could not be resolved at approval time " +
+			"(status.approval.approvedByKubernetesUserUnresolved), so the acknowledging user cannot be compared with every identity of the approver")
 	case ack.Spec.SessionUID != string(ds.UID):
 		return reject("acknowledgement is for session UID %q, not %q", ack.Spec.SessionUID, ds.UID)
 	case !cleanupConditionFailed(ds):
@@ -234,11 +237,53 @@ func completeCleanupAcknowledgement(ds *breakglassv1alpha1.DebugSession, record 
 	if acknowledgementCompleted(ds, record) {
 		return false
 	}
-	if !acknowledgementProcessed(ds, record.UID) && len(ds.Status.CleanupAcknowledgements) < maxCleanupAcknowledgementRecords {
+	retireIdentities(ds, record.Retired)
+	if !acknowledgementProcessed(ds, record.UID) && cleanupAcknowledgementRecordFits(ds, record) {
 		ds.Status.CleanupAcknowledgements = append(ds.Status.CleanupAcknowledgements, record)
 	}
-	retireIdentities(ds, record.Retired)
+	if serializedSize(ds) > cleanupAcknowledgementStatusBudget {
+		// Even the retirement markers do not fit: keep only Deleted, which
+		// never grows the object beyond what was stored before.
+		clearAcknowledgedAbsentReasons(ds)
+	}
 	return true
+}
+
+// cleanupAcknowledgementRecordFits reports whether record can be added to
+// status.cleanupAcknowledgements within the record cap and the serialized
+// size budget. A record that does not fit is omitted; the retained
+// acknowledgement object keeps its provenance and retired identities.
+func cleanupAcknowledgementRecordFits(ds *breakglassv1alpha1.DebugSession, record breakglassv1alpha1.DebugSessionCleanupAcknowledgementStatus) bool {
+	if len(ds.Status.CleanupAcknowledgements) >= maxCleanupAcknowledgementRecords {
+		return false
+	}
+	recordSize, err := json.Marshal(record)
+	// +1 for the separating comma in the list.
+	return err == nil && serializedSize(ds)+len(recordSize) < cleanupAcknowledgementStatusBudget
+}
+
+// serializedSize is the JSON size of ds; an unmarshalable object counts as
+// over budget.
+func serializedSize(ds *breakglassv1alpha1.DebugSession) int {
+	raw, err := json.Marshal(ds)
+	if err != nil {
+		return cleanupAcknowledgementStatusBudget + 1
+	}
+	return len(raw)
+}
+
+func clearAcknowledgedAbsentReasons(ds *breakglassv1alpha1.DebugSession) {
+	for i := range ds.Status.AuxiliaryResourceStatuses {
+		entry := &ds.Status.AuxiliaryResourceStatuses[i]
+		if entry.Error == acknowledgedAbsentReason {
+			entry.Error = ""
+		}
+		for j := range entry.AdditionalResources {
+			if child := &entry.AdditionalResources[j]; child.Error == acknowledgedAbsentReason {
+				child.Error = ""
+			}
+		}
+	}
 }
 
 // acknowledgementCompleted reports whether an Applied acknowledgement needs
@@ -318,13 +363,11 @@ func approverIdentitiesMissing(ds *breakglassv1alpha1.DebugSession) bool {
 // status.cleanupAcknowledgements; it matches the CRD maxItems.
 const maxCleanupAcknowledgementRecords = 64
 
-// e2eHoldCleanupAcknowledgementClaim names an acknowledgement whose first
-// claimant stalls after claiming it, so an HA e2e test can kill the claim
-// holder (e2e/api/debug_session_cleanup_acknowledgement_ha_test.go). Test-only
-// fault injection: unset in every real deployment.
-var e2eHoldCleanupAcknowledgementClaim = os.Getenv("BREAKGLASS_E2E_HOLD_CLEANUP_ACKNOWLEDGEMENT_CLAIM")
-
-const e2eHoldCleanupAcknowledgementClaimLog = "e2e fault injection: holding cleanup acknowledgement claim"
+// cleanupAcknowledgementStatusBudget bounds the serialized DebugSession a
+// completion may write, well below the default 1.5 MiB etcd request limit,
+// so an Applied acknowledgement can always be completed: records that do
+// not fit are omitted rather than failing the write on every retry.
+const cleanupAcknowledgementStatusBudget = 1 << 20
 
 // cleanupAcknowledgementClaimTimeout lets another replica take over an
 // acknowledgement whose claiming replica stopped before recording an outcome.
