@@ -65,8 +65,15 @@ target_pid() {
 	pod_pid "$MIRROR_POD_UID"
 }
 
+# pin_target opens the target network namespace once. Every later step
+# enters it through descriptor 3, so a reused PID can never redirect the
+# helper into another namespace after the identity checks.
+pin_target() {
+	exec 3<"/proc/$tpid/ns/net" || fail inspect-failed "cannot open the target network namespace"
+}
+
 in_target() {
-	nsenter -t "$tpid" -n -- "$@"
+	nsenter --net=/proc/self/fd/3 -- "$@"
 }
 
 hooks() {
@@ -131,13 +138,8 @@ detach() {
 	if ! link_absent "$MIRROR_VETH"; then
 		in_target ip link del "$MIRROR_VETH" || fail teardown-failed "cannot delete $MIRROR_VETH"
 	fi
-	# ponytail: an empty clsact is deleted even if another tool created it;
-	# a tool that attaches later recreates it.
-	ingress=$(show_filters ingress) || exit 1
-	egress=$(show_filters egress) || exit 1
-	if [ -z "$ingress$egress" ] && in_target tc qdisc show dev "$MIRROR_INTERFACE" 2>/dev/null | grep -q 'qdisc clsact'; then
-		in_target tc qdisc del dev "$MIRROR_INTERFACE" clsact 2>/dev/null || true
-	fi
+	# The clsact qdisc is left in place: another tool may own it or be about
+	# to attach to it, and an empty clsact does not touch any packet.
 }
 
 verify_detached() {
@@ -158,9 +160,10 @@ attach() {
 	check_scan
 	[ "$(remaining)" -gt 0 ] || fail expired "the approved session has expired"
 	tpid=$(target_pid) || fail target-missing "the target Pod has no process on this Node"
+	pin_target
 	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	if [ -n "${MIRROR_POD_UID:-}" ]; then
-		[ "$(readlink "/proc/$tpid/ns/net")" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
+		[ "$(readlink /proc/self/fd/3)" != "$(readlink /proc/1/ns/net)" ] || fail target-mismatch "the target Pod uses the host network"
 		in_target ip -o addr show | grep -F -q " ${MIRROR_POD_IP:?}/" || fail target-mismatch "the target network namespace does not own the Pod IP"
 	fi
 	! link_absent "$MIRROR_INTERFACE" || fail interface-missing "interface $MIRROR_INTERFACE does not exist"
@@ -220,6 +223,7 @@ teardown() {
 		log teardown-verified "target network namespace is gone"
 		return 0
 	fi
+	pin_target
 	in_target true || fail inspect-failed "cannot enter the target network namespace"
 	detach
 	verify_detached

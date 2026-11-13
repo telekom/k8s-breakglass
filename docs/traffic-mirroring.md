@@ -124,7 +124,7 @@ and stop at it on their own; `activeDeadlineSeconds` is a backstop.
 On expiry, termination, failure or deletion the controller deletes the
 mirror Pod (the agent detaches), then runs a teardown Pod on the Node that
 removes only `tc` filters carrying the session's action cookie, the mirror
-device and an empty `clsact`, and succeeds only after verifying that none
+device (the `clsact` qdisc stays), and succeeds only after verifying that none
 remain; an inspection error is a failure, never proof of absence. The
 session keeps its finalizer and the `CleanupFailed` condition until that
 verification succeeds, which also covers a controller restart and a crashed

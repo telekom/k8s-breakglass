@@ -131,8 +131,11 @@ fails closed if any identity, label or the interface changed.
    so mirroring ends on time even while the controller is down.
 5. **Verified teardown.** Whenever `createAttempted` is set, the controller
    then runs a teardown Pod on the same Node. It deletes only filters whose
-   action cookie is the operation's, deletes the mirror device and an empty
-   `clsact`, and exits successfully only after re-reading that none remain.
+   action cookie is the operation's and the mirror device, leaves the
+   `clsact` qdisc (another tool may own it), and exits successfully only
+   after re-reading that none remain. The helper opens the source network
+   namespace once and enters it only through that descriptor, so a reused
+   PID cannot redirect it after the identity checks.
    Every inspection must succeed: a namespace or `tc` read error fails the
    teardown instead of counting as absence. A failed teardown Pod is
    replaced; the session keeps its finalizer and reports `CleanupFailed`
