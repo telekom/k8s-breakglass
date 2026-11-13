@@ -81,6 +81,10 @@ func TestAccessLogNeverLogsQueryAndCoversPanics(t *testing.T) {
 	engine.GET("/auth/callback", func(c *gin.Context) { c.Status(http.StatusOK) })
 	engine.GET("/api/breakglassSessions/status", func(c *gin.Context) { c.Status(http.StatusOK) })
 	engine.GET("/boom", func(*gin.Context) { panic("kaboom") })
+	engine.NoRoute(func(c *gin.Context) {
+		c.Request.URL.Path = "/" // like the SPA fallback
+		c.Status(http.StatusOK)
+	})
 
 	for _, target := range []string{
 		"/auth/callback?code=secret-code&state=secret-state",

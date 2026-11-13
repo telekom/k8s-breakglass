@@ -222,7 +222,7 @@ controller's `--log-format`.
 
 ```json
 {"level":"debug","ts":1763030400.120,"caller":"cmd/main.go:191","msg":"Debug logging enabled","logLevel":"debug","logFormat":"json"}
-{"level":"info","ts":1763030400.531,"caller":"api/api.go:760","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042,"ip":"10.0.0.7","user_agent":"Mozilla/5.0 …"}
+{"level":"info","ts":1763030400.531,"caller":"api/api.go:762","msg":"http_request","cid":"5f0c…","method":"GET","path":"/api/breakglassSessions","status":200,"latency":0.0042,"ip":"10.0.0.7","user_agent":"Mozilla/5.0 …"}
 {"level":"warn","ts":1763030401.002,"caller":"cmd/main.go:189","msg":"--debug is deprecated; use --log-level=debug and, for this output format, --log-format=console"}
 {"level":"error","ts":1763030402.877,"caller":"api/api.go:254","msg":"handler_error","cid":"5f0c…","method":"POST","path":"/api/breakglassSessions","remote":"10.0.0.7","error":"…","meta":"…"}
 {"level":"info","ts":1763030403.100,"logger":"audit-service.audit","caller":"audit/sink.go:165","msg":"audit_event","event_id":"…","event_type":"session.approved","severity":"info","timestamp":1763030403.099,"actor_user":"jane@example.com","target_kind":"BreakglassSession","target_name":"…"}
