@@ -160,6 +160,18 @@ spec:
       'the owner references, labels, selector and finalizers of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'
     reason: Forbidden
+  # Workload status (for example a StatefulSet's currentRevision) selects
+  # which stored template the exempt controller creates Pods from; a partial
+  # ControllerRevision without metadata would inherit the reserved labels.
+  # Only the kube-controller-manager writes workload status.
+  - expression: >-
+      request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
+      object.kind in ['Pod', 'Binding', 'ControllerRevision'] ||
+      (has(object.status) ? object.status : null) == (has(oldObject.status) ? oldObject.status : null)
+    messageExpression: >-
+      'the status of a breakglass debug workload is reserved for the kube-controller-manager; '
+      + request.userInfo.username + ' may not change it'
+    reason: Forbidden
   # Orphaning deletes leave the marked children running after cleanup. Where
   # the kube-controller-manager shares one identity, its garbage collector is
   # exempt, so this must be refused at the delete itself. Jobs and

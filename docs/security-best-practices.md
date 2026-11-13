@@ -580,7 +580,10 @@ detached ReplicaSet keeps creating marked Pods. On every Pod and workload
 whose Pod or pod template carries a reserved key, the policy therefore also
 freezes the pod spec, the owner references, the labels and the selector, and
 refuses new finalizers, for everyone except the exempt users, through the main
-resource and its `status` subresource. A foreign finalizer would otherwise hold
+resource and its `status` subresource. Workload status itself is reserved for
+the kube-controller-manager as well: a StatefulSet's `status.currentRevision`
+selects the ControllerRevision its Pods are created from, and a partial
+revision without metadata would inherit the reserved labels. A foreign finalizer would otherwise hold
 a deleted debug workload while its Pods keep running; independently of the
 policy, cleanup switches a delete that such a finalizer holds to Foreground, so
 the garbage collector removes the Pods anyway. Orphaning deletes

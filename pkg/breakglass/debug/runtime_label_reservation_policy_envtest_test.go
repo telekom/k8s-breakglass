@@ -201,6 +201,21 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		assert.NoError(t, statefulSetController.Create(ctx, revision("genuine-rev", selected), client.DryRunAll),
 			"the StatefulSet controller records revisions of reserved templates")
 
+		// A partial revision without metadata would inherit the reserved
+		// labels, so nobody else may point a marked StatefulSet at one.
+		debugSet := &appsv1.StatefulSet{ObjectMeta: meta("debug-sts"), Spec: appsv1.StatefulSetSpec{Selector: selector, Replicas: ptr.To[int32](0), Template: always}}
+		require.NoError(t, controller.Create(ctx, debugSet))
+		setStatus := func(c client.Client) error {
+			sts := &appsv1.StatefulSet{}
+			require.NoError(t, admin.Get(ctx, client.ObjectKeyFromObject(debugSet), sts))
+			sts.Status.CurrentRevision = "partial-rev"
+			return c.Status().Update(ctx, sts)
+		}
+		err := setStatus(forger)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reserved for the kube-controller-manager")
+		assert.NoError(t, setStatus(statefulSetController), "the StatefulSet controller still writes status")
+
 		plain := &appsv1.Deployment{ObjectMeta: meta("plain"), Spec: appsv1.DeploymentSpec{Selector: selector, Replicas: ptr.To[int32](0),
 			Template: func() corev1.PodTemplateSpec {
 				p := template(map[string]string{"app": "w"})
