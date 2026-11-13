@@ -23,11 +23,14 @@
 #
 # On a Pod or workload that carries reserved keys, the same users may also not
 # change the pod spec (image, command, containers, ephemeral containers), the
-# owner references, the labels, the selector or the orphan finalizer, nor
-# delete the workload with orphaning propagation, so nobody can run their own
-# code under genuine session markers or detach a marked ReplicaSet or Pod so
-# that it outlives the session. Other requests are allowed, so kubelet status
-# updates, scaling, annotation edits and cascading deletes keep working.
+# owner references, the labels or the selector, nor add finalizers, so nobody
+# can run their own code under genuine session markers or detach or hold a
+# marked workload so that it outlives the session. They may delete such a
+# workload only with propagationPolicy Background (the kubectl default) or
+# Foreground; deletes without a policy or with Orphan are denied, because Jobs
+# and ReplicationControllers orphan their Pods by default. Other requests are
+# allowed, so kubelet status updates, scaling and annotation edits keep
+# working.
 #
 # Requires Kubernetes 1.30+ (ValidatingAdmissionPolicy GA).
 apiVersion: admissionregistration.k8s.io/v1
@@ -125,9 +128,10 @@ spec:
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
-  # Ownership and selection: changing them can detach a marked ReplicaSet or
-  # Pod from the workload the controller cleans up, so it would outlive the
-  # session.
+  # Ownership, selection and finalizers: changing them can detach a marked
+  # ReplicaSet or Pod from the workload the controller cleans up, or hold the
+  # workload after its delete, so it would outlive the session. Removing
+  # finalizers stays allowed (the garbage collector does that).
   - name: newOwners
     expression: "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
   - name: oldOwners
@@ -174,9 +178,9 @@ spec:
       request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
        variables.newSelector == variables.oldSelector &&
-       (!('orphan' in variables.newFinalizers) || 'orphan' in variables.oldFinalizers))
+       variables.newFinalizers.all(f, f in variables.oldFinalizers))
     messageExpression: >-
-      'the owner references, labels, selector and orphan finalizer of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
+      'the owner references, labels, selector and finalizers of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'
     reason: Forbidden
   # Orphaning deletes leave the marked children running after cleanup. Where

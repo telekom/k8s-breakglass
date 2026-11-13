@@ -92,9 +92,10 @@ spec:
       (has(variables.oldMeta.annotations) ? variables.oldMeta.annotations.map(k,
         k.startsWith('breakglass.telekom.com/debug-session') || k.startsWith('breakglass.telekom.com/ephemeral.'),
         'annotation ' + k + '=' + variables.oldMeta.annotations[k]) : [])
-  # Ownership and selection: changing them can detach a marked ReplicaSet or
-  # Pod from the workload the controller cleans up, so it would outlive the
-  # session.
+  # Ownership, selection and finalizers: changing them can detach a marked
+  # ReplicaSet or Pod from the workload the controller cleans up, or hold the
+  # workload after its delete, so it would outlive the session. Removing
+  # finalizers stays allowed (the garbage collector does that).
   - name: newOwners
     expression: "has(object.metadata.ownerReferences) ? object.metadata.ownerReferences : []"
   - name: oldOwners
@@ -141,9 +142,9 @@ spec:
       request.operation == 'DELETE' || variables.exempt || variables.oldReserved.size() == 0 ||
       (variables.newOwners == variables.oldOwners && variables.newLabels == variables.oldLabels &&
        variables.newSelector == variables.oldSelector &&
-       (!('orphan' in variables.newFinalizers) || 'orphan' in variables.oldFinalizers))
+       variables.newFinalizers.all(f, f in variables.oldFinalizers))
     messageExpression: >-
-      'the owner references, labels, selector and orphan finalizer of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
+      'the owner references, labels, selector and finalizers of a breakglass debug pod or debug workload are reserved for the breakglass controller; '
       + request.userInfo.username + ' may not change them'
     reason: Forbidden
   # Orphaning deletes leave the marked children running after cleanup. Where

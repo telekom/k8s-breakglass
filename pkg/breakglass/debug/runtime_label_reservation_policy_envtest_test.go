@@ -276,6 +276,8 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		assert.NoError(t, forger.Delete(ctx, markedJob.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationForeground)))
 		assert.NoError(t, forger.Delete(ctx, markedRC.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationBackground)))
 		denied(t, edit(func(d *appsv1.Deployment) { d.Finalizers = append(d.Finalizers, "orphan") }), "the orphan finalizer")
+		denied(t, edit(func(d *appsv1.Deployment) { d.Finalizers = append(d.Finalizers, "example.com/hold") }),
+			"a foreign finalizer would hold the workload after cleanup deletes it")
 		assert.NoError(t, forger.Delete(ctx, plain.DeepCopy(), orphan), "unmarked workloads may be orphaned")
 		assert.NoError(t, forger.Delete(ctx, debugDeployment.DeepCopy(), client.PropagationPolicy(metav1.DeletePropagationBackground)),
 			"cascading deletes stay allowed")
@@ -309,4 +311,45 @@ func TestPlatformRuntimeLabelReservationPolicyEnvtest(t *testing.T) {
 		assert.NoError(t, groupMember.Create(ctx, pod("oidc-group", sessionLabel, nil), client.DryRunAll))
 		denied(t, otherOIDCUser.Create(ctx, pod("oidc-other", sessionLabel, nil), client.DryRunAll))
 	})
+}
+
+// TestPlatformCleanupForegroundsPendingOwnerEnvtest proves that session
+// cleanup does not leave a held workload's Pods running: when a foreign
+// finalizer keeps a deleted debug Deployment pending, cleanup switches the
+// delete to Foreground so the garbage collector removes its dependents.
+func TestPlatformCleanupForegroundsPendingOwnerEnvtest(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS required")
+	}
+	env := &envtest.Environment{}
+	cfg, err := env.Start()
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, env.Stop()) })
+	target, err := client.New(cfg, client.Options{Scheme: scheme.Scheme})
+	require.NoError(t, err)
+	ctx := context.Background()
+	const ns = "cleanup-foreground"
+	require.NoError(t, target.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}))
+
+	labels := map[string]string{"app": "held", DebugSessionLabelKey: "s1"}
+	held := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "held", Namespace: ns, Finalizers: []string{"example.com/hold"}},
+		Spec: appsv1.DeploymentSpec{Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "held"}},
+			Template: corev1.PodTemplateSpec{ObjectMeta: metav1.ObjectMeta{Labels: labels},
+				Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "c", Image: "busybox"}}}}},
+	}
+	require.NoError(t, target.Create(ctx, held))
+	held.SetGroupVersionKind(appsv1.SchemeGroupVersion.WithKind("Deployment"))
+
+	err = deleteTrackedResource(ctx, target, nil, held.DeepCopy())
+	require.ErrorContains(t, err, "pending finalizers", "the held owner stays in the inventory for retry")
+	live := &appsv1.Deployment{}
+	require.NoError(t, target.Get(ctx, client.ObjectKeyFromObject(held), live))
+	require.NotNil(t, live.DeletionTimestamp)
+	assert.Contains(t, live.Finalizers, metav1.FinalizerDeleteDependents,
+		"the garbage collector must delete the dependents although the owner is held")
+	assert.Contains(t, live.Finalizers, "example.com/hold")
+
+	// Retries keep the Foreground delete and still report the owner as pending.
+	require.ErrorContains(t, deleteTrackedResource(ctx, target, nil, held.DeepCopy()), "pending finalizers")
 }

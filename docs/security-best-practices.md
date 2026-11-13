@@ -575,9 +575,12 @@ remove a marked ReplicaSet's owner reference, or change its labels so the
 Deployment does not adopt it again; cleanup deletes the Deployment and the
 detached ReplicaSet keeps creating marked Pods. On every Pod and workload
 whose Pod or pod template carries a reserved key, the policy therefore also
-freezes the pod spec, the owner references, the labels, the selector and the
-`orphan` finalizer for everyone except the exempt users, through the main
-resource and its `status` subresource. Orphaning deletes
+freezes the pod spec, the owner references, the labels and the selector, and
+refuses new finalizers, for everyone except the exempt users, through the main
+resource and its `status` subresource. A foreign finalizer would otherwise hold
+a deleted debug workload while its Pods keep running; independently of the
+policy, cleanup switches a delete that such a finalizer holds to Foreground, so
+the garbage collector removes the Pods anyway. Orphaning deletes
 of such workloads are denied too: deletes must set `propagationPolicy`
 `Background` (the `kubectl delete` default) or `Foreground`, because Jobs and
 ReplicationControllers orphan their Pods when no policy is given; this
