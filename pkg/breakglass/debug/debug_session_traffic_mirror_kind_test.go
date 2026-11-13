@@ -300,8 +300,8 @@ func TestTrafficMirrorKind(t *testing.T) {
 		controller = newController()
 		reconcile(session)
 		require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, session.Status.State, session.Status.Message)
-		require.Equal(t, 1, eventCount(session, audit.EventDebugSessionTrafficMirrorFailed))
 		requireCleaned(session, string(target.UID))
+		require.Equal(t, 1, eventCount(session, audit.EventDebugSessionTrafficMirrorFailed))
 		require.Equal(t, 1, eventCount(session, audit.EventDebugSessionTrafficMirrorStopped))
 	})
 }

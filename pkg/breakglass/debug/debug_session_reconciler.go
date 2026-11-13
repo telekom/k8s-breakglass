@@ -489,6 +489,9 @@ func (c *DebugSessionController) handlePending(ctx context.Context, ds *breakgla
 	if err := c.validateMaintenancePending(ctx, ds, effectiveTemplate, binding); err != nil {
 		return c.failSession(ctx, ds, fmt.Sprintf("invalid node-maintenance request: %v", err))
 	}
+	if result, deferred := c.deferTrafficMirrorProvenance(ds, effectiveTemplate); deferred {
+		return result, nil
+	}
 	if err := c.validateTrafficMirrorPending(ctx, ds, effectiveTemplate, binding); err != nil {
 		if errors.Is(err, errMaintenanceTargetUnavailable) {
 			return ctrl.Result{RequeueAfter: DefaultDebugSessionRequeue}, nil

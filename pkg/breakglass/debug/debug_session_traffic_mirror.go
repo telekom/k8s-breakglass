@@ -11,6 +11,7 @@ import (
 	"math"
 	"reflect"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -30,6 +31,13 @@ import (
 //
 //go:embed traffic_mirror.sh
 var trafficMirrorScript string
+
+// trafficMirrorCommand runs the helper in one mode. The kubelet expands
+// $(VAR) references and collapses "$$" to "$" in container commands, so
+// every "$" of the script is doubled to reach the shell unchanged.
+func trafficMirrorCommand(mode string) []string {
+	return []string{"/bin/sh", "-c", strings.ReplaceAll(trafficMirrorScript, "$", "$$"), "traffic-mirror", mode}
+}
 
 // trafficMirrorDisabled is the process-wide --disable-traffic-mirror switch.
 // ponytail: package-level because the API builds ad-hoc validators; move it
@@ -148,6 +156,16 @@ func (c *DebugSessionController) validateTrafficMirrorPending(ctx context.Contex
 	return nil
 }
 
+// deferTrafficMirrorProvenance waits, within the bounded group-provenance
+// grace period, for the API's second write that records the authenticated
+// requester provenance. Afterwards a missing provenance fails the request.
+func (c *DebugSessionController) deferTrafficMirrorProvenance(ds *breakglassv1alpha1.DebugSession, template *breakglassv1alpha1.DebugSessionTemplate) (ctrl.Result, bool) {
+	if template.Spec.TrafficMirror == nil || ds.Status.AuthenticatedUserGroupsCaptured {
+		return ctrl.Result{}, false
+	}
+	return c.deferOnMissingGroupProvenance(ds)
+}
+
 func (c *DebugSessionController) patchTrafficMirrorStatus(ctx context.Context, ds *breakglassv1alpha1.DebugSession, mutate func(*breakglassv1alpha1.TrafficMirrorStatus)) error {
 	reader := c.reader
 	if reader == nil {
@@ -214,7 +232,7 @@ func trafficMirrorEnv(ds *breakglassv1alpha1.DebugSession) []corev1.EnvVar {
 func trafficMirrorAgent(ds *breakglassv1alpha1.DebugSession, mode string, env []corev1.EnvVar) corev1.Container {
 	return corev1.Container{
 		Name: "mirror", Image: ds.Status.ResolvedTemplate.TrafficMirror.Image, ImagePullPolicy: corev1.PullIfNotPresent,
-		Command: []string{"/bin/sh", "-c", trafficMirrorScript, "traffic-mirror", mode}, Env: env,
+		Command: trafficMirrorCommand(mode), Env: env,
 		// Entering another network namespace needs ptrace read access to a
 		// process outside the runtime's AppArmor profile, so only this
 		// container runs unconfined; seccomp stays RuntimeDefault.
@@ -260,12 +278,12 @@ func trafficMirrorPod(ds *breakglassv1alpha1.DebugSession, podIP string) *corev1
 	agent := trafficMirrorAgent(ds, "attach", env)
 	agent.VolumeMounts = []corev1.VolumeMount{{Name: "run", MountPath: "/run/mirror"}}
 	agent.ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"test", "-e", "/run/mirror/attached"}}},
-		PeriodSeconds: 2, FailureThreshold: 1}
+		PeriodSeconds: 2, TimeoutSeconds: 5, FailureThreshold: 1}
 	pod.Spec.Volumes = []corev1.Volume{{Name: "run", VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
 		Medium: corev1.StorageMediumMemory, SizeLimit: ptr.To(resource.MustParse("1Mi"))}}}}
 	pod.Spec.Containers = []corev1.Container{agent, {
 		Name: "capture", Image: mirror.Image, ImagePullPolicy: corev1.PullIfNotPresent,
-		Command: []string{"/bin/sh", "-c", trafficMirrorScript, "traffic-mirror", "capture"},
+		Command: trafficMirrorCommand("capture"),
 		Env: []corev1.EnvVar{
 			{Name: "MIRROR_SNAPLEN", Value: strconv.Itoa(int(mirror.EffectiveSnapLength()))},
 			{Name: "MIRROR_MAX_PACKETS", Value: strconv.Itoa(int(mirror.EffectiveMaxPackets()))},
@@ -376,6 +394,16 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if status.PodUID != "" {
 		return fmt.Errorf("trafficMirror Pod disappeared")
 	}
+	if err := c.deployMaintenanceAuxiliaryResources(ctx, ds, target, configurationFence); err != nil {
+		return err
+	}
+	if !status.CreateAttempted {
+		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.CreateAttempted = true }); err != nil {
+			return err
+		}
+	}
+	// Re-verify the approved source and the live session after every durable
+	// write and immediately before the privileged Pod is created.
 	resolved, podIP, err := resolveTrafficMirrorSource(ctx, target, ds.Status.ResolvedTemplate.TrafficMirror, ds.Spec.TrafficMirror)
 	if err != nil {
 		return err
@@ -383,16 +411,8 @@ func (c *DebugSessionController) deployTrafficMirror(ctx context.Context, ds *br
 	if !reflect.DeepEqual(resolved, ds.Spec.TrafficMirror) {
 		return fmt.Errorf("trafficMirror source changed since approval")
 	}
-	if err := c.deployMaintenanceAuxiliaryResources(ctx, ds, target, configurationFence); err != nil {
-		return err
-	}
 	if err := c.trafficMirrorFence(ctx, ds, configurationFence); err != nil {
 		return err
-	}
-	if !status.CreateAttempted {
-		if err := c.patchTrafficMirrorStatus(ctx, ds, func(current *breakglassv1alpha1.TrafficMirrorStatus) { current.CreateAttempted = true }); err != nil {
-			return err
-		}
 	}
 	pod = trafficMirrorPod(ds, podIP)
 	if err := target.Create(ctx, pod); err != nil {
@@ -431,15 +451,12 @@ func trafficMirrorAttached(pod *corev1.Pod) bool {
 	return false
 }
 
-// failTrafficMirror records and audits a failed mirror, then fails the
-// session; the terminal cleanup verifies the teardown.
+// failTrafficMirror records a failed mirror and fails the session, so the
+// mirror is stopped even while the audit sink is unavailable. The failure
+// receipt is pending until cleanup emits it, before the stop receipt and
+// before cleanup responsibility is released.
 func (c *DebugSessionController) failTrafficMirror(ctx context.Context, ds *breakglassv1alpha1.DebugSession, message string) (ctrl.Result, error) {
 	if ds.Status.TrafficMirror.State != breakglassv1alpha1.TrafficMirrorStateFailed {
-		receipt := ds.DeepCopy()
-		receipt.Status.TrafficMirror.State = breakglassv1alpha1.TrafficMirrorStateFailed
-		if err := c.auditTrafficMirror(ctx, receipt, audit.EventDebugSessionTrafficMirrorFailed, "failed", message); err != nil {
-			return ctrl.Result{}, err
-		}
 		if err := c.patchTrafficMirrorStatus(ctx, ds, func(status *breakglassv1alpha1.TrafficMirrorStatus) {
 			status.State, status.Message = breakglassv1alpha1.TrafficMirrorStateFailed, message
 		}); err != nil {
@@ -545,7 +562,7 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 	if ds.Spec.TrafficMirror == nil || ds.Status.ResolvedTemplate == nil || ds.Status.ResolvedTemplate.TrafficMirror == nil {
 		return fmt.Errorf("trafficMirror cleanup provenance is incomplete")
 	}
-	target, configurationFence, release, err := c.maintenanceClient(ctx, ds)
+	target, configurationFence, release, err := c.maintenanceCleanupClient(ctx, ds)
 	if err != nil {
 		return err
 	}
@@ -577,6 +594,12 @@ func (c *DebugSessionController) cleanupTrafficMirror(ctx context.Context, ds *b
 		status = ds.Status.TrafficMirror
 	}
 	if !status.StopAudited {
+		if status.State == breakglassv1alpha1.TrafficMirrorStateFailed {
+			// Pending failure receipt; its deterministic ID deduplicates retries.
+			if err := c.auditTrafficMirror(ctx, ds, audit.EventDebugSessionTrafficMirrorFailed, "failed", status.Message); err != nil {
+				return err
+			}
+		}
 		receipt := ds.DeepCopy()
 		receipt.Status.TrafficMirror.State = breakglassv1alpha1.TrafficMirrorStateStopped
 		if err := c.auditTrafficMirror(ctx, receipt, audit.EventDebugSessionTrafficMirrorStopped, "stopped", status.Message); err != nil {

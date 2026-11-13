@@ -341,7 +341,8 @@ func (r *ClusterConfigReconciler) terminateDebugSessionsForCluster(ctx context.C
 func debugSessionHasTrackedSpokeResources(session *breakglassv1alpha1.DebugSession) bool {
 	if utils.DebugSessionHasActionableDeployedResources(session) ||
 		debugSessionHasOutstandingAuxiliaryResources(session) ||
-		len(session.Status.AllowedPods) > 0 {
+		len(session.Status.AllowedPods) > 0 ||
+		session.Status.TrafficMirror != nil && !session.Status.TrafficMirror.Released {
 		return true
 	}
 	for _, resource := range session.Status.PodTemplateResourceStatuses {

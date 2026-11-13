@@ -148,7 +148,7 @@ func TestTrafficMirrorDeployCreatesFixedCapturePod(t *testing.T) {
 		require.False(t, *container.SecurityContext.AllowPrivilegeEscalation)
 		require.True(t, *container.SecurityContext.ReadOnlyRootFilesystem)
 		require.Equal(t, mirrorTemplateSpec().TrafficMirror.Image, container.Image)
-		require.Equal(t, trafficMirrorScript, container.Command[2], "only the controller-owned helper runs")
+		require.Equal(t, trafficMirrorScript, kubeletExpand(container.Command[2]), "only the controller-owned helper runs, unexpanded")
 	}
 	require.Equal(t, "attach", agent.Command[4])
 	require.Equal(t, "capture", capture.Command[4])
@@ -191,7 +191,7 @@ func TestTrafficMirrorDeployFailsClosed(t *testing.T) {
 		f := newMirrorFixture(t, approvedPodRequest(), replaced)
 		require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "replaced")
 		require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID))
-		require.False(t, f.ds.Status.TrafficMirror.CreateAttempted)
+		require.True(t, f.ds.Status.TrafficMirror.CreateAttempted, "the source is checked after the marker, so cleanup still verifies the Node")
 	})
 	t.Run("relabelled source Pod", func(t *testing.T) {
 		f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "payments"))
@@ -275,7 +275,15 @@ func TestTrafficMirrorActiveTracksAgent(t *testing.T) {
 	require.Equal(t, breakglassv1alpha1.TrafficMirrorStateFailed, f.ds.Status.TrafficMirror.State)
 	require.Equal(t, breakglassv1alpha1.DebugSessionStateFailed, f.ds.Status.State)
 	require.Contains(t, f.ds.Status.TrafficMirror.Message, "exited 137")
-	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted, audit.EventDebugSessionTrafficMirrorFailed}, f.eventTypes())
+	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted}, f.eventTypes(),
+		"the failure receipt never blocks stopping the mirror")
+
+	// Cleanup emits the pending failure receipt before the stop receipt.
+	require.ErrorIs(t, f.c.cleanupTrafficMirror(t.Context(), f.ds), errTrafficMirrorTeardownPending)
+	setMirrorPodStatus(t, f, name+trafficMirrorTeardownSuffix, func(pod *corev1.Pod) { pod.Status.Phase = corev1.PodSucceeded })
+	require.NoError(t, f.c.cleanupTrafficMirror(t.Context(), f.ds))
+	require.Equal(t, []audit.EventType{audit.EventDebugSessionTrafficMirrorStarted, audit.EventDebugSessionTrafficMirrorFailed,
+		audit.EventDebugSessionTrafficMirrorStopped}, f.eventTypes())
 }
 
 func TestTrafficMirrorCleanupVerifiesTeardown(t *testing.T) {
@@ -370,6 +378,64 @@ func TestTrafficMirrorCleanupRefusesForeignPod(t *testing.T) {
 	require.Error(t, err)
 	require.False(t, errors.Is(err, errTrafficMirrorTeardownPending))
 	require.NotNil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "a foreign Pod is never deleted")
+}
+
+// kubeletExpand applies the kubelet's command expansion for a command that
+// references no variables: "$$" becomes "$" and "$(" would be a reference.
+func kubeletExpand(command string) string {
+	var out strings.Builder
+	for i := 0; i < len(command); i++ {
+		if command[i] == '$' && i+1 < len(command) && command[i+1] == '$' {
+			i++
+		}
+		out.WriteByte(command[i])
+	}
+	return out.String()
+}
+
+func TestTrafficMirrorCommandSurvivesKubeletExpansion(t *testing.T) {
+	require.Contains(t, trafficMirrorScript, `"$$"`, "the helper passes its own PID to ip link netns")
+	require.Contains(t, trafficMirrorScript, "$(", "the helper uses command substitution")
+	command := trafficMirrorCommand("attach")
+	require.Equal(t, []string{"/bin/sh", "-c"}, command[:2])
+	require.Equal(t, []string{"traffic-mirror", "attach"}, command[3:])
+	// Every "$" is escaped, so no $(VAR) reference or $$ collapse can reach
+	// the shell altered.
+	require.NotRegexp(t, `(^|[^$])(\$\$)*\$([^$]|$)`, command[2])
+	require.Equal(t, trafficMirrorScript, kubeletExpand(command[2]))
+}
+
+func TestTrafficMirrorDefersMissingProvenanceWithinGrace(t *testing.T) {
+	c := NewDebugSessionController(zap.NewNop().Sugar(), nil, nil)
+	template := &breakglassv1alpha1.DebugSessionTemplate{Spec: *mirrorTemplateSpec()}
+	ds := &breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.Now()}}
+	result, deferred := c.deferTrafficMirrorProvenance(ds, template)
+	require.True(t, deferred, "a fresh API request may not have persisted its provenance yet")
+	require.Positive(t, result.RequeueAfter)
+	ds.CreationTimestamp = metav1.NewTime(time.Now().Add(-2 * groupProvenanceGracePeriod))
+	_, deferred = c.deferTrafficMirrorProvenance(ds, template)
+	require.False(t, deferred, "after the grace period missing provenance fails closed")
+	ds.CreationTimestamp = metav1.Now()
+	ds.Status.AuthenticatedUserGroupsCaptured = true
+	_, deferred = c.deferTrafficMirrorProvenance(ds, template)
+	require.False(t, deferred)
+	_, deferred = c.deferTrafficMirrorProvenance(&breakglassv1alpha1.DebugSession{ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.Now()}},
+		&breakglassv1alpha1.DebugSessionTemplate{})
+	require.False(t, deferred, "only mirror templates are deferred here")
+}
+
+func TestTrafficMirrorFencesSessionAfterCreateMarker(t *testing.T) {
+	f := newMirrorFixture(t, approvedPodRequest(), mirrorSourcePod("cart", "cart"))
+	f.c.beforeDebugTargetWrite = func(string) {
+		// The session is terminated after the create marker was persisted.
+		live := &breakglassv1alpha1.DebugSession{}
+		require.NoError(t, f.c.client.Get(t.Context(), client.ObjectKeyFromObject(f.ds), live))
+		live.Status.State = breakglassv1alpha1.DebugSessionStateTerminated
+		require.NoError(t, f.c.client.Status().Update(t.Context(), live))
+	}
+	require.ErrorContains(t, f.c.deployTrafficMirror(t.Context(), f.ds), "no longer approved")
+	require.True(t, f.ds.Status.TrafficMirror.CreateAttempted, "cleanup will verify the Node even though nothing was created")
+	require.Nil(t, f.pod(t, f.ds.Status.TrafficMirror.OperationID), "no privileged Pod after the live fence fails")
 }
 
 func TestTrafficMirrorTuple(t *testing.T) {

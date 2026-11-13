@@ -132,10 +132,25 @@ func maintenanceApproved(ds *breakglassv1alpha1.DebugSession) bool {
 
 // maintenanceClient uses the same privileged ClusterConfig provenance as workload deployment.
 func (c *DebugSessionController) maintenanceClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrlclient.Client, func() error, func(), error) {
+	return c.fencedTargetClient(ctx, ds, false)
+}
+
+// maintenanceCleanupClient is maintenanceClient for removing executor state:
+// it also works while the ClusterConfig is being deleted, since that
+// deletion waits for the cleanup. UID, spec and credential fences still apply.
+func (c *DebugSessionController) maintenanceCleanupClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession) (ctrlclient.Client, func() error, func(), error) {
+	return c.fencedTargetClient(ctx, ds, true)
+}
+
+func (c *DebugSessionController) fencedTargetClient(ctx context.Context, ds *breakglassv1alpha1.DebugSession, cleanup bool) (ctrlclient.Client, func() error, func(), error) {
 	if c.ccProvider == nil {
 		return nil, nil, nil, fmt.Errorf("nodeMaintenance requires a target cluster provider")
 	}
-	cfg, configured, err := c.ccProvider.GetRESTConfigForPrivilegedOperation(ctx, ds.Spec.Cluster)
+	resolve := c.ccProvider.GetRESTConfigForPrivilegedOperation
+	if cleanup {
+		resolve = c.ccProvider.GetRESTConfigForCleanupOperation
+	}
+	cfg, configured, err := resolve(ctx, ds.Spec.Cluster)
 	if err != nil {
 		return nil, nil, nil, err
 	}
